@@ -9,6 +9,7 @@ Design:
 
 - [Client contract](docs/client-contract.md): the protocol every client uses to talk to the agent service.
 - [Separation of concerns](docs/separation-of-concerns.md): what the service owns, what clients own.
+- [Developer view](docs/developer-view.md): everything the web app's developer view shows, and what the service must start recording for it.
 
 ## Run
 
