@@ -37,4 +37,4 @@ No project API key is needed in the web image. Keep any local project configurat
 
 `bun run build` produces Next.js standalone output; `bun run lint` checks the frontend. The Dockerfile builds only `web/` and excludes `.env*`, dependencies, and local build output from its context.
 
-A deployment must update only the web image on the existing `nori-web` Cloud Run service. Preserve its IAP, identity, environment, private access, domain mapping, and min/max instance configuration. Backend and Temporal changes are outside this frontend update. Observe the authorized session deadline and the 22:00 America/Los_Angeles cutoff for paid execution.
+A deployment must update only the web image on the existing `nori-web` Cloud Run service. Preserve its IAP, identity, environment, private access, domain mapping, and min/max instance configuration. Backend and Temporal changes are outside this frontend update. Observe the authorized session deadline and the maximum three-hour limit for explicitly authorized runtime sessions.
