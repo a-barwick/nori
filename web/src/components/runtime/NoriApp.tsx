@@ -14,20 +14,20 @@ import { DocumentViewer } from "./DocumentViewer";
 import { RuntimeComposer } from "./RuntimeComposer";
 import { TaskPanel } from "./TaskPanel";
 
-export function NoriApp() {
+export function NoriApp({ agentMode = false }: { agentMode?: boolean }) {
   const hydrated = useHydrated();
   if (!hydrated) return <div className="fixed inset-0 bg-canvas" />;
   return (
     <Tooltip.Provider delayDuration={500}>
       <MotionConfig reducedMotion="user">
-        <RuntimeChat />
+        <RuntimeChat agentMode={agentMode} />
       </MotionConfig>
     </Tooltip.Provider>
   );
 }
 
-function RuntimeChat() {
-  const runtime = useRuntime();
+function RuntimeChat({ agentMode }: { agentMode: boolean }) {
+  const runtime = useRuntime(agentMode);
   const {
     session,
     pending,
@@ -78,7 +78,8 @@ function RuntimeChat() {
         message.id === `${pending.id}-user` && message.role === "user",
     );
   const conversation = useMemo<Conversation>(() => {
-    const items: ThreadItem[] = (session?.messages ?? []).map((message) => ({
+    const generatedRequests = new Set(session?.dispatches?.map((dispatch) => `${dispatch.id}-user`));
+    const items: ThreadItem[] = (session?.messages ?? []).filter((message) => !generatedRequests.has(message.id)).map((message) => ({
       id: message.id,
       kind: "text",
       sender: message.role === "user" ? "me" : "nori",
@@ -100,7 +101,7 @@ function RuntimeChat() {
       createdAt: items[0]?.at ?? 0,
       items,
     };
-  }, [session?.messages, pending, pendingNotPersisted]);
+  }, [session?.messages, session?.dispatches, pending, pendingNotPersisted]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -121,13 +122,15 @@ function RuntimeChat() {
       busy={busy}
       loading={loading}
       error={error}
-      unavailable={unavailable}
+      unavailable={agentMode ? runtime.tasksUnavailable : unavailable}
       stopping={stopping}
       stopDisabled={stopDisabled}
       onSelect={runtime.setSelectedId}
       onStop={runtime.stop}
       onRefresh={() => void runtime.refreshHistory()}
       onClose={closePanel}
+      artifactEndpoint={agentMode ? "/api/agent/artifact" : undefined}
+      onUpdate={agentMode ? runtime.updateTask : undefined}
     />
   );
   const notice =
@@ -135,7 +138,7 @@ function RuntimeChat() {
     (unavailable
       ? `${session?.paused ? "This session is paused." : "This session has expired."} History remains available.`
       : "");
-  const work = busy
+  const work = agentMode && pending && pending.id === pending.runId ? "Nori is thinking…" : busy
     ? stopping
       ? "Stop requested. Waiting for the runtime to confirm."
       : pending
@@ -239,13 +242,14 @@ function RuntimeChat() {
         <RuntimeComposer
           draft={runtime.draft}
           setDraft={runtime.setDraft}
-          disabled={!session || unavailable || loading || !!error}
+          disabled={!session || unavailable || loading || (!!error && !agentMode)}
           busy={busy}
           canUpdate={runtime.canUpdate}
+          canChat={runtime.canChat}
           stopping={stopping && !error}
           stopDisabled={stopDisabled}
           onSend={() => void runtime.send()}
-          onStop={runtime.stop}
+          onStop={agentMode && !running ? undefined : runtime.stop}
           unread={unread.count}
           onJump={unread.jump}
         />
