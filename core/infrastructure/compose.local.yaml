@@ -1,0 +1,13 @@
+# Explicit local build override; image-only local runs use compose.yaml.
+services:
+  nori-core:
+    build:
+      context: ..
+      dockerfile: infrastructure/Dockerfile
+  nori-web:
+    build:
+      context: ../../web
+      dockerfile: infrastructure/Dockerfile
+  computer:
+    build:
+      context: ./computer
