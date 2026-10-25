@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Popover } from "radix-ui";
 import { ArrowDown, ArrowUp, FileUp, ImagePlus, LibraryBig, Mic, Plus, X } from "lucide-react";
 import { IconButton } from "@/components/ui/primitives";
@@ -188,17 +188,33 @@ export function Composer({ threadId, unread, onJump }: { threadId: ID; unread: n
   const recorder = useRecorder(threadId);
   const hasContent = draft.trim().length > 0 || attachments.length > 0;
 
-  useLayoutEffect(() => {
+  // Measure at auto, then ease from the old height to the new one.
+  const fit = useCallback(() => {
     const el = area.current;
     if (!el) return;
-    // Measure at auto, then ease from the old height to the new one.
     const prev = el.style.height;
     el.style.height = "auto";
     const next = `${Math.min(el.scrollHeight, LINE * MAX_LINES + 4)}px`;
     el.style.height = prev;
     void el.offsetHeight;
     el.style.height = next;
-  }, [draft]);
+  }, []);
+
+  useLayoutEffect(fit, [draft, fit]);
+
+  // A width change rewraps the text (and a first measure in a window that was still opening is wrong).
+  useEffect(() => {
+    const el = area.current;
+    if (!el) return;
+    let width = el.offsetWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.offsetWidth === width) return;
+      width = el.offsetWidth;
+      fit();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fit]);
 
   // Nori looks down at the composer while you write to it.
   useEffect(() => {
