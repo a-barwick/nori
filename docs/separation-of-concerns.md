@@ -1,8 +1,8 @@
 # Separation of concerns: agent service and client apps
 
-**One agent service decides, acts and remembers. Every client renders state and sends intent.** Nori will run as a web app, a desktop app and a mobile app. They must never disagree about a conversation, a task, an approval or a memory, so all of that lives in the agent service. Clients meet the service through one contract: they send commands, and they receive an ordered event log plus a live stream. The client contract spec in the nori repo (`docs/client-contract.md`) defines that protocol.
+**One agent service decides, acts and remembers. Every client renders state and sends intent.** Nori will run as a web app, a desktop app and a mobile app. They must never disagree about a conversation, a task, an approval or a memory, so all of that lives in the agent service. Clients meet the service through one contract: they send commands, and they receive an ordered event log plus a live stream. The [client contract](client-contract.md) defines that protocol.
 
-See the [architecture](https://chatgpt.com/space/page_fb462c68ef1c8191be51107a6118d6ac), [outer loop](https://chatgpt.com/space/page_2c00c5ce6cac8191b153218029cf445e) and [inner loop](https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65) for the agent design behind the service.
+See the [architecture](https://chatgpt.com/space/page_fb462c68ef1c8191be51107a6118d6ac), [outer loop](https://chatgpt.com/space/page_2c00c5ce6cac8191b153218029cf445e) and [inner loop](https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65) for the agent design behind the service. Spaces copy: [Nori separation of concerns](https://chatgpt.com/space/page_efd8068da4fc8191a54ae575d8a1c57d); this file is the source.
 
 # The rule
 

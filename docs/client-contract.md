@@ -6,7 +6,8 @@
 | Author | Austin Barwick |
 | Last updated | 2026-10-24 |
 | Scope | The protocol between Nori's agent service and every client app (web, desktop, mobile) |
-| Related | [Separation of concerns](separation-of-concerns.md); outer loop, inner loop and architecture pages (ChatGPT Spaces); Linear AB-120, AB-122, AB-130, AB-131, AB-133 |
+| Related | [Separation of concerns](separation-of-concerns.md); [architecture](https://chatgpt.com/space/page_fb462c68ef1c8191be51107a6118d6ac), [outer loop](https://chatgpt.com/space/page_2c00c5ce6cac8191b153218029cf445e) and [inner loop](https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65) (ChatGPT Spaces); Linear AB-120, AB-122, AB-130, AB-131, AB-133 |
+| Spaces copy | [Nori client contract](https://chatgpt.com/space/page_593a06e74e988191975cfbb5c20e378a). This file is the source; update Spaces when it changes. |
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as described in RFC 2119.
 
