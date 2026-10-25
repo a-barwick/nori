@@ -1,0 +1,647 @@
+microvm on gcp? for ai assistant (grok bot, muse) type product
+Yes. GCP now has several microVM options specifically designed for autonomous AI assistants like Grok Bot, Muse, or OpenClaw. And Google's newest offerings are almost exactly what you're describing: an isolated Linux environment per agent, persistent workspace, fast startup, and the ability to suspend agents when they're idle.
+
+The timing is interesting: Google announced Agent Compute Engine on October 22, 2026, just two days ago.
+
+GCP options for an AI assistant platform
+Service
+
+What it provides
+
+Status
+
+Agent Compute Engine
+
+Managed microVMs, persistent disks, snapshot/resume, agent identities
+
+Announced; preview coming
+
+Agent Substrate on GKE
+
+High-density microVMs, suspend/resume, persistent state, optimized scheduling
+
+Available
+
+GKE Sandbox (microVM)
+
+Hardware-isolated Linux VM per Kubernetes Pod
+
+GA since October 7
+
+Agent Sandbox on GKE
+
+Stateful sandbox orchestration, persistent volumes, warm pools
+
+Available
+
+Cloud Run Sandboxes
+
+Fast, ephemeral isolated code execution within Cloud Run
+
+Public preview
+
+Google's new GKE microVM runtime uses Kata Containers + Cloud Hypervisor, not Firecracker. Each Pod gets an isolated guest kernel, with approximately 1–2 seconds of VM startup time and 130 MiB of fixed memory overhead.
+
+Google Cloud Documentation
++1
+
+Agent Substrate goes further with sub-500 ms resume, idle suspension, and reported 10× higher sandbox density than conventional container runtimes.
+
+Google Cloud Blog
++1
+
+For a multi-tenant personal AI assistant that needs a real filesystem, CLI tools, browsers, and continued work across conversations, Agent Substrate on GKE is the most interesting option you can deploy today.
+
+How I'd architect it
+Next.js / mobile client
+
+Chat, files, task status, approvals
+Cloud Run API + orchestration
+
+Authentication, model calls, message routing, task scheduling
+GKE Agent Substrate
+
+User A
+
+Active
+User B
+
+Suspended
+User C
+
+Active
+Independent Linux workspaces running CLI tools, Python, browsers and agent harnesses
+Postgres
+
+Conversations, tasks, memory
+Persistent storage
+
+Files, workspace, snapshots
+I'd make the assistant's computer a per-user resource, not necessarily a per-conversation resource. That preserves tools, workspace files, and execution context across multiple conversations.
+
+When the assistant is idle, suspend its runtime. When the user sends a message or a scheduled task fires, reactivate it. Keep the scheduler outside the microVM, since a suspended machine can't run its own timers.
+
+For credentials, use an external secrets/authorization gateway and short-lived tokens rather than storing reusable OAuth tokens or CLI credentials inside agent-accessible files.
+
+Cost implications at 5,000 users
+The critical variable is concurrent active agents, not total registered users.
+
+For an illustrative 5,000-user product with 5% active simultaneously:
+
+250 executing agents
+
+4,750 mostly suspended agents
+
+GKE compute paid for the active worker capacity and warm headroom
+
+Persistent storage and snapshots billed even while agents sleep
+
+An n4-standard-32 GCE node currently lists at about $1.45/hour in us-central1, roughly $1,060/month. Nine such nodes would be about $9,500/month in base VM compute, before disks, load balancing, networking, and other services. Whether nine nodes suffice depends on real CPU/memory usage and runtime overhead.
+
+Google Cloud
++1
+
+What I'd choose
+For a prototype, I'd use Agent Sandbox on GKE, with a persistent workspace and gVisor initially. Move execution to hardware microVMs if the security model or Linux compatibility requires them.
+
+For thousands of users, Agent Substrate is more compelling because of its snapshot/resume model.
+
+One availability qualification: Agent Substrate is currently open for evaluation and non-production use; production support requires access to Google's limited-GA program.
+
+Google Cloud Documentation
+
+And keep an eye on Agent Compute Engine. Once available, it may eliminate much of the custom GKE execution infrastructure.
+
+The main design decision is whether your assistant needs a persistent computer with a filesystem and running processes, or only a persistent logical identity that launches disposable execution environments when needed. That choice drives almost everything else.
+
+what are other products like agent compute engine - is becoming popular. aws version?
+Yes. This is becoming a distinct cloud infrastructure category: agent-native compute. AWS, Google, Microsoft, and several startups now offer isolated execution environments built for agents that need to run code, access files, execute tools, and retain state between interactions.
+
+AWS actually has two direct competitors to Google's new Agent Compute Engine, including a standalone microVM service launched in June 2026.
+
+The big three cloud providers
+Software development | LogosCorp
+1. AWS Lambda MicroVMs
+
+Available now
+The closest direct AWS equivalent to Agent Compute Engine.
+
+Firecracker microVM per user, job, or session
+
+Suspend/resume with memory and disk state preserved
+
+Up to 8 hours of session lifecycle
+
+Dedicated HTTPS endpoint with WebSockets, gRPC and HTTP/2
+
+Custom Linux images created from Dockerfiles
+
+Managed lifecycle, networking and capacity
+
+Launched June 22, 2026.
+
+AWS
++1
+
+AWS launch announcement
+
+First Impressions with Amazon Bedrock AgentCore - DEV Community
+2. Amazon Bedrock AgentCore Runtime
+
+Available now
+A higher-level service specifically for deploying AI agents.
+
+Dedicated microVM per agent session
+
+Framework-agnostic; supports custom agents
+
+Built-in agent identity and session management
+
+Managed filesystem persistence across restarts
+
+Up to 8 hours on microVMs, or 14 days on Runtime Instances
+
+Additional services for memory, browser automation and code execution
+
+AWS added persistent Runtime Instances in August 2026. This is closer to a complete managed agent-hosting platform.
+
+AWS News Blog
++1
+
+Azure AI Foundry - Création d’applications d’IA générative
+3. Microsoft Foundry Hosted Agents
+
+Generally available
+Microsoft's managed agent-hosting alternative.
+
+Isolated VM-backed environment per session
+
+Persistent $HOME filesystem
+
+Scale to zero and resume with filesystem state
+
+Deploy custom agents packaged as containers
+
+Microsoft Entra agent identities and managed endpoints
+
+Microsoft also has Azure Container Apps Dynamic Sessions, which provide lower-level, Hyper-V-isolated execution sandboxes.
+
+Microsoft Learn
++2
+
+Agent Factory のハイライト: Agent Sandbox と Pod スナップショットを使用して GKE 上のエージェントを強化する | Google Cloud 公式ブログ
+4. Google Agent Compute Engine
+
+Preview upcoming
+Google's October 22, 2026 announcement focuses on fast checkpoint/restore, memory-preserving suspension, copy-on-write sharing, and extremely high agent density.
+
+Unlike the AWS products, this is not generally available yet.
+
+Google Cloud Blog
++1
+
+Specialized providers are competing aggressively
+These companies are particularly interesting if you're building a Grok Bot/Muse-style product rather than a traditional enterprise agent workflow.
+
+Provider
+
+Technology
+
+What makes it interesting
+
+E2B
+
+Firecracker microVMs
+
+Agent-specific SDK, persistent filesystem, pause/resume, snapshot/fork
+
+Fly.io Sprites
+
+Firecracker microVMs
+
+Persistent Linux computers that sleep when idle and wake rapidly
+
+Daytona
+
+Containers and VMs
+
+Fast sandbox provisioning, persistent workspaces, GPU options
+
+Modal Sandboxes
+
+gVisor / VM options
+
+Python-oriented compute, sandboxes, GPUs
+
+Vercel Sandbox
+
+Firecracker microVMs
+
+Good fit for Next.js applications, code execution and file workspaces
+
+Cloudflare Sandboxes
+
+Isolated containers
+
+Integrated with Workers, Durable Objects, R2 and the edge network
+
+E2B, Fly Sprites, and Vercel are especially close to the emerging computer-as-an-API model.
+
+The Enterprise AI Agent Cloud
++3
+
+Why this category is exploding
+Traditional cloud infrastructure assumed your unit of deployment was an application or service.
+
+Agent infrastructure introduces a different unit: a computer belonging to a user, task, or agent.
+
+That changes the infrastructure requirements considerably:
+
+Provision isolated execution environments in seconds or less.
+
+Maintain files, installed packages, and optionally running processes.
+
+Suspend execution when waiting for an LLM response or human approval.
+
+Restore state without paying for an always-running machine.
+
+Snapshot and fork environments to explore multiple solutions.
+
+Restrict network access, filesystem access and credential exposure.
+
+AWS launched Lambda MicroVMs in June, Microsoft and Vercel have released managed alternatives, AWS upgraded AgentCore Runtime in September, and Google announced Agent Compute Engine in October. That's strong evidence that the major providers are investing in this compute model, although it doesn't establish broad adoption by itself.
+
+AWS
++4
+
+Which would I use for your assistant?
+I'd shortlist three:
+
+AWS Lambda MicroVMs — maximum infrastructure control
+
+Best if you want to build your own orchestration and agent loop, with AWS providing the execution environments. The main limitations are ARM64-only support and a hard 8-hour lifecycle. You need durable external state for work spanning days.
+
+AWS Lambda
++1
+
+Bedrock AgentCore Runtime — least custom agent infrastructure
+
+Best if you want AWS to manage session execution, identity, and agent operations. V2 includes elastic memory reclamation and CPU billing based on actual processing rather than waiting on model calls.
+
+AWS
+
+Fly Sprites or E2B — simplest path to persistent agent computers
+
+Worth evaluating for an assistant that needs a reusable Linux workspace across conversations, without building a full VM fleet management layer.
+
+One important distinction: Lambda MicroVMs charge for baseline compute while running, then snapshot storage while suspended. AgentCore instead meters CPU and memory consumption and reclaims unused memory. That billing difference becomes significant at thousands of users.
+
+Amazon Web Services, Inc.
++1
+
+For a personal assistant product, I'd separate the always-available assistant identity, scheduler, conversation state and memory from its on-demand computer. Not every conversation requires a running VM, and that separation lets you support thousands of users without thousands of continuously running computers.
+
+Google's new Agent Compute Engine is interesting because it explicitly targets this pattern, including preserving memory across longer idle periods without active-VM billing. AWS Lambda MicroVMs already provides much of the same execution capability today, but with a more restrictive lifecycle.
+
+agent substrate - open source framework
+
+agent substrate on gke - first class support with ootb provisioning for gke then?
+
+agnet compute engine looks like exactly what we want, whats the immediate replacement thats prod ready? on gcp
+Yes, Agent Substrate has first-class GKE integration. But there's an even closer production-ready replacement for Agent Compute Engine on GCP: Gemini Enterprise Agent Platform Sandboxes.
+
+I found three distinct options, and their maturity levels matter.
+
+GCP options as of October 24, 2026
+Product
+
+Production status
+
+What Google manages
+
+Gemini Enterprise Agent Platform Sandboxes
+
+GA
+
+Sandbox provisioning, lifecycle, pause/resume, snapshots
+
+Agent Sandbox on GKE
+
+Available
+
+Kubernetes sandbox controller, provisioning, upgrades
+
+Agent Substrate on GKE
+
+Private GA for production
+
+GKE-optimized installation and infrastructure integration; you operate the runtime
+
+Agent Compute Engine
+
+Upcoming preview
+
+Fully managed agent-native compute infrastructure
+
+Google confirmed that Agent Platform's Shell and Computer Use sandboxes reached GA on September 9, 2026. Agent Substrate is publicly available for evaluation, but production support requires acceptance into Google's private GA program.
+
+Google Cloud Documentation
++2
+
+1. Agent Substrate on GKE — how integrated is it?
+It's more than an open-source framework someone happens to run on Kubernetes.
+
+Google maintains a dedicated substrate-gke installer. It can provision a new GKE Standard cluster, configure the storage and networking dependencies, and deploy the Substrate control plane.
+
+The installer provisions:
+
+GKE cluster, node configuration, IAM and Workload Identity
+
+Cloud Storage buckets for suspended agent snapshots
+
+ActorTemplate and WorkerPool Kubernetes custom resources
+
+Agent identity, mTLS certificates and networking components
+
+PostgreSQL for actor and worker metadata
+
+Monitoring dashboards and telemetry integration
+
+gVisor-based sandbox execution by default
+
+Important distinction: This is an integrated installer, not a fully managed GKE add-on. You still own the installed Substrate controllers and their operational lifecycle. Cloud Hypervisor microVM execution also requires additional manual configuration; the default installation uses gVisor.
+
+Google Cloud Documentation
++1
+
+Official installation:
+
+curl -sSL https://raw.githubusercontent.com/ai-on-gke/substrate-gke/main/install.sh | bash
+
+It only supports GKE Standard, not Autopilot.
+
+So yes, provisioning is substantially automated. But calling it the same operational experience as Agent Compute Engine would be misleading.
+
+2. Gemini Enterprise Agent Platform Sandboxes — closest managed replacement today
+Production-ready, with important lifecycle limitations
+
+This is the one I'd evaluate first for a Grok Bot/Muse-style product.
+
+Google already provides APIs for creating and managing isolated Linux environments, including Shell sandboxes, custom containers and browser-based Computer Use.
+
+Crucially, it supports:
+
+Programmatic provisioning without operating your own GKE cluster
+
+Persistent files and installed packages across interactions
+
+Explicit pause/resume, retaining filesystem state and endpoint identity
+
+Snapshot creation and restoration
+
+Network isolation, VPC connectivity and customer-managed encryption
+
+A paused sandbox releases its compute resources and can resume in seconds.
+
+Google Cloud Documentation
++2
+
+However, two limitations distinguish it from Agent Compute Engine.
+
+First, its published maximum lifetimes range from 7 days for custom container environments to 14 days for code-execution sandboxes. Second, Google says cold provisioning can take up to two minutes, although its Shell sandbox quickstart indicates approximately 20 seconds is typical.
+
+Google Cloud Documentation
++1
+
+Also, the documented pause/resume contract guarantees filesystem state, not resumption of live process memory. Agent Substrate explicitly supports RAM snapshots.
+
+So this works for an assistant that uses a computer for hours or days, but you'll still need external durable storage and workspace rehydration for a persistent assistant spanning months.
+
+Official Sandboxes documentation · Shell sandbox quickstart
+
+3. Agent Sandbox on GKE — best Kubernetes-native production option
+This one actually is a Google-managed GKE add-on, unlike Agent Substrate.
+
+You enable it with --enable-agent-sandbox on a supported cluster. Google manages the controller's upgrades and security patches. The API uses SandboxClaim, SandboxTemplate and SandboxWarmPool to provision and assign isolated environments, including sub-second assignment from prewarmed pools.
+
+Google Cloud Documentation
++1
+
+It supports persistent storage and stable network identities. However, the full snapshot/suspend workflow has caveats: Google's October 22 documentation still describes manual controller installation for some snapshot functionality pending integration into the managed add-on.
+
+Google Cloud Documentation
+
+Separately, GKE's hardware-isolated microVM runtime became GA on October 7, using Kata Containers and Cloud Hypervisor. That's production-ready infrastructure, but it doesn't automatically give you Agent Substrate's high-density scheduling and memory hibernation.
+
+Google Cloud Documentation
+
+What I'd deploy
+Cloud Run API + scheduler
+
+Owns user identity, messages, background tasks and sandbox routing
+Gemini Enterprise Agent Platform Sandboxes
+
+Managed isolated Linux execution, pause/resume and snapshots
+Cloud SQL
+
+Sessions, memory, task state
+Cloud Storage
+
+Durable user files and backups
+For the first production release, I'd use the managed sandboxes and keep your execution abstraction small enough to swap implementations.
+
+But if your non-negotiable requirement is 5,000 persistent agent identities with true RAM-and-disk suspension, sub-second wakeup and no arbitrary 7–14-day environment expiry, Agent Substrate is a substantially better architectural match.
+
+In that case, I'd apply for Agent Substrate's production support program now. Google explicitly offers production support through its private-GA allowlist.
+
+Bottom line: Agent Platform Sandboxes is the closest fully managed product you can use in production today. Agent Sandbox on GKE gives you more control. Agent Substrate is the closest functional match to Agent Compute Engine's architecture, provided Google grants production access.
+
+why can't we just deploy agent substrate on gke ourselves, what does the first class option offer besdies easier deploys
+You can deploy Agent Substrate on GKE yourself. I’ll check which capabilities are genuinely exclusive to Google’s managed offerings versus what you’d simply have to operate yourself—especially suspension, isolation, scaling, and production support.
+
+Clarified product differences
+
+You absolutely can. And for what you're building, I'd seriously consider self-hosting Agent Substrate on GKE rather than waiting for Agent Compute Engine.
+
+Agent Substrate isn't a stripped-down version of Google's managed product. It's an open-source agent execution runtime with much of the functionality you actually want:
+
+RAM and filesystem snapshotting.
+
+Sub-second agent suspension and restoration.
+
+Warm worker pools with automatic reuse.
+
+gVisor or Cloud Hypervisor isolation.
+
+Actor identity decoupled from the underlying machine.
+
+High-density scheduling that avoids Kubernetes' per-agent Pod limitations.
+
+Google explicitly positions it as the customizable, Kubernetes-native alternative to Agent Compute Engine.
+
+Google Cloud Documentation
++1
+
+The production caveat is a support and release-maturity distinction, not a technical prohibition. Anyone can install and operate the open-source runtime on GKE Standard. Google currently makes general availability explicit for evaluation and non-production usage, while production support requires acceptance into its limited-GA program.
+
+Google Cloud Documentation
+
+What do you actually gain from Google's managed option?
+Capability
+
+Self-hosted Agent Substrate on GKE
+
+Managed Agent Compute Engine
+
+Create isolated agent environments
+
+Yes
+
+Yes, planned
+
+Suspend and restore live RAM
+
+Yes
+
+Yes, planned
+
+Persistent workspace
+
+Yes, with configured storage
+
+Managed
+
+Fast warm resume
+
+Yes
+
+Planned
+
+High-density execution
+
+Yes
+
+Planned
+
+Operate scheduling/control-plane services
+
+You
+
+Google
+
+Manage worker capacity and nodes
+
+You, with GKE autoscaling
+
+Google
+
+Install security and runtime updates
+
+You
+
+Google
+
+Control runtime internals
+
+Full open-source access
+
+More restricted
+
+Infrastructure portability
+
+Kubernetes-based
+
+Google Cloud-specific
+
+Production support
+
+Limited-GA approval
+
+Not yet launched
+
+The biggest difference is who owns the execution platform's operational reliability, not whether the platform supports advanced agent execution.
+
+not going with non-prod supported features yet, but will check them out when they're GA
+
+create the one pager for what this would look slike, including infra, features, pitfalls, limitations, cost - agent substrate custom deployed on generic k8s (aws, gcp, etc)
+Created the one-page architecture brief, covering deployment on EKS, GKE, or compatible Kubernetes, along with capabilities, infrastructure, production risks, and estimated operating costs.
+
+Download the one-pager (PDF)
+
+Self-Hosted Agent Substrate on Kubernetes
+Architecture proposal | AWS EKS / GKE Standard / Kubernetes | October 24, 2026
+
+Objective: Provide each user with a persistent, isolated Linux execution environment for an AI assistant, without dedicating an always-running VM to every user.
+
+Status: Evaluation candidate. Agent Substrate is pre-1.0 and lacks broadly available production support. Do not adopt for customer production until release maturity, operational readiness, and security requirements are satisfied.
+
+1. Infrastructure
+Application layer: Next.js/mobile frontend, API service, authentication, agent orchestration, queues, task scheduler and tool gateway.
+
+Agent Substrate: API server, actor registry, routing, controllers, warm worker pools, sandbox runtimes, RAM/filesystem checkpointing and restoration.
+
+Supporting infrastructure:
+
+Component	AWS	GCP
+Kubernetes	EKS	GKE Standard
+Worker compute	EC2 + Karpenter	Compute Engine + Autoscaler
+Agent isolation	gVisor / Cloud Hypervisor	gVisor / Cloud Hypervisor
+Snapshot storage	S3	Cloud Storage
+Metadata / memory	RDS PostgreSQL	Cloud SQL PostgreSQL
+Edge / networking	ALB/NLB, VPC	Cloud Load Balancing, VPC
+Observability	CloudWatch / OpenTelemetry	Cloud Monitoring / OpenTelemetry
+Execution lifecycle: User request → resolve actor → acquire warm worker → restore agent → execute → checkpoint RAM/filesystem → release worker. Conversations, scheduled jobs, durable documents and user identity remain external to the runtime.
+
+2. Capabilities
+Agent Substrate provides persistent actors, warm-worker multiplexing, isolated OCI execution, memory and filesystem snapshots, on-demand restoration, routing and runtime-level identity.
+
+Custom agent harnesses can run Python, shell commands, browser automation, development tools and MCP integrations.
+
+The application must still implement agent reasoning loops, memory retrieval, OAuth connectors, tool authorization, background scheduling, usage limits and billing.
+
+3. Portability
+The open-source core targets standard Kubernetes and supports both GCS and S3 snapshot backends. Google's integrated installer is GKE-specific.
+
+On EKS or another Kubernetes distribution, the team owns installation, storage/IAM integration, node compatibility, networking policies, upgrades and validation.
+
+Start with gVisor. Evaluate hardware microVMs separately because Cloud Hypervisor requires appropriate host virtualization support.
+
+4. Pitfalls and limitations
+Risk	Implication
+Pre-1.0 maturity	Breaking API changes and operational instability possible
+Security	Isolation is necessary but insufficient; validate egress enforcement, credentials and tenant boundaries
+Hibernate/resume	Open network connections are not preserved; reconnect after restoration
+Persistence	Large snapshots increase storage usage and wake latency
+GPU	GPU passthrough and live CUDA checkpointing are unsupported
+Operations	Team owns upgrades, observability, recovery, capacity and snapshot compatibility
+Portability	Cloud-specific Kubernetes APIs, IAM, node capabilities and storage integration require validation
+GKE's current documentation also identifies unsupported egress-policy and credential-injection capabilities despite related functionality appearing in the upstream project.
+
+5. Estimated monthly cost
+Example: 5,000 registered users, 250 peak concurrent agents, 0.25–0.5 vCPU and 0.5–1 GiB RAM per active agent.
+
+Cost component	Monthly estimate
+EKS worker nodes (6–12 m7i.4xlarge)	$3,533–$7,066
+Kubernetes management	~$73
+S3 snapshots (5–10 TiB)	~$118–$236
+PostgreSQL, networking, disks, telemetry	$400–$2,000+
+Total infrastructure	~$4,000–$10,000+
+Illustrative AWS on-demand pricing, excluding model inference, external services, browser bandwidth, discounts and labor. Actual sizing requires workload benchmarks. GCP will have different worker-node prices.
+
+6. Adoption criteria
+Before production, validate tenant isolation, credential boundaries, checkpoint/recovery correctness, p95/p99 resume time, cross-node restoration, operational upgrades, snapshot cost, scaling and availability.
+
+Recommendation: Retain Agent Substrate as a future execution-layer option. Prototype on disposable infrastructure if useful, but require a supported production release and proven security controls before customer deployment.
+
+References: Upstream project · GKE limitations · EKS pricing · GKE pricing
+
+The important architectural point is that Agent Substrate replaces execution infrastructure, not the assistant application. Its multiplexing model is what makes thousands of persistent assistants economically plausible, but it also introduces a new scheduling, storage and recovery system that your team must operate.
+
+The cost estimates use current EKS and EC2 pricing. The portability and maturity qualifications come from the upstream repository and Google's deployment documentation.
+
+GitHub
++4
+
+
+agent_substrate_kubernetes_one_pager.pdf
+PDF

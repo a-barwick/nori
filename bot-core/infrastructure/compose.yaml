@@ -1,0 +1,153 @@
+name: bot-infra-dev
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16.13-bookworm
+    restart: unless-stopped
+    environment:
+      # No passwords: pg_hba.conf restricts trust to control-subnet app roles.
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: postgres
+    command: [postgres, -c, hba_file=/etc/postgresql/pg_hba.conf]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-bot.sql:ro
+    networks: [control]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    logging: *logging
+
+  temporal-schema:
+    image: temporalio/admin-tools:1.31.0
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: temporal
+    entrypoint: [/bin/sh, /scripts/setup-schema.sh]
+    volumes:
+      - ./temporal/setup-schema.sh:/scripts/setup-schema.sh:ro
+    networks: [control]
+    logging: *logging
+
+  temporal:
+    image: temporalio/server:1.31.0
+    restart: unless-stopped
+    depends_on:
+      temporal-schema:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: temporal
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      BIND_ON_IP: 0.0.0.0
+      # Immutable after database initialization; rebuild a new cluster to change.
+      NUM_HISTORY_SHARDS: "4"
+      SQL_MAX_CONNS: "10"
+      SQL_MAX_IDLE_CONNS: "10"
+      SQL_VIS_MAX_CONNS: "5"
+      SQL_VIS_MAX_IDLE_CONNS: "5"
+      LOG_LEVEL: warn
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/local.yaml
+    volumes:
+      - ./temporal/dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/local.yaml:ro
+    networks: [control]
+    healthcheck:
+      test: [CMD, nc, -z, localhost, "7233"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    logging: *logging
+
+  temporal-namespace:
+    image: temporalio/admin-tools:1.31.0
+    restart: "no"
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    entrypoint: [/bin/sh, /scripts/setup-namespace.sh]
+    volumes:
+      - ./temporal/setup-namespace.sh:/scripts/setup-namespace.sh:ro
+    networks: [control]
+    logging: *logging
+
+  computer:
+    image: ${BOT_COMPUTER_IMAGE:-bot-computer:local-v1}
+    hostname: computer
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 20s
+    shm_size: 256mb
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - computer-workspace:/workspace
+      - computer-home:/home/agent
+    networks: [computer]
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:9222/json/version]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    logging: *logging
+
+  bot-core:
+    image: ${BOT_CORE_IMAGE:-bot-core:local}
+    restart: unless-stopped
+    depends_on:
+      temporal-namespace:
+        condition: service_completed_successfully
+      computer:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+    networks: [control]
+    logging: *logging
+
+  bot-web:
+    image: ${BOT_WEB_IMAGE:-bot-web:local}
+    restart: unless-stopped
+    depends_on:
+      bot-core:
+        condition: service_started
+    environment:
+      BOT_CORE_URL: http://bot-core:8080
+    ports: ["127.0.0.1:${BOT_WEB_PORT:-3100}:3000"]
+    networks: [control, ingress]
+    logging: *logging
+
+networks:
+  control:
+    internal: true
+    # Must match postgres/pg_hba.conf; explicit because OrbStack crosses bridges.
+    ipam:
+      config:
+        - subnet: 172.28.40.0/24
+          gateway: 172.28.40.1
+  computer: {}
+  # The tested OrbStack runtime needs a noninternal bridge for port publishing.
+  ingress: {}
+
+volumes:
+  postgres-data:
+  computer-workspace:
+  computer-home:

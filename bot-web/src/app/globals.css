@@ -1,0 +1,579 @@
+@import "tailwindcss";
+
+/* ────────────────────────────────────────────────────────────
+   Nori tokens (spec §4). Components use semantic names only.
+   ──────────────────────────────────────────────────────────── */
+:root {
+  /* Paper (neutrals, warm) */
+  --bg-canvas: #f6f2ea;
+  --bg-surface: #fffdf8;
+  --bg-sidebar: #f0ebe2;
+  --bg-bubble-nori: #ece6da;
+  --fill-1: #efeae0;
+  --fill-2: #e5ded1;
+  --hairline: rgba(34, 32, 27, 0.12);
+  --hairline-strong: rgba(34, 32, 27, 0.2);
+  --overlay: rgba(38, 31, 18, 0.22);
+
+  /* Ink */
+  --text-primary: #22201b;
+  --text-secondary: #5e584e;
+  --text-tertiary: #6b6458;
+  --text-on-accent: #ffffff;
+
+  /* Accent scale: forest / olive */
+  --olive-50: #f1f4ea;
+  --olive-100: #e2e9d6;
+  --olive-200: #c7d4b2;
+  --olive-300: #a6ba8c;
+  --olive-400: #86a06a;
+  --olive-500: #6a8650;
+  --olive-600: #526d3d;
+  --olive-700: #425932;
+  --olive-800: #334527;
+  --olive-900: #26331d;
+
+  --accent: var(--olive-600);
+  --accent-hover: var(--olive-700);
+  --accent-pressed: var(--olive-800);
+  --accent-text: var(--olive-700);
+  --accent-signal: var(--olive-500);
+  --accent-subtle: var(--olive-50);
+  --accent-muted: var(--olive-100);
+  --focus-ring: var(--olive-500);
+
+  /* Status */
+  --warning-text: #855a0c;
+  --warning-bg: #f6e9c9;
+  --danger-text: #a8432c;
+  --danger-bg: #f6ded6;
+
+  /* Identity moments: the only saturated color */
+  --soul-from: #8f3b23;
+  --soul-to: #b4512f;
+  --memory-from: #2c4426;
+  --memory-to: #5a7a44;
+  --on-identity: #ffffff;
+
+  /* Materials */
+  --glass-bg: rgba(251, 248, 242, 0.78);
+  --glass-filter: blur(24px) saturate(1.4);
+  --glass-border: rgba(34, 32, 27, 0.08);
+
+  /* Derived semantic tokens */
+  --chip-border: rgba(34, 32, 27, 0.5);
+  --mark-ink: var(--text-primary);
+  --mark-fill: var(--olive-500);
+  --mark-fill-soft: var(--olive-200);
+  --mark-paper: var(--bg-surface);
+  --heartbeat: var(--danger-text);
+  --waveform-on-accent: var(--bg-surface);
+
+  /* Elevation (shadows live in @theme below) */
+  --drop-contact: drop-shadow(0 4px 8px rgba(48, 40, 24, 0.12));
+
+  /* Motion (easings live in @theme below) */
+  --dur-fast: 150ms;
+  --dur-arrive: 450ms;
+  --dur-spring: 320ms;
+
+  /* Layout */
+  --rail-w: 72px;
+  --panel-w: 360px;
+  --drawer-w: 260px;
+}
+
+@theme inline {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-canvas: var(--bg-canvas);
+  --color-surface: var(--bg-surface);
+  --color-sidebar: var(--bg-sidebar);
+  --color-bubble: var(--bg-bubble-nori);
+  --color-fill-1: var(--fill-1);
+  --color-fill-2: var(--fill-2);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-overlay: var(--overlay);
+  --color-ink: var(--text-primary);
+  --color-ink-2: var(--text-secondary);
+  --color-ink-3: var(--text-tertiary);
+  --color-on-accent: var(--text-on-accent);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-accent-text: var(--accent-text);
+  --color-accent-signal: var(--accent-signal);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-muted: var(--accent-muted);
+  --color-focus: var(--focus-ring);
+  --color-warning: var(--warning-text);
+  --color-warning-bg: var(--warning-bg);
+  --color-danger: var(--danger-text);
+  --color-danger-bg: var(--danger-bg);
+  --color-on-identity: var(--on-identity);
+  --color-glass: var(--glass-bg);
+  --color-glass-border: var(--glass-border);
+  --color-chip-border: var(--chip-border);
+  --color-heartbeat: var(--heartbeat);
+
+  --font-*: initial;
+  --font-sans: var(--font-figtree), "Instrument Sans", system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+
+  --text-*: initial;
+  --text-display: 32px;
+  --text-display--line-height: 40px;
+  --text-display--letter-spacing: -0.01em;
+  --text-title: 22px;
+  --text-title--line-height: 28px;
+  --text-section: 16px;
+  --text-section--line-height: 22px;
+  --text-body: 16px;
+  --text-body--line-height: 22px;
+  --text-read: 16px;
+  --text-read--line-height: 26px;
+  --text-h-page: 18px;
+  --text-h-page--line-height: 26px;
+  --text-search: 17px;
+  --text-search--line-height: 24px;
+  --text-subtitle: 16px;
+  --text-subtitle--line-height: 24px;
+  --text-input: 15px;
+  --text-input--line-height: 24px;
+  --text-row: 15px;
+  --text-row--line-height: 22px;
+  --text-status: 15px;
+  --text-status--line-height: 20px;
+  --text-row-title: 14px;
+  --text-row-title--line-height: 20px;
+  --text-meta: 13px;
+  --text-meta--line-height: 18px;
+  --text-code: 13px;
+  --text-code--line-height: 20px;
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-mono-data: 12px;
+  --text-mono-data--line-height: 16px;
+  --text-mono-label: 11px;
+  --text-mono-label--line-height: 14px;
+  --text-mono-label--letter-spacing: 0.06em;
+
+  --radius-*: initial;
+  --radius-full: 9999px;
+  --radius-bubble: 22px;
+  --radius-sheet: 22px;
+  --radius-card: 16px;
+  --radius-row: 14px;
+  --radius-tile: 12px;
+  --radius-chip: 10px;
+  --radius-check: 5px;
+
+}
+
+/* Shadows and easings are emitted as real custom properties (static) so
+   plain CSS can use var(--shadow-float) and var(--ease-spring) too. */
+@theme static {
+  --shadow-*: initial;
+  --shadow-float: 0 1px 2px rgba(48, 40, 24, 0.06), 0 8px 24px rgba(48, 40, 24, 0.08);
+  --shadow-pill: 0 1px 2px rgba(48, 40, 24, 0.1), 0 0 0 0.5px rgba(48, 40, 24, 0.08);
+  --shadow-pop: 0 2px 6px rgba(48, 40, 24, 0.08), 0 20px 48px rgba(48, 40, 24, 0.16);
+
+  --ease-*: initial;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.15, 1, 0.4, 1);
+}
+
+/* ── Base (layered so utilities can override) ───────────── */
+@layer base {
+  html {
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+    color-scheme: light;
+  }
+
+  body {
+    background: var(--bg-canvas);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 22px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--accent-muted);
+    color: var(--text-primary);
+  }
+
+  :focus {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: default;
+  }
+}
+
+/* ── Materials ────────────────────────────────────────────── */
+.glass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-float);
+}
+
+.hairline-r {
+  box-shadow: inset -1px 0 0 var(--hairline);
+}
+
+.hairline-l {
+  box-shadow: inset 1px 0 0 var(--hairline);
+}
+
+.scrollbar-quiet {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-strong) transparent;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Messages dissolve under the floating top bar and composer */
+.thread-mask {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0 calc(var(--top-fade, 56px) * 0.25),
+    #000 var(--top-fade, 56px),
+    #000 calc(100% - 132px),
+    rgba(0, 0, 0, 0.35) calc(100% - 64px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0 calc(var(--top-fade, 56px) * 0.25),
+    #000 var(--top-fade, 56px),
+    #000 calc(100% - 132px),
+    rgba(0, 0, 0, 0.35) calc(100% - 64px),
+    transparent 100%
+  );
+}
+
+.page-fade {
+  background: linear-gradient(to bottom, transparent, var(--bg-canvas) 85%);
+}
+
+/* ── Motion ───────────────────────────────────────────────── */
+.t-fast {
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes slide-out-right {
+  from {
+    transform: none;
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes slide-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes slide-out-left {
+  from {
+    transform: none;
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes signal-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes flash-highlight {
+  0% {
+    background-color: var(--accent-muted);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes skeleton {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.arrive {
+  animation: arrive var(--dur-arrive) var(--ease-out) both;
+}
+
+.anim-pop {
+  animation: pop-in 200ms var(--ease-out) both;
+}
+
+.anim-fade {
+  animation: fade-in var(--dur-fast) var(--ease-standard) both;
+}
+
+.typing-dot {
+  animation: typing-dot 1.2s var(--ease-standard) infinite;
+}
+
+.pulse-dot {
+  animation: signal-pulse 1.6s var(--ease-standard) infinite;
+}
+
+.skeleton {
+  animation: skeleton 1.2s var(--ease-standard) infinite;
+}
+
+.flash {
+  animation: flash-highlight 1.6s var(--ease-out) both;
+}
+
+/* Radix-driven layers animate on data-state */
+.scrim[data-state="open"] {
+  animation: fade-in var(--dur-fast) var(--ease-standard);
+}
+.scrim[data-state="closed"] {
+  animation: fade-out var(--dur-fast) var(--ease-standard);
+}
+.sheet-right[data-state="open"] {
+  animation: slide-in-right var(--dur-spring) var(--ease-spring);
+}
+.sheet-right[data-state="closed"] {
+  animation: slide-out-right 200ms var(--ease-standard);
+}
+.sheet-left[data-state="open"] {
+  animation: slide-in-left var(--dur-spring) var(--ease-spring);
+}
+.sheet-left[data-state="closed"] {
+  animation: slide-out-left 200ms var(--ease-standard);
+}
+.palette[data-state="open"] {
+  animation: palette-in 200ms var(--ease-out);
+}
+.palette[data-state="closed"] {
+  animation: fade-out 120ms var(--ease-standard);
+}
+.menu[data-state="open"] {
+  animation: menu-in var(--dur-fast) var(--ease-out);
+}
+.menu[data-state="closed"] {
+  animation: fade-out 100ms var(--ease-standard);
+}
+.tooltip[data-state="delayed-open"],
+.tooltip[data-state="instant-open"] {
+  animation: fade-in 120ms var(--ease-standard);
+}
+
+/* Nori's mark states */
+.mark-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 90ms var(--ease-standard);
+}
+.mark[data-blink="true"] .mark-eye {
+  transform: scaleY(0.12);
+}
+.mark[data-state="thinking"] .mark-eyes {
+  animation: mark-think 2s var(--ease-standard) infinite;
+}
+.mark[data-state="listening"] .mark-body-group {
+  transform-box: view-box;
+  transform-origin: 50% 92%;
+  animation: mark-lean 1.6s var(--ease-standard) infinite;
+}
+.mark[data-state="pleased"] .mark-body-group {
+  transform-box: view-box;
+  transform-origin: 50% 60%;
+  animation: mark-beat 520ms var(--ease-spring) 1;
+}
+
+@keyframes mark-think {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  30% {
+    transform: translate(-2.4px, -2.6px);
+  }
+  65% {
+    transform: translate(2.4px, -2.6px);
+  }
+}
+
+@keyframes mark-lean {
+  0%,
+  100% {
+    transform: rotate(-6deg);
+  }
+  50% {
+    transform: rotate(-3deg);
+  }
+}
+
+@keyframes mark-beat {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* ── Reduced motion: opacity only, the mark stays static ──── */
+@media (prefers-reduced-motion: reduce) {
+  .arrive,
+  .anim-pop,
+  .palette[data-state="open"],
+  .menu[data-state="open"] {
+    animation-name: fade-in;
+  }
+  .sheet-right[data-state="open"],
+  .sheet-left[data-state="open"] {
+    animation: fade-in var(--dur-fast) var(--ease-standard);
+  }
+  .sheet-right[data-state="closed"],
+  .sheet-left[data-state="closed"] {
+    animation: fade-out var(--dur-fast) var(--ease-standard);
+  }
+  .typing-dot {
+    animation-name: signal-pulse;
+  }
+  .mark *,
+  .mark .mark-eye {
+    animation: none !important;
+    transition: none !important;
+  }
+  .mark[data-blink="true"] .mark-eye {
+    transform: none;
+  }
+}

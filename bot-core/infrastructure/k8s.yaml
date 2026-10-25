@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bot-core
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bot-core
+  template:
+    metadata:
+      labels:
+        app: bot-core
+    spec:
+      containers:
+        - name: bot-core
+          image: bot-core:local
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bot-core
+spec:
+  selector:
+    app: bot-core
+  ports:
+    - port: 8080
+      targetPort: http

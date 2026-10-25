@@ -1,0 +1,18 @@
+.env
+.env.*
+!.env.example
+/bin/
+.DS_Store
+.claude/
+.ori/
+
+# Terraform working files, plans and state; provider lockfiles stay tracked.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
