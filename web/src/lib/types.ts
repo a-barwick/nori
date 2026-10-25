@@ -41,6 +41,8 @@ export interface TextItem extends BaseItem {
   fromChip?: ID;
   /** Nori wrote first; counts toward the daily cap in Settings. */
   proactive?: boolean;
+  /** Debug mode: what the runtime did to produce this message. */
+  debug?: import("@/components/dev/debug").DebugInfo;
 }
 
 export interface VoiceItem extends BaseItem {

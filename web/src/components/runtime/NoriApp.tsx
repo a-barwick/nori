@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { MotionConfig } from "motion/react";
 import { Dialog, Tooltip } from "radix-ui";
-import { RefreshCw } from "lucide-react";
+import { Bug, RefreshCw } from "lucide-react";
 import { Thread } from "@/components/chat/Thread";
 import { Medallion } from "@/components/mark/NoriMark";
 import { IconButton } from "@/components/ui/primitives";
 import { useHydrated, useWide } from "@/lib/hooks";
 import { useRuntime } from "@/lib/poc/useRuntime";
+import { debugFor, demoSession } from "@/components/dev/debug";
 import type { Thread as Conversation, ThreadItem } from "@/lib/types";
 import { DocumentViewer } from "./DocumentViewer";
 import { RuntimeComposer } from "./RuntimeComposer";
@@ -28,8 +29,13 @@ export function NoriApp() {
 
 function RuntimeChat() {
   const runtime = useRuntime();
+  const [debug, setDebug] = useState(false);
+  const demo = useMemo(
+    () => (process.env.NODE_ENV === "development" && new URLSearchParams(window.location.search).has("demo") ? demoSession() : undefined),
+    [],
+  );
   const {
-    session,
+    session: liveSession,
     pending,
     running,
     activeId,
@@ -41,6 +47,7 @@ function RuntimeChat() {
     stopIntent,
     stopPending,
   } = runtime;
+  const session = liveSession ?? demo;
   const wide = useWide();
   const [document, setDocument] = useState<{ body: string; at: number } | null>(
     null,
@@ -84,6 +91,10 @@ function RuntimeChat() {
       sender: message.role === "user" ? "me" : "nori",
       at: Date.parse(message.created_at),
       text: message.text,
+      debug:
+        debug && message.role === "assistant"
+          ? debugFor(message, session?.runs.find((run) => run.id === message.run_id))
+          : undefined,
     }));
     if (pendingNotPersisted && pending)
       items.push({
@@ -100,7 +111,7 @@ function RuntimeChat() {
       createdAt: items[0]?.at ?? 0,
       items,
     };
-  }, [session?.messages, pending, pendingNotPersisted]);
+  }, [session?.messages, session?.runs, pending, pendingNotPersisted, debug]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -206,7 +217,14 @@ function RuntimeChat() {
             )}
           </div>
         </div>
-        <div className="absolute top-3 right-3 z-20">
+        <div className="absolute top-3 right-3 z-20 flex gap-1">
+          <IconButton
+            label={debug ? "Hide debug info" : "Show debug info"}
+            size={32}
+            onClick={() => setDebug((on) => !on)}
+          >
+            <Bug size={16} strokeWidth={1.5} className={debug ? "text-accent-text" : undefined} />
+          </IconButton>
           <IconButton
             label={loading ? "Loading history" : "Refresh history"}
             size={32}

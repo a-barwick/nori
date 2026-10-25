@@ -13,6 +13,7 @@ import { buildUnits, posOf, type Unit } from "@/lib/units";
 import type { ID, TextItem, Thread as Conversation } from "@/lib/types";
 import { cn, firstSentence } from "@/lib/utils";
 import { scrollWithin } from "@/lib/dom";
+import { DebugBlock } from "@/components/dev/DebugBlock";
 import { ApprovalCard } from "./ApprovalCard";
 import { Markdown } from "./Markdown";
 import { ArtifactUnit, BubbleUnit, ImageUnit, VoiceUnit } from "./Message";
@@ -223,6 +224,8 @@ function UnitView({ threadId, unit, animate, readOnly, onOpenDocument }: { threa
               </div>
             );
           })}
+          {unit.sender === "nori" &&
+            unit.units.map((u) => ("item" in u && u.item.kind === "text" && u.item.debug ? <DebugBlock key={`${u.key}-debug`} info={u.item.debug} /> : null))}
         </div>
       );
     }
