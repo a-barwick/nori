@@ -23,7 +23,7 @@ Without a release file, the default configuration creates no pools. It keeps the
 4. Set `shutdown_verified=true` only after that live proof. Set exactly one `active_build_id`; then `wci_enabled=true` may enable its invoker and expiring IAM grants. Old retained pools get shutdown jobs but no WCI pool grant. Verify effective IAM, including inherited grants, before allowing task routing.
 5. Register the corresponding Temporal Worker Deployment Version with min **0**, max **1**, initial **0**, utilization **0.8**, and stabilization **90s**; all five CLI scaling flags must be passed together. The worker uses deployment `nori-task`, queue `nori-tasks`, and its immutable build ID. Validate Connection checks impersonation/read access only. After the access and shutdown checks pass, promote the immutable build with `temporal worker deployment set-current-version --namespace quickstart-nori.qtjow --deployment-name nori-task --build-id <BUILD_ID>`. Registration alone does not route tasks or let WCI start instances; the version must be Current before an attended task proves scaling and actual execution.
 
-The max of one applies per version, not across versions. This POC permits WCI to access only one pool at a time. Native manual scaling does not itself enforce an aggregate cap, and a broad inherited grant would bypass this restriction.
+The max of one is enforced by Temporal WCI version configuration, per version. Cloud Run MANUAL mode follows `manualInstanceCount`; native min/max fields do not impose a hard maximum on it, so Terraform omits those fields. This POC permits WCI to access only one pool at a time. There is no native aggregate cap, and a broad inherited grant or a manual count change could bypass the WCI restriction.
 
 ## Pause
 

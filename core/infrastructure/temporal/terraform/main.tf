@@ -57,13 +57,12 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
   for_each            = var.worker_images
   name                = "nori-task-${each.key}"
   location            = local.region
-  launch_stage        = "BETA"
   deletion_protection = true
+  # MANUAL mode uses manual_instance_count. Temporal version configuration
+  # supplies WCI max=1; native min/max do not constrain the manual count.
   scaling {
     scaling_mode          = "MANUAL"
     manual_instance_count = 0
-    min_instance_count    = 0
-    max_instance_count    = 1
   }
   template {
     service_account = local.runner
