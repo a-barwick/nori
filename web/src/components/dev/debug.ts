@@ -16,7 +16,32 @@ export type DebugStep =
     }
   | { kind: "tool"; id: string; name: string; ms: number; args: string; result: string; ok: boolean };
 
+/** Jev's answer for the owner's message (`classification_hint`). */
+export type Classification = {
+  intent: "converse" | "ask" | "request_work" | "steer" | "provide_input" | "decide" | "inspect" | "control" | "update_memory" | "mixed";
+  confidence: number;
+  available: boolean;
+  /** Set when Jev split a mixed message. */
+  parts?: { intent: string; text: string; replaces_work?: boolean }[];
+};
+
+export type OuterAction =
+  | { type: "respond"; text: string }
+  | { type: "dispatch"; request: string; task_id: string; status: "accepted" | "rejected"; error?: string }
+  | { type: "update_dispatch"; task_id: string; text: string; instruction_rev: number }
+  | { type: "clarify"; question: string };
+
+export type OuterTurn = {
+  id: string;
+  phase: "thinking" | "writing" | "done" | "superseded" | "failed";
+  context: { label: string; tokens: number }[];
+  actions: OuterAction[];
+  ms: number;
+};
+
 export type DebugInfo = {
+  classification: Classification;
+  turn: OuterTurn;
   runId: string;
   status: string;
   model: string;
@@ -78,10 +103,62 @@ const sampleSteps: DebugStep[] = [
   },
 ];
 
+const sampleContext = [
+  { label: "Agent prompt", tokens: 412 },
+  { label: "Conversation · 6 msgs", tokens: 1388 },
+  { label: "Jev hint", tokens: 24 },
+  { label: "Active tasks · 1", tokens: 86 },
+];
+
+function sampleTurn(message: Message, run: Run | undefined): { classification: Classification; turn: OuterTurn } {
+  const id = `t-${message.run_id}`;
+  if (message.run_id === "r1")
+    return {
+      classification: { intent: "converse", confidence: 0.94, available: true },
+      turn: { id, phase: "done", context: sampleContext, ms: 1420, actions: [{ type: "respond", text: message.text }] },
+    };
+  if (run?.status === "failed")
+    return {
+      classification: { intent: "request_work", confidence: 0.81, available: false },
+      turn: {
+        id,
+        phase: "done",
+        context: sampleContext,
+        ms: 2210,
+        actions: [
+          { type: "respond", text: "On it. I'll look for the receipt." },
+          { type: "dispatch", request: "Find the receipt for the drill in Austin's email and orders.", task_id: message.run_id, status: "accepted" },
+        ],
+      },
+    };
+  return {
+    classification: {
+      intent: "mixed",
+      confidence: 0.72,
+      available: true,
+      parts: [
+        { intent: "ask", text: "is the fern & flask site up?" },
+        { intent: "request_work", text: "check the site", replaces_work: false },
+      ],
+    },
+    turn: {
+      id,
+      phase: "done",
+      context: sampleContext,
+      ms: 1960,
+      actions: [
+        { type: "respond", text: "Checking now." },
+        { type: "dispatch", request: "Load fernandflask.com and confirm the homepage renders.", task_id: message.run_id, status: "accepted" },
+      ],
+    },
+  };
+}
+
 export function debugFor(message: Message, run: Run | undefined): DebugInfo {
   const steps = run?.status === "failed" ? sampleSteps.slice(0, 2).map((s) => (s.kind === "tool" ? { ...s, ok: false, result: '{"error": "exit 124: command timed out after 45 s"}' } : s)) : sampleSteps;
   const tokens = steps.reduce((sum, s) => (s.kind === "model" ? sum + s.tokens.input + s.tokens.output : sum), 0);
   return {
+    ...sampleTurn(message, run),
     runId: message.run_id,
     status: run?.status ?? "completed",
     model: "gemini-3.1-flash-lite",
