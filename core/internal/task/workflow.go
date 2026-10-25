@@ -95,8 +95,9 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 	}
 	modelCalls, toolCalls := 0, 0
 	// Budget accounting uses each model call's reported usage. Only an explicit
-	// continue command accepted while the budget is spent raises it.
+	// continue command answering the budget question raises it.
 	spent, budget := 0.0, agent.BudgetUSD
+	asked := false
 	request, note := "", ""
 	ran := []string{}
 	for {
@@ -114,11 +115,13 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 			return
 		}
 		revision = snap.Run.Revision
+		granted := false
 		for _, cmd := range snap.Commands {
 			if cmd.Position > incorporated {
 				switch {
 				case cmd.Kind == "cancel":
-				case cmd.Kind == "continue" && spent >= budget:
+				case cmd.Kind == "continue" && asked:
+					asked, granted = false, true
 					budget += agent.BudgetUSD
 					contents = append(contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: fmt.Sprintf("Austin approved another $%.2f of model spend for this task. Continue the task.", agent.BudgetUSD)}}})
 				default:
@@ -128,6 +131,11 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 					contents = append(contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: cmd.Text}}})
 				}
 				incorporated = cmd.Position
+			}
+		}
+		if granted {
+			if err = workflow.ExecuteActivity(quick, activities.Spend, Spending{RunID: id, Spent: spent, Budget: budget}).Get(ctx, nil); err != nil {
+				return
 			}
 		}
 		if spent >= budget {
@@ -140,6 +148,7 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 			if err != nil {
 				return
 			}
+			asked = true
 			if err = await(snap.Run.Deadline); err != nil {
 				return
 			}
