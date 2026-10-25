@@ -5,6 +5,11 @@ Nori is a personal assistant you text. This repository holds the whole product:
 - [core](core/README.md): the Go agent service and its infrastructure.
 - [web](web/README.md): the Next.js desktop web interface.
 
+Design:
+
+- [Client contract](docs/client-contract.md): the protocol every client uses to talk to the agent service.
+- [Separation of concerns](docs/separation-of-concerns.md): what the service owns, what clients own.
+
 ## Run
 
 ```sh
