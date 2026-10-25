@@ -140,8 +140,7 @@ func (s *Service) execute(ctx context.Context, run state.Run) (string, *computer
 	}
 	contents := Context(session)
 	var client *computer.Client
-	toolCalls := 0
-	for modelCalls := 0; modelCalls < 6; modelCalls++ {
+	for {
 		if e = ctx.Err(); e != nil {
 			return "", client, e
 		}
@@ -157,12 +156,8 @@ func (s *Service) execute(ctx context.Context, run state.Run) (string, *computer
 		if len(calls) == 0 {
 			return decision.Answer, client, nil
 		}
-		if toolCalls+len(calls) > 12 {
-			return "", client, errors.New("tool call limit reached")
-		}
 		parts := []*genai.Part{}
 		for _, call := range calls {
-			toolCalls++
 			if e = s.Store.Event(ctx, run.ID, state.Event{Kind: "tool", Text: call.Name}); e != nil {
 				return "", client, e
 			}
@@ -189,7 +184,6 @@ func (s *Service) execute(ctx context.Context, run state.Run) (string, *computer
 		}
 		contents = append(contents, &genai.Content{Role: "user", Parts: parts})
 	}
-	return "", client, errors.New("model call limit reached before a final answer")
 }
 func params(name string) *genai.Schema {
 	return &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{name: {Type: genai.TypeString}}, Required: []string{name}}

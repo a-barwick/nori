@@ -11,6 +11,7 @@ export function RuntimeComposer({
   disabled,
   busy,
   canUpdate,
+  canChat = false,
   stopping,
   stopDisabled,
   onSend,
@@ -23,6 +24,7 @@ export function RuntimeComposer({
   disabled: boolean;
   busy: boolean;
   canUpdate: boolean;
+  canChat?: boolean;
   stopping: boolean;
   stopDisabled: boolean;
   onSend: () => void;
@@ -79,7 +81,7 @@ export function RuntimeComposer({
               rows={1}
               value={draft}
               maxLength={8192}
-              disabled={disabled || (busy && !canUpdate)}
+              disabled={disabled || (busy && !canUpdate && !canChat)}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (
@@ -94,7 +96,7 @@ export function RuntimeComposer({
               placeholder={
                 canUpdate
                   ? "Answer or update this task"
-                  : busy
+                  : busy && !canChat
                     ? "Nori is working…"
                     : "Message Nori"
               }
@@ -112,7 +114,7 @@ export function RuntimeComposer({
                 <Square size={14} strokeWidth={2} fill="currentColor" />
               </IconButton>
             )}
-            {(!busy || canUpdate) && (
+            {(!busy || canUpdate || canChat) && (
               <button
                 type="submit"
                 aria-label={canUpdate ? "Send update" : "Send"}

@@ -24,9 +24,11 @@ export function statusLabel(run: Run) {
 function Screenshot({
   runId,
   artifact,
+  endpoint,
 }: {
   runId: string;
   artifact: Artifact;
+  endpoint: string;
 }) {
   const [url, setUrl] = useState<string>();
   const [error, setError] = useState("");
@@ -35,7 +37,7 @@ function Screenshot({
     let objectUrl: string | undefined;
     async function load() {
       try {
-        const response = await fetch("/api/artifact", {
+        const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ run_id: runId, artifact_id: artifact.id }),
@@ -60,7 +62,7 @@ function Screenshot({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [runId, artifact.id]);
+  }, [runId, artifact.id, endpoint]);
   if (error)
     return (
       <p role="status" className="text-meta text-ink-2">
@@ -103,6 +105,8 @@ export function TaskPanel({
   onStop,
   onRefresh,
   onClose,
+  artifactEndpoint = "/api/artifact",
+  onUpdate,
 }: {
   session?: Session;
   selected?: Run;
@@ -117,6 +121,8 @@ export function TaskPanel({
   onStop: () => void;
   onRefresh: () => void;
   onClose: () => void;
+  artifactEndpoint?: string;
+  onUpdate?: (id: string, message: string) => Promise<void>;
 }) {
   const connection = error
     ? "Connection interrupted"
@@ -215,6 +221,9 @@ export function TaskPanel({
                 {selected.error}
               </p>
             )}
+            {onUpdate && selected.status === "running" && !selected.cancel_requested && (
+              <TaskUpdate key={selected.id} runId={selected.id} onUpdate={onUpdate} disabled={unavailable} />
+            )}
             <ol className="space-y-2" aria-label="Task events">
               {selected.events?.map((event, index) => {
                 const Icon = /browser|web/.test(event.kind)
@@ -255,6 +264,7 @@ export function TaskPanel({
                     key={`${selected.id}-${artifact.id}`}
                     runId={selected.id}
                     artifact={artifact}
+                    endpoint={artifactEndpoint}
                   />
                 ))}
               </section>
@@ -305,5 +315,32 @@ export function TaskPanel({
         </Button>
       </div>
     </div>
+  );
+}
+
+function TaskUpdate({ runId, onUpdate, disabled }: {
+  runId: string;
+  onUpdate: (id: string, message: string) => Promise<void>;
+  disabled: boolean;
+}) {
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <form className="mb-4 space-y-2 px-2" onSubmit={async (event) => {
+      event.preventDefault();
+      if (!message.trim() || sending || disabled) return;
+      setSending(true); setError("");
+      try { await onUpdate(runId, message); setMessage(""); }
+      catch (error) { setError(error instanceof Error ? error.message : "Task update was not accepted."); }
+      finally { setSending(false); }
+    }}>
+      <label className="block text-meta font-medium" htmlFor={`update-${runId}`}>Update this task</label>
+      <textarea id={`update-${runId}`} aria-label="Task update" value={message} onChange={(event) => setMessage(event.target.value)}
+        maxLength={8192} rows={2} disabled={disabled || sending}
+        className="w-full resize-y rounded-tile bg-fill-1 p-3 text-meta text-ink" />
+      <Button type="submit" size="sm" disabled={disabled || sending || !message.trim()}>{sending ? "Sending update…" : "Send task update"}</Button>
+      {error && <p role="alert" className="text-meta text-danger">{error}</p>}
+    </form>
   );
 }

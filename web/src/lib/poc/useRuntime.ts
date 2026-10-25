@@ -7,8 +7,9 @@ async function post<T>(
   operation: string,
   payload: object,
   signal?: AbortSignal,
+  agentMode = false,
 ): Promise<T> {
-  const response = await fetch(`/api/${operation}`, {
+  const response = await fetch(`${agentMode ? "/api/agent" : "/api"}/${operation}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -23,7 +24,7 @@ async function post<T>(
   return data as T;
 }
 
-export function useRuntime() {
+export function useRuntime(agentMode = false) {
   const [session, setSession] = useState<Session>();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
@@ -46,21 +47,24 @@ export function useRuntime() {
   const selected =
     session?.runs.find((run) => run.id === selectedId) ||
     (!pending ? session?.runs[0] : undefined);
-  const unavailable = !!session?.paused || expired;
+  const tasksUnavailable = !!session?.paused || expired;
+  const unavailable = !agentMode && tasksUnavailable;
   const busy = !!activeId;
   const canUpdate =
+    !agentMode &&
     !!running?.temporal &&
     !running.cancel_requested &&
     !pending &&
     !stopPending &&
     stopIntent !== running.id;
+  const canChat = agentMode && !pending;
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    const data = await post<Session>("session", {}, signal);
+    const data = await post<Session>("session", {}, signal, agentMode);
     setSession(data);
     setExpired(!!data.expires_at && Date.parse(data.expires_at) <= Date.now());
     return data;
-  }, []);
+  }, [agentMode]);
 
   const requestCancellation = useCallback(async (id: string) => {
     if (cancellationInFlight.current) return;
@@ -73,6 +77,7 @@ export function useRuntime() {
         "cancel",
         { id },
         controller.signal,
+        agentMode,
       );
       if (controller.signal.aborted) return;
       setSession((current) =>
@@ -94,13 +99,13 @@ export function useRuntime() {
       cancellationInFlight.current = false;
       if (!controller.signal.aborted) setStopPending(false);
     }
-  }, []);
+  }, [agentMode]);
 
   useEffect(() => {
     const currentControllers = controllers.current;
     const controller = new AbortController();
     currentControllers.add(controller);
-    void post<Session>("session", {}, controller.signal)
+    void post<Session>("session", {}, controller.signal, agentMode)
       .then((data) => {
         if (!controller.signal.aborted) {
           setSession(data);
@@ -122,7 +127,7 @@ export function useRuntime() {
       currentControllers.clear();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [refresh]);
+  }, [refresh, agentMode]);
 
   useEffect(() => {
     if (!session?.expires_at || expired) return;
@@ -135,7 +140,7 @@ export function useRuntime() {
 
   useEffect(() => {
     // No idle requests. Pause in hidden tabs and after any connection error.
-    if (!activeId || unavailable || error || !visible) return;
+    if (!activeId || unavailable || error || !visible || (agentMode && pending)) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const stopAt = running?.deadline
@@ -194,6 +199,7 @@ export function useRuntime() {
     pending,
     stopIntent,
     requestCancellation,
+    agentMode,
   ]);
 
   async function refreshHistory() {
@@ -218,12 +224,12 @@ export function useRuntime() {
     const text = draft.trim();
     if (
       !text ||
-      (busy && !canUpdate) ||
+      (busy && !canUpdate && !canChat) ||
       sending.current ||
       unavailable ||
       !session ||
       loading ||
-      error
+      (error && !agentMode)
     )
       return;
     if (new TextEncoder().encode(text).length > 8192) {
@@ -240,6 +246,14 @@ export function useRuntime() {
     setDraft("");
     setError("");
     try {
+      if (agentMode) {
+        const next = await post<Session>("turn", { id, message: text }, controller.signal, true);
+        if (!controller.signal.aborted) {
+          setSession(next);
+          setSelectedId(next.runs.find((run) => run.status === "running")?.id);
+        }
+        return;
+      }
       const { run } = await post<{ run: Run }>(
         canUpdate ? "input" : "run",
         canUpdate
@@ -259,6 +273,14 @@ export function useRuntime() {
       await refresh(controller.signal);
     } catch (err) {
       if (!controller.signal.aborted) {
+        if (agentMode) {
+          // Show the accurate failure reply recorded by the outer loop, including
+          // any task that was accepted before another dispatch failed.
+          const latest = await refresh(controller.signal).catch(() => undefined);
+          if (!latest?.messages.some((message) => message.id === `${id}-user`)) {
+            setDraft(text);
+          }
+        }
         setError(
           err instanceof Error
             ? err.message
@@ -269,6 +291,19 @@ export function useRuntime() {
       controllers.current.delete(controller);
       sending.current = false;
       if (!controller.signal.aborted) setPending(undefined);
+    }
+  }
+
+  async function updateTask(runId: string, message: string) {
+    const text = message.trim();
+    if (!text) return;
+    const controller = new AbortController();
+    controllers.current.add(controller);
+    try {
+      await post<{ run: Run }>("input", { id: crypto.randomUUID(), run_id: runId, message: text }, controller.signal, agentMode);
+      await refresh(controller.signal);
+    } finally {
+      controllers.current.delete(controller);
     }
   }
 
@@ -294,10 +329,13 @@ export function useRuntime() {
     activeId,
     selected,
     unavailable,
+    tasksUnavailable,
     busy,
     canUpdate,
+    canChat,
     refreshHistory,
     send,
     stop,
+    updateTask,
   };
 }

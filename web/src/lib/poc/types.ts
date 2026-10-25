@@ -16,4 +16,8 @@ export type Run = {
   events: RunEvent[];
   artifacts: Artifact[];
 };
-export type Session = { messages: Message[]; runs: Run[]; paused: boolean; expires_at: string };
+export type Session = {
+  messages: Message[]; runs: Run[]; paused: boolean; expires_at: string;
+  dispatches?: { id: string; request: string; status: string; created_at: string }[];
+  classification_hint?: { intent?: string; confidence?: number; available: boolean };
+};

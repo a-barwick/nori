@@ -3,7 +3,7 @@ import { localDevelopment, sameOrigin } from "@/lib/poc/auth";
 export async function POST(request: Request, context: { params: Promise<{ operation: string }> }) {
   const { operation } = await context.params;
   const configured = process.env.NORI_LOCAL_AGENT_URL;
-  if (!configured || !localDevelopment(request.headers) || !["session", "turn"].includes(operation)) {
+  if (!configured || !localDevelopment(request.headers) || !["session", "turn", "input", "cancel", "artifact"].includes(operation)) {
     return Response.json({ error: "Not found." }, { status: 404 });
   }
   if (!sameOrigin(request)) return Response.json({ error: "Forbidden." }, { status: 403 });
@@ -29,11 +29,11 @@ export async function POST(request: Request, context: { params: Promise<{ operat
       body,
       cache: "no-store",
       redirect: "error",
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(80_000)]),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(100_000)]),
     });
     return new Response(response.body, {
       status: response.status,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      headers: { "Content-Type": response.headers.get("content-type") || "application/json", "Cache-Control": "no-store" },
     });
   } catch {
     return Response.json({ error: "Could not reach the local agent. Check that the Go runner is running, then retry." }, { status: 502 });
