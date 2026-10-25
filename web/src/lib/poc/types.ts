@@ -5,6 +5,10 @@ export type Run = {
   id: string;
   status: "running" | "completed" | "failed" | "cancelled";
   cancel_requested: boolean;
+  temporal?: boolean;
+  revision?: number;
+  incorporated?: number;
+  waiting?: string;
   started_at: string;
   deadline: string;
   finished_at?: string;

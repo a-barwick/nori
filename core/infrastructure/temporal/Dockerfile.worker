@@ -1,0 +1,16 @@
+FROM --platform=$BUILDPLATFORM golang:1.26 AS build
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /nori-worker ./cmd/nori-worker
+
+FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:584.0.0-slim
+COPY --from=build /nori-worker /nori-worker
+RUN useradd --create-home --uid 65532 nori
+USER 65532:65532
+ENV CLOUDSDK_CORE_DISABLE_PROMPTS=1 CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=true TEMPORAL_CLOUD_RUN_ID=true
+ENTRYPOINT ["/nori-worker"]

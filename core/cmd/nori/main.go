@@ -17,10 +17,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"go.temporal.io/sdk/client"
 	"google.golang.org/genai"
 	"nori/internal/agent"
 	"nori/internal/computer"
 	"nori/internal/state"
+	"nori/internal/task"
 )
 
 func env(name, fallback string) string {
@@ -30,7 +32,7 @@ func env(name, fallback string) string {
 	return fallback
 }
 func main() {
-	if err := godotenv.Load("../.env"); err != nil && !os.IsNotExist(err) {
+	if err := godotenv.Load(env("NORI_ENV_FILE", "../.env")); err != nil && !os.IsNotExist(err) {
 		log.Fatal("could not load .env; check its syntax and permissions")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -53,6 +55,42 @@ func main() {
 		log.Fatal(e)
 	}
 	service := agent.New(store, model, env("MODEL_NAME", "gemini-3.1-flash-lite"), computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env("COMPUTER_INSTANCE", "nori-computer")})
+	mode := env("NORI_EXECUTION_MODE", "inline")
+	if mode != "inline" && mode != "temporal" {
+		log.Fatal("NORI_EXECUTION_MODE must be inline or temporal")
+	}
+	var temporalClient client.Client
+	if mode == "temporal" {
+		temporalClient, e = task.Dial(ctx)
+		if e != nil {
+			log.Fatal(e)
+		}
+		defer temporalClient.Close()
+	}
+	deliver := func(parent context.Context) {
+		deliveryCtx, cancel := context.WithTimeout(parent, 2*time.Second)
+		defer cancel()
+		if e := task.Deliver(deliveryCtx, store, temporalClient); e != nil {
+			log.Printf("command accepted; delivery pending repair: %v", e)
+		}
+	}
+	if temporalClient != nil {
+		go func() {
+			if e := task.RepairClosed(ctx, store, temporalClient, service.Computer); e != nil {
+				log.Printf("terminal recovery: %v", e)
+			}
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+			for {
+				deliver(ctx)
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	health := func(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +123,16 @@ func main() {
 			writeJSON(w, 400, map[string]string{"error": "A UUID id and a message of 1–8192 bytes are required."})
 			return
 		}
+		if temporalClient != nil {
+			run, e := store.Accept(r.Context(), state.Command{ID: body.ID, RunID: body.ID, Kind: "start", Text: strings.TrimSpace(body.Message)})
+			if e != nil {
+				writeError(w, e)
+				return
+			}
+			deliver(r.Context())
+			writeJSON(w, http.StatusAccepted, map[string]any{"run": run})
+			return
+		}
 		run, e := service.Run(r.Context(), body.ID, strings.TrimSpace(body.Message))
 		if e != nil {
 			writeError(w, e)
@@ -103,12 +151,57 @@ func main() {
 			writeJSON(w, 400, map[string]string{"error": "id must be a UUID"})
 			return
 		}
+		current, e := store.GetRun(r.Context(), body.ID)
+		if e != nil {
+			writeError(w, e)
+			return
+		}
+		if current.Temporal {
+			if temporalClient == nil {
+				writeJSON(w, 503, map[string]string{"error": "Temporal delivery is not configured"})
+				return
+			}
+			commandID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(body.ID+"-cancel")).String()
+			run, e := store.Accept(r.Context(), state.Command{ID: commandID, RunID: body.ID, Kind: "cancel"})
+			if e != nil {
+				writeError(w, e)
+				return
+			}
+			deliver(r.Context())
+			writeJSON(w, http.StatusAccepted, map[string]any{"run": run})
+			return
+		}
 		run, e := service.Cancel(r.Context(), body.ID)
 		if e != nil {
 			writeError(w, e)
 			return
 		}
 		writeJSON(w, 200, map[string]any{"run": run})
+	})
+	mux.HandleFunc("POST /api/input", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ID      string `json:"id"`
+			RunID   string `json:"run_id"`
+			Message string `json:"message"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if !validID(body.ID) || !validID(body.RunID) || strings.TrimSpace(body.Message) == "" || len(body.Message) > 8192 {
+			writeJSON(w, 400, map[string]string{"error": "UUID id, run_id and message of 1–8192 bytes required"})
+			return
+		}
+		if temporalClient == nil {
+			writeJSON(w, 503, map[string]string{"error": "Temporal execution is not enabled"})
+			return
+		}
+		run, e := store.Accept(r.Context(), state.Command{ID: body.ID, RunID: body.RunID, Kind: "input", Text: strings.TrimSpace(body.Message)})
+		if e != nil {
+			writeError(w, e)
+			return
+		}
+		deliver(r.Context())
+		writeJSON(w, http.StatusAccepted, map[string]any{"run": run})
 	})
 	mux.HandleFunc("POST /api/artifact", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

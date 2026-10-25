@@ -23,10 +23,12 @@ const maxScreenshot = 2 << 20
 var runPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$`)
 
 type server struct {
-	tasks   string
-	browser chan struct{}
-	runsMu  sync.Mutex
-	runs    map[string]*runState
+	tasks          string
+	browser        chan struct{}
+	runsMu         sync.Mutex
+	runs           map[string]*runState
+	receiptMu      sync.Mutex
+	activeReceipts map[string]bool
 }
 type runState struct {
 	ctx     context.Context
@@ -40,7 +42,7 @@ func New(tasks string) (http.Handler, error) {
 	if err := os.MkdirAll(tasks, 0700); err != nil {
 		return nil, err
 	}
-	s := &server{tasks: tasks, browser: make(chan struct{}, 1), runs: make(map[string]*runState)}
+	s := &server{tasks: tasks, browser: make(chan struct{}, 1), runs: make(map[string]*runState), activeReceipts: make(map[string]bool)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -52,12 +54,13 @@ func New(tasks string) (http.Handler, error) {
 		}
 		// Readiness only validates the CDP page connection; it changes no page state.
 		_ = c.conn.CloseNow()
-		respond(w, map[string]bool{"ready": true})
+		respond(w, map[string]bool{"ready": true, "operation_receipts_v1": true})
 	})
 	mux.HandleFunc("POST /cancel", s.cancelRun)
-	mux.HandleFunc("POST /exec", s.exec)
-	mux.HandleFunc("POST /navigate", s.navigate)
-	mux.HandleFunc("POST /screenshot", s.screenshot)
+	mux.HandleFunc("POST /exec", s.receipted(s.exec))
+	mux.HandleFunc("POST /navigate", s.receipted(s.navigate))
+	mux.HandleFunc("POST /screenshot", s.receipted(s.screenshot))
+	mux.HandleFunc("POST /operation", s.operationStatus)
 	return mux, nil
 }
 
@@ -67,7 +70,7 @@ func Proxy() http.Handler {
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = &http.Transport{ResponseHeaderTimeout: 123 * time.Second}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot"))) {
+		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation"))) {
 			http.NotFound(w, r)
 			return
 		}
@@ -123,6 +126,7 @@ func (b *cappedWriter) String() string {
 
 func (s *server) exec(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		TaskID  string `json:"task_id"`
 		RunID   string `json:"run_id"`
 		Command string `json:"command"`
 		Timeout int    `json:"timeout_seconds"`
@@ -132,6 +136,13 @@ func (s *server) exec(w http.ResponseWriter, r *http.Request) {
 	}
 	if !runPattern.MatchString(req.RunID) || req.Command == "" {
 		http.Error(w, "run_id and command required", 400)
+		return
+	}
+	if req.TaskID == "" {
+		req.TaskID = req.RunID
+	}
+	if !runPattern.MatchString(req.TaskID) {
+		http.Error(w, "invalid task_id", 400)
 		return
 	}
 	if req.Timeout <= 0 || req.Timeout > 120 {
@@ -151,11 +162,11 @@ func (s *server) exec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer root.Close()
-	if err = root.Mkdir(req.RunID, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+	if err = root.Mkdir(req.TaskID, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		http.Error(w, "task directory unavailable", 500)
 		return
 	}
-	dir, err := root.Open(req.RunID)
+	dir, err := root.Open(req.TaskID)
 	if err != nil {
 		http.Error(w, "task directory unavailable", 400)
 		return
@@ -213,6 +224,9 @@ func (s *server) exec(w http.ResponseWriter, r *http.Request) {
 func (s *server) begin(parent context.Context, id string) (context.Context, func(), error) {
 	if !runPattern.MatchString(id) {
 		return nil, nil, errors.New("invalid run id")
+	}
+	if s.wasCancelled(id) {
+		return nil, nil, errors.New("run durably cancelled")
 	}
 	s.runsMu.Lock()
 	state := s.runs[id]
@@ -275,6 +289,14 @@ func (s *server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		s.runsMu.Unlock()
 		if stopErr != nil {
 			http.Error(w, "computer stop could not be confirmed", 502)
+			return
+		}
+		if err := s.persistCancelled(req.RunID); err != nil {
+			http.Error(w, "cancellation receipt unavailable", 502)
+			return
+		}
+		if s.uncertainReceipts(req.RunID) {
+			http.Error(w, "prior operation stop is uncertain after guest agent restart", 502)
 			return
 		}
 		respond(w, map[string]bool{"stopped": true})

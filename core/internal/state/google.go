@@ -102,7 +102,7 @@ func (s *Google) Begin(ctx context.Context, id, text string) (Run, error) {
 				return e
 			}
 			if r.Status == "running" {
-				if r.Deadline.Add(CleanupGrace).After(time.Now()) {
+				if r.Temporal || r.Deadline.Add(CleanupGrace).After(time.Now()) {
 					return ErrBusy
 				}
 				previous = &r
@@ -226,7 +226,7 @@ func (s *Google) Session(ctx context.Context) (Session, error) {
 		if e != nil {
 			return session, e
 		}
-		if r.Status == "running" && !r.Deadline.Add(CleanupGrace).After(time.Now()) {
+		if r.Status == "running" && !r.Temporal && !r.Deadline.Add(CleanupGrace).After(time.Now()) {
 			r, e = s.Finish(ctx, r.ID, "failed", "Interrupted: execution deadline expired; no automatic recovery.", "")
 			if e != nil {
 				return session, e

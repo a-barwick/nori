@@ -47,6 +47,10 @@ type Artifact struct {
 	Kind string `json:"kind" firestore:"kind"`
 }
 type Run struct {
+	Temporal        bool       `json:"temporal,omitempty" firestore:"temporal,omitempty"`
+	Revision        int64      `json:"revision,omitempty" firestore:"revision,omitempty"`
+	Incorporated    int64      `json:"incorporated,omitempty" firestore:"incorporated,omitempty"`
+	Waiting         string     `json:"waiting,omitempty" firestore:"waiting,omitempty"`
 	ID              string     `json:"id" firestore:"id"`
 	Status          string     `json:"status" firestore:"status"`
 	CancelRequested bool       `json:"cancel_requested" firestore:"cancel_requested"`

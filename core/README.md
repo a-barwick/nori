@@ -234,3 +234,127 @@ These documents are research and proposals, not an implementation checklist.
 Go `core` and Next.js `web` share this monorepo and retain independent images
 and releases. Their current POC integration is described above; historical plans do
 not expand its scope.
+
+## Temporal task slice (default off)
+
+`NORI_EXECUTION_MODE=inline` preserves the existing deployed request loop. Set it
+explicitly to `temporal` only after validating the worker and guest release. The
+API then commits the task, user message, ordered command and delivery intent in
+one Firestore transaction and returns HTTP 202. Retrying an identical command ID
+returns its original acceptance; reusing that ID with different content fails.
+
+The Temporal worker calls the ordinary Go agent steps directly. One pinned
+workflow owns a task, with separate context, reconciliation, model, individual
+tool, wait projection, Stop and publication activities. It makes at most six
+model calls and twelve tool calls, with at most 32 accepted input commands.
+`wait_for_input` persists a question and waits for a command signal or the single
+authorized-session deadline; it does not poll while idle. The POC web composer
+can send corrections and answers while a Temporal task runs.
+
+| Request | Body and behavior |
+| --- | --- |
+| `POST /api/run` | `{ "id": "UUID", "message": "..." }`; the task UUID also identifies its initial command |
+| `POST /api/input` | `{ "id": "new-command-UUID", "run_id": "task-UUID", "message": "..." }`; atomically advances the task revision |
+| `POST /api/cancel` | `{ "id": "task-UUID" }`; idempotently records Stop and its delivery intent |
+| `POST /api/session` | Existing history plus `temporal`, `revision`, `incorporated` and optional `waiting` fields |
+
+Each effect is admitted against the current incorporated revision and durable
+session control. A correction supersedes later unadmitted calls; already admitted
+bounded work can finish, and its observed results remain in task context. Final
+publication atomically checks the revision again, so a queued correction cannot
+receive an obsolete answer. The current task reconciles the ordered original
+instructions directly; a separate model-generated task brief is deferred.
+
+Tool activities and model requests have one attempt. Shell commands are never
+blindly retried. Each admitted operation has a stable ID in Firestore; the guest
+writes a request digest before execution and a response receipt before replying.
+Identical RPCs can return a completed receipt, while started/uncertain receipts
+refuse re-execution. `POST /operation` with `id` and `run_id` reads receipt status.
+Receipts and cancellation tombstones live under the retained task root's
+`.nori-receipts`. They protect transport recovery, not malicious shell code
+running as the same guest Unix user. A guest-agent restart with an unresolved
+receipt cannot claim a successful Stop. The worker requires the guest readiness
+capability `operation_receipts_v1`; deploy the matching guest binary before using
+Temporal computer tools.
+
+Cancellation scopes include the task revision; shell working directories remain
+`/workspace/tasks/<task-UUID>` across corrections. Stop uses cleanup-only IAP
+access, never starts a stopped VM, and requires the guest's actual stopped ACK
+(or an observed terminated VM). Stop uncertainty produces a failed task and no
+successful answer. During shutdown, the worker keeps polling for a bounded drain
+so workflow cleanup and terminal persistence can complete. On authorized startup
+or operator repair, closed Temporal executions with unfinished UI projections
+are reconciled after checking their admitted computer scopes. Recovery never
+repeats their work.
+
+### Build and run independently
+
+Run from `core/`:
+
+```sh
+go build ./cmd/nori ./cmd/nori-worker ./cmd/nori-deliver ./cmd/computer-agent
+go vet ./...
+docker build -f infrastructure/temporal/Dockerfile.worker -t nori-worker .
+```
+
+The API image remains `infrastructure/Dockerfile`; the worker image has no HTTP
+server and starts `/nori-worker`. Its Cloud Run ID plugin is enabled in the image.
+Both processes use the existing Google ADC/service identity and POC configuration
+names. The worker needs Firestore, artifact, Vertex, computer get/start and IAP
+permissions; it never invokes Agent Runtime.
+
+Keep credentials in the one gitignored mode-600 monorepo-root `.env`. The commands
+load `../.env`; `NORI_ENV_FILE` can point to the original root file from a worktree
+without copying it. Required Temporal names are `TEMPORAL_ADDRESS`,
+`TEMPORAL_NAMESPACE`, `TEMPORAL_API_KEY`, `TEMPORAL_TASK_QUEUE` (default
+`nori-tasks`), `TEMPORAL_DEPLOYMENT_NAME` (default `nori-task`) and an immutable
+`TEMPORAL_BUILD_ID`. Cloud connections require TLS and an API key. Set
+`TEMPORAL_LOCAL=true` only for a local dev server, and
+`TEMPORAL_CLOUD_RUN_ID=false` outside Cloud Run. Never place key values in command
+arguments, Terraform variables, source files or images.
+
+```sh
+# With the matching configuration already loaded from the root .env:
+go run ./cmd/nori-worker
+go run ./cmd/nori
+# Repair pending delivery and closed-execution projections once:
+go run ./cmd/nori-deliver
+```
+
+Register the immutable deployment version as current before routing new work to
+it. Running pinned executions need their original compatible build available;
+changing code under an existing build ID is unsafe. The selected Cloud target is
+a GCP-hosted Temporal Cloud namespace and Cloud Run worker pool with minimum zero,
+maximum one; deployment and pool lifecycle remain separate operator work.
+
+### Delivery and shutdown limits
+
+The API attempts delivery for at most two seconds after acceptance. API/worker
+startup and their running delivery loop retry pending intents, and
+`nori-deliver` repairs them explicitly. Temporal acknowledgement and the Firestore
+delivered flag are separate: a crash between them causes a harmless duplicate
+signal. Commands are incorporated once by their ordered positions.
+
+If the API dies after Firestore acceptance but before Temporal receives the
+start, a pool at zero cannot discover that outbox entry on its own. Resume or
+explicit repair is required for this first slice; an unattended outbox trigger is
+a deployment follow-up. Worker expiry checks, process exit and a minimum of zero
+do not scale a paid worker pool to zero or prevent WCI wakeups. Operator pause
+must close admission, cancel and drain tasks, stop the retained computer, disable
+effective WCI update access and scale every deployed version pool to zero. An
+absolute cloud deadline must enforce the same paid-capacity stop.
+
+Acceptance, deduplication, delivery and queued cancellation were checked with
+Firestore's emulator and a Temporal dev server. An isolated Temporal Cloud task
+using real Vertex Gemini also survived a normal worker shutdown, accepted a
+correction while the worker was down, replayed after restart, asked a revised
+clarification question and ended cancelled in both Temporal and the UI. A second
+Stop accepted during model I/O suppressed the answer. That model completed before
+the cancellation watcher tick, so forced HTTP-abort classification remains a
+separate check. No computer tool ran in those isolated Cloud checks.
+
+Real guest/tool Stop ACKs through Temporal, overnight or project-pause wait
+recovery, and the Cloud Run preview's cold start, scale-in and billing behavior
+still need coordinated active-session validation. Waits currently end at the
+admitted session deadline. [Temporal Go message passing](https://docs.temporal.io/develop/go/message-passing),
+[Cloud Run versioned workers](https://docs.temporal.io/production-deployment/worker-deployments/serverless-workers/cloud-run).

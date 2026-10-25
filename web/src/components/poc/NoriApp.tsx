@@ -15,7 +15,7 @@ async function post<T>(operation: string, payload: object, signal?: AbortSignal)
 }
 
 function statusLabel(run: Run) {
-  return run.status === "running" && run.cancel_requested ? "Stopping…" : {
+  return run.status === "running" && run.cancel_requested ? "Stopping…" : run.status === "running" && run.waiting ? "Waiting for you" : {
     running: "Running", completed: "Completed", failed: "Failed", cancelled: "Cancelled",
   }[run.status];
 }
@@ -76,6 +76,7 @@ export function NoriApp() {
   const selected = session?.runs.find((run) => run.id === selectedId) || (!pending ? session?.runs[0] : undefined);
   const unavailable = !!session?.paused || expired;
   const busy = !!activeId;
+  const canUpdate = !!running?.temporal && !running.cancel_requested && !pending;
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const data = await post<Session>("session", {}, signal);
@@ -180,7 +181,7 @@ export function NoriApp() {
 
   async function send() {
     const text = draft.trim();
-    if (!text || busy || unavailable || !session) return;
+    if (!text || (busy && !canUpdate) || unavailable || !session) return;
     if (new TextEncoder().encode(text).length > 8192) {
       setError("Please keep the message within 8,192 UTF-8 bytes.");
       return;
@@ -189,11 +190,11 @@ export function NoriApp() {
     const controller = new AbortController();
     controllers.current.add(controller);
     setPending({ id, text, started: Date.now() });
-    setSelectedId(id);
+    setSelectedId(canUpdate ? running?.id : id);
     setDraft("");
     setError("");
     try {
-      const { run } = await post<{ run: Run }>("run", { id, message: text }, controller.signal);
+      const { run } = await post<{ run: Run }>(canUpdate ? "input" : "run", canUpdate ? { id, run_id: running?.id, message: text } : { id, message: text }, controller.signal);
       if (controller.signal.aborted) return;
       setSession((current) => current ? { ...current, runs: [run, ...current.runs.filter((r) => r.id !== run.id)] } : current);
       await refresh(controller.signal);
@@ -233,8 +234,8 @@ export function NoriApp() {
           {unavailable && <p className="poc-notice">{session?.paused ? "This session is paused." : "This session has expired."} History remains available.</p>}
           <form className="poc-composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
             <label htmlFor="message" className="poc-sr-only">Message Nori</label>
-            <textarea id="message" placeholder="Ask Nori…" value={draft} rows={2} maxLength={8192} onChange={(event) => setDraft(event.target.value)} disabled={!session || unavailable || busy} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
-            <div className="poc-composer-footer"><span>{busy ? "One task at a time. You can stop it below." : "Enter to send · Shift + Enter for a new line"}</span><button type="submit" className="poc-button" disabled={!draft.trim() || !session || unavailable || busy}>Send ↑</button></div>
+            <textarea id="message" placeholder="Ask Nori…" value={draft} rows={2} maxLength={8192} onChange={(event) => setDraft(event.target.value)} disabled={!session || unavailable || (busy && !canUpdate)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
+            <div className="poc-composer-footer"><span>{canUpdate ? "Send a correction or answer for the current task." : busy ? "One task at a time. You can stop it below." : "Enter to send · Shift + Enter for a new line"}</span><button type="submit" className="poc-button" disabled={!draft.trim() || !session || unavailable || (busy && !canUpdate)}>{canUpdate ? "Update ↑" : "Send ↑"}</button></div>
           </form>
         </div>
       </section>
@@ -244,6 +245,7 @@ export function NoriApp() {
         {!selected ? <div className="poc-idle"><span className="poc-dot" />{loading ? "Loading history…" : !session ? "Runtime unavailable." : pending ? "Sending task to Nori…" : "Ready when you are."}<p>Activity and screenshots from your tasks will appear here.</p></div> : <>
           <div className={`poc-status poc-status-${selected.status}`}><span className="poc-dot" />{statusLabel(selected)}</div>
           {selected.cancel_requested && selected.status === "running" && <p className="poc-muted">Stop was requested. Waiting for Nori’s computer to confirm it has stopped.</p>}
+          {selected.waiting && selected.status === "running" && <p className="poc-notice">{selected.waiting}</p>}
           {selected.error && <p className="poc-error" role="status">{selected.error}</p>}
           <ol className="poc-events">{selected.events?.map((event, index) => <li key={`${event.created_at}-${index}`}><span className="poc-event-kind">{event.kind.replaceAll("_", " ")}</span><p>{event.text}</p></li>)}</ol>
           {!!selected.artifacts?.length && <div className="poc-artifacts"><h3>Screenshots</h3>{selected.artifacts.map((artifact) => <Screenshot key={`${selected.id}-${artifact.id}`} runId={selected.id} artifact={artifact} />)}</div>}

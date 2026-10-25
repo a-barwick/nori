@@ -20,15 +20,28 @@ import (
 
 type Config struct{ Project, Zone, Instance string }
 type Client struct {
-	base    string
-	http    *http.Client
-	process *exec.Cmd
-	once    sync.Once
-	run     string
-	done    chan struct{}
+	base      string
+	http      *http.Client
+	process   *exec.Cmd
+	once      sync.Once
+	receipts  bool
+	operation string
+	taskID    string
+	run       string
+	done      chan struct{}
 }
 
+var ErrStopped = errors.New("computer is stopped")
+
 func Open(ctx context.Context, c Config, run string) (*Client, error) {
+	return connect(ctx, c, run, true)
+}
+
+// Attach establishes cleanup access without starting paid compute.
+func Attach(ctx context.Context, c Config, run string) (*Client, error) {
+	return connect(ctx, c, run, false)
+}
+func connect(ctx context.Context, c Config, run string, allowStart bool) (*Client, error) {
 	ctx, readyCancel := context.WithTimeout(ctx, 90*time.Second)
 	defer readyCancel()
 	if c.Project == "" || c.Zone == "" || c.Instance == "" {
@@ -55,6 +68,9 @@ func Open(ctx context.Context, c Config, run string) (*Client, error) {
 		return nil, e
 	}
 	if vm.Status == "TERMINATED" {
+		if !allowStart {
+			return nil, ErrStopped
+		}
 		req, e = http.NewRequestWithContext(ctx, "POST", target+"/start", nil)
 		if e != nil {
 			return nil, e
@@ -110,9 +126,13 @@ func Open(ctx context.Context, c Config, run string) (*Client, error) {
 		}
 		resp, e = client.http.Do(req)
 		if e == nil {
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			var health struct {
+				Receipts bool `json:"operation_receipts_v1"`
+			}
+			_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&health)
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
+				client.receipts = health.Receipts
 				return client, nil
 			}
 		}
@@ -157,6 +177,9 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) ([]by
 		return nil, e
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.operation != "" {
+		req.Header.Set("Nori-Operation-ID", c.operation)
+	}
 	resp, e := c.http.Do(req)
 	if e != nil {
 		return nil, e
@@ -188,7 +211,11 @@ func (c *Client) Cancel(ctx context.Context) error {
 	return nil
 }
 func (c *Client) Exec(ctx context.Context, command string) (map[string]any, error) {
-	data, e := c.post(ctx, "/exec", map[string]any{"run_id": c.run, "command": command, "timeout_seconds": 45}, 512<<10)
+	body := map[string]any{"run_id": c.run, "command": command, "timeout_seconds": 45}
+	if c.taskID != "" {
+		body["task_id"] = c.taskID
+	}
+	data, e := c.post(ctx, "/exec", body, 512<<10)
 	if e != nil {
 		return nil, e
 	}
@@ -235,3 +262,20 @@ func bound(result map[string]any) map[string]any {
 		output = output[:len(output)/2]
 	}
 }
+
+// SetOperation binds a durable ID to a single activity's RPC. The guest records
+// the request and response before acknowledging it and never replays uncertainty.
+func (c *Client) SetOperation(id string) { c.operation = id }
+func (c *Client) OperationID() string    { return c.operation }
+
+func (c *Client) SetTaskID(id string) { c.taskID = id }
+
+func (c *Client) RequireReceipts() error {
+	if !c.receipts {
+		return errors.New("guest operation receipts v1 is required before durable tool execution")
+	}
+	return nil
+}
+
+// SetRun selects another cancellation scope on the same cleanup tunnel.
+func (c *Client) SetRun(id string) { c.run = id }
