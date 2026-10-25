@@ -74,7 +74,8 @@ function RuntimeChat() {
   const pendingNotPersisted =
     pending &&
     !session?.messages.some(
-      (message) => message.run_id === pending.id && message.role === "user",
+      (message) =>
+        message.id === `${pending.id}-user` && message.role === "user",
     );
   const conversation = useMemo<Conversation>(() => {
     const items: ThreadItem[] = (session?.messages ?? []).map((message) => ({
@@ -137,9 +138,13 @@ function RuntimeChat() {
   const work = busy
     ? stopping
       ? "Stop requested. Waiting for the runtime to confirm."
-      : pending && !running
-        ? "Sending task to Nori…"
-        : "Nori is working."
+      : pending
+        ? pending.id === pending.runId
+          ? "Sending task to Nori…"
+          : "Sending your update…"
+        : running?.waiting
+          ? `Nori is waiting for your answer: ${running.waiting}`
+          : "Nori is working."
     : undefined;
 
   return (
@@ -152,7 +157,9 @@ function RuntimeChat() {
             threadId="runtime"
             conversation={conversation}
             readOnly
-          onStatusDetails={() => wide ? setDockOpen(true) : setOverlayOpen(true)}
+            onStatusDetails={() =>
+              wide ? setDockOpen(true) : setOverlayOpen(true)
+            }
             onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
             status={work}
             onUnread={onUnread}
@@ -234,6 +241,7 @@ function RuntimeChat() {
           setDraft={runtime.setDraft}
           disabled={!session || unavailable || loading || !!error}
           busy={busy}
+          canUpdate={runtime.canUpdate}
           stopping={stopping && !error}
           stopDisabled={stopDisabled}
           onSend={() => void runtime.send()}

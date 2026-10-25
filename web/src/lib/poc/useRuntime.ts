@@ -30,6 +30,7 @@ export function useRuntime() {
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<{
     id: string;
+    runId: string;
     text: string;
     started: number;
   }>();
@@ -41,12 +42,18 @@ export function useRuntime() {
   const controllers = useRef(new Set<AbortController>());
   const cancellationInFlight = useRef(false);
   const running = session?.runs.find((run) => run.status === "running");
-  const activeId = running?.id || pending?.id;
+  const activeId = running?.id || pending?.runId;
   const selected =
     session?.runs.find((run) => run.id === selectedId) ||
     (!pending ? session?.runs[0] : undefined);
   const unavailable = !!session?.paused || expired;
   const busy = !!activeId;
+  const canUpdate =
+    !!running?.temporal &&
+    !running.cancel_requested &&
+    !pending &&
+    !stopPending &&
+    stopIntent !== running.id;
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const data = await post<Session>("session", {}, signal);
@@ -160,7 +167,7 @@ export function useRuntime() {
           !next.paused &&
           Date.parse(next.expires_at) > Date.now() &&
           (next.runs.some((run) => run.status === "running") ||
-            (pending && !next.runs.some((run) => run.id === pending.id)))
+            (pending && !next.runs.some((run) => run.id === pending.runId)))
         ) {
           timer = setTimeout(poll, 2000);
         }
@@ -211,7 +218,7 @@ export function useRuntime() {
     const text = draft.trim();
     if (
       !text ||
-      busy ||
+      (busy && !canUpdate) ||
       sending.current ||
       unavailable ||
       !session ||
@@ -227,14 +234,17 @@ export function useRuntime() {
     const id = crypto.randomUUID();
     const controller = new AbortController();
     controllers.current.add(controller);
-    setPending({ id, text, started: Date.now() });
-    setSelectedId(id);
+    const runId = canUpdate && running ? running.id : id;
+    setPending({ id, runId, text, started: Date.now() });
+    setSelectedId(runId);
     setDraft("");
     setError("");
     try {
       const { run } = await post<{ run: Run }>(
-        "run",
-        { id, message: text },
+        canUpdate ? "input" : "run",
+        canUpdate
+          ? { id, run_id: runId, message: text }
+          : { id, message: text },
         controller.signal,
       );
       if (controller.signal.aborted) return;
@@ -285,6 +295,7 @@ export function useRuntime() {
     selected,
     unavailable,
     busy,
+    canUpdate,
     refreshHistory,
     send,
     stop,

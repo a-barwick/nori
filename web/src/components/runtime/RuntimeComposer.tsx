@@ -10,6 +10,7 @@ export function RuntimeComposer({
   setDraft,
   disabled,
   busy,
+  canUpdate,
   stopping,
   stopDisabled,
   onSend,
@@ -21,6 +22,7 @@ export function RuntimeComposer({
   setDraft: (draft: string) => void;
   disabled: boolean;
   busy: boolean;
+  canUpdate: boolean;
   stopping: boolean;
   stopDisabled: boolean;
   onSend: () => void;
@@ -66,13 +68,18 @@ export function RuntimeComposer({
           }}
           className="glass t-fast rounded-[28px] p-3 transition-[border-color] focus-within:border-hairline-strong"
         >
+          {canUpdate && (
+            <p className="mb-1 px-2 text-caption text-ink-3">
+              Your message updates the current task.
+            </p>
+          )}
           <div className="flex items-end gap-2 pl-2">
             <textarea
               ref={area}
               rows={1}
               value={draft}
               maxLength={8192}
-              disabled={disabled || busy}
+              disabled={disabled || (busy && !canUpdate)}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (
@@ -84,11 +91,17 @@ export function RuntimeComposer({
                   onSend();
                 }
               }}
-              placeholder={busy ? "Nori is working…" : "Message Nori"}
+              placeholder={
+                canUpdate
+                  ? "Answer or update this task"
+                  : busy
+                    ? "Nori is working…"
+                    : "Message Nori"
+              }
               aria-label="Message Nori"
               className="scrollbar-quiet max-h-[196px] min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1 text-input text-ink transition-[height] duration-150 ease-out placeholder:text-ink-3 focus-visible:outline-none disabled:opacity-60"
             />
-            {busy ? (
+            {busy && (
               <IconButton
                 size={32}
                 label={stopping ? "Stopping…" : "Stop task"}
@@ -98,10 +111,11 @@ export function RuntimeComposer({
               >
                 <Square size={14} strokeWidth={2} fill="currentColor" />
               </IconButton>
-            ) : (
+            )}
+            {(!busy || canUpdate) && (
               <button
                 type="submit"
-                aria-label="Send"
+                aria-label={canUpdate ? "Send update" : "Send"}
                 disabled={disabled || !draft.trim()}
                 className="grid size-8 shrink-0 place-items-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:opacity-40"
               >

@@ -11,12 +11,14 @@ import { cn } from "@/lib/utils";
 export function statusLabel(run: Run) {
   return run.status === "running" && run.cancel_requested
     ? "Stopping…"
-    : {
-        running: "Working on your task",
-        completed: "Completed",
-        failed: "Failed",
-        cancelled: "Cancelled",
-      }[run.status];
+    : run.status === "running" && run.waiting
+      ? "Waiting for your answer"
+      : {
+          running: "Working on your task",
+          completed: "Completed",
+          failed: "Failed",
+          cancelled: "Cancelled",
+        }[run.status];
 }
 
 function Screenshot({
@@ -195,6 +197,14 @@ export function TaskPanel({
             {selected.cancel_requested && selected.status === "running" && (
               <p className="px-2 pb-3 text-meta text-ink-2">
                 Waiting for Nori’s computer to confirm it has stopped.
+              </p>
+            )}
+            {selected.waiting && selected.status === "running" && (
+              <p
+                role="status"
+                className="mb-3 rounded-tile bg-fill-1 p-3 text-meta text-ink"
+              >
+                {selected.waiting}
               </p>
             )}
             {selected.error && (
