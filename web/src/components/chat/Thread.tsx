@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookmarkPlus, Check, Copy, CornerUpLeft, Library } from "lucide-react";
+import { BookmarkPlus, Check, Copy, CornerUpLeft, FileText, Library } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import { retryLive } from "@/lib/nori/engine";
@@ -10,7 +10,7 @@ import { classify, extractHints } from "@/lib/hybrid";
 import { useNori, useThread } from "@/lib/store";
 import { clock } from "@/lib/time";
 import { buildUnits, posOf, type Unit } from "@/lib/units";
-import type { ID, TextItem } from "@/lib/types";
+import type { ID, TextItem, Thread as Conversation } from "@/lib/types";
 import { cn, firstSentence } from "@/lib/utils";
 import { scrollWithin } from "@/lib/dom";
 import { ApprovalCard } from "./ApprovalCard";
@@ -19,8 +19,8 @@ import { ArtifactUnit, BubbleUnit, ImageUnit, VoiceUnit } from "./Message";
 
 /* ── Page block: not a bubble; full column width, paper and ink ── */
 
-function PageBlock({ threadId, item, body }: { threadId: ID; item: TextItem; body: string }) {
-  const name = useNori((s) => s.identity.name);
+function PageBlock({ threadId, item, body, readOnly = false, onOpenDocument }: { threadId: ID; item: TextItem; body: string; readOnly?: boolean; onOpenDocument?: (item: TextItem, body: string) => void }) {
+  const name = useNori((s) => readOnly ? "Nori" : s.identity.name);
   const addArtifact = useNori((s) => s.addArtifact);
   const set = useNori((s) => s.set);
   const ref = useRef<HTMLDivElement>(null);
@@ -46,11 +46,11 @@ function PageBlock({ threadId, item, body }: { threadId: ID; item: TextItem; bod
 
   return (
     <article className="group/page relative mt-4 w-full" data-item-id={item.id} aria-label={`${name}: ${title}`}>
-      <header className="flex h-8 items-center gap-1.5">
+      <header className="flex min-h-8 flex-wrap items-center gap-1.5">
         <NoriMark size={16} state="idle" />
         <span className="text-meta font-medium text-ink">{name}</span>
         <span className="text-caption text-ink-3">· {clock(item.at)}</span>
-        <div className="t-fast ml-auto flex items-center gap-1 opacity-0 transition-opacity group-focus-within/page:opacity-100 group-hover/page:opacity-100">
+        <div className={cn("t-fast ml-auto flex items-center gap-1 transition-opacity", !readOnly && "opacity-0 group-focus-within/page:opacity-100 group-hover/page:opacity-100")}>
           <Button
             size="sm"
             variant="quiet"
@@ -63,7 +63,8 @@ function PageBlock({ threadId, item, body }: { threadId: ID; item: TextItem; bod
             {copied ? <Check size={15} strokeWidth={1.5} /> : <Copy size={15} strokeWidth={1.5} />}
             {copied ? "Copied" : "Copy"}
           </Button>
-          {savedId ? (
+          {onOpenDocument && <Button size="sm" variant="quiet" onClick={() => onOpenDocument(item, body)}><FileText size={15} strokeWidth={1.5} />Open document</Button>}
+          {!readOnly && (savedId ? (
             <Button
               size="sm"
               variant="quiet"
@@ -84,11 +85,11 @@ function PageBlock({ threadId, item, body }: { threadId: ID; item: TextItem; bod
               <BookmarkPlus size={15} strokeWidth={1.5} />
               Save to Library
             </Button>
-          )}
-          <Button size="sm" variant="quiet" onClick={() => set({ replyTo: { threadId, itemId: item.id }, composerFocus: Date.now() })}>
+          ))}
+          {!readOnly && <Button size="sm" variant="quiet" onClick={() => set({ replyTo: { threadId, itemId: item.id }, composerFocus: Date.now() })}>
             <CornerUpLeft size={15} strokeWidth={1.5} />
             Reply
-          </Button>
+          </Button>}
         </div>
       </header>
       <div className={cn("relative mt-1", collapsed && "max-h-[50vh] overflow-hidden")}>
@@ -164,20 +165,21 @@ function greeting(now = new Date()) {
   return "Late one. What's on your mind?";
 }
 
-function WorkLine({ label, activityId }: { label: string; activityId?: ID }) {
+function WorkLine({ label, activityId, onDetails }: { label: string; activityId?: ID; onDetails?: () => void }) {
   const openPanelAt = useNori((s) => s.openPanelAt);
   const setFocus = useNori((s) => s.setFocusActivity);
   return (
     <div className="anim-fade mt-4 flex items-center gap-2 text-meta text-ink-2" role="status">
       <NoriMark size={16} state="thinking" />
       <span>{label}</span>
-      {activityId && (
+      {(activityId || onDetails) && (
         <button
           type="button"
           className="font-medium text-accent-text hover:underline"
           onClick={() => {
+            if (onDetails) return onDetails();
             openPanelAt("activity", null);
-            requestAnimationFrame(() => setFocus(activityId));
+            requestAnimationFrame(() => setFocus(activityId ?? null));
           }}
         >
           Details
@@ -187,14 +189,14 @@ function WorkLine({ label, activityId }: { label: string; activityId?: ID }) {
   );
 }
 
-function UnitView({ threadId, unit, animate }: { threadId: ID; unit: Unit; animate: (id: ID) => boolean }) {
+function UnitView({ threadId, unit, animate, readOnly, onOpenDocument }: { threadId: ID; unit: Unit; animate: (id: ID) => boolean; readOnly: boolean; onOpenDocument?: (item: TextItem, body: string) => void }) {
   switch (unit.type) {
     case "sep":
       return <div className="my-6 text-center text-caption text-ink-3">{unit.label}</div>;
     case "page":
       return (
         <div className={cn(animate(unit.item.id) && "arrive")} style={{ animationDelay: "60ms" }}>
-          <PageBlock threadId={threadId} item={unit.item} body={unit.body} />
+          <PageBlock onOpenDocument={onOpenDocument} readOnly={readOnly} threadId={threadId} item={unit.item} body={unit.body} />
         </div>
       );
     case "approval":
@@ -214,7 +216,7 @@ function UnitView({ threadId, unit, animate }: { threadId: ID; unit: Unit; anima
             const cls = cn("flex w-full", unit.sender === "me" ? "justify-end" : "justify-start", isNew && "arrive");
             return (
               <div key={u.key} className={cls} style={style}>
-                {u.type === "bubble" && <BubbleUnit threadId={threadId} unit={u} pos={pos} sender={unit.sender} />}
+                {u.type === "bubble" && <BubbleUnit readOnly={readOnly} threadId={threadId} unit={u} pos={pos} sender={unit.sender} />}
                 {u.type === "voice" && <VoiceUnit threadId={threadId} item={u.item} pos={pos} sender={unit.sender} />}
                 {u.type === "image" && <ImageUnit threadId={threadId} item={u.item} pos={pos} sender={unit.sender} />}
                 {u.type === "artifact" && <ArtifactUnit threadId={threadId} item={u.item} artifactId={u.artifactId} pos={pos} sender={unit.sender} />}
@@ -231,17 +233,30 @@ export function Thread({
   threadId,
   onUnread,
   presence,
+  conversation,
+  readOnly = false,
+  status,
+  emptyMessage,
+  onOpenDocument,
+  onStatusDetails,
 }: {
+  onStatusDetails?: () => void;
+  onOpenDocument?: (item: TextItem, body: string) => void;
+  conversation?: Conversation;
+  readOnly?: boolean;
+  status?: string;
+  emptyMessage?: string;
   threadId: ID;
   onUnread: (count: number, jump: () => void) => void;
   /** The presence medallion floats at top center, so content fades out lower. */
   presence: boolean;
 }) {
-  const thread = useThread(threadId);
+  const localThread = useThread(threadId);
+  const thread = conversation ?? localThread;
   const arrived = useNori((s) => s.arrived);
-  const typing = useNori((s) => s.typing === threadId);
-  const work = useNori((s) => (s.work?.threadId === threadId ? s.work : null));
-  const liveError = useNori((s) => (s.liveError?.threadId === threadId ? s.liveError : null));
+  const typing = useNori((s) => !readOnly && s.typing === threadId);
+  const work = useNori((s) => (!readOnly && s.work?.threadId === threadId ? s.work : null));
+  const liveError = useNori((s) => (!readOnly && s.liveError?.threadId === threadId ? s.liveError : null));
   const highlight = useNori((s) => s.highlight);
   const items = useMemo(() => thread?.items ?? [], [thread?.items]);
   const units = useMemo(() => buildUnits(items), [items]);
@@ -333,7 +348,7 @@ export function Thread({
   };
 
   if (!thread) return null;
-  const animate = (id: ID) => !!arrived[id];
+  const animate = (id: ID) => !readOnly && !!arrived[id];
 
   return (
     <div
@@ -356,14 +371,15 @@ export function Thread({
           {units.length === 0 && !typing && thread.kind !== "side" && (
             <div className="grid min-h-[calc(100dvh-320px)] place-items-center">
               <p className="arrive text-title text-ink-2" style={{ animationDelay: "250ms" }}>
-                {greeting()}
+                {emptyMessage ?? greeting()}
               </p>
             </div>
           )}
           {units.map((u) => (
-            <UnitView key={u.key} threadId={threadId} unit={u} animate={animate} />
+            <UnitView onOpenDocument={onOpenDocument} readOnly={readOnly} key={u.key} threadId={threadId} unit={u} animate={animate} />
           ))}
-          <Draft threadId={threadId} />
+          {!readOnly && <Draft threadId={threadId} />}
+          {status && <WorkLine label={status} onDetails={onStatusDetails} />}
           {typing && <Typing />}
           {work && <WorkLine label={work.label} activityId={work.activityId} />}
           {liveError && (

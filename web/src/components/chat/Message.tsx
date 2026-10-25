@@ -139,7 +139,9 @@ function UnitFrame({
   copyText,
   children,
   className,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
   threadId: ID;
   item: ThreadItem;
   sender: Sender;
@@ -151,7 +153,7 @@ function UnitFrame({
   return (
     <div className={cn("group/msg relative flex", sender === "me" ? "max-w-[min(560px,85%)]" : "max-w-[min(680px,100%)]", reactions?.length && "mb-2.5", className)} data-item-id={item.id}>
       {children}
-      <HoverActions threadId={threadId} item={item} sender={sender} copyText={copyText} />
+      {!readOnly && <HoverActions threadId={threadId} item={item} sender={sender} copyText={copyText} />}
       {reactions?.length ? <Reactions reactions={reactions} sender={sender} /> : null}
     </div>
   );
@@ -191,12 +193,14 @@ function Chips({ threadId, itemId, chips, fresh }: { threadId: ID; itemId: ID; c
 /* ── Units ─────────────────────────────────────────────────── */
 
 export function BubbleUnit({
+  readOnly = false,
   threadId,
   unit,
   pos,
   sender,
 }: {
   threadId: ID;
+  readOnly?: boolean;
   unit: Extract<GroupUnit, { type: "bubble" }>;
   pos: Pos;
   sender: Sender;
@@ -227,7 +231,7 @@ export function BubbleUnit({
 
   return (
     <div className={cn("flex w-full flex-col gap-2", mine ? "items-end" : "items-start")}>
-    <UnitFrame threadId={threadId} item={unit.item} sender={sender} reactions={reactions} copyText={unit.markdown}>
+    <UnitFrame readOnly={readOnly} threadId={threadId} item={unit.item} sender={sender} reactions={reactions} copyText={unit.markdown}>
       <motion.div
         layoutId={fromChip ? `chip-${fromChip}` : undefined}
         transition={SPRING}

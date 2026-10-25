@@ -1,37 +1,40 @@
 # Nori web
 
-Desktop web interface for Nori, built from the Nori design spec. Next.js 16 (App Router, Turbopack), Tailwind v4 on semantic tokens, Radix primitives, Zustand.
+The current-main chat UI connected to the deployed Go runtime. Conversation and task history come from Firestore through the existing runtime API; the web app does not generate answers or execute tasks itself.
 
-This is demo work: the thread, agent panel, Ideas, Goals and Library run on seed data, and anything you type gets a live reply from Claude through `src/app/api/nori/route.ts`. Later, `src/lib/nori/backend.ts` is the seam where the core agent service API plugs in.
+## Local preview
 
-## Run
-
-```bash
-bun install
-bun run dev
+```sh
+bun install --frozen-lockfile
+bun run dev --port 3234
 ```
 
-Then open http://127.0.0.1:3000 (pass `--port` to pick another). The dev and start scripts bind to 127.0.0.1 only, and `/api/nori` rejects non-local requests, because the route spends your API key.
+The local preview binds to loopback. Without a configured runtime, it shows a connection notice and disables Send. It does not substitute demo messages, task results, or screenshots. A real task requires an explicitly authorized active session; previewing the frontend does not authorize resuming the computer or worker.
 
-## Environment
+## Runtime configuration
 
-Keys live in `web/.env` (gitignored). The app reads one:
+Production uses the existing Cloud Run service configuration:
 
-| Key | Used for |
+| Name | Purpose |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | Live replies (Claude Sonnet 5.5, medium effort) |
+| `NORI_RUNTIME_URL` | Existing Go runtime base URL |
+| `IAP_AUDIENCE` | Expected audience of Google's signed IAP assertion |
+| `NORI_APP_ORIGIN` | Exact browser origin used for same-origin POST verification |
 
-Without it, scripted moments still work and typed messages show a neutral error with Retry.
+No project API key is needed in the web image. Keep any local project configuration in the ignored repository-root `.env`, mode 600; use existing approved server stores in production. Never bake credentials into images.
 
-## Where things are
+## Behavior and boundaries
 
-- `src/app/globals.css`: color, type, radius, shadow and motion tokens (spec §4). Components use semantic names only.
-- `src/lib/hybrid.ts`: the bubble vs page rule (spec §5.2), decided from the markdown's structure.
-- `src/lib/units.ts`: grouping, pinched corners, time separators (spec §5.1, §5.6).
-- `src/lib/seed.ts`: seed content in Nori's voice. Settings → Reset demo data restores it.
-- `src/lib/nori/engine.ts`: scripted moments (chips, approvals, Ideas, Goals) and live replies.
-- `src/components/mark/NoriMark.tsx`: the mark and its states (idle, attentive, thinking, writing, listening, pleased).
+- The signed IAP assertion and exact owner email are verified before private routes are served. Unsigned identity headers are never trusted.
+- `/api/session`, `/api/run`, `/api/cancel`, and `/api/artifact` proxy the existing API contract with server credentials. Browser credentials are not forwarded.
+- The conversation uses the current message bubbles, avatar/presence, document layout and reading view. Long saved replies can be opened and downloaded, with Back to chat preserving the conversation position.
+- The activity panel shows real task events, shell/browser output, statuses, and protected screenshots. Stop requests cancellation and waits for runtime confirmation.
+- History refreshes only while a task is active, the tab is visible, and the session remains active. Errors suspend automatic refresh until manual reconnection.
+- Attachments, voice, local message edits/deletion, demo Library/Goals/Ideas/Settings, and simulated agent actions are not exposed. Their old URLs redirect to chat. The old `/api/nori` demo generation endpoint is retired.
+- The UI does not invent response streaming: the existing contract returns saved messages and task activity.
 
-## Requirements
+## Build and deployment
 
-- [Avatar state protocol](docs/avatar.md): modes, gestures and gaze for Nori's mark, and the claim rules that replace the single `markState`. Not built yet.
+`bun run build` produces Next.js standalone output; `bun run lint` checks the frontend. The Dockerfile builds only `web/` and excludes `.env*`, dependencies, and local build output from its context.
+
+A deployment must update only the web image on the existing `nori-web` Cloud Run service. Preserve its IAP, identity, environment, private access, domain mapping, and min/max instance configuration. Backend and Temporal changes are outside this frontend update. Observe the authorized session deadline and the 22:00 America/Los_Angeles cutoff for paid execution.

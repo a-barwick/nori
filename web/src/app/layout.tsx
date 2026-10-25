@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Figtree, IBM_Plex_Mono } from "next/font/google";
-import { AppShell } from "@/components/shell/AppShell";
 import "./globals.css";
 
 const figtree = Figtree({
@@ -25,7 +24,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${figtree.variable} ${plexMono.variable} h-full`}>
       <body className="h-full overflow-clip">
-        <AppShell>{children}</AppShell>
+        {children}
       </body>
     </html>
   );
