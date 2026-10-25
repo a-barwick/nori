@@ -119,11 +119,8 @@ boot=$host
 if ! "$execute"; then
   deadline=$(python3 - <<'DEADLINE'
 from datetime import datetime,timedelta,timezone
-from zoneinfo import ZoneInfo
 now=datetime.now(timezone.utc)
-cutoff=now.astimezone(ZoneInfo('America/Los_Angeles')).replace(hour=22,minute=0,second=0,microsecond=0)
-if now >= cutoff: raise SystemExit('Daily cutoff passed')
-print(min(now+timedelta(minutes=30),cutoff).astimezone(timezone.utc).isoformat(timespec='seconds'))
+print((now+timedelta(minutes=30)).isoformat(timespec='seconds'))
 DEADLINE
 )
   tf_runtime plan -input=false -var=enabled=true -var="termination_time=$deadline" -var="public_key_path=$key.pub" -out="$state/runtime-start.plan" > "$state/runtime-start-plan.log"
@@ -140,10 +137,9 @@ fi
 deadline=$(python3 - "$state/start-plan.json" "$key" <<'CHECK'
 import json,sys
 from datetime import datetime,timedelta,timezone
-from zoneinfo import ZoneInfo
 j=json.load(open(sys.argv[1]));assert j['key']==sys.argv[2] and j['project']=='bot-111549' and j['disk']=='bot-computer-data'
-now=datetime.now(timezone.utc);deadline=datetime.fromisoformat(j['deadline']);cutoff=now.astimezone(ZoneInfo('America/Los_Angeles')).replace(hour=22,minute=0,second=0,microsecond=0)
-assert now < deadline <= min(now+timedelta(minutes=30),cutoff), 'Reviewed deadline expired/invalid; create a new plan'
+now=datetime.now(timezone.utc);deadline=datetime.fromisoformat(j['deadline'])
+assert now < deadline <= now+timedelta(minutes=30), 'Reviewed deadline expired/invalid; create a new plan'
 print(j['deadline'])
 CHECK
 )

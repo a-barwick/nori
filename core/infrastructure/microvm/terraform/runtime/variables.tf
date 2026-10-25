@@ -7,7 +7,7 @@ variable "enabled" {
 variable "termination_time" {
   type        = string
   default     = ""
-  description = "Explicit RFC3339 DELETE deadline, future and within 30 minutes, no later than today's 22:00 America/Los_Angeles."
+  description = "Explicit RFC3339 DELETE deadline, future and within 30 minutes."
 }
 
 variable "host_name" {

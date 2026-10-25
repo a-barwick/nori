@@ -1,37 +1,69 @@
 # Nori core
 
-The Go service for Nori. It currently provides a hello-world HTTP API;
-agent loops, models, tools, and persistence are not implemented yet.
+The Go service runs Nori's bounded, single-user agent loop using the official
+Google Gen AI SDK with Vertex AI Application Default Credentials. Conversation,
+run state, events, and cancellation requests live in Firestore; screenshots live
+in a private GCS bucket. The existing persistent Firecracker computer supplies
+shell commands and Chromium navigation/screenshots through a keyless IAP tunnel.
 
-## Local development
+## Local development and API
 
-Requires Go 1.26 or newer. From `core/`:
+Requires Go 1.26, Google Cloud CLI, and ADC for the selected Google project.
+Run commands in this section from `core/`. `make run` starts the service on
+port 8080; `make build` builds `bin/nori`. No model API
+keys are used. The optional monorepo-root `.env` loads without overriding existing
+environment variables; keep it gitignored and mode 600.
 
-```sh
-make run
-```
+| Environment | Default / purpose |
+| --- | --- |
+| `BIND_HOST` | `127.0.0.1` locally; container explicitly sets `0.0.0.0` behind runtime IAM |
+| `PORT` | `8080` |
+| `NORI_PROJECT_ID` | `bot-111549` (application project, independent of platform variables) |
+| `MODEL_LOCATION` | `global` (Vertex model location) |
+| `MODEL_NAME` | `gemini-3.1-flash-lite` |
+| `FIRESTORE_DATABASE_ID` | `nori-poc` |
+| `ARTIFACT_BUCKET` | Required private screenshot bucket |
+| `COMPUTER_ZONE` | Required zone of the existing computer VM |
+| `COMPUTER_INSTANCE` | `nori-computer` |
 
-- `GET http://localhost:8080/` returns a greeting as JSON.
-- `GET http://localhost:8080/healthz` returns a health response.
-- `make build` creates `bin/nori`.
-- `make check` runs Go vet and checks formatting.
+The fixed owner is `austinbarwickdavis@gmail.com`. Deploy the Go service behind
+Agent Runtime IAM with invocation granted only to the private Next.js web service
+account. The browser calls its same-origin web proxy; it does not select an owner
+or send cloud credentials. Local startup binds loopback. The container binds all interfaces for the managed
+runtime contract; runtime IAM must guard it. The service listener must not be
+exposed publicly.
 
-The service loads `core/.env` when present. Existing environment
-variables take precedence. `PORT` defaults to `8080`; no model keys are required
-or used by this scaffold. The existing project credential file was preserved here,
-is gitignored, and should remain mode 600. `.env.example` lists scaffold settings.
+| Route | Request / response |
+| --- | --- |
+| `POST /api/healthz` or `POST /healthz` | Safe process/configuration health; no database reads |
+| `GET /healthz` | `{"status":"ok"}` (process health) |
+| `POST /api/session` | `{}` → `{messages,runs,paused,expires_at}` |
+| `POST /api/run` | `{id: UUID,message}` → `{run}` after execution stops |
+| `POST /api/cancel` | `{id: UUID}` → `{run}` with `cancel_requested` |
+| `POST /api/artifact` | `{run_id,artifact_id}` → private PNG bytes |
 
-`web/` calls this service over HTTP. The two apps share the repo and nothing else:
-each has its own toolchain, dependencies and image.
+Create the run UUID in the UI before submitting. The run request stays open while
+Nori works; session polling and Stop use separate requests. One Firestore
+transaction admits one active run across instances. Runs finish as `completed`,
+`failed`, or `cancelled`; cancelled means model/tool execution stopped and any
+computer work acknowledged stopping. Failed stop verification is reported as
+interrupted. No background execution or automatic durable recovery is promised.
+Expired `running` records become `failed` when read or when a new run starts.
 
-## Deployment
+Firestore document `system/control` must contain `paused` (boolean) and
+`expires_at` (absolute RFC3339 string). Missing, paused, or expired control rejects
+new runs; an active run is capped by that expiry. Each run also has a two-minute
+execution deadline, six model calls, twelve tool calls, 1024 output tokens per
+model response, 32 KiB text tool output, and 2 MiB screenshot limit. A separate
+bounded cleanup window confirms stop and persists the terminal record.
 
-The local Docker Compose stack (Temporal, Postgres, and a persistent
-shell/Chromium computer) and the container build live in
-[infrastructure](infrastructure/README.md); the greeting API does not use them
-yet. The historical GKE starter manifests there are not the current deployed
-architecture; the microVM computer below is a separate infrastructure
-prototype.
+`infrastructure/Dockerfile` builds the agent container with the official Cloud
+SDK 584.0.0 IAP helper. The current deployment target is GCP Agent Runtime for Go
+and Cloud Run for the Next.js app in `../web`. The older Compose stack and
+GKE manifests are historical prototypes; the agent does not use Temporal or
+Postgres. The retained computer must be provisioned once separately; agent
+execution can start that existing VM during an active session but never creates,
+replaces, or deletes it.
 
 ## Historical boot smoke
 
@@ -39,7 +71,7 @@ A disposable Firecracker trial on 2026-10-24 verified nested KVM, two guest boot
 and orderly shutdowns, rootfs-marker survival, and complete resource cleanup.
 Historical source remains in `infrastructure/microvm/run.sh`, which now refuses
 `--execute`: current cloud lifecycle belongs to Terraform. Operational evidence
-is retained in the repo root's gitignored `.artifacts/microvm/`.
+is retained in the Bot workspace at `.artifacts/microvm/`, outside this checkout.
 
 ## Persistent shell and browser microVM
 
@@ -102,7 +134,7 @@ first boot, an expiry-bearing cookie, and localStorage through both a guest
 restart and a fresh Terraform-managed GCE host using the same disk. CDP DOM and
 screenshot checks also loaded a real public website; the non-root browser
 reported active namespace and Seccomp-BPF sandboxing. Evidence lives in
-the repo root's gitignored `.artifacts/persistent-computer/`.
+`.artifacts/persistent-computer/` in the Bot workspace.
 
 ### Terraform ownership
 
@@ -199,9 +231,138 @@ off; the daily shutdown policy never authorizes deleting it.
 - [GCP execution infrastructure notes](docs/research/gcp-agent-infrastructure-notes.txt)
 
 These documents are research and proposals, not an implementation checklist.
-The Go core and the Next.js web app keep separate images and releases. The Firecracker/GCE computer prototype has demonstrated a persistent
-shell and Chromium browser; application deployment and agent-loop integration
-are not built. GKE or Agent Substrate remains a later option. The pasted
-infrastructure research has not been independently revalidated in full.
-Locally, a Compose stack runs Postgres, Temporal and a plain persistent
-Docker computer.
+Go `core` and Next.js `web` share this monorepo and retain independent images
+and releases. Their current POC integration is described above; historical plans do
+not expand its scope.
+
+## Temporal task slice (default off)
+
+`NORI_EXECUTION_MODE=inline` preserves the existing deployed request loop. Set it
+explicitly to `temporal` only after validating the worker and guest release. The
+API then commits the task, user message, ordered command and delivery intent in
+one Firestore transaction and returns HTTP 202. Retrying an identical command ID
+returns its original acceptance; reusing that ID with different content fails.
+
+The Temporal worker calls the ordinary Go agent steps directly. One pinned
+workflow owns a task, with separate context, reconciliation, model, individual
+tool, wait projection, Stop and publication activities. It makes at most six
+model calls and twelve tool calls, with at most 32 accepted input commands.
+`wait_for_input` persists a question and waits for a command signal or the single
+authorized-session deadline; it does not poll while idle. The POC web composer
+can send corrections and answers while a Temporal task runs.
+
+| Request | Body and behavior |
+| --- | --- |
+| `POST /api/run` | `{ "id": "UUID", "message": "..." }`; the task UUID also identifies its initial command |
+| `POST /api/input` | `{ "id": "new-command-UUID", "run_id": "task-UUID", "message": "..." }`; atomically advances the task revision |
+| `POST /api/cancel` | `{ "id": "task-UUID" }`; idempotently records Stop and its delivery intent |
+| `POST /api/session` | Existing history plus `temporal`, `revision`, `incorporated` and optional `waiting` fields |
+
+Each effect is admitted against the current incorporated revision and durable
+session control. A correction supersedes later unadmitted calls; already admitted
+bounded work can finish, and its observed results remain in task context. Final
+publication atomically checks the revision again, so a queued correction cannot
+receive an obsolete answer. The current task reconciles the ordered original
+instructions directly; a separate model-generated task brief is deferred.
+
+Tool activities and model requests have one attempt. Shell commands are never
+blindly retried. Each admitted operation has a stable ID in Firestore; the guest
+writes a request digest before execution and a response receipt before replying.
+Identical RPCs can return a completed receipt, while started/uncertain receipts
+refuse re-execution. `POST /operation` with `id` and `run_id` reads receipt status.
+Receipts and cancellation tombstones live under the retained task root's
+`.nori-receipts`. They protect transport recovery, not malicious shell code
+running as the same guest Unix user. A guest-agent restart with an unresolved
+receipt cannot claim a successful Stop. The worker requires the guest readiness
+capability `operation_receipts_v1`; deploy the matching guest binary before using
+Temporal computer tools.
+
+Cancellation scopes include the task revision; shell working directories remain
+`/workspace/tasks/<task-UUID>` across corrections. Stop uses cleanup-only IAP
+access, never starts a stopped VM, and requires the guest's actual stopped ACK
+(or an observed terminated VM). Stop uncertainty produces a failed task and no
+successful answer. During shutdown, the worker keeps polling for a bounded drain
+so workflow cleanup and terminal persistence can complete. On authorized startup
+or operator repair, closed Temporal executions with unfinished UI projections
+are reconciled after checking their admitted computer scopes. Recovery never
+repeats their work.
+
+### Build and run independently
+
+Run from `core/`:
+
+```sh
+go build ./cmd/nori ./cmd/nori-worker ./cmd/nori-deliver ./cmd/computer-agent
+go vet ./...
+docker build -f infrastructure/temporal/Dockerfile.worker -t nori-worker .
+```
+
+The API image remains `infrastructure/Dockerfile`; the worker image has no HTTP
+server and starts `/nori-worker`. Its Cloud Run ID plugin is enabled in the image.
+Both processes use the existing Google ADC/service identity and POC configuration
+names. The worker needs Firestore, artifact, Vertex, computer get/start and IAP
+permissions; it never invokes Agent Runtime.
+
+Keep credentials in the one gitignored mode-600 monorepo-root `.env`. The commands
+load `../.env`; `NORI_ENV_FILE` can point to the original root file from a worktree
+without copying it. The API and worker require `TEMPORAL_ADDRESS` and
+`TEMPORAL_NAMESPACE`, and share `TEMPORAL_TASK_QUEUE` (default `nori-tasks`). The
+worker also uses `TEMPORAL_DEPLOYMENT_NAME` (default `nori-task`) and requires an
+immutable `TEMPORAL_BUILD_ID`. Cloud connections require TLS and an API key. Local processes
+load `TEMPORAL_API_KEY` from the root `.env`; deployed workers can use native
+Secret Manager environment injection. The API can instead set
+`TEMPORAL_API_KEY_SECRET_VERSION=projects/bot-111549/secrets/nori-temporal-api-key/versions/1`.
+It reads that version once on startup through Google ADC, checks its CRC32C, and
+keeps the credential in memory. The version reference takes precedence over
+`TEMPORAL_API_KEY` and requires `roles/secretmanager.secretAccessor` on that secret
+for the runtime service account. Keep only the reference in Terraform and runtime
+configuration; never put its payload there. Set
+`TEMPORAL_LOCAL=true` only for a local dev server, and
+`TEMPORAL_CLOUD_RUN_ID=false` outside Cloud Run. Never place key values in command
+arguments, Terraform variables, source files or images.
+
+```sh
+# With the matching configuration already loaded from the root .env:
+go run ./cmd/nori-worker
+go run ./cmd/nori
+# Repair pending delivery and closed-execution projections once:
+go run ./cmd/nori-deliver
+```
+
+Register the immutable deployment version as current before routing new work to
+it. Running pinned executions need their original compatible build available;
+changing code under an existing build ID is unsafe. The selected Cloud target is
+a GCP-hosted Temporal Cloud namespace and Cloud Run worker pool with minimum zero,
+maximum one; deployment and pool lifecycle remain separate operator work.
+
+### Delivery and shutdown limits
+
+The API attempts delivery for at most two seconds after acceptance. API/worker
+startup and their running delivery loop retry pending intents, and
+`nori-deliver` repairs them explicitly. Temporal acknowledgement and the Firestore
+delivered flag are separate: a crash between them causes a harmless duplicate
+signal. Commands are incorporated once by their ordered positions.
+
+If the API dies after Firestore acceptance but before Temporal receives the
+start, a pool at zero cannot discover that outbox entry on its own. Resume or
+explicit repair is required for this first slice; an unattended outbox trigger is
+a deployment follow-up. Worker expiry checks, process exit and a minimum of zero
+do not scale a paid worker pool to zero or prevent WCI wakeups. Operator pause
+must close admission, cancel and drain tasks, stop the retained computer, disable
+effective WCI update access and scale every deployed version pool to zero. An
+absolute cloud deadline must enforce the same paid-capacity stop.
+
+Acceptance, deduplication, delivery and queued cancellation were checked with
+Firestore's emulator and a Temporal dev server. An isolated Temporal Cloud task
+using real Vertex Gemini also survived a normal worker shutdown, accepted a
+correction while the worker was down, replayed after restart, asked a revised
+clarification question and ended cancelled in both Temporal and the UI. A second
+Stop accepted during model I/O suppressed the answer. That model completed before
+the cancellation watcher tick, so forced HTTP-abort classification remains a
+separate check. No computer tool ran in those isolated Cloud checks.
+
+Real guest/tool Stop ACKs through Temporal, overnight or project-pause wait
+recovery, and the Cloud Run preview's cold start, scale-in and billing behavior
+still need coordinated active-session validation. Waits currently end at the
+admitted session deadline. [Temporal Go message passing](https://docs.temporal.io/develop/go/message-passing),
+[Cloud Run versioned workers](https://docs.temporal.io/production-deployment/worker-deployments/serverless-workers/cloud-run).
