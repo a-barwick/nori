@@ -117,7 +117,9 @@ def temporal_access(t, active=None):
     sa = t["invoker_service_account"]
     end = time.monotonic() + 300
     while True:
-        decisions = {build: api("POST", "https://policytroubleshooter.googleapis.com/v3/iam:troubleshoot", {"accessTuple": {"principal": sa, "fullResourceName": "//run.googleapis.com/" + p["resource"], "permission": "run.workerpools.update", "conditionContext": {"request": {"receiveTime": stamp(datetime.now(timezone.utc))}}}}).get("overallAccessState") for build, p in t["worker_pools"].items()}
+        # IAM's full resource name uses lowercase workerpools; the owning Run
+        # v2 API and Terraform IDs retain their camel-case workerPools path.
+        decisions = {build: api("POST", "https://policytroubleshooter.googleapis.com/v3/iam:troubleshoot", {"accessTuple": {"principal": sa, "fullResourceName": "//run.googleapis.com/" + p["resource"].replace("/workerPools/", "/workerpools/"), "permission": "run.workerpools.update", "conditionContext": {"request": {"receiveTime": stamp(datetime.now(timezone.utc))}}}}).get("overallAccessState") for build, p in t["worker_pools"].items()}
         if all(decision == ("CAN_ACCESS" if build == active else "CANNOT_ACCESS") for build, decision in decisions.items()):
             return
         if time.monotonic() > end:
