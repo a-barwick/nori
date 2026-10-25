@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { BookmarkPlus, Check, Copy, CornerUpLeft } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { BookmarkPlus, Check, Copy, CornerUpLeft, Library } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import { retryLive } from "@/lib/nori/engine";
@@ -23,10 +24,12 @@ function PageBlock({ threadId, item, body }: { threadId: ID; item: TextItem; bod
   const addArtifact = useNori((s) => s.addArtifact);
   const set = useNori((s) => s.set);
   const ref = useRef<HTMLDivElement>(null);
+  const router = useRouter();
   const [tall, setTall] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  // A page you just watched being written stays open; older ones fold.
+  const [expanded, setExpanded] = useState(() => Date.now() - item.at < 15000);
   const [copied, setCopied] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [savedId, setSavedId] = useState<ID | null>(item.artifactId ?? null);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -60,18 +63,28 @@ function PageBlock({ threadId, item, body }: { threadId: ID; item: TextItem; bod
             {copied ? <Check size={15} strokeWidth={1.5} /> : <Copy size={15} strokeWidth={1.5} />}
             {copied ? "Copied" : "Copy"}
           </Button>
-          <Button
-            size="sm"
-            variant="quiet"
-            disabled={saved}
-            onClick={() => {
-              addArtifact({ title, type: "page", madeBy: "nori", body, thumb: /\|.*\|/.test(body) ? "table" : "page" });
-              setSaved(true);
-            }}
-          >
-            {saved ? <Check size={15} strokeWidth={1.5} /> : <BookmarkPlus size={15} strokeWidth={1.5} />}
-            {saved ? "Saved" : "Save to Library"}
-          </Button>
+          {savedId ? (
+            <Button
+              size="sm"
+              variant="quiet"
+              onClick={() => {
+                set({ viewerId: savedId, viewerReturn: "/", libraryFilter: "all" });
+                router.push("/library");
+              }}
+            >
+              <Library size={15} strokeWidth={1.5} />
+              In Library
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="quiet"
+              onClick={() => setSavedId(addArtifact({ title, type: "page", madeBy: "nori", body, thumb: /\|.*\|/.test(body) ? "table" : "page" }))}
+            >
+              <BookmarkPlus size={15} strokeWidth={1.5} />
+              Save to Library
+            </Button>
+          )}
           <Button size="sm" variant="quiet" onClick={() => set({ replyTo: { threadId, itemId: item.id }, composerFocus: Date.now() })}>
             <CornerUpLeft size={15} strokeWidth={1.5} />
             Reply

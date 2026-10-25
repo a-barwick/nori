@@ -208,8 +208,8 @@ function finalize(threadId: ID, raw: string, streamed = false) {
       summary: `${artifactTypeLabel[hints.artifact.type]} saved to Library.`,
       threadId,
     });
-    say(threadId, split.cover!, { artifactId, chips: replyChips, activityId });
-    pleased();
+    // The page you watched being written stays put; it's also kept in the Library.
+    say(threadId, `${body}\n<!-- nori:page -->`, { artifactId, chips: replyChips, activityId }, !streamed);
     return;
   }
   const mode = (t: string) => (hints.mode ? `${t}\n<!-- nori:${hints.mode} -->` : t);

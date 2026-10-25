@@ -47,6 +47,8 @@ interface UIState {
   editLookOpen: boolean;
   libraryFilter: LibraryFilter;
   viewerId: ID | null;
+  /** Where the viewer's back arrow goes when it was opened from somewhere other than the Library. */
+  viewerReturn: string | null;
   replyTo: ReplyTarget | null;
   editingId: ID | null;
   drafts: Record<ID, string>;
@@ -126,6 +128,7 @@ const initialUI = (): UIState => ({
   editLookOpen: false,
   libraryFilter: "all",
   viewerId: null,
+  viewerReturn: null,
   replyTo: null,
   editingId: null,
   drafts: {},

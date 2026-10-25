@@ -429,7 +429,7 @@ export function ArtifactUnit({
   if (!artifact) return null;
   const open = (e: React.MouseEvent<HTMLElement>) =>
     morphOpen(e.currentTarget.querySelector("[data-tile]"), () => {
-      set({ viewerId: artifact.id, libraryFilter: "all" });
+      set({ viewerId: artifact.id, viewerReturn: "/", libraryFilter: "all" });
       router.push("/library");
     });
   return (

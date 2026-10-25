@@ -66,7 +66,7 @@ function Sidebar({ q, setQ }: { q: string; setQ: (q: string) => void }) {
                 key={item.key}
                 type="button"
                 aria-current={filter === item.key ? "page" : undefined}
-                onClick={() => set({ libraryFilter: item.key, viewerId: null })}
+                onClick={() => set({ libraryFilter: item.key, viewerId: null, viewerReturn: null })}
                 className={cn(
                   "t-fast flex h-9 w-full items-center rounded-chip px-2.5 text-left text-row-title transition-colors",
                   filter === item.key ? "bg-fill-2 font-medium text-ink" : "text-ink-2 hover:bg-fill-1 hover:text-ink",
@@ -249,6 +249,7 @@ function Grid() {
 
 function Viewer({ a }: { a: Artifact }) {
   const set = useNori((s) => s.set);
+  const back = useNori((s) => s.viewerReturn);
   const router = useRouter();
   const download = () => {
     const blob = a.src
@@ -264,7 +265,14 @@ function Viewer({ a }: { a: Artifact }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-16 shrink-0 items-center gap-3 border-b border-hairline px-5">
-        <IconButton label="Back to Library" onClick={() => morphClose(a.id, () => set({ viewerId: null }))}>
+        <IconButton
+          label={back ? "Back to chat" : "Back to Library"}
+          onClick={() => {
+            if (!back) return morphClose(a.id, () => set({ viewerId: null }));
+            set({ viewerId: null, viewerReturn: null });
+            router.push(back);
+          }}
+        >
           <ArrowLeft size={20} strokeWidth={1.5} />
         </IconButton>
         <div className="min-w-0 flex-1">
@@ -275,7 +283,7 @@ function Viewer({ a }: { a: Artifact }) {
         </div>
         <Button
           onClick={() => {
-            set({ replyTo: { threadId: useNori.getState().activeThreadId, artifactId: a.id }, composerFocus: Date.now() });
+            set({ replyTo: { threadId: useNori.getState().activeThreadId, artifactId: a.id }, composerFocus: Date.now(), viewerId: null, viewerReturn: null });
             router.push("/");
           }}
         >
