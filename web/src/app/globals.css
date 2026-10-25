@@ -83,6 +83,47 @@
   --drawer-w: 260px;
 }
 
+/* Dark: the same paper at night. Follows the system setting. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-canvas: #1a1916;
+    --bg-surface: #23211d;
+    --bg-sidebar: #1f1d1a;
+    --bg-bubble-nori: #2d2a25;
+    --fill-1: #2a2823;
+    --fill-2: #35322c;
+    --hairline: rgba(244, 238, 226, 0.1);
+    --hairline-strong: rgba(244, 238, 226, 0.18);
+    --overlay: rgba(0, 0, 0, 0.5);
+
+    --text-primary: #eeeae1;
+    --text-secondary: #b8b0a2;
+    --text-tertiary: #9c9486;
+
+    --accent: var(--olive-600);
+    --accent-hover: var(--olive-500);
+    --accent-pressed: var(--olive-700);
+    --accent-text: var(--olive-300);
+    --accent-signal: var(--olive-400);
+    --accent-subtle: rgba(134, 160, 106, 0.14);
+    --accent-muted: rgba(134, 160, 106, 0.28);
+    --focus-ring: var(--olive-400);
+
+    --warning-text: #e2b45c;
+    --warning-bg: rgba(226, 180, 92, 0.14);
+    --danger-text: #e58b73;
+    --danger-bg: rgba(229, 139, 115, 0.14);
+
+    --glass-bg: rgba(35, 33, 29, 0.74);
+    --glass-border: rgba(244, 238, 226, 0.08);
+    --chip-border: rgba(244, 238, 226, 0.4);
+
+    /* The mark keeps its daytime ink so it reads as the same character */
+    --mark-ink: #22201b;
+    --mark-paper: #f6f2ea;
+  }
+}
+
 @theme inline {
   --color-*: initial;
   --color-transparent: transparent;
@@ -191,7 +232,7 @@
   html {
     background: var(--bg-canvas);
     color: var(--text-primary);
-    color-scheme: light;
+    color-scheme: light dark;
   }
 
   body {
@@ -277,8 +318,31 @@
   );
 }
 
+.top-frost {
+  background: linear-gradient(to bottom, var(--bg-canvas) 20%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent);
+  mask-image: linear-gradient(to bottom, #000 45%, transparent);
+  transition: height var(--dur-spring) var(--ease-spring);
+}
+
 .page-fade {
   background: linear-gradient(to bottom, transparent, var(--bg-canvas) 85%);
+}
+
+/* A reply being written ends in a soft caret */
+.streaming > div > :last-child:is(p, h2, h3, h4)::after,
+.streaming > div > :is(ul, ol):last-child > li:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-left: 0.3em;
+  border-radius: 9999px;
+  background: var(--accent-signal);
+  vertical-align: 0.05em;
+  animation: signal-pulse 1.1s var(--ease-standard) infinite;
 }
 
 /* ── Motion ───────────────────────────────────────────────── */
@@ -500,6 +564,17 @@
 .mark[data-blink="true"] .mark-eye {
   transform: scaleY(0.12);
 }
+.mark-look {
+  transition: transform 260ms var(--ease-out);
+}
+.mark[data-state="writing"] .mark-eyes {
+  animation: mark-write 1.8s var(--ease-standard) infinite;
+}
+.mark[data-state="writing"] .mark-body-group {
+  transform-box: view-box;
+  transform-origin: 50% 90%;
+  animation: mark-nod 1.8s var(--ease-standard) infinite;
+}
 .mark[data-state="thinking"] .mark-eyes {
   animation: mark-think 2s var(--ease-standard) infinite;
 }
@@ -527,6 +602,26 @@
   }
 }
 
+@keyframes mark-write {
+  0%,
+  100% {
+    transform: translate(-2px, 2px);
+  }
+  50% {
+    transform: translate(2px, 2px);
+  }
+}
+
+@keyframes mark-nod {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(1.5deg);
+  }
+}
+
 @keyframes mark-lean {
   0%,
   100% {
@@ -547,6 +642,29 @@
   100% {
     transform: scale(1);
   }
+}
+
+/* Artifact tile ⇄ viewer morph (lib/dom.ts) */
+::view-transition-group(artifact) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.15, 1, 0.4, 1);
+}
+::view-transition-old(artifact),
+::view-transition-new(artifact) {
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+/* The tile hands off fast so the two never read as a double exposure */
+::view-transition-old(artifact) {
+  animation: fade-out 140ms var(--ease-standard) both;
+}
+::view-transition-new(artifact) {
+  animation: fade-in 220ms var(--ease-out) 60ms both;
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
 }
 
 /* ── Reduced motion: opacity only, the mark stays static ──── */

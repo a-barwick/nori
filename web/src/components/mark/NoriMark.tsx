@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useNori } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import type { MarkLook, MarkState } from "@/lib/types";
@@ -87,31 +87,77 @@ function useBlink(enabled: boolean) {
   return blink;
 }
 
+/** The eyes follow your pointer, a few pixels at most; they look down at the composer while you type. */
+function useLook(enabled: boolean, attentive: boolean) {
+  const svg = useRef<SVGSVGElement>(null);
+  const look = useRef<SVGGElement>(null);
+  useEffect(() => {
+    const g = look.current;
+    if (!g) return;
+    const aim = (x: number, y: number) => {
+      g.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`;
+    };
+    if (attentive || !enabled || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      aim(0, attentive ? 2.6 : 0);
+      return;
+    }
+    let frame = 0;
+    let idle: ReturnType<typeof setTimeout>;
+    const onMove = (e: PointerEvent) => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const r = svg.current?.getBoundingClientRect();
+        if (!r) return;
+        const dx = e.clientX - (r.left + r.width / 2);
+        const dy = e.clientY - (r.top + r.height / 2);
+        const d = Math.hypot(dx, dy) || 1;
+        const reach = Math.min(1, d / 320) * 3.2;
+        aim((dx / d) * reach, (dy / d) * reach * 0.8);
+      });
+      clearTimeout(idle);
+      idle = setTimeout(() => aim(0, 0), 4000);
+    };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      cancelAnimationFrame(frame);
+      clearTimeout(idle);
+      aim(0, 0);
+    };
+  }, [enabled, attentive]);
+  return { svg, look };
+}
+
 export function NoriMark({
   size = 32,
   state,
   look,
   className,
   title,
+  watch = false,
 }: {
   size?: number;
   state?: MarkState;
   look?: MarkLook;
   className?: string;
   title?: string;
+  /** Follow the pointer with its eyes (the presence medallion only). */
+  watch?: boolean;
 }) {
   const storeState = useNori((s) => s.markState);
   const storeLook = useNori((s) => s.identity.look);
   const s = state ?? storeState;
   const l = look ?? storeLook;
   const clip = useId().replace(/:/g, "");
-  const blink = useBlink(s === "idle");
+  const blink = useBlink(s === "idle" || s === "attentive" || s === "writing");
+  const { svg: svgRef, look: lookRef } = useLook(watch && s === "idle", watch && s === "attentive");
   const { face, body } = LOOKS[l];
   const [lx, rx] = face.eyes;
   const happy = s === "pleased";
 
   return (
     <svg
+      ref={svgRef}
       width={size}
       height={size}
       viewBox="0 0 96 96"
@@ -124,6 +170,7 @@ export function NoriMark({
     >
       <g className="mark-body-group">
         {body(`clip-${clip}`)}
+        <g ref={lookRef} className="mark-look">
         <g className="mark-eyes">
           {happy ? (
             <>
@@ -136,6 +183,7 @@ export function NoriMark({
               <ellipse className="mark-eye" cx={rx} cy={face.y} rx="3.4" ry="4" fill="var(--mark-ink)" />
             </>
           )}
+        </g>
         </g>
         <path
           d={happy ? `M43 ${face.mouthY - 0.5}Q48 ${face.mouthY + 5} 53 ${face.mouthY - 0.5}` : `M44 ${face.mouthY}Q48 ${face.mouthY + 3.6} 52 ${face.mouthY}`}
@@ -153,19 +201,21 @@ export function Medallion({
   look,
   className,
   children,
+  watch,
 }: {
   size: number;
   state?: MarkState;
   look?: MarkLook;
   className?: string;
   children?: React.ReactNode;
+  watch?: boolean;
 }) {
   return (
     <span
-      className={cn("relative inline-grid shrink-0 place-items-center rounded-full bg-surface", className)}
+      className={cn("relative inline-grid shrink-0 place-items-center rounded-full bg-[var(--mark-paper)]", className)}
       style={{ width: size, height: size, boxShadow: "inset 0 0 0 1px var(--hairline)" }}
     >
-      <NoriMark size={Math.round(size * 0.74)} state={state} look={look} />
+      <NoriMark size={Math.round(size * 0.74)} state={state} look={look} watch={watch} />
       {children}
     </span>
   );

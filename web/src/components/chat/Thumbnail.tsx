@@ -3,6 +3,7 @@
 import { AudioLines, FileText } from "lucide-react";
 import type { Artifact } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { Markdown } from "./Markdown";
 
 /** Drawn 4:3 previews, near-monochrome, so the Library reads as one system. */
 
@@ -104,10 +105,27 @@ function FileThumb({ label }: { label?: string }) {
   );
 }
 
+/** The real thing, shrunk: the document's own title and opening lines on a sheet. */
+function Sheet({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="absolute inset-[10%_12%_0] overflow-hidden rounded-t-[8px] bg-surface shadow-[0_0_0_1px_var(--hairline)]">
+      <div className="pointer-events-none p-[22px] select-none" style={{ zoom: 0.42 }} aria-hidden>
+        <div className="mb-3 text-title font-medium text-ink">{title}</div>
+        <Markdown variant="page">{body.slice(0, 1600)}</Markdown>
+      </div>
+      <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-b from-transparent to-surface" />
+    </div>
+  );
+}
+
+const SHEETS = new Set(["doc", "list", "table", "page", undefined]);
+
 export function Thumbnail({ artifact, className }: { artifact: Artifact; className?: string }) {
   return (
     <div className={cn("relative aspect-[4/3] overflow-hidden bg-fill-1", className)}>
-      {artifact.thumb === "image" && artifact.src ? (
+      {artifact.body && SHEETS.has(artifact.thumb) ? (
+        <Sheet title={artifact.title} body={artifact.body} />
+      ) : artifact.thumb === "image" && artifact.src ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={artifact.src} alt="" className="absolute inset-0 size-full object-cover" draggable={false} />
       ) : artifact.thumb === "table" ? (

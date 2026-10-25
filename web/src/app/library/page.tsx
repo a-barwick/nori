@@ -12,6 +12,7 @@ import { artifactTypeLabel, useNori, type LibraryFilter } from "@/lib/store";
 import { shortDate, duration } from "@/lib/time";
 import type { Artifact } from "@/lib/types";
 import { cn, waveform } from "@/lib/utils";
+import { morphClose, morphOpen } from "@/lib/dom";
 
 const NAV: { heading?: string; items: { key: LibraryFilter; label: string }[] }[] = [
   {
@@ -86,11 +87,11 @@ function Card({ a, selecting, selected, onToggle }: { a: Artifact; selecting: bo
   return (
     <button
       type="button"
-      onClick={() => (selecting ? onToggle() : set({ viewerId: a.id }))}
+      onClick={(e) => (selecting ? onToggle() : morphOpen(e.currentTarget.querySelector("[data-tile]"), () => set({ viewerId: a.id })))}
       aria-pressed={selecting ? selected : undefined}
       className="group/card text-left"
     >
-      <div className={cn("relative overflow-hidden rounded-card shadow-[inset_0_0_0_1px_var(--hairline)] transition-shadow", selected && "shadow-[0_0_0_2px_var(--accent-signal)]")}>
+      <div data-tile={a.id} className={cn("relative overflow-hidden rounded-card shadow-[inset_0_0_0_1px_var(--hairline)] transition-shadow", selected && "shadow-[0_0_0_2px_var(--accent-signal)]")}>
         <Thumbnail artifact={a} className="t-fast transition-transform duration-300 group-hover/card:scale-[1.015]" />
         {selecting && (
           <span
@@ -263,7 +264,7 @@ function Viewer({ a }: { a: Artifact }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-16 shrink-0 items-center gap-3 border-b border-hairline px-5">
-        <IconButton label="Back to Library" onClick={() => set({ viewerId: null })}>
+        <IconButton label="Back to Library" onClick={() => morphClose(a.id, () => set({ viewerId: null }))}>
           <ArrowLeft size={20} strokeWidth={1.5} />
         </IconButton>
         <div className="min-w-0 flex-1">
@@ -304,7 +305,7 @@ function Viewer({ a }: { a: Artifact }) {
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       </header>
-      <div className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto">
+      <div data-artifact-viewer className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto bg-canvas" style={{ viewTransitionName: "artifact" }}>
         {a.src ? (
           <div className="grid min-h-full place-items-center p-10">
             {/* eslint-disable-next-line @next/next/no-img-element */}

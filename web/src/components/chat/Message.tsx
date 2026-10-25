@@ -12,6 +12,7 @@ import { clock, duration } from "@/lib/time";
 import { corners, type GroupUnit, type Pos } from "@/lib/units";
 import type { Chip, ChipSet, ID, ImageItem, Reaction, Sender, ThreadItem, VoiceItem } from "@/lib/types";
 import { cn, plainLine } from "@/lib/utils";
+import { morphOpen } from "@/lib/dom";
 import { Markdown } from "./Markdown";
 import { Thumbnail } from "./Thumbnail";
 
@@ -156,38 +157,34 @@ function UnitFrame({
   );
 }
 
-/* ── Chips: inside Nori's last bubble, dashed = possible, not yet said ── */
+/* ── Chips: one-tap replies under Nori's last bubble; a tapped one becomes your message ── */
 
-function Chips({ threadId, itemId, chips }: { threadId: ID; itemId: ID; chips: ChipSet }) {
+function Chips({ threadId, itemId, chips, fresh }: { threadId: ID; itemId: ID; chips: ChipSet; fresh: boolean }) {
   const chosen = chips.options.find((c) => c.id === chips.chosenId);
-  const busy = useNori((s) => s.typing === threadId || s.work?.threadId === threadId);
+  const busy = useNori((s) => s.typing === threadId || s.work?.threadId === threadId || s.stream?.threadId === threadId);
   return (
-    <>
-      <AnimatePresence initial={false}>
-        {!chosen && (
-          <motion.div key="chips" className="mt-2.5 flex flex-col gap-2 first:mt-0" exit={{ opacity: 0, transition: { duration: 0.15 } }}>
-            {chips.options.map((c: Chip) => (
-              <motion.button
-                key={c.id}
-                layoutId={`chip-${c.id}`}
-                type="button"
-                disabled={busy}
-                onClick={() => void chooseChip(threadId, itemId, c)}
-                transition={SPRING}
-                className="t-fast w-full rounded-chip border border-dashed border-chip-border px-2.5 py-2 text-left text-input text-ink transition-[background-color,border-color] hover:border-solid hover:border-accent-signal hover:bg-accent-subtle disabled:opacity-60"
-              >
-                {c.label}
-              </motion.button>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {chosen && (
-        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2, delay: 0.1 }} className="mt-2 text-meta text-ink-2">
-          You chose: {chosen.label.replace(/[.!?]$/, "")}.
-        </motion.p>
+    <AnimatePresence initial={false}>
+      {!chosen && (
+        <motion.div key="chips" role="group" aria-label="Suggested replies" className="flex flex-wrap gap-1.5" exit={{ opacity: 0, transition: { duration: 0.15 } }}>
+          {chips.options.map((c: Chip, i) => (
+            <motion.button
+              key={c.id}
+              layoutId={`chip-${c.id}`}
+              type="button"
+              disabled={busy}
+              onClick={() => void chooseChip(threadId, itemId, c)}
+              initial={fresh ? { opacity: 0, y: 8, scale: 0.96 } : false}
+              animate={{ opacity: 1, y: 0, scale: 1, transition: { ...SPRING, delay: fresh ? 0.18 + i * 0.07 : 0 } }}
+              whileTap={{ scale: 0.96 }}
+              transition={SPRING}
+              className="t-fast min-h-9 rounded-full bg-surface px-3.5 py-1.5 text-left text-row text-ink shadow-pill transition-[background-color,color,box-shadow] hover:bg-accent-subtle hover:text-accent-text hover:shadow-[0_0_0_1px_var(--accent-signal)] disabled:opacity-60"
+            >
+              {c.label}
+            </motion.button>
+          ))}
+        </motion.div>
       )}
-    </>
+    </AnimatePresence>
   );
 }
 
@@ -212,13 +209,24 @@ export function BubbleUnit({
   });
   const mine = sender === "me";
   const fromChip = unit.item.kind === "text" ? unit.item.fromChip : undefined;
-  // Reactions sit on the item's last bubble: its chips bubble if it has one.
-  const hasChips = unit.item.kind === "text" && !!unit.item.chips;
-  const carriesReactions = unit.transcript || unit.key.endsWith("-chips") || (unit.item.kind === "text" && !hasChips);
+  // Reactions sit on the item's text bubble.
+  const carriesReactions = unit.transcript || (unit.item.kind === "text" && !!unit.markdown);
   const reactions = carriesReactions ? unit.item.reactions : undefined;
   const edited = unit.item.kind === "text" && unit.item.edited;
 
+  // Chips that just arrived stagger in; ones from history are simply there.
+  const [fresh] = useState(() => Date.now() - unit.item.at < 4000);
+
+  if (!unit.markdown && unit.chips) {
+    return (
+      <div className="w-full" data-item-id={unit.item.id}>
+        <Chips threadId={threadId} itemId={unit.item.id} chips={unit.chips} fresh={fresh} />
+      </div>
+    );
+  }
+
   return (
+    <div className={cn("flex w-full flex-col gap-2", mine ? "items-end" : "items-start")}>
     <UnitFrame threadId={threadId} item={unit.item} sender={sender} reactions={reactions} copyText={unit.markdown}>
       <motion.div
         layoutId={fromChip ? `chip-${fromChip}` : undefined}
@@ -234,10 +242,11 @@ export function BubbleUnit({
           )}
           {unit.markdown && <Markdown onAccent={mine}>{unit.markdown}</Markdown>}
           {edited && <span className={cn("text-caption", mine ? "text-on-accent/75" : "text-ink-3")}> · edited</span>}
-          {unit.chips && <Chips threadId={threadId} itemId={unit.item.id} chips={unit.chips} />}
         </motion.div>
       </motion.div>
     </UnitFrame>
+    {unit.chips && <Chips threadId={threadId} itemId={unit.item.id} chips={unit.chips} fresh={fresh} />}
+    </div>
   );
 }
 
@@ -418,10 +427,11 @@ export function ArtifactUnit({
   const set = useNori((s) => s.set);
   const router = useRouter();
   if (!artifact) return null;
-  const open = () => {
-    set({ viewerId: artifact.id, libraryFilter: "all" });
-    router.push("/library");
-  };
+  const open = (e: React.MouseEvent<HTMLElement>) =>
+    morphOpen(e.currentTarget.querySelector("[data-tile]"), () => {
+      set({ viewerId: artifact.id, libraryFilter: "all" });
+      router.push("/library");
+    });
   return (
     <UnitFrame threadId={threadId} item={item} sender={sender} reactions={item.kind === "attachment" ? item.reactions : undefined}>
       <div
@@ -429,7 +439,9 @@ export function ArtifactUnit({
         style={{ borderRadius: corners(sender, pos, 16) }}
       >
         <button type="button" onClick={open} className="block w-full text-left" aria-label={`Open ${artifact.title}`}>
-          <Thumbnail artifact={artifact} />
+          <div data-tile={artifact.id}>
+            <Thumbnail artifact={artifact} />
+          </div>
           <div className="px-3 pt-2.5 pb-3">
             <div className="truncate text-row-title font-medium text-ink">{artifact.title}</div>
             <div className="text-caption text-ink-3">

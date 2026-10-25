@@ -165,12 +165,6 @@ export function classify(markdown: string, forced?: "page" | "bubble"): Classifi
   return { mode, cover: FALLBACK_COVER, body: markdown, reasons };
 }
 
-/** Rough check used while a live reply streams in, to switch typing → "writing it up". */
-export function looksLikePage(partial: string) {
-  if (/^#{1,6}\s|\n#{1,6}\s|\n\|.*\|\s*\n|```[\s\S]*\n[\s\S]*\n[\s\S]*\n/.test(partial)) return true;
-  return partial.split(/\s+/).length > PAGE_WORDS;
-}
-
 const SVG_FENCE = /```svg[^\n]*\n([\s\S]*?)```/;
 
 /** Pulls the reply's ```svg block out as an image; the text around it stays. */

@@ -191,8 +191,21 @@ export function Composer({ threadId, unread, onJump }: { threadId: ID; unread: n
   useLayoutEffect(() => {
     const el = area.current;
     if (!el) return;
+    // Measure at auto, then ease from the old height to the new one.
+    const prev = el.style.height;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, LINE * MAX_LINES + 4)}px`;
+    const next = `${Math.min(el.scrollHeight, LINE * MAX_LINES + 4)}px`;
+    el.style.height = prev;
+    void el.offsetHeight;
+    el.style.height = next;
+  }, [draft]);
+
+  // Nori looks down at the composer while you write to it.
+  useEffect(() => {
+    const s = getNori();
+    const writing = draft.trim().length > 0;
+    if (writing && s.markState === "idle") s.set({ markState: "attentive" });
+    if (!writing && s.markState === "attentive") s.set({ markState: "idle" });
   }, [draft]);
 
   useEffect(() => {
@@ -430,7 +443,7 @@ export function Composer({ threadId, unread, onJump }: { threadId: ID; unread: n
                 onPaste={onPaste}
                 placeholder="Message Nori"
                 aria-label="Message Nori"
-                className="scrollbar-quiet max-h-[196px] min-h-8 flex-1 resize-none bg-transparent py-1 text-input text-ink placeholder:text-ink-3 focus-visible:outline-none"
+                className="scrollbar-quiet max-h-[196px] min-h-8 flex-1 resize-none bg-transparent transition-[height] duration-150 ease-out py-1 text-input text-ink placeholder:text-ink-3 focus-visible:outline-none"
               />
               {(recorder.error || recorder.pending) && (
                 <span className="self-center text-caption text-ink-3" role="status">

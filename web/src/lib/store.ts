@@ -54,6 +54,8 @@ interface UIState {
   typing: ID | null;
   work: WorkStatus | null;
   liveError: { threadId: ID; message: string } | null;
+  /** A live reply as it's being written, revealed word by word. */
+  stream: { threadId: ID; text: string } | null;
   lightbox: { src: string; alt: string } | null;
   composerFocus: number;
   /** Items that arrived after load animate in. */
@@ -131,6 +133,7 @@ const initialUI = (): UIState => ({
   typing: null,
   work: null,
   liveError: null,
+  stream: null,
   lightbox: null,
   composerFocus: 0,
   arrived: {},

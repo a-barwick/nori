@@ -15,6 +15,8 @@ function TopBar() {
 
   return (
     <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex items-start px-4">
+      {/* Frosted band: what scrolls under Nori blurs away instead of ghosting through */}
+      <div aria-hidden className="top-frost absolute inset-x-0 -top-3" style={{ height: panelOpen ? 44 : 92 }} />
       {!panelOpen && (
         <button
           type="button"
@@ -22,7 +24,7 @@ function TopBar() {
           aria-label={`${name}: open agent panel`}
           className="anim-fade pointer-events-auto absolute left-1/2 flex -translate-x-1/2 flex-col items-center rounded-full"
         >
-          <Medallion size={52} />
+          <Medallion size={52} watch />
           <span className="glass -mt-2.5 rounded-full px-2.5 py-0.5 text-caption font-medium text-ink">{name}</span>
         </button>
       )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { classify, extractHints, extractSvg, looksLikePage, svgSize } from "../hybrid";
+import { classify, extractHints, extractSvg, svgSize } from "../hybrid";
 import { MAIN_THREAD } from "../seed";
 import { getNori, artifactTypeLabel } from "../store";
 import { clock, nextRun, relative, upcomingAt } from "../time";
@@ -37,7 +37,7 @@ function clearBusy(threadId: ID, token: object) {
   if (s.work?.threadId === threadId && busyToken.get(threadId) === token) patch.work = null;
   if (busyToken.get(threadId) === token) {
     busyToken.delete(threadId);
-    if (s.markState === "thinking") patch.markState = "idle";
+    if (s.markState === "thinking" || s.markState === "writing") patch.markState = "idle";
   }
   if (Object.keys(patch).length) s.set(patch);
 }
@@ -58,9 +58,9 @@ async function typing(threadId: ID, ms: number) {
   }
 }
 
-function say(threadId: ID, text: string, extra: Partial<TextItem> = {}) {
+function say(threadId: ID, text: string, extra: Partial<TextItem> = {}, animate = true) {
   const item: TextItem = { id: uid("m"), kind: "text", sender: "nori", at: Date.now(), text, ...extra };
-  getNori().appendItem(threadId, item);
+  getNori().appendItem(threadId, item, { animate });
   if (item.activityId) getNori().linkActivity(item.activityId, threadId, item.id);
   return item.id;
 }
@@ -186,7 +186,8 @@ function react(threadId: ID, emoji: string) {
   s.updateItem(threadId, mine.id, { reactions: [...(mine.reactions ?? []).filter((r) => r.by !== "nori"), { emoji, by: "nori" }] });
 }
 
-function finalize(threadId: ID, raw: string) {
+/** `streamed`: the words were already on screen, so the bubbles settle in place instead of arriving. */
+function finalize(threadId: ID, raw: string, streamed = false) {
   const s = getNori();
   const { body, hints } = extractHints(raw);
   if (hints.react) react(threadId, hints.react);
@@ -217,7 +218,7 @@ function finalize(threadId: ID, raw: string) {
   const after = drawing?.after ?? "";
   // An approval card carries its own buttons, so chips would compete with it.
   const lastChips = hints.approval ? undefined : replyChips;
-  if (before) say(threadId, mode(before), after ? {} : { chips: lastChips });
+  if (before) say(threadId, mode(before), after ? {} : { chips: lastChips }, !streamed);
   if (drawing) {
     const { w, h } = svgSize(drawing.svg);
     const item: ImageItem = {
@@ -232,7 +233,7 @@ function finalize(threadId: ID, raw: string) {
     };
     s.appendItem(threadId, item);
   }
-  if (after) say(threadId, mode(after), { chips: lastChips });
+  if (after) say(threadId, mode(after), { chips: lastChips }, !streamed);
   if (hints.approval) {
     const messageId = uid("ap-m");
     const approvalId = s.addApproval({ ...hints.approval, threadId, messageId });
@@ -242,6 +243,62 @@ function finalize(threadId: ID, raw: string) {
   }
 }
 
+/**
+ * Paces a live reply onto the screen a word at a time. The network arrives in
+ * bursts; this smooths it to a steady read that speeds up when it falls behind,
+ * so it never lags the model by more than about half a second.
+ */
+function revealer(threadId: ID) {
+  let target = "";
+  let shown = 0;
+  let last = 0;
+  let frame = 0;
+  let settle: (() => void) | null = null;
+  const reduced = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const tick = (now: number) => {
+    const dt = last ? Math.min(64, now - last) : 16;
+    last = now;
+    const backlog = target.length - shown;
+    const rate = Math.max(70, backlog * 2.4); // characters per second
+    let next = reduced ? target.length : Math.min(target.length, shown + Math.max(1, Math.round((rate * dt) / 1000)));
+    // Whole words only: finish the word we're in.
+    if (next < target.length) {
+      const space = target.slice(next).search(/\s/);
+      next = space < 0 ? target.length : next + space;
+    }
+    if (next !== shown) {
+      shown = next;
+      getNori().set({ stream: { threadId, text: target.slice(0, shown) } });
+    }
+    if (shown < target.length) frame = requestAnimationFrame(tick);
+    else {
+      frame = 0;
+      last = 0;
+      settle?.();
+      settle = null;
+    }
+  };
+
+  return {
+    push(text: string) {
+      target = text;
+      if (!frame) frame = requestAnimationFrame(tick);
+    },
+    /** Resolves once everything pushed so far is on screen. */
+    flush() {
+      return shown >= target.length ? Promise.resolve() : new Promise<void>((r) => (settle = r));
+    },
+    stop() {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      settle?.();
+      settle = null;
+      if (getNori().stream?.threadId === threadId) getNori().set({ stream: null });
+    },
+  };
+}
+
 /** `nudge` is a note in your voice for turns you didn't type, such as tapping Approve. */
 export async function liveReply(threadId: ID, nudge?: string) {
   live.get(threadId)?.abort();
@@ -249,20 +306,27 @@ export async function liveReply(threadId: ID, nudge?: string) {
   live.set(threadId, controller);
   const token = claimBusy(threadId);
   const s = getNori();
-  s.set({ typing: threadId, work: null, markState: "thinking", liveError: null });
+  s.set({ typing: threadId, work: null, markState: "thinking", liveError: null, stream: null });
+  const reveal = revealer(threadId);
   let text = "";
-  let paged = false;
+  let started = false;
   try {
     for await (const chunk of backend.reply({ messages: toApiMessages(threadId, nudge), context: buildContext() }, controller.signal)) {
       text += chunk;
-      if (!paged && looksLikePage(extractHints(text).body)) {
-        paged = true;
-        getNori().set({ typing: null, work: { label: "Writing it up…", threadId } });
+      if (!started && extractHints(text).body) {
+        started = true;
+        getNori().set({ typing: null, markState: "writing" });
       }
+      reveal.push(text);
     }
     if (controller.signal.aborted) return;
+    await reveal.flush();
+    if (controller.signal.aborted) return;
     clearBusy(threadId, token);
-    finalize(threadId, text);
+    // Same task: the draft leaves and the real items take its place in one paint.
+    finalize(threadId, text, started);
+    getNori().set({ stream: null });
+    if (started) pleased();
   } catch (err) {
     if (controller.signal.aborted) return;
     getNori().set({
@@ -272,6 +336,7 @@ export async function liveReply(threadId: ID, nudge?: string) {
       },
     });
   } finally {
+    reveal.stop();
     if (live.get(threadId) === controller) live.delete(threadId);
     // A newer reply on this thread owns the indicator now; leave it alone.
     clearBusy(threadId, token);

@@ -5,6 +5,7 @@ import { BookmarkPlus, Check, Copy, CornerUpLeft } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import { retryLive } from "@/lib/nori/engine";
+import { classify, extractHints } from "@/lib/hybrid";
 import { useNori, useThread } from "@/lib/store";
 import { clock } from "@/lib/time";
 import { buildUnits, posOf, type Unit } from "@/lib/units";
@@ -103,6 +104,53 @@ function Typing() {
   );
 }
 
+/** The reply while it's being written: same shapes it will settle into, with a soft caret. */
+function Draft({ threadId }: { threadId: ID }) {
+  const text = useNori((s) => (s.stream?.threadId === threadId ? s.stream.text : null));
+  const name = useNori((s) => s.identity.name);
+  if (text == null) return null;
+  const { body, hints } = extractHints(text);
+  // A drawing is shown whole once it's done; until then it holds its place.
+  const svgAt = body.indexOf("```svg");
+  const words = (svgAt >= 0 ? body.slice(0, svgAt) : body).trim();
+  if (!words && svgAt < 0) return null;
+  const c = words ? classify(words, hints.mode) : null;
+  const bubble = c?.mode === "page" ? c.cover : c?.body;
+
+  return (
+    <div className="arrive" aria-hidden>
+      {bubble && (
+        <div className="mt-4 flex">
+          <div className={cn("max-w-[min(680px,100%)] rounded-bubble bg-bubble px-[15px] py-[11px] text-ink", c?.mode !== "page" && "streaming")}>
+            <Markdown>{bubble}</Markdown>
+          </div>
+        </div>
+      )}
+      {c?.mode === "page" && (
+        <article className="mt-4 w-full">
+          <header className="flex h-8 items-center gap-1.5">
+            <NoriMark size={16} state="writing" />
+            <span className="text-meta font-medium text-ink">{name}</span>
+          </header>
+          <div className="streaming mt-1 max-w-[68ch]">
+            <Markdown variant="page">{c.body}</Markdown>
+          </div>
+        </article>
+      )}
+      {svgAt >= 0 && <div className="skeleton mt-1 aspect-[4/3] w-[min(480px,100%)] rounded-tile bg-fill-1" />}
+    </div>
+  );
+}
+
+function greeting(now = new Date()) {
+  const h = now.getHours();
+  if (h < 5) return "Still up? I'm here.";
+  if (h < 12) return "Morning. What's on today?";
+  if (h < 17) return "Afternoon. What can I take off your plate?";
+  if (h < 22) return "Evening. Anything for tomorrow?";
+  return "Late one. What's on your mind?";
+}
+
 function WorkLine({ label, activityId }: { label: string; activityId?: ID }) {
   const openPanelAt = useNori((s) => s.openPanelAt);
   const setFocus = useNori((s) => s.setFocusActivity);
@@ -185,6 +233,7 @@ export function Thread({
   const items = useMemo(() => thread?.items ?? [], [thread?.items]);
   const units = useMemo(() => buildUnits(items), [items]);
   const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const seen = useRef(items.length);
   const [firstUnread, setFirstUnread] = useState<ID | null>(null);
@@ -221,6 +270,21 @@ export function Thread({
   useEffect(() => {
     if ((typing || work) && atBottom.current) requestAnimationFrame(() => scrollToBottom(true));
   }, [typing, work]);
+
+  // Anything that grows the thread (a reply being written, an image decoding)
+  // keeps you pinned to the bottom if that's where you were.
+  useEffect(() => {
+    const el = content.current;
+    if (!el) return;
+    let prev = el.offsetHeight;
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight;
+      if (h > prev && atBottom.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
+      prev = h;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const jump = () => {
@@ -266,18 +330,27 @@ export function Thread({
       style={{ "--top-fade": presence ? "104px" : "56px" } as React.CSSProperties}
     >
       <div
+        ref={content}
         role="log"
         aria-live="polite"
         aria-label={`Conversation: ${thread.title}`}
         className={cn("mx-auto max-w-[768px] px-[clamp(24px,calc(72px-(100vw-768px)/2),72px)] pb-[148px] transition-[padding] duration-300", presence ? "pt-28" : "pt-16")}
       >
         <div aria-live="off">
-          {units.length === 0 && thread.kind === "side" && (
+          {units.length === 0 && !typing && thread.kind === "side" && (
             <div className="grid min-h-[50vh] place-items-center text-center text-meta text-ink-3">Say hi to start this side chat.</div>
+          )}
+          {units.length === 0 && !typing && thread.kind !== "side" && (
+            <div className="grid min-h-[calc(100dvh-320px)] place-items-center">
+              <p className="arrive text-title text-ink-2" style={{ animationDelay: "250ms" }}>
+                {greeting()}
+              </p>
+            </div>
           )}
           {units.map((u) => (
             <UnitView key={u.key} threadId={threadId} unit={u} animate={animate} />
           ))}
+          <Draft threadId={threadId} />
           {typing && <Typing />}
           {work && <WorkLine label={work.label} activityId={work.activityId} />}
           {liveError && (

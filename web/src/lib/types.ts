@@ -1,6 +1,6 @@
 export type ID = string;
 export type Sender = "nori" | "me";
-export type MarkState = "idle" | "thinking" | "listening" | "pleased";
+export type MarkState = "idle" | "attentive" | "thinking" | "writing" | "listening" | "pleased";
 export type MarkLook = "onigiri" | "sprout" | "pebble";
 
 export interface Reaction {
