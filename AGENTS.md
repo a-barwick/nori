@@ -1,3 +1,5 @@
+> AGENTS.md and CLAUDE.md are guidance, not law. Use judgment: follow the intent (keep costs low, keep things simple), and do not let a literal reading block reasonable work or add process. When a rule and good sense conflict, do the sensible thing and say so in one line.
+
 # GCP cost rules
 
 These apply to this repository's GCP project `bot-111549`. They are cost controls, not design constraints.
