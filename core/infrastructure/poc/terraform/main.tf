@@ -1,0 +1,511 @@
+locals {
+
+  project      = "bot-111549"
+  region       = "us-central1"
+  zone         = "us-central1-a"
+  number       = "8273801370"
+  apis         = toset(["run.googleapis.com", "aiplatform.googleapis.com", "firestore.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "compute.googleapis.com", "iap.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "policytroubleshooter.googleapis.com"])
+  runtime_name = "projects/${local.number}/locations/${local.region}/reasoningEngines/${basename(google_vertex_ai_reasoning_engine.runtime.name)}"
+  runtime_url  = "https://${local.region}-aiplatform.googleapis.com/reasoningEngines/v1/${local.runtime_name}/api"
+
+}
+
+variable "web_image" {
+  type = string
+}
+
+variable "runtime_image" {
+  type = string
+}
+
+variable "computer_release_sha256" {
+
+  type = string
+  validation {
+
+    condition     = can(regex("^[a-f0-9]{64}$", var.computer_release_sha256))
+    error_message = "Use the sha256 of the statically built Linux amd64 computer-agent."
+
+  }
+
+}
+
+variable "provisioning_deadline" {
+
+  description = "Initial VM STOP deadline, verified by poc.py before first apply. Native resume updates it thereafter."
+  type        = string
+
+}
+
+variable "model" {
+  type    = string
+  default = "gemini-3.1-flash-lite"
+}
+
+variable "firestore_database" {
+  type    = string
+  default = "nori-poc"
+}
+
+resource "google_project_service" "api" {
+
+  for_each           = local.apis
+  project            = local.project
+  service            = each.value
+  disable_on_destroy = false
+
+}
+
+data "google_compute_network" "computer" {
+  name = "nori-computer"
+}
+
+data "google_compute_subnetwork" "computer" {
+  name   = "nori-computer"
+  region = local.region
+}
+
+data "google_compute_disk" "computer" {
+  name = "bot-computer-data"
+  zone = local.zone
+}
+
+resource "google_artifact_registry_repository" "images" {
+
+  location      = local.region
+  repository_id = "nori-poc"
+  format        = "DOCKER"
+  depends_on    = [google_project_service.api]
+
+}
+
+resource "google_storage_bucket" "artifacts" {
+
+  name                        = "bot-111549-nori-poc"
+  location                    = "US-CENTRAL1"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [google_project_service.api]
+
+}
+
+resource "google_firestore_database" "state" {
+
+  name                    = var.firestore_database
+  location_id             = local.region
+  type                    = "FIRESTORE_NATIVE"
+  delete_protection_state = "DELETE_PROTECTION_ENABLED"
+  deletion_policy         = "ABANDON"
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [google_project_service.api]
+
+}
+
+resource "google_service_account" "web" {
+  account_id   = "nori-poc-web"
+  display_name = "Nori web"
+}
+
+resource "google_service_account" "runtime" {
+  account_id   = "nori-poc-runtime"
+  display_name = "Nori agent runtime"
+}
+
+resource "google_service_account" "computer" {
+  account_id   = "nori-poc-computer"
+  display_name = "Nori retained computer"
+}
+
+resource "google_project_iam_custom_role" "query" {
+
+  role_id     = "noriPocRuntimeQuery"
+  title       = "Nori runtime invocation"
+  permissions = ["aiplatform.reasoningEngines.query"]
+
+}
+
+resource "google_project_iam_custom_role" "computer_start" {
+
+  role_id     = "noriPocComputerStart"
+  title       = "Nori retained computer start"
+  permissions = ["compute.instances.get", "compute.instances.start"]
+
+}
+
+resource "google_project_iam_member" "computer_start" {
+
+  project = local.project
+  role    = google_project_iam_custom_role.computer_start.name
+  member  = "serviceAccount:${google_service_account.runtime.email}"
+  condition {
+
+    title      = "nori-computer-only"
+    expression = "resource.name == 'projects/${local.project}/zones/${local.zone}/instances/nori-computer'"
+
+  }
+
+}
+
+resource "google_project_iam_member" "runtime_firestore" {
+
+  project = local.project
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.runtime.email}"
+  condition {
+
+    title      = "nori-state-only"
+    expression = "resource.name == 'projects/${local.project}/databases/${var.firestore_database}' || resource.name.startsWith('projects/${local.project}/databases/${var.firestore_database}/') || resource.name == 'projects/${local.number}/databases/${var.firestore_database}' || resource.name.startsWith('projects/${local.number}/databases/${var.firestore_database}/')"
+
+  }
+
+}
+
+resource "google_project_iam_custom_role" "model" {
+  role_id     = "noriPocModelPredict"
+  title       = "Nori runtime API calls"
+  permissions = ["aiplatform.endpoints.predict", "serviceusage.services.use"]
+}
+resource "google_project_iam_member" "runtime_model" {
+
+  project = local.project
+  role    = google_project_iam_custom_role.model.name
+  member  = "serviceAccount:${google_service_account.runtime.email}"
+
+}
+
+resource "google_storage_bucket_iam_member" "runtime_objects" {
+
+  bucket = google_storage_bucket.artifacts.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.runtime.email}"
+  condition {
+
+    title      = "runtime-artifacts-only"
+    expression = "resource.name.startsWith('projects/_/buckets/${google_storage_bucket.artifacts.name}/objects/artifacts/')"
+
+  }
+
+}
+
+resource "google_storage_bucket_iam_member" "computer_release" {
+
+  bucket = google_storage_bucket.artifacts.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.computer.email}"
+  condition {
+
+    title      = "computer-binaries-only"
+    expression = "resource.name.startsWith('projects/_/buckets/${google_storage_bucket.artifacts.name}/objects/releases/computer-agent-')"
+
+  }
+
+}
+
+resource "google_compute_firewall" "computer_rpc" {
+
+  name                    = "nori-poc-computer-iap-rpc"
+  network                 = data.google_compute_network.computer.id
+  source_ranges           = ["35.235.240.0/20"]
+  target_service_accounts = [google_service_account.computer.email]
+  allow {
+    protocol = "tcp"
+    ports    = ["8090"]
+  }
+
+}
+
+resource "google_compute_instance" "computer" {
+
+  name                      = "nori-computer"
+  zone                      = local.zone
+  machine_type              = "n2-standard-2"
+  min_cpu_platform          = "Intel Cascade Lake"
+  desired_status            = "TERMINATED"
+  allow_stopping_for_update = false
+  deletion_protection       = true
+  advanced_machine_features {
+    enable_nested_virtualization = true
+  }
+
+  boot_disk {
+
+    auto_delete = true
+    initialize_params {
+      image = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64"
+      type  = "pd-standard"
+      size  = 20
+    }
+
+  }
+
+  attached_disk {
+    source      = data.google_compute_disk.computer.id
+    device_name = "bot-guest-data"
+    mode        = "READ_WRITE"
+  }
+
+  network_interface {
+    subnetwork = data.google_compute_subnetwork.computer.id
+    access_config {
+
+    }
+
+  }
+
+  service_account {
+    email  = google_service_account.computer.email
+    scopes = ["https://www.googleapis.com/auth/devstorage.read_only"]
+  }
+
+  scheduling {
+
+    automatic_restart           = false
+    on_host_maintenance         = "TERMINATE"
+    provisioning_model          = "STANDARD"
+    instance_termination_action = "STOP"
+    termination_time            = var.provisioning_deadline
+
+  }
+
+  metadata = {
+
+    block-project-ssh-keys = "true"
+    enable-oslogin         = "true"
+    serial-port-enable     = "false"
+    startup-script         = file("${path.module}/../computer-startup.sh")
+    shutdown-script        = "#!/bin/bash\nset -e\n[ ! -x /usr/local/sbin/nori-vm ] || /usr/local/sbin/nori-vm stop\n"
+    # Keep the deployed attachment's device name; host paths/services use Nori.
+    nori-vm-control         = replace(file("${path.module}/../../microvm/vm-control.sh"), "/dev/disk/by-id/google-nori-guest-data", "/dev/disk/by-id/google-bot-guest-data")
+    computer-paused         = "true"
+    computer-release-object = "${google_storage_bucket.artifacts.name}/releases/computer-agent-${var.computer_release_sha256}"
+    computer-release-sha256 = var.computer_release_sha256
+
+  }
+
+  lifecycle {
+
+    prevent_destroy = true
+    ignore_changes  = [desired_status, scheduling[0].termination_time, metadata["computer-paused"], metadata["computer-release-object"], metadata["computer-release-sha256"]]
+    precondition {
+
+      condition     = data.google_compute_disk.computer.disk_id == "3757334953750232874" && data.google_compute_disk.computer.size == 20
+      error_message = "Refusing to attach a replaced or resized retained guest disk."
+
+    }
+
+  }
+
+  depends_on = [google_project_service.api]
+
+}
+
+resource "google_iap_tunnel_instance_iam_member" "runtime_computer" {
+
+  project  = local.project
+  zone     = local.zone
+  instance = google_compute_instance.computer.name
+  role     = "roles/iap.tunnelResourceAccessor"
+  member   = "serviceAccount:${google_service_account.runtime.email}"
+  condition {
+    title      = "rpc-port-only"
+    expression = "destination.port == 8090"
+  }
+
+}
+
+resource "google_vertex_ai_reasoning_engine" "runtime" {
+
+  display_name    = "Nori Go Agent Runtime"
+  region          = local.region
+  deletion_policy = "PREVENT"
+  spec {
+
+    service_account = google_service_account.runtime.email
+    identity_type   = "SERVICE_ACCOUNT"
+    agent_framework = "custom"
+    container_spec {
+      image_uri = var.runtime_image
+      port      = 8080
+    }
+
+    deployment_spec {
+
+      min_instances         = 0
+      max_instances         = 1
+      container_concurrency = 3
+      resource_limits = {
+        cpu = "1", memory = "1Gi"
+      }
+
+      env {
+        name  = "NORI_PROJECT_ID"
+        value = local.project
+      }
+
+      env {
+        name  = "MODEL_LOCATION"
+        value = "global"
+      }
+
+      env {
+        name  = "FIRESTORE_DATABASE_ID"
+        value = var.firestore_database
+      }
+
+      env {
+        name  = "ARTIFACT_BUCKET"
+        value = google_storage_bucket.artifacts.name
+      }
+
+      env {
+        name  = "COMPUTER_ZONE"
+        value = local.zone
+      }
+
+      env {
+        name  = "COMPUTER_INSTANCE"
+        value = google_compute_instance.computer.name
+      }
+
+      env {
+        name  = "MODEL_NAME"
+        value = var.model
+      }
+
+    }
+
+  }
+
+  lifecycle {
+    ignore_changes = [spec[0].container_spec[0].image_uri]
+  }
+
+  depends_on = [google_project_service.api, google_project_iam_member.runtime_firestore, google_project_iam_member.runtime_model, google_artifact_registry_repository_iam_member.runtime_image_reader, google_artifact_registry_repository_iam_member.platform_image_reader]
+
+}
+
+resource "google_cloud_run_v2_service" "web" {
+
+  name                 = "nori-web"
+  location             = local.region
+  deletion_protection  = true
+  iap_enabled          = true
+  invoker_iam_disabled = false
+  ingress              = "INGRESS_TRAFFIC_ALL"
+  template {
+
+    service_account                  = google_service_account.web.email
+    timeout                          = "180s"
+    max_instance_request_concurrency = 10
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 1
+    }
+
+    containers {
+
+      image = var.web_image
+      ports {
+        container_port = 8080
+      }
+
+      resources {
+        limits = {
+          cpu = "1", memory = "512Mi"
+        }
+
+        cpu_idle = true
+      }
+
+      env {
+        name  = "NORI_RUNTIME_URL"
+        value = local.runtime_url
+      }
+
+      env {
+        name  = "IAP_AUDIENCE"
+        value = "/projects/${local.number}/locations/${local.region}/services/nori-web"
+      }
+      env {
+        name  = "OWNER_EMAIL"
+        value = "austinbarwickdavis@gmail.com"
+      }
+
+    }
+
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image]
+  }
+
+  depends_on = [google_project_service.api]
+
+}
+
+# Invocation grants are deliberately absent. poc.py resume adds expiring bindings;
+# pause removes them and verifies denial. Terraform never owns their lifecycle.
+output "web_url" {
+  value = google_cloud_run_v2_service.web.uri
+}
+
+output "runtime_name" {
+  value = local.runtime_name
+}
+
+output "runtime_url" {
+  value = local.runtime_url
+}
+
+output "artifact_bucket" {
+  value = google_storage_bucket.artifacts.name
+}
+
+output "firestore_database" {
+  value = var.firestore_database
+}
+
+output "query_role" {
+  value = google_project_iam_custom_role.query.name
+}
+
+output "web_service_account" {
+  value = google_service_account.web.email
+}
+
+output "runtime_service_account" {
+  value = google_service_account.runtime.email
+}
+
+output "computer_service_account" {
+  value = google_service_account.computer.email
+}
+
+output "image_repository" {
+  value = "${local.region}-docker.pkg.dev/${local.project}/${google_artifact_registry_repository.images.repository_id}"
+}
+
+# Create this native Google-managed identity before applying the grant:
+# gcloud beta services identity create --service=aiplatform.googleapis.com
+resource "google_artifact_registry_repository_iam_member" "runtime_image_reader" {
+  location   = local.region
+  repository = google_artifact_registry_repository.images.name
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:service-${local.number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+}
+
+# Both native service agents need read access for the BYOC image pull.
+resource "google_artifact_registry_repository_iam_member" "platform_image_reader" {
+  location   = local.region
+  repository = google_artifact_registry_repository.images.name
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:service-${local.number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+}

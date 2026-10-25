@@ -1,33 +1,32 @@
 # Nori web
 
-Desktop web interface for Nori, built from the Nori design spec. Next.js 16 (App Router, Turbopack), Tailwind v4 on semantic tokens, Radix primitives, Zustand.
+The root page is the single-user Nori POC: persisted conversation, task activity, screenshot results, and Stop. It calls the private Go Agent Runtime through server-side POST routes. The web service makes no model calls and needs no model API keys.
 
-This is demo work: the thread, agent panel, Ideas, Goals and Library run on seed data, and anything you type gets a live reply from Claude through `src/app/api/nori/route.ts`. Later, `src/lib/nori/backend.ts` is the seam where the core agent service API plugs in.
+## Local development
 
-## Run
-
-```bash
-bun install
-bun run dev
+```sh
+cd web && bun install
+cd .. && make web
 ```
 
-Then open http://127.0.0.1:3000 (pass `--port` to pick another). The dev and start scripts bind to 127.0.0.1 only, and `/api/nori` rejects non-local requests, because the route spends your API key.
+Run these commands from the monorepo root. Open `http://127.0.0.1:3210`. Development access is limited to loopback hostnames; API calls also require the exact same Origin. Production always requires a signed IAP assertion. Missing runtime configuration produces a visible error without automatic retries.
 
-## Environment
+The root `.env.example` lists the configuration names. Keep their values in the monorepo's single gitignored, mode-600 root `.env` and load them through the root start script or Makefile; do not create a second credential file in `web/`. Local upstream access uses Google Application Default Credentials; Cloud Run uses its service account.
 
-Keys live in `web/.env` (gitignored). The app reads one:
-
-| Key | Used for |
+| Variable | Meaning |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | Live replies (Claude Sonnet 5.5, medium effort) |
+| `NORI_RUNTIME_URL` | Native Agent Runtime invoke root, ending in `/api/`. The proxy appends `api/session`, `api/run`, `api/cancel`, or `api/artifact`; the resulting `/api/api/` is intentional. |
+| `IAP_AUDIENCE` | Cloud Run signed-header audience: `/projects/PROJECT_NUMBER/locations/REGION/services/SERVICE_NAME`. Required in production. |
+| `NORI_APP_ORIGIN` | Optional canonical HTTPS origin for same-origin checks, especially with a custom domain. Otherwise the request host is used. |
 
-Without it, scripted moments still work and typed messages show a neutral error with Retry.
+The production app verifies IAP's ES256 signature using Google's IAP public keys, issuer, audience, token timestamps, and the exact configured owner in `src/lib/poc/auth.ts`. Unsigned identity headers grant no access. Cloud Run's native IAP remains the first gate; configure its OAuth client and access policy before use. See [Google's signed-header requirements](https://docs.cloud.google.com/iap/docs/signed-headers-howto).
 
-## Where things are
+The service account needs permission to invoke the configured Agent Runtime. Browser credentials and IAP's `X-Serverless-Authorization` header are never forwarded upstream; the server obtains a fresh OAuth access token through `google-auth-library`.
 
-- `src/app/globals.css`: color, type, radius, shadow and motion tokens (spec §4). Components use semantic names only.
-- `src/lib/hybrid.ts`: the bubble vs page rule (spec §5.2), decided from the markdown's structure.
-- `src/lib/units.ts`: grouping, pinched corners, time separators (spec §5.1, §5.6).
-- `src/lib/seed.ts`: seed content in Nori's voice. Settings → Reset demo data restores it.
-- `src/lib/nori/engine.ts`: scripted moments (chips, approvals, Ideas, Goals) and live replies.
-- `src/components/mark/NoriMark.tsx`: the mark and its idle, thinking, listening and pleased states.
+## Container and checks
+
+`bun run build` produces Next.js standalone output. The Dockerfile runs as the non-root `node` user on Cloud Run's `PORT` (default `8080`). `.dockerignore` excludes all `.env` files. `/api/health` is an unauthenticated liveness endpoint; it does not invoke the agent or check external services.
+
+`bun run lint` checks the existing application. Polling runs only while a task is active and the tab is visible, stops after errors or session pause/expiry, and is bounded by the task deadline. Stop remains pending until the backend confirms cancellation; a lost connection does not imply the task stopped.
+
+The older design screens under `/ideas`, `/goals`, `/library`, and `/settings` remain separate legacy demos and are not linked from the POC. Their former direct model endpoint `/api/nori` returns `410`.

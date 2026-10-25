@@ -4,7 +4,7 @@ dev:
 	$(MAKE) -j2 web core
 
 web:
-	cd web && ./node_modules/.bin/next dev -H 127.0.0.1 --port 3210
+	cd web && bun --env-file=../.env run dev --port 3210
 
 core:
 	$(MAKE) -C core run

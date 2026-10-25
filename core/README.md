@@ -1,37 +1,69 @@
 # Nori core
 
-The Go service for Nori. It currently provides a hello-world HTTP API;
-agent loops, models, tools, and persistence are not implemented yet.
+The Go service runs Nori's bounded, single-user agent loop using the official
+Google Gen AI SDK with Vertex AI Application Default Credentials. Conversation,
+run state, events, and cancellation requests live in Firestore; screenshots live
+in a private GCS bucket. The existing persistent Firecracker computer supplies
+shell commands and Chromium navigation/screenshots through a keyless IAP tunnel.
 
-## Local development
+## Local development and API
 
-Requires Go 1.26 or newer. From `core/`:
+Requires Go 1.26, Google Cloud CLI, and ADC for the selected Google project.
+Run commands in this section from `core/`. `make run` starts the service on
+port 8080; `make build` builds `bin/nori`. No model API
+keys are used. The optional monorepo-root `.env` loads without overriding existing
+environment variables; keep it gitignored and mode 600.
 
-```sh
-make run
-```
+| Environment | Default / purpose |
+| --- | --- |
+| `BIND_HOST` | `127.0.0.1` locally; container explicitly sets `0.0.0.0` behind runtime IAM |
+| `PORT` | `8080` |
+| `NORI_PROJECT_ID` | `bot-111549` (application project, independent of platform variables) |
+| `MODEL_LOCATION` | `global` (Vertex model location) |
+| `MODEL_NAME` | `gemini-3.1-flash-lite` |
+| `FIRESTORE_DATABASE_ID` | `nori-poc` |
+| `ARTIFACT_BUCKET` | Required private screenshot bucket |
+| `COMPUTER_ZONE` | Required zone of the existing computer VM |
+| `COMPUTER_INSTANCE` | `nori-computer` |
 
-- `GET http://localhost:8080/` returns a greeting as JSON.
-- `GET http://localhost:8080/healthz` returns a health response.
-- `make build` creates `bin/nori`.
-- `make check` runs Go vet and checks formatting.
+The fixed owner is `austinbarwickdavis@gmail.com`. Deploy the Go service behind
+Agent Runtime IAM with invocation granted only to the private Next.js web service
+account. The browser calls its same-origin web proxy; it does not select an owner
+or send cloud credentials. Local startup binds loopback. The container binds all interfaces for the managed
+runtime contract; runtime IAM must guard it. The service listener must not be
+exposed publicly.
 
-The service loads `core/.env` when present. Existing environment
-variables take precedence. `PORT` defaults to `8080`; no model keys are required
-or used by this scaffold. The existing project credential file was preserved here,
-is gitignored, and should remain mode 600. `.env.example` lists scaffold settings.
+| Route | Request / response |
+| --- | --- |
+| `POST /api/healthz` or `POST /healthz` | Safe process/configuration health; no database reads |
+| `GET /healthz` | `{"status":"ok"}` (process health) |
+| `POST /api/session` | `{}` → `{messages,runs,paused,expires_at}` |
+| `POST /api/run` | `{id: UUID,message}` → `{run}` after execution stops |
+| `POST /api/cancel` | `{id: UUID}` → `{run}` with `cancel_requested` |
+| `POST /api/artifact` | `{run_id,artifact_id}` → private PNG bytes |
 
-`web/` calls this service over HTTP. The two apps share the repo and nothing else:
-each has its own toolchain, dependencies and image.
+Create the run UUID in the UI before submitting. The run request stays open while
+Nori works; session polling and Stop use separate requests. One Firestore
+transaction admits one active run across instances. Runs finish as `completed`,
+`failed`, or `cancelled`; cancelled means model/tool execution stopped and any
+computer work acknowledged stopping. Failed stop verification is reported as
+interrupted. No background execution or automatic durable recovery is promised.
+Expired `running` records become `failed` when read or when a new run starts.
 
-## Deployment
+Firestore document `system/control` must contain `paused` (boolean) and
+`expires_at` (absolute RFC3339 string). Missing, paused, or expired control rejects
+new runs; an active run is capped by that expiry. Each run also has a two-minute
+execution deadline, six model calls, twelve tool calls, 1024 output tokens per
+model response, 32 KiB text tool output, and 2 MiB screenshot limit. A separate
+bounded cleanup window confirms stop and persists the terminal record.
 
-The local Docker Compose stack (Temporal, Postgres, and a persistent
-shell/Chromium computer) and the container build live in
-[infrastructure](infrastructure/README.md); the greeting API does not use them
-yet. The historical GKE starter manifests there are not the current deployed
-architecture; the microVM computer below is a separate infrastructure
-prototype.
+`infrastructure/Dockerfile` builds the agent container with the official Cloud
+SDK 584.0.0 IAP helper. The current deployment target is GCP Agent Runtime for Go
+and Cloud Run for the Next.js app in `../web`. The older Compose stack and
+GKE manifests are historical prototypes; the agent does not use Temporal or
+Postgres. The retained computer must be provisioned once separately; agent
+execution can start that existing VM during an active session but never creates,
+replaces, or deletes it.
 
 ## Historical boot smoke
 
@@ -39,7 +71,7 @@ A disposable Firecracker trial on 2026-10-24 verified nested KVM, two guest boot
 and orderly shutdowns, rootfs-marker survival, and complete resource cleanup.
 Historical source remains in `infrastructure/microvm/run.sh`, which now refuses
 `--execute`: current cloud lifecycle belongs to Terraform. Operational evidence
-is retained in the repo root's gitignored `.artifacts/microvm/`.
+is retained in the Bot workspace at `.artifacts/microvm/`, outside this checkout.
 
 ## Persistent shell and browser microVM
 
@@ -102,7 +134,7 @@ first boot, an expiry-bearing cookie, and localStorage through both a guest
 restart and a fresh Terraform-managed GCE host using the same disk. CDP DOM and
 screenshot checks also loaded a real public website; the non-root browser
 reported active namespace and Seccomp-BPF sandboxing. Evidence lives in
-the repo root's gitignored `.artifacts/persistent-computer/`.
+`.artifacts/persistent-computer/` in the Bot workspace.
 
 ### Terraform ownership
 
@@ -199,9 +231,6 @@ off; the daily shutdown policy never authorizes deleting it.
 - [GCP execution infrastructure notes](docs/research/gcp-agent-infrastructure-notes.txt)
 
 These documents are research and proposals, not an implementation checklist.
-The Go core and the Next.js web app keep separate images and releases. The Firecracker/GCE computer prototype has demonstrated a persistent
-shell and Chromium browser; application deployment and agent-loop integration
-are not built. GKE or Agent Substrate remains a later option. The pasted
-infrastructure research has not been independently revalidated in full.
-Locally, a Compose stack runs Postgres, Temporal and a plain persistent
-Docker computer.
+Go `core` and Next.js `web` share this monorepo and retain independent images
+and releases. Their current POC integration is described above; historical plans do
+not expand its scope.

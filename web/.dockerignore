@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env*
+node_modules
+.next
+out
+build
+coverage
+*.tsbuildinfo
+*.log
+.DS_Store
+README.md
+AGENTS.md
