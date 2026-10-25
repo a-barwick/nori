@@ -63,7 +63,12 @@ func main() {
 	if build == "" {
 		log.Fatal("TEMPORAL_BUILD_ID is required; use an immutable release identifier")
 	}
-	service := agent.New(store, model, env("MODEL_NAME", "gemini-3.1-flash-lite"), computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env("COMPUTER_INSTANCE", "nori-computer")})
+	// List price of MODEL_NAME (Vertex AI standard, checked 2026-10-25).
+	price, e := agent.ParsePrice(env("MODEL_INPUT_USD_PER_MTOK", "0.25"), env("MODEL_OUTPUT_USD_PER_MTOK", "1.50"))
+	if e != nil {
+		log.Fatal(e)
+	}
+	service := agent.New(store, model, env("MODEL_NAME", "gemini-3.1-flash-lite"), price, computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env("COMPUTER_INSTANCE", "nori-computer")})
 	stopTimeout := 25 * time.Second
 	if cleanupOnly {
 		stopTimeout = 5 * time.Second

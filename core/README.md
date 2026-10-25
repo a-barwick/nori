@@ -21,6 +21,8 @@ environment variables; keep it gitignored and mode 600.
 | `NORI_PROJECT_ID` | `bot-111549` (application project, independent of platform variables) |
 | `MODEL_LOCATION` | `global` (Vertex model location) |
 | `MODEL_NAME` | `gemini-3.1-flash-lite` |
+| `MODEL_INPUT_USD_PER_MTOK` | `0.25` (list input price of `MODEL_NAME`; change both prices with the model) |
+| `MODEL_OUTPUT_USD_PER_MTOK` | `1.50` (list output price, thinking tokens included) |
 | `FIRESTORE_DATABASE_ID` | `nori-poc` |
 | `ARTIFACT_BUCKET` | Required private screenshot bucket |
 | `COMPUTER_ZONE` | Required zone of the existing computer VM |
@@ -53,8 +55,11 @@ Expired `running` records become `failed` when read or when a new run starts.
 Firestore document `system/control` must contain `paused` (boolean) and
 `expires_at` (absolute RFC3339 string). Missing, paused, or expired control rejects
 new runs; an active run is capped by that expiry. Each run also has a two-minute
-execution deadline, six model calls, twelve tool calls, 1024 output tokens per
-model response, 32 KiB text tool output, and 2 MiB screenshot limit. A separate
+execution deadline, a $1 model budget, 1024 output tokens per model response,
+32 KiB text tool output, and 2 MiB screenshot limit. Model cost is each call's
+reported token usage times the configured price, with cached prompt tokens
+charged at the full input price. An inline run cannot wait, so it fails when
+the budget is spent. A separate
 bounded cleanup window confirms stop and persists the terminal record.
 
 `infrastructure/Dockerfile` builds the agent container with the official Cloud
@@ -245,8 +250,18 @@ returns its original acceptance; reusing that ID with different content fails.
 
 The Temporal worker calls the ordinary Go agent steps directly. One pinned
 workflow owns a task, with separate context, reconciliation, model, individual
-tool, wait projection, Stop and publication activities. It makes at most six
-model calls and twelve tool calls, with at most 32 accepted input commands.
+tool, wait projection, Stop and publication activities. Each task has a $1
+model budget, checked before every model call and recorded on the run as
+`spent_usd` and `budget_usd`, with at most 32 accepted input commands. When the
+budget is spent the task asks Austin, through the same durable wait as
+`wait_for_input`, whether to continue; the question lists the tool calls done,
+the model's latest note and the unfinished request. Only a reply of exactly
+`continue` (a `continue` command) grants another $1, and only while the task is
+paused at its budget; the budget never grows automatically. Stop, pause and
+publication need no model call and keep working after the budget is spent.
+A tool batch is validated whole before any call runs: an invalid batch (for
+example `wait_for_input` beside another tool) gets a rejection result for every
+call and goes back to the model, with no effects and no task failure.
 `wait_for_input` persists a question and waits for a command signal or the single
 authorized-session deadline; it does not poll while idle. The POC web composer
 can send corrections and answers while a Temporal task runs.
@@ -254,7 +269,7 @@ can send corrections and answers while a Temporal task runs.
 | Request | Body and behavior |
 | --- | --- |
 | `POST /api/run` | `{ "id": "UUID", "message": "..." }`; the task UUID also identifies its initial command |
-| `POST /api/input` | `{ "id": "new-command-UUID", "run_id": "task-UUID", "message": "..." }`; atomically advances the task revision |
+| `POST /api/input` | `{ "id": "new-command-UUID", "run_id": "task-UUID", "message": "..." }`; atomically advances the task revision. A message of exactly `continue` is accepted as a `continue` command |
 | `POST /api/cancel` | `{ "id": "task-UUID" }`; idempotently records Stop and its delivery intent |
 | `POST /api/session` | Existing history plus `temporal`, `revision`, `incorporated` and optional `waiting` fields |
 

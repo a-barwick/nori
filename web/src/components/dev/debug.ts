@@ -1,8 +1,8 @@
-import type { Message, Run, Session } from "@/lib/poc/types";
+import type { Message, Run, RunEvent, Session } from "@/lib/poc/types";
 
-// Debug info shown under a Nori message when debug mode is on. The runtime
-// records only run status and event names today, so the step detail here is a
-// static sample until the service keeps model and tool records.
+// Debug info shown under a Nori message when debug mode is on. Real messages
+// show only what the runtime records (task status, revision, times, spend and
+// event names); the step detail below is a sample for the `?demo` session only.
 
 export type DebugStep =
   | {
@@ -39,18 +39,23 @@ export type OuterTurn = {
   ms: number;
 };
 
+/** Fields left undefined were not recorded and render as such. */
 export type DebugInfo = {
-  classification: Classification;
-  turn: OuterTurn;
-  runId: string;
-  status: string;
-  model: string;
-  revision: number;
-  started: string;
-  ended: string;
-  tokens: number;
-  cost: number;
-  steps: DebugStep[];
+  classification?: Classification;
+  turn?: OuterTurn;
+  runId?: string;
+  status?: string;
+  model?: string;
+  revision?: number;
+  started?: string;
+  ended?: string;
+  tokens?: number;
+  cost?: number;
+  budget?: number;
+  /** Sample model and tool detail; the runtime does not record it yet. */
+  steps?: DebugStep[];
+  /** Recorded task events: kind and name only. */
+  events?: RunEvent[];
 };
 
 const TOOLS = ["shell", "browser_navigate", "browser_screenshot", "wait_for_input"];
@@ -154,7 +159,23 @@ function sampleTurn(message: Message, run: Run | undefined): { classification: C
   };
 }
 
-export function debugFor(message: Message, run: Run | undefined): DebugInfo {
+/** Recorded fields only, for real messages. */
+export function recordedDebug(message: Message, run: Run | undefined): DebugInfo {
+  if (!run) return {};
+  return {
+    runId: run.id,
+    status: run.status,
+    revision: run.revision,
+    started: run.started_at,
+    ended: run.finished_at,
+    cost: run.spent_usd,
+    budget: run.budget_usd,
+    events: run.events,
+  };
+}
+
+/** Sample detail for the `?demo` session only. */
+export function sampleDebug(message: Message, run: Run | undefined): DebugInfo {
   const steps = run?.status === "failed" ? sampleSteps.slice(0, 2).map((s) => (s.kind === "tool" ? { ...s, ok: false, result: '{"error": "exit 124: command timed out after 45 s"}' } : s)) : sampleSteps;
   const tokens = steps.reduce((sum, s) => (s.kind === "model" ? sum + s.tokens.input + s.tokens.output : sum), 0);
   return {
@@ -167,6 +188,7 @@ export function debugFor(message: Message, run: Run | undefined): DebugInfo {
     ended: run?.finished_at ?? message.created_at,
     tokens,
     cost: tokens * 0.00000035,
+    budget: 1,
     steps,
   };
 }

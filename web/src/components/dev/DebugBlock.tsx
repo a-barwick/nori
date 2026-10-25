@@ -3,6 +3,7 @@
 import { Fragment, type ReactNode } from "react";
 import { clock } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import type { RunEvent } from "@/lib/poc/types";
 import type { Classification, DebugInfo, DebugStep, OuterAction, OuterTurn } from "./debug";
 
 const n = (v: number) => v.toLocaleString("en-US");
@@ -28,51 +29,97 @@ const COLS = [
 type Tone = "ok" | "warn" | "bad" | "idle";
 const TONE: Record<Tone, string> = { ok: "text-accent-signal", warn: "text-warning", bad: "text-danger", idle: "text-ink-3" };
 
-/** Shown under a Nori message when debug mode is on. */
+/** Shown under a Nori message when debug mode is on. Unrecorded fields say so. */
 export function DebugBlock({ info }: { info: DebugInfo }) {
-  const modelCalls = info.steps.filter((s) => s.kind === "model").length;
-  const toolCalls = info.steps.length - modelCalls;
   const failed = info.status === "failed";
+  const usd = (v: number) => `$${v.toFixed(4)}`;
   return (
     <div className="mt-2 w-full max-w-[640px] rounded-tile border border-hairline bg-surface/70 px-1.5 py-1.5 font-mono text-mono-label leading-[18px] tracking-normal text-ink-2 tabular-nums">
-      <ClassificationRow c={info.classification} />
-      <TurnRow turn={info.turn} />
+      {info.classification ? <ClassificationRow c={info.classification} /> : <MissingRow kind="jev" />}
+      {info.turn ? <TurnRow turn={info.turn} /> : <MissingRow kind="turn" />}
 
-      <div className={cn(ROW, "mt-1 border-t border-hairline px-1 pt-1")}>
-        <span />
-        <span className="text-ink-3">task</span>
-        <span className="text-ink">{info.runId}</span>
-        <span className="truncate">
-          <Status tone={failed ? "bad" : info.status === "completed" ? "ok" : "idle"}>{info.status}</Status>
-          <span className="ml-[2ch] text-ink">{info.model}</span>
-          <span className="ml-[1ch] text-ink-3">rev {info.revision}</span>
-          <span className="ml-[2ch] text-ink-3">
-            {clock(Date.parse(info.started))}–{clock(Date.parse(info.ended))}
-          </span>
-        </span>
-        <span className="text-right">
-          {n(info.tokens)}
-          <Unit>tok</Unit>
-          <span className="ml-[2ch] text-ink">${info.cost.toFixed(4)}</span>
-        </span>
-      </div>
+      {info.runId && (
+        <>
+          <div className={cn(ROW, "mt-1 border-t border-hairline px-1 pt-1")}>
+            <span />
+            <span className="text-ink-3">task</span>
+            <span className="truncate text-ink" title={info.runId}>{info.runId}</span>
+            <span className="truncate">
+              <Status tone={failed ? "bad" : info.status === "completed" ? "ok" : "idle"}>{info.status}</Status>
+              {info.model ? <span className="ml-[2ch] text-ink">{info.model}</span> : <span className="ml-[2ch] text-ink-3">model not recorded</span>}
+              {info.revision !== undefined && <span className="ml-[1ch] text-ink-3">rev {info.revision}</span>}
+              {info.started && (
+                <span className="ml-[2ch] text-ink-3">
+                  {clock(Date.parse(info.started))}–{info.ended ? clock(Date.parse(info.ended)) : "now"}
+                </span>
+              )}
+            </span>
+            <span className="text-right">
+              {info.tokens !== undefined ? (
+                <>
+                  {n(info.tokens)}
+                  <Unit>tok</Unit>
+                </>
+              ) : (
+                <span className="text-ink-3">tokens not recorded</span>
+              )}
+            </span>
+          </div>
 
-      <div className="mt-0.5 ml-[calc(4px+0.5ch)] border-l border-hairline pl-[0.5ch]">
-        <div className={cn(ROW, "px-1 text-ink-3")}>
-          <span />
-          <span>kind</span>
-          <span>id</span>
-          <span>
-            model {modelCalls}/6 · tools {toolCalls}/12
-          </span>
-          <Cells values={COLS.map((c) => c.key)} />
-        </div>
-        <ol>
-          {info.steps.map((step) => (
-            <li key={step.id}>{step.kind === "model" ? <ModelRow step={step} /> : <ToolRow step={step} />}</li>
-          ))}
-        </ol>
-      </div>
+          <div className="mt-0.5 ml-[calc(4px+0.5ch)] border-l border-hairline pl-[0.5ch]">
+            <div className={cn(ROW, "px-1 text-ink-3")}>
+              <span />
+              <span>kind</span>
+              <span>id</span>
+              <span>
+                {info.cost !== undefined && info.budget !== undefined ? (
+                  <>
+                    budget <span className="text-ink">{usd(info.cost)}</span> / ${info.budget.toFixed(2)}
+                  </>
+                ) : (
+                  "budget not recorded"
+                )}
+              </span>
+              {info.steps ? <Cells values={COLS.map((c) => c.key)} /> : <span>time</span>}
+            </div>
+            <ol>
+              {info.steps
+                ? info.steps.map((step) => <li key={step.id}>{step.kind === "model" ? <ModelRow step={step} /> : <ToolRow step={step} />}</li>)
+                : info.events?.map((event, i) => (
+                    <li key={i}>
+                      <EventRow event={event} index={i + 1} />
+                    </li>
+                  ))}
+            </ol>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MissingRow({ kind }: { kind: string }) {
+  return (
+    <div className={cn(ROW, "px-1")}>
+      <span />
+      <span className="text-ink-3">{kind}</span>
+      <span />
+      <span className="text-ink-3">not recorded</span>
+      <span />
+    </div>
+  );
+}
+
+/** One recorded task event; the runtime keeps only its kind and name. */
+function EventRow({ event, index }: { event: RunEvent; index: number }) {
+  const kind = event.kind === "waiting" ? "wait" : event.kind;
+  return (
+    <div className={cn(ROW, "px-1", event.kind === "tool" && "pl-[2ch]")}>
+      <span />
+      <span className={event.kind === "tool" ? "text-ink-3" : "text-ink"}>{kind}</span>
+      <span className="text-ink-3">e{index}</span>
+      <span className="truncate text-ink" title={event.text}>{event.text}</span>
+      <span className="text-right text-ink-3">{clock(Date.parse(event.created_at))}</span>
     </div>
   );
 }

@@ -18,13 +18,14 @@ type Service struct {
 	Store     state.Store
 	Model     *genai.Client
 	ModelName string
+	Price     Price
 	Computer  computer.Config
 	mu        sync.Mutex
 	active    map[string]context.CancelFunc
 }
 
-func New(store state.Store, model *genai.Client, name string, c computer.Config) *Service {
-	return &Service{Store: store, Model: model, ModelName: name, Computer: c, active: map[string]context.CancelFunc{}}
+func New(store state.Store, model *genai.Client, name string, price Price, c computer.Config) *Service {
+	return &Service{Store: store, Model: model, ModelName: name, Price: price, Computer: c, active: map[string]context.CancelFunc{}}
 }
 func (s *Service) Cancel(ctx context.Context, id string) (state.Run, error) {
 	r, e := s.Store.RequestCancel(ctx, id)
@@ -140,15 +141,24 @@ func (s *Service) execute(ctx context.Context, run state.Run) (string, *computer
 	}
 	contents := Context(session)
 	var client *computer.Client
+	spent := 0.0
 	for {
 		if e = ctx.Err(); e != nil {
 			return "", client, e
+		}
+		// An inline request cannot wait for Austin, so it stops at the budget.
+		if spent >= BudgetUSD {
+			return "", client, fmt.Errorf("stopped at the $%.2f model budget ($%.4f spent); durable tasks can ask to continue", BudgetUSD, spent)
 		}
 		if e = s.Store.Event(ctx, run.ID, state.Event{Kind: "model", Text: "Thinking"}); e != nil {
 			return "", client, e
 		}
 		decision, e := s.Decide(ctx, contents, false)
 		if e != nil {
+			return "", client, e
+		}
+		spent += decision.Cost
+		if e = s.Store.Spend(ctx, run.ID, spent, BudgetUSD); e != nil {
 			return "", client, e
 		}
 		contents = append(contents, decision.Content)

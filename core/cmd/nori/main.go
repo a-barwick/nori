@@ -54,7 +54,12 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	service := agent.New(store, model, env("MODEL_NAME", "gemini-3.1-flash-lite"), computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env("COMPUTER_INSTANCE", "nori-computer")})
+	// List price of MODEL_NAME (Vertex AI standard, checked 2026-10-25).
+	price, e := agent.ParsePrice(env("MODEL_INPUT_USD_PER_MTOK", "0.25"), env("MODEL_OUTPUT_USD_PER_MTOK", "1.50"))
+	if e != nil {
+		log.Fatal(e)
+	}
+	service := agent.New(store, model, env("MODEL_NAME", "gemini-3.1-flash-lite"), price, computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env("COMPUTER_INSTANCE", "nori-computer")})
 	mode := env("NORI_EXECUTION_MODE", "inline")
 	if mode != "inline" && mode != "temporal" {
 		log.Fatal("NORI_EXECUTION_MODE must be inline or temporal")
@@ -211,7 +216,7 @@ func main() {
 			writeJSON(w, 503, map[string]string{"error": "Temporal execution is not enabled"})
 			return
 		}
-		run, e := store.Accept(r.Context(), state.Command{ID: body.ID, RunID: body.RunID, Kind: "input", Text: strings.TrimSpace(body.Message)})
+		run, e := store.Accept(r.Context(), state.Command{ID: body.ID, RunID: body.RunID, Kind: state.InputKind(body.Message), Text: strings.TrimSpace(body.Message)})
 		if e != nil {
 			writeError(w, e)
 			return

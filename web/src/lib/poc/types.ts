@@ -9,6 +9,9 @@ export type Run = {
   revision?: number;
   incorporated?: number;
   waiting?: string;
+  /** Model USD from reported token usage, and the budget Austin has approved. */
+  spent_usd?: number;
+  budget_usd?: number;
   started_at: string;
   deadline: string;
   finished_at?: string;

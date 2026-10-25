@@ -47,10 +47,14 @@ type Artifact struct {
 	Kind string `json:"kind" firestore:"kind"`
 }
 type Run struct {
-	Temporal        bool       `json:"temporal,omitempty" firestore:"temporal,omitempty"`
-	Revision        int64      `json:"revision,omitempty" firestore:"revision,omitempty"`
-	Incorporated    int64      `json:"incorporated,omitempty" firestore:"incorporated,omitempty"`
-	Waiting         string     `json:"waiting,omitempty" firestore:"waiting,omitempty"`
+	Temporal     bool   `json:"temporal,omitempty" firestore:"temporal,omitempty"`
+	Revision     int64  `json:"revision,omitempty" firestore:"revision,omitempty"`
+	Incorporated int64  `json:"incorporated,omitempty" firestore:"incorporated,omitempty"`
+	Waiting      string `json:"waiting,omitempty" firestore:"waiting,omitempty"`
+	// Spent and Budget are model USD from reported token usage; Budget grows
+	// only by Austin's explicit continue.
+	Spent           float64    `json:"spent_usd,omitempty" firestore:"spent_usd,omitempty"`
+	Budget          float64    `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
 	ID              string     `json:"id" firestore:"id"`
 	Status          string     `json:"status" firestore:"status"`
 	CancelRequested bool       `json:"cancel_requested" firestore:"cancel_requested"`
@@ -74,6 +78,7 @@ type Store interface {
 	GetRun(context.Context, string) (Run, error)
 	RequestCancel(context.Context, string) (Run, error)
 	Event(context.Context, string, Event) error
+	Spend(context.Context, string, float64, float64) error
 	Artifact(context.Context, string, Artifact) error
 	Finish(context.Context, string, string, string, string) (Run, error)
 	PutPNG(context.Context, string, string, []byte) error

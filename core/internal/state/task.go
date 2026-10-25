@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,16 @@ type Command struct {
 	Revision  int64     `json:"revision" firestore:"revision"`
 	Delivered bool      `json:"delivered" firestore:"delivered"`
 	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
+}
+
+// InputKind makes a bare "continue" reply an explicit continue command. The
+// task grants another budget only if it is paused at its budget; otherwise
+// the command is ordinary input text.
+func InputKind(message string) string {
+	if strings.EqualFold(strings.TrimSpace(message), "continue") {
+		return "continue"
+	}
+	return "input"
 }
 
 type TaskSnapshot struct {

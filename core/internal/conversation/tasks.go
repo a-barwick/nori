@@ -42,7 +42,7 @@ func (t *Tasks) Dispatch(ctx context.Context, id, request string) (Dispatch, err
 }
 
 func (t *Tasks) Update(ctx context.Context, id, runID, message string) (state.Run, error) {
-	run, err := t.Store.Accept(ctx, state.Command{ID: id, RunID: runID, Kind: "input", Text: message})
+	run, err := t.Store.Accept(ctx, state.Command{ID: id, RunID: runID, Kind: state.InputKind(message), Text: message})
 	if err != nil {
 		return state.Run{}, err
 	}

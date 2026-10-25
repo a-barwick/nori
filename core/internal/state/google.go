@@ -153,6 +153,13 @@ func (s *Google) Event(ctx context.Context, id string, event Event) error {
 	_, e := s.runs().Doc(id).Update(ctx, []firestore.Update{{Path: "events", Value: firestore.ArrayUnion(event)}})
 	return e
 }
+
+// Spend records model cost even after a correction or terminal state; it is a
+// fact about money already used, not task progress.
+func (s *Google) Spend(ctx context.Context, id string, spent, budget float64) error {
+	_, e := s.runs().Doc(id).Update(ctx, []firestore.Update{{Path: "spent_usd", Value: spent}, {Path: "budget_usd", Value: budget}})
+	return e
+}
 func (s *Google) Artifact(ctx context.Context, id string, a Artifact) error {
 	_, e := s.runs().Doc(id).Update(ctx, []firestore.Update{{Path: "artifacts", Value: firestore.ArrayUnion(a)}})
 	return e

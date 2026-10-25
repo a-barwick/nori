@@ -9,7 +9,7 @@ import { Medallion } from "@/components/mark/NoriMark";
 import { IconButton } from "@/components/ui/primitives";
 import { useHydrated, useWide } from "@/lib/hooks";
 import { useRuntime } from "@/lib/poc/useRuntime";
-import { debugFor, demoSession } from "@/components/dev/debug";
+import { demoSession, recordedDebug, sampleDebug } from "@/components/dev/debug";
 import type { Thread as Conversation, ThreadItem } from "@/lib/types";
 import { DocumentViewer } from "./DocumentViewer";
 import { RuntimeComposer } from "./RuntimeComposer";
@@ -94,7 +94,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       text: message.text,
       debug:
         debug && message.role === "assistant"
-          ? debugFor(message, session?.runs.find((run) => run.id === message.run_id))
+          ? (liveSession ? recordedDebug : sampleDebug)(message, session?.runs.find((run) => run.id === message.run_id))
           : undefined,
     }));
     if (pendingNotPersisted && pending)
@@ -112,7 +112,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       createdAt: items[0]?.at ?? 0,
       items,
     };
-  }, [session?.messages, session?.runs, session?.dispatches, pending, pendingNotPersisted, debug]);
+  }, [session?.messages, session?.runs, session?.dispatches, liveSession, pending, pendingNotPersisted, debug]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

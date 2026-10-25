@@ -7,6 +7,7 @@ import (
 	"google.golang.org/genai"
 	"nori/internal/computer"
 	"nori/internal/state"
+	"strconv"
 	"strings"
 )
 
@@ -46,6 +47,71 @@ type Decision struct {
 	Content *genai.Content
 	Calls   []*genai.FunctionCall
 	Answer  string
+	// Cost is the USD price of this request from its reported token usage.
+	Cost float64
+}
+
+// BudgetUSD is the model spend a task may use before it pauses for Austin's
+// explicit continue; each continue grants this amount again.
+const BudgetUSD = 1.0
+
+// Price is the model's list price in USD per million tokens.
+type Price struct {
+	InputPerMillion, OutputPerMillion float64
+}
+
+func ParsePrice(input, output string) (Price, error) {
+	in, e := strconv.ParseFloat(input, 64)
+	if e != nil || in <= 0 {
+		return Price{}, fmt.Errorf("model input price must be a positive USD amount per million tokens")
+	}
+	out, e := strconv.ParseFloat(output, 64)
+	if e != nil || out <= 0 {
+		return Price{}, fmt.Errorf("model output price must be a positive USD amount per million tokens")
+	}
+	return Price{in, out}, nil
+}
+
+// Cost charges cached prompt tokens at the full input price, so the budget
+// errs toward pausing early. Output includes thinking tokens.
+func (p Price) Cost(u *genai.GenerateContentResponseUsageMetadata) float64 {
+	input := float64(u.PromptTokenCount) + float64(u.ToolUsePromptTokenCount)
+	output := float64(u.CandidatesTokenCount) + float64(u.ThoughtsTokenCount)
+	return (input*p.InputPerMillion + output*p.OutputPerMillion) / 1e6
+}
+
+// ValidateCalls checks a whole tool batch before any call runs, so a batch
+// is either executed in order or rejected without effects.
+func ValidateCalls(calls []*genai.FunctionCall, wait bool) error {
+	for _, call := range calls {
+		switch call.Name {
+		case "shell":
+			command, _ := call.Args["command"].(string)
+			if command == "" || len(command) > 8192 {
+				return errors.New("shell needs a command of 1–8192 bytes")
+			}
+		case "browser_navigate":
+			address, _ := call.Args["url"].(string)
+			if address == "" || len(address) > 8192 {
+				return errors.New("browser_navigate needs a URL of 1–8192 bytes")
+			}
+		case "browser_screenshot":
+		case "wait_for_input":
+			if !wait {
+				return errors.New("wait_for_input is not available")
+			}
+			if len(calls) != 1 {
+				return errors.New("wait_for_input must be the only tool call")
+			}
+			question, _ := call.Args["question"].(string)
+			if question == "" || len(question) > 8192 {
+				return errors.New("wait_for_input needs a question of 1–8192 bytes")
+			}
+		default:
+			return fmt.Errorf("unknown tool %q", call.Name)
+		}
+	}
+	return nil
 }
 
 // Decide performs exactly one model request. Its caller owns retries and budgets.
@@ -57,8 +123,11 @@ func (s *Service) Decide(ctx context.Context, contents []*genai.Content, wait bo
 	if len(response.Candidates) == 0 || response.Candidates[0].Content == nil {
 		return Decision{}, errors.New("model returned no content")
 	}
+	if response.UsageMetadata == nil {
+		return Decision{}, errors.New("model response reported no token usage; the task budget cannot be enforced")
+	}
 	candidate := response.Candidates[0]
-	d := Decision{Content: candidate.Content, Calls: response.FunctionCalls()}
+	d := Decision{Content: candidate.Content, Calls: response.FunctionCalls(), Cost: s.Price.Cost(response.UsageMetadata)}
 	if len(d.Calls) == 0 {
 		d.Answer = strings.TrimSpace(response.Text())
 		if d.Answer == "" {

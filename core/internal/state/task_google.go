@@ -90,7 +90,7 @@ func (s *Google) Accept(ctx context.Context, cmd Command) (Run, error) {
 			// A durable wait may outlive a request, but never its authorized session.
 			run = Run{ID: cmd.RunID, Status: "running", Temporal: true, StartedAt: now, Deadline: expiry, Events: []Event{}, Artifacts: []Artifact{}}
 		}
-		if cmd.Kind != "start" && cmd.Kind != "input" && cmd.Kind != "cancel" {
+		if cmd.Kind != "start" && cmd.Kind != "input" && cmd.Kind != "continue" && cmd.Kind != "cancel" {
 			return fmt.Errorf("unknown command kind")
 		}
 		if run.Revision >= 32 && cmd.Kind != "cancel" {

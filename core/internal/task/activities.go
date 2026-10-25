@@ -43,6 +43,10 @@ type Projection struct {
 	Step
 	Kind, Text string
 }
+type Spending struct {
+	RunID         string
+	Spent, Budget float64
+}
 
 func classified(err error) error {
 	if err == nil {
@@ -257,4 +261,10 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (state.Run, err
 }
 func (a *Activities) Project(ctx context.Context, p Projection) error {
 	return classified(a.Store.Project(ctx, p.RunID, p.Revision, p.Kind, p.Text))
+}
+
+// Spend is unguarded: cost already incurred is recorded even if a correction
+// superseded the revision that spent it.
+func (a *Activities) Spend(ctx context.Context, s Spending) error {
+	return classified(a.Store.Spend(ctx, s.RunID, s.Spent, s.Budget))
 }
