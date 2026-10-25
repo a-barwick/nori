@@ -30,4 +30,8 @@ Without it, scripted moments still work and typed messages show a neutral error 
 - `src/lib/units.ts`: grouping, pinched corners, time separators (spec §5.1, §5.6).
 - `src/lib/seed.ts`: seed content in Nori's voice. Settings → Reset demo data restores it.
 - `src/lib/nori/engine.ts`: scripted moments (chips, approvals, Ideas, Goals) and live replies.
-- `src/components/mark/NoriMark.tsx`: the mark and its idle, thinking, listening and pleased states.
+- `src/components/mark/NoriMark.tsx`: the mark and its states (idle, attentive, thinking, writing, listening, pleased).
+
+## Requirements
+
+- [Avatar state protocol](docs/avatar.md): modes, gestures and gaze for Nori's mark, and the claim rules that replace the single `markState`. Not built yet.
