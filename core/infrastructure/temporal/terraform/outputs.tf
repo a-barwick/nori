@@ -21,3 +21,10 @@ output "temporal_api_key_secret" {
 output "wci_scaler_role" {
   value = google_project_iam_custom_role.pool_scaler.name
 }
+
+output "session_settings" {
+  value = {
+    session         = var.session
+    active_build_id = var.active_build_id
+  }
+}

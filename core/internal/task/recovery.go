@@ -14,13 +14,14 @@ import (
 )
 
 // RepairClosed handles the projection crash window only after Temporal proves
-// execution is closed (or it never started and admission expired). It never
+// execution is closed (or it never started and admission closed). It never
 // retries execution. Known computer scopes must report their real stop outcome.
 func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, config computer.Config) error {
 	session, e := store.Session(ctx)
 	if e != nil {
 		return e
 	}
+	_, admissionErr := (state.Control{Paused: session.Paused, ExpiresAt: session.ExpiresAt}).Deadline()
 	var failures []error
 	for _, run := range session.Runs {
 		if !run.Temporal || run.Status != "running" {
@@ -28,7 +29,7 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 		}
 		execution, e := c.DescribeWorkflowExecution(ctx, WorkflowID(run.ID), "")
 		var missing *serviceerror.NotFound
-		neverStarted := errors.As(e, &missing) && !run.Deadline.After(time.Now())
+		neverStarted := errors.As(e, &missing) && (admissionErr != nil || !run.Deadline.After(time.Now()))
 		if e != nil && !neverStarted {
 			if !errors.As(e, &missing) {
 				failures = append(failures, e)
@@ -50,7 +51,7 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 		stopErr := StopComputer(ctx, config, scopes)
 		status, detail := "failed", "Interrupted: Temporal execution ended before its terminal result was persisted; work was not retried."
 		if neverStarted {
-			detail = "Interrupted: task admission expired before Temporal execution started."
+			detail = "Interrupted: task admission closed before Temporal execution started."
 		}
 		if run.CancelRequested && stopErr == nil {
 			status = "cancelled"

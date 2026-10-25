@@ -89,7 +89,7 @@ resource "google_compute_instance" "host" {
   lifecycle {
     precondition {
       condition     = data.external.deadline[0].result.valid == "true"
-      error_message = "Host DELETE deadline must be future, within 30 minutes and no later than 22:00 America/Los_Angeles today."
+      error_message = "Host DELETE deadline must be future and within 30 minutes."
     }
     precondition {
       condition     = data.terraform_remote_state.foundation[0].outputs.retained_disk_numeric_id == "3757334953750232874"

@@ -380,6 +380,20 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
         value = var.model
       }
 
+      dynamic "env" {
+        for_each = {
+          NORI_EXECUTION_MODE             = "temporal"
+          TEMPORAL_ADDRESS                = "quickstart-nori.qtjow.tmprl.cloud:7233"
+          TEMPORAL_NAMESPACE              = "quickstart-nori.qtjow"
+          TEMPORAL_TASK_QUEUE             = "nori-tasks"
+          TEMPORAL_API_KEY_SECRET_VERSION = "projects/${local.project}/secrets/nori-temporal-api-key/versions/latest"
+        }
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
     }
 
   }
@@ -451,8 +465,8 @@ resource "google_cloud_run_v2_service" "web" {
 
 }
 
-# Invocation grants are deliberately absent. poc.py resume adds expiring bindings;
-# pause removes them and verifies denial. Terraform never owns their lifecycle.
+# Owner-only website/history invocation grants are configured separately.
+# Resume and pause preserve those grants; durable control gates task execution.
 output "web_url" {
   value = google_cloud_run_v2_service.web.uri
 }

@@ -1,5 +1,6 @@
 {
   "worker_images": {
-    "poc-20261024": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:1b871e3f8d34940a4111c37aca37f6beb145e5904d1305f44ef6c046fd5563f7"
+    "poc-20261024": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:1b871e3f8d34940a4111c37aca37f6beb145e5904d1305f44ef6c046fd5563f7",
+    "poc-20261025": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:13e37fa8d4337c735b5a884315be8120fe107e5dfb1de72893c284061090f24d"
   }
 }

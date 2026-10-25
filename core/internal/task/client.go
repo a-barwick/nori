@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -28,9 +27,9 @@ func Dial(ctx context.Context) (client.Client, error) {
 	}
 	options := client.Options{HostPort: address, Namespace: namespace}
 	if os.Getenv("TEMPORAL_LOCAL") != "true" {
-		key := strings.TrimSpace(os.Getenv("TEMPORAL_API_KEY"))
-		if key == "" {
-			return nil, errors.New("TEMPORAL_API_KEY is required for Temporal Cloud")
+		key, err := apiKey(ctx)
+		if err != nil {
+			return nil, err
 		}
 		options.ConnectionOptions.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
 		options.Credentials = client.NewAPIKeyStaticCredentials(key)

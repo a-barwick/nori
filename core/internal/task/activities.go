@@ -16,8 +16,9 @@ import (
 )
 
 type Activities struct {
-	Agent *agent.Service
-	Store state.TaskStore
+	Agent       *agent.Service
+	Store       state.TaskStore
+	CleanupOnly bool
 }
 type Step struct {
 	RunID    string
@@ -94,6 +95,9 @@ func (a *Activities) Reconcile(ctx context.Context, id string) (state.TaskSnapsh
 // bounded tracks pause, expiry and Stop throughout I/O. Corrections invalidate
 // the next boundary; already admitted bounded work is allowed to finish.
 func (a *Activities) bounded(parent context.Context, step Step) (context.Context, func(), error) {
+	if a.CleanupOnly {
+		return nil, nil, classified(state.ErrPaused)
+	}
 	run, e := a.Store.Guard(parent, step.RunID, step.Revision)
 	if e != nil {
 		return nil, nil, classified(e)

@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import ssl
@@ -12,7 +13,6 @@ import time
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
-from zoneinfo import ZoneInfo
 
 PROJECT = "bot-111549"
 NUMBER = "8273801370"
@@ -21,12 +21,14 @@ ZONE = "us-central1-a"
 OWNER = "austinbarwickdavis@gmail.com"
 WEB = "nori-web"
 VM = "nori-computer"
-IAP_SA = f"service-{NUMBER}@gcp-sa-iap.iam.gserviceaccount.com"
 BILLING = "010FFA-6C77F1-18FF6D"
 SPEND_CAPS = {"Cloud Run": "ec91d69c-af6f-4582-8a57-fc5d74df3922", "Agent Platform": "c288b003-c839-4ef0-9327-7ae10d3e762b"}
 ROOT = Path(__file__).resolve().parent
 TF = ROOT / "terraform"
 STATE = Path.home() / ".local/state/nori/bot-111549/poc/terraform.tfstate"
+TEMPORAL_TF = ROOT.parent / "temporal/terraform"
+TEMPORAL_STATE = STATE.parent.parent / "temporal/terraform.tfstate"
+TEMPORAL_SESSION = TEMPORAL_STATE.parent / "session.tfvars.json"
 TOKEN = None
 SSL_CONTEXT = ssl.create_default_context(cafile="/etc/ssl/cert.pem") if sys.platform == "darwin" and Path("/etc/ssl/cert.pem").is_file() else ssl.create_default_context()
 
@@ -65,11 +67,111 @@ def stamp(value):
 
 
 def deadline():
-    now = datetime.now(timezone.utc)
-    cutoff = now.astimezone(ZoneInfo("America/Los_Angeles")).replace(hour=22, minute=0, second=0, microsecond=0)
-    if now >= cutoff:
-        raise RuntimeError("22:00 America/Los_Angeles cutoff has passed; no resume or paid start allowed")
-    return stamp(min(now + timedelta(hours=3), cutoff))
+    return stamp(datetime.now(timezone.utc) + timedelta(hours=3))
+
+
+def temporal_config():
+    return {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TEMPORAL_TF}", "output", "-state=" + str(TEMPORAL_STATE), "-json"])).items()}
+
+
+def temporal_apply(session, build=None, enabled=False, verified=False):
+    # Only session settings, never credentials, are saved outside the checkout.
+    TEMPORAL_SESSION.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(TEMPORAL_SESSION, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as out:
+        json.dump({"session": session, "active_build_id": build, "wci_enabled": enabled, "shutdown_verified": verified}, out)
+    os.chmod(TEMPORAL_SESSION, 0o600)
+    args = ["terraform", f"-chdir={TEMPORAL_TF}"]
+    plan = TEMPORAL_STATE.parent / "session.plan"
+    # Save and apply the same plan. Worker image changes remain a separate,
+    # reviewed deployment; normal lifecycle uses the retained release manifest.
+    print(command(args + ["plan", "-input=false", "-state=" + str(TEMPORAL_STATE), "-var-file=worker-releases.json", "-var-file=" + str(TEMPORAL_SESSION), "-out=" + str(plan)]))
+    os.chmod(plan, 0o600)
+    print(command(args + ["apply", "-input=false", str(plan)]))
+
+
+def temporal_zero(t):
+    failures = []
+    for pool in t["worker_pools"].values():
+        try:
+            url = "https://run.googleapis.com/v2/" + pool["resource"]
+            result = api("PATCH", url + "?updateMask=scaling.manualInstanceCount", {"scaling": {"manualInstanceCount": 0}})
+            end = time.monotonic() + 600
+            while not result.get("done"):
+                if time.monotonic() > end:
+                    raise RuntimeError("Pool scale-to-zero operation timed out: " + pool["name"])
+                time.sleep(3)
+                result = api("GET", "https://run.googleapis.com/v2/" + result["name"])
+            if result.get("error"):
+                raise RuntimeError("Pool scale-to-zero failed: " + pool["name"])
+            current = api("GET", url)
+            if current.get("reconciling") or current.get("scaling", {}).get("manualInstanceCount", 0) != 0 or current.get("observedGeneration") != current.get("generation") or current.get("terminalCondition", {}).get("state") != "CONDITION_SUCCEEDED":
+                raise RuntimeError("Pool has not reconciled to zero: " + pool["name"])
+        except Exception as error:
+            failures.append(str(error))
+    if failures:
+        raise RuntimeError("; ".join(failures))
+
+
+def temporal_access(t, active=None):
+    sa = t["invoker_service_account"]
+    end = time.monotonic() + 300
+    while True:
+        decisions = {build: api("POST", "https://policytroubleshooter.googleapis.com/v3/iam:troubleshoot", {"accessTuple": {"principal": sa, "fullResourceName": "//run.googleapis.com/" + p["resource"], "permission": "run.workerpools.update", "conditionContext": {"request": {"receiveTime": stamp(datetime.now(timezone.utc))}}}}).get("overallAccessState") for build, p in t["worker_pools"].items()}
+        if all(decision == ("CAN_ACCESS" if build == active else "CANNOT_ACCESS") for build, decision in decisions.items()):
+            return
+        if time.monotonic() > end:
+            raise RuntimeError("Effective WCI pool access not verified: " + repr(decisions))
+        time.sleep(5)
+
+
+def temporal_denied(t):
+    sa = t["invoker_service_account"]
+    state = api("GET", f"https://iam.googleapis.com/v1/projects/{PROJECT}/serviceAccounts/{sa}")
+    if not state.get("disabled"):
+        raise RuntimeError("Temporal WCI invoker is not disabled")
+    temporal_access(t)
+
+
+def temporal_pause():
+    t = temporal_config()
+    settings = t.get("session_settings") or (json.loads(TEMPORAL_SESSION.read_text()) if TEMPORAL_SESSION.exists() else {})
+    failures = []
+    # Independent fences still run if Terraform or an IAM verification fails.
+    for step in (
+        lambda: api("POST", f"https://iam.googleapis.com/v1/projects/{PROJECT}/serviceAccounts/{t['invoker_service_account']}:disable", {}),
+        lambda: temporal_apply(settings.get("session"), settings.get("active_build_id")),
+        lambda: temporal_zero(t),
+        lambda: temporal_denied(t),
+    ):
+        try:
+            step()
+        except Exception as error:
+            failures.append(str(error))
+    if failures:
+        raise RuntimeError("Temporal pause incomplete: " + "; ".join(failures))
+    # Keep the scheduled backstop armed until shutdown and denial succeeded.
+    temporal_apply(None)
+
+
+def temporal_resume(session, build, verified):
+    t = temporal_config()
+    if not build or build not in t["worker_pools"]:
+        raise RuntimeError("resume needs --build-id naming a deployed immutable Temporal pool")
+    if not verified:
+        raise RuntimeError("resume needs --shutdown-verified after the live Scheduler scale-to-zero proof")
+    # Arm durable shutdown with WCI disabled before opening task admission.
+    temporal_apply(session, build)
+    temporal_zero(t)
+    temporal_denied(t)
+    for pool in t["worker_pools"].values():
+        job = api("GET", "https://cloudscheduler.googleapis.com/v1/" + pool["shutdown_job"])
+        scheduled = datetime.strptime(session["shutdown_at"], "%Y-%m-%dT%H:%M:%SZ")
+        expected = scheduled.strftime("%M %H %d %m *")
+        if job.get("state") != "ENABLED" or job.get("schedule") != expected or job.get("timeZone") != "Etc/UTC":
+            raise RuntimeError("Cloud shutdown job not armed: " + pool["shutdown_job"])
+    temporal_apply(session, build, enabled=True, verified=True)
+    temporal_access(t, build)
 
 
 def operation(result, service="compute"):
@@ -115,58 +217,6 @@ def control(c, paused, expires=None):
     return api("PATCH", firestore(c, "system/control"), {"fields": fields})
 
 
-def policy(kind, role, member, expires=None):
-    if kind == "project":
-        base = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}"
-        current = api("POST", base + ":getIamPolicy", {"options": {"requestedPolicyVersion": 3}})
-    elif kind == "run":
-        base = f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/{REGION}/services/{WEB}"
-        current = api("GET", base + ":getIamPolicy?options.requestedPolicyVersion=3")
-    elif kind == "iap":
-        base = f"https://iap.googleapis.com/v1/projects/{NUMBER}/iap_web/cloud_run-{REGION}/services/{WEB}"
-        current = api("POST", base + ":getIamPolicy", {"options": {"requestedPolicyVersion": 3}})
-    bindings = []
-    for binding in current.get("bindings", []):
-        if binding["role"] == role:
-            binding["members"] = [m for m in binding.get("members", []) if m != member]
-        if binding.get("members"):
-            bindings.append(binding)
-    if expires:
-        bindings.append({"role": role, "members": [member], "condition": {"title": "nori-poc-lease", "expression": f"request.time < timestamp('{expires}')"}})
-    current.update(version=3, bindings=bindings)
-    api("POST", base + ":setIamPolicy", {"policy": current})
-
-
-def grants(c, expires=None):
-    # Close owner access first on pause; open it last on resume.
-    specs = [("project", c["query_role"], "serviceAccount:" + c["web_service_account"]), ("run", "roles/run.invoker", "serviceAccount:" + IAP_SA), ("iap", "roles/iap.httpsResourceAccessor", "user:" + OWNER)]
-    if expires is None:
-        specs.reverse()
-    failures = []
-    for kind, role, member in specs:
-        try:
-            policy(kind, role, member, expires)
-        except Exception as error:
-            failures.append(str(error))
-    if failures:
-        raise RuntimeError("; ".join(failures))
-
-
-def denied(c):
-    checks = [(c["web_service_account"], "//aiplatform.googleapis.com/" + c["runtime_name"], "aiplatform.reasoningEngines.query"), (IAP_SA, f"//run.googleapis.com/projects/{PROJECT}/locations/{REGION}/services/{WEB}", "run.routes.invoke"), (OWNER, f"//iap.googleapis.com/projects/{NUMBER}/iap_web/cloud_run-{REGION}/services/{WEB}", "iap.webServiceVersions.accessViaIAP")]
-    end = time.monotonic() + 300
-    while True:
-        states = []
-        for principal, resource, permission in checks:
-            result = api("POST", "https://policytroubleshooter.googleapis.com/v3/iam:troubleshoot", {"accessTuple": {"principal": principal, "fullResourceName": resource, "permission": permission, "conditionContext": {"request": {"receiveTime": stamp(datetime.now(timezone.utc))}}}})
-            states.append(result.get("overallAccessState"))
-        if all(state == "CANNOT_ACCESS" for state in states):
-            return
-        if time.monotonic() > end:
-            raise RuntimeError("Invocation denial not verified: " + repr(states) + "; inspect inherited IAM before claiming paused")
-        time.sleep(5)
-
-
 def cancel_active(c):
     owner_path = "owners/" + quote(OWNER, safe="")
     owner = api("GET", firestore(c, owner_path), allow404=True)
@@ -195,14 +245,14 @@ def cancel_active(c):
 def pause(c):
     failures = []
     # Attempt every closure even if one fails. Never report success on partial closure.
-    for step in (lambda: control(c, True), lambda: cancel_active(c), lambda: grants(c), lambda: metadata({"computer-paused": "true"}), lambda: stop_vm(), lambda: denied(c)):
+    for step in (lambda: control(c, True), lambda: cancel_active(c), lambda: temporal_pause(), lambda: metadata({"computer-paused": "true"}), lambda: stop_vm()):
         try:
             step()
         except Exception as error:
             failures.append(str(error))
     if failures:
         raise RuntimeError("Pause incomplete: " + "; ".join(failures))
-    print("Paused: durable control closed, active run terminal, invocation denied, retained computer TERMINATED.")
+    print("Paused: durable control closed, active run terminal, task admission closed and WCI denied, every worker pool reconciled to zero, retained computer TERMINATED.")
 
 
 def stop_vm():
@@ -213,11 +263,14 @@ def stop_vm():
         raise RuntimeError("Computer did not stop")
 
 
-def resume(c):
-    vm_deadline = deadline()
-    expires = stamp(datetime.fromisoformat(vm_deadline.replace("Z", "+00:00")) - timedelta(seconds=20))
-    if datetime.now(timezone.utc) >= datetime.fromisoformat(expires.replace("Z", "+00:00")):
-        raise RuntimeError("Not enough time remains before cutoff for cancellation cleanup")
+def resume(c, build, verified):
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    hard = now + timedelta(hours=3)
+    shutdown = (hard - timedelta(minutes=10)).replace(second=0)
+    access = shutdown - timedelta(minutes=2)
+    expires = stamp(access - timedelta(minutes=2))
+    vm_deadline = stamp(hard)
+    session = {"started_at": stamp(now), "access_expires_at": stamp(access), "shutdown_at": stamp(shutdown), "hard_deadline_at": vm_deadline}
     # Verify a usable custom OAuth client exists without printing credentials.
     settings = api("GET", f"https://iap.googleapis.com/v1/projects/{NUMBER}:iapSettings")
     oauth = settings.get("accessSettings", {}).get("oauthSettings", {})
@@ -226,25 +279,35 @@ def resume(c):
     state = api("GET", vm_url())
     if state["status"] != "TERMINATED":
         raise RuntimeError("Resume requires a stopped computer; pause/reconcile first")
-    # Cloud-side STOP deadline is installed before invocation grants can wake anything.
+    current = api("GET", firestore(c, "system/control"), allow404=True)
+    if current and not current.get("fields", {}).get("paused", {}).get("booleanValue", True):
+        raise RuntimeError("Resume requires paused durable control; pause/reconcile the previous session first")
+    # Install the cloud-side STOP deadline before opening task admission.
     operation(api("POST", vm_url() + "/setScheduling", {"automaticRestart": False, "onHostMaintenance": "TERMINATE", "instanceTerminationAction": "STOP", "terminationTime": vm_deadline}))
-    metadata({"computer-paused": "false"})
+    installed = api("GET", vm_url())["scheduling"]
+    if installed.get("automaticRestart") or installed.get("instanceTerminationAction") != "STOP" or datetime.fromisoformat(installed["terminationTime"].replace("Z", "+00:00")) != hard:
+        raise RuntimeError("VM cloud-side STOP deadline was not verified")
     try:
+        temporal_resume(session, build, verified)
+        metadata({"computer-paused": "false"})
         control(c, False, expires)
-        grants(c, expires)
     except Exception:
         pause(c)
         raise
-    print("Resumed until " + expires + ". Computer remains stopped until a tool needs it.")
+    print("Resumed until " + expires + "; WCI expires " + stamp(access) + ", worker shutdown " + stamp(shutdown) + ", VM STOP " + vm_deadline + ". Computer remains stopped until a tool needs it.")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["deadline", "bootstrap-identities", "publish-computer", "deploy-runtime", "deploy-web", "resume", "pause", "status", "spend-caps"])
     parser.add_argument("value", nargs="?")
+    parser.add_argument("--build-id", help="deployed immutable Temporal build to admit for this session")
+    parser.add_argument("--shutdown-verified", action="store_true", help="attest the documented live Scheduler scale-to-zero proof succeeded")
     args = parser.parse_args()
     if args.action == "deadline":
         print(deadline()); return
+    if args.action == "resume" and (not args.build_id or not args.shutdown_verified):
+        parser.error("resume requires --build-id BUILD --shutdown-verified; complete the documented live shutdown proof first")
     if args.action == "bootstrap-identities":
         for service in ("aiplatform.googleapis.com", "iap.googleapis.com", "run.googleapis.com"):
             result = operation(api("POST", f"https://serviceusage.googleapis.com/v1beta1/projects/{NUMBER}/services/{service}:generateServiceIdentity", {}), "serviceusage")
@@ -267,13 +330,23 @@ def main():
     elif args.action == "deploy-runtime":
         if not args.value: parser.error("deploy-runtime needs an immutable image URI")
         name = c["runtime_name"]
-        operation(api("PATCH", f"https://{REGION}-aiplatform.googleapis.com/v1beta1/{name}?updateMask=spec.containerSpec.imageUri", {"spec": {"containerSpec": {"imageUri": args.value, "port": 8080}}}), "vertex")
+        base = f"https://{REGION}-aiplatform.googleapis.com/v1beta1/{name}"
+        current = api("GET", base)
+        env = {entry["name"]: entry for entry in current.get("spec", {}).get("deploymentSpec", {}).get("env", [])}
+        env.update({key: {"name": key, "value": value} for key, value in {
+            "NORI_EXECUTION_MODE": "temporal",
+            "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",
+            "TEMPORAL_NAMESPACE": "quickstart-nori.qtjow",
+            "TEMPORAL_TASK_QUEUE": "nori-tasks",
+            "TEMPORAL_API_KEY_SECRET_VERSION": f"projects/{PROJECT}/secrets/nori-temporal-api-key/versions/latest",
+        }.items()})
+        operation(api("PATCH", base + "?updateMask=spec.containerSpec.imageUri,spec.deploymentSpec.env", {"spec": {"containerSpec": {"imageUri": args.value, "port": 8080}, "deploymentSpec": {"env": list(env.values())}}}), "vertex")
         print("Runtime image updated.")
     elif args.action == "deploy-web":
         if not args.value: parser.error("deploy-web needs an immutable image URI")
         print(gcloud("run", "services", "update", WEB, "--region=" + REGION, "--image=" + args.value))
     elif args.action == "resume":
-        resume(c)
+        resume(c, args.build_id, args.shutdown_verified)
     elif args.action == "pause":
         pause(c)
     elif args.action == "status":

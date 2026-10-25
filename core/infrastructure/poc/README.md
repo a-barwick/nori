@@ -23,7 +23,7 @@ Build and push the web and runtime images independently to the private `us-centr
 
 Before the full apply, upload the Linux binary to `gs://bot-111549-nori-poc/releases/computer-agent-SHA256`. Its object name and checksum must match. New GCE instances initially boot as part of insertion before Terraform stops them; `computer-paused=true` makes that first startup exit without booting the guest. The VM has a cloud STOP deadline, automatic restart disabled, and desired state `TERMINATED`. Its data attachment never auto-deletes.
 
-Terraform uses native `container_spec` for Agent Runtime and `iap_enabled` for Cloud Run. It leaves all invocation grants closed and sets both services' minimum instances to zero. The runtime uses the named `nori-poc` Firestore database. The application uses explicit `NORI_PROJECT_ID=bot-111549`, independent of the
+Terraform uses native `container_spec` for Agent Runtime and `iap_enabled` for Cloud Run. It leaves separately configured owner-only invocation grants unchanged and sets both services' minimum instances to zero. The runtime uses the named `nori-poc` Firestore database. The application uses explicit `NORI_PROJECT_ID=bot-111549`, independent of the
 platform project; model selection uses `MODEL_LOCATION=global`
 so the runtime region does not override the Vertex model endpoint. The web receives the native Agent Runtime invoke root ending in `/api`; its application routes append `/api/session`, `/api/run`, `/api/cancel`, and `/api/artifact`.
 
@@ -40,6 +40,8 @@ python3 infrastructure/poc/poc.py deploy-runtime IMAGE_URI
 python3 infrastructure/poc/poc.py deploy-web IMAGE_URI
 ```
 
+`deploy-runtime` updates the image and enables Temporal execution with the namespace, task queue, address, and `TEMPORAL_API_KEY_SECRET_VERSION=projects/bot-111549/secrets/nori-temporal-api-key/versions/latest`. It preserves other runtime environment entries. The runtime service account reads the existing Secret Manager secret; no credential payload enters Terraform or the image. Deploy workers independently through the Temporal release manifest while paused.
+
 The computer release installs on its next stopped-host start. The host uses Nori
 paths and services. Its POC helper keeps the existing `bot-guest-data` attachment,
 `BOT_GUEST_DATA` filesystem label, and original READY marker; these identify the
@@ -51,14 +53,16 @@ Terraform ignores independent image changes, computer release metadata, and nati
 ## Resume and pause
 
 ```sh
-python3 infrastructure/poc/poc.py resume
+python3 infrastructure/poc/poc.py resume --build-id BUILD_ID --shutdown-verified
 python3 infrastructure/poc/poc.py status
 python3 infrastructure/poc/poc.py pause
 ```
 
-Resume requires configured IAP OAuth and a stopped computer. It installs a cloud-side STOP deadline at the earlier of three hours from now and 22:00 America/Los_Angeles. It writes `system/control` with `paused=false` and an RFC3339 `expires_at` 20 seconds earlier for cancellation cleanup. Owner IAP access, the IAP service agent's Cloud Run invocation permission, and the web service account's query-only Agent Runtime permission get that same absolute expiry. The VM stays stopped until a computer tool starts it. Nothing automatically resumes later.
+Resume requires configured IAP OAuth, paused durable control, a stopped computer, and an immutable worker build already deployed through the [Temporal module](../temporal/README.md). `--shutdown-verified` attests the documented live Scheduler scale-to-zero proof; it does not skip the per-session checks. Resume installs and reads back a cloud-side VM STOP deadline three hours from session start. It arms every retained pool's shutdown job with WCI disabled, verifies all pools have reconciled to zero and effective WCI update denial, then enables WCI for the chosen build alone.
 
-Pause writes `paused=true`, marks the active run for cancellation, calls the runtime cancellation endpoint, and waits for a terminal run status. It removes all three invocation bindings and stops the retained computer. It reports success only after the VM is `TERMINATED` and native IAM Policy Troubleshooter verifies denial for all three gates. API errors, inherited grants, or unknown decisions leave an explicit incomplete-pause error. Check those failures before claiming shutdown. Runtime requests have a two-minute limit and watch durable pause/expiry during work.
+Task admission expires four minutes before the worker shutdown; WCI expires two minutes before shutdown, and worker shutdown is at least ten minutes before the VM deadline. These margins allow admitted work to cancel and clean up while a worker is available. `system/control` holds the task admission expiry. Owner IAP access, IAP service-agent Cloud Run invocation, and web runtime-query access remain available so Austin can open the website and saved history after pause or expiry. Native IAP and the application's exact owner-email check still enforce access. The VM stays stopped until a computer tool starts it. Expiry never resumes anything; a new session requires an explicit operator command. There is no fixed time-of-day cutoff.
+
+Pause writes `paused=true`, marks the active run for cancellation, calls the runtime cancellation endpoint, and waits for a terminal run status. It preserves all three website invocation bindings, disables the WCI invoker account, removes its pool grant, reconciles every retained worker pool to zero, and stops the retained computer. Shutdown jobs remain armed until zero capacity and effective WCI denial are verified, then are paused. It reports success only after the VM is `TERMINATED`, every pool is reconciled to zero, and native IAM Policy Troubleshooter verifies denial for WCI updates. Website and history requests remain available; durable paused or expired control rejects new task execution. API errors, inherited grants, or unknown decisions leave an explicit incomplete-pause error. Check those failures before claiming shutdown. Runtime requests have a two-minute limit and watch durable pause/expiry during work.
 
 The operator needs the project's normal provisioning/IAM permissions and Policy Troubleshooter access. The running web service account can only query the runtime. The runtime can access the named Firestore database, its artifacts prefix, Vertex model prediction, and the single computer's get/start and IAP port 8090. The computer service account only reads computer release binary objects.
 
@@ -66,7 +70,7 @@ The operator needs the project's normal provisioning/IAM permissions and Policy 
 
 Native monthly service spend caps already exist on billing account `010FFA-6C77F1-18FF6D`: Cloud Run $10 (`ec91d69c-af6f-4582-8a57-fc5d74df3922`) and Agent Platform $20 (`c288b003-c839-4ef0-9327-7ae10d3e762b`). The existing $50 alert budget remains. Do not create duplicates. `python3 infrastructure/poc/poc.py spend-caps` reads the existing budgets through the native Billing Budgets REST API; this provider version does not model the spend-cap field.
 
-Pause retains the VM boot disk, original guest disk, GCS objects, images, and Firestore data, so their storage charges continue. Check the project's paid-service inventory by day end. No scheduler, automatic restart, static address, load balancer, proxy OAuth service, or background job system is provisioned here.
+Pause retains the VM boot disk, original guest disk, GCS objects, images, and Firestore data, so their storage charges continue. Check the project's paid-service inventory by day end. The separate Temporal module owns shutdown-only Scheduler jobs. No unattended start or automatic restart is provisioned.
 
 ## Computer RPC
 

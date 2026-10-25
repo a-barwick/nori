@@ -18,7 +18,7 @@ variable "active_build_id" {
 }
 
 variable "session" {
-  description = "Explicit authorized session, never an unattended start. All times RFC3339 UTC; shutdown_at must be minute-aligned. Operator must bound hard_deadline_at by 22:00 America/Los_Angeles."
+  description = "Explicit authorized session of at most three hours, never an unattended start. All times RFC3339 UTC; shutdown_at must be minute-aligned."
   type = object({
     started_at        = string
     access_expires_at = string

@@ -168,6 +168,22 @@ func main() {
 				return
 			}
 			deliver(r.Context())
+			// A paused task whose start was never delivered has no workflow to
+			// wake the worker pool. Repair only proven closed/missing executions;
+			// this path never starts a workflow or a retained computer.
+			repairCtx, cancelRepair := context.WithTimeout(r.Context(), 5*time.Second)
+			control, controlErr := store.Control(repairCtx)
+			if controlErr == nil {
+				if _, admissionErr := control.Deadline(); admissionErr != nil {
+					if repairErr := task.RepairClosed(repairCtx, store, temporalClient, service.Computer); repairErr != nil {
+						log.Printf("Stop terminal recovery pending: %v", repairErr)
+					}
+					if repaired, readErr := store.GetRun(repairCtx, run.ID); readErr == nil {
+						run = repaired
+					}
+				}
+			}
+			cancelRepair()
 			writeJSON(w, http.StatusAccepted, map[string]any{"run": run})
 			return
 		}

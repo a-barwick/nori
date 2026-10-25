@@ -41,8 +41,11 @@ func main() {
 		log.Fatal(e)
 	}
 	expiry, e := control.Deadline()
-	if e != nil {
-		log.Fatal("worker admission denied: session paused or expired")
+	cleanupOnly := e != nil
+	if cleanupOnly {
+		// An operator can start a stopped poller solely to finish cancellation.
+		// This grants no execution admission and never resumes paid computers.
+		expiry = time.Now().Add(30 * time.Second)
 	}
 	ctx, cancel := context.WithDeadline(ctx, expiry)
 	defer cancel()
@@ -61,13 +64,24 @@ func main() {
 		log.Fatal("TEMPORAL_BUILD_ID is required; use an immutable release identifier")
 	}
 	service := agent.New(store, model, env("MODEL_NAME", "gemini-3.1-flash-lite"), computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env("COMPUTER_INSTANCE", "nori-computer")})
-	w := worker.New(c, task.Queue(), worker.Options{MaxConcurrentActivityExecutionSize: 1, MaxConcurrentWorkflowTaskExecutionSize: 2, WorkerStopTimeout: 25 * time.Second, DeploymentOptions: worker.DeploymentOptions{UseVersioning: true, Version: worker.WorkerDeploymentVersion{DeploymentName: env("TEMPORAL_DEPLOYMENT_NAME", "nori-task"), BuildID: build}, DefaultVersioningBehavior: workflow.VersioningBehaviorPinned}})
+	stopTimeout := 25 * time.Second
+	if cleanupOnly {
+		stopTimeout = 5 * time.Second
+	}
+	w := worker.New(c, task.Queue(), worker.Options{MaxConcurrentActivityExecutionSize: 1, MaxConcurrentWorkflowTaskExecutionSize: 2, WorkerStopTimeout: stopTimeout, DeploymentOptions: worker.DeploymentOptions{UseVersioning: true, Version: worker.WorkerDeploymentVersion{DeploymentName: env("TEMPORAL_DEPLOYMENT_NAME", "nori-task"), BuildID: build}, DefaultVersioningBehavior: workflow.VersioningBehaviorPinned}})
 	w.RegisterWorkflowWithOptions(task.Workflow, workflow.RegisterOptions{Name: task.WorkflowName, VersioningBehavior: workflow.VersioningBehaviorPinned})
-	w.RegisterActivity(&task.Activities{Agent: service, Store: store})
+	w.RegisterActivity(&task.Activities{Agent: service, Store: store, CleanupOnly: cleanupOnly})
 	if e = w.Start(); e != nil {
 		log.Fatal(e)
 	}
 	defer w.Stop()
+	if cleanupOnly {
+		log.Print("session paused or expired; worker draining cleanup only")
+		if e = task.Drain(ctx, store, c, service.Computer); e != nil {
+			log.Printf("worker cleanup incomplete: %v", e)
+		}
+		return
+	}
 	defer func() {
 		check, cancelCheck := context.WithTimeout(context.Background(), 5*time.Second)
 		control, readErr := store.Control(check)

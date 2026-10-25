@@ -305,10 +305,18 @@ permissions; it never invokes Agent Runtime.
 
 Keep credentials in the one gitignored mode-600 monorepo-root `.env`. The commands
 load `../.env`; `NORI_ENV_FILE` can point to the original root file from a worktree
-without copying it. Required Temporal names are `TEMPORAL_ADDRESS`,
-`TEMPORAL_NAMESPACE`, `TEMPORAL_API_KEY`, `TEMPORAL_TASK_QUEUE` (default
-`nori-tasks`), `TEMPORAL_DEPLOYMENT_NAME` (default `nori-task`) and an immutable
-`TEMPORAL_BUILD_ID`. Cloud connections require TLS and an API key. Set
+without copying it. The API and worker require `TEMPORAL_ADDRESS` and
+`TEMPORAL_NAMESPACE`, and share `TEMPORAL_TASK_QUEUE` (default `nori-tasks`). The
+worker also uses `TEMPORAL_DEPLOYMENT_NAME` (default `nori-task`) and requires an
+immutable `TEMPORAL_BUILD_ID`. Cloud connections require TLS and an API key. Local processes
+load `TEMPORAL_API_KEY` from the root `.env`; deployed workers can use native
+Secret Manager environment injection. The API can instead set
+`TEMPORAL_API_KEY_SECRET_VERSION=projects/bot-111549/secrets/nori-temporal-api-key/versions/1`.
+It reads that version once on startup through Google ADC, checks its CRC32C, and
+keeps the credential in memory. The version reference takes precedence over
+`TEMPORAL_API_KEY` and requires `roles/secretmanager.secretAccessor` on that secret
+for the runtime service account. Keep only the reference in Terraform and runtime
+configuration; never put its payload there. Set
 `TEMPORAL_LOCAL=true` only for a local dev server, and
 `TEMPORAL_CLOUD_RUN_ID=false` outside Cloud Run. Never place key values in command
 arguments, Terraform variables, source files or images.

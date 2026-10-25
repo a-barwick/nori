@@ -22,13 +22,8 @@ zone=us-central1-a
 region=us-central1
 deadline=$(python3 - <<'DEADLINE'
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 now = datetime.now(timezone.utc)
-local = now.astimezone(ZoneInfo("America/Los_Angeles"))
-cutoff = local.replace(hour=22, minute=0, second=0, microsecond=0)
-if local >= cutoff:
-    raise SystemExit("Daily 22:00 America/Los_Angeles cutoff passed; no new paid compute")
-print(min(now + timedelta(minutes=30), cutoff).astimezone(timezone.utc).isoformat(timespec="seconds"))
+print((now + timedelta(minutes=30)).isoformat(timespec="seconds"))
 DEADLINE
 )
 gc=(gcloud --project "$project" --quiet)
