@@ -26,7 +26,7 @@ export function RuntimeComposer({
   stopping: boolean;
   stopDisabled: boolean;
   onSend: () => void;
-  onStop: () => void;
+  onStop?: () => void;
   unread: number;
   onJump: () => void;
 }) {
@@ -101,7 +101,7 @@ export function RuntimeComposer({
               aria-label="Message Nori"
               className="scrollbar-quiet max-h-[196px] min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1 text-input text-ink transition-[height] duration-150 ease-out placeholder:text-ink-3 focus-visible:outline-none disabled:opacity-60"
             />
-            {busy && (
+            {busy && onStop && (
               <IconButton
                 size={32}
                 label={stopping ? "Stopping…" : "Stop task"}
