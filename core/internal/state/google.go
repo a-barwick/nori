@@ -188,12 +188,26 @@ func (s *Google) Finish(ctx context.Context, id, runStatus, detail, text string)
 	return r, e
 }
 func (s *Google) Session(ctx context.Context) (Session, error) {
+	return s.session(ctx, false)
+}
+
+// ConversationSession supplies the outer agent with all available messages.
+// Selecting or compacting its context is a separate feature.
+func (s *Google) ConversationSession(ctx context.Context) (Session, error) {
+	return s.session(ctx, true)
+}
+
+func (s *Google) session(ctx context.Context, fullConversation bool) (Session, error) {
 	c, e := s.Control(ctx)
 	if e != nil {
 		return Session{}, e
 	}
 	session := Session{Messages: []Message{}, Runs: []Run{}, Paused: c.Paused, ExpiresAt: c.ExpiresAt}
-	iter := s.messages().OrderBy("created_at", firestore.Desc).Limit(100).Documents(ctx)
+	query := s.messages().OrderBy("created_at", firestore.Desc)
+	if !fullConversation {
+		query = query.Limit(100)
+	}
+	iter := query.Documents(ctx)
 	defer iter.Stop()
 	for {
 		d, e := iter.Next()

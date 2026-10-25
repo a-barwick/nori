@@ -90,10 +90,6 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 				incorporated = cmd.Position
 			}
 		}
-		if modelCalls >= 6 {
-			err = errors.New("model call limit reached before a final answer")
-			return
-		}
 		err = workflow.ExecuteActivity(quick, activities.Project, Projection{Step: Step{id, revision}, Kind: "model", Text: "Thinking"}).Get(ctx, nil)
 		if superseded(err) {
 			continue
@@ -134,10 +130,6 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 				finalText = ""
 				continue
 			}
-			return
-		}
-		if toolCalls+len(decision.Calls) > 12 {
-			err = errors.New("tool call limit reached")
 			return
 		}
 		contents = append(contents, decision.Content)

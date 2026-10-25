@@ -39,7 +39,7 @@ const textOf = (node: React.ReactNode): string => {
 const bubble = (onAccent: boolean): Components => ({
   p: ({ children }) => <p className="[&+*]:mt-2">{children}</p>,
   ul: ({ children }) => <ul className="my-2 flex list-disc flex-col gap-1 pl-5 first:mt-0 last:mb-0">{children}</ul>,
-  ol: ({ children }) => <ol className="my-2 flex list-decimal flex-col gap-1 pl-5 first:mt-0 last:mb-0">{children}</ol>,
+  ol: ({ children, start }) => <ol start={start} className="my-2 flex list-decimal flex-col gap-1 pl-5 first:mt-0 last:mb-0">{children}</ol>,
   strong: ({ children }) => <strong className="font-medium">{children}</strong>,
   a: ({ href, children }) => (
     <a
@@ -62,7 +62,7 @@ const page: Components = {
   h3: ({ children }) => <h3 className="mt-5 mb-1.5 text-section font-medium text-ink first:mt-0">{children}</h3>,
   h4: ({ children }) => <h4 className="mt-4 mb-1 text-row-title font-medium text-ink">{children}</h4>,
   ul: ({ children }) => <ul className="my-3 flex list-disc flex-col gap-1.5 pl-5 marker:text-ink-3">{children}</ul>,
-  ol: ({ children }) => <ol className="my-3 flex list-decimal flex-col gap-1.5 pl-5 marker:text-ink-3">{children}</ol>,
+  ol: ({ children, start }) => <ol start={start} className="my-3 flex list-decimal flex-col gap-1.5 pl-5 marker:text-ink-3">{children}</ol>,
   strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
   a: ({ href, children }) => (
     <a href={href} target="_blank" rel="noreferrer" className="text-accent-text hover:underline">
