@@ -408,6 +408,10 @@ resource "google_cloud_run_v2_service" "web" {
   iap_enabled          = true
   invoker_iam_disabled = false
   ingress              = "INGRESS_TRAFFIC_ALL"
+  scaling {
+    min_instance_count = 0
+    max_instance_count = 1
+  }
   template {
 
     service_account                  = google_service_account.web.email

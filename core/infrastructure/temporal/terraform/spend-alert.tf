@@ -130,9 +130,8 @@ resource "google_cloud_scheduler_job" "spend_alert" {
   schedule         = each.value.schedule
   time_zone        = "Etc/UTC"
   attempt_deadline = "30s"
-  retry_config {
-    retry_count = 0
-  }
+  # Native retryCount/maxRetryDuration defaults are zero: no retries.
+  # A zero-only block is omitted by the API and causes perpetual provider drift.
   http_target {
     http_method = "POST"
     uri         = "https://run.googleapis.com/v2/${google_cloud_run_v2_job.spend_alert[each.key].id}:run"
