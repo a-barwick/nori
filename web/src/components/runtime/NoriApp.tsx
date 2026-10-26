@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MotionConfig } from "motion/react";
 import { Dialog, Tooltip } from "radix-ui";
-import { Bug, RefreshCw } from "lucide-react";
+import { Activity, Bug, RefreshCw } from "lucide-react";
 import { Thread } from "@/components/chat/Thread";
-import { Medallion } from "@/components/mark/NoriMark";
+import { NovaShell } from "@/components/nova/NovaShell";
 import { IconButton } from "@/components/ui/primitives";
 import { useHydrated, useWide } from "@/lib/hooks";
 import { useRuntime } from "@/lib/poc/useRuntime";
@@ -50,6 +50,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
   );
   const [dockOpen, setDockOpen] = useState(false);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const activityButton = useRef<HTMLButtonElement>(null);
   const panelOpen = wide ? dockOpen : overlayOpen;
   const closePanel = useCallback(
     () => (wide ? setDockOpen(false) : setOverlayOpen(false)),
@@ -158,7 +159,20 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
     : undefined;
 
   return (
-    <div className="fixed inset-0 flex overflow-clip bg-canvas text-ink">
+    <NovaShell actions={
+      <>
+        <IconButton label={debug ? "Hide debug info" : "Show debug info"} size={32} onClick={() => setDebug((on) => !on)}>
+          <Bug size={16} strokeWidth={1.5} className={debug ? "text-accent-text" : undefined} />
+        </IconButton>
+        <IconButton label={loading ? "Loading history" : "Refresh history"} size={32} disabled={loading} onClick={() => void runtime.refreshHistory()}>
+          <RefreshCw size={16} strokeWidth={1.5} />
+        </IconButton>
+        <button ref={activityButton} type="button" className="nova-activity-button" aria-label="Activity" aria-expanded={panelOpen} onClick={togglePanel}>
+          <Activity size={16} /><span>Activity</span>{busy && <span className="nova-working-dot" />}
+        </button>
+      </>
+    }>
+    <div className="nova-live-body flex min-h-0 flex-1 overflow-clip text-ink">
       <main className="relative min-w-0 flex-1 overflow-clip" aria-label="Chat">
         <div
           className={notice ? "absolute inset-x-0 top-0 bottom-20" : "h-full"}
@@ -171,7 +185,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
             onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
             status={work}
             onUnread={onUnread}
-            presence={!panelOpen}
+            presence={false}
             emptyMessage={
               loading
                 ? "Loading your conversation…"
@@ -182,54 +196,6 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
                     : undefined
             }
           />
-          <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex items-start px-4">
-            <div
-              aria-hidden
-              className="top-frost absolute inset-x-0 -top-3"
-              style={{ height: panelOpen ? 44 : 92 }}
-            />
-            {!panelOpen && (
-              <button
-                type="button"
-                onClick={togglePanel}
-                aria-label="Nori: open agent panel"
-                className="anim-fade pointer-events-auto absolute left-1/2 flex -translate-x-1/2 flex-col items-center rounded-full"
-              >
-                <Medallion
-                  size={52}
-                  state={
-                    busy
-                      ? "thinking"
-                      : runtime.draft.trim()
-                        ? "attentive"
-                        : "idle"
-                  }
-                  look="onigiri"
-                  watch
-                />
-                <span className="glass -mt-2.5 rounded-full px-2.5 py-0.5 text-caption font-medium text-ink">
-                  Nori
-                </span>
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="absolute top-3 right-3 z-20 flex gap-1">
-          <IconButton
-            label={debug ? "Hide debug info" : "Show debug info"}
-            size={32}
-            onClick={() => setDebug((on) => !on)}
-          >
-            <Bug size={16} strokeWidth={1.5} className={debug ? "text-accent-text" : undefined} />
-          </IconButton>
-          <IconButton
-            label={loading ? "Loading history" : "Refresh history"}
-            size={32}
-            disabled={loading}
-            onClick={() => void runtime.refreshHistory()}
-          >
-            <RefreshCw size={16} strokeWidth={1.5} />
-          </IconButton>
         </div>
         {notice && (
           <div className="absolute inset-x-0 bottom-[88px] z-10 mx-auto max-w-[768px] px-6">
@@ -282,6 +248,10 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
             <Dialog.Overlay className="scrim fixed inset-0 z-40 bg-overlay" />
             <Dialog.Content
               aria-describedby={undefined}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                activityButton.current?.focus();
+              }}
               className="sheet-right fixed inset-y-0 right-0 z-40 max-w-full shadow-pop"
               style={{ width: "var(--panel-w)" }}
             >
@@ -292,5 +262,6 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
         </Dialog.Root>
       )}
     </div>
+    </NovaShell>
   );
 }

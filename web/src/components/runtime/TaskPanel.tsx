@@ -143,6 +143,7 @@ export function TaskPanel({
         <IconButton
           size={36}
           label="Hide agent panel"
+          tip={false}
           onClick={onClose}
           className="absolute top-3 right-0"
         >

@@ -52,7 +52,7 @@ export function RuntimeComposer({
   }, [draft]);
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-5">
+    <div className="nova-composer pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-5">
       <div className="pointer-events-auto relative mx-auto max-w-[768px] px-[clamp(24px,calc(72px-(100vw-768px)/2),72px)]">
         {unread > 0 && (
           <button
@@ -98,7 +98,7 @@ export function RuntimeComposer({
                   ? "Answer or update this task"
                   : busy && !canChat
                     ? "Nori is working…"
-                    : "Message Nori"
+                    : "Ask Nori anything…"
               }
               aria-label="Message Nori"
               className="scrollbar-quiet max-h-[196px] min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1 text-input text-ink transition-[height] duration-150 ease-out placeholder:text-ink-3 focus-visible:outline-none disabled:opacity-60"

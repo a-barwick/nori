@@ -16,8 +16,8 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Nori",
-  description: "Someone you text who happens to be very capable.",
+  title: "Nori · Nova",
+  description: "Nori, the assistant inside Nova. One conversation, everything moving forward.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
