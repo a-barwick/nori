@@ -54,7 +54,9 @@ computer tool starts the retained VM on demand.
 
 ## Immutable releases
 
-`terraform/worker-releases.json` retains every deployed build ID and image digest.
+`terraform/worker-releases.json` retains every deployed build ID and image digest,
+the compatible build set, and the enabled billing-alert configuration. Pass this
+complete file to every plan so future releases preserve those resources.
 Never change an image behind a live build ID. New pools begin at zero. Always
 plan with the complete release manifest; omitting it selects an empty default,
 which deletion protection rejects for existing pools. Preserve the compatible
