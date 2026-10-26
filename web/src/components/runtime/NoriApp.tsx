@@ -159,7 +159,12 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
     : undefined;
 
   return (
-    <NovaShell actions={
+    <NovaShell
+      state={busy ? "thinking" : runtime.draft.trim() ? "attentive" : "idle"}
+      status={loading ? "Connecting…" : error || !session ? "Disconnected" : unavailable ? "Paused" : running?.waiting ? "Waiting for you" : busy ? "Working…" : "Ready when you are"}
+      activityOpen={panelOpen}
+      onToggleActivity={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}
+      actions={
       <>
         <IconButton label={debug ? "Hide debug info" : "Show debug info"} size={32} onClick={() => setDebug((on) => !on)}>
           <Bug size={16} strokeWidth={1.5} className={debug ? "text-accent-text" : undefined} />
@@ -167,16 +172,14 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
         <IconButton label={loading ? "Loading history" : "Refresh history"} size={32} disabled={loading} onClick={() => void runtime.refreshHistory()}>
           <RefreshCw size={16} strokeWidth={1.5} />
         </IconButton>
-        <button ref={activityButton} type="button" className="nova-activity-button" aria-label="Activity" aria-expanded={panelOpen} onClick={togglePanel}>
+        <button ref={activityButton} type="button" className="nova-activity-button" aria-label="Activity" aria-expanded={panelOpen} onClick={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}>
           <Activity size={16} /><span>Activity</span>{busy && <span className="nova-working-dot" />}
         </button>
       </>
     }>
     <div className="nova-live-body flex min-h-0 flex-1 overflow-clip text-ink">
-      <main className="relative min-w-0 flex-1 overflow-clip" aria-label="Chat">
-        <div
-          className={notice ? "absolute inset-x-0 top-0 bottom-20" : "h-full"}
-        >
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-clip" aria-label="Chat">
+        <div className="min-h-0 flex-1">
           <Thread
             conversation={conversation}
             onStatusDetails={() =>
@@ -198,7 +201,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
           />
         </div>
         {notice && (
-          <div className="absolute inset-x-0 bottom-[88px] z-10 mx-auto max-w-[768px] px-6">
+          <div className="nova-runtime-notice w-full shrink-0 self-center px-6 pb-3">
             <div
               role={error ? "alert" : "status"}
               className="rounded-tile bg-surface p-3 text-meta text-ink-2 shadow-pill"

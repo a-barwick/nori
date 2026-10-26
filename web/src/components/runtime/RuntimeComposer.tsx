@@ -52,7 +52,7 @@ export function RuntimeComposer({
   }, [draft]);
 
   return (
-    <div className="nova-composer pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-5">
+    <div className="nova-composer relative z-10 shrink-0 pb-5">
       <div className="pointer-events-auto relative mx-auto max-w-[768px] px-[clamp(24px,calc(72px-(100vw-768px)/2),72px)]">
         {unread > 0 && (
           <button

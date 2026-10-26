@@ -14,8 +14,8 @@ bun run dev --port 3211
 ```
 
 Visit `http://127.0.0.1:3211/redesign` for the interactive concept, or `/` for
-the redesigned live chat. The existing loopback development access and production
-IAP checks apply to both routes.
+the live chat. Nova is now the main design. The concept route is development-only
+and returns not found in production; the live app retains production IAP checks.
 
 The concept has three scenes: meeting preparation, a recap email and Salesforce
 approval, and a renewals dashboard. Open the meeting rows, edit and save the recap,
@@ -29,8 +29,9 @@ preview. No backend, live integrations, or deployment are needed for this route.
 
 ## Implementation
 
-- `NovaShell` shares the white app frame, Nova branding, Nori identity, and mobile
-  header between the live app and concept.
+- `NovaShell` shares the white app frame, Nova branding, animated onigiri, and mobile
+  header between the live app and concept. Live identity shows runtime status and
+  opens Activity; the onigiri remains visible at every screen size.
 - Global semantic colors match the deck: white, plum ink, saturated purple,
   lavender borders and badges, and coral risk indicators. The POC stays light
   regardless of system theme, matching the reference.

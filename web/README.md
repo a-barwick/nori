@@ -1,6 +1,6 @@
 # Nori web
 
-The current-main chat UI connected to the deployed Go runtime. Conversation and task history come from Firestore through the existing runtime API; the web app does not generate answers or execute tasks itself.
+Nori uses the Nova design: a white conversation surface, lavender frame, purple actions, and the animated onigiri identity. Conversation and task history come from Firestore through the existing runtime API; the web app does not generate answers or execute tasks itself.
 
 ## Local preview
 
@@ -25,6 +25,9 @@ No project API key is needed in the web image. Keep any local project configurat
 
 ## Behavior and boundaries
 
+- The onigiri stays visible on desktop and mobile, responds to typing and task state, and opens Activity. The header also reports connection and execution status.
+- The composer and connection notices reserve their own space, including for multiline drafts. Saved structured replies use document cards with Copy, Open document, and Download.
+- `/redesign` is a development-only concept with fictional data; production returns not found for it.
 - The signed IAP assertion and exact owner email are verified before private routes are served. Unsigned identity headers are never trusted.
 - `/api/session`, `/api/run`, `/api/cancel`, `/api/input`, and `/api/artifact` proxy the existing API contract with server credentials. Browser credentials are not forwarded.
 - The conversation uses the current message bubbles, avatar/presence, document layout and reading view. Long saved replies can be opened and downloaded, with Back to chat preserving the conversation position.

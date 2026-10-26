@@ -36,7 +36,7 @@ function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: strin
   const title = body.match(/^#{1,3}\s+(.+)$/m)?.[1] ?? firstSentence(body).slice(0, 48);
 
   return (
-    <article className="group/page relative mt-4 w-full" data-item-id={item.id} aria-label={`Nori: ${title}`}>
+    <article className="nova-document group/page relative mt-4 w-full" data-item-id={item.id} aria-label={`Nori: ${title}`}>
       <header className="flex min-h-8 flex-wrap items-center gap-1.5">
         <NoriMark size={16} state="idle" />
         <span className="text-meta font-medium text-ink">Nori</span>

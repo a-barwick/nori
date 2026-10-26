@@ -101,7 +101,7 @@ export function Markdown({
   className?: string;
 }) {
   return (
-    <div className={cn(variant === "page" ? "text-read text-ink" : "text-body", className)}>
+    <div className={cn("[overflow-wrap:anywhere]", variant === "page" ? "text-read text-ink" : "text-body", className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={variant === "page" ? page : bubble(onAccent)}>
         {children}
       </ReactMarkdown>
