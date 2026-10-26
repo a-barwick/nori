@@ -6,10 +6,10 @@ The current-main chat UI connected to the deployed Go runtime. Conversation and 
 
 ```sh
 bun install --frozen-lockfile
-bun run dev --port 3234
+bun --env-file=../.env run dev --port 3210
 ```
 
-The local preview binds to loopback. Without a configured runtime, it shows a connection notice and disables Send. It does not substitute demo messages, task results, or screenshots. A real task requires an explicitly authorized active session; previewing the frontend does not authorize resuming the computer or worker.
+The local preview binds to loopback. Without a configured runtime, it shows a connection notice and disables Send. It does not substitute demo messages, task results, or screenshots. Real task execution requires the project to be resumed; previewing the frontend does not authorize resuming the computer or worker.
 
 ## Runtime configuration
 
@@ -29,13 +29,13 @@ No project API key is needed in the web image. Keep any local project configurat
 - `/api/session`, `/api/run`, `/api/cancel`, `/api/input`, and `/api/artifact` proxy the existing API contract with server credentials. Browser credentials are not forwarded.
 - The conversation uses the current message bubbles, avatar/presence, document layout and reading view. Long saved replies can be opened and downloaded, with Back to chat preserving the conversation position.
 - The activity panel shows real task events, shell/browser output, statuses, and protected screenshots. Stop requests cancellation and waits for runtime confirmation.
-- History refreshes only while a task is active, the tab is visible, and the session remains active. Errors suspend automatic refresh until manual reconnection.
-- Attachments, voice, local message edits/deletion, demo Library/Goals/Ideas/Settings, and simulated agent actions are not exposed. Their old URLs redirect to chat. The old `/api/nori` demo generation endpoint is retired.
-- Durable tasks accept corrections and answers through the composer while running; these use the existing `/api/input` contract. Questions from the runtime appear in Activity and in the conversation status.
+- History refreshes only while a task is active, the tab is visible, and task execution is resumed. Errors suspend automatic refresh until manual reconnection.
+- The old Library/Goals/Ideas/Settings URLs redirect to chat. Their demo shell, seeded local store, scripted agent, attachments, voice, and local edit/delete controls have been removed. The old `/api/nori` endpoint returns HTTP 410.
+- Durable tasks accept corrections and answers through the composer while running; these use the existing `/api/input` contract. Questions from the runtime appear in Activity and in the conversation status. The local outer-agent adapter has a separate task-update form.
 - The UI does not invent response streaming: the existing contract returns saved messages and task activity.
 
 ## Build and deployment
 
 `bun run build` produces Next.js standalone output; `bun run lint` checks the frontend. The Dockerfile builds only `web/` and excludes `.env*`, dependencies, and local build output from its context.
 
-A deployment must update only the web image on the existing `nori-web` Cloud Run service. Preserve its IAP, identity, environment, private access, domain mapping, and min/max instance configuration. Backend and Temporal changes are outside this frontend update. Observe the authorized session deadline and the maximum three-hour limit for explicitly authorized runtime sessions.
+A deployment must update only the web image on the existing `nori-web` Cloud Run service. Preserve its IAP, identity, environment, private access, domain mapping, and min/max instance configuration. Use the [operator lifecycle](../core/infrastructure/poc/README.md) to pause worker capacity and stop the computer when live work finishes. Local preview does not start cloud capacity.

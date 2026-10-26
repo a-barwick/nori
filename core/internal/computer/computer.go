@@ -33,6 +33,10 @@ type Client struct {
 
 var ErrStopped = errors.New("computer is stopped")
 
+// ErrDraining proves that the host rejected this RPC before forwarding it to
+// the guest. Only this explicit rejection is safe to reconnect and send again.
+var ErrDraining = errors.New("computer is stopping after idle; request was not dispatched")
+
 func Open(ctx context.Context, c Config, run string) (*Client, error) {
 	return connect(ctx, c, run, true)
 }
@@ -42,70 +46,123 @@ func Attach(ctx context.Context, c Config, run string) (*Client, error) {
 	return connect(ctx, c, run, false)
 }
 func connect(ctx context.Context, c Config, run string, allowStart bool) (*Client, error) {
-	ctx, readyCancel := context.WithTimeout(ctx, 90*time.Second)
+	// An idle stop may already be flushing the guest when a new task arrives.
+	// Allow that stop to complete before starting it; no tool has been sent yet.
+	ctx, readyCancel := context.WithTimeout(ctx, 180*time.Second)
 	defer readyCancel()
 	if c.Project == "" || c.Zone == "" || c.Instance == "" {
 		return nil, errors.New("computer project, zone and instance are required")
 	}
-	api, e := google.DefaultClient(ctx, "https://www.googleapis.com/auth/compute")
-	if e != nil {
-		return nil, e
+	api, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/compute")
+	if err != nil {
+		return nil, err
 	}
 	target := "https://compute.googleapis.com/compute/v1/projects/" + url.PathEscape(c.Project) + "/zones/" + url.PathEscape(c.Zone) + "/instances/" + url.PathEscape(c.Instance)
-	req, e := http.NewRequestWithContext(ctx, "GET", target, nil)
-	if e != nil {
-		return nil, e
-	}
-	resp, e := api.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	var vm struct {
-		Status string `json:"status"`
-	}
-	e = readJSON(resp, &vm)
-	if e != nil {
-		return nil, e
-	}
-	if vm.Status == "TERMINATED" {
-		if !allowStart {
-			return nil, ErrStopped
+	var client *Client
+	defer func() {
+		if client != nil {
+			client.Close()
 		}
-		req, e = http.NewRequestWithContext(ctx, "POST", target+"/start", nil)
-		if e != nil {
-			return nil, e
+	}()
+	startIssued := false
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		if err != nil {
+			return nil, err
 		}
-		resp, e = api.Do(req)
-		if e != nil {
-			return nil, e
+		resp, err := api.Do(req)
+		if err != nil {
+			return nil, err
 		}
-		if e = readJSON(resp, nil); e != nil {
-			return nil, e
+		var vm struct {
+			Status string `json:"status"`
 		}
-	} else if vm.Status != "RUNNING" && vm.Status != "STAGING" && vm.Status != "PROVISIONING" {
-		return nil, fmt.Errorf("computer unavailable (%s)", vm.Status)
-	}
-	for vm.Status != "RUNNING" {
+		if err = readJSON(resp, &vm); err != nil {
+			return nil, err
+		}
+		if vm.Status != "RUNNING" && client != nil {
+			client.Close()
+			client = nil
+		}
+		switch vm.Status {
+		case "TERMINATED":
+			if !allowStart {
+				return nil, ErrStopped
+			}
+			if !startIssued {
+				req, err = http.NewRequestWithContext(ctx, http.MethodPost, target+"/start", nil)
+				if err != nil {
+					return nil, err
+				}
+				resp, err = api.Do(req)
+				if err != nil {
+					return nil, err
+				}
+				// A concurrent on-demand start is harmless; re-read its state.
+				if resp.StatusCode == http.StatusConflict {
+					resp.Body.Close()
+				} else if err = readJSON(resp, nil); err != nil {
+					return nil, err
+				}
+				startIssued = true
+			}
+		case "STOPPING":
+			// Cleanup may only claim stopped after GCE reports TERMINATED.
+			startIssued = false
+		case "STAGING", "PROVISIONING":
+		case "RUNNING":
+			startIssued = false
+			if client != nil {
+				select {
+				case <-client.done:
+					client.Close()
+					client = nil
+				default:
+				}
+			}
+			if client == nil {
+				client, err = tunnel(c, run)
+				if err != nil {
+					return nil, err
+				}
+			}
+			check, cancel := context.WithTimeout(ctx, 3*time.Second)
+			req, err = http.NewRequestWithContext(check, http.MethodGet, client.base+"/healthz", nil)
+			if err != nil {
+				cancel()
+				return nil, err
+			}
+			resp, err = client.http.Do(req)
+			if err == nil {
+				var health struct {
+					Receipts bool `json:"operation_receipts_v1"`
+				}
+				decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&health)
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK && decodeErr == nil {
+					client.receipts = health.Receipts
+					ready := client
+					client = nil
+					cancel()
+					return ready, nil
+				}
+			}
+			cancel()
+		default:
+			return nil, fmt.Errorf("computer unavailable (%s)", vm.Status)
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(time.Second):
 		}
-		req, e = http.NewRequestWithContext(ctx, "GET", target, nil)
-		if e != nil {
-			return nil, e
-		}
-		resp, e = api.Do(req)
-		if e != nil {
-			return nil, e
-		}
-		if e = readJSON(resp, &vm); e != nil {
-			return nil, e
-		}
 	}
-	listener, e := net.Listen("tcp", "127.0.0.1:0")
-	if e != nil {
-		return nil, e
+}
+
+func tunnel(c Config, run string) (*Client, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
 	}
 	address := listener.Addr().String()
 	listener.Close()
@@ -113,40 +170,14 @@ func connect(ctx context.Context, c Config, run string, allowStart bool) (*Clien
 	cmd := exec.Command("gcloud", "compute", "start-iap-tunnel", c.Instance, "8090", "--project="+c.Project, "--zone="+c.Zone, "--local-host-port="+address, "--quiet", "--verbosity=error", "--iap-tunnel-disable-connection-check")
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
-	if e = cmd.Start(); e != nil {
-		return nil, e
+	if err = cmd.Start(); err != nil {
+		return nil, err
 	}
 	client := &Client{base: "http://" + address, http: &http.Client{}, process: cmd, run: run, done: make(chan struct{})}
 	go func() { _ = cmd.Wait(); close(client.done) }()
-	for {
-		req, e = http.NewRequestWithContext(ctx, "GET", client.base+"/healthz", nil)
-		if e != nil {
-			client.Close()
-			return nil, e
-		}
-		resp, e = client.http.Do(req)
-		if e == nil {
-			var health struct {
-				Receipts bool `json:"operation_receipts_v1"`
-			}
-			_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&health)
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
-				client.receipts = health.Receipts
-				return client, nil
-			}
-		}
-		select {
-		case <-client.done:
-			client.Close()
-			return nil, errors.New("IAP tunnel helper exited before computer readiness")
-		case <-ctx.Done():
-			client.Close()
-			return nil, ctx.Err()
-		case <-time.After(time.Second):
-		}
-	}
+	return client, nil
 }
+
 func readJSON(resp *http.Response, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -185,6 +216,9 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) ([]by
 		return nil, e
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get("Nori-Computer-Draining") == "true" {
+		return nil, ErrDraining
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("computer %s returned HTTP %d", path, resp.StatusCode)
 	}

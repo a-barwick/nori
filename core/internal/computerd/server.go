@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -61,19 +62,132 @@ func New(tasks string) (http.Handler, error) {
 	mux.HandleFunc("POST /navigate", s.receipted(s.navigate))
 	mux.HandleFunc("POST /screenshot", s.receipted(s.screenshot))
 	mux.HandleFunc("POST /operation", s.operationStatus)
-	return mux, nil
+	activity := &activityState{last: time.Now()}
+	// This endpoint is host-only: Proxy deliberately does not forward it.
+	mux.HandleFunc("GET /activity", func(w http.ResponseWriter, r *http.Request) {
+		activity.mu.Lock()
+		defer activity.mu.Unlock()
+		respond(w, map[string]any{"active": activity.active, "idle_seconds": time.Since(activity.last).Seconds()})
+	})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		activity.mu.Lock()
+		activity.active++
+		activity.mu.Unlock()
+		defer func() {
+			activity.mu.Lock()
+			activity.active--
+			activity.last = time.Now()
+			activity.mu.Unlock()
+		}()
+		// Count until the complete handler returns, including guest cleanup and
+		// writing the operation receipt after a caller disconnects.
+		mux.ServeHTTP(w, r)
+	}), nil
+}
+
+type activityState struct {
+	mu      sync.Mutex
+	active  int
+	last    time.Time
+	closing bool
 }
 
 // Proxy only exposes the computer RPC routes; IAP and the host firewall authenticate callers.
-func Proxy() http.Handler {
-	u, _ := url.Parse("http://172.30.0.2:8090")
+// The host owns idle shutdown so no cloud credentials or host privileges enter the guest.
+func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle func()) http.Handler {
+	u := guestURL
 	p := httputil.NewSingleHostReverseProxy(u)
 	p.Transport = &http.Transport{ResponseHeaderTimeout: 123 * time.Second}
+	p.ModifyResponse = func(response *http.Response) error {
+		// This admission signal belongs to the trusted host, never the guest.
+		response.Header.Del("Nori-Computer-Draining")
+		return nil
+	}
+	activity := &activityState{last: time.Now()}
+	go func() {
+		interval := min(30*time.Second, idle/4)
+		if interval <= 0 {
+			return
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		client := &http.Client{Timeout: 3 * time.Second}
+		warned := false
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			activity.mu.Lock()
+			if activity.active != 0 || time.Since(activity.last) < idle {
+				activity.mu.Unlock()
+				continue
+			}
+			// Keep admission locked through the guest check. A request either
+			// registers before this gate or is rejected before guest effects.
+			check, cancel := context.WithTimeout(ctx, 3*time.Second)
+			req, _ := http.NewRequestWithContext(check, http.MethodGet, u.String()+"/activity", nil)
+			resp, err := client.Do(req)
+			var guest struct {
+				Active      *int     `json:"active"`
+				IdleSeconds *float64 `json:"idle_seconds"`
+			}
+			if err == nil {
+				err = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&guest)
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					err = errors.New("guest activity unavailable")
+				}
+			}
+			cancel()
+			verified := err == nil && guest.Active != nil && guest.IdleSeconds != nil
+			if !verified && !warned {
+				log.Print("computer idle check unavailable; guest activity is unknown, host remains on; explicit pause/reconciliation is required if the guest does not recover")
+				warned = true
+			} else if verified {
+				warned = false
+			}
+			safe := verified && *guest.Active == 0 && *guest.IdleSeconds >= idle.Seconds()
+			if safe {
+				activity.closing = true
+			}
+			activity.mu.Unlock()
+			if safe {
+				onIdle()
+				return
+			}
+		}
+	}()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation"))) {
 			http.NotFound(w, r)
 			return
 		}
+		activity.mu.Lock()
+		if activity.closing {
+			activity.mu.Unlock()
+			w.Header().Set("Nori-Computer-Draining", "true")
+			http.Error(w, "computer stopping after idle", http.StatusServiceUnavailable)
+			return
+		}
+		tool := r.Method == http.MethodPost
+		if tool {
+			activity.active++
+		}
+		activity.mu.Unlock()
+		defer func() {
+			if tool {
+				activity.mu.Lock()
+				activity.active--
+				activity.last = time.Now()
+				activity.mu.Unlock()
+			}
+		}()
 		r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
 		p.ServeHTTP(w, r)
 	})

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -83,7 +84,7 @@ func (s *Service) Run(parent context.Context, id, message string) (state.Run, er
 					cancel()
 					return
 				}
-				if _, err = control.Deadline(); err != nil {
+				if err = control.Check(); err != nil {
 					cancel()
 					return
 				}
@@ -142,6 +143,14 @@ func (s *Service) execute(ctx context.Context, run state.Run) (string, *computer
 	contents := Context(session)
 	var client *computer.Client
 	spent := 0.0
+	costUnknown := false
+	defer func() {
+		projection, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if spendErr := s.Store.Spend(projection, run.ID, spent, BudgetUSD, costUnknown); spendErr != nil {
+			log.Printf("final model spend projection pending for run %s: %v", run.ID, spendErr)
+		}
+	}()
 	for {
 		if e = ctx.Err(); e != nil {
 			return "", client, e
@@ -153,13 +162,17 @@ func (s *Service) execute(ctx context.Context, run state.Run) (string, *computer
 		if e = s.Store.Event(ctx, run.ID, state.Event{Kind: "model", Text: "Thinking"}); e != nil {
 			return "", client, e
 		}
-		decision, e := s.Decide(ctx, contents, false)
-		if e != nil {
-			return "", client, e
-		}
+		decision, modelErr := s.Decide(ctx, contents, false)
 		spent += decision.Cost
-		if e = s.Store.Spend(ctx, run.ID, spent, BudgetUSD); e != nil {
-			return "", client, e
+		costUnknown = costUnknown || !decision.CostKnown
+		if spendErr := s.Store.Spend(ctx, run.ID, spent, BudgetUSD, costUnknown); spendErr != nil {
+			log.Printf("model spend projection pending for run %s: %v", run.ID, spendErr)
+		}
+		if costUnknown {
+			return "", client, state.ErrCostUnknown
+		}
+		if modelErr != nil {
+			return "", client, modelErr
 		}
 		contents = append(contents, decision.Content)
 		calls := decision.Calls

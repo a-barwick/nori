@@ -25,10 +25,14 @@ func superseded(err error) bool {
 // Workflow contains only deterministic state transitions. Every external read,
 // model request, computer call and projection write is an independent activity.
 func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
-	options := workflow.ActivityOptions{StartToCloseTimeout: 150 * time.Second, ScheduleToCloseTimeout: 170 * time.Second, HeartbeatTimeout: 10 * time.Second, WaitForCancellation: true, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1}}
+	options := workflow.ActivityOptions{StartToCloseTimeout: 240 * time.Second, ScheduleToCloseTimeout: 260 * time.Second, HeartbeatTimeout: 10 * time.Second, WaitForCancellation: true, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1}}
 	ctx = workflow.WithActivityOptions(ctx, options)
 	// Read/write activities are short and do not heartbeat.
 	quick := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 15 * time.Second, ScheduleToCloseTimeout: 25 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1}})
+	// Stop may wait for an idle shutdown to reach TERMINATED. It performs no
+	// heartbeats; ordinary projection activities keep their shorter limits.
+	stopOptions := workflow.ActivityOptions{StartToCloseTimeout: 200 * time.Second, ScheduleToCloseTimeout: 240 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1}}
+	stopCtx := workflow.WithActivityOptions(ctx, stopOptions)
 	signals := workflow.GetSignalChannel(ctx, Signal)
 	var activities *Activities
 	var contents []*genai.Content
@@ -36,12 +40,24 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 	usedComputer := false
 	computerRuns := []string{}
 	var finalText string
+	// These values are replayed from ModelOutcome history; Firestore is a
+	// recoverable cumulative projection, never the budget authority.
+	spent, budget := 0.0, agent.BudgetUSD
+	costUnknown := false
+	spending := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 5 * time.Second, ScheduleToCloseTimeout: 15 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3}})
+	projectSpend := func(spendCtx workflow.Context) {
+		if spendErr := workflow.ExecuteActivity(spendCtx, activities.Spend, Spending{RunID: id, Spent: spent, Budget: budget, CostUnknown: costUnknown}).Get(spendCtx, nil); spendErr != nil {
+			workflow.GetLogger(ctx).Warn("Model spend projection pending; workflow budget retained", "run_id", id, "error", spendErr)
+		}
+	}
 	defer func() {
 		cleanup, _ := workflow.NewDisconnectedContext(ctx)
 		cleanup = workflow.WithActivityOptions(cleanup, workflow.ActivityOptions{StartToCloseTimeout: 25 * time.Second, ScheduleToCloseTimeout: 35 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1}})
+		projectSpend(workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(spending)))
 		stopConfirmed := !usedComputer
 		if usedComputer {
-			if stopErr := workflow.ExecuteActivity(cleanup, activities.Stop, computerRuns).Get(cleanup, nil); stopErr != nil {
+			stopCleanup := workflow.WithActivityOptions(cleanup, stopOptions)
+			if stopErr := workflow.ExecuteActivity(stopCleanup, activities.Stop, computerRuns).Get(stopCleanup, nil); stopErr != nil {
 				err = fmt.Errorf("computer stop could not be confirmed: %w", stopErr)
 				finalText = ""
 			} else {
@@ -56,7 +72,7 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 			if temporal.IsCanceledError(err) || (errors.As(err, &application) && application.Type() == "cancelled") {
 				status = "cancelled"
 			}
-			publishErr := workflow.ExecuteActivity(cleanup, activities.Publish, Publication{Step: Step{id, revision}, Status: status, Detail: err.Error(), StopConfirmed: stopConfirmed}).Get(cleanup, &result)
+			publishErr := workflow.ExecuteActivity(cleanup, activities.Publish, Publication{Step: Step{id, revision}, Status: status, Detail: err.Error(), StopConfirmed: stopConfirmed, CostUnknown: costUnknown}).Get(cleanup, &result)
 			if publishErr != nil {
 				err = fmt.Errorf("%w; terminal persistence failed: %v", err, publishErr)
 			} else if result.Status == "cancelled" {
@@ -68,21 +84,36 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 	if err = workflow.ExecuteActivity(quick, activities.Context, id).Get(ctx, &contents); err != nil {
 		return
 	}
-	// await blocks without polling until an accepted command changes the
-	// revision; commands wake the task and one durable timer enforces the
-	// admitted session deadline. Pause explicitly cancels it.
-	await := func(deadline time.Time) error {
-		for {
+	// A paused boundary waits for a command or explicit resume signal without
+	// timers or model calls. A new pinned worker release owns this history.
+	retryBoundary := func(boundaryErr error) bool {
+		if superseded(boundaryErr) {
+			return true
+		}
+		var application *temporal.ApplicationError
+		if errors.As(boundaryErr, &application) && application.Type() == "paused" {
 			var command state.Command
-			selector := workflow.NewSelector(ctx)
-			selector.AddReceive(signals, func(c workflow.ReceiveChannel, more bool) { c.Receive(ctx, &command) })
-			timerCtx, cancelTimer := workflow.WithCancel(ctx)
-			selector.AddFuture(workflow.NewTimer(timerCtx, deadline.Sub(workflow.Now(ctx))), func(workflow.Future) {})
-			selector.Select(ctx)
-			cancelTimer()
+			signals.Receive(ctx, &command)
+			return ctx.Err() == nil
+		}
+		return false
+	}
+	// User waits have no expiry and wake only for accepted commands/resume.
+	await := func() error {
+		needsSignal := true
+		for {
+			if needsSignal {
+				var command state.Command
+				signals.Receive(ctx, &command)
+			}
+			needsSignal = true
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			var current state.TaskSnapshot
 			e := workflow.ExecuteActivity(quick, activities.Reconcile, id).Get(ctx, &current)
-			if superseded(e) {
+			if retryBoundary(e) {
+				needsSignal = false
 				continue
 			}
 			if e != nil {
@@ -96,7 +127,6 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 	modelCalls, toolCalls := 0, 0
 	// Budget accounting uses each model call's reported usage. Only an explicit
 	// continue command answering the budget question raises it.
-	spent, budget := 0.0, agent.BudgetUSD
 	asked := false
 	request, note := "", ""
 	ran := []string{}
@@ -108,10 +138,16 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 		}
 		var snap state.TaskSnapshot
 		err = workflow.ExecuteActivity(quick, activities.Reconcile, id).Get(ctx, &snap)
-		if superseded(err) {
+		if retryBoundary(err) {
 			continue
 		}
 		if err != nil {
+			return
+		}
+		// Reconciliation gives Stop precedence. A correction cannot make an
+		// unpriced provider request free or authorize another model call.
+		if costUnknown {
+			err = state.ErrCostUnknown
 			return
 		}
 		revision = snap.Run.Revision
@@ -134,70 +170,87 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 			}
 		}
 		if granted {
-			if err = workflow.ExecuteActivity(quick, activities.Spend, Spending{RunID: id, Spent: spent, Budget: budget}).Get(ctx, nil); err != nil {
-				return
-			}
+			projectSpend(spending)
 		}
 		if spent >= budget {
 			// The durable wait, Stop, pause and publication need no model call,
 			// so they keep working after the budget is spent.
 			err = workflow.ExecuteActivity(quick, activities.Project, Projection{Step: Step{id, revision}, Kind: "waiting", Text: budgetQuestion(spent, budget, modelCalls, ran, note, request)}).Get(ctx, nil)
-			if superseded(err) {
+			if retryBoundary(err) {
 				continue
 			}
 			if err != nil {
 				return
 			}
 			asked = true
-			if err = await(snap.Run.Deadline); err != nil {
+			if err = await(); err != nil {
 				return
 			}
 			continue
 		}
 		err = workflow.ExecuteActivity(quick, activities.Project, Projection{Step: Step{id, revision}, Kind: "model", Text: "Thinking"}).Get(ctx, nil)
-		if superseded(err) {
+		if retryBoundary(err) {
 			continue
 		}
 		if err != nil {
+			return
+		}
+		var outcome ModelOutcome
+		err = workflow.ExecuteActivity(ctx, activities.Model, ModelInput{Step: Step{id, revision}, Contents: contents}).Get(ctx, &outcome)
+		if err != nil {
+			// Model application errors originate only in its pre-I/O guard. A
+			// Temporal timeout/crash/cancellation may hide a billed response.
+			var application *temporal.ApplicationError
+			if !errors.As(err, &application) {
+				costUnknown = true
+				if !temporal.IsCanceledError(err) {
+					err = fmt.Errorf("%w Model activity outcome unavailable: %v", state.ErrCostUnknown, err)
+				}
+			}
+			if retryBoundary(err) {
+				continue
+			}
 			return
 		}
 		modelCalls++
-		var decision agent.Decision
-		err = workflow.ExecuteActivity(ctx, activities.Model, ModelInput{Step: Step{id, revision}, Contents: contents}).Get(ctx, &decision)
-		if superseded(err) {
-			continue
-		}
-		if err != nil {
-			return
-		}
+		decision := outcome.Decision
 		spent += decision.Cost
-		if err = workflow.ExecuteActivity(quick, activities.Spend, Spending{RunID: id, Spent: spent, Budget: budget}).Get(ctx, nil); err != nil {
-			return
-		}
+		costUnknown = costUnknown || !decision.CostKnown
+		projectSpend(spending)
 		if text := modelText(decision.Content); text != "" {
 			note = text
 		}
 		var current state.TaskSnapshot
 		err = workflow.ExecuteActivity(quick, activities.Reconcile, id).Get(ctx, &current)
-		if superseded(err) {
+		if retryBoundary(err) {
 			continue
 		}
 		if err != nil {
 			return
 		}
+		if costUnknown {
+			err = state.ErrCostUnknown
+			return
+		}
 		if current.Run.Revision != revision {
 			continue
+		}
+		// Account the response first, then honor accepted cancellation/correction
+		// before a rejection from the now-obsolete model turn can fail the task.
+		if outcome.Failure != "" {
+			err = errors.New(outcome.Failure)
+			return
 		}
 		if len(decision.Calls) == 0 {
 			finalText = decision.Answer
 			if usedComputer {
-				if err = workflow.ExecuteActivity(quick, activities.Stop, computerRuns).Get(ctx, nil); err != nil {
+				if err = workflow.ExecuteActivity(stopCtx, activities.Stop, computerRuns).Get(stopCtx, nil); err != nil {
 					return
 				}
 				usedComputer = false
 			}
-			err = workflow.ExecuteActivity(quick, activities.Publish, Publication{Step: Step{id, revision}, Status: "completed", Text: finalText}).Get(ctx, &result)
-			if superseded(err) {
+			err = workflow.ExecuteActivity(quick, activities.Publish, Publication{Step: Step{id, revision}, Status: "completed", Text: finalText, CostUnknown: costUnknown}).Get(ctx, &result)
+			if retryBoundary(err) {
 				finalText = ""
 				continue
 			}
@@ -221,14 +274,14 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 			if call.Name == "wait_for_input" {
 				question, _ := call.Args["question"].(string)
 				err = workflow.ExecuteActivity(quick, activities.Project, Projection{Step: Step{id, revision}, Kind: "waiting", Text: question}).Get(ctx, nil)
-				if superseded(err) {
+				if retryBoundary(err) {
 					revised = true
 					break
 				}
 				if err != nil {
 					return
 				}
-				if err = await(snap.Run.Deadline); err != nil {
+				if err = await(); err != nil {
 					return
 				}
 				// Complete the protocol pair before incorporating Austin's next input.
@@ -236,7 +289,7 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 				break
 			}
 			err = workflow.ExecuteActivity(quick, activities.Project, Projection{Step: Step{id, revision}, Kind: "tool", Text: call.Name}).Get(ctx, nil)
-			if superseded(err) {
+			if retryBoundary(err) {
 				revised = true
 				break
 			}
@@ -251,7 +304,7 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 			operation := fmt.Sprintf("%s-m%d-t%d", id, modelCalls, toolCalls)
 			var output map[string]any
 			err = workflow.ExecuteActivity(ctx, activities.Tool, ToolInput{Step: Step{id, revision}, OperationID: operation, Call: call}).Get(ctx, &output)
-			if superseded(err) {
+			if retryBoundary(err) {
 				revised = true
 				break
 			}
@@ -266,7 +319,7 @@ func Workflow(ctx workflow.Context, id string) (result state.Run, err error) {
 			// every remaining call with an explicit skipped result so the next
 			// model turn sees both real effects and the accepted correction.
 			for _, skipped := range decision.Calls[len(parts):] {
-				parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: skipped.ID, Name: skipped.Name, Response: map[string]any{"skipped": true, "reason": "An accepted correction superseded this unexecuted call."}}})
+				parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: skipped.ID, Name: skipped.Name, Response: map[string]any{"skipped": true, "reason": "Execution admission or accepted input changed before this call ran."}}})
 			}
 			contents = append(contents, &genai.Content{Role: "user", Parts: parts})
 			continue

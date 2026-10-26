@@ -60,9 +60,8 @@ func (s *Google) Accept(ctx context.Context, cmd Command) (Run, error) {
 		if e = cdoc.DataTo(&c); e != nil {
 			return e
 		}
-		// Stop remains admissible after the paid execution window closes.
-		expiry, e := c.Deadline()
-		if e != nil && cmd.Kind != "cancel" {
+		// Stop remains admissible while execution is paused.
+		if e = c.Check(); e != nil && cmd.Kind != "cancel" {
 			return e
 		}
 		now := time.Now().UTC()
@@ -87,8 +86,8 @@ func (s *Google) Accept(ctx context.Context, cmd Command) (Run, error) {
 					}
 				}
 			}
-			// A durable wait may outlive a request, but never its authorized session.
-			run = Run{ID: cmd.RunID, Status: "running", Temporal: true, StartedAt: now, Deadline: expiry, Events: []Event{}, Artifacts: []Artifact{}}
+			// Durable tasks have no session expiry; pause only fences execution.
+			run = Run{ID: cmd.RunID, Status: "running", Temporal: true, StartedAt: now, Events: []Event{}, Artifacts: []Artifact{}}
 		}
 		if cmd.Kind != "start" && cmd.Kind != "input" && cmd.Kind != "continue" && cmd.Kind != "cancel" {
 			return fmt.Errorf("unknown command kind")
@@ -194,25 +193,30 @@ func (s *Google) Incorporate(ctx context.Context, id string, revision, position 
 	})
 }
 
-// guardTx is the common admission fence. No new paid work after pause, expiry,
-// cancellation, terminal state, or an accepted but unincorporated correction.
+// guardTask checks task ownership without execution admission. Publishing an
+// already-paid answer may proceed during pause; stale revisions may not.
+func guardTask(r Run, revision int64) error {
+	if r.CancelRequested {
+		return ErrCancelled
+	}
+	if r.Revision != revision || r.Incorporated != revision {
+		return ErrSuperseded
+	}
+	if r.Status != "running" {
+		return ErrBusy
+	}
+	return nil
+}
+
+// guardTx additionally fences new paid work while execution is paused.
 func (s *Google) guardTx(tx *firestore.Transaction, id string, revision int64) (Run, error) {
 	d, e := tx.Get(s.runs().Doc(id))
 	r, e := decodeRun(d, e)
 	if e != nil {
 		return r, e
 	}
-	if r.CancelRequested {
-		return r, ErrCancelled
-	}
-	if r.Revision != revision || r.Incorporated != revision {
-		return r, ErrSuperseded
-	}
-	if r.Status != "running" {
-		return r, ErrBusy
-	}
-	if !r.Deadline.After(time.Now()) {
-		return r, ErrPaused
+	if e = guardTask(r, revision); e != nil {
+		return r, e
 	}
 	d, e = tx.Get(s.db.Collection("system").Doc("control"))
 	if e != nil {
@@ -222,8 +226,7 @@ func (s *Google) guardTx(tx *firestore.Transaction, id string, revision int64) (
 	if e = d.DataTo(&c); e != nil {
 		return r, e
 	}
-	_, e = c.Deadline()
-	return r, e
+	return r, c.Check()
 }
 func (s *Google) Guard(ctx context.Context, id string, revision int64) (Run, error) {
 	var r Run
@@ -255,7 +258,7 @@ func (s *Google) Project(ctx context.Context, id string, revision int64, kind, t
 		return tx.Update(s.runs().Doc(id), []firestore.Update{{Path: "waiting", Value: waiting}, {Path: "events", Value: firestore.ArrayUnion(Event{Kind: kind, Text: text, CreatedAt: time.Now().UTC()})}})
 	})
 }
-func (s *Google) Publish(ctx context.Context, id string, revision int64, runStatus, detail, text string) (Run, error) {
+func (s *Google) Publish(ctx context.Context, id string, revision int64, runStatus, detail, text string, costUnknown bool) (Run, error) {
 	var run Run
 	err := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		d, e := tx.Get(s.runs().Doc(id))
@@ -267,7 +270,7 @@ func (s *Google) Publish(ctx context.Context, id string, revision int64, runStat
 			return nil
 		}
 		if runStatus == "completed" {
-			if _, e = s.guardTx(tx, id, revision); e != nil {
+			if e = guardTask(run, revision); e != nil {
 				return e
 			}
 		}
@@ -277,6 +280,7 @@ func (s *Google) Publish(ctx context.Context, id string, revision int64, runStat
 			text = ""
 		}
 		now := time.Now().UTC()
+		run.CostUnknown = run.CostUnknown || costUnknown
 		run.Status = runStatus
 		run.Error = detail
 		run.Waiting = ""

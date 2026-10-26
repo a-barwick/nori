@@ -140,6 +140,19 @@ StandardOutput=append:/var/log/nori-vm-console.log
 StandardError=inherit
 Restart=no
 SERVICE
+# This helper is root-owned; the unprivileged proxy can only request its own
+# idle exit. Ordinary errors or operator signals never trigger host shutdown.
+cat > /usr/local/sbin/nori-computer-idle-stop <<'STOP'
+#!/bin/bash
+set -euo pipefail
+[ "${EXIT_CODE:-}" = exited ] && [ "${EXIT_STATUS:-}" = 75 ] || exit 0
+if ! /usr/local/sbin/nori-vm stop; then
+  echo 'Idle stop incomplete: graceful guest shutdown/flush was not verified; host remains on. Reconcile the guest/filesystem, then pause explicitly. No forced poweroff was attempted.' >&2
+  exit 1
+fi
+systemctl poweroff
+STOP
+chmod 755 /usr/local/sbin/nori-computer-idle-stop
 primary=$(meta instance/network-interfaces/0/ip)
 cat > /etc/systemd/system/nori-computer-proxy.service <<SERVICE
 [Unit]
@@ -147,12 +160,17 @@ Description=IAP computer RPC proxy
 After=nori-firecracker.service
 [Service]
 User=nobody
-ExecStart=/usr/local/bin/computer-agent --proxy --listen $primary:8090
+ExecStart=/usr/local/bin/computer-agent --proxy --listen $primary:8090 --idle-timeout 15m
+SuccessExitStatus=75
+ExecStopPost=+/usr/local/sbin/nori-computer-idle-stop
+TimeoutStopSec=75
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-Restart=no
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=75
 SERVICE
 systemctl daemon-reload
 /usr/local/sbin/nori-vm start

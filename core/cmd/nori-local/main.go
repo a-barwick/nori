@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -32,11 +31,11 @@ func env(name, fallback string) string {
 }
 
 func main() {
-	envFile := env("NORI_ENV_FILE", ".env")
+	envFile := env("NORI_ENV_FILE", "../.env")
 	if err := godotenv.Load(envFile); err != nil && !os.IsNotExist(err) {
 		log.Fatal("could not load the configured .env; check its syntax and permissions")
 	}
-	if err := godotenv.Load(env("NORI_TASK_ENV_FILE", filepath.Join(filepath.Dir(envFile), "..", ".env"))); err != nil && !os.IsNotExist(err) {
+	if err := godotenv.Load(env("NORI_TASK_ENV_FILE", envFile)); err != nil && !os.IsNotExist(err) {
 		log.Fatal("could not load task configuration")
 	}
 	key := os.Getenv("OPENROUTER_API_KEY")
@@ -82,6 +81,21 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok", "model": model})
+	})
+	mux.HandleFunc("POST /api/resume", func(w http.ResponseWriter, r *http.Request) {
+		var body struct{}
+		if !decode(w, r, &body) {
+			return
+		}
+		if err := task.Deliver(r.Context(), store, temporalClient); err != nil {
+			writeError(w, 502, err.Error())
+			return
+		}
+		if err := task.Wake(r.Context(), store, temporalClient); err != nil {
+			writeError(w, 409, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"resumed": true})
 	})
 	mux.HandleFunc("POST /api/session", func(w http.ResponseWriter, r *http.Request) {
 		session, err := runner.Snapshot(r.Context())

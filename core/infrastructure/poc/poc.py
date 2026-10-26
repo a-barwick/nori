@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Thin operator commands for the native GCP resources; no resident controller."""
 import argparse
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
+import shlex
 import ssl
 import sys
 import time
@@ -18,7 +18,6 @@ PROJECT = "bot-111549"
 NUMBER = "8273801370"
 REGION = "us-central1"
 ZONE = "us-central1-a"
-OWNER = "austinbarwickdavis@gmail.com"
 WEB = "nori-web"
 VM = "nori-computer"
 BILLING = "010FFA-6C77F1-18FF6D"
@@ -28,7 +27,6 @@ TF = ROOT / "terraform"
 STATE = Path.home() / ".local/state/nori/bot-111549/poc/terraform.tfstate"
 TEMPORAL_TF = ROOT.parent / "temporal/terraform"
 TEMPORAL_STATE = STATE.parent.parent / "temporal/terraform.tfstate"
-TEMPORAL_SESSION = TEMPORAL_STATE.parent / "session.tfvars.json"
 TOKEN = None
 SSL_CONTEXT = ssl.create_default_context(cafile="/etc/ssl/cert.pem") if sys.platform == "darwin" and Path("/etc/ssl/cert.pem").is_file() else ssl.create_default_context()
 
@@ -62,32 +60,113 @@ def config():
     return {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TF}", "output", "-state=" + str(STATE), "-json"])).items()}
 
 
-def stamp(value):
-    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def deadline():
-    return stamp(datetime.now(timezone.utc) + timedelta(hours=3))
-
-
 def temporal_config():
     return {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TEMPORAL_TF}", "output", "-state=" + str(TEMPORAL_STATE), "-json"])).items()}
 
 
-def temporal_apply(session, build=None, enabled=False, verified=False):
-    # Only session settings, never credentials, are saved outside the checkout.
-    TEMPORAL_SESSION.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(TEMPORAL_SESSION, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as out:
-        json.dump({"session": session, "active_build_id": build, "wci_enabled": enabled, "shutdown_verified": verified}, out)
-    os.chmod(TEMPORAL_SESSION, 0o600)
-    args = ["terraform", f"-chdir={TEMPORAL_TF}"]
-    plan = TEMPORAL_STATE.parent / "session.plan"
-    # Save and apply the same plan. Worker image changes remain a separate,
-    # reviewed deployment; normal lifecycle uses the retained release manifest.
-    print(command(args + ["plan", "-input=false", "-state=" + str(TEMPORAL_STATE), "-var-file=worker-releases.json", "-var-file=" + str(TEMPORAL_SESSION), "-out=" + str(plan)]))
-    os.chmod(plan, 0o600)
-    print(command(args + ["apply", "-input=false", str(plan)]))
+def temporal_env():
+    env = os.environ.copy()
+    # Read the existing project env file in memory; never copy its credentials.
+    env_file = Path(env.get("NORI_ENV_FILE", str(ROOT.parents[2] / ".env")))
+    if env_file.is_file():
+        for line in env_file.read_text().splitlines():
+            words = shlex.split(line, comments=True)
+            if words and words[0] == "export":
+                words = words[1:]
+            if len(words) == 1 and "=" in words[0]:
+                key, value = words[0].split("=", 1)
+                env.setdefault(key, value)
+    if not env.get("TEMPORAL_API_KEY"):
+        raise RuntimeError("TEMPORAL_API_KEY is missing; configure it in the project root .env (or select the existing file with NORI_ENV_FILE)")
+    env.setdefault("TEMPORAL_ADDRESS", "quickstart-nori.qtjow.tmprl.cloud:7233")
+    env.setdefault("TEMPORAL_NAMESPACE", "quickstart-nori.qtjow")
+    return env
+
+
+class VersionNotFound(RuntimeError):
+    pass
+
+
+def temporal_command(*args):
+    # Authentication is passed through the child environment, never argv/logs.
+    result = subprocess.run(["temporal", "--output=json", "--command-timeout=60s", *args], env=temporal_env(), text=True, capture_output=True)
+    if result.returncode:
+        # Confirmed CLI response for a nonexistent registered version. Other
+        # failures (including auth and unavailable service) remain failures.
+        if args[:3] == ("worker", "deployment", "describe-version") and result.stderr.strip().endswith(": Worker Deployment Version not found"):
+            raise VersionNotFound("Worker deployment version is not registered")
+        raise RuntimeError("Temporal " + " ".join(args[:3]) + " failed; exit " + str(result.returncode))
+    return json.loads(result.stdout) if result.stdout.strip() else {}
+
+
+def temporal(*args):
+    return temporal_command("worker", "deployment", *args)
+
+
+def version_config(build, pool, invoker):
+    return ["--deployment-name=nori-task", "--build-id=" + build,
+            "--gcp-cloud-run-project=" + PROJECT, "--gcp-cloud-run-region=us-west1",
+            "--gcp-cloud-run-worker-pool=" + pool["name"],
+            "--gcp-cloud-run-service-account=" + invoker,
+            "--gcp-cloud-run-min-instances=0", "--gcp-cloud-run-max-instances=1",
+            "--gcp-cloud-run-initial-instances=0", "--gcp-cloud-run-utilization-target=0.8",
+            "--gcp-cloud-run-scale-down-stabilization-duration=90s"]
+
+
+def version_info(build, missing_ok=False):
+    try:
+        result = temporal("describe-version", "--deployment-name=nori-task", "--build-id=" + build)
+    except VersionNotFound:
+        if missing_ok:
+            return None
+        raise
+    return result.get("workerDeploymentVersionInfo", result.get("worker_deployment_version_info", result))
+
+
+def compute_config(info):
+    return (info or {}).get("computeConfig", (info or {}).get("compute_config"))
+
+
+def compatible_builds(t):
+    builds = set(t.get("scalable_build_ids", []))
+    if not builds or not builds.issubset(t["worker_pools"]):
+        raise RuntimeError("No valid sessionless worker release is configured; prepare and register a compatible build first")
+    deployment = temporal("describe", "--name=nori-task")
+    routing = deployment.get("routingConfig", {})
+    current = routing.get("currentVersionBuildID") or routing.get("currentDeploymentVersion", {}).get("buildId")
+    if current not in builds:
+        raise RuntimeError("Current worker build is not marked compatible: " + str(current))
+    ramp = routing.get("rampingVersionBuildID") or routing.get("rampingDeploymentVersion", {}).get("buildId")
+    if routing.get("rampingVersionPercentage", 0) and ramp not in builds:
+        raise RuntimeError("Ramping worker build is not marked compatible: " + str(ramp))
+    # Visibility gives the candidates; Describe supplies the pinned version.
+    # Unknown assignments and explicit overrides need review, never migration
+    # or cancellation as a side effect of opening admission.
+    running = temporal_command("workflow", "list", '--query=ExecutionStatus = "Running" AND TaskQueue = "nori-tasks"')
+    if not isinstance(running, list):
+        raise RuntimeError("Cannot verify open workflow compatibility")
+    for item in running:
+        execution = item["execution"]
+        details = temporal_command("workflow", "describe", "--workflow-id=" + execution["workflowId"], "--run-id=" + execution["runId"])
+        info = details.get("workflowExecutionInfo", {})
+        status = info.get("status")
+        if status in {"WORKFLOW_EXECUTION_STATUS_COMPLETED", "WORKFLOW_EXECUTION_STATUS_FAILED", "WORKFLOW_EXECUTION_STATUS_CANCELED", "WORKFLOW_EXECUTION_STATUS_TERMINATED", "WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW", "WORKFLOW_EXECUTION_STATUS_TIMED_OUT"}:
+            continue
+        if status != "WORKFLOW_EXECUTION_STATUS_RUNNING":
+            raise RuntimeError("Cannot verify open workflow status: " + execution["workflowId"])
+        versioning = info.get("versioningInfo", {})
+        version = versioning.get("deploymentVersion", {})
+        if not versioning:
+            # A task queued before its first worker completed a workflow task
+            # has no pinned code/history yet; it safely inherits compatible Current.
+            history = temporal_command("workflow", "show", "--workflow-id=" + execution["workflowId"], "--run-id=" + execution["runId"])
+            events = history.get("events") if isinstance(history, dict) else history
+            queued_events = {"EVENT_TYPE_WORKFLOW_EXECUTION_STARTED", "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED", "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED", "EVENT_TYPE_WORKFLOW_TASK_STARTED", "EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT", "EVENT_TYPE_WORKFLOW_TASK_FAILED"}
+            if isinstance(events, list) and events and all(event.get("eventType") in queued_events for event in events):
+                continue
+        if versioning.get("versioningOverride") or version.get("deploymentName") != "nori-task" or version.get("buildId") not in builds:
+            raise RuntimeError("Open workflow uses an incompatible or unknown worker build: " + execution["workflowId"])
+    return builds
 
 
 def temporal_zero(t):
@@ -113,67 +192,49 @@ def temporal_zero(t):
         raise RuntimeError("; ".join(failures))
 
 
-def temporal_access(t, active=None):
-    sa = t["invoker_service_account"]
-    end = time.monotonic() + 300
-    while True:
-        # IAM's full resource name uses lowercase workerpools; the owning Run
-        # v2 API and Terraform IDs retain their camel-case workerPools path.
-        decisions = {build: api("POST", "https://policytroubleshooter.googleapis.com/v3/iam:troubleshoot", {"accessTuple": {"principal": sa, "fullResourceName": "//run.googleapis.com/" + p["resource"].replace("/workerPools/", "/workerpools/"), "permission": "run.workerpools.update", "conditionContext": {"request": {"receiveTime": stamp(datetime.now(timezone.utc))}}}}).get("overallAccessState") for build, p in t["worker_pools"].items()}
-        if all(decision == ("CAN_ACCESS" if build == active else "CANNOT_ACCESS") for build, decision in decisions.items()):
-            return
-        if time.monotonic() > end:
-            raise RuntimeError("Effective WCI pool access not verified: " + repr(decisions))
-        time.sleep(5)
-
-
-def temporal_denied(t):
-    sa = t["invoker_service_account"]
-    state = api("GET", f"https://iam.googleapis.com/v1/projects/{PROJECT}/serviceAccounts/{sa}")
-    if not state.get("disabled"):
-        raise RuntimeError("Temporal WCI invoker is not disabled")
-    temporal_access(t)
-
-
 def temporal_pause():
     t = temporal_config()
-    settings = t.get("session_settings") or (json.loads(TEMPORAL_SESSION.read_text()) if TEMPORAL_SESSION.exists() else {})
     failures = []
-    # Independent fences still run if Terraform or an IAM verification fails.
-    for step in (
-        lambda: api("POST", f"https://iam.googleapis.com/v1/projects/{PROJECT}/serviceAccounts/{t['invoker_service_account']}:disable", {}),
-        lambda: temporal_apply(settings.get("session"), settings.get("active_build_id")),
-        lambda: temporal_zero(t),
-        lambda: temporal_denied(t),
-    ):
+    # Remove the native scaler configuration first; a zero-count PATCH alone
+    # races WCI. Pinned workflows and their retained pools are not deleted.
+    for build in t["worker_pools"]:
         try:
-            step()
+            if version_info(build, missing_ok=True) is None:
+                continue # A newly staged zero-count pool may precede registration.
+            temporal("update-version-compute-config", "--deployment-name=nori-task", "--build-id=" + build, "--remove")
+            if compute_config(version_info(build, missing_ok=True)):
+                raise RuntimeError("Worker compute configuration still present: " + build)
         except Exception as error:
             failures.append(str(error))
+    # Attempt zeroing even when a fence failed, but never claim pause succeeded.
+    try:
+        temporal_zero(t)
+        # Recheck after outstanding Cloud Run updates have reconciled.
+        for build in t["worker_pools"]:
+            if compute_config(version_info(build, missing_ok=True)):
+                raise RuntimeError("Worker scaler was restored during pause: " + build)
+        temporal_zero(t)
+    except Exception as error:
+        failures.append(str(error))
     if failures:
-        raise RuntimeError("Temporal pause incomplete: " + "; ".join(failures))
-    # Keep the scheduled backstop armed until shutdown and denial succeeded.
-    temporal_apply(None)
+        raise RuntimeError("Worker pause incomplete: " + "; ".join(failures))
 
 
-def temporal_resume(session, build, verified):
+def temporal_unpause():
     t = temporal_config()
-    if not build or build not in t["worker_pools"]:
-        raise RuntimeError("resume needs --build-id naming a deployed immutable Temporal pool")
-    if not verified:
-        raise RuntimeError("resume needs --shutdown-verified after the live Scheduler scale-to-zero proof")
-    # Arm durable shutdown with WCI disabled before opening task admission.
-    temporal_apply(session, build)
-    temporal_zero(t)
-    temporal_denied(t)
-    for pool in t["worker_pools"].values():
-        job = api("GET", "https://cloudscheduler.googleapis.com/v1/" + pool["shutdown_job"])
-        scheduled = datetime.strptime(session["shutdown_at"], "%Y-%m-%dT%H:%M:%SZ")
-        expected = scheduled.strftime("%M %H %d %m *")
-        if job.get("state") != "ENABLED" or job.get("schedule") != expected or job.get("timeZone") != "Etc/UTC":
-            raise RuntimeError("Cloud shutdown job not armed: " + pool["shutdown_job"])
-    temporal_apply(session, build, enabled=True, verified=True)
-    temporal_access(t, build)
+    builds = compatible_builds(t)
+    # Legacy immutable workers cancel tasks on missing session expiry. Retain
+    # their pools/images but never wake their binaries under the new control.
+    for build, pool in t["worker_pools"].items():
+        if build not in builds:
+            if compute_config(version_info(build, missing_ok=True)):
+                raise RuntimeError("Incompatible worker still has a scaler; pause before unpause: " + build)
+            continue
+        temporal("update-version-compute-config", *version_config(build, pool, t["invoker_service_account"]))
+        config = compute_config(version_info(build)) or {}
+        scaler = config.get("scalingGroups", {}).get("default", {}).get("scaler", {})
+        if (scaler.get("minInstances"), scaler.get("maxInstances"), scaler.get("initialInstances")) != (0, 1, 0):
+            raise RuntimeError("Worker scaling bounds not verified: " + build)
 
 
 def operation(result, service="compute"):
@@ -214,47 +275,22 @@ def firestore(c, path):
     return f"https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/{quote(c['firestore_database'], safe='')}/documents/{path}"
 
 
-def control(c, paused, expires=None):
-    fields = {"paused": {"booleanValue": paused}, "expires_at": {"stringValue": expires or stamp(datetime.now(timezone.utc))}}
-    return api("PATCH", firestore(c, "system/control"), {"fields": fields})
-
-
-def cancel_active(c):
-    owner_path = "owners/" + quote(OWNER, safe="")
-    owner = api("GET", firestore(c, owner_path), allow404=True)
-    run_id = (owner or {}).get("fields", {}).get("active_run", {}).get("stringValue")
-    if not run_id:
-        return
-    run_path = owner_path + "/runs/" + quote(run_id, safe="")
-    current = api("GET", firestore(c, run_path), allow404=True)
-    if not current or current.get("fields", {}).get("status", {}).get("stringValue") != "running":
-        return
-    # The pause watcher also cancels work. Mark durable cancellation before invoking.
-    api("PATCH", firestore(c, run_path) + "?updateMask.fieldPaths=cancel_requested", {"fields": {"cancel_requested": {"booleanValue": True}}})
-    try:
-        api("POST", c["runtime_url"].rstrip("/") + "/api/cancel", {"id": run_id})
-    except Exception as error:
-        print("Cancellation endpoint unavailable; waiting for bounded active run: " + str(error), file=sys.stderr)
-    end = time.monotonic() + 130
-    while time.monotonic() < end:
-        run = api("GET", firestore(c, run_path), allow404=True)
-        if run and run.get("fields", {}).get("status", {}).get("stringValue") in ("completed", "failed", "cancelled"):
-            return
-        time.sleep(1)
-    raise RuntimeError("Active run did not become terminal; stop VM and inspect before claiming paused")
+def control(c, paused):
+    # Omitted expires_at in the update mask removes the obsolete admission field.
+    return api("PATCH", firestore(c, "system/control") + "?updateMask.fieldPaths=paused&updateMask.fieldPaths=expires_at", {"fields": {"paused": {"booleanValue": paused}}})
 
 
 def pause(c):
     failures = []
-    # Attempt every closure even if one fails. Never report success on partial closure.
-    for step in (lambda: control(c, True), lambda: cancel_active(c), lambda: temporal_pause(), lambda: metadata({"computer-paused": "true"}), lambda: stop_vm()):
+    # Admission closes before pool shutdown. Waiting tasks remain durable.
+    for step in (lambda: control(c, True), temporal_pause, lambda: metadata({"computer-paused": "true"}), stop_vm):
         try:
             step()
         except Exception as error:
             failures.append(str(error))
     if failures:
         raise RuntimeError("Pause incomplete: " + "; ".join(failures))
-    print("Paused: durable control closed, active run terminal, task admission closed and WCI denied, every worker pool reconciled to zero, retained computer TERMINATED.")
+    print("Paused: new work blocked, worker scalers removed, all retained pools at zero, computer stopped; waiting tasks preserved.")
 
 
 def stop_vm():
@@ -265,51 +301,47 @@ def stop_vm():
         raise RuntimeError("Computer did not stop")
 
 
-def resume(c, build, verified):
-    now = datetime.now(timezone.utc).replace(microsecond=0)
-    hard = now + timedelta(hours=3)
-    shutdown = (hard - timedelta(minutes=10)).replace(second=0)
-    access = shutdown - timedelta(minutes=2)
-    expires = stamp(access - timedelta(minutes=2))
-    vm_deadline = stamp(hard)
-    session = {"started_at": stamp(now), "access_expires_at": stamp(access), "shutdown_at": stamp(shutdown), "hard_deadline_at": vm_deadline}
-    # Verify a usable custom OAuth client exists without printing credentials.
-    settings = api("GET", f"https://iap.googleapis.com/v1/projects/{NUMBER}:iapSettings")
-    oauth = settings.get("accessSettings", {}).get("oauthSettings", {})
-    if not oauth.get("clientId"):
-        raise RuntimeError("Custom IAP OAuth client is not configured; consumer Gmail access remains closed")
-    state = api("GET", vm_url())
-    if state["status"] != "TERMINATED":
-        raise RuntimeError("Resume requires a stopped computer; pause/reconcile first")
-    current = api("GET", firestore(c, "system/control"), allow404=True)
-    if current and not current.get("fields", {}).get("paused", {}).get("booleanValue", True):
-        raise RuntimeError("Resume requires paused durable control; pause/reconcile the previous session first")
-    # Install the cloud-side STOP deadline before opening task admission.
-    operation(api("POST", vm_url() + "/setScheduling", {"automaticRestart": False, "onHostMaintenance": "TERMINATE", "instanceTerminationAction": "STOP", "terminationTime": vm_deadline}))
-    installed = api("GET", vm_url())["scheduling"]
-    if installed.get("automaticRestart") or installed.get("instanceTerminationAction") != "STOP" or datetime.fromisoformat(installed["terminationTime"].replace("Z", "+00:00")) != hard:
-        raise RuntimeError("VM cloud-side STOP deadline was not verified")
+def verify_no_deadline():
+    scheduling = api("GET", vm_url())["scheduling"]
+    if scheduling.get("terminationTime") or scheduling.get("maxRunDuration"):
+        raise RuntimeError("Legacy VM termination schedule remains; run clear-deadline once while paused before unpause")
+    if scheduling.get("automaticRestart"):
+        raise RuntimeError("VM automatic restart must remain disabled")
+
+
+def clear_deadline():
+    if api("GET", vm_url())["status"] != "TERMINATED":
+        raise RuntimeError("Clear the legacy deadline only on the stopped retained computer; pause first")
+    # Google provider 8.8.1 marks termination_time ForceNew. Native scheduling
+    # updates clear it in place; never replace this retained VM to remove it.
+    print(gcloud("compute", "instances", "set-scheduling", VM, "--zone=" + ZONE,
+                 "--clear-termination-time", "--clear-max-run-duration",
+                 "--clear-instance-termination-action", "--no-restart-on-failure",
+                 "--maintenance-policy=TERMINATE"))
+    verify_no_deadline()
+    print("Legacy VM deadline cleared in place; retained VM and disks preserved.")
+
+
+def unpause(c):
+    verify_no_deadline()
+    # Keep application admission closed until native worker scaling is restored.
+    control(c, True)
     try:
-        temporal_resume(session, build, verified)
+        temporal_unpause()
         metadata({"computer-paused": "false"})
-        control(c, False, expires)
+        control(c, False)
+        api("POST", c["runtime_url"].rstrip("/") + "/api/resume", {})
     except Exception:
         pause(c)
         raise
-    print("Resumed until " + expires + "; WCI expires " + stamp(access) + ", worker shutdown " + stamp(shutdown) + ", VM STOP " + vm_deadline + ". Computer remains stopped until a tool needs it.")
+    print("Unpaused: tasks may run; the computer starts only when a tool needs it.")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["deadline", "bootstrap-identities", "publish-computer", "deploy-runtime", "deploy-web", "resume", "pause", "status", "spend-caps"])
+    parser.add_argument("action", choices=["bootstrap-identities", "publish-computer", "deploy-runtime", "deploy-web", "unpause", "pause", "clear-deadline", "status", "spend-caps"])
     parser.add_argument("value", nargs="?")
-    parser.add_argument("--build-id", help="deployed immutable Temporal build to admit for this session")
-    parser.add_argument("--shutdown-verified", action="store_true", help="attest the documented live Scheduler scale-to-zero proof succeeded")
     args = parser.parse_args()
-    if args.action == "deadline":
-        print(deadline()); return
-    if args.action == "resume" and (not args.build_id or not args.shutdown_verified):
-        parser.error("resume requires --build-id BUILD --shutdown-verified; complete the documented live shutdown proof first")
     if args.action == "bootstrap-identities":
         for service in ("aiplatform.googleapis.com", "iap.googleapis.com", "run.googleapis.com"):
             result = operation(api("POST", f"https://serviceusage.googleapis.com/v1beta1/projects/{NUMBER}/services/{service}:generateServiceIdentity", {}), "serviceusage")
@@ -347,8 +379,10 @@ def main():
     elif args.action == "deploy-web":
         if not args.value: parser.error("deploy-web needs an immutable image URI")
         print(gcloud("run", "services", "update", WEB, "--region=" + REGION, "--image=" + args.value))
-    elif args.action == "resume":
-        resume(c, args.build_id, args.shutdown_verified)
+    elif args.action == "clear-deadline":
+        clear_deadline()
+    elif args.action == "unpause":
+        unpause(c)
     elif args.action == "pause":
         pause(c)
     elif args.action == "status":

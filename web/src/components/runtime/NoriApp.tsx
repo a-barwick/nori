@@ -9,7 +9,7 @@ import { Medallion } from "@/components/mark/NoriMark";
 import { IconButton } from "@/components/ui/primitives";
 import { useHydrated, useWide } from "@/lib/hooks";
 import { useRuntime } from "@/lib/poc/useRuntime";
-import { demoSession, recordedDebug, sampleDebug } from "@/components/dev/debug";
+import { recordedDebug } from "@/components/dev/debug";
 import type { Thread as Conversation, ThreadItem } from "@/lib/types";
 import { DocumentViewer } from "./DocumentViewer";
 import { RuntimeComposer } from "./RuntimeComposer";
@@ -30,10 +30,6 @@ export function NoriApp({ agentMode = false }: { agentMode?: boolean }) {
 function RuntimeChat({ agentMode }: { agentMode: boolean }) {
   const runtime = useRuntime(agentMode);
   const [debug, setDebug] = useState(false);
-  const demo = useMemo(
-    () => (process.env.NODE_ENV === "development" && new URLSearchParams(window.location.search).has("demo") ? demoSession() : undefined),
-    [],
-  );
   const {
     session: liveSession,
     pending,
@@ -47,7 +43,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
     stopIntent,
     stopPending,
   } = runtime;
-  const session = liveSession ?? demo;
+  const session = liveSession;
   const wide = useWide();
   const [document, setDocument] = useState<{ body: string; at: number } | null>(
     null,
@@ -94,7 +90,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       text: message.text,
       debug:
         debug && message.role === "assistant"
-          ? (liveSession ? recordedDebug : sampleDebug)(message, session?.runs.find((run) => run.id === message.run_id))
+          ? recordedDebug(session?.runs.find((run) => run.id === message.run_id))
           : undefined,
     }));
     if (pendingNotPersisted && pending)
@@ -112,7 +108,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       createdAt: items[0]?.at ?? 0,
       items,
     };
-  }, [session?.messages, session?.runs, session?.dispatches, liveSession, pending, pendingNotPersisted, debug]);
+  }, [session?.messages, session?.runs, session?.dispatches, pending, pendingNotPersisted, debug]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -147,7 +143,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
   const notice =
     error ||
     (unavailable
-      ? `${session?.paused ? "This session is paused." : "This session has expired."} History remains available.`
+      ? "Task execution is paused. History remains available."
       : "");
   const work = agentMode && pending && pending.id === pending.runId ? "Nori is thinking…" : busy
     ? stopping
@@ -168,9 +164,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
           className={notice ? "absolute inset-x-0 top-0 bottom-20" : "h-full"}
         >
           <Thread
-            threadId="runtime"
             conversation={conversation}
-            readOnly
             onStatusDetails={() =>
               wide ? setDockOpen(true) : setOverlayOpen(true)
             }

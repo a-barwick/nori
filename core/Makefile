@@ -8,4 +8,4 @@ build:
 
 check:
 	go vet ./...
-	@test -z "$$(gofmt -l cmd)" || (echo "Run gofmt on cmd/"; exit 1)
+	@test -z "$$(gofmt -l cmd internal)" || (echo "Run gofmt on cmd/ and internal/"; exit 1)

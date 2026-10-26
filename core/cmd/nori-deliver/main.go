@@ -33,7 +33,7 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	if _, e = control.Deadline(); e != nil {
+	if e = control.Check(); e != nil {
 		log.Fatal(e)
 	}
 	c, e := task.Dial(ctx)

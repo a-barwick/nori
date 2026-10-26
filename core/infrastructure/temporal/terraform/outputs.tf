@@ -1,8 +1,7 @@
 output "worker_pools" {
   value = { for build, pool in google_cloud_run_v2_worker_pool.worker : build => {
-    name         = pool.name
-    resource     = pool.id
-    shutdown_job = google_cloud_scheduler_job.shutdown[build].id
+    name     = pool.name
+    resource = pool.id
   } }
 }
 
@@ -22,9 +21,6 @@ output "wci_scaler_role" {
   value = google_project_iam_custom_role.pool_scaler.name
 }
 
-output "session_settings" {
-  value = {
-    session         = var.session
-    active_build_id = var.active_build_id
-  }
+output "scalable_build_ids" {
+  value = var.scalable_build_ids
 }

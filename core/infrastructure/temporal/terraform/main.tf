@@ -2,7 +2,6 @@ locals {
   project = "bot-111549"
   region  = "us-west1"
   runner  = "nori-poc-runtime@bot-111549.iam.gserviceaccount.com"
-  expires = var.session == null ? "1970-01-01T00:00:00Z" : var.session.access_expires_at
   # Copied from this Temporal account's Access template, not generic Temporal identities.
   temporal_impersonators = toset([
     "serverless-qtjow@prod-vs4padk9dkczcey6d6st9c58e.iam.gserviceaccount.com",
@@ -28,7 +27,7 @@ locals {
 }
 
 resource "google_project_service" "api" {
-  for_each           = toset(["secretmanager.googleapis.com", "cloudscheduler.googleapis.com"])
+  for_each           = toset(["secretmanager.googleapis.com"])
   project            = local.project
   service            = each.value
   disable_on_destroy = false
@@ -91,7 +90,7 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
   }
   lifecycle {
     prevent_destroy = true
-    # WCI and the shutdown job own count after initial creation. Terraform never
+    # WCI and the operator pause command own count after creation. Terraform never
     # restarts paid capacity just because it refreshes an active pool.
     ignore_changes = [scaling[0].manual_instance_count]
   }
@@ -101,13 +100,6 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
 resource "google_service_account" "invoker" {
   account_id   = "nori-temporal-invoker"
   display_name = "Temporal WCI scaler (not worker runtime)"
-  disabled     = !var.wci_enabled
-  lifecycle {
-    precondition {
-      condition     = !var.wci_enabled || (var.shutdown_verified && var.session != null && contains(keys(var.worker_images), (var.active_build_id == null ? "" : var.active_build_id)))
-      error_message = "WCI requires a live-proven shutdown path, an explicit session, and exactly one retained active build."
-    }
-  }
 }
 
 resource "google_project_iam_custom_role" "pool_scaler" {
@@ -116,29 +108,21 @@ resource "google_project_iam_custom_role" "pool_scaler" {
   permissions = ["run.workerpools.get", "run.workerpools.update"]
 }
 
-# Resource IAM, not project run.developer. Grant expiry is an independent
-# fence, including after an operator re-enables a previously disabled SA.
+# Stable resource-scoped IAM. Removing a version's native compute configuration
+# pauses scaling without changing identities or deleting pinned workflows.
 resource "google_cloud_run_v2_worker_pool_iam_member" "wci" {
-  for_each = var.wci_enabled ? { for build, pool in google_cloud_run_v2_worker_pool.worker : build => pool if build == var.active_build_id } : {}
+  for_each = { for build, pool in google_cloud_run_v2_worker_pool.worker : build => pool if contains(var.scalable_build_ids, build) }
   project  = local.project
   location = local.region
   name     = each.value.name
   role     = google_project_iam_custom_role.pool_scaler.name
   member   = "serviceAccount:${google_service_account.invoker.email}"
-  condition {
-    title      = "nori-active-session"
-    expression = "request.time < timestamp('${local.expires}')"
-  }
 }
 
 resource "google_service_account_iam_member" "wci_runner" {
   service_account_id = "projects/${local.project}/serviceAccounts/${local.runner}"
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.invoker.email}"
-  condition {
-    title      = "nori-active-session"
-    expression = "request.time < timestamp('${local.expires}')"
-  }
 }
 
 resource "google_service_account_iam_member" "temporal_impersonation" {
@@ -146,8 +130,4 @@ resource "google_service_account_iam_member" "temporal_impersonation" {
   service_account_id = google_service_account.invoker.name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "serviceAccount:${each.value}"
-  condition {
-    title      = "nori-active-session"
-    expression = "request.time < timestamp('${local.expires}')"
-  }
 }

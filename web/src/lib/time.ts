@@ -75,23 +75,6 @@ export function nextRun(t: number, now = Date.now(), dayOnly = false) {
   return shortDate(t);
 }
 
-/** The next time a task runs, rolled forward past `now`; null for a one-off that already ran. */
-export function upcomingAt(task: { nextRunAt: number; repeat?: import("./types").Repeat }, now = Date.now()): number | null {
-  const r = task.repeat;
-  if (task.nextRunAt > now) return task.nextRunAt;
-  if (!r) return null;
-  if ("every" in r) return task.nextRunAt + Math.ceil((now - task.nextRunAt) / r.every) * r.every;
-  const [h, m] = ("daily" in r ? r.daily : r.at).split(":").map(Number);
-  const d = new Date(now);
-  d.setHours(h, m, 0, 0);
-  for (let i = 0; i < 8; i++) {
-    const ok = "daily" in r ? !r.weekdays || (d.getDay() > 0 && d.getDay() < 6) : d.getDay() === r.weekly;
-    if (ok && d.getTime() > now) return d.getTime();
-    d.setDate(d.getDate() + 1);
-  }
-  return null;
-}
-
 /** Rounds up to the next :00 or :30. */
 export function nextHalfHour(now: number) {
   const d = new Date(now);

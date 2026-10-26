@@ -48,6 +48,6 @@ type TaskStore interface {
 	Incorporate(context.Context, string, int64, int64) error
 	Guard(context.Context, string, int64) (Run, error)
 	Admit(context.Context, string, int64, string) error
-	Publish(context.Context, string, int64, string, string, string) (Run, error)
+	Publish(context.Context, string, int64, string, string, string, bool) (Run, error)
 	Project(context.Context, string, int64, string, string) error
 }

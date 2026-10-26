@@ -19,8 +19,9 @@ make check   # Go vet and gofmt, then TypeScript and ESLint
 
 Install web's dependencies first with `cd web && bun install --frozen-lockfile`.
 The local runner reads `OPENROUTER_API_KEY` and `JEV_API_KEY` from the existing
-`core/.env` by default. Task credentials load from the existing root `.env`, or
-from `NORI_TASK_ENV_FILE`. Google Cloud access uses Application Default Credentials.
+root `.env` by default. `NORI_ENV_FILE` selects an existing configuration file;
+`NORI_TASK_ENV_FILE` selects a separate existing task configuration when needed.
+Neither setting copies or moves credentials. Google Cloud access uses Application Default Credentials.
 Use `make dev NORI_ENV_FILE=/absolute/path/to/the/existing/.env` to select a different
 file or use a worktree without copying credentials. Keep the credential file
 gitignored and mode 600. Required names and optional model settings are in
@@ -38,7 +39,8 @@ identity without waiting for execution. The existing worker executes tools and
 saves results; the current Activity panel shows them. Ordinary chat stays
 available during a task. Stop and the panel's explicit task-update form target
 that task directly; a chat message never automatically becomes a task update.
-The existing one-active-task limit and authorized GCP session deadline still apply.
+One task can be active at a time. Paused task execution does not disable conversation.
+Durable task waiting has no session-expiry timer; operator cloud capacity is controlled separately.
 
 Outer-turn history stays in memory; saved task history stays in Firestore.
 `NORI_CONVERSATION_SEED` can carry a saved transcript through a development restart
@@ -46,7 +48,8 @@ without re-executing its old requests. Full context is currently untrimmed, so
 token cost and latency grow until provider context limits are reached. Selection,
 memory, and compaction are separate features. `POST /api/turn` accepts
 `{ "id": "UUID", "message": "text" }`; it and `POST /api/session` return the same
-conversation/task snapshot, including `messages`, `runs`, and `dispatches`.
+conversation/task snapshot, including `messages`, `runs`, `dispatches`, and
+recorded provider `usage`. Jev cost remains unknown when the provider supplies no price.
 Repeated turn IDs reuse the recorded outcome; a different message with the same
 ID is rejected. The Go listener and web preview bind to loopback. Conversation
 remains available when task execution is paused.
@@ -60,3 +63,17 @@ continues to use the existing owner-protected runtime and task UI. `make core`
 still starts the GCP-backed runtime, which uses Application Default Credentials
 and private GCP infrastructure; see [core setup](core/README.md) and
 [POC operations](core/infrastructure/poc/README.md).
+
+## Durable tasks
+
+The deployed task API uses Temporal Cloud. Tasks can wait across worker shutdown
+and project pause; resuming the project wakes retained work. Model requests and
+computer operations remain individually bounded. Uncertain tool work is never
+automatically replayed. Each inner task starts with a $1 model budget; an exact
+`continue` reply while waiting at that budget grants another $1. Outer
+conversation and Jev usage are accounted separately. See [core](core/README.md)
+and [operator lifecycle](core/infrastructure/poc/README.md) for the protocol and
+capacity controls.
+
+Cloud lifecycle changes in source require separate deployment. Local validation
+does not update the deployed services, worker images, or Terraform state.

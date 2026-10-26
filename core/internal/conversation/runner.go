@@ -46,22 +46,23 @@ type turnOutcome struct {
 }
 
 type Runner struct {
-	model      *Model
-	classifier *Classifier
-	tasks      *Tasks
-	turn       sync.Mutex
-	mu         sync.RWMutex
-	session    Session
-	history    []json.RawMessage
-	inputs     map[string]turnOutcome
-	seen       map[string]bool
+	model        *Model
+	classifier   *Classifier
+	tasks        *Tasks
+	turn         sync.Mutex
+	mu           sync.RWMutex
+	session      Session
+	history      []json.RawMessage
+	inputs       map[string]turnOutcome
+	pendingUsage map[string]state.Usage
+	seen         map[string]bool
 }
 
 func New(model *Model, classifier *Classifier, tasks *Tasks) *Runner {
 	return &Runner{model: model, classifier: classifier, tasks: tasks,
 		session: Session{Session: state.Session{Messages: []Message{}, Runs: []state.Run{}}, Dispatches: []Dispatch{}},
 		history: []json.RawMessage{modelMessage(map[string]string{"role": "system", "content": Instructions})},
-		inputs:  map[string]turnOutcome{}, seen: map[string]bool{}}
+		inputs:  map[string]turnOutcome{}, seen: map[string]bool{}, pendingUsage: map[string]state.Usage{}}
 }
 
 // RestoreConversation carries an existing local transcript across a development
@@ -112,7 +113,14 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 		return Session{}, err
 	}
 	r.syncHistory(snapshot)
+	// Carry the parent input on both pre-request attempt and response updates.
+	recordAttempt := func(ctx context.Context, usage state.Usage) error {
+		usage.InputID = input.ID
+		return r.tasks.Store.RecordUsage(ctx, usage)
+	}
+	r.model.RecordUsage, r.classifier.RecordUsage = recordAttempt, recordAttempt
 	hint, classifyErr := r.classifier.Classify(ctx, input.Message, snapshot.Messages)
+	r.recordUsage(input.ID, hint.Usage)
 	if classifyErr != nil {
 		log.Printf("Jev hint unavailable: %v", classifyErr)
 		hint = Classification{Available: false}
@@ -128,6 +136,7 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 	messages := append([]json.RawMessage{}, r.history...)
 	messages = append(messages, modelMessage(map[string]string{"role": "system", "content": "Advisory context for the current input: " + string(advice)}), user)
 	reply, err := r.model.Call(ctx, messages)
+	r.recordUsage(input.ID, reply.Usage)
 	if err != nil {
 		r.recordTurn(input, hint, user, Reply{}, nil, nil, "I couldn't answer this message: "+err.Error())
 		return Session{}, err
@@ -177,6 +186,23 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 		return Session{}, errors.New(failure)
 	}
 	return r.Snapshot(ctx)
+}
+
+// Usage projection is independent from routing and model output validity. Keep
+// failed writes for the next turn and use an independent bounded context after
+// provider I/O so a disconnected browser cannot discard observed usage.
+func (r *Runner) recordUsage(inputID string, usage state.Usage) {
+	usage.InputID = inputID
+	r.pendingUsage[usage.ID] = usage
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for id, record := range r.pendingUsage {
+		if err := r.tasks.Store.RecordUsage(ctx, record); err != nil {
+			log.Printf("model usage projection pending for request %s: %v", id, err)
+			continue
+		}
+		delete(r.pendingUsage, id)
+	}
 }
 
 func (r *Runner) recordTurn(input Input, hint Classification, user json.RawMessage, reply Reply, results []json.RawMessage, dispatches []Dispatch, failure string) {
@@ -239,7 +265,7 @@ func dispatchFailure(err error) string {
 		return "another task is already active. Use the explicit task controls to update or stop it."
 	}
 	if errors.Is(err, state.ErrPaused) {
-		return "task execution is paused or this session has expired."
+		return "task execution is paused."
 	}
 	return "task admission was unavailable. No acceptance was confirmed."
 }

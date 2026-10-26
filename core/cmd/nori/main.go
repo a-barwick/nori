@@ -104,6 +104,25 @@ func main() {
 	// Native generic invocation forwards POST; this route performs no cloud reads.
 	mux.HandleFunc("POST /api/healthz", health)
 	mux.HandleFunc("POST /healthz", health)
+	mux.HandleFunc("POST /api/resume", func(w http.ResponseWriter, r *http.Request) {
+		var body struct{}
+		if !decode(w, r, &body) {
+			return
+		}
+		if temporalClient == nil {
+			writeJSON(w, 503, map[string]string{"error": "Temporal delivery is not configured"})
+			return
+		}
+		if e := task.Deliver(r.Context(), store, temporalClient); e != nil {
+			writeError(w, e)
+			return
+		}
+		if e := task.Wake(r.Context(), store, temporalClient); e != nil {
+			writeError(w, e)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"resumed": true})
+	})
 	mux.HandleFunc("POST /api/session", func(w http.ResponseWriter, r *http.Request) {
 		var body struct{}
 		if !decode(w, r, &body) {
@@ -179,7 +198,7 @@ func main() {
 			repairCtx, cancelRepair := context.WithTimeout(r.Context(), 5*time.Second)
 			control, controlErr := store.Control(repairCtx)
 			if controlErr == nil {
-				if _, admissionErr := control.Deadline(); admissionErr != nil {
+				if admissionErr := control.Check(); admissionErr != nil {
 					if repairErr := task.RepairClosed(repairCtx, store, temporalClient, service.Computer); repairErr != nil {
 						log.Printf("Stop terminal recovery pending: %v", repairErr)
 					}

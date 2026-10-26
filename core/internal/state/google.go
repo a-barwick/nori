@@ -72,8 +72,7 @@ func (s *Google) Begin(ctx context.Context, id, text string) (Run, error) {
 		if e = control.DataTo(&c); e != nil {
 			return e
 		}
-		expiry, e := c.Deadline()
-		if e != nil {
+		if e = c.Check(); e != nil {
 			return e
 		}
 		_, e = tx.Get(s.runs().Doc(id))
@@ -110,9 +109,6 @@ func (s *Google) Begin(ctx context.Context, id, text string) (Run, error) {
 		}
 		now := time.Now().UTC()
 		deadline := now.Add(2 * time.Minute)
-		if expiry.Before(deadline) {
-			deadline = expiry
-		}
 		run = Run{ID: id, Status: "running", StartedAt: now, Deadline: deadline, Events: []Event{}, Artifacts: []Artifact{}}
 		if previous != nil {
 			previous.Status = "failed"
@@ -156,10 +152,24 @@ func (s *Google) Event(ctx context.Context, id string, event Event) error {
 
 // Spend records model cost even after a correction or terminal state; it is a
 // fact about money already used, not task progress.
-func (s *Google) Spend(ctx context.Context, id string, spent, budget float64) error {
-	_, e := s.runs().Doc(id).Update(ctx, []firestore.Update{{Path: "spent_usd", Value: spent}, {Path: "budget_usd", Value: budget}})
+func (s *Google) Spend(ctx context.Context, id string, spent, budget float64, costUnknown bool) error {
+	return s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		r, e := decodeRun(tx.Get(s.runs().Doc(id)))
+		if e != nil {
+			return e
+		}
+		// Cumulative projections may be retried or arrive after a newer write.
+		return tx.Update(s.runs().Doc(id), []firestore.Update{{Path: "spent_usd", Value: max(r.Spent, spent)}, {Path: "budget_usd", Value: max(r.Budget, budget)}, {Path: "cost_unknown", Value: r.CostUnknown || costUnknown}})
+	})
+}
+
+// RecordUsage is idempotent for one observed provider request. The caller keeps
+// the same ID and timestamp when retrying a failed projection.
+func (s *Google) RecordUsage(ctx context.Context, usage Usage) error {
+	_, e := s.root().Collection("model_usage").Doc(usage.ID).Set(ctx, usage)
 	return e
 }
+
 func (s *Google) Artifact(ctx context.Context, id string, a Artifact) error {
 	_, e := s.runs().Doc(id).Update(ctx, []firestore.Update{{Path: "artifacts", Value: firestore.ArrayUnion(a)}})
 	return e
@@ -209,7 +219,7 @@ func (s *Google) session(ctx context.Context, fullConversation bool) (Session, e
 	if e != nil {
 		return Session{}, e
 	}
-	session := Session{Messages: []Message{}, Runs: []Run{}, Paused: c.Paused, ExpiresAt: c.ExpiresAt}
+	session := Session{Messages: []Message{}, Runs: []Run{}, Paused: c.Paused}
 	query := s.messages().OrderBy("created_at", firestore.Desc)
 	if !fullConversation {
 		query = query.Limit(100)
@@ -254,6 +264,24 @@ func (s *Google) session(ctx context.Context, fullConversation bool) (Session, e
 			}
 		}
 		session.Runs = append(session.Runs, r)
+	}
+	if fullConversation {
+		usage := s.root().Collection("model_usage").OrderBy("created_at", firestore.Desc).Limit(100).Documents(ctx)
+		defer usage.Stop()
+		for {
+			d, e := usage.Next()
+			if e == iterator.Done {
+				break
+			}
+			if e != nil {
+				return session, e
+			}
+			var record Usage
+			if e = d.DataTo(&record); e != nil {
+				return session, e
+			}
+			session.Usage = append(session.Usage, record)
+		}
 	}
 	return session, nil
 }

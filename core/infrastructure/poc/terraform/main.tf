@@ -30,13 +30,6 @@ variable "computer_release_sha256" {
 
 }
 
-variable "provisioning_deadline" {
-
-  description = "Initial VM STOP deadline, verified by poc.py before first apply. Native resume updates it thereafter."
-  type        = string
-
-}
-
 variable "model" {
   type    = string
   default = "gemini-3.1-flash-lite"
@@ -267,11 +260,9 @@ resource "google_compute_instance" "computer" {
 
   scheduling {
 
-    automatic_restart           = false
-    on_host_maintenance         = "TERMINATE"
-    provisioning_model          = "STANDARD"
-    instance_termination_action = "STOP"
-    termination_time            = var.provisioning_deadline
+    automatic_restart   = false
+    on_host_maintenance = "TERMINATE"
+    provisioning_model  = "STANDARD"
 
   }
 
@@ -293,7 +284,10 @@ resource "google_compute_instance" "computer" {
   lifecycle {
 
     prevent_destroy = true
-    ignore_changes  = [desired_status, scheduling[0].termination_time, metadata["computer-paused"], metadata["computer-release-object"], metadata["computer-release-sha256"]]
+    # Google 8.8.1 replaces the instance when termination_time is removed.
+    # The native clear-deadline migration owns these two legacy fields instead;
+    # poc.py refuses unpause while any termination schedule remains.
+    ignore_changes = [desired_status, scheduling[0].termination_time, scheduling[0].instance_termination_action, metadata["computer-paused"], metadata["computer-release-object"], metadata["computer-release-sha256"]]
     precondition {
 
       condition     = data.google_compute_disk.computer.disk_id == "3757334953750232874" && data.google_compute_disk.computer.size == 20
@@ -458,7 +452,7 @@ resource "google_cloud_run_v2_service" "web" {
   }
 
   lifecycle {
-    ignore_changes = [template[0].containers[0].image]
+    ignore_changes = [template[0].containers[0].image, client, client_version]
   }
 
   depends_on = [google_project_service.api]

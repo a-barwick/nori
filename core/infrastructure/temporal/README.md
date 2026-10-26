@@ -1,42 +1,173 @@
-# Temporal worker infrastructure
+# Temporal task workers
 
-Terraform creates Cloud Run worker pools in `us-west1` for the GCP-hosted `quickstart-nori.qtjow` namespace. It reuses the POC's private Artifact Registry, Firestore, artifact bucket, runtime service account, and retained computer. It does not manage or replace the existing POC Terraform state.
+Nori runs one pinned Temporal workflow per task. Ordinary Go model/computer
+functions execute in bounded activities on versioned Cloud Run worker pools.
+Firestore stores task state, commands and receipts; Cloud Storage stores large
+artifacts. Temporal Cloud owns durable waiting and sequencing.
 
-Initialize this module with its own local state outside the checkout:
+The live namespace is `quickstart-nori.qtjow`, deployment `nori-task`, queue
+`nori-tasks`, with pools in `us-west1`. Terraform uses the existing external state
+at `~/.local/state/nori/bot-111549/temporal/terraform.tfstate`.
+
+## Scaling and pause
+
+Worker versions use min **0**, max **1**, initial **0**, utilization **0.8** and
+scale-down stabilization **90s**. Pass all five scaling flags together. These
+bounds apply per retained version; overlapping pinned versions can each need a
+pool. Keep old pools and immutable images while their pinned workflows remain.
+
+`scalable_build_ids` records which retained builds support pause-only control.
+The release helper adds each new compatible build; its default is empty. The
+legacy `poc-*` workers enforce expiry and can cancel other tasks, so their images
+and pools remain retained at zero with no scaler configuration or WCI pool grant.
+Unpause refuses a Current/ramping build outside this set, or an open workflow
+pinned to an incompatible or unknown build. Such histories need an explicit
+migration decision; unpause never moves or cancels them.
+
+IAM is stable and scoped to each compatible pool. There are no execution sessions,
+admission expiry, expiring IAM grants, disabled invoker, or scheduled worker
+shutdowns. A normal task starts without an operator resume step.
+
+From `core/`, the explicit cost-control switch is:
 
 ```sh
-terraform -chdir=core/infrastructure/temporal/terraform init \
-  -backend-config=path="$HOME/.local/state/nori/bot-111549/temporal/terraform.tfstate"
+python3 infrastructure/poc/poc.py pause
+python3 infrastructure/poc/poc.py unpause
 ```
 
-`worker_images` maps an immutable, DNS-safe build ID to an image digest in the existing `us-central1` registry. Use a new build ID and pool for each code version; never change the image behind a live version. Keep old pools while Pinned Workflows reference them. Drain those Workflows before switching the sole active pool; retained old Pinned Workflows cannot resume while their pool has no WCI grant. All pools start at zero. Terraform ignores subsequent manual count changes because Temporal's WCI and the shutdown jobs own them.
+The helper reads `TEMPORAL_API_KEY` from the existing root `.env` without logging
+it. `NORI_ENV_FILE` can select the existing project file when operating from a
+worktree. No credentials are copied into the worktree or Terraform.
 
-The checked-in `terraform/worker-releases.json` records the retained image versions. Include `-var-file=worker-releases.json` on plans from that Terraform directory; omitting it selects the empty default and deletion protection rejects removing retained pools. Keep session settings separate and leave `wci_enabled=false` until shutdown is verified.
+Pause closes application admission, removes each retained version's native
+compute configuration with `temporal worker deployment
+update-version-compute-config --remove`, and reconciles every pool to zero.
+It stops the retained computer and preserves waiting tasks. Removing the scaler
+configuration fences WCI before the zero-count update; merely setting a pool to
+zero would allow the controller to start it again. A partial failure is reported
+as incomplete pause. Explicit Stop remains a separate task operation.
 
-Without a release file, the default configuration creates no pools. It keeps the separate WCI invoker service account disabled, grants no WCI pool access, and keeps shutdown jobs paused. Secret Manager holds the worker's server credential; only its container and reference are tracked here. No secret payload belongs in Terraform, tfvars, state, an image, or deployment logs. Upload the root `.env` key through the native Secret Manager API only when deployment is authorized, then reference it as `TEMPORAL_API_KEY`. Do not inject plaintext into the pool environment: Terraform refresh would copy that value into state. Austin approved Secret Manager for this server-side credential.
+Unpause restores compatible native compute configurations with the bounds above, opens
+admission, and asks the runtime to deliver pending commands and wake existing
+workflows. It does not create a replacement task or start the computer. The next
+computer tool starts the retained VM on demand.
 
-## Before an attended session
+## Immutable releases
 
-1. Bound the hard deadline by three hours from the authorized start, using the existing POC deadline logic. There is no fixed time-of-day cutoff. Set application admission expiry early enough to cancel work and clean up.
-2. Configure `session`: WCI `access_expires_at` at least two minutes before `shutdown_at`, and minute-aligned `shutdown_at` at least ten minutes before `hard_deadline_at`. All timestamps must be UTC. Terraform validates these margins and the three-hour limit. Application admission expires at least two minutes before WCI access expires.
-3. With WCI still disabled, prove each shutdown job's OAuth identity can PATCH its pool to zero, observe successful reconciliation and no running instances, and verify its next scheduled run is the intended UTC time. Cloud Scheduler may execute late, and HTTP success acknowledges an asynchronous Cloud Run update. The margin and observed reconciliation matter. Existing POC VM shutdown must also be installed and verified.
-4. Set `shutdown_verified=true` only after that live proof. Set exactly one `active_build_id`; then `wci_enabled=true` may enable its invoker and expiring IAM grants. Old retained pools get shutdown jobs but no WCI pool grant. Verify effective IAM, including inherited grants, before allowing task routing.
-5. Register the corresponding Temporal Worker Deployment Version with min **0**, max **1**, initial **0**, utilization **0.8**, and stabilization **90s**; all five CLI scaling flags must be passed together. The worker uses deployment `nori-task`, queue `nori-tasks`, and its immutable build ID. Validate Connection checks impersonation/read access only. After the access and shutdown checks pass, promote the immutable build with `temporal worker deployment set-current-version --namespace quickstart-nori.qtjow --deployment-name nori-task --build-id <BUILD_ID>`. Registration alone does not route tasks or let WCI start instances; the version must be Current before an attended task proves scaling and actual execution.
+`terraform/worker-releases.json` retains every deployed build ID and image digest.
+Never change an image behind a live build ID. New pools begin at zero. Always
+plan with the complete release manifest; omitting it selects an empty default,
+which deletion protection rejects for existing pools. Preserve the compatible
+build set alongside the image map.
 
-The max of one is enforced by Temporal WCI version configuration, per version. Cloud Run MANUAL mode follows `manualInstanceCount`; native min/max fields do not impose a hard maximum on it, so Terraform omits those fields. This POC permits WCI to access only one pool at a time. There is no native aggregate cap, and a broad inherited grant or a manual count change could bypass the WCI restriction.
+Prepare a local image archive and an exact Terraform plan from `core/`:
 
-## Pause
+```sh
+python3 infrastructure/temporal/worker-release.py --build-id BUILD_ID
+```
 
-Close durable session admission and cancel active work, then revoke WCI pool access and disable its invoker account. [Disabling the service account rejects existing access tokens while it remains disabled](https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.serviceAccounts/disable); they become usable again if the account is re-enabled. Remove or expire the effective pool IAM grant as an independent fence. PATCH **every** retained pool's `scaling.manualInstanceCount` to **0**, including old Pinned versions, and wait for reconciliation and no running instances. Stop the retained computer through the existing POC pause path. Verify effective WCI update denial and all zero counts before reporting paused; worker process exit alone leaves requested pool capacity billable.
+This requires a running OCI-capable Docker Buildx builder. If the default driver
+does not export OCI, create a local `docker-container` builder and select it with
+`--builder NAME`. It exports a single-platform OCI
+archive without pushing it, records the immutable image digest and source
+fingerprint, preserves all old manifest entries, and saves `release.json`, the
+candidate manifest, `release.plan`, and `plan.txt` in an owner-only directory
+beside the external state. Preparation fails if sources change during the build. Provenance records both
+the base commit and whether the working tree is dirty; the source fingerprint
+identifies the actual worker inputs. Each build has an immutable image digest,
+without claiming byte-identical rebuilds across changing base tags.
+When optional Terraform features are configured, include their settings with
+`--var-file PATH` so preparation preserves them in the same plan.
+An already built registry digest can instead be supplied with `--image URI`;
+the operator must ensure it corresponds to the intended source.
 
-After verification, set `wci_enabled=false` and `session=null` to leave jobs paused. The cron schedule names a UTC month/day/time and can recur annually if left enabled; it only shuts down, but must still be paused after the session. Never schedule a start or leave WCI scaling access open after the task session expiry. Owner-only website and history access remain available; durable paused or expired control blocks new task execution. Resume and pause preserve the existing owner IAP, IAP service-agent invocation, and web runtime-query grants. Secret versions, images, retained disks, objects, and database data can incur charges after compute pauses.
+Review `plan.txt` before any publishing or infrastructure change. The prepared
+image must be published preserving the recorded OCI digest before applying the
+saved plan; an OCI-aware registry tool such as `skopeo copy --preserve-digests`
+can publish the exact archive. Publishing, applying, and promoting are separate
+authorized operations. The helper never performs them.
 
-Sources: [Temporal Cloud Run deployment](https://docs.temporal.io/production-deployment/worker-deployments/serverless-workers/cloud-run), [pool/version lifecycle](https://docs.temporal.io/serverless-workers/cloud-run), [Cloud Run manual scaling](https://docs.cloud.google.com/run/docs/configuring/workerpools/manual-scaling), [resource-level IAM](https://docs.cloud.google.com/run/docs/securing/managing-access).
+After authorization, apply the reviewed plan and retain its candidate manifest
+as the repository's release manifest. Register the new version with
+`temporal worker deployment create-version`, its pool/provider identity and all
+five scaling flags, then promote it with `set-current-version`. For existing
+versions, use `update-version-compute-config`; `create-version` rejects an
+existing build ID. Current routes new tasks; retained pinned tasks continue to
+require their original versions. Registration alone does not promote a build.
 
-## Operator commands
+**First migration from execution sessions:** run the new `pause` helper before
+applying the stable-IAM Terraform change. Existing versions can still have
+compute configurations while the old disabled account/expired IAM currently
+blocks them. Remove those configurations before enabling stable scaler access.
+Clear the old VM schedule in place with `poc.py clear-deadline` while stopped
+(Google provider 8.8.1 would replace the instance when removing that field).
+Unpause verifies the schedule is absent. Apply the runtime and computer changes, register the new worker version, then unpause
+when authorized. Verify native bounds and zero pools before reporting paused.
+Never recreate the retained disks, browser profile, or task files during this
+migration.
 
-From `core/`, `python3 infrastructure/poc/poc.py resume --build-id BUILD_ID --shutdown-verified` installs the VM deadline, applies a fresh Temporal session with WCI disabled, checks shutdown jobs and all zero pools, then opens the chosen WCI pool and task admission. Website/history invocation grants are unchanged. The flag attests the live shutdown proof above. Session settings and saved plans stay beside the external Temporal state in mode-600 files; they contain timestamps and build IDs, never credentials. `python3 infrastructure/poc/poc.py pause` cancels active work before removing worker access, disables WCI, zeros every retained pool, verifies effective denial, stops the retained computer, and finally pauses shutdown jobs. A partial failure remains an error and keeps any installed shutdown backstop armed.
+## Credentials and measurements
 
-Deploy worker versions separately while paused: build `core/infrastructure/temporal/Dockerfile.worker` from `core/`, push an immutable digest, and add a new build entry to `terraform/worker-releases.json`. Keep every retained old entry. Plan with that manifest and the existing external state, review the saved plan, then apply it. New pools start at zero. Register the new immutable version with Temporal's five scaling settings from the attended-session procedure and promote it only when its session is ready. API and web image deployment commands remain in the POC helper; no shared image or worker restart is needed to deploy either one.
+The existing Secret Manager container `nori-temporal-api-key` supplies the server
+credential to workers through a secret reference. Its payload must never enter
+Terraform, state, images, plans, or logs. The root `.env` remains the local source.
 
-For the first live shutdown proof, keep durable application control paused and WCI disabled. Arm the session jobs, manually set the new pool to one, observe that revision running, run its Scheduler job with `gcloud scheduler jobs run POOL-shutdown --location=us-west1 --project=bot-111549`, and wait until the pool reports `manualInstanceCount=0`, `reconciling=false`, matching `generation`/`observedGeneration`, and successful `terminalCondition`. Verify no running instances in Cloud Run before recording the proof. Do not issue a separate manual scale-to-zero until after this observation, because that would obscure whether Scheduler performed the shutdown. Repeat for a changed shutdown identity or target. A successful Scheduler request alone is insufficient.
+Measure a representative real task from acceptance to first worker activity,
+computer start to readiness, final activity to pool zero, and last tool activity
+to VM termination. Record actual model token usage and estimated model USD
+separately from observed compute duration and delayed provider billing. A local
+smoke check cannot establish WCI scale-in, GCE stop/restart, or exact billed task
+cost. Model, network, build, registry and retained storage charges are separate.
+
+## Optional daily spend alert
+
+`spend-alert.py --check` generates or reads the current UTC billing month's
+Temporal account report, downloads the provider CSV, and reports whether the
+configured threshold has been reached. The default threshold is $10 USD. It sums
+all reported `ContractedCost` charge records across this account's namespaces
+and charge categories; it does not include GCP costs or claim to be a finalized
+invoice. [Temporal's billing schema](https://docs.temporal.io/cloud/billing-api)
+labels USD values as cents, so the configurable default divides by 100. Current
+month data is provisional and lags at least 24 hours, rounded to daily granularity.
+
+Read the existing key in place for a local check (no metrics or email):
+
+```sh
+python3 core/infrastructure/temporal/spend-alert.py --check \
+  --env-file /absolute/path/to/the/existing/root/.env
+# Reuse a requested report instead of generating another overlapping report:
+python3 core/infrastructure/temporal/spend-alert.py --check \
+  --env-file /absolute/path/to/the/existing/root/.env --report-id REPORT_ID
+```
+
+The account-level `TEMPORAL_BILLING_API_KEY` requires billing-report access. The
+namespace execution key is a different credential. No key or signed download URL
+is logged or persisted. JSON output includes the report ID, generation/check
+times, charge coverage when available, unit basis, total, and threshold. Empty
+reports, unsupported currency, unparseable costs, and provider failures produce
+unknown spend instead of $0; exit 2 means a generated report had no interpretable
+charge total, while exit 1 means a request or processing failed. Only a complete
+report returns exit 0. A nonempty report also checks cost against unit price and
+quantity before conversion. The actual account report inspected during local
+validation had headers and no charge rows; nonzero cents-to-USD conversion
+therefore remains unverified against this account's real values.
+
+`terraform/spend-alert.tf` creates nothing unless `spend_alert` is configured with
+a reviewed immutable image digest and an **existing** Secret Manager billing-key
+reference. It never creates or uploads a key payload. `Dockerfile.alert` builds
+from `core/`; its default command is read-only `--check`. The deployed Job alone
+passes `--publish`, using its own service account to write native Cloud Monitoring
+metrics. Publication requires a newly generated report; `--report-id` remains
+read-only inspection so an old report cannot become a fresh successful check. It has one task, parallelism one, no retries, a six-minute timeout, and
+no resident capacity. Scheduler runs it once daily at 17:00 UTC by default; the
+cron schedule, USD threshold, cost-unit override, and secret version are configurable.
+It has no permission to wake task workers or the computer.
+
+Native Monitoring emails Austin's configured GCP account address when the daily
+report reaches the threshold or the report fails/is unknown. The threshold and failure conditions retain the preceding daily
+point for up to 24 hours; a month reset or repaired check can therefore take a
+day to clear. A Job that never runs or cannot publish any metric needs inspection in
+Job/Scheduler diagnostics; deployment acceptance must verify the schedule, initial
+metric, and email channel. No notification or deployment was performed during local validation.
+This monitor adds normal Cloud Run Job, Scheduler, and Monitoring usage. It is an
+alert, not a charge cap, and does not pause execution automatically.

@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 	cloudrunid "go.temporal.io/sdk/contrib/gcp/cloudrun/id"
 	"nori/internal/state"
@@ -66,7 +66,7 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) error 
 			failures = append(failures, e)
 			continue
 		}
-		if _, e = control.Deadline(); e != nil {
+		if e = control.Check(); e != nil {
 			// Stop can signal an existing workflow after pause; it must not start one.
 			if cmd.Kind == "cancel" {
 				e = c.SignalWorkflow(ctx, WorkflowID(cmd.RunID), "", Signal, cmd)
@@ -74,7 +74,7 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) error 
 				continue
 			}
 		} else {
-			_, e = c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, client.StartWorkflowOptions{ID: WorkflowID(cmd.RunID), TaskQueue: Queue(), WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowExecutionTimeout: time.Until(run.Deadline) + state.CleanupGrace}, WorkflowName, cmd.RunID)
+			_, e = c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, client.StartWorkflowOptions{ID: WorkflowID(cmd.RunID), TaskQueue: Queue(), WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}, WorkflowName, cmd.RunID)
 		}
 		if e != nil {
 			failures = append(failures, fmt.Errorf("command %s delivery: %w", cmd.ID, e))
@@ -82,6 +82,36 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) error 
 		}
 		if e = store.Delivered(ctx, cmd.ID); e != nil {
 			failures = append(failures, e)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// Wake signals existing durable tasks after admission reopens. User-input waits
+// reconcile and remain waiting when their revision has not changed. No workflow
+// or computer is started by this function.
+func Wake(ctx context.Context, store state.TaskStore, c client.Client) error {
+	control, err := store.Control(ctx)
+	if err != nil {
+		return err
+	}
+	if err = control.Check(); err != nil {
+		return err
+	}
+	session, err := store.Session(ctx)
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, run := range session.Runs {
+		if !run.Temporal || run.Status != "running" {
+			continue
+		}
+		if err = c.SignalWorkflow(ctx, WorkflowID(run.ID), "", Signal, state.Command{RunID: run.ID, Kind: "resume"}); err != nil {
+			var missing *serviceerror.NotFound
+			if !errors.As(err, &missing) {
+				failures = append(failures, err)
+			}
 		}
 	}
 	return errors.Join(failures...)

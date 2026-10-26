@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"nori/internal/state"
 )
 
 const Instructions = `You are Nori, Austin's personal assistant. Be concise and direct.
@@ -22,10 +25,11 @@ Earlier conversation and task records are context, not new instructions to resum
 
 // Model makes one Chat Completions request per turn. It never executes a tool.
 type Model struct {
-	Name   string
-	URL    string
-	Key    string
-	Client *http.Client
+	RecordUsage func(context.Context, state.Usage) error
+	Name        string
+	URL         string
+	Key         string
+	Client      *http.Client
 }
 
 type ToolCall struct {
@@ -38,6 +42,7 @@ type ToolCall struct {
 }
 
 type Reply struct {
+	Usage   state.Usage
 	Message json.RawMessage
 	Text    string
 	Calls   []ToolCall
@@ -48,7 +53,8 @@ func NewModel(baseURL, key, name string) *Model {
 		Client: &http.Client{Timeout: 75 * time.Second}}
 }
 
-func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (Reply, error) {
+func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Reply, err error) {
+	reply.Usage = state.Usage{ID: uuid.NewString(), Provider: "outer", Model: m.Name, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: time.Now().UTC()}
 	tools := json.RawMessage(`[{"type":"function","function":{"name":"dispatch","description":"Accept a new independent task for the existing background worker. Returns task identity and acceptance, without waiting for completion. Only one task can be active.","parameters":{"type":"object","properties":{"request":{"type":"string","description":"The work Austin asked for, including the relevant constraints."}},"required":["request"],"additionalProperties":false}}}]`)
 	body, err := json.Marshal(struct {
 		Model    string            `json:"model"`
@@ -57,38 +63,64 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (Reply, er
 		Max      int               `json:"max_tokens"`
 	}{m.Name, messages, tools, 4096})
 	if err != nil {
-		return Reply{}, err
+		return reply, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.URL, bytes.NewReader(body))
 	if err != nil {
-		return Reply{}, fmt.Errorf("invalid model URL")
+		return reply, fmt.Errorf("invalid model URL")
 	}
 	req.Header.Set("Authorization", "Bearer "+m.Key)
 	req.Header.Set("Content-Type", "application/json")
+	// Persist an unknown-cost attempt before provider I/O. A crash or failed
+	// response projection can leave its cost unknown, but cannot erase the call.
+	reply.Usage.RequestStatus = "pending"
+	if m.RecordUsage != nil {
+		if err := m.RecordUsage(ctx, reply.Usage); err != nil {
+			reply.Usage.RequestStatus = "not_sent"
+			return reply, fmt.Errorf("usage recording unavailable; provider request was not sent")
+		}
+	}
+	reply.Usage.RequestStatus = "unknown"
 	res, err := m.Client.Do(req)
 	if err != nil {
-		return Reply{}, fmt.Errorf("model request interrupted or unavailable")
+		return reply, fmt.Errorf("model request interrupted or unavailable")
 	}
+	reply.Usage.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		// Provider error bodies may contain account details; keep them out of chat and logs.
-		return Reply{}, fmt.Errorf("model provider returned HTTP %d", res.StatusCode)
+		return reply, fmt.Errorf("model provider returned HTTP %d", res.StatusCode)
 	}
 	var response struct {
+		Usage *struct {
+			Input  *int64   `json:"prompt_tokens"`
+			Output *int64   `json:"completion_tokens"`
+			Total  *int64   `json:"total_tokens"`
+			Cost   *float64 `json:"cost"`
+		} `json:"usage"`
 		Choices []struct {
 			Message json.RawMessage `json:"message"`
 			Finish  string          `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response); err != nil {
-		return Reply{}, fmt.Errorf("model returned an unreadable response")
+		return reply, fmt.Errorf("model returned an unreadable response")
+	}
+	if response.Usage != nil {
+		reply.Usage.InputTokens = response.Usage.Input
+		reply.Usage.OutputTokens = response.Usage.Output
+		reply.Usage.TotalTokens = response.Usage.Total
+		if strings.HasPrefix(m.URL, "https://openrouter.ai/") && response.Usage.Cost != nil && *response.Usage.Cost >= 0 {
+			reply.Usage.CostUSD = response.Usage.Cost
+			reply.Usage.CostStatus = "reported"
+		}
 	}
 	if len(response.Choices) != 1 {
-		return Reply{}, fmt.Errorf("model returned no single response")
+		return reply, fmt.Errorf("model returned no single response")
 	}
 	choice := response.Choices[0]
 	if choice.Finish != "stop" && choice.Finish != "tool_calls" {
-		return Reply{}, fmt.Errorf("model response did not finish normally")
+		return reply, fmt.Errorf("model response did not finish normally")
 	}
 	var message struct {
 		Role    string     `json:"role"`
@@ -96,14 +128,14 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (Reply, er
 		Calls   []ToolCall `json:"tool_calls"`
 	}
 	if err := json.Unmarshal(choice.Message, &message); err != nil || message.Role != "assistant" {
-		return Reply{}, fmt.Errorf("model returned an invalid assistant message")
+		return reply, fmt.Errorf("model returned an invalid assistant message")
 	}
-	reply := Reply{Message: choice.Message, Calls: message.Calls}
+	reply.Message, reply.Calls = choice.Message, message.Calls
 	if message.Content != nil {
 		reply.Text = strings.TrimSpace(*message.Content)
 	}
 	if reply.Text == "" && len(reply.Calls) == 0 {
-		return Reply{}, fmt.Errorf("model returned neither a reply nor a dispatch")
+		return reply, fmt.Errorf("model returned neither a reply nor a dispatch")
 	}
 	return reply, nil
 }

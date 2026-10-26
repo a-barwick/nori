@@ -72,9 +72,11 @@ export function DebugBlock({ info }: { info: DebugInfo }) {
               <span>kind</span>
               <span>id</span>
               <span>
-                {info.cost !== undefined && info.budget !== undefined ? (
+                {info.cost !== undefined || info.costUnknown ? (
                   <>
-                    budget <span className="text-ink">{usd(info.cost)}</span> / ${info.budget.toFixed(2)}
+                    budget <span className="text-ink">{info.cost !== undefined ? usd(info.cost) : "unknown"}</span>
+                    {info.costUnknown && info.cost !== undefined && <span className="text-warning"> + unknown</span>}
+                    {info.budget !== undefined && <> / ${info.budget.toFixed(2)}</>}
                   </>
                 ) : (
                   "budget not recorded"

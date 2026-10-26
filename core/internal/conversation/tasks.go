@@ -59,7 +59,7 @@ func (t *Tasks) Cancel(ctx context.Context, id string) (state.Run, error) {
 	t.deliver(ctx)
 	control, err := t.Store.Control(ctx)
 	if err == nil {
-		if _, expired := control.Deadline(); expired != nil {
+		if paused := control.Check(); paused != nil {
 			repair, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			if err := task.RepairClosed(repair, t.Store, t.Client, t.Computer); err != nil {

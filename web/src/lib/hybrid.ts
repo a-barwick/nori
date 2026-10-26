@@ -2,66 +2,18 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
 import type { List, Nodes, Paragraph, Root, RootContent } from "mdast";
-import type { ArtifactType } from "./types";
 
-/**
- * The hybrid rule (spec §5.2). Bubble vs page is decided from the markdown's
- * structure, never by model whim. The model can force a mode with a hint:
- *   <!-- nori:page -->  <!-- nori:bubble -->
- * and attach extras:
- *   <!-- nori:chips Yes, do it | Not now -->
- *   <!-- nori:artifact type="document" title="Parts list" -->
- *   <!-- nori:approval title="Send a message to the seller" what="…" why="…" impact="…" -->
- *   <!-- nori:image alt="Desk display mockup" -->  (pairs with the reply's ```svg block)
- *   <!-- nori:react ❤️ -->  (on your latest message; may be the whole reply)
- */
-
+/** Pure markdown presentation: short replies are bubbles, structured replies are documents. */
 export const PAGE_WORDS = 150;
 export const MAX_BUBBLE_LIST_ITEMS = 5;
 export const MAX_BUBBLE_CODE_LINES = 3;
 
-export interface Hints {
-  mode?: "page" | "bubble";
-  chips?: string[];
-  artifact?: { type: ArtifactType; title: string };
-  approval?: { title: string; what: string; why: string; impact: string };
-  image?: { alt: string };
-  react?: string;
-}
-
-const attr = (arg: string, name: string) => new RegExp(`${name}="([^"]*)"`).exec(arg)?.[1]?.trim();
-
-const HINT = /<!--\s*nori:([a-z]+)([\s\S]*?)-->/g;
-const ARTIFACT_TYPES: ArtifactType[] = ["document", "page", "dashboard", "image", "audio", "file"];
-
-export function extractHints(markdown: string): { body: string; hints: Hints } {
-  const hints: Hints = {};
-  let body = markdown.replace(HINT, (_m, name: string, rest: string) => {
-    const arg = rest.trim();
+export function extractHints(markdown: string): { body: string; hints: { mode?: "page" | "bubble" } } {
+  const hints: { mode?: "page" | "bubble" } = {};
+  const body = markdown.replace(/<!--\s*nori:([a-z]+)[\s\S]*?-->/g, (_match, name: string) => {
     if (name === "page" || name === "bubble") hints.mode = name;
-    if (name === "chips") {
-      hints.chips = arg
-        .split("|")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .slice(0, 4);
-    }
-    if (name === "artifact") {
-      const type = attr(arg, "type") as ArtifactType | undefined;
-      const title = attr(arg, "title");
-      if (title) hints.artifact = { type: type && ARTIFACT_TYPES.includes(type) ? type : "document", title };
-    }
-    if (name === "approval") {
-      const title = attr(arg, "title");
-      const what = attr(arg, "what");
-      if (title && what) hints.approval = { title, what, why: attr(arg, "why") ?? "", impact: attr(arg, "impact") ?? "" };
-    }
-    if (name === "react" && arg && arg.length <= 8) hints.react = arg;
-    if (name === "image") hints.image = { alt: attr(arg, "alt") || "Image" };
     return "";
-  });
-  // While streaming, hide a hint that hasn't closed yet.
-  body = body.replace(/<!--(?![\s\S]*-->)[\s\S]*$/, "");
+  }).replace(/<!--(?![\s\S]*-->)[\s\S]*$/, "");
   return { body: body.trim(), hints };
 }
 
@@ -163,25 +115,4 @@ export function classify(markdown: string, forced?: "page" | "bubble"): Classifi
     }
   }
   return { mode, cover: FALLBACK_COVER, body: markdown, reasons };
-}
-
-const SVG_FENCE = /```svg[^\n]*\n([\s\S]*?)```/;
-
-/** Pulls the reply's ```svg block out as an image; the text around it stays. */
-export function extractSvg(body: string): { before: string; svg: string; after: string } | null {
-  const m = SVG_FENCE.exec(body);
-  if (!m || !/^\s*<svg[\s>]/.test(m[1])) return null;
-  return { before: body.slice(0, m.index).trim(), svg: m[1].trim(), after: body.slice(m.index + m[0].length).trim() };
-}
-
-/** Intrinsic size from width/height or the viewBox; 4:3 when neither is usable. */
-export function svgSize(svg: string): { w: number; h: number } {
-  const tag = /<svg[^>]*>/.exec(svg)?.[0] ?? "";
-  const num = (n: string) => Number(/^[\d.]+/.exec(n)?.[0]);
-  const w = num(/\swidth="([^"]+)"/.exec(tag)?.[1] ?? "");
-  const h = num(/\sheight="([^"]+)"/.exec(tag)?.[1] ?? "");
-  if (w > 0 && h > 0) return { w, h };
-  const vb = /viewBox="([^"]+)"/.exec(tag)?.[1]?.split(/[\s,]+/).map(Number);
-  if (vb?.length === 4 && vb[2] > 0 && vb[3] > 0) return { w: vb[2], h: vb[3] };
-  return { w: 400, h: 300 };
 }

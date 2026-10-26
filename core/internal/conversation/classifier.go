@@ -8,6 +8,9 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/google/uuid"
+	"nori/internal/state"
 )
 
 type Intent string
@@ -39,21 +42,26 @@ var intentDescriptions = map[Intent]string{
 }
 
 type Classification struct {
-	Intent     Intent  `json:"intent,omitempty"`
-	Confidence float64 `json:"confidence,omitempty"`
-	Available  bool    `json:"available"`
+	Usage      state.Usage `json:"-"`
+	Intent     Intent      `json:"intent,omitempty"`
+	Confidence float64     `json:"confidence,omitempty"`
+	Available  bool        `json:"available"`
 }
 
 type Classifier struct {
-	Key    string
-	Client *http.Client
+	RecordUsage func(context.Context, state.Usage) error
+	Key         string
+	Client      *http.Client
 }
 
 func NewClassifier(key string) *Classifier {
 	return &Classifier{Key: key, Client: &http.Client{Timeout: 10 * time.Second}}
 }
 
-func (c *Classifier) Classify(ctx context.Context, input string, history []Message) (Classification, error) {
+func (c *Classifier) Classify(ctx context.Context, input string, history []Message) (classification Classification, err error) {
+	// Jev does not supply a verified USD price in this integration. Record the
+	// request explicitly as unknown rather than estimate an undocumented cost.
+	classification.Usage = state.Usage{ID: uuid.NewString(), Provider: "jev", Model: "jev-latest", CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: time.Now().UTC()}
 	// Classify against the whole visible conversation. Provider reasoning and
 	// protocol metadata belong to the conversational model's history, not Jev.
 	conversation := make([]map[string]string, 0, len(history))
@@ -70,21 +78,32 @@ func (c *Classifier) Classify(ctx context.Context, input string, history []Messa
 		}},
 	})
 	if err != nil {
-		return Classification{}, err
+		return classification, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.typesafe.ai/v1/systemone", bytes.NewReader(body))
 	if err != nil {
-		return Classification{}, err
+		return classification, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Key)
 	req.Header.Set("Content-Type", "application/json")
+	// Persist an unknown-cost attempt before provider I/O. A crash or failed
+	// response projection can leave its cost unknown, but cannot erase the call.
+	classification.Usage.RequestStatus = "pending"
+	if c.RecordUsage != nil {
+		if err := c.RecordUsage(ctx, classification.Usage); err != nil {
+			classification.Usage.RequestStatus = "not_sent"
+			return classification, fmt.Errorf("usage recording unavailable; provider request was not sent")
+		}
+	}
+	classification.Usage.RequestStatus = "unknown"
 	res, err := c.Client.Do(req)
 	if err != nil {
-		return Classification{}, fmt.Errorf("classification unavailable")
+		return classification, fmt.Errorf("classification unavailable")
 	}
+	classification.Usage.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return Classification{}, fmt.Errorf("classification returned HTTP %d", res.StatusCode)
+		return classification, fmt.Errorf("classification returned HTTP %d", res.StatusCode)
 	}
 	var result struct {
 		Answers map[string]struct {
@@ -93,11 +112,12 @@ func (c *Classifier) Classify(ctx context.Context, input string, history []Messa
 		} `json:"answers"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&result); err != nil {
-		return Classification{}, fmt.Errorf("classification response was unreadable")
+		return classification, fmt.Errorf("classification response was unreadable")
 	}
 	answer, ok := result.Answers["intent"]
 	if _, valid := intentDescriptions[answer.Choice]; !ok || !valid {
-		return Classification{}, fmt.Errorf("classification returned an unknown intent")
+		return classification, fmt.Errorf("classification returned an unknown intent")
 	}
-	return Classification{Intent: answer.Choice, Confidence: answer.Confidence, Available: true}, nil
+	classification.Intent, classification.Confidence, classification.Available = answer.Choice, answer.Confidence, true
+	return classification, nil
 }

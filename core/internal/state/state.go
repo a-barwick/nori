@@ -14,20 +14,20 @@ const CleanupGrace = 20 * time.Second
 
 var ErrBusy = errors.New("another run is active")
 var ErrDuplicate = errors.New("run ID already exists")
-var ErrPaused = errors.New("session paused or expired")
+var ErrPaused = errors.New("task execution is paused")
 var ErrNotFound = errors.New("not found")
+var ErrCostUnknown = errors.New("Model cost is unknown for a provider request; task stopped before further model calls. Recorded spend includes only known costs.")
 
 type Control struct {
-	Paused    bool   `json:"paused" firestore:"paused"`
-	ExpiresAt string `json:"expires_at" firestore:"expires_at"`
+	Paused bool `json:"paused" firestore:"paused"`
 }
 
-func (c Control) Deadline() (time.Time, error) {
-	t, e := time.Parse(time.RFC3339, c.ExpiresAt)
-	if e != nil || c.Paused || !t.After(time.Now()) {
-		return time.Time{}, ErrPaused
+// Check fences execution without tying durable tasks to a temporary session.
+func (c Control) Check() error {
+	if c.Paused {
+		return ErrPaused
 	}
-	return t, nil
+	return nil
 }
 
 type Message struct {
@@ -54,6 +54,7 @@ type Run struct {
 	// Spent and Budget are model USD from reported token usage; Budget grows
 	// only by Austin's explicit continue.
 	Spent           float64    `json:"spent_usd,omitempty" firestore:"spent_usd,omitempty"`
+	CostUnknown     bool       `json:"cost_unknown,omitempty" firestore:"cost_unknown,omitempty"`
 	Budget          float64    `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
 	ID              string     `json:"id" firestore:"id"`
 	Status          string     `json:"status" firestore:"status"`
@@ -65,11 +66,28 @@ type Run struct {
 	Events          []Event    `json:"events" firestore:"events"`
 	Artifacts       []Artifact `json:"artifacts" firestore:"artifacts"`
 }
+
+// Usage records one provider request independently from the inner task budget.
+// A nil cost is unknown, never a free request. IDs are stable across writes.
+type Usage struct {
+	ID            string    `json:"id" firestore:"id"`
+	InputID       string    `json:"input_id" firestore:"input_id"`
+	Provider      string    `json:"provider" firestore:"provider"`
+	Model         string    `json:"model" firestore:"model"`
+	InputTokens   *int64    `json:"input_tokens,omitempty" firestore:"input_tokens,omitempty"`
+	OutputTokens  *int64    `json:"output_tokens,omitempty" firestore:"output_tokens,omitempty"`
+	TotalTokens   *int64    `json:"total_tokens,omitempty" firestore:"total_tokens,omitempty"`
+	CostUSD       *float64  `json:"cost_usd,omitempty" firestore:"cost_usd,omitempty"`
+	CostStatus    string    `json:"cost_status" firestore:"cost_status"`
+	RequestStatus string    `json:"request_status" firestore:"request_status"`
+	CreatedAt     time.Time `json:"created_at" firestore:"created_at"`
+}
+
 type Session struct {
-	Messages  []Message `json:"messages"`
-	Runs      []Run     `json:"runs"`
-	Paused    bool      `json:"paused"`
-	ExpiresAt string    `json:"expires_at"`
+	Messages []Message `json:"messages"`
+	Runs     []Run     `json:"runs"`
+	Paused   bool      `json:"paused"`
+	Usage    []Usage   `json:"usage,omitempty"`
 }
 type Store interface {
 	Control(context.Context) (Control, error)
@@ -78,7 +96,7 @@ type Store interface {
 	GetRun(context.Context, string) (Run, error)
 	RequestCancel(context.Context, string) (Run, error)
 	Event(context.Context, string, Event) error
-	Spend(context.Context, string, float64, float64) error
+	Spend(context.Context, string, float64, float64, bool) error
 	Artifact(context.Context, string, Artifact) error
 	Finish(context.Context, string, string, string, string) (Run, error)
 	PutPNG(context.Context, string, string, []byte) error

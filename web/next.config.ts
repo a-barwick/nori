@@ -4,12 +4,12 @@ const nextConfig: NextConfig = {
   output: "standalone",
   cacheComponents: true,
   partialPrefetching: true,
-  // The dev badge would sit on the rail's menu button.
+  // Keep the development badge clear of chat controls.
   devIndicators: false,
   // Keep next dev from writing its own AGENTS.md.
   agentRules: false,
   experimental: {
-    // The shell renders on the client (clock, viewport, saved state), so
+    // Chat renders on the client (clock and viewport), so
     // per-page instant-navigation insights only apply where a page opts in.
     instantInsights: { validationLevel: "manual-warning" },
   },

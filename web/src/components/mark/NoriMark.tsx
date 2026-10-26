@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { useNori } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import type { MarkLook, MarkState } from "@/lib/types";
 
@@ -144,10 +143,8 @@ export function NoriMark({
   /** Follow the pointer with its eyes (the presence medallion only). */
   watch?: boolean;
 }) {
-  const storeState = useNori((s) => s.markState);
-  const storeLook = useNori((s) => s.identity.look);
-  const s = state ?? storeState;
-  const l = look ?? storeLook;
+  const s = state ?? "idle";
+  const l = look ?? "onigiri";
   const clip = useId().replace(/:/g, "");
   const blink = useBlink(s === "idle" || s === "attentive" || s === "writing");
   const { svg: svgRef, look: lookRef } = useLook(watch && s === "idle", watch && s === "attentive");

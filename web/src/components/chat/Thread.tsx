@@ -1,36 +1,26 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { BookmarkPlus, Check, Copy, CornerUpLeft, FileText, Library } from "lucide-react";
+import { Check, Copy, FileText } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
-import { retryLive } from "@/lib/nori/engine";
-import { classify, extractHints } from "@/lib/hybrid";
-import { useNori, useThread } from "@/lib/store";
 import { clock } from "@/lib/time";
 import { buildUnits, posOf, type Unit } from "@/lib/units";
-import type { ID, TextItem, Thread as Conversation } from "@/lib/types";
+import type { TextItem, Thread as Conversation } from "@/lib/types";
 import { cn, firstSentence } from "@/lib/utils";
 import { scrollWithin } from "@/lib/dom";
 import { DebugBlock } from "@/components/dev/DebugBlock";
-import { ApprovalCard } from "./ApprovalCard";
 import { Markdown } from "./Markdown";
-import { ArtifactUnit, BubbleUnit, ImageUnit, VoiceUnit } from "./Message";
+import { BubbleUnit } from "./Message";
 
 /* ── Page block: not a bubble; full column width, paper and ink ── */
 
-function PageBlock({ threadId, item, body, readOnly = false, onOpenDocument }: { threadId: ID; item: TextItem; body: string; readOnly?: boolean; onOpenDocument?: (item: TextItem, body: string) => void }) {
-  const name = useNori((s) => readOnly ? "Nori" : s.identity.name);
-  const addArtifact = useNori((s) => s.addArtifact);
-  const set = useNori((s) => s.set);
+function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: string; onOpenDocument?: (item: TextItem, body: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  const router = useRouter();
   const [tall, setTall] = useState(false);
   // A page you just watched being written stays open; older ones fold.
   const [expanded, setExpanded] = useState(() => Date.now() - item.at < 15000);
   const [copied, setCopied] = useState(false);
-  const [savedId, setSavedId] = useState<ID | null>(item.artifactId ?? null);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -46,12 +36,12 @@ function PageBlock({ threadId, item, body, readOnly = false, onOpenDocument }: {
   const title = body.match(/^#{1,3}\s+(.+)$/m)?.[1] ?? firstSentence(body).slice(0, 48);
 
   return (
-    <article className="group/page relative mt-4 w-full" data-item-id={item.id} aria-label={`${name}: ${title}`}>
+    <article className="group/page relative mt-4 w-full" data-item-id={item.id} aria-label={`Nori: ${title}`}>
       <header className="flex min-h-8 flex-wrap items-center gap-1.5">
         <NoriMark size={16} state="idle" />
-        <span className="text-meta font-medium text-ink">{name}</span>
+        <span className="text-meta font-medium text-ink">Nori</span>
         <span className="text-caption text-ink-3">· {clock(item.at)}</span>
-        <div className={cn("t-fast ml-auto flex items-center gap-1 transition-opacity", !readOnly && "opacity-0 group-focus-within/page:opacity-100 group-hover/page:opacity-100")}>
+        <div className="ml-auto flex items-center gap-1">
           <Button
             size="sm"
             variant="quiet"
@@ -65,32 +55,6 @@ function PageBlock({ threadId, item, body, readOnly = false, onOpenDocument }: {
             {copied ? "Copied" : "Copy"}
           </Button>
           {onOpenDocument && <Button size="sm" variant="quiet" onClick={() => onOpenDocument(item, body)}><FileText size={15} strokeWidth={1.5} />Open document</Button>}
-          {!readOnly && (savedId ? (
-            <Button
-              size="sm"
-              variant="quiet"
-              onClick={() => {
-                set({ viewerId: savedId, viewerReturn: "/", libraryFilter: "all" });
-                router.push("/library");
-              }}
-            >
-              <Library size={15} strokeWidth={1.5} />
-              In Library
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="quiet"
-              onClick={() => setSavedId(addArtifact({ title, type: "page", madeBy: "nori", body, thumb: /\|.*\|/.test(body) ? "table" : "page" }))}
-            >
-              <BookmarkPlus size={15} strokeWidth={1.5} />
-              Save to Library
-            </Button>
-          ))}
-          {!readOnly && <Button size="sm" variant="quiet" onClick={() => set({ replyTo: { threadId, itemId: item.id }, composerFocus: Date.now() })}>
-            <CornerUpLeft size={15} strokeWidth={1.5} />
-            Reply
-          </Button>}
         </div>
       </header>
       <div className={cn("relative mt-1", collapsed && "max-h-[50vh] overflow-hidden")}>
@@ -107,56 +71,6 @@ function PageBlock({ threadId, item, body, readOnly = false, onOpenDocument }: {
   );
 }
 
-function Typing() {
-  return (
-    <div className="arrive mt-4 flex" aria-label="Nori is typing">
-      <div className="flex h-[44px] items-center gap-1.5 rounded-bubble bg-bubble px-[17px]">
-        {[0, 1, 2].map((i) => (
-          <span key={i} className="typing-dot size-1.5 rounded-full bg-ink-2" style={{ animationDelay: `${i * 0.18}s` }} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** The reply while it's being written: same shapes it will settle into, with a soft caret. */
-function Draft({ threadId }: { threadId: ID }) {
-  const text = useNori((s) => (s.stream?.threadId === threadId ? s.stream.text : null));
-  const name = useNori((s) => s.identity.name);
-  if (text == null) return null;
-  const { body, hints } = extractHints(text);
-  // A drawing is shown whole once it's done; until then it holds its place.
-  const svgAt = body.indexOf("```svg");
-  const words = (svgAt >= 0 ? body.slice(0, svgAt) : body).trim();
-  if (!words && svgAt < 0) return null;
-  const c = words ? classify(words, hints.mode) : null;
-  const bubble = c?.mode === "page" ? c.cover : c?.body;
-
-  return (
-    <div className="arrive" aria-hidden>
-      {bubble && (
-        <div className="mt-4 flex">
-          <div className={cn("max-w-[min(680px,100%)] rounded-bubble bg-bubble px-[15px] py-[11px] text-ink", c?.mode !== "page" && "streaming")}>
-            <Markdown>{bubble}</Markdown>
-          </div>
-        </div>
-      )}
-      {c?.mode === "page" && (
-        <article className="mt-4 w-full">
-          <header className="flex h-8 items-center gap-1.5">
-            <NoriMark size={16} state="writing" />
-            <span className="text-meta font-medium text-ink">{name}</span>
-          </header>
-          <div className="streaming mt-1 max-w-[68ch]">
-            <Markdown variant="page">{c.body}</Markdown>
-          </div>
-        </article>
-      )}
-      {svgAt >= 0 && <div className="skeleton mt-1 aspect-[4/3] w-[min(480px,100%)] rounded-tile bg-fill-1" />}
-    </div>
-  );
-}
-
 function greeting(now = new Date()) {
   const h = now.getHours();
   if (h < 5) return "Still up? I'm here.";
@@ -166,78 +80,40 @@ function greeting(now = new Date()) {
   return "Late one. What's on your mind?";
 }
 
-function WorkLine({ label, activityId, onDetails }: { label: string; activityId?: ID; onDetails?: () => void }) {
-  const openPanelAt = useNori((s) => s.openPanelAt);
-  const setFocus = useNori((s) => s.setFocusActivity);
+function WorkLine({ label, onDetails }: { label: string; onDetails?: () => void }) {
   return (
     <div className="anim-fade mt-4 flex items-center gap-2 text-meta text-ink-2" role="status">
       <NoriMark size={16} state="thinking" />
       <span>{label}</span>
-      {(activityId || onDetails) && (
-        <button
-          type="button"
-          className="font-medium text-accent-text hover:underline"
-          onClick={() => {
-            if (onDetails) return onDetails();
-            openPanelAt("activity", null);
-            requestAnimationFrame(() => setFocus(activityId ?? null));
-          }}
-        >
-          Details
-        </button>
-      )}
+      {onDetails && <button type="button" className="font-medium text-accent-text hover:underline" onClick={onDetails}>Details</button>}
     </div>
   );
 }
 
-function UnitView({ threadId, unit, animate, readOnly, onOpenDocument }: { threadId: ID; unit: Unit; animate: (id: ID) => boolean; readOnly: boolean; onOpenDocument?: (item: TextItem, body: string) => void }) {
+function UnitView({ unit, onOpenDocument }: { unit: Unit; onOpenDocument?: (item: TextItem, body: string) => void }) {
   switch (unit.type) {
     case "sep":
       return <div className="my-6 text-center text-caption text-ink-3">{unit.label}</div>;
     case "page":
-      return (
-        <div className={cn(animate(unit.item.id) && "arrive")} style={{ animationDelay: "60ms" }}>
-          <PageBlock onOpenDocument={onOpenDocument} readOnly={readOnly} threadId={threadId} item={unit.item} body={unit.body} />
-        </div>
-      );
-    case "approval":
-      return (
-        <div className={cn("mt-1 max-w-[440px]", animate(unit.item.id) && "arrive")} data-item-id={unit.item.id}>
-          <ApprovalCard approvalId={unit.item.approvalId} />
-        </div>
-      );
-    case "group": {
-      const n = unit.units.length;
+      return <PageBlock onOpenDocument={onOpenDocument} item={unit.item} body={unit.body} />;
+    case "group":
       return (
         <div className={cn("mt-4 flex flex-col gap-1", unit.sender === "me" ? "items-end" : "items-start")}>
-          {unit.units.map((u, i) => {
-            const pos = posOf(i, n);
-            const isNew = animate(u.item.id);
-            const style = isNew && unit.sender === "nori" ? { animationDelay: `${i * 60}ms` } : undefined;
-            const cls = cn("flex w-full", unit.sender === "me" ? "justify-end" : "justify-start", isNew && "arrive");
-            return (
-              <div key={u.key} className={cls} style={style}>
-                {u.type === "bubble" && <BubbleUnit readOnly={readOnly} threadId={threadId} unit={u} pos={pos} sender={unit.sender} />}
-                {u.type === "voice" && <VoiceUnit threadId={threadId} item={u.item} pos={pos} sender={unit.sender} />}
-                {u.type === "image" && <ImageUnit threadId={threadId} item={u.item} pos={pos} sender={unit.sender} />}
-                {u.type === "artifact" && <ArtifactUnit threadId={threadId} item={u.item} artifactId={u.artifactId} pos={pos} sender={unit.sender} />}
-              </div>
-            );
-          })}
-          {unit.sender === "nori" &&
-            unit.units.map((u) => ("item" in u && u.item.kind === "text" && u.item.debug ? <DebugBlock key={`${u.key}-debug`} info={u.item.debug} /> : null))}
+          {unit.units.map((u, i) => (
+            <div key={u.key} className={cn("flex w-full", unit.sender === "me" ? "justify-end" : "justify-start")}>
+              <BubbleUnit unit={u} pos={posOf(i, unit.units.length)} sender={unit.sender} />
+            </div>
+          ))}
+          {unit.sender === "nori" && unit.units.map((u) => u.item.debug ? <DebugBlock key={`${u.key}-debug`} info={u.item.debug} /> : null)}
         </div>
       );
-    }
   }
 }
 
 export function Thread({
-  threadId,
   onUnread,
   presence,
   conversation,
-  readOnly = false,
   status,
   emptyMessage,
   onOpenDocument,
@@ -245,29 +121,21 @@ export function Thread({
 }: {
   onStatusDetails?: () => void;
   onOpenDocument?: (item: TextItem, body: string) => void;
-  conversation?: Conversation;
-  readOnly?: boolean;
+  conversation: Conversation;
   status?: string;
   emptyMessage?: string;
-  threadId: ID;
   onUnread: (count: number, jump: () => void) => void;
   /** The presence medallion floats at top center, so content fades out lower. */
   presence: boolean;
 }) {
-  const localThread = useThread(threadId);
-  const thread = conversation ?? localThread;
-  const arrived = useNori((s) => s.arrived);
-  const typing = useNori((s) => !readOnly && s.typing === threadId);
-  const work = useNori((s) => (!readOnly && s.work?.threadId === threadId ? s.work : null));
-  const liveError = useNori((s) => (!readOnly && s.liveError?.threadId === threadId ? s.liveError : null));
-  const highlight = useNori((s) => s.highlight);
-  const items = useMemo(() => thread?.items ?? [], [thread?.items]);
+  const thread = conversation;
+  const items = thread.items;
   const units = useMemo(() => buildUnits(items), [items]);
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const seen = useRef(items.length);
-  const [firstUnread, setFirstUnread] = useState<ID | null>(null);
+  const [firstUnread, setFirstUnread] = useState<string | null>(null);
   const [unread, setUnread] = useState(0);
   const [announcement, setAnnouncement] = useState("");
 
@@ -288,7 +156,7 @@ export function Thread({
     if (!added.length) return;
     const fromNori = added.filter((i) => i.sender === "nori");
     const lastNori = fromNori[fromNori.length - 1];
-    if (lastNori && lastNori.kind === "text") setAnnouncement(`Nori: ${firstSentence(lastNori.text)}`);
+    if (lastNori) setAnnouncement(`Nori: ${firstSentence(lastNori.text)}`);
     const mine = added.some((i) => i.sender === "me");
     if (atBottom.current || mine) {
       requestAnimationFrame(() => scrollToBottom(true));
@@ -299,10 +167,10 @@ export function Thread({
   }, [items]);
 
   useEffect(() => {
-    if ((typing || work) && atBottom.current) requestAnimationFrame(() => scrollToBottom(true));
-  }, [typing, work]);
+    if (status && atBottom.current) requestAnimationFrame(() => scrollToBottom(true));
+  }, [status]);
 
-  // Anything that grows the thread (a reply being written, an image decoding)
+  // Anything that grows the saved reply (fonts or document layout)
   // keeps you pinned to the bottom if that's where you were.
   useEffect(() => {
     const el = content.current;
@@ -328,18 +196,6 @@ export function Thread({
     onUnread(unread, jump);
   }, [unread, firstUnread, onUnread]);
 
-  // "Show in chat" from Activity: scroll to the message and flash it.
-  useEffect(() => {
-    if (!highlight) return;
-    const el = scroller.current?.querySelector<HTMLElement>(`[data-item-id="${highlight.itemId}"]`);
-    if (!el) return;
-    scrollWithin(el, "center");
-    const target = (el.querySelector("[style*='border-radius']") as HTMLElement | null) ?? el;
-    target.classList.remove("flash");
-    void target.offsetWidth;
-    target.classList.add("flash");
-  }, [highlight]);
-
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
@@ -349,9 +205,6 @@ export function Thread({
       setFirstUnread(null);
     }
   };
-
-  if (!thread) return null;
-  const animate = (id: ID) => !readOnly && !!arrived[id];
 
   return (
     <div
@@ -368,10 +221,7 @@ export function Thread({
         className={cn("mx-auto max-w-[768px] px-[clamp(24px,calc(72px-(100vw-768px)/2),72px)] pb-[148px] transition-[padding] duration-300", presence ? "pt-28" : "pt-16")}
       >
         <div aria-live="off">
-          {units.length === 0 && !typing && thread.kind === "side" && (
-            <div className="grid min-h-[50vh] place-items-center text-center text-meta text-ink-3">Say hi to start this side chat.</div>
-          )}
-          {units.length === 0 && !typing && thread.kind !== "side" && (
+          {units.length === 0 && (
             <div className="grid min-h-[calc(100dvh-320px)] place-items-center">
               <p className="arrive text-title text-ink-2" style={{ animationDelay: "250ms" }}>
                 {emptyMessage ?? greeting()}
@@ -379,20 +229,9 @@ export function Thread({
             </div>
           )}
           {units.map((u) => (
-            <UnitView onOpenDocument={onOpenDocument} readOnly={readOnly} key={u.key} threadId={threadId} unit={u} animate={animate} />
+            <UnitView onOpenDocument={onOpenDocument} key={u.key} unit={u} />
           ))}
-          {!readOnly && <Draft threadId={threadId} />}
           {status && <WorkLine label={status} onDetails={onStatusDetails} />}
-          {typing && <Typing />}
-          {work && <WorkLine label={work.label} activityId={work.activityId} />}
-          {liveError && (
-            <div className="anim-fade mt-4 flex items-center gap-2 text-meta text-ink-2" role="alert">
-              <span>{liveError.message}</span>
-              <button type="button" onClick={() => retryLive(threadId)} className="font-medium text-accent-text hover:underline">
-                Retry
-              </button>
-            </div>
-          )}
         </div>
         <div className="sr-only">{announcement}</div>
       </div>

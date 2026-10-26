@@ -39,15 +39,19 @@ export function useRuntime(agentMode = false) {
   const [stopIntent, setStopIntent] = useState<string>();
   const [selectedId, setSelectedId] = useState<string>();
   const [visible, setVisible] = useState(true);
-  const [expired, setExpired] = useState(false);
   const controllers = useRef(new Set<AbortController>());
   const cancellationInFlight = useRef(false);
   const running = session?.runs.find((run) => run.status === "running");
   const activeId = running?.id || pending?.runId;
+  const deadline = running?.deadline;
+  const temporal = running?.temporal;
+  const pollDelay = temporal && running?.waiting && !running.cancel_requested &&
+    running.incorporated === running.revision &&
+    !pending && !stopPending && stopIntent !== activeId ? 30_000 : 2_000;
   const selected =
     session?.runs.find((run) => run.id === selectedId) ||
     (!pending ? session?.runs[0] : undefined);
-  const tasksUnavailable = !!session?.paused || expired;
+  const tasksUnavailable = !!session?.paused;
   const unavailable = !agentMode && tasksUnavailable;
   const busy = !!activeId;
   const canUpdate =
@@ -62,7 +66,6 @@ export function useRuntime(agentMode = false) {
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const data = await post<Session>("session", {}, signal, agentMode);
     setSession(data);
-    setExpired(!!data.expires_at && Date.parse(data.expires_at) <= Date.now());
     return data;
   }, [agentMode]);
 
@@ -109,9 +112,6 @@ export function useRuntime(agentMode = false) {
       .then((data) => {
         if (!controller.signal.aborted) {
           setSession(data);
-          setExpired(
-            !!data.expires_at && Date.parse(data.expires_at) <= Date.now(),
-          );
         }
       })
       .catch((err) => {
@@ -130,25 +130,14 @@ export function useRuntime(agentMode = false) {
   }, [refresh, agentMode]);
 
   useEffect(() => {
-    if (!session?.expires_at || expired) return;
-    const timer = setTimeout(
-      () => setExpired(true),
-      Math.max(0, Date.parse(session.expires_at) - Date.now()),
-    );
-    return () => clearTimeout(timer);
-  }, [session?.expires_at, expired]);
-
-  useEffect(() => {
     // No idle requests. Pause in hidden tabs and after any connection error.
     if (!activeId || unavailable || error || !visible || (agentMode && pending)) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
-    const stopAt = running?.deadline
-      ? Date.parse(running.deadline) + 25_000
-      : (pending?.started || Date.now()) + 145_000;
+    const stopAt = !temporal && deadline
+      ? Date.parse(deadline) + 25_000
+      : Infinity;
     const poll = async () => {
-      if (session?.expires_at && Date.parse(session.expires_at) <= Date.now())
-        return;
       if (Date.now() >= stopAt) {
         setError(
           "The task's deadline has passed. Refresh history to confirm its status.",
@@ -170,11 +159,10 @@ export function useRuntime(agentMode = false) {
         if (
           !controller.signal.aborted &&
           !next.paused &&
-          Date.parse(next.expires_at) > Date.now() &&
           (next.runs.some((run) => run.status === "running") ||
             (pending && !next.runs.some((run) => run.id === pending.runId)))
         ) {
-          timer = setTimeout(poll, 2000);
+          timer = setTimeout(poll, pollDelay);
         }
       } catch (err) {
         if (!controller.signal.aborted)
@@ -183,7 +171,7 @@ export function useRuntime(agentMode = false) {
           );
       }
     };
-    timer = setTimeout(poll, 2000);
+    timer = setTimeout(poll, pollDelay);
     return () => {
       controller.abort();
       clearTimeout(timer);
@@ -194,8 +182,9 @@ export function useRuntime(agentMode = false) {
     error,
     visible,
     refresh,
-    session?.expires_at,
-    running?.deadline,
+    deadline,
+    temporal,
+    pollDelay,
     pending,
     stopIntent,
     requestCancellation,

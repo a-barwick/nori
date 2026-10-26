@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,11 +17,24 @@ import (
 func main() {
 	listen := flag.String("listen", "172.30.0.2:8090", "HTTP bind address")
 	proxy := flag.Bool("proxy", false, "forward RPC to the guest instead of running tools")
+	guest := flag.String("guest-url", "http://172.30.0.2:8090", "guest RPC address for host proxy")
+	idle := flag.Duration("idle-timeout", 15*time.Minute, "host proxy idle stop delay; health checks do not extend it")
 	tasks := flag.String("tasks", "/workspace/tasks", "task working directory")
 	flag.Parse()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	idleStop := make(chan struct{})
 	var handler http.Handler
 	if *proxy {
-		handler = computerd.Proxy()
+		if *idle <= 0 {
+			log.Fatal("idle-timeout must be positive")
+		}
+		target, err := url.Parse(*guest)
+		if err != nil || target.Scheme != "http" || target.Host == "" || target.User != nil || target.RawQuery != "" || target.Fragment != "" || (target.Path != "" && target.Path != "/") {
+			log.Fatal("guest-url must be an HTTP origin")
+		}
+		target.Path = ""
+		handler = computerd.Proxy(ctx, target, *idle, func() { close(idleStop); stop() })
 	} else {
 		var err error
 		handler, err = computerd.New(*tasks)
@@ -29,8 +43,6 @@ func main() {
 		}
 	}
 	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 125 * time.Second, MaxHeaderBytes: 8192}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	go func() {
 		<-ctx.Done()
 		deadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -40,5 +52,11 @@ func main() {
 	log.Printf("computer RPC listening on %s", *listen)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
+	}
+	select {
+	case <-idleStop:
+		log.Print("computer idle; requesting graceful host stop")
+		os.Exit(75) // The host unit alone maps this code to graceful guest stop + poweroff.
+	default:
 	}
 }
