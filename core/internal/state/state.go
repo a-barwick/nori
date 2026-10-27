@@ -32,6 +32,7 @@ func (c Control) Check() error {
 
 type Message struct {
 	ID        string    `json:"id" firestore:"id"`
+	TurnID    string    `json:"turn_id,omitempty" firestore:"turn_id,omitempty"`
 	RunID     string    `json:"run_id" firestore:"run_id"`
 	Role      string    `json:"role" firestore:"role"`
 	Text      string    `json:"text" firestore:"text"`

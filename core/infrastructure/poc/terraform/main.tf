@@ -4,7 +4,7 @@ locals {
   region       = "us-central1"
   zone         = "us-central1-a"
   number       = "8273801370"
-  apis         = toset(["run.googleapis.com", "aiplatform.googleapis.com", "firestore.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "compute.googleapis.com", "iap.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "policytroubleshooter.googleapis.com"])
+  apis         = toset(["run.googleapis.com", "aiplatform.googleapis.com", "cloudtasks.googleapis.com", "firestore.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "compute.googleapis.com", "iap.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "policytroubleshooter.googleapis.com"])
   runtime_name = "projects/${local.number}/locations/${local.region}/reasoningEngines/${basename(google_vertex_ai_reasoning_engine.runtime.name)}"
   runtime_url  = "https://${local.region}-aiplatform.googleapis.com/reasoningEngines/v1/${local.runtime_name}/api"
 
@@ -16,6 +16,19 @@ variable "web_image" {
 
 variable "runtime_image" {
   type = string
+}
+
+# Existing runtime_url output; supplied explicitly because the runtime cannot
+# refer to its own generated resource name in its deployment environment.
+variable "runtime_invoke_root" {
+  type        = string
+  default     = ""
+  description = "Native Agent Runtime invoke root ending in /api; required before deploying the durable conversation image."
+}
+
+variable "outer_model" {
+  type    = string
+  default = "anthropic/claude-opus-5.5"
 }
 
 variable "computer_release_sha256" {
@@ -32,7 +45,7 @@ variable "computer_release_sha256" {
 
 variable "model" {
   type    = string
-  default = "gemini-3.1-flash-lite"
+  default = "gemini-3.8-flash"
 }
 
 variable "firestore_database" {
@@ -110,6 +123,52 @@ resource "google_service_account" "web" {
 resource "google_service_account" "runtime" {
   account_id   = "nori-poc-runtime"
   display_name = "Nori agent runtime"
+}
+
+resource "google_service_account" "conversation_wake" {
+  account_id   = "nori-conversation-wake"
+  display_name = "Nori conversation queue caller"
+}
+
+resource "google_cloud_tasks_queue" "conversation" {
+  name     = "nori-conversation"
+  location = local.region
+  rate_limits {
+    max_concurrent_dispatches = 1
+    max_dispatches_per_second = 1
+  }
+  retry_config {
+    max_attempts       = -1
+    max_retry_duration = "0s"
+    min_backoff        = "1s"
+    max_backoff        = "60s"
+    max_doublings      = 6
+  }
+  depends_on = [google_project_service.api]
+}
+
+resource "google_cloud_tasks_queue_iam_member" "runtime_enqueue" {
+  project  = local.project
+  location = local.region
+  name     = google_cloud_tasks_queue.conversation.name
+  role     = "roles/cloudtasks.enqueuer"
+  member   = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_service_account_iam_member" "runtime_wake_caller" {
+  service_account_id = google_service_account.conversation_wake.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_project_iam_member" "wake_runtime_query" {
+  project = local.project
+  role    = google_project_iam_custom_role.query.name
+  member  = "serviceAccount:${google_service_account.conversation_wake.email}"
+  condition {
+    title      = "nori-runtime-only"
+    expression = "resource.name == '${google_vertex_ai_reasoning_engine.runtime.name}' || resource.name == '${local.runtime_name}'"
+  }
 }
 
 resource "google_service_account" "computer" {
@@ -377,6 +436,11 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
       dynamic "env" {
         for_each = {
           NORI_EXECUTION_MODE             = "temporal"
+          NORI_AGENT_MODEL                = var.outer_model
+          NORI_AGENT_BASE_URL             = "https://openrouter.ai/api/v1"
+          NORI_WAKE_QUEUE                 = google_cloud_tasks_queue.conversation.id
+          NORI_WAKE_SERVICE_ACCOUNT       = google_service_account.conversation_wake.email
+          NORI_RUNTIME_URL                = var.runtime_invoke_root
           TEMPORAL_ADDRESS                = "quickstart-nori.qtjow.tmprl.cloud:7233"
           TEMPORAL_NAMESPACE              = "quickstart-nori.qtjow"
           TEMPORAL_TASK_QUEUE             = "nori-tasks"
@@ -387,6 +451,10 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
           value = env.value
         }
       }
+
+      # OPENROUTER_API_KEY and JEV_API_KEY are required server configuration.
+      # Provision them through the approved server credential path before any
+      # deployment. This plan deliberately contains no credential values.
 
     }
 

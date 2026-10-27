@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
+	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"google.golang.org/genai"
@@ -186,6 +189,9 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 		return ModelOutcome{}, e
 	}
 	defer done()
+	info := activity.GetInfo(ctx)
+	trace := state.TaskStep{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(info.WorkflowExecution.RunID+":"+info.ActivityID)).String(), Kind: "model", Status: "running", Revision: in.Revision, StartedAt: time.Now().UTC(), Model: a.Agent.ModelName, CostStatus: "unknown"}
+	a.recordStep(in.RunID, trace)
 	modelCtx, stop := context.WithTimeout(ctx, 45*time.Second)
 	defer stop()
 	decision, e := a.Agent.Decide(modelCtx, in.Contents, true)
@@ -193,9 +199,23 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	if e != nil {
 		outcome.Failure = e.Error()
 	}
+	if decision.Usage != nil {
+		u := decision.Usage
+		input, output, cached, thinking := u.PromptTokenCount+u.ToolUsePromptTokenCount, u.CandidatesTokenCount, u.CachedContentTokenCount, u.ThoughtsTokenCount
+		trace.InputTokens, trace.OutputTokens, trace.CachedTokens, trace.ThinkingTokens = &input, &output, &cached, &thinking
+	}
+	if decision.CostKnown {
+		trace.CostUSD, trace.CostStatus = &decision.Cost, "estimated"
+	}
+	for _, call := range decision.Calls {
+		trace.Calls = append(trace.Calls, state.TraceCall{Name: call.Name, Arguments: traceJSON(call.Args)})
+	}
+	trace.Result = traceText(decision.Answer)
+	finishStep(&trace, e)
+	a.recordStep(in.RunID, trace)
 	return outcome, nil
 }
-func (a *Activities) Tool(ctx context.Context, in ToolInput) (map[string]any, error) {
+func (a *Activities) Tool(ctx context.Context, in ToolInput) (result map[string]any, err error) {
 	ctx, done, e := a.bounded(ctx, in.Step)
 	if e != nil {
 		return nil, e
@@ -204,6 +224,13 @@ func (a *Activities) Tool(ctx context.Context, in ToolInput) (map[string]any, er
 	if e = a.Store.Admit(ctx, in.RunID, in.Revision, in.OperationID); e != nil {
 		return nil, classified(e)
 	}
+	trace := state.TaskStep{ID: in.OperationID, Kind: "tool", Name: in.Call.Name, Status: "running", Revision: in.Revision, StartedAt: time.Now().UTC(), Arguments: traceJSON(in.Call.Args), CostStatus: "not_applicable"}
+	a.recordStep(in.RunID, trace)
+	defer func() {
+		trace.Result = traceJSON(result)
+		finishStep(&trace, err)
+		a.recordStep(in.RunID, trace)
+	}()
 	for attempt := 0; ; attempt++ {
 		c, e := computer.Open(ctx, a.Agent.Computer, computerRun(in.Step))
 		if e != nil {
@@ -234,6 +261,46 @@ func (a *Activities) Tool(ctx context.Context, in ToolInput) (map[string]any, er
 		}
 		return result, nil
 	}
+}
+
+func finishStep(step *state.TaskStep, err error) {
+	now := time.Now().UTC()
+	step.FinishedAt, step.DurationMS, step.Status = &now, now.Sub(step.StartedAt).Milliseconds(), "completed"
+	if err != nil {
+		step.Status, step.Error = "failed", traceText(err.Error())
+	}
+}
+
+// Trace projection never retries an external call or changes its outcome.
+func (a *Activities) recordStep(runID string, step state.TaskStep) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := a.Store.RecordTaskStep(ctx, runID, step); err != nil {
+		log.Printf("task trace unavailable for step %s: %v", step.ID, err)
+	}
+}
+
+func traceJSON(value any) string {
+	if value == nil {
+		return ""
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "unavailable"
+	}
+	return traceText(string(encoded))
+}
+
+func traceText(text string) string {
+	const limit = 4096
+	if len(text) <= limit {
+		return text
+	}
+	text = text[:limit]
+	for !utf8.ValidString(text) {
+		text = text[:len(text)-1]
+	}
+	return text + "… [truncated]"
 }
 func computerRun(step Step) string { return fmt.Sprintf("%s-r%d", step.RunID, step.Revision) }
 func (a *Activities) Stop(ctx context.Context, ids []string) error {

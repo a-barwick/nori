@@ -50,6 +50,7 @@ type Decision struct {
 	// Cost is the USD price of this request from its reported token usage.
 	Cost      float64
 	CostKnown bool
+	Usage     *genai.GenerateContentResponseUsageMetadata
 }
 
 // BudgetUSD is the model spend a task may use before it pauses for Austin's
@@ -125,7 +126,7 @@ func (s *Service) Decide(ctx context.Context, contents []*genai.Content, wait bo
 		return Decision{}, errors.New("model response reported no token usage; the task budget cannot be enforced")
 	}
 	// A received response can be billed even when its content is rejected.
-	d := Decision{Cost: s.Price.Cost(response.UsageMetadata), CostKnown: true}
+	d := Decision{Cost: s.Price.Cost(response.UsageMetadata), CostKnown: true, Usage: response.UsageMetadata}
 	if len(response.Candidates) == 0 || response.Candidates[0].Content == nil {
 		return d, errors.New("model returned no content")
 	}

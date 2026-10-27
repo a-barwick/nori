@@ -205,43 +205,47 @@ func (s *Google) Finish(ctx context.Context, id, runStatus, detail, text string)
 	return r, e
 }
 func (s *Google) Session(ctx context.Context) (Session, error) {
-	return s.session(ctx, false)
+	return s.session(ctx, false, true)
 }
 
-// ConversationSession supplies the outer agent with all available messages.
-// Selecting or compacting its context is a separate feature.
+// ConversationSession returns a bounded visible projection. Full provider turns
+// are selected separately and all stored messages remain cursor-accessible.
 func (s *Google) ConversationSession(ctx context.Context) (Session, error) {
-	return s.session(ctx, true)
+	return s.session(ctx, true, true)
 }
 
-func (s *Google) session(ctx context.Context, fullConversation bool) (Session, error) {
+func (s *Google) ConversationProjection(ctx context.Context) (Session, error) {
+	return s.session(ctx, true, false)
+}
+
+func (s *Google) session(ctx context.Context, fullConversation, includeMessages bool) (Session, error) {
 	c, e := s.Control(ctx)
 	if e != nil {
 		return Session{}, e
 	}
 	session := Session{Messages: []Message{}, Runs: []Run{}, Paused: c.Paused}
-	query := s.messages().OrderBy("created_at", firestore.Desc)
-	if !fullConversation {
+	if includeMessages {
+		query := s.messages().OrderBy("created_at", firestore.Desc)
 		query = query.Limit(100)
-	}
-	iter := query.Documents(ctx)
-	defer iter.Stop()
-	for {
-		d, e := iter.Next()
-		if e == iterator.Done {
-			break
+		iter := query.Documents(ctx)
+		defer iter.Stop()
+		for {
+			d, e := iter.Next()
+			if e == iterator.Done {
+				break
+			}
+			if e != nil {
+				return session, e
+			}
+			var m Message
+			if e = d.DataTo(&m); e != nil {
+				return session, e
+			}
+			session.Messages = append(session.Messages, m)
 		}
-		if e != nil {
-			return session, e
+		for i, j := 0, len(session.Messages)-1; i < j; i, j = i+1, j-1 {
+			session.Messages[i], session.Messages[j] = session.Messages[j], session.Messages[i]
 		}
-		var m Message
-		if e = d.DataTo(&m); e != nil {
-			return session, e
-		}
-		session.Messages = append(session.Messages, m)
-	}
-	for i, j := 0, len(session.Messages)-1; i < j; i, j = i+1, j-1 {
-		session.Messages[i], session.Messages[j] = session.Messages[j], session.Messages[i]
 	}
 	runs := s.runs().OrderBy("started_at", firestore.Desc).Limit(30).Documents(ctx)
 	defer runs.Stop()

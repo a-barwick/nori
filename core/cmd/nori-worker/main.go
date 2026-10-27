@@ -58,12 +58,13 @@ func main() {
 	if build == "" {
 		log.Fatal("TEMPORAL_BUILD_ID is required; use an immutable release identifier")
 	}
-	// List price of MODEL_NAME (Vertex AI standard, checked 2026-10-25).
-	price, e := agent.ParsePrice(env("MODEL_INPUT_USD_PER_MTOK", "0.25"), env("MODEL_OUTPUT_USD_PER_MTOK", "1.50"))
+	// Gemini 3.8 Flash global introductory pricing through 2026-12-31.
+	// https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing
+	price, e := agent.ParsePrice(env("MODEL_INPUT_USD_PER_MTOK", "0.75"), env("MODEL_OUTPUT_USD_PER_MTOK", "3.75"))
 	if e != nil {
 		log.Fatal(e)
 	}
-	service := agent.New(store, model, env("MODEL_NAME", "gemini-3.1-flash-lite"), price, computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env("COMPUTER_INSTANCE", "nori-computer")})
+	service := agent.New(store, model, env("MODEL_NAME", "gemini-3.8-flash"), price, computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env("COMPUTER_INSTANCE", "nori-computer")})
 	w := worker.New(c, task.Queue(), worker.Options{MaxConcurrentActivityExecutionSize: 1, MaxConcurrentWorkflowTaskExecutionSize: 2, WorkerStopTimeout: 25 * time.Second, DeploymentOptions: worker.DeploymentOptions{UseVersioning: true, Version: worker.WorkerDeploymentVersion{DeploymentName: env("TEMPORAL_DEPLOYMENT_NAME", "nori-task"), BuildID: build}, DefaultVersioningBehavior: workflow.VersioningBehaviorPinned}})
 	w.RegisterWorkflowWithOptions(task.Workflow, workflow.RegisterOptions{Name: task.WorkflowName, VersioningBehavior: workflow.VersioningBehaviorPinned})
 	w.RegisterActivity(&task.Activities{Agent: service, Store: store})

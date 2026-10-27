@@ -32,8 +32,8 @@ func (t *Tasks) deliver(ctx context.Context) {
 	}
 }
 
-func (t *Tasks) Dispatch(ctx context.Context, id, request string) (Dispatch, error) {
-	run, err := t.Store.Accept(ctx, state.Command{ID: id, RunID: id, Kind: "start", Text: request})
+func (t *Tasks) DispatchConversation(ctx context.Context, id, request string, fence state.ConversationFence) (Dispatch, error) {
+	run, err := t.Store.AcceptConversation(ctx, state.Command{ID: id, RunID: id, Kind: "start", Text: request}, fence)
 	if err != nil {
 		return Dispatch{}, err
 	}

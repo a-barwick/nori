@@ -17,7 +17,7 @@ locals {
     COMPUTER_ZONE            = "us-central1-a"
     COMPUTER_INSTANCE        = "nori-computer"
     MODEL_LOCATION           = "global"
-    MODEL_NAME               = "gemini-3.1-flash-lite"
+    MODEL_NAME               = "gemini-3.8-flash"
     TEMPORAL_ADDRESS         = "quickstart-nori.qtjow.tmprl.cloud:7233"
     TEMPORAL_NAMESPACE       = "quickstart-nori.qtjow"
     TEMPORAL_TASK_QUEUE      = "nori-tasks"

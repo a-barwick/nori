@@ -15,6 +15,14 @@ import (
 func (s *Google) commands() *firestore.CollectionRef { return s.root().Collection("task_commands") }
 
 func (s *Google) Accept(ctx context.Context, cmd Command) (Run, error) {
+	return s.accept(ctx, cmd, nil)
+}
+
+func (s *Google) AcceptConversation(ctx context.Context, cmd Command, fence ConversationFence) (Run, error) {
+	return s.accept(ctx, cmd, &fence)
+}
+
+func (s *Google) accept(ctx context.Context, cmd Command, fence *ConversationFence) (Run, error) {
 	var run Run
 	err := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		prior, e := tx.Get(s.commands().Doc(cmd.ID))
@@ -31,6 +39,9 @@ func (s *Google) Accept(ctx context.Context, cmd Command) (Run, error) {
 			return e
 		}
 		if status.Code(e) != codes.NotFound {
+			return e
+		}
+		if e = s.conversationAdmission(tx, fence); e != nil {
 			return e
 		}
 		d, e := tx.Get(s.runs().Doc(cmd.RunID))
@@ -115,7 +126,11 @@ func (s *Google) Accept(ctx context.Context, cmd Command) (Run, error) {
 		if cmd.Kind == "cancel" {
 			return nil
 		}
-		return tx.Create(s.messages().Doc(cmd.ID+"-user"), Message{ID: cmd.ID + "-user", RunID: run.ID, Role: "user", Text: cmd.Text, CreatedAt: now})
+		message := Message{ID: cmd.ID + "-user", RunID: run.ID, Role: "user", Text: cmd.Text, CreatedAt: now}
+		if fence != nil {
+			message.TurnID = fence.TurnID
+		}
+		return tx.Create(s.messages().Doc(cmd.ID+"-user"), message)
 	})
 	return run, err
 }

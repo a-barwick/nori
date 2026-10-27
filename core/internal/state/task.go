@@ -50,4 +50,5 @@ type TaskStore interface {
 	Admit(context.Context, string, int64, string) error
 	Publish(context.Context, string, int64, string, string, string, bool) (Run, error)
 	Project(context.Context, string, int64, string, string) error
+	RecordTaskStep(context.Context, string, TaskStep) error
 }

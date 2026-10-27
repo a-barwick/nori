@@ -30,7 +30,7 @@ export function buildUnits(items: ThreadItem[], now = Date.now()): Unit[] {
       group = { type: "group", key: `g-${item.id}`, sender: item.sender, units: [] };
       out.push(group);
     }
-    group.units.push({ type: "bubble", key: item.id, item, markdown: classified.mode === "page" ? classified.cover! : classified.body });
+    group.units.push({ type: "bubble", key: item.id, item: classified.mode === "page" ? { ...item, debug: undefined } : item, markdown: classified.mode === "page" ? classified.cover! : classified.body });
     if (classified.mode === "page") {
       out.push({ type: "page", key: `${item.id}-page`, item, body: classified.body });
       group = undefined;

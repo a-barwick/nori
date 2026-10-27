@@ -42,10 +42,13 @@ var intentDescriptions = map[Intent]string{
 }
 
 type Classification struct {
-	Usage      state.Usage `json:"-"`
-	Intent     Intent      `json:"intent,omitempty"`
-	Confidence float64     `json:"confidence,omitempty"`
-	Available  bool        `json:"available"`
+	Usage  state.Usage `json:"-"`
+	Intent Intent      `json:"intent,omitempty"`
+	// Confidence is the lowest Jev concentration statistic among selected flags,
+	// not the probability that an intent is present. It never gates action.
+	Confidence float64  `json:"confidence,omitempty"`
+	Intents    []Intent `json:"intents,omitempty"`
+	Available  bool     `json:"available"`
 }
 
 type Classifier struct {
@@ -58,7 +61,17 @@ func NewClassifier(key string) *Classifier {
 	return &Classifier{Key: key, Client: &http.Client{Timeout: 10 * time.Second}}
 }
 
-func (c *Classifier) Classify(ctx context.Context, input string, history []Message) (classification Classification, err error) {
+func (c *Classifier) Classify(ctx context.Context, inputs []state.ConversationInput, history []Message) (classification Classification, err error) {
+	current := make([]map[string]any, 0, len(inputs))
+	for _, input := range inputs {
+		if input.Introduction {
+			continue
+		}
+		current = append(current, map[string]any{"id": input.ID, "message": inputMessage(input)})
+	}
+	if len(current) == 0 {
+		return Classification{Available: false}, nil
+	}
 	// Jev does not supply a verified USD price in this integration. Record the
 	// request explicitly as unknown rather than estimate an undocumented cost.
 	classification.Usage = state.Usage{ID: uuid.NewString(), Provider: "jev", Model: "jev-latest", CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: time.Now().UTC()}
@@ -68,14 +81,19 @@ func (c *Classifier) Classify(ctx context.Context, input string, history []Messa
 	for _, message := range history {
 		conversation = append(conversation, map[string]string{"role": message.Role, "content": message.Text})
 	}
-	body, err := json.Marshal(map[string]any{
-		"model": "jev-latest",
-		"state": map[string]any{"message": input, "conversation": conversation},
-		"questions": map[string]any{"intent": map[string]any{
+	questions := map[string]any{}
+	for intent, description := range intentDescriptions {
+		if intent == Mixed {
+			continue
+		}
+		questions[string(intent)] = map[string]any{
 			"type":         "choice",
-			"instructions": "Which intent best describes the CURRENT message? Use the conversation only to resolve references. Classify the underlying request independently of available tools or requested reply format. A factual question remains ask even if answering needs a lookup or unavailable access. Choose mixed when multiple distinct intents are present. This is a non-exhaustive advisory hint, not a route or permission to act. Choose converse for random or incomplete input.",
-			"criteria":     intentDescriptions,
-		}},
+			"instructions": "Independently check whether the CURRENT input batch contains this intent. Read its messages in their supplied order; later messages can correct earlier ones. Several intents may be present. Use conversation only to resolve references. Classify the underlying request independently of available tools, access or requested reply format. This is advisory, never a route or permission. Intent: " + description,
+			"criteria":     map[string]string{"present": "The current input batch contains this intent.", "absent": "The current input batch does not contain this intent."},
+		}
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": "jev-latest", "state": map[string]any{"messages": current, "conversation": conversation}, "questions": questions,
 	})
 	if err != nil {
 		return classification, err
@@ -107,17 +125,37 @@ func (c *Classifier) Classify(ctx context.Context, input string, history []Messa
 	}
 	var result struct {
 		Answers map[string]struct {
-			Choice     Intent  `json:"choice"`
+			Choice     string  `json:"choice"`
 			Confidence float64 `json:"confidence"`
 		} `json:"answers"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&result); err != nil {
 		return classification, fmt.Errorf("classification response was unreadable")
 	}
-	answer, ok := result.Answers["intent"]
-	if _, valid := intentDescriptions[answer.Choice]; !ok || !valid {
-		return classification, fmt.Errorf("classification returned an unknown intent")
+	for _, intent := range []Intent{Converse, Ask, RequestWork, Steer, ProvideInput, Decide, Inspect, Control, UpdateMemory} {
+		answer, ok := result.Answers[string(intent)]
+		if !ok || (answer.Choice != "present" && answer.Choice != "absent") {
+			return classification, fmt.Errorf("classification returned incomplete intent hints")
+		}
+		if answer.Choice == "present" {
+			classification.Intents = append(classification.Intents, intent)
+			if len(classification.Intents) == 1 {
+				classification.Confidence = answer.Confidence
+			} else {
+				classification.Confidence = min(classification.Confidence, answer.Confidence)
+			}
+		}
 	}
-	classification.Intent, classification.Confidence, classification.Available = answer.Choice, answer.Confidence, true
+	classification.Available = true
+	if len(classification.Intents) == 0 {
+		// No selected flag is unclassifiable input, so retain the conversational
+		// fallback without inventing a provider confidence for that fallback.
+		classification.Intents = []Intent{Converse}
+	}
+	if len(classification.Intents) == 1 {
+		classification.Intent = classification.Intents[0]
+	} else if len(classification.Intents) > 1 {
+		classification.Intent = Mixed
+	}
 	return classification, nil
 }

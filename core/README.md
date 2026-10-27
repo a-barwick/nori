@@ -1,67 +1,110 @@
 # Nori core
 
-The Go API accepts task commands and persists them in Firestore. Temporal Cloud
-owns durable task execution; a separate Go worker calls Vertex Gemini and the
-persistent Firecracker computer. Screenshots live in a private GCS bucket. The
-browser talks to a same-origin Next.js proxy; runtime IAM restricts the Go API to
-the private web service account.
+The Go API owns durable conversation and task admission in Firestore. Both
+`cmd/nori-local` and `cmd/nori` use the same conversation runner, OpenRouter
+model, and advisory Jev hints. Temporal owns inner task execution; a separate Go
+worker calls Vertex Gemini and the retained Firecracker computer. Screenshots
+live in a private GCS bucket. The browser uses a same-origin Next.js proxy and
+owner authentication; hosted runtime IAM admits the web and queue caller
+service accounts.
 
 ## Local development
 
-Requires Go 1.26, Google Cloud CLI, and Application Default Credentials for the
-selected project. From `core/`, `make run` starts the task API on loopback port
-8080 and `make build` builds `bin/nori`. The [repository local loop](../README.md)
-adds the OpenRouter conversation runner and Jev intent hints.
+Requires Go 1.26, the web dependencies, and the configured provider credentials.
+Run `make dev` from the repository root for loopback web and Go servers. The
+local Go entrypoint recovers pending conversation work at startup and processes
+it on its application lifecycle, independently of browser requests. Firestore
+and Temporal remain the configured backing services; select their emulators
+explicitly for an isolated local run.
 
 Commands load the monorepo-root `.env` without overriding existing environment
-variables. Keep it gitignored and mode 600. `NORI_ENV_FILE` can select an existing
-file from a worktree; the local conversation runner additionally supports
-`NORI_TASK_ENV_FILE` for a distinct existing task configuration. These settings
-use credentials in place, without moving or copying them. Required names are in
+variables. Keep it gitignored and mode 600. `NORI_ENV_FILE` selects an existing
+file; `NORI_TASK_ENV_FILE` can select distinct existing task configuration.
+Credentials are used in place. Required names are in
 [`.env.example`](../.env.example).
 
 | Configuration | Purpose |
 | --- | --- |
-| `BIND_HOST`, `PORT` | Defaults `127.0.0.1:8080`; the managed container explicitly binds `0.0.0.0` behind IAM |
-| `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Defaults `bot-111549`, `nori-poc` |
-| `MODEL_LOCATION`, `MODEL_NAME` | Vertex model; defaults `global`, `gemini-3.1-flash-lite` |
-| `MODEL_INPUT_USD_PER_MTOK`, `MODEL_OUTPUT_USD_PER_MTOK` | Model list prices; required for task spend accounting |
+| `OPENROUTER_API_KEY`, `JEV_API_KEY` | Required conversation provider credentials for both entrypoints |
+| `NORI_AGENT_MODEL`, `NORI_AGENT_BASE_URL` | Conversation model and HTTPS endpoint; defaults `anthropic/claude-opus-5.5`, `https://openrouter.ai/api/v1` |
+| `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
+| `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Defaults `bot-111549`, `nori-poc`; Google APIs use Application Default Credentials |
+| `FIRESTORE_EMULATOR_HOST`, `TEMPORAL_LOCAL` | Explicit local Firestore endpoint and local Temporal mode; absent/false uses configured services |
+| `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and native Agent Runtime invoke root ending in `/api` |
+| `MODEL_LOCATION`, `MODEL_NAME` | Inner worker's Vertex model; defaults `global`, `gemini-3.8-flash` |
+| `MODEL_INPUT_USD_PER_MTOK`, `MODEL_OUTPUT_USD_PER_MTOK` | Inner task model prices for spend accounting |
 | `ARTIFACT_BUCKET` | Private screenshot bucket |
 | `COMPUTER_ZONE`, `COMPUTER_INSTANCE` | Existing retained computer |
-| `NORI_EXECUTION_MODE` | Deployed API uses `temporal`; command default retains `inline` compatibility |
 | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | Shared API/worker connection and task queue |
-| `TEMPORAL_API_KEY` | Local TLS connection key, loaded from the selected env file |
-| `TEMPORAL_API_KEY_SECRET_VERSION` | Deployed API alternative: ADC reads the existing Secret Manager version |
+| `TEMPORAL_API_KEY` | TLS connection key loaded from the selected env file |
+| `TEMPORAL_API_KEY_SECRET_VERSION` | Existing deployed alternative: ADC reads a Secret Manager version |
 | `TEMPORAL_DEPLOYMENT_NAME`, `TEMPORAL_BUILD_ID` | Worker deployment and immutable release version |
 
-Run the worker and API independently after loading configuration:
+From `core/`, run the local API and inner worker independently:
 
 ```sh
+go run ./cmd/nori-local
 go run ./cmd/nori-worker
-go run ./cmd/nori
-# Repair pending delivery and terminal projections explicitly:
+# Repair pending task delivery and terminal projections explicitly:
 go run ./cmd/nori-deliver
 ```
 
+`make run` starts `cmd/nori`, which requires the hosted queue configuration;
+`make build` builds `bin/nori`. Hosted processing runs only within
+`POST /api/process` requests. Cloud Tasks sends OAuth-authenticated notifications
+through the native Runtime invoke URL, retries failures, and limits concurrent
+dispatch to one. Firestore leases and input revisions govern processing order.
+An interrupted enqueue leaves accepted input saved; retrying the same input or
+reconnecting to the session repairs its wake. Active processing suppresses
+redundant wake creation during session polling.
+
 The API image is `infrastructure/Dockerfile`, built from `core/`. The worker image
 is `infrastructure/temporal/Dockerfile.worker`; the web image is `../web/Dockerfile`,
-built from `web/`. Deployment, worker registration, pause/resume, and retained data
-ownership are covered by [POC operations](infrastructure/poc/README.md) and
-[Temporal operations](infrastructure/temporal/README.md). Source changes do not
-update those deployed resources.
+built from `web/`. This source revision has not been deployed. Rollout requires
+the queue/IAM Terraform changes, the existing Runtime invoke root supplied as
+`runtime_invoke_root`, and server OpenRouter/Jev credentials provisioned through
+an approved credential path. Native Runtime status/deadline forwarding and
+Cloud Tasks OAuth delivery still need cloud verification. Existing deployment,
+worker registration, pause/resume, and retained-data operations are covered by
+[POC operations](infrastructure/poc/README.md) and
+[Temporal operations](infrastructure/temporal/README.md).
 
-## Task protocol
+## API protocol
 
 | Route | Behavior |
 | --- | --- |
 | `GET /healthz` | Process health only |
 | `POST /api/healthz` or `/healthz` | Safe configuration health; no database reads |
-| `POST /api/session` | Saved messages, tasks, and paused state |
-| `POST /api/run` | `{id: UUID,message}`; Temporal acceptance returns HTTP 202 without waiting for execution |
+| `POST /api/session` | `{before?: message-ID}`; saved conversation/task snapshot and older-message cursor; the initial latest-page load queues one real introduction if history is empty |
+| `POST /api/turn` | `{id: UUID,message}`; saves input and confirms wake scheduling before HTTP 202, without waiting for a model answer |
+| `POST /api/process` | Internal queue handler; drains conversation and repairs task delivery, returning retryable HTTP 503 while work cannot finish |
+| `POST /api/trace` | `{run_id: task-UUID}`; recorded task steps loaded on demand |
 | `POST /api/input` | `{id: new-UUID,run_id: task-UUID,message}`; ordered correction, answer, or explicit `continue` |
 | `POST /api/cancel` | `{id: task-UUID}`; records Stop and its delivery intent |
 | `POST /api/resume` | `{}`; repairs delivery and wakes retained workflows after operator admission is resumed |
 | `POST /api/artifact` | `{run_id,artifact_id}`; private PNG bytes |
+
+`/api/run` has been retired. The browser proxy admits conversation and explicit
+task controls, but does not expose `/api/process` or operator resume. Queue
+failure after input or task-command acceptance returns HTTP 503 with
+`accepted: true`, `retryable: true`, and the saved session or run; retry the same
+request identity. Unknown JSON fields, trailing objects, and invalid IDs are
+rejected.
+
+Session snapshots include `messages`, `runs`, `dispatches`, `usage`, conversation
+pending/processing state, and recorded outer attempt traces. New input can
+supersede an unfinished turn up to three times; the fourth attempt fixes its
+batch and later input stays queued. Native tool-call/result history survives
+restart. Context is bounded to recent history and traces report truncation;
+older transcript pages remain available separately.
+
+The live conversation E2E suite now checks this async contract, a single saved
+introduction, UUID replay/conflict handling, ordered follow-ups and no dispatch
+for hypothetical work. Use a fresh isolated database and run from the repo root:
+`NORI_E2E_API_URL=http://127.0.0.1:PORT bun test core/e2e/conversation.test.js`.
+`NORI_E2E_URL` instead selects the local web proxy. These calls use the selected
+real models. The older durable-task suite targets the retired direct-run route
+and is not validation of this revision's conversation contract.
 
 One Firestore transaction admits one active task. Repeating an identical command
 UUID returns its recorded acceptance; reusing that ID with different content is
@@ -72,9 +115,8 @@ are ignored. Missing or paused control rejects new task execution.
 
 A durable task can wait for input, budget approval, or project resume without a
 wall-clock task deadline. It survives normal worker shutdown and project pause.
-Model requests and tool execution keep per-call limits; the legacy inline API
-retains its two-minute request bound. Interrupted or uncertain tool operations
-can fail the task rather than risk replaying a side effect. Stop requires an
+Model requests and tool execution keep per-call limits. Interrupted or uncertain
+tool operations can fail the task rather than risk replaying a side effect. Stop requires an
 actual guest stopped acknowledgement or an observed terminated VM; uncertainty
 must not be reported as successful cancellation.
 

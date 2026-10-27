@@ -39,7 +39,6 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
     busy,
     loading,
     error,
-    unavailable,
     stopIntent,
     stopPending,
   } = runtime;
@@ -70,46 +69,31 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
     [],
   );
   const stopping =
-    stopPending || stopIntent === activeId || !!running?.cancel_requested;
+    stopPending || (!!activeId && stopIntent === activeId) || !!running?.cancel_requested;
   const stopDisabled =
     stopPending ||
-    (!error && stopIntent === activeId) ||
+    (!error && !!activeId && stopIntent === activeId) ||
     !!running?.cancel_requested;
-  const pendingNotPersisted =
-    pending &&
-    !session?.messages.some(
-      (message) =>
-        message.id === `${pending.id}-user` && message.role === "user",
-    );
   const conversation = useMemo<Conversation>(() => {
     const generatedRequests = new Set(session?.dispatches?.map((dispatch) => `${dispatch.id}-user`));
-    const items: ThreadItem[] = (session?.messages ?? []).filter((message) => !generatedRequests.has(message.id)).map((message) => ({
+    const items: ThreadItem[] = (session?.messages ?? []).filter((message) => !(message.run_id && message.id === `${message.run_id}-user` && message.turn_id) && !generatedRequests.has(message.id)).map((message) => ({
       id: message.id,
       kind: "text",
       sender: message.role === "user" ? "me" : "nori",
       at: Date.parse(message.created_at),
       text: message.text,
-      debug:
-        debug && message.role === "assistant"
-          ? recordedDebug(session?.runs.find((run) => run.id === message.run_id))
-          : undefined,
+      debug: debug && message.role === "assistant"
+        ? recordedDebug(session?.runs.find((run) => run.id === message.run_id), session?.traces?.filter((trace) => trace.turn_id === (message.turn_id || message.id.replace(/-assistant$/, ""))), agentMode, message.turn_id)
+        : undefined,
     }));
-    if (pendingNotPersisted && pending)
-      items.push({
-        id: pending.id,
-        kind: "text",
-        sender: "me",
-        at: pending.started,
-        text: pending.text,
+    for (const item of pending) {
+      if (!session?.messages.some((message) => message.id === `${item.id}-user`)) items.push({
+        id: `${item.id}-user`, kind: "text", sender: "me", at: item.started, text: item.text,
       });
-    return {
-      id: "runtime",
-      title: "Nori",
-      kind: "main",
-      createdAt: items[0]?.at ?? 0,
-      items,
-    };
-  }, [session?.messages, session?.runs, session?.dispatches, pending, pendingNotPersisted, debug]);
+    }
+    items.sort((a, b) => a.at - b.at);
+    return { id: "runtime", title: "Nori", kind: "main", createdAt: items[0]?.at ?? 0, items };
+  }, [session?.messages, session?.runs, session?.dispatches, session?.traces, pending, debug, agentMode]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -126,11 +110,11 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
     <TaskPanel
       session={session}
       selected={selected}
-      pending={!!pending}
-      busy={busy}
+      pending={pending.length > 0}
+      busy={!!running}
       loading={loading}
       error={error}
-      unavailable={agentMode ? runtime.tasksUnavailable : unavailable}
+      unavailable={runtime.tasksUnavailable}
       stopping={stopping}
       stopDisabled={stopDisabled}
       onSelect={runtime.setSelectedId}
@@ -138,30 +122,20 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       onRefresh={() => void runtime.refreshHistory()}
       onClose={closePanel}
       artifactEndpoint={agentMode ? "/api/agent/artifact" : undefined}
-      onUpdate={agentMode ? runtime.updateTask : undefined}
+      onUpdate={runtime.updateTask}
     />
   );
-  const notice =
-    error ||
-    (unavailable
-      ? "Task execution is paused. History remains available."
-      : "");
-  const work = agentMode && pending && pending.id === pending.runId ? "Nori is thinking…" : busy
-    ? stopping
-      ? "Stop requested. Waiting for the runtime to confirm."
-      : pending
-        ? pending.id === pending.runId
-          ? "Sending task to Nori…"
-          : "Sending your update…"
-        : running?.waiting
-          ? `Nori is waiting for your answer: ${running.waiting}`
-          : "Nori is working."
+  const notice = error;
+  const work = runtime.conversationBusy ? "Nori is thinking…" : pending.some((item) => !item.error) ? "Sending your message…" : running
+    ? stopping ? "Stop requested. Waiting for the runtime to confirm."
+      : runtime.tasksUnavailable ? "Task execution is paused. You can still chat with Nori."
+      : running.waiting ? `Nori is waiting for your answer: ${running.waiting}` : "Nori is working."
     : undefined;
 
   return (
     <NovaShell
       state={busy ? "thinking" : runtime.draft.trim() ? "attentive" : "idle"}
-      status={loading ? "Connecting…" : error || !session ? "Disconnected" : unavailable ? "Paused" : running?.waiting ? "Waiting for you" : busy ? "Working…" : "Ready when you are"}
+      status={loading ? "Connecting…" : error || !session ? "Disconnected" : running?.waiting ? "Waiting for you" : busy ? "Working…" : "Ready when you are"}
       activityOpen={panelOpen}
       onToggleActivity={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}
       actions={
@@ -189,17 +163,24 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
             status={work}
             onUnread={onUnread}
             presence={false}
+            hasOlder={!!session?.next_cursor}
+            loadingOlder={runtime.loadingOlder}
+            onLoadOlder={() => void runtime.loadOlder()}
             emptyMessage={
               loading
                 ? "Loading your conversation…"
                 : !session
                   ? "Your conversation will appear when Nori reconnects."
-                  : unavailable
-                    ? "Your saved conversation appears here."
-                    : undefined
+                  : "Nori is getting ready to say hello…"
             }
           />
         </div>
+        {pending.filter((item) => item.error).map((item) => (
+          <div key={item.id} role="alert" className="mx-6 mb-2 rounded-tile bg-surface p-3 text-meta text-ink-2">
+            Could not confirm “{item.text.slice(0, 80)}{item.text.length > 80 ? "…" : ""}”. {item.error}{" "}
+            <button type="button" className="font-medium text-accent-text hover:underline" onClick={() => void runtime.retry(item)}>Retry message</button>
+          </div>
+        ))}
         {notice && (
           <div className="nova-runtime-notice w-full shrink-0 self-center px-6 pb-3">
             <div
@@ -223,14 +204,14 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
         <RuntimeComposer
           draft={runtime.draft}
           setDraft={runtime.setDraft}
-          disabled={!session || unavailable || loading || (!!error && !agentMode)}
+          disabled={!session || loading || !!session.conversation?.introducing}
           busy={busy}
           canUpdate={runtime.canUpdate}
           canChat={runtime.canChat}
           stopping={stopping && !error}
           stopDisabled={stopDisabled}
           onSend={() => void runtime.send()}
-          onStop={agentMode && !running ? undefined : runtime.stop}
+          onStop={running ? runtime.stop : undefined}
           unread={unread.count}
           onJump={unread.jump}
         />

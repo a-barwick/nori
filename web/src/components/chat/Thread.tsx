@@ -71,15 +71,6 @@ function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: strin
   );
 }
 
-function greeting(now = new Date()) {
-  const h = now.getHours();
-  if (h < 5) return "Still up? I'm here.";
-  if (h < 12) return "Morning. What's on today?";
-  if (h < 17) return "Afternoon. What can I take off your plate?";
-  if (h < 22) return "Evening. Anything for tomorrow?";
-  return "Late one. What's on your mind?";
-}
-
 function WorkLine({ label, onDetails }: { label: string; onDetails?: () => void }) {
   return (
     <div className="anim-fade mt-4 flex items-center gap-2 text-meta text-ink-2" role="status">
@@ -95,7 +86,7 @@ function UnitView({ unit, onOpenDocument }: { unit: Unit; onOpenDocument?: (item
     case "sep":
       return <div className="my-6 text-center text-caption text-ink-3">{unit.label}</div>;
     case "page":
-      return <PageBlock onOpenDocument={onOpenDocument} item={unit.item} body={unit.body} />;
+      return <><PageBlock onOpenDocument={onOpenDocument} item={unit.item} body={unit.body} />{unit.item.debug && <DebugBlock info={unit.item.debug} />}</>;
     case "group":
       return (
         <div className={cn("mt-4 flex flex-col gap-1", unit.sender === "me" ? "items-end" : "items-start")}>
@@ -118,7 +109,13 @@ export function Thread({
   emptyMessage,
   onOpenDocument,
   onStatusDetails,
+  hasOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
 }: {
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
   onStatusDetails?: () => void;
   onOpenDocument?: (item: TextItem, body: string) => void;
   conversation: Conversation;
@@ -134,7 +131,9 @@ export function Thread({
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
-  const seen = useRef(items.length);
+  const seenIds = useRef(new Set(items.map((item) => item.id)));
+  const previousFirst = useRef(items[0]?.id);
+  const prependAnchor = useRef<{ id: string; top: number } | null>(null);
   const [firstUnread, setFirstUnread] = useState<string | null>(null);
   const [unread, setUnread] = useState(0);
   const [announcement, setAnnouncement] = useState("");
@@ -149,10 +148,23 @@ export function Thread({
     scrollToBottom(false);
   }, []);
 
+
+  useLayoutEffect(() => {
+    const anchor = prependAnchor.current;
+    const el = scroller.current;
+    if (!anchor || !el || loadingOlder) return;
+    const target = Array.from(el.querySelectorAll<HTMLElement>("[data-item-id]")).find((node) => node.dataset.itemId === anchor.id);
+    if (target) el.scrollTop += target.getBoundingClientRect().top - anchor.top;
+    prependAnchor.current = null;
+  }, [items, loadingOlder]);
+
   // New arrivals: follow along if you're at the bottom, otherwise count them.
   useEffect(() => {
-    const added = items.slice(seen.current);
-    seen.current = items.length;
+    const previousIndex = items.findIndex((item) => item.id === previousFirst.current);
+    const prepended = previousIndex > 0;
+    const added = items.filter((item, index) => !seenIds.current.has(item.id) && (!prepended || index >= previousIndex));
+    seenIds.current = new Set(items.map((item) => item.id));
+    previousFirst.current = items[0]?.id;
     if (!added.length) return;
     const fromNori = added.filter((i) => i.sender === "nori");
     const lastNori = fromNori[fromNori.length - 1];
@@ -221,10 +233,16 @@ export function Thread({
         className={cn("mx-auto max-w-[768px] px-[clamp(24px,calc(72px-(100vw-768px)/2),72px)] pb-[148px] transition-[padding] duration-300", presence ? "pt-28" : "pt-16")}
       >
         <div aria-live="off">
+          {hasOlder && <div className="mb-4 text-center"><Button size="sm" variant="quiet" disabled={loadingOlder} onClick={() => {
+            const first = scroller.current?.querySelector<HTMLElement>("[data-item-id]");
+            if (first?.dataset.itemId) prependAnchor.current = { id: first.dataset.itemId, top: first.getBoundingClientRect().top };
+            atBottom.current = false;
+            onLoadOlder?.();
+          }}>{loadingOlder ? "Loading older messages…" : "Load older messages"}</Button></div>}
           {units.length === 0 && (
             <div className="grid min-h-[calc(100dvh-320px)] place-items-center">
               <p className="arrive text-title text-ink-2" style={{ animationDelay: "250ms" }}>
-                {emptyMessage ?? greeting()}
+                {emptyMessage ?? "Nori is getting ready to say hello…"}
               </p>
             </div>
           )}

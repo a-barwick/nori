@@ -25,44 +25,72 @@ Neither setting copies or moves credentials. Google Cloud access uses Applicatio
 Use `make dev NORI_ENV_FILE=/absolute/path/to/the/existing/.env` to select a different
 file or use a worktree without copying credentials. Keep the credential file
 gitignored and mode 600. Required names and optional model settings are in
-[.env.example](.env.example). The default model is `meta/muse-spark-1.3-contributor`.
+[.env.example](.env.example). The default model is `anthropic/claude-opus-5.5`.
+Austin selected Claude Opus 5.5 for conversation, `jev-latest` for intent hints,
+and `gemini-3.8-flash` on Vertex for inner tasks. Agents must preserve these
+choices; the model policy in [AGENTS.md](AGENTS.md) also applies to overrides.
 
-The runner gets a Jev intent hint, then makes one Muse call with the original
-message, full available conversation, and only the native `dispatch` tool.
-Classification never selects a prompt or forces a route. The shared prompt asks
-for reply text alongside tool calls; a tool-only reply is an explicit failure
-before dispatch. Reply text is published only after all dispatches are accepted.
-A failed dispatch produces an accurate failure reply and a paired tool result.
+Both Go entrypoints use the same durable conversation runner. Each message is
+saved to Firestore before acceptance; model processing continues independently
+of the browser. Local mode checks pending work at startup and uses an application
+loop to recover after restart. Hosted mode schedules a Cloud Tasks notification
+and processes it through a request-bound handler, so scale-to-zero does not
+require a resident worker for conversation.
+
+The first load of an empty conversation queues one introduction through that
+same inbox. Nori generates a short, warm greeting with the real outer model;
+the saved reply is reused on reload. The bootstrap instruction is internal and
+does not appear as a message Austin sent. The composer stays disabled until the
+greeting is saved and the system is ready. Inputs arriving from another client
+still join the normal ordered input flow. The UI shows connection and
+preparation status until a saved reply is available.
+
+The runner gets a Jev hint, then calls the configured conversational model with
+recent conversation, native tool-call results, and the `dispatch` tool.
+Classification remains advisory. Nearby messages are coalesced; new input can
+supersede an unfinished answer up to three times. The fourth attempt finishes
+its fixed input batch, leaving later messages for the next turn. The runner
+rechecks accepted input before dispatch and publication, and preserves already
+accepted actions when an answer is superseded.
 
 Dispatch reuses Firestore task acceptance and Temporal delivery. It returns task
 identity without waiting for execution. The existing worker executes tools and
-saves results; the current Activity panel shows them. Ordinary chat stays
-available during a task. Stop and the panel's explicit task-update form target
-that task directly; a chat message never automatically becomes a task update.
-One task can be active at a time. Paused task execution does not disable conversation.
-Durable task waiting has no session-expiry timer; operator cloud capacity is controlled separately.
+saves results. Ordinary chat stays available during a task. Stop and the panel's
+explicit task-update form target that task directly; a chat message does not
+automatically become a task update. One task can be active at a time. Paused task
+execution does not disable conversation.
 
-Outer-turn history stays in memory; saved task history stays in Firestore.
-`NORI_CONVERSATION_SEED` can carry a saved transcript through a development restart
-without re-executing its old requests. Full context is currently untrimmed, so
-token cost and latency grow until provider context limits are reached. Selection,
-memory, and compaction are separate features. `POST /api/turn` accepts
-`{ "id": "UUID", "message": "text" }`; it and `POST /api/session` return the same
-conversation/task snapshot, including `messages`, `runs`, `dispatches`, and
-recorded provider `usage`. Jev cost remains unknown when the provider supplies no price.
-Repeated turn IDs reuse the recorded outcome; a different message with the same
-ID is rejected. The Go listener and web preview bind to loopback. Conversation
-remains available when task execution is paused.
+`POST /api/turn` accepts `{ "id": "UUID", "message": "text" }` and returns HTTP
+202 with a session snapshot after durable acceptance and wake confirmation.
+Retry an interrupted request with the same UUID; different text with that UUID
+is rejected. `POST /api/session` restores saved history and pending state, and
+supports a `before` cursor for older messages. The UI shows conversation work
+and recorded model attempts, actions, and provider usage; task steps load on
+demand. Provider cost stays unknown when no price is supplied.
 
-With the local app running, opt into two live conversation checks with
-`NORI_E2E_URL=http://127.0.0.1:3210 bun test ./core/e2e/conversation.test.js`.
-They use the configured Jev and conversational model and do not request real work.
+Firestore holds the transcript, processing state, dispatch records, and traces.
+Model context uses bounded recent history, with truncation shown in the attempt
+trace. Browsing older messages does not expand model context; memory and
+compaction remain separate features. The Go listener and web preview bind to
+loopback. Defaults still select the configured GCP database and Temporal service;
+use explicit Firestore and Temporal emulator settings for an isolated local run.
 
-`NORI_LOCAL_AGENT_URL` selects this client adapter only in development. Production
-continues to use the existing owner-protected runtime and task UI. `make core`
-still starts the GCP-backed runtime, which uses Application Default Credentials
-and private GCP infrastructure; see [core setup](core/README.md) and
-[POC operations](core/infrastructure/poc/README.md).
+Two live conversation E2E journeys cover the generated greeting, asynchronous
+acceptance, UUID replay/conflict handling, rapid follow-up ordering and
+hypothetical replies without task dispatch. Point `NORI_E2E_API_URL` at a running
+local Go API with a fresh isolated Firestore database, or `NORI_E2E_URL` at its
+local web proxy, then run `bun test core/e2e/conversation.test.js`. They use the
+selected real providers; do not point them at a saved personal conversation.
+The older durable-task suite still targets the retired direct-run route and
+does not validate this revision's conversation contract.
+
+`NORI_LOCAL_AGENT_URL` selects the local adapter only in development. Production
+keeps the owner-protected proxy and runtime IAM. `make core` starts the hosted
+entrypoint locally and additionally requires Cloud Tasks configuration; see
+[core setup](core/README.md). This source revision has not been deployed. Hosted
+rollout needs the queue/IAM configuration, server OpenRouter/Jev credentials, and
+verification of native Runtime retry/status forwarding. See
+[POC operations](core/infrastructure/poc/README.md) for the existing deployment.
 
 ## Durable tasks
 
