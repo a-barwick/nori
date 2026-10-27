@@ -6,7 +6,7 @@ import type { MarkLook, MarkState } from "@/lib/types";
 
 /**
  * Nori's mark: at most five simple shapes, ink outline (1.75 at 96px,
- * scaled), two-tone olive fill. Reads as a silhouette at 20px.
+ * scaled), near-black navy and soft white fill. Reads as a silhouette at 20px.
  */
 
 const INK = { stroke: "var(--mark-ink)", strokeWidth: 1.75, strokeLinejoin: "round" as const };
@@ -191,7 +191,7 @@ export function NoriMark({
   );
 }
 
-/** Avatar contexts: the mark sits in a paper circle with a hairline ring. */
+/** Keep avatar spacing consistent while letting the mark stand on its own. */
 export function Medallion({
   size,
   state,
@@ -209,10 +209,10 @@ export function Medallion({
 }) {
   return (
     <span
-      className={cn("relative inline-grid shrink-0 place-items-center rounded-full bg-[var(--mark-paper)]", className)}
-      style={{ width: size, height: size, boxShadow: "inset 0 0 0 1px var(--hairline)" }}
+      className={cn("relative inline-grid shrink-0 place-items-center", className)}
+      style={{ width: size, height: size }}
     >
-      <NoriMark size={Math.round(size * 0.74)} state={state} look={look} watch={watch} />
+      <NoriMark size={Math.round(size * 0.9)} state={state} look={look} watch={watch} />
       {children}
     </span>
   );

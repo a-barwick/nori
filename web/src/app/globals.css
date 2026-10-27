@@ -37,10 +37,9 @@
   --glass-filter: blur(16px);
   --glass-border: #e7e2ef;
   --chip-border: #cfc3e9;
-  --mark-ink: #292e20;
-  --mark-fill: #617548;
-  --mark-fill-soft: #f5f1df;
-  --mark-paper: #faf8ef;
+  --mark-ink: var(--text-primary);
+  --mark-fill: #101a30;
+  --mark-fill-soft: #fdfcff;
   --heartbeat: var(--danger-text);
   --waveform-on-accent: #ffffff;
   --drop-contact: drop-shadow(0 4px 8px rgba(37, 12, 76, 0.08));
