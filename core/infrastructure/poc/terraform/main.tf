@@ -130,6 +130,45 @@ resource "google_service_account" "conversation_wake" {
   display_name = "Nori conversation queue caller"
 }
 
+# Secret Manager is already enabled and owned by the Temporal state. Terraform
+# owns only these retained containers and references, never credential payloads.
+resource "google_secret_manager_secret" "conversation" {
+  for_each = {
+    OPENROUTER_API_KEY = "nori-openrouter-api-key"
+    JEV_API_KEY        = "nori-jev-api-key"
+  }
+  secret_id = each.value
+  replication {
+    auto {}
+  }
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "conversation_runtime_secrets" {
+  for_each  = google_secret_manager_secret.conversation
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+# Agent Platform resolves secret environment variables during deployment; the
+# custom runtime identity also needs access when the container is started.
+resource "google_secret_manager_secret_iam_member" "conversation_deploy_secrets" {
+  for_each  = google_secret_manager_secret.conversation
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:service-${local.number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "cloudtasks_service_agent" {
+  project    = local.project
+  role       = "roles/cloudtasks.serviceAgent"
+  member     = "serviceAccount:service-${local.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
+  depends_on = [google_project_service.api]
+}
+
 resource "google_cloud_tasks_queue" "conversation" {
   name     = "nori-conversation"
   location = local.region
@@ -161,14 +200,14 @@ resource "google_service_account_iam_member" "runtime_wake_caller" {
   member             = "serviceAccount:${google_service_account.runtime.email}"
 }
 
-resource "google_project_iam_member" "wake_runtime_query" {
-  project = local.project
-  role    = google_project_iam_custom_role.query.name
-  member  = "serviceAccount:${google_service_account.conversation_wake.email}"
-  condition {
-    title      = "nori-runtime-only"
-    expression = "resource.name == '${google_vertex_ai_reasoning_engine.runtime.name}' || resource.name == '${local.runtime_name}'"
-  }
+# Agent Runtime does not expose resource.name to inherited IAM conditions.
+# Grant this one-permission role directly on the retained engine instead.
+resource "google_vertex_ai_reasoning_engine_iam_member" "wake_runtime_query" {
+  project          = local.project
+  region           = local.region
+  reasoning_engine = google_vertex_ai_reasoning_engine.runtime.name
+  role             = google_project_iam_custom_role.query.name
+  member           = "serviceAccount:${google_service_account.conversation_wake.email}"
 }
 
 resource "google_service_account" "computer" {
@@ -452,9 +491,16 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
         }
       }
 
-      # OPENROUTER_API_KEY and JEV_API_KEY are required server configuration.
-      # Provision them through the approved server credential path before any
-      # deployment. This plan deliberately contains no credential values.
+      dynamic "secret_env" {
+        for_each = google_secret_manager_secret.conversation
+        content {
+          name = secret_env.key
+          secret_ref {
+            secret  = secret_env.value.secret_id
+            version = "latest"
+          }
+        }
+      }
 
     }
 
@@ -464,7 +510,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
     ignore_changes = [spec[0].container_spec[0].image_uri]
   }
 
-  depends_on = [google_project_service.api, google_project_iam_member.runtime_firestore, google_project_iam_member.runtime_model, google_artifact_registry_repository_iam_member.runtime_image_reader, google_artifact_registry_repository_iam_member.platform_image_reader]
+  depends_on = [google_project_service.api, google_project_iam_member.runtime_firestore, google_project_iam_member.runtime_model, google_artifact_registry_repository_iam_member.runtime_image_reader, google_artifact_registry_repository_iam_member.platform_image_reader, google_secret_manager_secret_iam_member.conversation_runtime_secrets, google_secret_manager_secret_iam_member.conversation_deploy_secrets]
 
 }
 
@@ -563,6 +609,18 @@ output "web_service_account" {
 
 output "runtime_service_account" {
   value = google_service_account.runtime.email
+}
+
+output "conversation_queue" {
+  value = google_cloud_tasks_queue.conversation.id
+}
+
+output "conversation_wake_service_account" {
+  value = google_service_account.conversation_wake.email
+}
+
+output "outer_model" {
+  value = var.outer_model
 }
 
 output "computer_service_account" {

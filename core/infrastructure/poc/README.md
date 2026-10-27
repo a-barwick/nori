@@ -1,6 +1,6 @@
 # Nori native POC
 
-The Next.js web app runs on Cloud Run with native IAP. An ordinary Go container runs on Vertex AI Agent Runtime, calls Gemini on Vertex AI, stores sessions and run events in Firestore, and writes screenshots to a private GCS bucket. Its computer tools use an official `gcloud compute start-iap-tunnel` connection to the retained Firecracker computer. The host exposes only port 8090 through IAP; the guest holds the persistent browser profile and `/workspace/tasks/<run-id>`.
+The Next.js web app runs on Cloud Run with native IAP. A Go container runs the durable conversation on Vertex AI Agent Runtime using Opus 5.5 through OpenRouter and Jev intent hints. It saves history in Firestore and dispatches tasks to Temporal workers using Gemini 3.8 Flash on Vertex AI; screenshots stay in a private GCS bucket. Its computer tools use an official `gcloud compute start-iap-tunnel` connection to the retained Firecracker computer. The host exposes only port 8090 through IAP; the guest holds the persistent browser profile and `/workspace/tasks/<run-id>`.
 
 Run the commands below from `core/`. The source lives in this monorepo; build
 the web image from `../web` and the runtime image from `core/` with
@@ -40,7 +40,11 @@ python3 infrastructure/poc/poc.py deploy-runtime IMAGE_URI
 python3 infrastructure/poc/poc.py deploy-web IMAGE_URI
 ```
 
-`deploy-runtime` updates the image and enables Temporal execution with the namespace, task queue, address, and `TEMPORAL_API_KEY_SECRET_VERSION=projects/bot-111549/secrets/nori-temporal-api-key/versions/latest`. It preserves other runtime environment entries. The runtime service account reads the existing Secret Manager secret; no credential payload enters Terraform or the image. Prepare and deploy workers independently through the [Temporal release procedure](../temporal/README.md).
+`deploy-runtime` updates the image and enables Temporal execution with the namespace, task queue, address, and `TEMPORAL_API_KEY_SECRET_VERSION=projects/bot-111549/secrets/nori-temporal-api-key/versions/latest`. It also sets the selected outer model (`anthropic/claude-opus-5.5`) and the durable conversation queue/caller from Terraform outputs. Other runtime environment entries and native secret references are preserved. Prepare and deploy workers independently through the [Temporal release procedure](../temporal/README.md).
+
+For Milestone 2, supply the existing native invoke root as `runtime_invoke_root` before applying the full plan. The root ends in `/api`; the Go API's `/api/process` suffix is intentionally appended to it. Terraform creates the `nori-conversation` Cloud Tasks queue, its scoped OAuth caller, and retained `nori-openrouter-api-key` / `nori-jev-api-key` secret containers. Upload the existing Nori credential payloads directly to Secret Manager, outside Terraform, before applying the runtime's native `secret_env` references. Only the named runtime and Agent Platform deployment identities may read those two secrets. No payload enters Terraform, state, images, or command arguments. `bootstrap-identities` includes the Cloud Tasks managed service identity.
+
+The conversation service processes accepted messages through authenticated Cloud Tasks requests, so web cancellation or a scaled-down instance does not lose the inbox. The queue allows one concurrent dispatch and retries delivery; Firestore owns ordering, leases, deduplication, and publication. Web and Agent Runtime remain min zero / max one. Task workers use the selected `gemini-3.8-flash` through Vertex; model substitutions require Austin's explicit approval.
 
 The computer release installs on its next stopped-host start. The host uses Nori
 paths and services. Its POC helper keeps the existing `bot-guest-data` attachment,

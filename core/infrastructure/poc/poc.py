@@ -343,7 +343,7 @@ def main():
     parser.add_argument("value", nargs="?")
     args = parser.parse_args()
     if args.action == "bootstrap-identities":
-        for service in ("aiplatform.googleapis.com", "iap.googleapis.com", "run.googleapis.com"):
+        for service in ("aiplatform.googleapis.com", "iap.googleapis.com", "run.googleapis.com", "cloudtasks.googleapis.com"):
             result = operation(api("POST", f"https://serviceusage.googleapis.com/v1beta1/projects/{NUMBER}/services/{service}:generateServiceIdentity", {}), "serviceusage")
             print(service + ": " + result.get("response", {}).get("email", "identity ready"))
         return
@@ -363,11 +363,19 @@ def main():
         print("Computer release " + digest + "; restart the stopped host on next use to install.")
     elif args.action == "deploy-runtime":
         if not args.value: parser.error("deploy-runtime needs an immutable image URI")
+        required = ("conversation_queue", "conversation_wake_service_account", "outer_model")
+        if any(not c.get(key) for key in required):
+            raise RuntimeError("Apply the Milestone 2 queue, IAM and secret-reference infrastructure before deploying the runtime")
         name = c["runtime_name"]
         base = f"https://{REGION}-aiplatform.googleapis.com/v1beta1/{name}"
         current = api("GET", base)
         env = {entry["name"]: entry for entry in current.get("spec", {}).get("deploymentSpec", {}).get("env", [])}
         env.update({key: {"name": key, "value": value} for key, value in {
+            "NORI_AGENT_MODEL": c["outer_model"],
+            "NORI_AGENT_BASE_URL": "https://openrouter.ai/api/v1",
+            "NORI_WAKE_QUEUE": c["conversation_queue"],
+            "NORI_WAKE_SERVICE_ACCOUNT": c["conversation_wake_service_account"],
+            "NORI_RUNTIME_URL": c["runtime_url"],
             "NORI_EXECUTION_MODE": "temporal",
             "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",
             "TEMPORAL_NAMESPACE": "quickstart-nori.qtjow",

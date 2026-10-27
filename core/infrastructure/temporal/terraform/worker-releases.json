@@ -3,10 +3,12 @@
     "poc-20261024": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:1b871e3f8d34940a4111c37aca37f6beb145e5904d1305f44ef6c046fd5563f7",
     "poc-20261025": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:13e37fa8d4337c735b5a884315be8120fe107e5dfb1de72893c284061090f24d",
     "poc-20261025b": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:db310c169662a1731f0a524b17846155406950edc4ce68feb97a80056f2a30e9",
-    "m1-20261025-r3": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:1225cbed48f00f4c25677b49626e4a070bd5f58238d29a9ddaa21d5953a59f75"
+    "m1-20261025-r3": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:1225cbed48f00f4c25677b49626e4a070bd5f58238d29a9ddaa21d5953a59f75",
+    "m2-20261027-51ab9db": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:8ad7adc8a781ea741cd5121809e4d0f46b1bb735f403391107306340ee218515"
   },
   "scalable_build_ids": [
-    "m1-20261025-r3"
+    "m1-20261025-r3",
+    "m2-20261027-51ab9db"
   ],
   "spend_alert": {
     "image": "us-central1-docker.pkg.dev/bot-111549/nori-poc/nori-temporal-billing@sha256:9897682453f3d950bb861fc63430fb81ce8144251a4dd08b625b764b79041249",

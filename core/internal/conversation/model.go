@@ -98,6 +98,7 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		return reply, fmt.Errorf("model provider returned HTTP %d", res.StatusCode)
 	}
 	var response struct {
+		ID    string `json:"id"`
 		Usage *struct {
 			Input  *int64   `json:"prompt_tokens"`
 			Output *int64   `json:"completion_tokens"`
@@ -126,7 +127,18 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	}
 	choice := response.Choices[0]
 	if choice.Finish != "stop" && choice.Finish != "tool_calls" {
-		return reply, fmt.Errorf("model response did not finish normally")
+		// Retain the provider request identity without exposing error bodies,
+		// which can contain account details or prompt content.
+		reason := "unknown"
+		switch choice.Finish {
+		case "error", "length", "content_filter", "function_call", "cancelled":
+			reason = choice.Finish
+		}
+		id := "unavailable"
+		if strings.HasPrefix(response.ID, "gen-") && len(response.ID) <= 128 && strings.Trim(response.ID, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") == "" {
+			id = response.ID
+		}
+		return reply, fmt.Errorf("model response did not finish normally (finish_reason=%s, request_id=%s)", reason, id)
 	}
 	var message struct {
 		Role    string     `json:"role"`
