@@ -10,27 +10,24 @@
 <body>
 <h1>Outer loop</h1>
 <p class="lede">The part of Nori that handles the conversation. It runs one short turn at a time and dispatches work to tasks.</p>
-<p>Only one turn owns the conversation at a time. The engine in
-  <span class="mono">conversation/runner.go</span> and <span class="mono">call.go</span> is built so a process can
-  die at any line and the next owner can recover from checkpoints without sending a second reply or
-  dispatching the same task twice.</p>
+<p>One turn owns the conversation. Checkpoints let a replacement process recover the response and accepted commands.</p>
   <div class="card">
       <h3 style="margin-top:0">One turn, in order</h3>
       <div class="flow">
-        <div class="node outer"><b>AcquireConversation</b><small>Takes the lease, the fence and the next batch of inputs after the consumed position. A watcher renews the lease every 10s and checks it every 250ms.</small></div>
+        <div class="node outer"><b>AcquireConversation</b><small>Takes the lease, fence and next input batch. A watcher renews ownership.</small></div>
         <div class="arrow">↓</div>
         <div class="branch">
-          <div class="node"><b>Setup reads</b><small>Reads history (up to 24 turns and 192KiB of protocol), visible messages and the task snapshot in parallel goroutines.</small></div>
-          <div class="node"><b>Jev Classify</b><small>Sets nine intent flags and a self-contained flag from the visible conversation. The result is advisory. If Jev is unavailable, the turn continues with the hint marked unavailable.</small></div>
+          <div class="node"><b>Setup reads</b><small>Reads history, visible messages and the task snapshot in parallel.</small></div>
+          <div class="node"><b>Jev Classify</b><small>Returns advisory intent flags. An unavailable classifier does not stop the turn.</small></div>
         </div>
         <div class="arrow">↓</div>
-        <div class="node outer"><b>Model call · Muse Spark 1.3</b><small>It gets the full tool set below, except on intro and notification turns, where tools are withheld.</small></div>
+        <div class="node outer"><b>Model call · GPT-6.1 Sol</b><small>Low reasoning through the OpenAI platform API. User turns return a strict JSON action list and reply text; intro and notification turns return text only.</small></div>
         <div class="arrow">↓</div>
         <div class="node outer"><b>Save model response</b><small>Checkpointed before any dispatch, so a restart recovers the accepted command receipts instead of deciding again.</small></div>
         <div class="arrow">↓</div>
-        <div class="node"><b>Admit commands</b><small>Validates the whole batch first, up to 16 calls. Stable action IDs come from the attempt and call ID. Business rejections go back to the model as tool results and don't fail the turn.</small></div>
+        <div class="node"><b>Admit commands</b><small>Validates the batch before admission. Stable action IDs prevent duplicate commands. Rejections are saved as results.</small></div>
         <div class="arrow">↓</div>
-        <div class="node outer"><b>Check for newer input, then publish</b><small>If newer user input has superseded this attempt, the turn discards its unpublished output and restarts, up to 3 times. Otherwise it publishes the reply and consumes the batch in one transaction.</small></div>
+        <div class="node outer"><b>Check for newer input, then publish</b><small>Newer user input can supersede an unpublished response. Otherwise the reply and consumed position are saved together.</small></div>
       </div>
     </div>
   <div class="grid2" style="align-items:start">
@@ -57,14 +54,27 @@
         <table>
           <tr><th>Tool</th><th>Effect</th></tr>
           <tr><td><code>dispatch(request)</code></td><td>Creates an independent task. Returns once the task is accepted, before it has finished.</td></tr>
-          <tr><td><code>steer(run_id, text)</code></td><td>Adds instructions to one task. Unrelated constraints stay in place.</td></tr>
+          <tr><td><code>steer(run_id, text, interrupt)</code></td><td>Adds instructions to one task. Unrelated constraints stay in place.</td></tr>
           <tr><td><code>answer(run_id, question_id, text)</code></td><td>Resolves that specific open question. Stale IDs are rejected.</td></tr>
           <tr><td><code>continue(run_id, question_id)</code></td><td>Grants another $1. Only valid for the current budget question, and only when the user has asked for it.</td></tr>
           <tr><td><code>stop(run_id)</code></td><td>Requests cancellation of that task only.</td></tr>
-          <tr class="designed"><td><code>hold(task_id, question)</code></td><td>Parks a chat question until that task's result arrives. <span class="tag design">designed</span></td></tr>
+          <tr><td><code>hold(task_id, question)</code></td><td>Saves a chat question until that task's result arrives.</td></tr>
         </table>
         <p class="note">Only the outer loop dispatches work. <span class="designed">An inner loop that needs outside work will ask for it through a control tool, which is designed but not built yet (<a href="contract.html">how the loops talk</a>).</span></p>
       </div>
+<section><h2>Command routing in milestone 4</h2>
+<div class="card"><div class="flow">
+<div class="node outer"><b>Sol returns actions and text</b><small>Each user turn requests one JSON object. Ordinary conversation has an empty actions array.</small></div><div class="arrow">↓</div>
+<div class="node"><b>Validate and save</b><small>The runtime checks every command, saves the response, and admits commands with stable IDs.</small></div><div class="arrow">↓</div>
+<div class="node outer"><b>Publish the acknowledgment</b><small>If the response contains actions without text, the runtime writes an acknowledgment from the accepted receipts.</small></div>
+</div></div>
+<p><a href="https://github.com/a-barwick/nori/pull/30">PR #30</a> requests schema-constrained output for user turns. Intro and task-notification turns still return plain text and cannot issue commands.</p>
+
+<details class="more"><summary>Provider behavior and recovery</summary>
+<p>Austin selected Sol low after Muse omitted commands and rejected structured responses in local checks. The schema uses the existing command definitions; no second model call forces dispatch.</p>
+<p>Rejected responses stay in private attempt records and are excluded from later model history. Recovery reuses accepted command receipts; it does not repeat the model call.</p>
+<p><code>hold(task_id, question)</code> saves a question without changing the task's instructions. A terminal event supplies the outcome for its answer.</p>
+</details></section>
 <section><h2>What Jev is looking for</h2>
 <p>Jev tags each batch of messages with the intents it sees. The model still reads the original words and decides what to do.</p>
 <div class="card"><table class="tall">
@@ -80,19 +90,17 @@
 <tr><td><code>update_memory</code></td><td>“Remember that I prefer evenings.”</td></tr>
 </table></div></section>
 <section><h2>One message, several jobs</h2>
-<p>A single message can answer something, steer a task and start another. It all comes back as reply text plus one tool call per job, in one response.</p>
+<p>A single message can answer something, steer a task and start another. It all comes back as reply text plus one action per job, in one response.</p>
 <div class="card"><p><span class="say me">Like Saturday, should I wear shorts?</span></p>
-<ul class="pts"><li>“Saturday” steers the weather task.</li><li>The shorts question waits for the forecast.<span class="tag design">designed</span></li><li>The reply answers it once the result arrives.</li></ul></div></section>
+<ul class="pts"><li>“Saturday” steers the weather task.</li><li>The shorts question waits for the forecast.</li><li>The reply answers it once the result arrives.</li></ul></div></section>
 <section><h2>Response time goals</h2>
 <div class="grid3">
-<div class="card tight"><p class="keyline">Under 1 second</p><p class="note">Message accepted, when the service is warm.</p></div>
-<div class="card tight"><p class="keyline">About 5 seconds</p><p class="note">A typical short reply.</p></div>
-<div class="card tight"><p class="keyline">10 seconds at p95</p><p class="note">The slow end for short replies. Cold starts are measured separately.</p></div>
-</div></section>
-<details class="more"><summary>Task categories</summary>
-<p>Lookup, research, create, modify, communicate and monitor are optional descriptions for discovery and display. They don't set permissions, behavior or a required dispatch field.</p></details>
-<details class="more"><summary>Early model trials</summary>
-<p>These were development tests on October 25, 2026, with samples too small for percentiles. They don't measure the current models.</p>
-<ul class="pts"><li>Muse wrote good replies but once claimed a dispatch without making the tool call.</li><li>GPT-5.4 mini and Qwen3.6 made tool calls with no reply text, and the runner rejected them.</li><li>Requiring reply text before the tool call gave three successful Sonnet 4.6 dispatches in a row.</li><li>Sonnet 4.6 replies took 1.12–2.01 seconds, and message acceptance took 9–95 ms.</li></ul></details>
+<div class="card tight"><p class="keyline">100 ms</p><p class="note">Typing feedback.</p></div>
+<div class="card tight"><p class="keyline">1 second</p><p class="note">Durable command acceptance.</p></div>
+<div class="card tight"><p class="keyline">2 seconds</p><p class="note">Saved status visible, or eligible read cancellation.</p></div>
+</div><p>These are warm localhost targets agreed for milestone 4. Model latency and cold starts are measured separately.</p></section>
+
+
+<details class="sources"><summary>Sources</summary><p><a href="https://github.com/a-barwick/nori/blob/codex/nori-milestone-4/core/internal/conversation/response.go">Routing schema</a> · <a href="https://developers.openai.com/api/docs/models/gpt-6.1-sol">Sol model reference</a> · <a href="https://linear.app/a-barwick/issue/AB-226">AB-226</a></p></details>
 </body>
 </html>

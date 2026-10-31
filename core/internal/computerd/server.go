@@ -34,6 +34,7 @@ type server struct {
 	runs           map[string]*runState
 	receiptMu      sync.Mutex
 	activeReceipts map[string]bool
+	readOperations map[string]*readOperation
 }
 type runState struct {
 	ctx     context.Context
@@ -47,7 +48,7 @@ func New(tasks string) (http.Handler, error) {
 	if err := os.MkdirAll(tasks, 0700); err != nil {
 		return nil, err
 	}
-	s := &server{tasks: tasks, browsers: make(map[string]*taskBrowser), screenshotGate: make(chan struct{}, 1), runs: make(map[string]*runState), activeReceipts: make(map[string]bool)}
+	s := &server{tasks: tasks, browsers: make(map[string]*taskBrowser), screenshotGate: make(chan struct{}, 1), runs: make(map[string]*runState), activeReceipts: make(map[string]bool), readOperations: make(map[string]*readOperation)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -67,6 +68,7 @@ func New(tasks string) (http.Handler, error) {
 	mux.HandleFunc("POST /navigate", s.receipted(s.navigate))
 	mux.HandleFunc("POST /screenshot", s.receipted(s.screenshot))
 	mux.HandleFunc("POST /operation", s.operationStatus)
+	mux.HandleFunc("POST /operation/cancel", s.cancelRead)
 	activity := &activityState{last: time.Now()}
 	// This endpoint is host-only: Proxy deliberately does not forward it.
 	mux.HandleFunc("GET /activity", func(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +178,7 @@ func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle fu
 		}
 	}()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/browser/close" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation"))) {
+		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/browser/close" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation" || r.URL.Path == "/operation/cancel"))) {
 			http.NotFound(w, r)
 			return
 		}

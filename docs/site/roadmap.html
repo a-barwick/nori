@@ -10,11 +10,11 @@
 <body>
 <h1>Roadmap</h1>
 <p class="lede">Twelve milestones, in order. A milestone is done when it works on noribot.chat against its scenarios.</p>
-<ul class="pts"><li>There are twelve milestones in Linear (project P-AB-7).</li><li>We measure progress against 106 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show Linear issue completion. Milestone 3's code is merged ahead of its tickets.</li></ul>
+<ul class="pts"><li>There are twelve milestones in Linear (project P-AB-7).</li><li>We measure progress against 106 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show Linear issue completion. Milestone 3's code is merged ahead of its tickets. Milestone 4 has passed its local model journeys; deployed acceptance remains open.</li></ul>
   <div class="road" id="roadGrid" aria-label="Milestone timeline"></div>
   <div class="grid2" style="margin-top:14px">
     <div class="card tight"><p class="keyline">What changes at milestone 4</p>
-      <ul class="pts note"><li>Tasks finish with an explicit <code>complete</code> call and a Jev completeness check.</li><li>Tool errors go back to the model.</li><li>Each action gets its own retry policy.</li><li>History moves out of workflow payloads.</li></ul></div>
+      <ul class="pts note"><li>Tasks finish with an explicit <code>complete</code> call and a Jev completeness check.</li><li>Tool errors go back to the model.</li><li>Reads can be corrected within limits; failed tasks and uncertain writes wait for user direction.</li><li>History moves out of workflow payloads.</li></ul></div>
     <div class="card tight"><p class="keyline">What changes at milestones 5–6</p>
       <ul class="pts note"><li>Milestone 5 adds web search, longer shell jobs, screenshots the model can see, tool discovery, and calendar read.</li><li>Milestone 6 adds approvals tied to one exact operation, starting with the first approved calendar write.</li><li>Writes only arrive once that approval step exists.</li></ul></div>
   </div>
@@ -23,7 +23,7 @@
       <tr><th>Capability</th><th>What it adds</th><th>Linear</th><th>Milestone</th></tr>
           <tr><td>Connectors and tools</td><td>Web search, shell jobs longer than 45 seconds, screenshots the model can see, and calendar read with a connected account.</td><td><a href="https://linear.app/a-barwick/issue/AB-201">AB-201</a> <a href="https://linear.app/a-barwick/issue/AB-202">AB-202</a> <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a> <a href="https://linear.app/a-barwick/issue/AB-204">AB-204</a></td><td>5</td></tr>
           <tr><td>Action policies and approvals</td><td>Each tool declares whether it is a read, a reversible write or a sensitive send. That sets its retries and when the user is asked. Approvals bind to one exact operation.</td><td><a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a> <a href="https://linear.app/a-barwick/issue/AB-169">AB-169</a> <a href="https://linear.app/a-barwick/issue/AB-170">AB-170</a> <a href="https://linear.app/a-barwick/issue/AB-171">AB-171</a> <a href="https://linear.app/a-barwick/issue/AB-172">AB-172</a> <a href="https://linear.app/a-barwick/issue/AB-199">AB-199</a> <a href="https://linear.app/a-barwick/issue/AB-205">AB-205</a> <a href="https://linear.app/a-barwick/issue/AB-216">AB-216</a></td><td>4, 6</td></tr>
-          <tr><td>Task supervision</td><td>The runtime reports crashes with completed and unresolved operations. A re-issued task inherits those records and gets no extra budget or authority.</td><td><a href="https://linear.app/a-barwick/issue/AB-179">AB-179</a></td><td>4</td></tr>
+          <tr><td>Task supervision</td><td>The runtime reports crashes with completed and unresolved operations. Milestone 4 waits for user direction instead of re-issuing failed tasks automatically.</td><td><a href="https://linear.app/a-barwick/issue/AB-179">AB-179</a></td><td>4</td></tr>
           <tr><td>Context</td><td>Each loop starts with a small context and retrieves more when it would change the next decision. Older context is compacted with links back to the originals.</td><td><a href="https://linear.app/a-barwick/issue/AB-153">AB-153</a> <a href="https://linear.app/a-barwick/issue/AB-154">AB-154</a> <a href="https://linear.app/a-barwick/issue/AB-155">AB-155</a></td><td>10</td></tr>
           <tr><td>Memory</td><td>Separate stores for user knowledge, history, active work, procedures and authority. Memories have a source and scope, and the user can inspect, correct and forget them.</td><td><a href="https://linear.app/a-barwick/issue/AB-156">AB-156</a> <a href="https://linear.app/a-barwick/issue/AB-157">AB-157</a></td><td>10</td></tr>
           <tr><td>Results and files</td><td>Saved outputs with stable IDs and revisions, typed message parts, uploads from the user, and an event log with a live stream.</td><td><a href="https://linear.app/a-barwick/issue/AB-173">AB-173</a> <a href="https://linear.app/a-barwick/issue/AB-174">AB-174</a> <a href="https://linear.app/a-barwick/issue/AB-175">AB-175</a> <a href="https://linear.app/a-barwick/issue/AB-176">AB-176</a> <a href="https://linear.app/a-barwick/issue/AB-177">AB-177</a> <a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a> <a href="https://linear.app/a-barwick/issue/AB-207">AB-207</a> <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></td><td>8</td></tr>
@@ -46,7 +46,7 @@ const miles = [
     [1, 'Simpler and cheaper', 5, 6, 'AB-188 spend alert in review'],
     [2, 'Conversational home, deployed', 6, 8, 'AB-143, AB-147 in progress'],
     [3, 'Many tasks at once', 0, 13, 'code merged, tickets behind'],
-    [4, 'Waits and finishing properly', 0, 16, 'complete + Jev check'],
+    [4, 'Waits and finishing properly', 0, 16, 'local model journeys pass; deployment pending'],
     [5, 'Real capabilities', 0, 8, 'search, vision, tool discovery, calendar read'],
     [6, 'Approvals and writes', 0, 7, 'first approved write'],
     [7, 'Subtasks', 0, 1, 'request_work'],

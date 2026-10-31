@@ -13,7 +13,13 @@ import (
 // Only explicitly selected operational fields cross the export boundary.
 // This also protects Sentry when an Arize span opts into model text.
 var operationalKeys = map[string]bool{
+	"nori.completion.failure_count": true, "nori.completion.verified": true, "nori.completion.available": true,
+	"nori.completion.score": true, "nori.completion.choice": true,
+	"nori.hold.id": true, "nori.hold.count": true, "nori.hold.status": true, "nori.command.interrupt": true,
+	"nori.operation.effect_class": true, "nori.operation.attempt": true, "nori.operation.stop_confirmed": true,
+	"nori.history.bytes": true, "nori.history.blocks": true,
 	"openinference.span.kind": true, "session.id": true,
+	"gen_ai.request.reasoning_effort": true, "gen_ai.request.service_tier": true,
 	"gen_ai.operation.name": true, "gen_ai.provider.name": true, "gen_ai.request.model": true,
 	"gen_ai.usage.input_tokens": true, "gen_ai.usage.output_tokens": true,
 	"gen_ai.usage.cache_read.input_tokens": true, "gen_ai.usage.reasoning.output_tokens": true,
@@ -31,6 +37,7 @@ var operationalKeys = map[string]bool{
 	"nori.classification.intent": true, "nori.computer.operation": true, "nori.computer.allow_start": true, "nori.computer.reconnect_count": true,
 	"nori.workflow.id": true, "nori.workflow.run_id": true, "nori.activity.id": true, "nori.activity.attempt": true,
 	"nori.reply.status": true, "nori.output.present": true, "nori.conversation.input_count": true,
+	"nori.reply.receipt_ack":          true,
 	"nori.conversation.restart_count": true, "nori.cost.usd": true, "nori.cost.status": true,
 }
 

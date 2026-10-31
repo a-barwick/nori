@@ -10,7 +10,7 @@
 <body>
 <h1>Budgets and controls</h1>
 <p class="lede">How Nori keeps spending visible, and the four different ways work can pause or stop.</p>
-<p>There are four separate controls here, and they're easy to mix up. On cost:</p><ul class="pts"><li>Model cost comes from what the provider reports, and the workflow adds it up.</li><li>The $1 limit is checked between calls to decide whether to pause, so it isn't a hard cap on billing.</li></ul>
+<p>There are four separate controls here, and they're easy to mix up. On cost:</p><ul class="pts"><li>The task worker adds up OpenRouter-reported cost. The outer loop calculates OpenAI cost from reported tokens.</li><li>The $1 limit is checked between calls to decide whether to pause, so it isn't a hard cap on billing.</li></ul>
   <div class="grid4">
     <div class="card tight"><p class="keyline">Task budget · $1</p><p class="note">Applies to each top-level task. When it runs out, the task saves its progress and asks, and <code>continue</code> adds $1. Reporting the pause doesn't use a model call.</p></div>
     <div class="card tight"><p class="keyline">Input / dependency wait</p><p class="note">The task parks with its identity, question and records intact. No timer ends it.</p></div>
@@ -22,7 +22,7 @@
     <div class="flow" style="flex-direction:row;align-items:center;gap:0;flex-wrap:wrap">
       <div class="node" style="flex:1;min-width:150px"><b>Usage row written</b><small>Before provider I/O, with status pending, then received or unknown</small></div>
       <div class="arrow" style="padding:0 6px">→</div>
-      <div class="node" style="flex:1;min-width:150px"><b>Provider reports tokens</b><small>Both loops use the cost OpenRouter reports.</small></div>
+      <div class="node" style="flex:1;min-width:150px"><b>Provider reports tokens</b><small>OpenRouter reports inner cost. Sol cost is calculated from OpenAI token usage, including reasoning output.</small></div>
       <div class="arrow" style="padding:0 6px">→</div>
       <div class="node inner" style="flex:1;min-width:150px"><b>Workflow adds to spent</b><small>It's added to the task's spent figure between calls</small></div>
       <div class="arrow" style="padding:0 6px">→</div>
@@ -30,5 +30,9 @@
     </div>
     <p class="note" style="margin:12px 0 0;font-weight:600">Operating rules</p><ul class="pts note"><li>Cloud Run and Agent Runtime run with a minimum of 0 and a maximum of 1 instance.</li><li>When live work finishes, worker pools scale to zero and the computer stops.</li><li>Credentials are in the gitignored root <code>.env</code> (mode 600) and are kept out of model context, logs and workflow history.</li></ul>
   </div>
+<section><h2>Development inference</h2>
+<div class="card"><table><tr><th>Scope</th><th>Limit</th></tr><tr><td>One logical development chat</td><td>$0.25 initially; eligible $0.25 increases up to $1.</td></tr><tr><td>Shared model use</td><td>$2 per UTC day and $20 per UTC month. Jev is excluded.</td></tr></table></div>
+<p>OpenAI and OpenRouter calls reserve maximum request cost atomically before dispatch. Unknown usage keeps the reservation.</p>
+<details class="more"><summary>Provider pricing and enforcement</summary><p>Pricing checked October 31, 2026: Sol standard tier costs $2 per million input tokens, $0.10 per million cached input tokens and $10 per million output tokens. Nori disables implicit cache writes and refuses requests above the 272K input pricing threshold. Terra's ceilings remain $1 input and $5 output per million tokens.</p><p>The direct OpenAI project key has no native per-chat cap. Nori's adapters enforce the shared ledger; arbitrary calls outside those adapters are not intercepted. OpenRouter also has a scoped native key limit.</p><p><a href="https://developers.openai.com/api/docs/models/gpt-6.1-sol">Sol pricing</a> · <a href="https://github.com/a-barwick/nori/blob/main/core/internal/spend/client.go">Request reservations</a></p></details></section>
 </body>
 </html>

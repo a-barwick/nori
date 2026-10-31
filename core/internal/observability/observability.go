@@ -4,6 +4,8 @@ package observability
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -148,12 +150,28 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 		if !strings.HasPrefix(endpoint, "https://") {
 			fmt.Fprintln(os.Stderr, "observability: Arize endpoint must use HTTPS")
 		} else {
-			exporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(endpoint), otlptracehttp.WithHeaders(map[string]string{"arize-space-id": space, "arize-api-key": key}), otlptracehttp.WithTimeout(2*time.Second), otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: false}))
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "observability: Arize exporter unavailable")
-			} else {
-				options = append(options, batch(&filteredExporter{inner: exporter, arize: true}))
-				exporters++
+			arizeOptions := []otlptracehttp.Option{otlptracehttp.WithEndpointURL(endpoint), otlptracehttp.WithHeaders(map[string]string{"arize-space-id": space, "arize-api-key": key}), otlptracehttp.WithTimeout(2 * time.Second), otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: false})}
+			certificateValid := true
+			// Trust an explicitly configured collector CA for Arize only. Global
+			// OTLP certificate options also change Sentry's independent exporter.
+			if path := os.Getenv("ARIZE_OTLP_CERTIFICATE"); path != "" {
+				pool, poolErr := x509.SystemCertPool()
+				certificate, readErr := os.ReadFile(path)
+				if poolErr != nil || readErr != nil || len(certificate) > 1<<20 || pool == nil || !pool.AppendCertsFromPEM(certificate) {
+					certificateValid = false
+					fmt.Fprintln(os.Stderr, "observability: invalid Arize collector certificate; Arize export disabled")
+				} else {
+					arizeOptions = append(arizeOptions, otlptracehttp.WithTLSClientConfig(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}))
+				}
+			}
+			if certificateValid {
+				exporter, err := otlptracehttp.New(ctx, arizeOptions...)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "observability: Arize exporter unavailable")
+				} else {
+					options = append(options, batch(&filteredExporter{inner: exporter, arize: true}))
+					exporters++
+				}
 			}
 		}
 	} else if space != "" || key != "" {

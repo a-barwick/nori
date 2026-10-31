@@ -82,10 +82,11 @@ def verify_spend_binding(c):
     if (spec.get("serviceAccount") != "nori-sandbox-runtime@" + PROJECT + ".iam.gserviceaccount.com" or
             env.get("NORI_SPEND_SCOPE") != os.environ.get("NORI_SPEND_SCOPE") or
             env.get("NORI_SPEND_PROFILE") != "feature" or
+            secrets.get("OPENAI_API_KEY") != {"secret": "nori-sandbox-openai-api-key", "version": "latest"} or
             secrets.get("OPENROUTER_API_KEY") != {"secret": "nori-sandbox-openrouter-api-key", "version": version}):
         raise RuntimeError("Sandbox runtime is not bound to the current feature spend lease")
-    if "OPENROUTER_API_KEY" in env or "OPENROUTER_MANAGEMENT_KEY" in env or "OPENROUTER_MANAGEMENT_KEY" in secrets:
-        raise RuntimeError("Sandbox credentials must use only the scoped native OpenRouter secret reference")
+    if "OPENAI_API_KEY" in env or "OPENROUTER_API_KEY" in env or "OPENROUTER_MANAGEMENT_KEY" in env or "OPENROUTER_MANAGEMENT_KEY" in secrets:
+        raise RuntimeError("Sandbox provider credentials must use their selected secret references")
     # Firestore terminal status can precede Temporal completion. Refuse that
     # gap rather than wake any workflow pinned to an older unguarded binary.
     running = temporal_command("workflow", "list", '--query=ExecutionStatus = "Running" AND TaskQueue = "' + TASK_QUEUE + '"')
@@ -553,7 +554,7 @@ def main():
             "NORI_WORKER_SERVICES": json.dumps(services),
             "NORI_WORKER_WAKE_QUEUE": workers.get("worker_wake_queue", ""),
             "NORI_AGENT_MODEL": c["outer_model"],
-            "NORI_AGENT_BASE_URL": "https://openrouter.ai/api/v1",
+            "NORI_AGENT_BASE_URL": "https://api.openai.com/v1",
             "NORI_WAKE_QUEUE": c["conversation_queue"],
             "NORI_WAKE_SERVICE_ACCOUNT": c["conversation_wake_service_account"],
             "NORI_RUNTIME_URL": c["runtime_url"],
@@ -564,8 +565,12 @@ def main():
             "TEMPORAL_DEPLOYMENT_NAME": DEPLOYMENT,
             "TEMPORAL_API_KEY_SECRET_VERSION": f"projects/{PROJECT}/secrets/nori-temporal-api-key/versions/latest",
         }.items()})
-        deployment = {"env": list(env.values())}
-        mask = "spec.containerSpec.imageUri,spec.deploymentSpec.env"
+        env.pop("OPENAI_API_KEY", None)
+        secret_env = {entry["name"]: entry for entry in current.get("spec", {}).get("deploymentSpec", {}).get("secretEnv", [])}
+        secret_env["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "secretRef": {
+            "secret": "nori-sandbox-openai-api-key" if ENVIRONMENT == "sandbox" else "nori-openai-api-key", "version": "latest"}}
+        deployment = {"env": list(env.values()), "secretEnv": list(secret_env.values())}
+        mask = "spec.containerSpec.imageUri,spec.deploymentSpec.env,spec.deploymentSpec.secretEnv"
         if ENVIRONMENT == "sandbox":
             spend_status()
             version = os.environ.get("NORI_SPEND_KEY_SECRET_VERSION", "")
@@ -576,13 +581,11 @@ def main():
             # Replace the inherited production key with this run's bounded
             # native OpenRouter key; the management credential stays in the operator launcher.
             env.pop("OPENROUTER_API_KEY", None)
-            secret_env = {entry["name"]: entry for entry in current.get("spec", {}).get("deploymentSpec", {}).get("secretEnv", [])}
             for key in ("NORI_SPEND_TOKEN", "NORI_SPEND_URL", "OPENROUTER_MANAGEMENT_KEY"):
                 env.pop(key, None)
                 secret_env.pop(key, None)
             secret_env["OPENROUTER_API_KEY"] = {"name": "OPENROUTER_API_KEY", "secretRef": {"secret": "nori-sandbox-openrouter-api-key", "version": version}}
             deployment.update(env=list(env.values()), secretEnv=list(secret_env.values()))
-            mask += ",spec.deploymentSpec.secretEnv"
         operation(api("PATCH", base + "?updateMask=" + mask, {"spec": {"containerSpec": {"imageUri": args.value, "port": 8080}, "deploymentSpec": deployment}}), "vertex")
         print("Runtime image updated.")
     elif args.action == "deploy-web":

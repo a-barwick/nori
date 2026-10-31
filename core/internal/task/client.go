@@ -137,7 +137,14 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) (resul
 				continue
 			}
 		} else {
-			_, e = c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, client.StartWorkflowOptions{ID: WorkflowID(cmd.RunID), TaskQueue: Queue(), WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}, WorkflowName, cmd.RunID)
+			options := client.StartWorkflowOptions{ID: WorkflowID(cmd.RunID), TaskQueue: Queue(), WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}
+			if run.WorkflowVersion < state.TaskWorkflowVersion {
+				// A retained v2 start intent keeps its original execution lane and
+				// argument shape, even when its first delivery follows an upgrade.
+				_, e = c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, options, PriorWorkflowName, cmd.RunID)
+			} else {
+				_, e = c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, options, WorkflowName, cmd.RunID, Checkpoint{})
+			}
 		}
 		if e != nil {
 			failures = append(failures, fmt.Errorf("command %s delivery: %w", cmd.ID, e))

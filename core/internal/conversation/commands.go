@@ -35,13 +35,15 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 			command.Kind, command.Text = "start", strings.TrimSpace(args.Request)
 		case "steer":
 			var args struct {
-				RunID string `json:"run_id"`
-				Text  string `json:"text"`
+				RunID     string `json:"run_id"`
+				Text      string `json:"text"`
+				Interrupt bool   `json:"interrupt,omitempty"`
 			}
 			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
 				return nil, err
 			}
 			command.Kind, command.RunID, command.Text = "steer", args.RunID, strings.TrimSpace(args.Text)
+			command.Interrupt = args.Interrupt
 		case "answer":
 			var args struct {
 				RunID      string `json:"run_id"`
@@ -61,6 +63,15 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				return nil, err
 			}
 			command.Kind, command.RunID, command.QuestionID = "continue", args.RunID, args.QuestionID
+		case "hold":
+			var args struct {
+				TaskID   string `json:"task_id"`
+				Question string `json:"question"`
+			}
+			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
+				return nil, err
+			}
+			command.Kind, command.RunID, command.Text = "hold", args.TaskID, strings.TrimSpace(args.Question)
 		case "stop":
 			var args struct {
 				RunID string `json:"run_id"`
@@ -78,7 +89,7 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				return nil, fmt.Errorf("task command requires a canonical task UUID")
 			}
 		}
-		if command.Kind == "start" || command.Kind == "steer" || command.Kind == "answer" {
+		if command.Kind == "start" || command.Kind == "steer" || command.Kind == "answer" || command.Kind == "hold" {
 			if command.Text == "" || len(command.Text) > 8192 {
 				return nil, fmt.Errorf("task command text must contain 1 to 8192 UTF-8 bytes")
 			}
@@ -103,4 +114,33 @@ func decodeCommandArguments(arguments string, target any) error {
 		return fmt.Errorf("invalid task command arguments")
 	}
 	return nil
+}
+
+// Tool-only model messages are valid. Acknowledge only durable receipts, after
+// admission (or recovery), without another model call or a claim of completion.
+func acceptedCommandText(actions []state.ConversationAction) string {
+	counts := map[string]int{}
+	for _, action := range actions {
+		if action.Status == "accepted" {
+			counts[action.Command.Kind]++
+		}
+	}
+	parts := []string{}
+	if n := counts["start"]; n == 1 {
+		parts = append(parts, "I've accepted your task. I'll let you know when it needs your input or has a result.")
+	} else if n > 1 {
+		parts = append(parts, fmt.Sprintf("I've accepted your %d tasks. I'll let you know when they need your input or have results.", n))
+	}
+	for _, item := range []struct{ kind, text string }{
+		{"steer", "I've saved your task updates."},
+		{"answer", "I've saved your answer."},
+		{"continue", "I've accepted your request to continue."},
+		{"hold", "I've saved your question to answer when the task has an outcome."},
+		{"stop", "I've requested that the task work stop. I'll confirm when it has stopped."},
+	} {
+		if counts[item.kind] > 0 {
+			parts = append(parts, item.text)
+		}
+	}
+	return strings.Join(parts, " ")
 }

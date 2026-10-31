@@ -14,6 +14,11 @@ import (
 )
 
 var errorCategories = map[string]bool{
+	"task.history.sync": true, "task.history.model": true, "task.history.tool": true,
+	"task.history.position": true,
+	"task.history.question": true, "task.history.append_result": true, "task.history.publish": true,
+	"task.completion.check": true, "task.completion.jev": true,
+	"task.evidence": true, "task.history": true, "task.completion": true,
 	"startup": true, "operation": true, "http.request": true, "http.panic": true, "http.listen": true, "wake.conversation": true, "wake.worker": true,
 	"worker.lifecycle": true, "conversation.accept": true, "conversation.snapshot": true,
 	"conversation.process": true, "conversation.attempt": true, "conversation.command": true,
@@ -24,6 +29,10 @@ var errorCategories = map[string]bool{
 }
 
 var eventNames = map[string]bool{
+	"conversation.command_acknowledgment": true,
+	"task.incomplete":                     true,
+	"conversation.hold.accepted":          true, "conversation.hold.answered": true, "conversation.correction.accepted": true,
+	"task.operation.recorded": true, "task.operation.interrupted": true, "task.operation.retry": true,
 	"nori request completed": true, "operation.failed": true,
 	"worker.slice.started": true, "worker.slice.completed": true, "worker.slice.failed": true,
 	"conversation.accepted": true, "conversation.completed": true, "conversation.failed": true,

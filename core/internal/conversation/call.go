@@ -416,26 +416,24 @@ func (r *Runner) finishCall(ctx, callCtx context.Context, f state.ConversationFe
 		if stale {
 			return r.checkpoint(ctx, f, *t)
 		}
+		// Retain rejected provider messages in private attempt records for diagnosis.
+		// They must never become conversation history or accepted commands.
+		t.Attempt.Reply = string(reply.Message)
+		t.Attempt.StructuredReply = reply.Structured
+		t.Attempt.ProtocolInvalid = len(reply.Message) > 0
 		attemptEnd(&t.Attempt, "error", modelErr.Error())
 		t.Attempt.Text = failureText
 	} else {
 		t.Attempt.Reply = string(reply.Message)
+		t.Attempt.StructuredReply = reply.Structured
 		commands, err := commandRequests(reply.Calls)
 		if noDispatch && len(reply.Calls) != 0 {
 			err = fmt.Errorf("a turn without user input cannot authorize task commands")
 		}
-		if err != nil || reply.Text == "" {
+		if err != nil {
 			failure := "The model returned invalid tool calls. No task commands were accepted."
-			if err == nil {
-				failure = "The model did not include a reply with its tool calls. No task commands were accepted."
-			}
 			attemptEnd(&t.Attempt, "error", failure)
-			t.Attempt.ProtocolInvalid = err != nil
-			if err == nil {
-				for _, call := range reply.Calls {
-					t.Attempt.Results = append(t.Attempt.Results, string(toolResult(call.ID, map[string]string{"error": failure})))
-				}
-			}
+			t.Attempt.ProtocolInvalid = true
 			t.Attempt.Text = failure
 		} else {
 			t.Attempt.Reply = string(reply.Message)

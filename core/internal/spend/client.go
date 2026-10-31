@@ -84,6 +84,9 @@ func (c *Client) Close() {
 	}
 }
 func (c *Client) open(ctx context.Context) error {
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
+		return blocked("shared budget cannot use an emulator; use NORI_STATE_EMULATOR_HOST for app data")
+	}
 	store, err := firestore.NewClientWithDatabase(ctx, c.project, c.database)
 	if err != nil {
 		return blocked("budget database is unavailable")
@@ -212,7 +215,7 @@ func CIContextStart(ctx context.Context) (time.Time, error) {
 
 func (c *Client) outputCap(provider string) int {
 	switch provider {
-	case "openrouter":
+	case "openrouter", "openai":
 		if c.profile == "ci" {
 			return 512
 		}
@@ -264,6 +267,12 @@ func (c *Client) Reserve(ctx context.Context, provider, model string, inputBytes
 		inRate, outRate = 4400, 22000
 	case provider == "openrouter" && model == "meta/muse-spark-1.3":
 		inRate, outRate = 1250, 4250
+	case provider == "openai" && model == "gpt-6.1-sol":
+		// Stay below the long-context pricing threshold even at one token per byte.
+		if inputBytes+FramingBytes > 272_000 {
+			return nil, blocked("OpenAI request exceeds standard-price context bounds")
+		}
+		inRate, outRate = 2000, 10000
 	case provider == "openrouter" && model == "openai/gpt-6.1-terra":
 		inRate, outRate = 1000, 5000
 	case provider == "vertex" && model == "gemini-3.8-flash":
@@ -332,7 +341,7 @@ func (r *Reservation) Settle(ctx context.Context, costUSD *float64, _ string, us
 	}
 	actual := int64(0)
 	switch r.provider {
-	case "openrouter":
+	case "openrouter", "openai":
 		if costUSD == nil {
 			return nil
 		}

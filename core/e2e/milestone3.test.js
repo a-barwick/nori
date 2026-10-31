@@ -67,7 +67,7 @@ journey("two browser tasks wait independently; exact answers replay once and tar
   const before = new Set((await settled()).runs.map((run) => run.id));
   try {
     await turn("Start exactly two independent tasks now, one for https://example.org and one for https://example.com. " +
-      "For EACH task: navigate to its own website with the browser, capture a screenshot, then use wait_for_input to ask whether to finish that website report. " +
+      "For EACH task: navigate to its own website with the browser, capture a screenshot, then use request_input to ask whether to finish that website report. " +
       "Use only browser navigation, screenshot and waiting tools; do not run shell commands or fill or submit forms. " +
       "Do not finish either task before its answer. After an answer, write a detailed report of the observed page. " +
       "Each dispatched request must name only its own website; do not combine them into one task.");
@@ -130,7 +130,7 @@ journey("a correction during real model work preserves trip constraints and prod
   const before = new Set((await settled()).runs.map((run) => run.id));
   try {
     await turn("Start one writing task: plan a Seattle trip for November 14–16, 2026 with a $500 total budget. " +
-      "First use wait_for_input to ask what kind of hotel I want; do not draft the itinerary until I answer. " +
+      "First use request_input to ask what kind of hotel I want; do not draft the itinerary until I answer. " +
       "Then write a detailed approximately 900-word itinerary with daily activities, lodging, meals and an itemized budget. " +
       "Use your own knowledge without browser or shell tools, do not book anything, and do not ask further questions after the hotel answer.");
     const routed = newRuns(await settled(), before);

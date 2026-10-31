@@ -16,10 +16,11 @@ import { gunzipSync, inflateSync } from "node:zlib";
 const live = process.env.NORI_OBSERVABILITY_E2E === "1";
 const journey = live ? test : test.skip;
 const core = resolve(import.meta.dir, "..");
-const rootEnv = resolve(core, "../.env");
+
 const modelEnv = process.env.NORI_OBSERVABILITY_MODEL_ENV_FILE;
 const suffix = randomBytes(6).toString("hex");
-const project = `nori-obs-${suffix}`;
+// Keep the real shared spend project; only app data uses a unique emulator database.
+const project = "bot-111549";
 const databases = [];
 const processes = new Set();
 const packets = [];
@@ -135,7 +136,7 @@ async function stop(child) {
 
 async function startAPI(index) {
   const database = `nori-obs-${suffix}-${index}`;
-  if (!/^nori-obs-[a-f0-9]{12}-[12]$/.test(database) || !/^nori-obs-[a-f0-9]{12}$/.test(project)) throw new Error("Unsafe emulator isolation settings");
+  if (!/^nori-obs-[a-f0-9]{12}-[12]$/.test(database) || project !== "bot-111549") throw new Error("Unsafe emulator isolation settings");
   databases.push(database);
   const documents = `http://${firestore}/v1/projects/${project}/databases/${database}/documents`;
   const control = await fetch(`${documents}/system/control`, {
@@ -148,10 +149,10 @@ async function startAPI(index) {
   const queue = `nori-obs-${suffix}-${index}`;
   const child = spawn(binary, [], { cwd: core, stdio: "ignore", env: {
     ...process.env,
-    NORI_ENV_FILE: rootEnv, NORI_TASK_ENV_FILE: rootEnv,
-    OPENROUTER_API_KEY: credentials.OPENROUTER_API_KEY, JEV_API_KEY: credentials.JEV_API_KEY,
-    NORI_AGENT_BASE_URL: "https://openrouter.ai/api/v1", NORI_AGENT_MODEL: "meta/muse-spark-1.3",
-    NORI_PROJECT_ID: project, FIRESTORE_DATABASE_ID: database, FIRESTORE_EMULATOR_HOST: firestore,
+    NORI_ENV_FILE: modelEnv, NORI_TASK_ENV_FILE: modelEnv,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY, JEV_API_KEY: credentials.JEV_API_KEY,
+    NORI_AGENT_BASE_URL: "https://api.openai.com/v1", NORI_AGENT_MODEL: "gpt-6.1-sol",
+    NORI_PROJECT_ID: project, FIRESTORE_DATABASE_ID: database, NORI_STATE_EMULATOR_HOST: firestore, FIRESTORE_EMULATOR_HOST: "",
     NORI_LOCAL_ARTIFACT_DIR: resolve(directory, `artifacts-${index}`), ARTIFACT_BUCKET: "unused-e2e",
     PORT: String(port), TEMPORAL_ADDRESS: temporal, TEMPORAL_NAMESPACE: "default", TEMPORAL_LOCAL: "true",
     TEMPORAL_CLOUD_RUN_ID: "false", TEMPORAL_API_KEY: "", TEMPORAL_TASK_QUEUE: queue,
@@ -191,9 +192,9 @@ beforeAll(async () => {
   if (!live) return;
   if (!modelEnv || !isAbsolute(modelEnv)) throw new Error("NORI_OBSERVABILITY_MODEL_ENV_FILE must name an existing absolute model credential file");
   credentials = parseEnv(readFileSync(modelEnv, "utf8"));
-  const telemetry = parseEnv(readFileSync(rootEnv, "utf8"));
-  if (!credentials.OPENROUTER_API_KEY || !credentials.JEV_API_KEY) throw new Error("Selected OpenRouter and Jev credentials are required in the existing model environment");
-  privateValues = [credentials.OPENROUTER_API_KEY, credentials.JEV_API_KEY, telemetry.ARIZE_API_KEY, telemetry.ARIZE_SPACE_ID,
+  const telemetry = credentials;
+  if (!process.env.NORI_SPEND_SCOPE || !process.env.OPENAI_API_KEY || !credentials.JEV_API_KEY) throw new Error("Use the spend wrapper with the selected OpenAI and Jev credentials");
+  privateValues = [process.env.OPENAI_API_KEY, credentials.OPENROUTER_API_KEY, credentials.JEV_API_KEY, telemetry.ARIZE_API_KEY, telemetry.ARIZE_SPACE_ID,
     `NORI_PRIVATE_CHAT_${suffix}`, `NORI_PRIVATE_QUERY_${suffix}`, `NORI_PRIVATE_AUTH_${suffix}`, `NORI_PRIVATE_COOKIE_${suffix}`, `NORI_PRIVATE_URL_${suffix}`].filter(Boolean);
   directory = mkdtempSync(resolve(tmpdir(), "nori-observability-e2e-"));
   binary = resolve(directory, "nori-local");
@@ -221,7 +222,7 @@ afterAll(async () => {
   for (const child of [...processes]) await stop(child);
   if (collector) await new Promise((done) => collector.close(done));
   for (const database of databases) {
-    if (/^nori-obs-[a-f0-9]{12}-[12]$/.test(database) && /^nori-obs-[a-f0-9]{12}$/.test(project)) {
+    if (/^nori-obs-[a-f0-9]{12}-[12]$/.test(database) && project === "bot-111549") {
       const response = await fetch(`http://${firestore}/emulator/v1/projects/${project}/databases/${database}/documents`, { method: "DELETE" });
       if (!response.ok) throw new Error(`Could not clean isolated emulator database: HTTP ${response.status}`);
     }
@@ -242,8 +243,8 @@ journey("a saved turn produces a successful traced private reply", async () => {
   const result = await visibleReply(address, id);
   expect(result.input.text === message).toBe(true);
   expect(result.reply.text.length > 0).toBe(true);
-  expect(result.attempt.status).toBe("completed");
-  expect(result.attempt.model).toBe("meta/muse-spark-1.3");
+  expect(result.attempt.status, result.attempt.error || "The selected model must reply successfully").toBe("completed");
+  expect(result.attempt.model).toBe("gpt-6.1-sol");
   if (result.attempt.status === "error") expect(result.reply.text.includes("Your message is saved")).toBe(true);
   expect(result.session.runs.length).toBe(0);
   await until(() => exportedSpans(), (spans) => spans.some((span) => span.trace === trace && span.name === "conversation.acceptance_to_reply"), "exported reply trace", 15_000);
@@ -278,7 +279,7 @@ journey("an unavailable telemetry receiver does not prevent a durable conversati
   const result = await visibleReply(address, id);
   expect(result.input.text === message).toBe(true);
   expect(result.reply.text.length > 0).toBe(true);
-  expect(result.attempt.status).toBe("completed");
+  expect(result.attempt.status, result.attempt.error || "The selected model must reply successfully").toBe("completed");
   expect(result.session.runs.length).toBe(0);
   expect(exportAttempts > before).toBe(true);
   await stop(child);
