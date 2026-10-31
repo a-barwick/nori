@@ -165,12 +165,21 @@ def run(config, deadline, evidence_callback=lambda _: None):
         iap = _iap_jwt(config, health, token, work_end)
         if _json(health, work_end, token=iap).get("status") != "ok": raise SmokeError("Web health failed")
         evidence_callback({"check": "web_health", "status": "passed"})
-        session = _post(base, "session", {}, token, work_end)
-        conversation = session.get("conversation", {})
-        runs = session.get("runs", [])
-        if (session.get("paused") or conversation.get("pending") or conversation.get("processing") or
-                any(r.get("status") not in TERMINAL or r.get("id") not in before for r in runs)):
-            raise SmokeError("Smoke requires an unpaused, idle session")
+        while True:
+            session = _post(base, "session", {}, token, work_end)
+            conversation = session.get("conversation", {})
+            runs = session.get("runs", [])
+            if (session.get("paused") or
+                    any(r.get("status") not in TERMINAL or r.get("id") not in before for r in runs)):
+                raise SmokeError("Smoke requires an unpaused, idle session")
+            if not conversation.get("pending") and not conversation.get("processing"):
+                break
+            # The first session read schedules Nori's greeting. Only that
+            # identified bootstrap turn may settle before the smoke input.
+            if (not conversation.get("introducing") or conversation.get("revision") != 1 or
+                    set(conversation.get("input_ids", [])) - {"nori-introduction"}):
+                raise SmokeError("Smoke requires an unpaused, idle session")
+            time.sleep(min(2, _left(work_end)))
         message = ("Start exactly one task: navigate to https://example.org using the browser, capture a screenshot, "
                    "then finish with a short description. Do not ask questions, run shell commands, fill forms, "
                    "or start other tasks. Include this identifier in the task request: nori-release-smoke-" + input_id)
