@@ -32,7 +32,7 @@ variable "observability" {
 
 locals {
   telemetry_enabled = var.observability.core_dsn != "" || var.observability.arize_secret != ""
-  telemetry_env = local.telemetry_enabled ? merge({
+  telemetry_env_values = local.telemetry_enabled ? merge({
     SENTRY_DSN                   = var.observability.core_dsn
     SENTRY_ENVIRONMENT           = var.environment
     SENTRY_TRACES_SAMPLE_RATE    = tostring(var.observability.trace_sample_rate)
@@ -48,6 +48,9 @@ locals {
     NORI_ARIZE_CAPTURE_CONTENT = tostring(var.observability.arize_capture_content)
     NORI_ARIZE_SPANS_PER_HOUR  = tostring(var.observability.arize_spans_per_hour)
   }) : {}
+  # Agent Runtime rejects environment entries with an empty value. Omit
+  # optional settings so the SDK can use its own defaults.
+  telemetry_env = { for name, value in local.telemetry_env_values : name => value if value != "" }
 }
 
 # The release controller uses this public configuration when preparing a new
