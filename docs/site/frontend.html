@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frontend architecture · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Frontend architecture</h1>
+<p class="lede">The browser talks to a Next.js server, and that server talks to the runtime. The client never calls a model.</p>
+<section><h2>Request path</h2>
+<div class="card"><div class="flow">
+<div class="node"><b>React client</b><small><code>NoriApp</code> and its components. All state comes from one hook, <code>useRuntime</code>.</small></div>
+<div class="arrow">↓ <span class="lbl">same-origin POST /api/{operation}</span></div>
+<div class="node"><b>Next.js server</b><small><code>proxy.ts</code> checks the owner on every private route. <code>lib/runtime/server.ts</code> checks the origin and the operation, then adds a Google token.</small></div>
+<div class="arrow">↓ <span class="lbl">POST /api/{operation} with server credentials</span></div>
+<div class="node"><b>Runtime</b><small>Saves commands and returns snapshots. See <a href="clients.html">Clients</a> for the endpoints.</small></div>
+</div></div>
+<div class="card"><table class="tall"><tr><th>Operation</th><th>Client use</th></tr>
+<tr><td><code>session</code></td><td>Loads a snapshot, or an older page with <code>before</code>.</td></tr>
+<tr><td><code>turn</code></td><td>Sends a message with a client-made UUID.</td></tr>
+<tr><td><code>command</code></td><td>Sends <code>steer</code>, <code>answer</code>, <code>continue</code> or <code>stop</code> for one task.</td></tr>
+<tr><td><code>artifact</code></td><td>Fetches a screenshot as PNG bytes.</td></tr>
+<tr><td><code>trace</code></td><td>Fetches task steps when a debug row is open, every 3 seconds while the task runs.</td></tr>
+</table></div>
+<p>The server also forwards <code>input</code> and <code>cancel</code>, but the client doesn't call them.</p>
+</section>
+<section><h2>Sending a message</h2>
+<div class="card"><div class="flow">
+<div class="node"><b>Enter</b><small><code>send()</code> creates a UUID and saves the message to <code>sessionStorage</code>.</small></div>
+<div class="arrow">↓</div>
+<div class="node"><b>POST /api/turn</b><small>The runtime returns a snapshot.</small></div>
+<div class="arrow">↓</div>
+<div class="node"><b>Acknowledged</b><small>The client removes its pending copy once the snapshot lists that UUID.</small></div>
+<div class="arrow">↓</div>
+<div class="node"><b>Poll</b><small>The reply appears in a later snapshot. The client doesn't stream.</small></div>
+</div></div>
+<ul class="pts">
+<li>If a response is lost, Retry sends the same UUID. Pending messages also resend after a reload, a reconnect or a manual refresh.</li>
+<li>A message can be up to 8,192 UTF-8 bytes, and up to 20 messages can be pending.</li>
+<li>Task commands work the same way, with their own stored list. A command clears when the runtime accepts it or a snapshot shows the task has applied it.</li>
+<li>A <code>4xx</code> marks a command as rejected, and the panel offers Edit. Any other failure offers Retry.</li>
+</ul>
+</section>
+<section><h2>Polling</h2>
+<div class="card"><table class="tall"><tr><th>Situation</th><th>Client behavior</th></tr>
+<tr><td>A turn, unpaused task, Stop or command is in progress</td><td>Polls after 1 second, then every 2 seconds.</td></tr>
+<tr><td>Nothing is in progress</td><td>Doesn't poll.</td></tr>
+<tr><td>The tab is hidden</td><td>Stops polling, then fetches once when the tab is visible again.</td></tr>
+<tr><td>The browser comes back online</td><td>Fetches once.</td></tr>
+<tr><td>A request fails</td><td>Stops polling and shows the error, with a link to refresh.</td></tr>
+</table></div>
+<p>While the client is idle with the tab open, a new message from Nori doesn't appear until a refresh. Refresh history and returning to the tab both fetch a snapshot.</p>
+<details class="more"><summary>How snapshots merge</summary>
+<ul class="pts">
+<li>A snapshot with an older conversation revision, or the same revision from an older request, is ignored.</li>
+<li>Messages and traces merge by ID, so older pages stay loaded.</li>
+<li>A saved task only replaces the one in memory if its position, event sequence, applied commands, status and Stop flag haven't moved backward.</li>
+</ul>
+</details>
+<details class="more"><summary>Sign-in and limits</summary>
+<ul class="pts">
+<li>Production sits behind Google IAP. The server verifies the signed assertion and the owner's email, and ignores unsigned identity headers.</li>
+<li>POST routes also require a matching <code>Origin</code>. Browser credentials are never forwarded to the runtime.</li>
+<li>The hosted route allows bodies up to 128,000 characters and waits up to 145 seconds. The runtime URL must use HTTPS.</li>
+<li>In development on loopback, the owner check passes. If <code>NORI_LOCAL_AGENT_URL</code> is set, the client uses <code>/api/agent/{operation}</code> instead, with limits of 64,000 characters and 100 seconds.</li>
+<li><code>/api/health</code> is the only API route with no owner check.</li>
+</ul>
+</details>
+<details class="more"><summary>Observability</summary>
+<ul class="pts">
+<li>The layout writes public Sentry settings to <code>data-nori-observability</code> at request time, so one image can move between environments.</li>
+<li><code>useRuntime</code> records the time from submit to reply as <code>nori.submit_to_reply</code>, with a 15-minute timeout, and sends trace headers on <code>turn</code>.</li>
+<li>Filters in <code>lib/observability/privacy.ts</code> run before events, spans, logs and metrics are sent. The <code>sentry-tunnel</code> route checks the owner and strips request headers before forwarding.</li>
+</ul>
+</details>
+</section>
+<section><h2>Components</h2>
+<div class="card"><table class="tall"><tr><th>File in <code>web/src/</code></th><th>Job</th></tr>
+<tr><td><code>app/page.tsx</code></td><td>Server entry. Chooses local agent mode, then renders <code>NoriApp</code>.</td></tr>
+<tr><td><code>components/runtime/NoriApp.tsx</code></td><td>Composes the screen. Converts the session into thread items, sets status text and owns panel, debug and document state.</td></tr>
+<tr><td><code>components/nova/NovaShell.tsx</code></td><td>Window frame and header.</td></tr>
+<tr><td><code>components/chat/Thread.tsx</code></td><td>Scrolling, follow-to-bottom, unread counts, older-message anchoring, documents and the status line.</td></tr>
+<tr><td><code>components/chat/Message.tsx</code></td><td>One bubble.</td></tr>
+<tr><td><code>components/chat/Markdown.tsx</code></td><td>Renders Markdown in a <code>bubble</code> or <code>page</code> variant, with copy buttons on page code blocks.</td></tr>
+<tr><td><code>components/runtime/RuntimeComposer.tsx</code></td><td>Message input.</td></tr>
+<tr><td><code>components/runtime/TaskPanel.tsx</code></td><td>Task list, task commands, events, results and protected screenshots.</td></tr>
+<tr><td><code>components/runtime/DocumentViewer.tsx</code></td><td>Reading view and Download.</td></tr>
+<tr><td><code>components/dev/DebugBlock.tsx</code></td><td>Saved outer attempts, usage, cost and task steps, shown by the debug toggle.</td></tr>
+<tr><td><code>components/mark/NoriMark.tsx</code></td><td>The mark, plus <code>Medallion</code>, which gives it a fixed box.</td></tr>
+<tr><td><code>components/ui/primitives.tsx</code></td><td><code>Button</code>, <code>IconButton</code>, <code>SectionHeader</code>.</td></tr>
+</table></div>
+<p class="note">Radix supplies dialogs and tooltips, lucide supplies icons, and <code>react-markdown</code> with <code>remark-gfm</code> renders Markdown.</p>
+</section>
+<section><h2>Run and build</h2>
+<div class="card"><table class="tall"><tr><th>Command, from the repo root</th><th>What it does</th></tr>
+<tr><td><code>make dev</code></td><td>Runs the client on port 3210 with the local Go agent.</td></tr>
+<tr><td><code>make web</code></td><td>Runs only the client. With no runtime configured, it shows the connection error and disables Send.</td></tr>
+<tr><td><code>make web-build</code></td><td>Builds the Next.js standalone output.</td></tr>
+<tr><td><code>make check</code></td><td>Runs the repo checks before a merge.</td></tr>
+</table></div>
+<p>The stack is Next.js 16, React 19, Tailwind 4 and Bun. Production runs the Docker image on Cloud Run with <code>NORI_RUNTIME_URL</code>, <code>IAP_AUDIENCE</code> and <code>NORI_APP_ORIGIN</code>. See <a href="deploy.html">Deployment</a>.</p>
+</section>
+<details class="sources"><summary>Sources</summary><p><a href="https://github.com/a-barwick/nori/tree/main/web/src">web/src</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/lib/runtime/useRuntime.ts">useRuntime.ts</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/lib/runtime/server.ts">server.ts</a> · <a href="https://github.com/a-barwick/nori/blob/main/Makefile">Makefile</a> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
+</body>
+</html>
