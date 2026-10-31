@@ -2,7 +2,7 @@
 const NAV = [
   ['Start', [['index', 'Overview'], ['product', 'What Nori should do'], ['request', 'Following a request']]],
   ['The loops', [['outer-loop', 'Outer loop'], ['inner-loop', 'Inner loop'], ['contract', 'How the loops talk'], ['tasks', 'Task lifecycle'], ['completion', 'Finishing a task']]],
-  ['The system', [['system', 'System overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['budgets', 'Budgets and controls'], ['deploy', 'Deployment'], ['clients', 'Clients'], ['web-client', 'Web client']]],
+  ['The system', [['system', 'System overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['budgets', 'Budgets and controls'], ['deploy', 'Deployment'], ['clients', 'Clients'], ['web-client', 'Web client'], ['theme', 'Theme'], ['frontend', 'Frontend architecture']]],
   ['Planned', [['tools', 'Tool discovery'], ['authority', 'Approvals and writes'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['schedules', 'Schedules and proactive'], ['roadmap', 'Roadmap']]],
   ['Reference', [['scenarios', 'Scenarios'], ['decisions', 'Decisions'], ['open-questions', 'Open questions'], ['code', 'Code map'], ['words', 'Words we use'], ['reading', 'Reading list'], ['sources', 'Sources']]],
 ];
