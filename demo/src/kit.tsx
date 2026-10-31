@@ -24,9 +24,22 @@ export const usePop = (at: number, damping = 11) => {
   return spring({ frame: frame - at, fps, config: { damping, stiffness: 190, mass: 0.7 } });
 };
 
+export const RICE_PATH = "M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z";
+
+/** A sticker caption: tilted, overshooting, in the film's purple. */
+export const Sticker: React.FC<{ text: string; at: number; until?: number; size?: number; style?: React.CSSProperties }> = ({ text, at, until = 1e6, size = 66, style }) => {
+  const frame = useCurrentFrame();
+  const pop = usePop(at, 12) * interpolate(frame, [until - 5, until], [1, 0], clamp);
+  return (
+    <div style={{ position: "absolute", right: 64, top: 60, ...style }}>
+      <div style={{ scale: String(pop), rotate: "-1.5deg", padding: "20px 38px", borderRadius: 26, background: C.purple, color: "#fff", fontFamily, fontSize: size, fontWeight: 800, letterSpacing: -1.8, lineHeight: 1.08, boxShadow: "0 18px 50px #3a00b855", whiteSpace: "nowrap" }}>{text}</div>
+    </div>
+  );
+};
+
 /** The real mark from web/src/components/mark/NoriMark.tsx, with a frame-driven face. */
 export const Onigiri: React.FC<{ size: number; happy?: number; blink?: number }> = ({ size, happy = 0, blink = 0 }) => {
-  const body = "M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z";
+  const body = RICE_PATH;
   const face = { stroke: C.ink, strokeWidth: 2.6, strokeLinecap: "round" as const, fill: "none" };
   const id = `oni-${size}`;
   return (
@@ -71,7 +84,3 @@ export const Ribbons: React.FC<{ start: number; dur?: number; muted?: boolean }>
     </svg>
   );
 };
-
-export const Small: React.FC<{ children: React.ReactNode; color?: string; style?: React.CSSProperties }> = ({ children, color = C.ink, style }) => (
-  <div style={{ fontSize: 22, fontWeight: 500, color, opacity: 0.62, letterSpacing: 0.1, ...style }}>{children}</div>
-);

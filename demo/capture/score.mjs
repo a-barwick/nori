@@ -1,11 +1,10 @@
-// Synthesizes the score and sound effects, locked to src/timeline.json.
+// Synthesizes the score and sound effects, on the frame cues in SCRIPT.md.
 //   node capture/score.mjs   writes public/audio/score.wav
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const T = JSON.parse(readFileSync(resolve(root, "src/timeline.json"), "utf8"));
-const markers = JSON.parse(readFileSync(resolve(root, "public/clips/markers.json"), "utf8")).desktop.markers;
 const SR = 44100;
 const seconds = T.total / T.fps;
 const L = new Float32Array(Math.ceil(SR * (seconds + 0.5)));
@@ -77,94 +76,135 @@ function impact(t, g = 1) {
 const chords = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
 const roots = [33, 29, 36, 31];
 const lead = [76, 72, 69, 72, 77, 72, 69, 65, 79, 76, 72, 67, 79, 74, 71, 67];
-const barsTotal = Math.ceil(T.total / (T.framesPerBeat * 4));
 
-// Section index by bar: 0-1 cold open, 2-3 stat, 4+ the drop, ends on a held chord.
-const endBar = T.scenes.end.from / 60;
-for (let b = 0; b < barsTotal; b++) {
-  const t = b * bar;
-  const chord = chords[b % 4];
-  const root = roots[b % 4];
-  if (b < 2) {
-    // Tense pulse under the window pile-up.
-    for (let i = 0; i < 8; i++) bass(t + (i * beat) / 2, 33, 0.14, 0.45 + b * 0.25);
-  } else if (b < 4) {
-    for (let i = 0; i < 4; i++) { kick(t + i * beat, 0.75); hat(t + (i + 0.5) * beat, 0.7); }
-    for (let i = 0; i < 8; i++) bass(t + (i * beat) / 2, root, 0.18, 0.7);
-    stab(t + beat * 1.5, chord, 0.3, 0.7);
-    stab(t + beat * 3, chord, 0.3, 0.7);
-  } else if (b < endBar) {
-    const light = b >= T.scenes.trust.from / 60 ? 1.1 : 1;
+/** One bar of the full band, from film frame `from`, up to (not including) frame `to`. */
+function band(from, to, level = 1) {
+  for (let f = from; f < to; f += 60) {
+    const b = Math.floor(f / 60);
+    const t = F(f);
+    const chord = chords[b % 4];
+    const root = roots[b % 4];
+    const has = (o) => f + o * 15 < to;
     for (let i = 0; i < 4; i++) {
-      kick(t + i * beat);
-      hat(t + (i + 0.5) * beat);
-      hat(t + (i + 0.25) * beat, 0.35, -0.3);
-      hat(t + (i + 0.75) * beat, 0.35, -0.3);
+      if (!has(i)) continue;
+      kick(t + i * beat, level);
+      hat(t + (i + 0.5) * beat, level);
+      hat(t + (i + 0.25) * beat, 0.35 * level, -0.3);
+      hat(t + (i + 0.75) * beat, 0.35 * level, -0.3);
     }
-    clap(t + beat);
-    clap(t + beat * 3);
-    [0, 0.75, 1.5, 2, 2.75, 3.5].forEach((o) => bass(t + o * beat, root, 0.2));
-    [0.5, 1.5, 2.5, 3.5].forEach((o) => stab(t + o * beat, chord, 0.28, 0.85 * light));
-    for (let i = 0; i < 8; i++) pluck(t + (i * beat) / 2, lead[(b * 8 + i) % 16] + (b % 8 >= 6 ? 12 : 0), 0.55, i % 2 ? 0.35 : -0.35);
-  } else {
-    // End card: the band drops out, one chord rings, the mark gets a bell.
-    if (b === endBar) {
-      kick(t);
-      stab(t, [57, 60, 64, 69], 2.4, 1.5);
-      bass(t, 33, 2.2);
-      kick(t + beat * 2, 0.7);
-      stab(t + beat * 2, [53, 57, 60, 65], 2.2, 1.3);
-    } else if (b === endBar + 1) {
-      stab(t, [48, 55, 60, 64], 3, 1.5);
-      bass(t, 36, 2.8);
-      kick(t, 0.8);
-      [84, 88, 91, 96].forEach((n, i) => pluck(t + i * 0.12, n, 1.1, (i - 1.5) * 0.3));
-    }
+    if (has(1)) clap(t + beat, level);
+    if (has(3)) clap(t + beat * 3, level);
+    [0, 0.75, 1.5, 2, 2.75, 3.5].forEach((o) => { if (has(o)) bass(t + o * beat, root, 0.2, level); });
+    [0.5, 1.5, 2.5, 3.5].forEach((o) => { if (has(o)) stab(t + o * beat, chord, 0.28, 0.85 * level); });
+    for (let i = 0; i < 8; i++) if (has(i / 2)) pluck(t + (i * beat) / 2, lead[(b * 8 + i) % 16] + (b % 8 >= 6 ? 12 : 0), 0.55 * level, i % 2 ? 0.35 : -0.35);
   }
 }
+/** A low pulse on A, tightening: `from` to `to`, one note every `step` frames. */
+function pulse(from, to, step, g0, g1) {
+  for (let f = from; f < to; f += step) bass(F(f), 33, step / 40, g0 + (g1 - g0) * ((f - from) / (to - from)));
+}
+/** One sustained, soft note with slow ends. */
+function held(from, to, n, g = 1) {
+  const f0 = midi(n);
+  add(F(from), F(to - from), (s, p) => (Math.sin(2 * Math.PI * f0 * s) + 0.3 * Math.sin(4 * Math.PI * f0 * s) + 0.12 * Math.sin(6.01 * Math.PI * f0 * s)) * Math.min(1, p * 8) * Math.min(1, (1 - p) * 3), 0.16 * g);
+}
+function rise(from, to, g = 1) {
+  add(F(from), F(to - from), (s, p) => Math.sin(2 * Math.PI * (midi(57) + midi(69) * p * 0.5) * s) * p * p * Math.min(1, (1 - p) * 20), 0.1 * g);
+}
+function click(f, g = 1) { add(F(f), 0.025, (s) => noise() * Math.exp(-s * 240), 0.34 * g); }
+function squish(f, g = 1) {
+  let lp = 0;
+  add(F(f), 0.22, (s, p) => { lp += 0.12 * (noise() - lp); return (lp * 1.6 + Math.sin(2 * Math.PI * (220 - 340 * p) * s) * 0.35) * Math.sin(Math.PI * p); }, 0.6 * g);
+}
+const pat = (f) => add(F(f), 0.07, (s) => Math.sin(2 * Math.PI * 170 * s) * Math.exp(-s * 44), 0.42);
+const buzz = (f) => add(F(f), 0.17, (s) => Math.sin(2 * Math.PI * 92 * s) * (Math.sin(2 * Math.PI * 28 * s) > -0.4 ? 1 : 0.1), 0.5);
+function keys(from, to, step = 2.5, g = 0.8) { for (let f = from; f < to; f += step) tick(F(f), g + Math.abs(noise()) * 0.5); }
 
-// Effects locked to picture.
 const S = T.scenes;
-[0, 15, 30, 45, 52, 60, 67, 75].forEach((f) => pop(F(f), 1.2));
-impact(F(90), 0.8);
-whoosh(F(S.stat.from), 0.35);
-tick(F(S.stat.from + 34), 3);
-whoosh(F(S.meet.from + 9), 0.5, 1.2);
-impact(F(S.meet.from + 9), 1.1);
-whoosh(F(S.demo.from), 0.3);
-whoosh(F(S.phone.from), 0.3);
-pop(F(S.phone.from + 8));
-whoosh(F(S.trust.from), 0.28);
-[0, 15, 30, 45].forEach((o) => pop(F(S.trust.from + o), 1.3));
-whoosh(F(S.end.from), 0.32, 0.9);
 
-// Demo sounds: map moments in the filmed clip to the edit.
-let segFrom = S.demo.from;
-const toEdit = (src) => {
-  let from = S.demo.from;
-  for (const seg of T.demo) {
-    const [a, b] = seg.src;
-    if (src >= a && src < b) return F(from + ((src - a) / (b - a)) * seg.frames);
-    from += seg.frames;
-  }
-  return null;
-};
-for (const seg of T.demo) {
-  pop(F(segFrom + 3), 0.8);
-  segFrom += seg.frames;
-}
-for (const [name, start] of Object.entries(markers)) {
-  if (!name.startsWith("type:")) continue;
-  const end = markers[`sent:${name.slice(5)}`];
-  for (let t = start; t < end; t += 0.075) { const at = toEdit(t); if (at !== null) tick(at, 0.7 + Math.abs(noise()) * 0.5); }
-  const sent = toEdit(end);
-  if (sent !== null) pop(sent, 1.1);
-}
-for (const [name, time] of Object.entries(markers)) {
-  if (!name.startsWith("reply:") && !["screenshot", "document"].includes(name)) continue;
-  const at = toEdit(time);
-  if (at !== null) pop(at, 0.8, -1);
-}
+// Scene 1: the cold open's tense pulse, tightening with each chore.
+pulse(0, 60, 15, 0.45, 0.7);
+pulse(60, 120, 7.5, 0.7, 0.95);
+pulse(120, 150, 3.75, 0.95, 1.15);
+[2, 30, 60, 90, 120].forEach((f) => pop(F(f), 1.2));
+[0, 30, 60, 120].forEach((f) => click(f));
+[64, 69].forEach((f) => pop(F(f), 0.7));
+keys(90, 116, 1.5, 0.7);
+[122, 126, 130, 134, 138, 142, 146].forEach((f) => { click(f, 0.8); pop(F(f), 0.5); });
+
+// Scene 2: the music cuts dead on 150. Squish, pats, then the drop on 240.
+squish(186);
+[195, 210, 225].forEach(pat);
+whoosh(F(240), 0.3, 0.8);
+impact(F(240), 1.2);
+band(240, 300);
+pop(F(246)); pop(F(258), 0.7);
+
+// Scene 3: the band falls to a pulse while she waits, and returns with the reply.
+whoosh(F(S.ask.from), 0.25, 0.8);
+band(300, 345, 0.7);
+keys(303, 343, 1.4);
+pop(F(345), 1.1);
+pulse(345, 435, 15, 0.55, 0.7);
+pop(F(375), 1.2); pop(F(405), 1.2);
+band(435, 810);
+pop(F(435), 1.1, -1);
+pop(F(450), 1.1);
+
+// Scene 4: a pop on every reply, and the panel opening and closing.
+[480, 630, 720].forEach((f) => pop(F(f), 1, -1));
+[483, 543, 633, 723].forEach((f) => pop(F(f), 0.8));
+click(538); click(628);
+whoosh(F(540), 0.2, 0.5);
+
+// Scene 5: one held note and a single soft tap at 900.
+stab(F(810), [53, 57, 60], 1.4, 0.8);
+held(810, 930, 69, 1.2);
+add(F(900), 0.09, (s) => Math.sin(2 * Math.PI * 660 * s) * Math.exp(-s * 34), 0.2);
+
+// Scene 6: near silence and a rising tone, the buzz, a light pulse, then the hit.
+rise(930, 990, 0.8);
+buzz(990); buzz(998);
+pulse(990, 1125, 15, 0.45, 0.65);
+for (let f = 990; f < 1125; f += 30) kick(F(f), 0.35);
+[1005, 1020, 1035, 1050, 1080].forEach((f) => pop(F(f), 0.45));
+pop(F(1110), 1.2);
+impact(F(1125), 0.75);
+pop(F(1128), 0.9);
+band(1170, 1470);
+impact(F(1170), 0.7);
+click(1170);
+pop(F(1173), 1);
+keys(1200, 1228, 1);
+pop(F(1230), 0.6);
+
+// Scene 7: fly in, tiles on the beat, fly out.
+whoosh(F(1260), 0.9, 1.3);
+impact(F(1260), 0.9);
+pop(F(1263), 0.9);
+[1290, 1305, 1320, 1335, 1350].forEach((f) => pop(F(f), 1.2));
+pop(F(1293), 0.6);
+whoosh(F(1410), 0.9, 1.2);
+pop(F(1410), 1.1);
+pop(F(1440), 0.55);
+
+// Scene 8: a whoosh and four pops on the beat.
+whoosh(F(1470), 0.28);
+[0, 15, 30, 45].forEach((o) => pop(F(1470 + o), 1.3));
+band(1470, 1590, 1.05);
+
+// Scene 9: the band drops out, one chord rings, a second, then bells.
+whoosh(F(1590), 0.32, 0.9);
+kick(F(1590));
+stab(F(1590), [57, 60, 64, 69], 2.4, 1.5);
+bass(F(1590), 33, 2.2);
+kick(F(1620), 0.7);
+stab(F(1620), [53, 57, 60, 65], 2.4, 1.3);
+bass(F(1620), 29, 2.2, 0.8);
+stab(F(1680), [48, 55, 60, 64], 3, 1.5);
+bass(F(1680), 36, 2.8);
+kick(F(1680), 0.8);
+[84, 88, 91, 96].forEach((n, i) => pluck(F(1680) + i * 0.12, n, 1.1, (i - 1.5) * 0.3));
 
 // Sidechain-style pump and soft limit.
 let peak = 0;
