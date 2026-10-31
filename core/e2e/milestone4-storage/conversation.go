@@ -20,6 +20,7 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 	var calls atomic.Int32
 	var mode atomic.Int32
 	var required atomic.Bool
+	var targets atomic.Bool
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -39,7 +40,10 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 			} `json:"prompt_cache_options"`
 			Messages []map[string]any `json:"messages"`
 			Format   struct {
-				Type string `json:"type"`
+				Type       string `json:"type"`
+				JSONSchema struct {
+					Schema map[string]any `json:"schema"`
+				} `json:"json_schema"`
 			} `json:"response_format"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&request)
@@ -48,6 +52,29 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 			valid = valid && len(message) == 2 && message["role"] != "tool"
 		}
 		required.Store(valid)
+		// Inspect the actual HTTP schema at the provider boundary. Existing-task
+		// actions must offer saved identities, never arbitrary task-name strings.
+		properties := request.Format.JSONSchema.Schema["properties"].(map[string]any)
+		variants := properties["actions"].(map[string]any)["items"].(map[string]any)["anyOf"].([]any)
+		bound := len(variants) == 6
+		for _, variant := range variants {
+			props := variant.(map[string]any)["properties"].(map[string]any)
+			name := props["name"].(map[string]any)["enum"].([]any)[0].(string)
+			if name == "dispatch" {
+				continue
+			}
+			key := "run_id"
+			if name == "hold" {
+				key = "task_id"
+			}
+			ids, ok := props["arguments"].(map[string]any)["properties"].(map[string]any)[key].(map[string]any)["enum"].([]any)
+			found := false
+			for _, id := range ids {
+				found = found || id == taskID
+			}
+			bound = bound && ok && found
+		}
+		targets.Store(bound)
 
 		actions := []any{map[string]any{"name": "hold", "arguments": map[string]string{"task_id": taskID, "question": "What does the result mean?"}}}
 		text := ""
@@ -112,6 +139,7 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 		return nil, err
 	}
 	report := map[string]bool{
+		"HTTP routing schema binds task commands to saved context identities":          targets.Load(),
 		"direct OpenAI Sol low request and usage-based cost":                           required.Load() && first.Traces[0].Usage[len(first.Traces[0].Usage)-1].CostStatus == "calculated" && *first.Traces[0].Usage[len(first.Traces[0].Usage)-1].CostUSD == .005,
 		"structured response admits a durable command":                                 structured && len(run.Holds) == 1,
 		"action-only command publishes a receipt acknowledgment":                       ack,

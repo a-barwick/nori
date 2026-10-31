@@ -193,6 +193,12 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		return err
 	}
 	t.Attempt.ContextTruncated = t.Attempt.ContextTruncated || taskContext.Truncated
+	model.TaskIDs = nil
+	for _, records := range [][]*TaskContextRecord{taskContext.ActiveTasks, taskContext.EventTasks, taskContext.RecentTasks} {
+		for _, record := range records {
+			model.TaskIDs = append(model.TaskIDs, record.ID)
+		}
+	}
 
 	classified := <-hintReady
 	jevMS = classified.durationMS
