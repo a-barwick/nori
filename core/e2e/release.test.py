@@ -24,6 +24,7 @@ COMMIT = "a" * 40
 BUILD = "11111111-1111-4111-8111-111111111111"
 NEXT_BUILD = "22222222-2222-4222-8222-222222222222"
 RELEASE_BUILD = "33333333-3333-4333-8333-333333333333"
+SANDBOX_BUILD = "44444444-4444-4444-8444-444444444444"
 IMAGES = {name: f"{REGISTRY}/{name}@sha256:" + digit * 64
           for name, digit in (("web", "b"), ("runtime", "c"), ("worker", "d"))}
 
@@ -89,8 +90,9 @@ class FakeAPI(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlsplit(self.path)
         path = parsed.path
-        if path.endswith("/triggers/nori-main-prepare"):
-            return self.reply(200, {"id": "trusted-trigger"})
+        for name, identity in (("nori-main-prepare", "trusted-trigger"), ("nori-sandbox", "sandbox-trigger"), ("nori-release", "release-trigger")):
+            if path.endswith("/triggers/" + name):
+                return self.reply(200, {"id": identity})
         if "/builds/" in path:
             build = self.server.builds.get(path.rsplit("/", 1)[-1])
             return self.reply(200, build) if build else self.reply(404, {})
@@ -131,6 +133,7 @@ class ReleaseProcessTest(unittest.TestCase):
         fake_gcloud = self.bin / "gcloud"
         fake_gcloud.write_text(GCLOUD)
         fake_gcloud.chmod(0o755)
+        self.assertTrue(os.access(fake_gcloud, os.X_OK), "Fixture directory must allow executables; refusing a real gcloud fallback")
         self.binary = self.directory / "computer-agent"
         self.binary.write_bytes(b"deterministic computer artifact fixture\n")
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), FakeAPI)
@@ -189,7 +192,7 @@ class ReleaseProcessTest(unittest.TestCase):
         first = self.cli("prepare", *self.manifest_args())
         self.assertEqual(first.returncode, 0, first.stderr)
         second_env = {**self.env, "BUILD_ID": NEXT_BUILD}
-        second = self.cli("prepare", *self.manifest_args(build=NEXT_BUILD), env=second_env)
+        second = self.cli("prepare", *self.manifest_args(build=NEXT_BUILD, worker=REGISTRY + "/worker@sha256:" + "e" * 64), env=second_env)
         self.assertEqual(second.returncode, 0, second.stderr)
         prefix = self.objects / "candidates" / COMMIT
         candidate = json.loads((prefix / (BUILD + ".json")).read_text())
@@ -203,21 +206,75 @@ class ReleaseProcessTest(unittest.TestCase):
                 "sourceProvenance": {"resolvedConnectedRepository": {"revision": COMMIT}},
                 "results": {"images": results}}
         cases = [
-            ("failed build", {**good, "status": "FAILURE"}, "No successful trusted preparation"),
+            ("failed build", {**good, "status": "FAILURE"}, "Preparation build did not succeed"),
             ("foreign trigger", {**good, "buildTriggerId": "other-trigger"}, "untrusted trigger"),
             ("non-main branch", {**good, "substitutions": {"BRANCH_NAME": "feature", "COMMIT_SHA": COMMIT}}, "not for this main commit"),
             ("wrong source", {**good, "sourceProvenance": {"resolvedConnectedRepository": {"revision": "f" * 40}}}, "source provenance"),
             ("wrong image", {**good, "results": {"images": results[:-1]}}, "did not attest"),
         ]
+        sandbox_build = {"status": "WORKING", "buildTriggerId": "sandbox-trigger",
+                         "serviceAccount": "projects/bot-111549/serviceAccounts/nori-ci-sandbox@bot-111549.iam.gserviceaccount.com",
+                         "substitutions": {"_SOURCE_COMMIT": COMMIT, "_PREPARE_BUILD_ID": BUILD}}
+        sandbox_env = {**self.env, "BUILD_ID": SANDBOX_BUILD, "NORI_ENVIRONMENT": "sandbox"}
+        sandbox_args = ["release", "--commit", COMMIT, "--prepare-build", BUILD, "--check-only"]
         for label, bad, message in cases:
             with self.subTest(label=label):
-                self.http.builds = {BUILD: bad, NEXT_BUILD: bad}
+                self.http.builds = {BUILD: bad, NEXT_BUILD: bad, SANDBOX_BUILD: sandbox_build}
                 self.http.writes.clear()
-                rejected = self.cli("release", "--commit", COMMIT, env={**self.env, "BUILD_ID": RELEASE_BUILD})
+                rejected = self.cli(*sandbox_args, env=sandbox_env)
                 self.assertNotEqual(rejected.returncode, 0)
                 self.assertIn(message, rejected.stderr)
                 self.assertEqual(self.http.writes, [], "untrusted artifacts must fail before any release journal or mutation")
-                self.assertFalse((self.objects / "deployments/lock.json").exists())
+                self.assertFalse((self.objects / "deployments/sandbox/lock.json").exists())
+
+        # Successful automatic sandbox selection uses the event's preparation,
+        # even if another build of the same commit has published newer artifacts.
+        self.http.builds = {BUILD: good, SANDBOX_BUILD: sandbox_build}
+        accepted = self.cli(*sandbox_args, env=sandbox_env)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        selection = json.loads(accepted.stdout)
+        self.assertEqual(selection["candidate"], candidate)
+        self.assertEqual((selection["web"], selection["computer"], selection["task_queue"], selection["deployment"]),
+                         ("nori-sandbox-web", "nori-sandbox-computer", "nori-sandbox-tasks", "nori-sandbox-task"))
+        release_build = {"status": "WORKING", "buildTriggerId": "release-trigger",
+                         "serviceAccount": "projects/bot-111549/serviceAccounts/nori-ci-deploy@bot-111549.iam.gserviceaccount.com",
+                         "substitutions": {"COMMIT_SHA": COMMIT, "TAG_NAME": "v1.2.3"},
+                         "sourceProvenance": good["sourceProvenance"]}
+        self.http.builds[RELEASE_BUILD] = release_build
+        production_env = {**self.env, "BUILD_ID": RELEASE_BUILD, "NORI_ENVIRONMENT": "production"}
+        production_args = ["release", "--commit", COMMIT, "--check-only"]
+        rejected = self.cli(*production_args, env=production_env)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("No successful sandbox", rejected.stderr)
+        # These are external Cloud Storage/Build evidence, not mocked application
+        # modules. Actual live deployment/smoke remains a separate demonstration.
+        receipt = {"candidate": candidate, "environment": "sandbox", "result": "passed", "phase": "finished",
+                   "compute_stopped": True, "build_id": SANDBOX_BUILD,
+                   "smoke": [{"check": name, "status": "passed"} for name in ("web_health", "browser_task")]}
+        receipt_path = self.objects / "validated" / COMMIT / (SANDBOX_BUILD + ".json")
+        receipt_path.parent.mkdir(parents=True)
+        receipt_path.write_text(json.dumps(receipt))
+        rejected = self.cli(*production_args, env=production_env)
+        self.assertNotEqual(rejected.returncode, 0, "an unfinished sandbox build cannot authorize production")
+        self.http.builds[SANDBOX_BUILD] = {**sandbox_build, "status": "SUCCESS", "finishTime": "2026-01-01T01:00:00Z"}
+        promoted = self.cli(*production_args, env=production_env)
+        self.assertEqual(promoted.returncode, 0, promoted.stderr)
+        selection = json.loads(promoted.stdout)
+        self.assertEqual(selection["environment"], "production")
+        self.assertEqual(selection["web"], "nori-web")
+        self.assertEqual(selection["candidate"], candidate, "production must reuse the sandbox-tested manifest")
+        for tag in ("", "main", "v1.2", "v01.2.3", "v1.2.3-rc1"):
+            self.http.builds[RELEASE_BUILD] = {**release_build, "substitutions": {"COMMIT_SHA": COMMIT, "TAG_NAME": tag}}
+            rejected = self.cli(*production_args, env=production_env)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("version tag", rejected.stderr)
+        self.http.builds[RELEASE_BUILD] = release_build
+        for key, value, message in (("compute_stopped", False, "shutdown"), ("candidate", {**candidate, "worker": IMAGES["worker"].replace("d" * 64, "e" * 64)}, "manifest changed")):
+            receipt_path.write_text(json.dumps({**receipt, key: value}))
+            rejected = self.cli(*production_args, env=production_env)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn(message, rejected.stderr)
+        self.assertEqual(self.http.writes, [], "selection and rejected promotions must not mutate cloud state")
 
 
 if __name__ == "__main__":

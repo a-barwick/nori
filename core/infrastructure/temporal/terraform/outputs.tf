@@ -14,7 +14,7 @@ output "runner_service_account" {
 }
 
 output "temporal_api_key_secret" {
-  value = google_secret_manager_secret.temporal_api_key.id
+  value = "projects/${local.project}/secrets/${local.temporal_api_key_secret}"
 }
 
 output "wci_scaler_role" {
@@ -23,4 +23,20 @@ output "wci_scaler_role" {
 
 output "scalable_build_ids" {
   value = var.scalable_build_ids
+}
+
+output "environment" {
+  value = var.environment
+}
+
+output "computer_instance" {
+  value = local.worker_env.COMPUTER_INSTANCE
+}
+
+output "temporal_deployment" {
+  value = local.deployment
+}
+
+output "task_queue" {
+  value = local.task_queue
 }

@@ -1,13 +1,44 @@
 locals {
 
-  project      = "bot-111549"
-  region       = "us-central1"
-  zone         = "us-central1-a"
-  number       = "8273801370"
-  apis         = toset(["run.googleapis.com", "aiplatform.googleapis.com", "cloudtasks.googleapis.com", "firestore.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "compute.googleapis.com", "iap.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "policytroubleshooter.googleapis.com"])
-  runtime_name = "projects/${local.number}/locations/${local.region}/reasoningEngines/${basename(google_vertex_ai_reasoning_engine.runtime.name)}"
-  runtime_url  = "https://${local.region}-aiplatform.googleapis.com/reasoningEngines/v1/${local.runtime_name}/api"
+  production        = var.environment == "production"
+  prefix            = local.production ? "nori-poc" : "nori-sandbox"
+  web_name          = local.production ? "nori-web" : "nori-sandbox-web"
+  computer_name     = local.production ? "nori-computer" : "nori-sandbox-computer"
+  database          = coalesce(var.firestore_database, local.production ? "nori-poc" : "nori-sandbox")
+  conversation_name = local.production ? "nori-conversation" : "nori-sandbox-conversation"
+  conversation_secrets = {
+    OPENROUTER_API_KEY = "nori-openrouter-api-key"
+    JEV_API_KEY        = "nori-jev-api-key"
+  }
+  task_queue          = local.production ? "nori-tasks" : "nori-sandbox-tasks"
+  temporal_deployment = local.production ? "nori-task" : "nori-sandbox-task"
+  project             = "bot-111549"
+  region              = "us-central1"
+  zone                = "us-central1-a"
+  number              = "8273801370"
+  apis                = toset(["run.googleapis.com", "aiplatform.googleapis.com", "cloudtasks.googleapis.com", "firestore.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "compute.googleapis.com", "iap.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "policytroubleshooter.googleapis.com"])
+  runtime_name        = "projects/${local.number}/locations/${local.region}/reasoningEngines/${basename(google_vertex_ai_reasoning_engine.runtime.name)}"
+  runtime_url         = "https://${local.region}-aiplatform.googleapis.com/reasoningEngines/v1/${local.runtime_name}/api"
 
+}
+
+variable "environment" {
+  type    = string
+  default = "production"
+  validation {
+    condition     = contains(["production", "sandbox"], var.environment)
+    error_message = "Environment must be production or sandbox."
+  }
+}
+
+variable "sandbox_computer_disk_id" {
+  type        = string
+  default     = null
+  description = "Numeric identity output by the separately applied sandbox foundation; required for sandbox, never inferred from a disk name."
+  validation {
+    condition     = var.environment == "production" ? var.sandbox_computer_disk_id == null : can(regex("^[0-9]+$", var.sandbox_computer_disk_id))
+    error_message = "Sandbox requires the foundation retained_disk_numeric_id output; production must omit this input."
+  }
 }
 
 variable "web_image" {
@@ -49,13 +80,18 @@ variable "model" {
 }
 
 variable "firestore_database" {
-  type    = string
-  default = "nori-poc"
+  type        = string
+  default     = null
+  description = "Defaults to nori-poc in production and nori-sandbox in sandbox."
+  validation {
+    condition     = var.firestore_database == null ? true : var.firestore_database == (var.environment == "production" ? "nori-poc" : "nori-sandbox")
+    error_message = "Database must match the selected environment."
+  }
 }
 
 resource "google_project_service" "api" {
 
-  for_each           = local.apis
+  for_each           = local.production ? local.apis : toset([])
   project            = local.project
   service            = each.value
   disable_on_destroy = false
@@ -63,20 +99,21 @@ resource "google_project_service" "api" {
 }
 
 data "google_compute_network" "computer" {
-  name = "nori-computer"
+  name = local.computer_name
 }
 
 data "google_compute_subnetwork" "computer" {
-  name   = "nori-computer"
+  name   = local.computer_name
   region = local.region
 }
 
 data "google_compute_disk" "computer" {
-  name = "bot-computer-data"
+  name = local.production ? "bot-computer-data" : "nori-sandbox-computer-data"
   zone = local.zone
 }
 
 resource "google_artifact_registry_repository" "images" {
+  count = local.production ? 1 : 0
 
   location      = local.region
   repository_id = "nori-poc"
@@ -87,7 +124,7 @@ resource "google_artifact_registry_repository" "images" {
 
 resource "google_storage_bucket" "artifacts" {
 
-  name                        = "bot-111549-nori-poc"
+  name                        = "bot-111549-${local.prefix}"
   location                    = "US-CENTRAL1"
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
@@ -102,7 +139,7 @@ resource "google_storage_bucket" "artifacts" {
 
 resource "google_firestore_database" "state" {
 
-  name                    = var.firestore_database
+  name                    = local.database
   location_id             = local.region
   type                    = "FIRESTORE_NATIVE"
   delete_protection_state = "DELETE_PROTECTION_ENABLED"
@@ -116,27 +153,24 @@ resource "google_firestore_database" "state" {
 }
 
 resource "google_service_account" "web" {
-  account_id   = "nori-poc-web"
+  account_id   = "${local.prefix}-web"
   display_name = "Nori web"
 }
 
 resource "google_service_account" "runtime" {
-  account_id   = "nori-poc-runtime"
+  account_id   = "${local.prefix}-runtime"
   display_name = "Nori agent runtime"
 }
 
 resource "google_service_account" "conversation_wake" {
-  account_id   = "nori-conversation-wake"
+  account_id   = "${local.conversation_name}-wake"
   display_name = "Nori conversation queue caller"
 }
 
 # Secret Manager is already enabled and owned by the Temporal state. Terraform
 # owns only these retained containers and references, never credential payloads.
 resource "google_secret_manager_secret" "conversation" {
-  for_each = {
-    OPENROUTER_API_KEY = "nori-openrouter-api-key"
-    JEV_API_KEY        = "nori-jev-api-key"
-  }
+  for_each  = local.production ? local.conversation_secrets : {}
   secret_id = each.value
   replication {
     auto {}
@@ -147,10 +181,11 @@ resource "google_secret_manager_secret" "conversation" {
 }
 
 resource "google_secret_manager_secret_iam_member" "conversation_runtime_secrets" {
-  for_each  = google_secret_manager_secret.conversation
-  secret_id = each.value.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.runtime.email}"
+  for_each   = local.conversation_secrets
+  secret_id  = each.value
+  role       = "roles/secretmanager.secretAccessor"
+  member     = "serviceAccount:${google_service_account.runtime.email}"
+  depends_on = [google_secret_manager_secret.conversation]
 }
 
 # Agent Platform resolves secret environment variables during deployment; the
@@ -163,6 +198,7 @@ resource "google_secret_manager_secret_iam_member" "conversation_deploy_secrets"
 }
 
 resource "google_project_iam_member" "cloudtasks_service_agent" {
+  count      = local.production ? 1 : 0
   project    = local.project
   role       = "roles/cloudtasks.serviceAgent"
   member     = "serviceAccount:service-${local.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
@@ -170,7 +206,7 @@ resource "google_project_iam_member" "cloudtasks_service_agent" {
 }
 
 resource "google_cloud_tasks_queue" "conversation" {
-  name     = "nori-conversation"
+  name     = local.conversation_name
   location = local.region
   rate_limits {
     max_concurrent_dispatches = 1
@@ -211,13 +247,13 @@ resource "google_vertex_ai_reasoning_engine_iam_member" "wake_runtime_query" {
 }
 
 resource "google_service_account" "computer" {
-  account_id   = "nori-poc-computer"
+  account_id   = "${local.prefix}-computer"
   display_name = "Nori retained computer"
 }
 
 resource "google_project_iam_custom_role" "query" {
 
-  role_id     = "noriPocRuntimeQuery"
+  role_id     = local.production ? "noriPocRuntimeQuery" : "noriSandboxRuntimeQuery"
   title       = "Nori runtime invocation"
   permissions = ["aiplatform.reasoningEngines.query"]
 
@@ -225,7 +261,7 @@ resource "google_project_iam_custom_role" "query" {
 
 resource "google_project_iam_custom_role" "computer_start" {
 
-  role_id     = "noriPocComputerStart"
+  role_id     = local.production ? "noriPocComputerStart" : "noriSandboxComputerStart"
   title       = "Nori retained computer start"
   permissions = ["compute.instances.get", "compute.instances.start"]
 
@@ -239,7 +275,7 @@ resource "google_project_iam_member" "computer_start" {
   condition {
 
     title      = "nori-computer-only"
-    expression = "resource.name == 'projects/${local.project}/zones/${local.zone}/instances/nori-computer'"
+    expression = "resource.name == 'projects/${local.project}/zones/${local.zone}/instances/${local.computer_name}'"
 
   }
 
@@ -253,14 +289,14 @@ resource "google_project_iam_member" "runtime_firestore" {
   condition {
 
     title      = "nori-state-only"
-    expression = "resource.name == 'projects/${local.project}/databases/${var.firestore_database}' || resource.name.startsWith('projects/${local.project}/databases/${var.firestore_database}/') || resource.name == 'projects/${local.number}/databases/${var.firestore_database}' || resource.name.startsWith('projects/${local.number}/databases/${var.firestore_database}/')"
+    expression = "resource.name == 'projects/${local.project}/databases/${local.database}' || resource.name.startsWith('projects/${local.project}/databases/${local.database}/') || resource.name == 'projects/${local.number}/databases/${local.database}' || resource.name.startsWith('projects/${local.number}/databases/${local.database}/')"
 
   }
 
 }
 
 resource "google_project_iam_custom_role" "model" {
-  role_id     = "noriPocModelPredict"
+  role_id     = local.production ? "noriPocModelPredict" : "noriSandboxModelPredict"
   title       = "Nori runtime API calls"
   permissions = ["aiplatform.endpoints.predict", "serviceusage.services.use"]
 }
@@ -302,7 +338,7 @@ resource "google_storage_bucket_iam_member" "computer_release" {
 
 resource "google_compute_firewall" "computer_rpc" {
 
-  name                    = "nori-poc-computer-iap-rpc"
+  name                    = "${local.prefix}-computer-iap-rpc"
   network                 = data.google_compute_network.computer.id
   source_ranges           = ["35.235.240.0/20"]
   target_service_accounts = [google_service_account.computer.email]
@@ -315,7 +351,8 @@ resource "google_compute_firewall" "computer_rpc" {
 
 resource "google_compute_instance" "computer" {
 
-  name                      = "nori-computer"
+  name                      = local.computer_name
+  tags                      = local.production ? [] : [local.computer_name]
   zone                      = local.zone
   machine_type              = "n2-standard-2"
   min_cpu_platform          = "Intel Cascade Lake"
@@ -388,7 +425,7 @@ resource "google_compute_instance" "computer" {
     ignore_changes = [desired_status, scheduling[0].termination_time, scheduling[0].instance_termination_action, metadata["computer-paused"], metadata["computer-release-object"], metadata["computer-release-sha256"]]
     precondition {
 
-      condition     = data.google_compute_disk.computer.disk_id == "3757334953750232874" && data.google_compute_disk.computer.size == 20
+      condition     = data.google_compute_disk.computer.disk_id == (local.production ? "3757334953750232874" : var.sandbox_computer_disk_id) && data.google_compute_disk.computer.size == 20
       error_message = "Refusing to attach a replaced or resized retained guest disk."
 
     }
@@ -415,7 +452,7 @@ resource "google_iap_tunnel_instance_iam_member" "runtime_computer" {
 
 resource "google_vertex_ai_reasoning_engine" "runtime" {
 
-  display_name    = "Nori Go Agent Runtime"
+  display_name    = local.production ? "Nori Go Agent Runtime" : "Nori Sandbox Go Agent Runtime"
   region          = local.region
   deletion_policy = "PREVENT"
   spec {
@@ -449,7 +486,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
 
       env {
         name  = "FIRESTORE_DATABASE_ID"
-        value = var.firestore_database
+        value = local.database
       }
 
       env {
@@ -482,7 +519,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
           NORI_RUNTIME_URL                = var.runtime_invoke_root
           TEMPORAL_ADDRESS                = "quickstart-nori.qtjow.tmprl.cloud:7233"
           TEMPORAL_NAMESPACE              = "quickstart-nori.qtjow"
-          TEMPORAL_TASK_QUEUE             = "nori-tasks"
+          TEMPORAL_TASK_QUEUE             = local.task_queue
           TEMPORAL_API_KEY_SECRET_VERSION = "projects/${local.project}/secrets/nori-temporal-api-key/versions/latest"
         }
         content {
@@ -492,11 +529,11 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
       }
 
       dynamic "secret_env" {
-        for_each = google_secret_manager_secret.conversation
+        for_each = local.conversation_secrets
         content {
           name = secret_env.key
           secret_ref {
-            secret  = secret_env.value.secret_id
+            secret  = secret_env.value
             version = "latest"
           }
         }
@@ -516,7 +553,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
 
 resource "google_cloud_run_v2_service" "web" {
 
-  name                 = "nori-web"
+  name                 = local.web_name
   location             = local.region
   deletion_protection  = true
   iap_enabled          = true
@@ -558,7 +595,7 @@ resource "google_cloud_run_v2_service" "web" {
 
       env {
         name  = "IAP_AUDIENCE"
-        value = "/projects/${local.number}/locations/${local.region}/services/nori-web"
+        value = "/projects/${local.number}/locations/${local.region}/services/${local.web_name}"
       }
       env {
         name  = "OWNER_EMAIL"
@@ -596,7 +633,7 @@ output "artifact_bucket" {
 }
 
 output "firestore_database" {
-  value = var.firestore_database
+  value = local.database
 }
 
 output "query_role" {
@@ -628,22 +665,59 @@ output "computer_service_account" {
 }
 
 output "image_repository" {
-  value = "${local.region}-docker.pkg.dev/${local.project}/${google_artifact_registry_repository.images.repository_id}"
+  value = "${local.region}-docker.pkg.dev/${local.project}/nori-poc"
 }
 
 # Create this native Google-managed identity before applying the grant:
 # gcloud beta services identity create --service=aiplatform.googleapis.com
 resource "google_artifact_registry_repository_iam_member" "runtime_image_reader" {
+  count      = local.production ? 1 : 0
   location   = local.region
-  repository = google_artifact_registry_repository.images.name
+  repository = google_artifact_registry_repository.images[0].name
   role       = "roles/artifactregistry.reader"
   member     = "serviceAccount:service-${local.number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
 }
 
 # Both native service agents need read access for the BYOC image pull.
 resource "google_artifact_registry_repository_iam_member" "platform_image_reader" {
+  count      = local.production ? 1 : 0
   location   = local.region
-  repository = google_artifact_registry_repository.images.name
+  repository = google_artifact_registry_repository.images[0].name
   role       = "roles/artifactregistry.reader"
   member     = "serviceAccount:service-${local.number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+}
+
+output "environment" {
+  value = var.environment
+}
+
+output "computer_instance" {
+  value = google_compute_instance.computer.name
+}
+
+output "temporal_deployment" {
+  value = local.temporal_deployment
+}
+
+output "task_queue" {
+  value = local.task_queue
+}
+
+# Production retains ownership of shared project resources. These moves only
+# change Terraform addresses, not remote resources; sandbox never owns them.
+moved {
+  from = google_artifact_registry_repository.images
+  to   = google_artifact_registry_repository.images[0]
+}
+moved {
+  from = google_project_iam_member.cloudtasks_service_agent
+  to   = google_project_iam_member.cloudtasks_service_agent[0]
+}
+moved {
+  from = google_artifact_registry_repository_iam_member.runtime_image_reader
+  to   = google_artifact_registry_repository_iam_member.runtime_image_reader[0]
+}
+moved {
+  from = google_artifact_registry_repository_iam_member.platform_image_reader
+  to   = google_artifact_registry_repository_iam_member.platform_image_reader[0]
 }

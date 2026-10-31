@@ -25,6 +25,7 @@ SMOKE_SECONDS = 600
 RECOVERY_SECONDS = 300
 SHA = re.compile(r"[a-f0-9]{40}")
 BUILD = re.compile(r"[a-f0-9-]{36}")
+TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 
 
 def require(condition, message):
@@ -94,6 +95,12 @@ def manifest(args):
                               "computer_sha256": digest, "computer_object": "computer/" + digest})
 
 
+class CloudError(RuntimeError):
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
 class Cloud:
     def __init__(self):
         self.bucket = os.environ["NORI_RELEASE_BUCKET"]
@@ -114,7 +121,7 @@ class Cloud:
         except HTTPError as error:
             if missing and error.code == 404:
                 return None
-            raise RuntimeError(f"Cloud {method} failed: HTTP {error.code}") from None
+            raise CloudError(f"Cloud {method} failed: HTTP {error.code}", error.code) from None
 
     def api(self, method, url, body=None):
         return json.loads(self.request(method, url, body) or b"{}")
@@ -184,21 +191,63 @@ def verify_build(candidate, build, trigger):
                 f"Cloud Build did not attest the {component} image")
 
 
-def select_candidate(cloud, commit):
+def trigger_id(cloud, name):
+    return cloud.api("GET", f"https://cloudbuild.googleapis.com/v1/projects/{PROJECT}/locations/{cloud.region}/triggers/{name}")["id"]
+
+
+def prepared_candidate(cloud, commit, build_id):
+    require(SHA.fullmatch(commit or "") and BUILD.fullmatch(build_id or ""), "Invalid preparation identity")
+    value = cloud.get("candidates/" + commit + "/" + build_id + ".json")
+    validate_manifest(value)
+    require(value["commit"] == commit and value["build_id"] == build_id, "Candidate path and identity differ")
+    verify_build(value, cloud.build(build_id), trigger_id(cloud, "nori-main-prepare"))
+    return value
+
+
+def promoted_candidate(cloud, commit):
     require(SHA.fullmatch(commit or ""), "Use the full main commit SHA")
     candidates = []
-    trigger = cloud.api("GET", f"https://cloudbuild.googleapis.com/v1/projects/{PROJECT}/locations/{cloud.region}/triggers/nori-main-prepare")["id"]
-    for name in cloud.list("candidates/" + commit + "/"):
-        value = cloud.get(name)
-        validate_manifest(value)
-        require(value["commit"] == commit, "Candidate path and commit differ")
-        build = cloud.build(value["build_id"])
+    trigger = trigger_id(cloud, "nori-sandbox")
+    for name in cloud.list("validated/" + commit + "/"):
+        receipt = cloud.get(name)
+        candidate = validate_manifest(receipt["candidate"])
+        require(candidate["commit"] == commit and receipt.get("environment") == "sandbox", "Invalid sandbox receipt identity")
+        require(receipt.get("result") == "passed" and receipt.get("phase") == "finished" and receipt.get("compute_stopped") is True,
+                "Sandbox did not pass smoke and shutdown")
+        checks = {event.get("check") for event in receipt.get("smoke", []) if event.get("status") == "passed"}
+        require({"web_health", "browser_task"}.issubset(checks), "Sandbox smoke evidence is incomplete")
+        build = cloud.build(receipt["build_id"])
         if build.get("status") != "SUCCESS":
             continue
-        verify_build(value, build, trigger)
-        candidates.append((build.get("finishTime", ""), value))
-    require(candidates, "No successful trusted preparation exists for this main commit")
+        require(build.get("buildTriggerId") == trigger, "Sandbox used an untrusted trigger")
+        require(build.get("serviceAccount", "").endswith("/nori-ci-sandbox@bot-111549.iam.gserviceaccount.com"), "Sandbox identity mismatch")
+        substitutions = build.get("substitutions", {})
+        require(substitutions.get("_SOURCE_COMMIT") == commit and substitutions.get("_PREPARE_BUILD_ID") == candidate["build_id"],
+                "Sandbox build did not test these artifacts")
+        require(prepared_candidate(cloud, commit, candidate["build_id"]) == candidate, "Sandbox artifact manifest changed")
+        candidates.append((build.get("finishTime", ""), candidate))
+    require(candidates, "No successful sandbox deployment exists for this main commit")
     return max(candidates, key=lambda pair: pair[0])[1]
+
+
+def deployment_candidate(cloud, args, build):
+    sandbox = poc.ENVIRONMENT == "sandbox"
+    require(build.get("buildTriggerId") == trigger_id(cloud, "nori-sandbox" if sandbox else "nori-release"),
+            "Deployment used an untrusted trigger")
+    account = "nori-ci-sandbox" if sandbox else "nori-ci-deploy"
+    require(build.get("serviceAccount", "").endswith("/" + account + "@bot-111549.iam.gserviceaccount.com"), "Deployment identity mismatch")
+    substitutions = build.get("substitutions", {})
+    if sandbox:
+        require(substitutions.get("_SOURCE_COMMIT") == args.commit and substitutions.get("_PREPARE_BUILD_ID") == args.prepare_build,
+                "Sandbox event identity mismatch")
+        return prepared_candidate(cloud, args.commit, args.prepare_build)
+    require(TAG.fullmatch(substitutions.get("TAG_NAME", "")), "Production requires a version tag such as v1.2.3")
+    require(substitutions.get("COMMIT_SHA") == args.commit, "Release tag commit mismatch")
+    provenance = build.get("sourceProvenance", {})
+    require(args.commit in [provenance.get(key, {}).get(field) for key, field in
+            (("resolvedRepoSource", "commitSha"), ("resolvedGitSource", "revision"), ("resolvedConnectedRepository", "revision"))],
+            "Release tag source provenance mismatch")
+    return promoted_candidate(cloud, args.commit)
 
 
 def prepare(args, cloud):
@@ -219,7 +268,7 @@ def init_backends():
         directory = ROOT.parent / name / "terraform"
         (directory / "release_backend_override.tf").write_text('terraform {\n  backend "gcs" {}\n}\n')
         run(["terraform", "-chdir=" + str(directory), "init", "-input=false", "-reconfigure",
-             "-backend-config=bucket=" + bucket, "-backend-config=prefix=nori/" + name])
+             "-backend-config=bucket=" + bucket, "-backend-config=prefix=nori/" + ("sandbox/" if poc.ENVIRONMENT == "sandbox" else "") + name])
         outputs = json.loads(run(["terraform", "-chdir=" + str(directory), "output", "-json"]))
         require(outputs, f"Migrated {name} state is missing; refusing an empty backend")
 
@@ -233,7 +282,7 @@ def temporal_key():
 
 
 def current_worker():
-    routing = poc.temporal("describe", "--name=nori-task").get("routingConfig", {})
+    routing = poc.temporal("describe", "--name=" + poc.DEPLOYMENT).get("routingConfig", {})
     require(not routing.get("rampingVersionPercentage", 0), "A Temporal ramp is active; finish it before release")
     build = routing.get("currentVersionBuildID") or routing.get("currentDeploymentVersion", {}).get("buildId")
     require(build and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", build), "Cannot identify Current Temporal build")
@@ -245,8 +294,14 @@ def snapshot(config):
     vm = poc.api("GET", poc.vm_url())
     require(control.get("fields", {}).get("paused", {}).get("booleanValue") is True and vm["status"] == "TERMINATED",
             "Release requires Nori already paused and its computer stopped")
-    web = poc.api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/services/nori-web")
+    web = poc.api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/services/{poc.WEB}")
     runtime = poc.api("GET", "https://us-central1-aiplatform.googleapis.com/v1beta1/" + config["runtime_name"])
+    runtime_env = {entry["name"]: entry.get("value") for entry in runtime["spec"]["deploymentSpec"].get("env", [])}
+    require(runtime_env.get("FIRESTORE_DATABASE_ID") == config["firestore_database"] and
+            runtime_env.get("COMPUTER_INSTANCE") == poc.VM and runtime_env.get("TEMPORAL_TASK_QUEUE") == poc.TASK_QUEUE,
+            "Runtime bindings do not match the selected environment")
+    web_env = {entry["name"]: entry.get("value") for entry in web["template"]["containers"][0].get("env", [])}
+    require(web_env.get("NORI_RUNTIME_URL") == config["runtime_url"], "Web points at a different environment runtime")
     scaling = runtime["spec"]["deploymentSpec"]
     require(scaling.get("minInstances", 0) == 0 and scaling.get("maxInstances") == 1, "Runtime must remain min 0 / max 1")
     for scaling in (web.get("scaling", {}), web["template"].get("scaling", {})):
@@ -263,7 +318,7 @@ def deploy_image(component, value):
 
 def warm_worker(build_id, pool):
     """Register real queue pollers before asking Temporal to route new tasks."""
-    if any(queue.get("name") == "nori-tasks" for queue in poc.version_info(build_id).get("taskQueueInfos", [])):
+    if any(queue.get("name") == poc.TASK_QUEUE for queue in poc.version_info(build_id).get("taskQueueInfos", [])):
         return
     operation = poc.api("PATCH", "https://run.googleapis.com/v2/" + pool["resource"] + "?updateMask=scaling.manualInstanceCount",
                         {"scaling": {"manualInstanceCount": 1}})
@@ -275,7 +330,7 @@ def warm_worker(build_id, pool):
     require(not operation.get("error"), "Candidate worker failed to start")
     while time.monotonic() < end:
         info = poc.version_info(build_id)
-        if any(queue.get("name") == "nori-tasks" for queue in info.get("taskQueueInfos", [])):
+        if any(queue.get("name") == poc.TASK_QUEUE for queue in info.get("taskQueueInfos", [])):
             return
         time.sleep(2)
     raise RuntimeError("Candidate worker did not register the expected task queue")
@@ -285,6 +340,7 @@ def validate_worker_plan(plan, build_id):
     allowed = {f'google_cloud_run_v2_worker_pool.worker["{build_id}"]',
                f'google_cloud_run_v2_worker_pool_iam_member.wci["{build_id}"]'}
     for resource in plan.get("resource_changes", []):
+        require(not resource.get("previous_address"), "Review and apply Terraform address moves separately before deployment")
         actions = resource["change"]["actions"]
         if actions in (["no-op"], ["read"]):
             continue
@@ -293,8 +349,9 @@ def validate_worker_plan(plan, build_id):
 
 
 def worker_plan(cloud, candidate, directory):
-    retained = cloud.get("deployments/worker-releases.json", missing=True)
+    retained = cloud.get("deployments/" + poc.ENVIRONMENT + "/worker-releases.json", missing=True)
     if retained is None:
+        require(poc.ENVIRONMENT == "production", "Initialize the sandbox retained worker manifest during setup")
         retained = json.loads((ROOT.parent / "temporal/terraform/worker-releases.json").read_text())
     state = json.loads(run(["terraform", "-chdir=" + str(poc.TEMPORAL_TF), "show", "-json"]))
     resources = state.get("values", {}).get("root_module", {}).get("resources", [])
@@ -309,7 +366,8 @@ def worker_plan(cloud, candidate, directory):
     write_json(manifest_file, retained)
     plan_file = directory / "worker.plan"
     run(["terraform", "-chdir=" + str(poc.TEMPORAL_TF), "plan", "-input=false", "-lock-timeout=30s",
-         "-var-file=" + str(manifest_file), "-out=" + str(plan_file)])
+         "-var-file=" + str(manifest_file), "-var=environment=" + poc.ENVIRONMENT,
+         "-var=runtime_invoke_root=" + os.environ["TF_VAR_runtime_invoke_root"], "-out=" + str(plan_file)])
     plan_file.chmod(0o600)
     plan = json.loads(run(["terraform", "-chdir=" + str(poc.TEMPORAL_TF), "show", "-json", str(plan_file)]))
     validate_worker_plan(plan, build_id)
@@ -320,24 +378,55 @@ def cancelled(_signum, _frame):
     raise RuntimeError("Release cancelled")
 
 
+def deployment_lock(cloud, prefix, build_id, report_path):
+    while True:
+        try:
+            return cloud.put(prefix + "lock.json", {"build_id": build_id, "report": report_path}, 0)
+        except CloudError as error:
+            if error.status != 412 or poc.ENVIRONMENT != "sandbox":
+                raise
+            owner = cloud.get(prefix + "lock.json", missing=True)
+            if owner is None:
+                continue
+            require(cloud.build(owner["build_id"]).get("status") in {"QUEUED", "WORKING", "PENDING"},
+                    "Sandbox has an unresolved deployment lock; inspect its report")
+            # Never steal or expire a lock. Native concurrent builds wait only
+            # within their own forward-operation budget.
+            time.sleep(min(5, poc.remaining(5)))
+
+
 def release(cloud, candidate, build_id, started):
     end = started + PIPELINE_SECONDS - 30
     os.environ["NORI_OPERATION_DEADLINE"] = str(end - RECOVERY_SECONDS)
-    report = {"commit": candidate["commit"], "build_id": build_id, "phase": "preflight", "result": "pending"}
-    report_path = "deployments/" + build_id + ".json"
-    lock = cloud.put("deployments/lock.json", {"build_id": build_id, "report": report_path}, 0)
+    report = {"commit": candidate["commit"], "candidate": candidate, "environment": poc.ENVIRONMENT,
+              "build_id": build_id, "phase": "preflight", "result": "pending"}
+    prefix = "deployments/" + poc.ENVIRONMENT + "/"
+    report_path = prefix + build_id + ".json"
+    lock = deployment_lock(cloud, prefix, build_id, report_path)
     config, mutating, changed, smoke_started, error = None, False, False, False, None
     def record(**values):
         report.update(values)
         cloud.put(report_path, report)
         print(json.dumps({"phase": report["phase"], "result": report["result"], "report": report_path}), flush=True)
     try:
+        if poc.ENVIRONMENT == "sandbox":
+            created = cloud.build(candidate["build_id"])["createTime"]
+            report["source_created"] = created
+            previous = cloud.get(prefix + "current.json", missing=True)
+            if previous:
+                timestamp = lambda value: datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+                require(timestamp(created) >= timestamp(previous["source_created"]), "A newer sandbox preparation has already deployed")
         record()
         init_backends()
         temporal_key()
         config = poc.config()
+        poc.temporal_config()  # Refuse another environment before any mutation.
+        os.environ["TF_VAR_environment"] = poc.ENVIRONMENT
+        os.environ["TF_VAR_runtime_invoke_root"] = config["runtime_url"]
         smoke = load_module("nori_smoke", ROOT / "smoke.py")
-        smoke_config = {**config, "project": PROJECT, "iap_service_account": "nori-ci-deploy@bot-111549.iam.gserviceaccount.com"}
+        account = "nori-ci-sandbox" if poc.ENVIRONMENT == "sandbox" else "nori-ci-deploy"
+        smoke_config = {**config, "project": PROJECT, "temporal_deployment": poc.DEPLOYMENT,
+                        "iap_service_account": account + "@bot-111549.iam.gserviceaccount.com"}
         before = snapshot(config)
         smoke.preflight(smoke_config, time.monotonic() + poc.remaining(120))
         record(previous=before)
@@ -351,7 +440,7 @@ def release(cloud, candidate, build_id, started):
             record(phase="deploy", retained_workers=retained, worker_build=worker)
             mutating = True
             run(["terraform", "-chdir=" + str(poc.TEMPORAL_TF), "apply", "-input=false", str(plan)])
-            cloud.put("deployments/worker-releases.json", retained)
+            cloud.put(prefix + "worker-releases.json", retained)
             workers = poc.temporal_config()
             if poc.version_info(worker, missing_ok=True) is None:
                 poc.temporal("create-version", *poc.version_config(worker, workers["worker_pools"][worker], workers["invoker_service_account"]))
@@ -365,7 +454,7 @@ def release(cloud, candidate, build_id, started):
             deploy_image("runtime", candidate["runtime"])
             deploy_image("web", candidate["web"])
             warm_worker(worker, workers["worker_pools"][worker])
-            poc.temporal("set-current-version", "--deployment-name=nori-task", "--build-id=" + worker, "--allow-no-pollers", "--yes")
+            poc.temporal("set-current-version", "--deployment-name=" + poc.DEPLOYMENT, "--build-id=" + worker, "--allow-no-pollers", "--yes")
             smoke_config["baseline_ids"] = smoke.preflight(smoke_config, time.monotonic() + poc.remaining(120))
             record(phase="smoke")
             available = poc.remaining(SMOKE_SECONDS)
@@ -394,7 +483,7 @@ def release(cloud, candidate, build_id, started):
                     deploy_image("runtime", previous["runtime"])
                     deploy_image("web", previous["web"])
                     poc.metadata(previous["computer"])
-                    poc.temporal("set-current-version", "--deployment-name=nori-task", "--build-id=" + previous["worker"], "--allow-no-pollers", "--yes")
+                    poc.temporal("set-current-version", "--deployment-name=" + poc.DEPLOYMENT, "--build-id=" + previous["worker"], "--allow-no-pollers", "--yes")
                     require(snapshot(config) == previous, "Previous release could not be verified")
                     report["restored"] = True
             except Exception as failure:
@@ -405,8 +494,12 @@ def release(cloud, candidate, build_id, started):
         report["phase"] = "restored" if report.get("restored") else "finished" if not error else "operator-action-required"
         os.environ["NORI_OPERATION_DEADLINE"] = str(started + PIPELINE_SECONDS - 5)
         record()
+        if not error and poc.ENVIRONMENT == "sandbox":
+            cloud.put(prefix + "current.json", report)
         if not error or not mutating or report.get("restored"):
-            cloud.remove("deployments/lock.json", lock)
+            cloud.remove(prefix + "lock.json", lock)
+    if not error and poc.ENVIRONMENT == "sandbox":
+        cloud.put("validated/" + candidate["commit"] + "/" + build_id + ".json", report, 0)
     if error:
         raise RuntimeError("Release failed; inspect " + report_path + ". " + safe_error(error))
 
@@ -423,6 +516,8 @@ def main():
     preview.add_argument("manifest", type=Path)
     release = commands.add_parser("release", help="Deploy a successful preparation for an explicitly selected main commit")
     release.add_argument("--commit", required=True)
+    release.add_argument("--prepare-build", default="")
+    release.add_argument("--check-only", action="store_true", help="Verify trigger, provenance and promotion evidence without changing cloud resources")
     args = parser.parse_args()
     os.umask(0o077)
     if args.action == "manifest":
@@ -443,8 +538,12 @@ def main():
     else:
         signal.signal(signal.SIGTERM, cancelled)
         signal.signal(signal.SIGINT, cancelled)
-        candidate = select_candidate(cloud, args.commit)
         build = cloud.build(build_id)
+        candidate = deployment_candidate(cloud, args, build)
+        if args.check_only:
+            print(json.dumps({"environment": poc.ENVIRONMENT, "candidate": candidate, "web": poc.WEB,
+                              "computer": poc.VM, "task_queue": poc.TASK_QUEUE, "deployment": poc.DEPLOYMENT}, indent=2))
+            return
         started = datetime.fromisoformat(build["startTime"].replace("Z", "+00:00")).timestamp()
         release(cloud, candidate, build_id, started)
 

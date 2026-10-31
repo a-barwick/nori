@@ -1,3 +1,12 @@
+variable "environment" {
+  type    = string
+  default = "production"
+  validation {
+    condition     = contains(["production", "sandbox"], var.environment)
+    error_message = "Environment must be production or sandbox."
+  }
+}
+
 variable "worker_images" {
   description = "Immutable build ID => existing Artifact Registry image digest. Retain old builds while Pinned Workflows reference them."
   type        = map(string)

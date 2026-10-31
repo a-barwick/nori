@@ -25,8 +25,8 @@ variable "spend_alert" {
 }
 
 locals {
-  spend_alert = var.spend_alert == null ? {} : { daily = var.spend_alert }
-  spend_metrics = var.spend_alert == null ? {} : {
+  spend_alert = !local.production || var.spend_alert == null ? {} : { daily = var.spend_alert }
+  spend_metrics = !local.production || var.spend_alert == null ? {} : {
     month_to_date_usd = { unit = "{USD}", description = "Reported current-month Temporal account ContractedCost, converted to USD. Provisional and delayed; not an invoice total or cap." }
     threshold_reached = { unit = "1", description = "1 when a successful report reaches the configured month-to-date USD threshold; otherwise 0." }
     check_ok          = { unit = "1", description = "1 only after a complete, interpretable billing report; 0 for errors or unknown charge data. Unknown is never zero spend." }
@@ -34,7 +34,7 @@ locals {
 }
 
 resource "google_project_service" "spend_alert_api" {
-  for_each           = var.spend_alert == null ? toset([]) : toset(["run.googleapis.com", "cloudscheduler.googleapis.com", "monitoring.googleapis.com"])
+  for_each           = !local.production || var.spend_alert == null ? toset([]) : toset(["run.googleapis.com", "cloudscheduler.googleapis.com", "monitoring.googleapis.com"])
   project            = local.project
   service            = each.value
   disable_on_destroy = false

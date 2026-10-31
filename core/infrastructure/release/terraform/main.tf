@@ -27,6 +27,11 @@ variable "release_tools_image" {
     error_message = "Use the immutable release-tools digest in the existing Nori registry."
   }
 }
+variable "enable_triggers" {
+  description = "Enable only after separate live setup, state, and first-deployment review"
+  type        = bool
+  default     = false
+}
 locals {
   project = "bot-111549"
   region  = "us-central1"
@@ -35,6 +40,7 @@ locals {
     check   = "nori-ci-check"
     prepare = "nori-ci-prepare"
     deploy  = "nori-ci-deploy"
+    sandbox = "nori-ci-sandbox"
   }
 }
 resource "google_service_account" "ci" {
@@ -87,6 +93,10 @@ resource "google_storage_bucket_iam_member" "state_deploy" {
   bucket = google_storage_bucket.state.name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.ci["deploy"].email}"
+  condition {
+    title      = "production-state-only"
+    expression = "resource.name.startsWith('projects/_/buckets/${google_storage_bucket.state.name}/objects/nori/poc/') || resource.name.startsWith('projects/_/buckets/${google_storage_bucket.state.name}/objects/nori/temporal/')"
+  }
 }
 # Object listing is a bucket-level permission. Restrict object reads/writes to
 # the release namespaces, while allowing listing for candidate discovery.
@@ -96,7 +106,7 @@ resource "google_project_iam_custom_role" "release_list" {
   permissions = ["storage.objects.list"]
 }
 resource "google_storage_bucket_iam_member" "release_list" {
-  for_each = toset(["prepare", "deploy"])
+  for_each = toset(["prepare", "deploy", "sandbox"])
   bucket   = local.bucket
   role     = google_project_iam_custom_role.release_list.name
   member   = "serviceAccount:${google_service_account.ci[each.key].email}"
@@ -107,7 +117,7 @@ resource "google_storage_bucket_iam_member" "release_journal" {
   member = "serviceAccount:${google_service_account.ci["deploy"].email}"
   condition {
     title      = "nori-release-journal-only"
-    expression = "resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/deployments/')"
+    expression = "resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/deployments/production/')"
   }
 }
 resource "google_storage_bucket_iam_member" "release_read" {
@@ -116,7 +126,7 @@ resource "google_storage_bucket_iam_member" "release_read" {
   member = "serviceAccount:${google_service_account.ci["deploy"].email}"
   condition {
     title      = "nori-release-inputs-only"
-    expression = "resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/candidates/') || resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/computer/') || resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/releases/computer-agent-')"
+    expression = "resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/candidates/') || resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/computer/') || resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/releases/computer-agent-') || resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/validated/')"
   }
 }
 resource "google_storage_bucket_iam_member" "published_computer" {
@@ -165,6 +175,7 @@ resource "google_secret_manager_secret_iam_member" "temporal" {
   member    = "serviceAccount:${google_service_account.ci["deploy"].email}"
 }
 resource "google_cloudbuild_trigger" "check" {
+  disabled        = !var.enable_triggers
   project         = local.project
   location        = local.region
   name            = "nori-pr-check"
@@ -179,6 +190,7 @@ resource "google_cloudbuild_trigger" "check" {
   }
 }
 resource "google_cloudbuild_trigger" "prepare" {
+  disabled        = !var.enable_triggers
   project         = local.project
   location        = local.region
   name            = "nori-main-prepare"
@@ -189,11 +201,34 @@ resource "google_cloudbuild_trigger" "prepare" {
     push { branch = "^main$" }
   }
 }
-resource "google_cloudbuild_trigger" "manual" {
+resource "google_cloudbuild_trigger" "release" {
+  disabled        = !var.enable_triggers
   project         = local.project
   location        = local.region
   name            = "nori-release"
   service_account = google_service_account.ci["deploy"].id
+  filename        = "core/infrastructure/release/cloudbuild-release.yaml"
+  repository_event_config {
+    repository = var.repository
+    push { tag = "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" }
+  }
+  substitutions = { _TOOLS_IMAGE = var.release_tools_image }
+}
+resource "google_pubsub_topic" "prepared" {
+  name = "nori-prepared-builds"
+}
+resource "google_pubsub_topic_iam_member" "prepare_publish" {
+  topic  = google_pubsub_topic.prepared.name
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:${google_service_account.ci["prepare"].email}"
+}
+resource "google_cloudbuild_trigger" "sandbox" {
+  disabled        = !var.enable_triggers
+  project         = local.project
+  location        = local.region
+  name            = "nori-sandbox"
+  service_account = google_service_account.ci["sandbox"].id
+  pubsub_config { topic = google_pubsub_topic.prepared.id }
   source_to_build {
     repository = var.repository
     ref        = "refs/heads/main"
@@ -201,11 +236,18 @@ resource "google_cloudbuild_trigger" "manual" {
   }
   git_file_source {
     repository = var.repository
-    path       = "core/infrastructure/release/cloudbuild-release.yaml"
+    path       = "core/infrastructure/release/cloudbuild-sandbox.yaml"
     revision   = "refs/heads/main"
     repo_type  = "GITHUB"
   }
-  substitutions = { _TOOLS_IMAGE = var.release_tools_image }
+  substitutions = {
+    _TOOLS_IMAGE      = var.release_tools_image
+    _SOURCE_COMMIT    = "$(body.message.data.substitutions.COMMIT_SHA)"
+    _PREPARE_BUILD_ID = "$(body.message.data.id)"
+    _PREPARE_STATUS   = "$(body.message.data.status)"
+    _PREPARE_TRIGGER  = "$(body.message.data.buildTriggerId)"
+  }
+  filter = "_PREPARE_STATUS == 'SUCCESS' && _PREPARE_TRIGGER == '${google_cloudbuild_trigger.prepare.trigger_id}'"
 }
 output "prepare_trigger_id" { value = google_cloudbuild_trigger.prepare.trigger_id }
 output "state_bucket" { value = google_storage_bucket.state.name }
@@ -282,5 +324,153 @@ resource "google_project_iam_member" "firestore" {
   condition {
     title      = "nori-state-only"
     expression = "resource.name == 'projects/bot-111549/databases/nori-poc' || resource.name.startsWith('projects/bot-111549/databases/nori-poc/') || resource.name == 'projects/8273801370/databases/nori-poc' || resource.name.startsWith('projects/8273801370/databases/nori-poc/')"
+  }
+}
+
+# Bootstrap these identities only after the isolated application stack exists.
+variable "sandbox_runtime_name" {
+  description = "Reviewed sandbox POC runtime_name output; grants access only on that engine"
+  type        = string
+  validation {
+    condition     = can(regex("^projects/8273801370/locations/us-central1/reasoningEngines/[0-9]+$", var.sandbox_runtime_name))
+    error_message = "Supply the sandbox runtime_name output after separate setup."
+  }
+}
+resource "google_artifact_registry_repository_iam_member" "sandbox" {
+  project    = local.project
+  location   = local.region
+  repository = "nori-poc"
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+}
+resource "google_storage_bucket_iam_member" "state_sandbox" {
+  bucket = google_storage_bucket.state.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+  condition {
+    title      = "sandbox-state-only"
+    expression = "resource.name.startsWith('projects/_/buckets/${google_storage_bucket.state.name}/objects/nori/sandbox/')"
+  }
+}
+resource "google_storage_bucket_iam_member" "state_list" {
+  for_each = toset(["deploy", "sandbox"])
+  bucket   = google_storage_bucket.state.name
+  role     = google_project_iam_custom_role.release_list.name
+  member   = "serviceAccount:${google_service_account.ci[each.key].email}"
+}
+resource "google_storage_bucket_iam_member" "sandbox_journal" {
+  bucket = local.bucket
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+  condition {
+    title      = "sandbox-journal-only"
+    expression = "resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/deployments/sandbox/')"
+  }
+}
+resource "google_storage_bucket_iam_member" "sandbox_receipt" {
+  bucket = local.bucket
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+  condition {
+    title      = "sandbox-promotion-evidence-only"
+    expression = "resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/validated/')"
+  }
+}
+resource "google_storage_bucket_iam_member" "sandbox_inputs" {
+  bucket = local.bucket
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+  condition {
+    title      = "prepared-inputs-only"
+    expression = "resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/candidates/') || resource.name.startsWith('projects/_/buckets/${local.bucket}/objects/computer/')"
+  }
+}
+resource "google_storage_bucket_iam_member" "sandbox_computer" {
+  for_each = toset(["roles/storage.objectCreator", "roles/storage.objectViewer"])
+  bucket   = "bot-111549-nori-sandbox"
+  role     = each.key
+  member   = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+  condition {
+    title      = "sandbox-computer-only"
+    expression = "resource.name.startsWith('projects/_/buckets/bot-111549-nori-sandbox/objects/releases/computer-agent-')"
+  }
+}
+resource "google_storage_bucket_iam_member" "sandbox_computer_list" {
+  bucket = "bot-111549-nori-sandbox"
+  role   = google_project_iam_custom_role.release_list.name
+  member = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+}
+# Cloud Run pool administration cannot be constrained by resource-name IAM
+# conditions. Like production, the trusted sandbox runner validates its saved
+# plan and acts only on its isolated worker state. This is not a project boundary.
+resource "google_project_iam_custom_role" "sandbox" {
+  role_id     = "noriCiSandbox"
+  title       = "Nori sandbox CI operations"
+  permissions = setsubtract(google_project_iam_custom_role.deploy.permissions, ["aiplatform.reasoningEngines.update", "aiplatform.reasoningEngines.query"])
+}
+resource "google_project_iam_member" "sandbox" {
+  project = local.project
+  role    = google_project_iam_custom_role.sandbox.name
+  member  = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+}
+resource "google_project_iam_custom_role" "sandbox_runtime" {
+  role_id     = "noriCiSandboxRuntime"
+  title       = "Nori sandbox runtime deployment and smoke"
+  permissions = ["aiplatform.reasoningEngines.get", "aiplatform.reasoningEngines.update", "aiplatform.reasoningEngines.query"]
+}
+resource "google_vertex_ai_reasoning_engine_iam_member" "sandbox_runtime" {
+  project          = local.project
+  region           = local.region
+  reasoning_engine = var.sandbox_runtime_name
+  role             = google_project_iam_custom_role.sandbox_runtime.name
+  member           = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+}
+resource "google_service_account_iam_member" "sandbox_act_as" {
+  for_each           = toset(["nori-sandbox-runtime", "nori-sandbox-web", "nori-sandbox-computer"])
+  service_account_id = "projects/${local.project}/serviceAccounts/${each.key}@${local.project}.iam.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+}
+resource "google_secret_manager_secret_iam_member" "sandbox_temporal" {
+  project   = local.project
+  secret_id = "nori-temporal-api-key"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+}
+resource "google_iap_web_cloud_run_service_iam_member" "sandbox_smoke" {
+  project                = local.project
+  location               = local.region
+  cloud_run_service_name = "nori-sandbox-web"
+  role                   = "roles/iap.httpsResourceAccessor"
+  member                 = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+}
+resource "google_service_account_iam_member" "sandbox_sign" {
+  service_account_id = google_service_account.ci["sandbox"].name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+}
+resource "google_project_iam_member" "sandbox_computer" {
+  project = local.project
+  role    = google_project_iam_custom_role.computer_deploy.name
+  member  = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+  condition {
+    title      = "sandbox-computer-only"
+    expression = "resource.name == 'projects/bot-111549/zones/us-central1-a/instances/nori-sandbox-computer'"
+  }
+}
+resource "google_cloud_run_v2_service_iam_member" "sandbox_web" {
+  project  = local.project
+  location = local.region
+  name     = "nori-sandbox-web"
+  role     = google_project_iam_custom_role.web_deploy.name
+  member   = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+}
+resource "google_project_iam_member" "sandbox_firestore" {
+  project = local.project
+  role    = google_project_iam_custom_role.firestore.name
+  member  = "serviceAccount:${google_service_account.ci["sandbox"].email}"
+  condition {
+    title      = "sandbox-state-only"
+    expression = "resource.name == 'projects/bot-111549/databases/nori-sandbox' || resource.name.startsWith('projects/bot-111549/databases/nori-sandbox/') || resource.name == 'projects/8273801370/databases/nori-sandbox' || resource.name.startsWith('projects/8273801370/databases/nori-sandbox/')"
   }
 }

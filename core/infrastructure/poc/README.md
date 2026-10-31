@@ -129,87 +129,142 @@ Shell work runs as `bot` in the run's persistent task directory. Every command s
 
 ## Hosted release workflow
 
-`../release/` contains a small Cloud Build flow. Live setup and state migration
-are separate review steps; these files do not activate the pipeline.
+The repository follows trunk-based delivery. Live setup, state migration, and
+first deployment are separate review steps; merging these files activates none
+of them.
 
-1. `nori-pr-check` runs independent static checks, release contract checks, and
-   production image builds in parallel, without production credentials.
-2. `nori-main-prepare` checks the exact main commit, builds each artifact once,
-   and publishes immutable image digests and a content-addressed computer binary.
-3. `nori-release` takes a full main commit SHA, selects a successful trusted
-   preparation, acquires one GCS lock, applies only an additive worker plan,
-   deploys those artifacts, runs one real browser/screenshot task, and pauses.
-   Its tools image is prepared once during setup, not rebuilt on every release.
+1. Pull requests to `main` run static checks, release-contract checks, and image
+   builds in parallel through `nori-pr-check`, without deployment credentials.
+2. Pushes to `main` run `nori-main-prepare`: check the exact commit, build once,
+   publish three immutable image digests and a content-addressed computer binary.
+3. A native Cloud Build SUCCESS notification starts `nori-sandbox`. It verifies
+   the preparation's source and artifact provenance, deploys to the isolated
+   sandbox, runs one real browser/screenshot task, and pauses paid compute.
+4. Push a tag such as `v1.2.3` on a sandbox-verified main commit to start
+   `nori-release`. Production promotes that sandbox's exact artifact manifest;
+   it does not rebuild or pick a newer preparation of the same commit. It also
+   runs the smoke and pauses compute.
 
-All builds have a 30-minute ceiling. Smoke, including resume, has a ten-minute
-ceiling; five minutes are reserved for shutdown and narrow restoration. These
-are failure limits, not target durations. Releasing requires Nori already paused
-with no unfinished tasks or pending conversation. Retained workers, disks,
-browser data and history are preserved. Releasing the same artifact again reuses
-its matching worker pool and version; it does not require another build.
+Tags must have three numeric components with no leading zeroes. Prerelease tags,
+branch pushes, failed/incomplete sandbox builds, and receipts without successful
+smoke and shutdown cannot promote. A tag pushed before sandbox finishes fails
+closed; retry its native build after sandbox succeeds, without moving the tag.
+Protect `main`, version tags, CI definitions, and privileged trigger access.
 
-The smoke verifies IAP web health, task ownership, the selected worker, browser
-navigation, a PNG screenshot, and completion. It adds a marked task to history.
-Keep owner activity quiescent during verification; there is no separate staging
-environment or exclusive application admission mode.
+The tools image is built and pinned once during setup. Each preparation or
+deployment build has a 30-minute ceiling; preparation and automatic sandbox
+are separate builds, so their ceilings can total 60 minutes. Smoke, including
+resume, has a ten-minute ceiling within deployment; five minutes are reserved
+for shutdown and narrow restoration. These are failure limits, not measured
+normal durations. Hosted timings still need the first reviewed live run.
 
-On failure the runner attempts pause first. It attempts restoration only if the
-smoke has not started admitting work. Once a smoke input may have been accepted,
-it preserves that state and reports operator action instead of blindly rolling
-back or replaying it. A verified pre-smoke restoration releases the lock but still reports failure.
-Unresolved failures retain the lock and a `deployments/BUILD_ID.json` report containing the previous references,
-worker manifest, failure and known smoke input/task IDs. There is no recovery
-service, automatic lock expiry, or automated partial-state repair.
+### Environment boundaries
+
+| Resource | Production | Sandbox |
+| --- | --- | --- |
+| Web | `nori-web` / `noribot.chat` | `nori-sandbox-web` / its IAP URL |
+| Database | `nori-poc` | `nori-sandbox` |
+| Artifact bucket | `bot-111549-nori-poc` | `bot-111549-nori-sandbox` |
+| Computer / retained disk | `nori-computer` / `bot-computer-data` | `nori-sandbox-computer` / `nori-sandbox-computer-data` |
+| Task queue / deployment | `nori-tasks` / `nori-task` | `nori-sandbox-tasks` / `nori-sandbox-task` |
+| Conversation queue | `nori-conversation` | `nori-sandbox-conversation` |
+| Terraform state prefixes | `nori/poc`, `nori/temporal` | `nori/sandbox/poc`, `nori/sandbox/temporal` |
+| CI identity | `nori-ci-deploy` | `nori-ci-sandbox` |
+
+Runtime, web, computer, wake, and Temporal scaler identities are also separate.
+The GCP project, immutable image registry, existing model/API secret references,
+and Temporal namespace remain shared. No credentials or production browser data
+are copied. This is application/data isolation, not a separate project security
+boundary: Cloud Run worker-pool creation/administration still requires trusted
+project-level CI permissions, and the existing Temporal credential is shared.
+Selected models remain unchanged.
+
+Both environments must be paused, with stopped computers and idle conversations,
+before deployment. Retained workers, disks, profiles, and history are preserved.
+The smoke verifies IAP health, task ownership, pinned worker version, navigation,
+a PNG screenshot, and completion; its marked task remains in that environment's
+history. Keep owner activity quiescent during verification. Successful deployments
+leave compute paused; use the existing operator unpause action for later use.
+
+Sandbox builds wait for an active deployment's lock within their own time budget.
+They never steal a failed build's lock. Delayed preparation notifications cannot
+replace a newer successful sandbox preparation. A repeated artifact can reuse its
+matching worker pool and version.
+
+### Failure handling
+
+The runner pauses first on failure. It restores previous images, computer binary,
+and worker routing only if smoke has not begun admitting work. After a smoke
+input may have been accepted, it preserves state and reports operator action.
+A verified pre-smoke restoration releases the lock but still fails the build.
+Unresolved failures retain `deployments/ENVIRONMENT/lock.json` and a report at
+`deployments/ENVIRONMENT/BUILD_ID.json`. Successful sandbox evidence is published
+create-only under `validated/COMMIT/SANDBOX_BUILD_ID.json`; production also checks
+that the native sandbox build finished SUCCESS under the trusted trigger.
 
 Hard Cloud Build cancellation can bypass cleanup. After confirming the owning
-build is terminal, inspect its report and run the existing `poc.py pause` using
-the migrated backend. Reconcile any incomplete Terraform apply before another
-release: inspect the native operation and Terraform lock; force-unlock only after
-confirming its owner is gone, import an existing journaled pool if it was created
-without a state entry, and review any tainted resource rather than replacing it.
-Retain all pools and reconcile `deployments/worker-releases.json` to that state.
-Use the recorded IDs to inspect and stop/drain only the smoke work if necessary;
-never clear conversation documents to make a check pass. Verify pause and inspect
-the lock's current generation before removing that exact lock with GCS's
-`--if-generation-match` precondition. An unresolved release stays blocked.
+build is terminal, inspect its report and use `poc.py pause` with the matching
+`NORI_ENVIRONMENT` and migrated backend. Inspect incomplete Terraform operations
+and locks before another deployment. Force-unlock only after the owner is gone;
+import a created-but-unjournaled pool rather than replacing it. Review tainted
+resources manually, preserve all retained pools, and reconcile that environment's
+`worker-releases.json` journal. Inspect only the recorded smoke task/input IDs;
+never clear conversation documents. Verify pause before removing the exact GCS
+lock generation. There is no recovery service or automatic lock expiry.
 
 ### Separate setup review
 
-Review `../release/terraform/main.tf` before activation. Enable Cloud Build and
-connect only `a-barwick/nori` through a regional GitHub connection after approval.
-Pass its repository resource as `repository`. Build and publish
-`../release/Dockerfile.tools` once to the existing registry's `release-tools`
-image and pass its immutable digest as `release_tools_image`. The separate
-bootstrap state owns CI identities, triggers and a versioned state bucket;
-it never owns existing application resources. Only Austin should be able to run
-privileged triggers or act as the deploy identity. No project keys are copied.
+Review the CI bootstrap in `../release/terraform/`, the sandbox foundation in
+`../sandbox/terraform/`, and the application roots before applying any of them.
+The application roots default to `environment=production`; sandbox requires
+`environment=sandbox` and its own backend. Local sandbox operator state lives
+under `~/.local/state/nori/bot-111549/sandbox/`. Use a separate Terraform data
+cache per root/environment when operating locally; hosted builds are isolated.
 
-Migrate the existing POC and Temporal states while other operators are idle.
-Back up the owner-only originals, initialize each existing local backend with its
-current absolute state path, then add an untracked `release_backend_override.tf`
-containing `terraform { backend "gcs" {} }`. Run `terraform init -migrate-state`
-with bucket `bot-111549-nori-ci-state` and prefix `nori/poc` or `nori/temporal`,
-respectively, and review the interactive migration prompt. Do not initialize an
-empty replacement state. Compare lineage, serial and resource inventory before
-and after, then review a full plan. Subsequent operators must use that GCS
-backend and `NORI_TF_BACKEND=gcs`. Hosted initialization refuses empty outputs
-and never migrates state. The old local-only worker preparation helper refuses
-migrated state; hosted preparation replaces that path.
+Setup must enable Cloud Build and Pub/Sub, connect only `a-barwick/nori` through
+a regional GitHub connection, and publish the immutable `release-tools` image.
+CI bootstrap inputs are `repository`, `release_tools_image`, and the reviewed
+`sandbox_runtime_name` output. The native `nori-prepared-builds` topic connects
+preparation SUCCESS to sandbox; no resident dispatcher is needed. `enable_triggers` defaults to false; leave it false until all state and readiness
+checks below pass and activation is separately approved.
 
-Before activation, reconcile the initial retained worker manifest with the
-current M3 release. New worker plans reject changes to existing or unrelated
-resources and all deletion/replacement. Native resources retain min-zero/max-one
-bounds. Cloud Build and model charges are separate from the runtime spend caps.
+Provision the sandbox foundation's new protected 20GiB disk and isolated network.
+Pass its numeric `retained_disk_numeric_id` as `sandbox_computer_disk_id` to the
+sandbox POC root. Initialize only this new blank guest disk in a separately
+reviewed setup operation using the existing guest-building tools; production
+startup deliberately refuses blank/partial filesystems and never formats them.
+Do not copy the production disk, browser profile, or task history. Existing
+model secrets are referenced in place. Establish owner-only IAP/runtime access,
+initial immutable image references, a compatible registered sandbox worker,
+an initialized conversation/control record, and a paused/stopped idle baseline.
+Seed `deployments/sandbox/worker-releases.json` from that sandbox's actual worker
+state. These are setup prerequisites, not implicit actions performed by CI.
 
-After setup and the live demonstration are separately approved:
+### Separate state review
 
-```sh
-gcloud builds triggers run nori-release --project=bot-111549 --region=us-central1 \
-  --substitutions=_RELEASE_COMMIT=FULL_MAIN_COMMIT_SHA
-```
+Back up production's owner-only local states while other operators are idle.
+The new `moved` blocks preserve the production registry, domain, service-agent
+grants, and Temporal secret as their Terraform addresses gain `[0]`; review a
+plan showing moves without replacement before committing those state updates.
+Hosted worker plans still reject every existing-resource mutation and deletion.
 
-`python3 core/e2e/release.test.py` exercises two offline process journeys for
-immutable artifacts and untrusted-provenance rejection. Both run in CI. Local
-builds, these boundary tests and Terraform validation do not prove hosted IAM,
-deployment, smoke, restoration, cancellation cleanup or actual pipeline latency;
-the first authorized live trial must establish those properties.
+Initialize each existing local backend with its current absolute state path,
+then add an untracked `release_backend_override.tf` containing
+`terraform { backend "gcs" {} }`. Run `terraform init -migrate-state` with bucket
+`bot-111549-nori-ci-state` and the matching prefix in the table; review the
+interactive migration prompt. Never initialize an empty replacement production
+state. Compare lineage, serial, resource inventory, and a full plan before and
+after. Initialize new sandbox states separately; never migrate production into
+a sandbox prefix. The sandbox foundation has its own setup state and is never
+managed by the deployment runner.
+
+After migration, operators use `NORI_TF_BACKEND=gcs` plus
+`NORI_ENVIRONMENT=production` or `sandbox`. Hosted initialization refuses missing
+state and checks the environment's database, bucket, computer, and worker identity.
+Reconcile each retained worker manifest with its actual state before activation.
+The legacy local worker helper refuses migrated state.
+
+Only after setup, state review, and the first live demonstration are approved
+should the triggers be enabled. Normal delivery then needs a push to `main` and,
+for production, a later version-tag push. No tag or live deployment is created
+by this implementation change.

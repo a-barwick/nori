@@ -1,7 +1,12 @@
 locals {
-  project = "bot-111549"
-  region  = "us-west1"
-  runner  = "nori-poc-runtime@bot-111549.iam.gserviceaccount.com"
+  project                 = "bot-111549"
+  region                  = "us-west1"
+  production              = var.environment == "production"
+  runner                  = "${local.production ? "nori-poc" : "nori-sandbox"}-runtime@${local.project}.iam.gserviceaccount.com"
+  deployment              = local.production ? "nori-task" : "nori-sandbox-task"
+  task_queue              = local.production ? "nori-tasks" : "nori-sandbox-tasks"
+  conversation_name       = local.production ? "nori-conversation" : "nori-sandbox-conversation"
+  temporal_api_key_secret = "nori-temporal-api-key"
   # Copied from this Temporal account's Access template, not generic Temporal identities.
   temporal_impersonators = toset([
     "serverless-qtjow@prod-vs4padk9dkczcey6d6st9c58e.iam.gserviceaccount.com",
@@ -12,29 +17,29 @@ locals {
   ])
   worker_env = {
     NORI_PROJECT_ID       = local.project
-    FIRESTORE_DATABASE_ID = "nori-poc"
-    ARTIFACT_BUCKET       = "bot-111549-nori-poc"
+    FIRESTORE_DATABASE_ID = local.production ? "nori-poc" : "nori-sandbox"
+    ARTIFACT_BUCKET       = local.production ? "bot-111549-nori-poc" : "bot-111549-nori-sandbox"
     # The worker uses the runtime identity, whose queue enqueue and wake-caller
     # actAs grants are owned by the POC Terraform state (not duplicated here).
-    NORI_WAKE_QUEUE           = "projects/${local.project}/locations/us-central1/queues/nori-conversation"
-    NORI_WAKE_SERVICE_ACCOUNT = "nori-conversation-wake@${local.project}.iam.gserviceaccount.com"
+    NORI_WAKE_QUEUE           = "projects/${local.project}/locations/us-central1/queues/${local.conversation_name}"
+    NORI_WAKE_SERVICE_ACCOUNT = "${local.conversation_name}-wake@${local.project}.iam.gserviceaccount.com"
     NORI_RUNTIME_URL          = var.runtime_invoke_root
     COMPUTER_ZONE             = "us-central1-a"
-    COMPUTER_INSTANCE         = "nori-computer"
+    COMPUTER_INSTANCE         = local.production ? "nori-computer" : "nori-sandbox-computer"
     MODEL_LOCATION            = "global"
     MODEL_NAME                = "gemini-3.8-flash"
     MODEL_INPUT_USD_PER_MTOK  = "0.75"
     MODEL_OUTPUT_USD_PER_MTOK = "3.75"
     TEMPORAL_ADDRESS          = "quickstart-nori.qtjow.tmprl.cloud:7233"
     TEMPORAL_NAMESPACE        = "quickstart-nori.qtjow"
-    TEMPORAL_TASK_QUEUE       = "nori-tasks"
-    TEMPORAL_DEPLOYMENT_NAME  = "nori-task"
+    TEMPORAL_TASK_QUEUE       = local.task_queue
+    TEMPORAL_DEPLOYMENT_NAME  = local.deployment
     TEMPORAL_CLOUD_RUN_ID     = "true"
   }
 }
 
 resource "google_project_service" "api" {
-  for_each           = toset(["secretmanager.googleapis.com"])
+  for_each           = local.production ? toset(["secretmanager.googleapis.com"]) : toset([])
   project            = local.project
   service            = each.value
   disable_on_destroy = false
@@ -43,7 +48,8 @@ resource "google_project_service" "api" {
 # Only the empty secret container is Terraform-managed. Upload a version through
 # native Secret Manager API from the root .env without logging the payload.
 resource "google_secret_manager_secret" "temporal_api_key" {
-  secret_id = "nori-temporal-api-key"
+  count     = local.production ? 1 : 0
+  secret_id = local.temporal_api_key_secret
   replication {
     auto {}
   }
@@ -54,14 +60,15 @@ resource "google_secret_manager_secret" "temporal_api_key" {
 }
 
 resource "google_secret_manager_secret_iam_member" "runner_key" {
-  secret_id = google_secret_manager_secret.temporal_api_key.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${local.runner}"
+  secret_id  = "projects/${local.project}/secrets/${local.temporal_api_key_secret}"
+  role       = "roles/secretmanager.secretAccessor"
+  member     = "serviceAccount:${local.runner}"
+  depends_on = [google_secret_manager_secret.temporal_api_key]
 }
 
 resource "google_cloud_run_v2_worker_pool" "worker" {
   for_each            = var.worker_images
-  name                = "nori-task-${each.key}"
+  name                = "${local.deployment}-${each.key}"
   location            = local.region
   deletion_protection = true
   # MANUAL mode uses manual_instance_count. Temporal version configuration
@@ -88,7 +95,7 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
         name = "TEMPORAL_API_KEY"
         value_source {
           secret_key_ref {
-            secret  = google_secret_manager_secret.temporal_api_key.secret_id
+            secret  = local.temporal_api_key_secret
             version = "latest"
           }
         }
@@ -105,12 +112,12 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
 }
 
 resource "google_service_account" "invoker" {
-  account_id   = "nori-temporal-invoker"
+  account_id   = local.production ? "nori-temporal-invoker" : "nori-sandbox-temporal-invoker"
   display_name = "Temporal WCI scaler (not worker runtime)"
 }
 
 resource "google_project_iam_custom_role" "pool_scaler" {
-  role_id     = "noriTemporalPoolScaler"
+  role_id     = local.production ? "noriTemporalPoolScaler" : "noriSandboxTemporalPoolScaler"
   title       = "Nori Temporal pool read and scale"
   permissions = ["run.workerpools.get", "run.workerpools.update"]
 }
@@ -137,4 +144,9 @@ resource "google_service_account_iam_member" "temporal_impersonation" {
   service_account_id = google_service_account.invoker.name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "serviceAccount:${each.value}"
+}
+
+moved {
+  from = google_secret_manager_secret.temporal_api_key
+  to   = google_secret_manager_secret.temporal_api_key[0]
 }

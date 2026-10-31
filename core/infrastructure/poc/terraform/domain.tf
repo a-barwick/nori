@@ -1,4 +1,5 @@
 resource "google_cloud_run_domain_mapping" "web" {
+  count           = local.production ? 1 : 0
   name            = "noribot.chat"
   project         = local.project
   location        = local.region
@@ -16,13 +17,18 @@ resource "google_cloud_run_domain_mapping" "web" {
 }
 
 output "web_custom_url" {
-  value = "https://${google_cloud_run_domain_mapping.web.name}"
+  value = local.production ? "https://${google_cloud_run_domain_mapping.web[0].name}" : null
 }
 
 output "web_domain_dns_records" {
-  value = google_cloud_run_domain_mapping.web.status[0].resource_records
+  value = local.production ? google_cloud_run_domain_mapping.web[0].status[0].resource_records : []
 }
 
 output "web_domain_conditions" {
-  value = google_cloud_run_domain_mapping.web.status[0].conditions
+  value = local.production ? google_cloud_run_domain_mapping.web[0].status[0].conditions : []
+}
+
+moved {
+  from = google_cloud_run_domain_mapping.web
+  to   = google_cloud_run_domain_mapping.web[0]
 }

@@ -18,13 +18,22 @@ PROJECT = "bot-111549"
 NUMBER = "8273801370"
 REGION = "us-central1"
 ZONE = "us-central1-a"
-WEB = "nori-web"
-VM = "nori-computer"
+ENVIRONMENT = os.environ.get("NORI_ENVIRONMENT", "production")
+if ENVIRONMENT not in {"production", "sandbox"}:
+    raise RuntimeError("NORI_ENVIRONMENT must be production or sandbox")
+PREFIX = "nori" if ENVIRONMENT == "production" else "nori-sandbox"
+WEB = PREFIX + "-web"
+VM = PREFIX + "-computer"
+DEPLOYMENT = PREFIX + "-task"
+TASK_QUEUE = PREFIX + "-tasks"
 BILLING = "010FFA-6C77F1-18FF6D"
 SPEND_CAPS = {"Cloud Run": "ec91d69c-af6f-4582-8a57-fc5d74df3922", "Agent Platform": "c288b003-c839-4ef0-9327-7ae10d3e762b"}
 ROOT = Path(__file__).resolve().parent
 TF = ROOT / "terraform"
-STATE = Path.home() / ".local/state/nori/bot-111549/poc/terraform.tfstate"
+STATE_ROOT = Path.home() / ".local/state/nori/bot-111549"
+if ENVIRONMENT == "sandbox":
+    STATE_ROOT /= "sandbox"
+STATE = STATE_ROOT / "poc/terraform.tfstate"
 TEMPORAL_TF = ROOT.parent / "temporal/terraform"
 TEMPORAL_STATE = STATE.parent.parent / "temporal/terraform.tfstate"
 TOKEN = None
@@ -77,11 +86,21 @@ def state_args(state):
 
 
 def config():
-    return {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TF}", "output", *state_args(STATE), "-json"])).items()}
+    value = {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TF}", "output", *state_args(STATE), "-json"])).items()}
+    expected = "nori-poc" if ENVIRONMENT == "production" else "nori-sandbox"
+    if value.get("firestore_database") != expected or value.get("artifact_bucket") != PROJECT + "-" + expected:
+        raise RuntimeError("Application state does not match the selected environment")
+    if ENVIRONMENT == "sandbox" and (value.get("environment") != "sandbox" or value.get("computer_instance") != VM):
+        raise RuntimeError("Sandbox state has not been initialized and reviewed")
+    return value
 
 
 def temporal_config():
-    return {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TEMPORAL_TF}", "output", *state_args(TEMPORAL_STATE), "-json"])).items()}
+    value = {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TEMPORAL_TF}", "output", *state_args(TEMPORAL_STATE), "-json"])).items()}
+    expected = "nori-poc-runtime" if ENVIRONMENT == "production" else "nori-sandbox-runtime"
+    if value.get("runner_service_account") != expected + "@" + PROJECT + ".iam.gserviceaccount.com":
+        raise RuntimeError("Worker state does not match the selected environment")
+    return value
 
 
 def temporal_env():
@@ -124,7 +143,7 @@ def temporal(*args):
 
 
 def version_config(build, pool, invoker):
-    return ["--deployment-name=nori-task", "--build-id=" + build,
+    return ["--deployment-name=" + DEPLOYMENT, "--build-id=" + build,
             "--gcp-cloud-run-project=" + PROJECT, "--gcp-cloud-run-region=us-west1",
             "--gcp-cloud-run-worker-pool=" + pool["name"],
             "--gcp-cloud-run-service-account=" + invoker,
@@ -135,7 +154,7 @@ def version_config(build, pool, invoker):
 
 def version_info(build, missing_ok=False):
     try:
-        result = temporal("describe-version", "--deployment-name=nori-task", "--build-id=" + build)
+        result = temporal("describe-version", "--deployment-name=" + DEPLOYMENT, "--build-id=" + build)
     except VersionNotFound:
         if missing_ok:
             return None
@@ -151,7 +170,7 @@ def compatible_builds(t):
     builds = set(t.get("scalable_build_ids", []))
     if not builds or not builds.issubset(t["worker_pools"]):
         raise RuntimeError("No valid sessionless worker release is configured; prepare and register a compatible build first")
-    deployment = temporal("describe", "--name=nori-task")
+    deployment = temporal("describe", "--name=" + DEPLOYMENT)
     routing = deployment.get("routingConfig", {})
     current = routing.get("currentVersionBuildID") or routing.get("currentDeploymentVersion", {}).get("buildId")
     if current not in builds:
@@ -162,7 +181,7 @@ def compatible_builds(t):
     # Visibility gives the candidates; Describe supplies the pinned version.
     # Unknown assignments and explicit overrides need review, never migration
     # or cancellation as a side effect of opening admission.
-    running = temporal_command("workflow", "list", '--query=ExecutionStatus = "Running" AND TaskQueue = "nori-tasks"')
+    running = temporal_command("workflow", "list", '--query=ExecutionStatus = "Running" AND TaskQueue = "' + TASK_QUEUE + '"')
     if not isinstance(running, list):
         raise RuntimeError("Cannot verify open workflow compatibility")
     for item in running:
@@ -184,7 +203,7 @@ def compatible_builds(t):
             queued_events = {"EVENT_TYPE_WORKFLOW_EXECUTION_STARTED", "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED", "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED", "EVENT_TYPE_WORKFLOW_TASK_STARTED", "EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT", "EVENT_TYPE_WORKFLOW_TASK_FAILED"}
             if isinstance(events, list) and events and all(event.get("eventType") in queued_events for event in events):
                 continue
-        if versioning.get("versioningOverride") or version.get("deploymentName") != "nori-task" or version.get("buildId") not in builds:
+        if versioning.get("versioningOverride") or version.get("deploymentName") != DEPLOYMENT or version.get("buildId") not in builds:
             raise RuntimeError("Open workflow uses an incompatible or unknown worker build: " + execution["workflowId"])
     return builds
 
@@ -224,7 +243,7 @@ def temporal_pause(t=None):
         try:
             if not compute_config(version_info(build, missing_ok=True)):
                 continue # Already paused, or a staged pool preceding registration.
-            temporal("update-version-compute-config", "--deployment-name=nori-task", "--build-id=" + build, "--remove")
+            temporal("update-version-compute-config", "--deployment-name=" + DEPLOYMENT, "--build-id=" + build, "--remove")
             if compute_config(version_info(build, missing_ok=True)):
                 raise RuntimeError("Worker compute configuration still present: " + build)
         except Exception as error:
@@ -403,7 +422,7 @@ def main():
             "NORI_EXECUTION_MODE": "temporal",
             "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",
             "TEMPORAL_NAMESPACE": "quickstart-nori.qtjow",
-            "TEMPORAL_TASK_QUEUE": "nori-tasks",
+            "TEMPORAL_TASK_QUEUE": TASK_QUEUE,
             "TEMPORAL_API_KEY_SECRET_VERSION": f"projects/{PROJECT}/secrets/nori-temporal-api-key/versions/latest",
         }.items()})
         operation(api("PATCH", base + "?updateMask=spec.containerSpec.imageUri,spec.deploymentSpec.env", {"spec": {"containerSpec": {"imageUri": args.value, "port": 8080}, "deploymentSpec": {"env": list(env.values())}}}), "vertex")

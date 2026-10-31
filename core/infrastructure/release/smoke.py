@@ -209,7 +209,7 @@ def run(config, deadline, evidence_callback=lambda _: None):
         try:
             info = json.loads(result.stdout)["workflowExecutionInfo"]["versioningInfo"]
             version = info["deploymentVersion"]
-            if result.returncode or info.get("versioningOverride") or version.get("deploymentName") != "nori-task" or version.get("buildId") != config["expected_worker_build"]:
+            if result.returncode or info.get("versioningOverride") or version.get("deploymentName") != config["temporal_deployment"] or version.get("buildId") != config["expected_worker_build"]:
                 raise ValueError()
         except (ValueError, KeyError, TypeError):
             raise SmokeError("Smoke worker build could not be verified") from None

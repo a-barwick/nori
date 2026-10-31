@@ -1,4 +1,4 @@
-# Manual trigger. The selected commit must have a successful trusted prepare.
+# Version tag trigger. Promote only artifacts that passed sandbox smoke and shutdown.
 # The operator supplies the previously published immutable tools image at setup.
 steps:
   - id: validate-tools
@@ -12,15 +12,15 @@ steps:
   - name: '$_TOOLS_IMAGE'
     waitFor: [validate-tools]
     entrypoint: python3
-    args: [core/infrastructure/release/release.py, release, --commit, '$_RELEASE_COMMIT']
+    args: [core/infrastructure/release/release.py, release, --commit, '$COMMIT_SHA']
     env:
       - 'NORI_RELEASE_BUCKET=bot-111549-nori-poc'
       - 'NORI_STATE_BUCKET=bot-111549-nori-ci-state'
       - 'NORI_BUILD_REGION=us-central1'
       - 'NORI_TF_BACKEND=gcs'
+      - 'NORI_ENVIRONMENT=production'
       - 'BUILD_ID=$BUILD_ID'
 substitutions:
-  _RELEASE_COMMIT: ''
   _TOOLS_IMAGE: ''
 timeout: 1800s
 options:
