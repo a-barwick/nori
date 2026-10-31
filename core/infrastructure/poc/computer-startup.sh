@@ -12,6 +12,18 @@ if ! command -v iptables >/dev/null || ! command -v curl >/dev/null; then
   timeout 240 apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends ca-certificates curl e2fsprogs iptables
 fi
 install -d /etc/nori-computer /usr/local/lib/nori-computer /opt/nori-firecracker /srv/nori-guest
+python3 - <<'TELEMETRY'
+import json,re,urllib.request
+from pathlib import Path
+request=urllib.request.Request('http://metadata.google.internal/computeMetadata/v1/instance/attributes/computer-telemetry',headers={'Metadata-Flavor':'Google'})
+try:
+    with urllib.request.urlopen(request,timeout=5) as response: values=json.load(response)
+except Exception: values={}
+patterns={'SENTRY_DSN':r'https://[a-f0-9]+@[a-z0-9.-]+/[0-9]+','SENTRY_ENVIRONMENT':r'[a-z0-9_-]{1,64}','SENTRY_RELEASE':r'[a-zA-Z0-9_.-]{1,100}','SENTRY_TRACES_SAMPLE_RATE':r'(?:0(?:\.[0-9]+)?|1(?:\.0+)?)'}
+lines=[key+'='+value for key,value in values.items() if key in patterns and isinstance(value,str) and re.fullmatch(patterns[key],value)]
+Path('/etc/nori-computer/telemetry.env').write_text('\n'.join(lines)+'\n')
+Path('/etc/nori-computer/telemetry.env').chmod(0o644)
+TELEMETRY
 attribute nori-vm-control > /usr/local/sbin/nori-vm
 chmod 755 /usr/local/sbin/nori-vm
 modprobe kvm_intel
@@ -70,6 +82,8 @@ grep -qx debian-bookworm-firecracker-1.17.0-kernel-6.1.188 /srv/nori-guest/READY
   test ! -L "$guest_root/workspace/tasks"
   install -d -o 1000 -g 1000 -m 700 "$guest_root/workspace/tasks"
   install -m 755 /usr/local/bin/computer-agent "$guest_root/usr/local/bin/computer-agent"
+  test ! -L "$guest_root/etc/nori-telemetry.env"
+  install -m 644 /etc/nori-computer/telemetry.env "$guest_root/etc/nori-telemetry.env"
   cat > "$guest_root/etc/systemd/system/bot-computer-agent.service" <<'SERVICE'
 [Unit]
 Description=Nori guest computer RPC
@@ -79,6 +93,7 @@ Wants=network-online.target
 User=bot
 Group=bot
 Environment=HOME=/home/bot
+EnvironmentFile=-/etc/nori-telemetry.env
 ExecStart=/usr/local/bin/computer-agent --listen 172.30.0.2:8090
 NoNewPrivileges=yes
 Delegate=yes
@@ -160,6 +175,7 @@ Description=IAP computer RPC proxy
 After=nori-firecracker.service
 [Service]
 User=nobody
+EnvironmentFile=-/etc/nori-computer/telemetry.env
 ExecStart=/usr/local/bin/computer-agent --proxy --listen $primary:8090 --idle-timeout 15m
 SuccessExitStatus=75
 ExecStopPost=+/usr/local/sbin/nori-computer-idle-stop

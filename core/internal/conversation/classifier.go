@@ -78,7 +78,7 @@ func (c *Classifier) Classify(ctx context.Context, inputs []state.ConversationIn
 	}
 	var requestStarted time.Time
 	ctx, span := conversationTracer.Start(ctx, "classify jev-latest", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
-		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID),
+		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID()),
 		attribute.String("gen_ai.operation.name", "classify"), attribute.String("gen_ai.provider.name", "typesafe"),
 		attribute.String("gen_ai.request.model", "jev-latest"), attribute.String("llm.model_name", "jev-latest"),
 	))

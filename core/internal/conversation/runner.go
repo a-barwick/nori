@@ -91,7 +91,7 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 	if strings.TrimSpace(input.Message) == "" || len(input.Message) > 8192 {
 		return Session{}, fmt.Errorf("message must contain 1–8192 bytes")
 	}
-	ctx, span := conversationTracer.Start(ctx, "conversation.accept", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID), attribute.String("nori.input.id", input.ID)))
+	ctx, span := conversationTracer.Start(ctx, "conversation.accept", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.input.id", input.ID)))
 	defer span.End()
 	if e := r.tasks.Store.AcceptConversationInput(ctx, input.ID, input.Message); e != nil {
 		if !errors.Is(e, state.ErrConversationConflict) && !errors.Is(ctx.Err(), context.Canceled) {

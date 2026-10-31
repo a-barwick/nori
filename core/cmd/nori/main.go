@@ -24,12 +24,12 @@ func main() {
 	defer observability.Shutdown(stopTelemetry)
 	runtime, err := wake.Open(ctx)
 	if err != nil {
-		log.Fatal(err)
+		observability.Fatal(err)
 	}
 	defer runtime.Close()
 	queue, err := wake.NewCloud(ctx, os.Getenv("NORI_WAKE_QUEUE"), os.Getenv("NORI_RUNTIME_URL"), os.Getenv("NORI_WAKE_SERVICE_ACCOUNT"))
 	if err != nil {
-		log.Fatal(err)
+		observability.Fatal(err)
 	}
 	// Only request-bound /api/process performs outer work in hosted mode. Cloud
 	// Tasks owns retry delivery across scale-to-zero and process termination.
@@ -38,6 +38,6 @@ func main() {
 	if err := wake.Listen(ctx, server, 25*time.Second); err != nil {
 		observability.RecordErrorCategory(ctx, "http.listen", err)
 		observability.Shutdown(stopTelemetry)
-		log.Fatal(err)
+		observability.Fatal(err)
 	}
 }

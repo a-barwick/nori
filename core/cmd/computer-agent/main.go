@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
@@ -34,11 +35,11 @@ func main() {
 	var handler http.Handler
 	if *proxy {
 		if *idle <= 0 {
-			log.Fatal("idle-timeout must be positive")
+			observability.Fatal(errors.New("idle-timeout must be positive"))
 		}
 		target, err := url.Parse(*guest)
 		if err != nil || target.Scheme != "http" || target.Host == "" || target.User != nil || target.RawQuery != "" || target.Fragment != "" || (target.Path != "" && target.Path != "/") {
-			log.Fatal("guest-url must be an HTTP origin")
+			observability.Fatal(errors.New("guest-url must be an HTTP origin"))
 		}
 		target.Path = ""
 		handler = computerd.Proxy(ctx, target, *idle, func() { close(idleStop); stop() })
@@ -46,7 +47,7 @@ func main() {
 		var err error
 		handler, err = computerd.New(*tasks)
 		if err != nil {
-			log.Fatal(err)
+			observability.Fatal(err)
 		}
 	}
 	server := &http.Server{Addr: *listen, Handler: observability.HTTPHandler(handler), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 125 * time.Second, MaxHeaderBytes: 8192}
@@ -60,7 +61,7 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		observability.RecordErrorCategory(ctx, "http.listen", err)
 		observability.Shutdown(stopTelemetry)
-		log.Fatal(err)
+		observability.Fatal(err)
 	}
 	select {
 	case <-idleStop:

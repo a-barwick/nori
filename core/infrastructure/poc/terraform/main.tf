@@ -7,7 +7,7 @@ locals {
   database          = coalesce(var.firestore_database, local.production ? "nori-poc" : "nori-sandbox")
   conversation_name = local.production ? "nori-conversation" : "nori-sandbox-conversation"
   conversation_secrets = {
-    OPENROUTER_API_KEY = "nori-openrouter-api-key"
+    OPENROUTER_API_KEY = local.production ? "nori-openrouter-api-key" : "nori-sandbox-openrouter-api-key"
     JEV_API_KEY        = "nori-jev-api-key"
   }
   task_queue          = local.production ? "nori-tasks" : "nori-sandbox-tasks"
@@ -28,6 +28,16 @@ variable "environment" {
   validation {
     condition     = contains(["production", "sandbox"], var.environment)
     error_message = "Environment must be production or sandbox."
+  }
+}
+
+variable "sandbox_spend_scope" {
+  type        = string
+  default     = ""
+  description = "Existing bounded feature lease for authorized sandbox work; never a production credential."
+  validation {
+    condition     = var.environment == "production" || can(regex("^[a-f0-9]{64}$", var.sandbox_spend_scope))
+    error_message = "Sandbox requires an existing feature spend scope."
   }
 }
 
@@ -433,8 +443,14 @@ resource "google_compute_instance" "computer" {
     startup-script         = file("${path.module}/../computer-startup.sh")
     shutdown-script        = "#!/bin/bash\nset -e\n[ ! -x /usr/local/sbin/nori-vm ] || /usr/local/sbin/nori-vm stop\n"
     # Keep the deployed attachment's device name; host paths/services use Nori.
-    nori-vm-control         = replace(file("${path.module}/../../microvm/vm-control.sh"), "/dev/disk/by-id/google-nori-guest-data", "/dev/disk/by-id/google-bot-guest-data")
-    computer-paused         = "true"
+    nori-vm-control = replace(file("${path.module}/../../microvm/vm-control.sh"), "/dev/disk/by-id/google-nori-guest-data", "/dev/disk/by-id/google-bot-guest-data")
+    computer-paused = "true"
+    computer-telemetry = jsonencode({
+      SENTRY_DSN                = var.observability.core_dsn
+      SENTRY_ENVIRONMENT        = var.environment
+      SENTRY_RELEASE            = var.computer_release_sha256
+      SENTRY_TRACES_SAMPLE_RATE = tostring(var.observability.trace_sample_rate)
+    })
     computer-release-object = "${google_storage_bucket.artifacts.name}/releases/computer-agent-${var.computer_release_sha256}"
     computer-release-sha256 = var.computer_release_sha256
 
@@ -548,7 +564,11 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
           TEMPORAL_TASK_QUEUE             = local.task_queue
           TEMPORAL_DEPLOYMENT_NAME        = local.temporal_deployment
           TEMPORAL_API_KEY_SECRET_VERSION = "projects/${local.project}/secrets/nori-temporal-api-key/versions/latest"
-        }, local.telemetry_env)
+          }, local.telemetry_env, local.production ? {} : {
+          NORI_SPEND_PROFILE  = "feature"
+          NORI_SPEND_DATABASE = "nori-sandbox"
+          NORI_SPEND_SCOPE    = var.sandbox_spend_scope
+        })
         content {
           name  = env.key
           value = env.value

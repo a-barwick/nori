@@ -12,11 +12,9 @@ variable "observability" {
     arize_endpoint          = optional(string, "")
     arize_capture_content   = optional(bool, false)
     trace_sample_rate       = optional(number, 0.05)
-    sentry_spans_per_hour   = optional(number, 500)
     sentry_errors_per_hour  = optional(number, 50)
     sentry_logs_per_hour    = optional(number, 100)
     sentry_metrics_per_hour = optional(number, 200)
-    arize_spans_per_hour    = optional(number, 50)
   })
   default = {}
   validation {
@@ -25,7 +23,7 @@ variable "observability" {
       can(regex("^(latest|[1-9][0-9]*)$", var.observability.arize_secret_version)) &&
       (var.observability.arize_endpoint == "" || startswith(var.observability.arize_endpoint, "https://")) &&
       var.observability.trace_sample_rate >= 0 && var.observability.trace_sample_rate <= 1 &&
-    alltrue([for n in [var.observability.sentry_spans_per_hour, var.observability.sentry_errors_per_hour, var.observability.sentry_logs_per_hour, var.observability.sentry_metrics_per_hour, var.observability.arize_spans_per_hour] : n >= 0 && n <= 10000 && floor(n) == n]))
+    alltrue([for n in [var.observability.sentry_errors_per_hour, var.observability.sentry_logs_per_hour, var.observability.sentry_metrics_per_hour] : n >= 0 && n <= 10000 && floor(n) == n]))
     error_message = "Use a paired AX space ID and existing same-project secret reference, a valid version/HTTPS endpoint, sampling 0..1, and whole hourly limits 0..10000."
   }
 }
@@ -36,7 +34,6 @@ locals {
     SENTRY_DSN                   = var.observability.core_dsn
     SENTRY_ENVIRONMENT           = var.environment
     SENTRY_TRACES_SAMPLE_RATE    = tostring(var.observability.trace_sample_rate)
-    NORI_SENTRY_SPANS_PER_HOUR   = tostring(var.observability.sentry_spans_per_hour)
     NORI_SENTRY_ERRORS_PER_HOUR  = tostring(var.observability.sentry_errors_per_hour)
     NORI_SENTRY_LOGS_PER_HOUR    = tostring(var.observability.sentry_logs_per_hour)
     NORI_SENTRY_METRICS_PER_HOUR = tostring(var.observability.sentry_metrics_per_hour)
@@ -46,7 +43,6 @@ locals {
     ARIZE_PROJECT_URL          = var.observability.arize_project_url
     ARIZE_OTLP_ENDPOINT        = var.observability.arize_endpoint
     NORI_ARIZE_CAPTURE_CONTENT = tostring(var.observability.arize_capture_content)
-    NORI_ARIZE_SPANS_PER_HOUR  = tostring(var.observability.arize_spans_per_hour)
   }) : {}
   # Agent Runtime rejects environment entries with an empty value. Omit
   # optional settings so the SDK can use its own defaults.

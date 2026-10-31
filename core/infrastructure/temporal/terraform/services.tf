@@ -26,7 +26,7 @@ variable "request_worker_targets" {
     condition = alltrue([for target in values(var.request_worker_targets) :
       target.spend_scope == null || (var.environment == "sandbox" && can(regex("^[a-f0-9]{64}$", target.spend_scope)))
     ])
-    error_message = "Spend binding must use the CI scope SHA256 on a sandbox build."
+    error_message = "Spend binding must use the feature scope SHA256 on a sandbox build."
   }
   validation {
     condition     = toset(keys(var.request_worker_targets)) == toset(keys(var.request_worker_images))
@@ -199,7 +199,7 @@ resource "google_cloud_run_v2_service" "worker" {
           NORI_WORKER_IDLE_WINDOW  = "15s"
           }, var.request_worker_targets[each.key].spend_scope == null ? {} : {
           NORI_SPEND_SCOPE   = var.request_worker_targets[each.key].spend_scope
-          NORI_SPEND_PROFILE = "ci"
+          NORI_SPEND_PROFILE = "feature"
           NORI_ENVIRONMENT   = "sandbox"
         })
         content {

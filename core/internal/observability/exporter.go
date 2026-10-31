@@ -8,7 +8,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"golang.org/x/time/rate"
 )
 
 // Only explicitly selected operational fields cross the export boundary.
@@ -21,7 +20,9 @@ var operationalKeys = map[string]bool{
 	"llm.model_name": true, "llm.token_count.prompt": true, "llm.token_count.completion": true, "llm.token_count.total": true,
 	"llm.cost.total": true,
 	"tool.name":      true, "error.type": true,
-	"nori.error.category": true,
+	"nori.error.category": true, "nori.error.reason": true,
+	"deployment.environment.name": true, "service.version": true, "service.name": true,
+	"nori.input.kind": true, "nori.input.truncated": true, "nori.prompt.message_count": true, "nori.prompt.bytes": true, "nori.prompt.version": true,
 	"http.request.method": true, "http.route": true, "http.response.status_code": true,
 	"nori.input.id": true, "nori.turn.id": true, "nori.attempt.id": true, "nori.attempt.number": true,
 	"nori.task.id": true, "nori.task.revision": true, "nori.task.status": true,
@@ -60,7 +61,18 @@ type filteredSpan struct {
 func (s filteredSpan) Name() string { return redactText(s.ReadOnlySpan.Name(), 120) }
 func (s filteredSpan) Attributes() []attribute.KeyValue {
 	attrs := s.ReadOnlySpan.Attributes()
-	result := make([]attribute.KeyValue, 0, len(attrs))
+	result := make([]attribute.KeyValue, 0, len(attrs)+3)
+	for _, attr := range s.Resource().Attributes() {
+		if attr.Key == "deployment.environment.name" || attr.Key == "service.version" || attr.Key == "service.name" {
+			result = append(result, attr)
+		}
+	}
+	for _, attr := range attrs {
+		if attr.Key == "openinference.span.kind" && attr.Value.AsString() == "LLM" {
+			result = append(result, attribute.String("nori.input.kind", "redacted_latest_user_excerpt"))
+			break
+		}
+	}
 	for _, attr := range attrs {
 		if safe, ok := allowedAttribute(attr, s.content); ok {
 			result = append(result, safe)
@@ -131,7 +143,6 @@ func (s filteredSpan) Status() sdktrace.Status {
 type filteredExporter struct {
 	inner           sdktrace.SpanExporter
 	arize           bool
-	limiter         *rate.Limiter
 	arizeProjectURL *url.URL
 }
 
@@ -150,15 +161,20 @@ func (e *filteredExporter) ExportSpans(ctx context.Context, spans []sdktrace.Rea
 				continue
 			}
 		}
-		if !e.limiter.Allow() {
-			continue
-		}
 		filtered = append(filtered, filteredSpan{ReadOnlySpan: span, content: e.arize, arizeProjectURL: e.arizeProjectURL})
 	}
 	if len(filtered) == 0 {
 		return nil
 	}
-	return e.inner.ExportSpans(ctx, filtered)
+	err := e.inner.ExportSpans(ctx, filtered)
+	destination := "sentry.spans"
+	if e.arize {
+		destination = "arize.spans"
+	}
+	if err != nil {
+		diagnostic(destination, "export_failed", len(filtered))
+	}
+	return err
 }
 
 func (e *filteredExporter) Shutdown(ctx context.Context) error { return e.inner.Shutdown(ctx) }

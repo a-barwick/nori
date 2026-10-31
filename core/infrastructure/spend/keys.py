@@ -229,6 +229,22 @@ def ensure_ci(commit):
     return ensure("ci:nori:" + commit + ":release", "ci", persist)
 
 
+def publish_sandbox(scope, key):
+    """Bind the existing feature key to the retained sandbox runtime secret."""
+    value = values(get_scope(scope))
+    require(value.get("profile") == "feature" and status(scope)["ready"], "Sandbox needs a ready feature allowance")
+    secret = f"projects/{PROJECT}/secrets/nori-sandbox-openrouter-api-key"
+    cloud_api("GET", "https://secretmanager.googleapis.com/v1/" + secret)
+    if value.get("secret_version"):
+        return str(value["secret_version"])
+    result = cloud_api("POST", "https://secretmanager.googleapis.com/v1/" + secret + ":addVersion",
+                       {"payload": {"data": base64.b64encode(key.encode()).decode()}})
+    version = result["name"].rsplit("/", 1)[-1]
+    require(version.isdigit(), "Invalid sandbox secret version")
+    update(scope, {"secret_version": version})
+    return version
+
+
 def close_ci(scope):
     try:
         value = values(get_scope(scope))

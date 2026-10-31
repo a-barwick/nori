@@ -4,14 +4,17 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -79,6 +82,7 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 			},
 			BeforeSend: func(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 				if !errorLimit.Allow() {
+					diagnostic("sentry.errors", "rate_limited", 1)
 					return nil
 				}
 				return scrubEvent(event)
@@ -87,7 +91,11 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 			BeforeSendTransaction: func(*sentry.Event, *sentry.EventHint) *sentry.Event { return nil },
 			BeforeBreadcrumb:      func(*sentry.Breadcrumb, *sentry.BreadcrumbHint) *sentry.Breadcrumb { return nil },
 			BeforeSendLog: func(event *sentry.Log) *sentry.Log {
-				if !eventNames[event.Body] || !logLimit.Allow() {
+				if !eventNames[event.Body] {
+					return nil
+				}
+				if !logLimit.Allow() {
+					diagnostic("sentry.logs", "rate_limited", 1)
 					return nil
 				}
 				for key, value := range event.Attributes {
@@ -104,11 +112,15 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 				return event
 			},
 			BeforeSendMetric: func(metric *sentry.Metric) *sentry.Metric {
-				if !metricNames[metric.Name] || !metricLimit.Allow() {
+				if !metricNames[metric.Name] {
+					return nil
+				}
+				if !metricLimit.Allow() {
+					diagnostic("sentry.metrics", "rate_limited", 1)
 					return nil
 				}
 				for key := range metric.Attributes {
-					if key != "sentry.release" && key != "sentry.environment" && key != "sentry.sdk.name" && key != "sentry.sdk.version" {
+					if !metricDimensions[key] && key != "sentry.release" && key != "sentry.environment" && key != "sentry.sdk.name" && key != "sentry.sdk.version" {
 						delete(metric.Attributes, key)
 					}
 				}
@@ -123,7 +135,7 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "observability: Sentry trace exporter unavailable")
 			} else {
-				options = append(options, batch(&filteredExporter{inner: exporter, limiter: hourlyLimiter("NORI_SENTRY_SPANS_PER_HOUR", 500), arizeProjectURL: arizeURL}))
+				options = append(options, batch(&filteredExporter{inner: exporter, arizeProjectURL: arizeURL}))
 				exporters++
 			}
 		}
@@ -140,7 +152,7 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "observability: Arize exporter unavailable")
 			} else {
-				options = append(options, batch(&filteredExporter{inner: exporter, arize: true, limiter: hourlyLimiter("NORI_ARIZE_SPANS_PER_HOUR", 50)}))
+				options = append(options, batch(&filteredExporter{inner: exporter, arize: true}))
 				exporters++
 			}
 		}
@@ -218,12 +230,27 @@ func firstNonempty(values ...string) string {
 
 // Flush makes a bounded best effort before a request-bound instance goes idle.
 func Flush(ctx context.Context) {
+	// Independent exports share wall time, never consume each other's deadline.
+	var work sync.WaitGroup
 	if tracerProvider != nil {
-		_ = tracerProvider.ForceFlush(ctx)
+		work.Add(1)
+		go func() {
+			defer work.Done()
+			if tracerProvider.ForceFlush(ctx) != nil {
+				diagnostic("otel", "flush_failed", 1)
+			}
+		}()
 	}
 	if sentryEnabled.Load() {
-		_ = sentry.FlushWithContext(ctx)
+		work.Add(1)
+		go func() {
+			defer work.Done()
+			if !sentry.FlushWithContext(ctx) {
+				diagnostic("sentry", "flush_failed", 1)
+			}
+		}()
 	}
+	work.Wait()
 }
 
 // Shutdown gives process termination a short bounded opportunity to export.
@@ -256,9 +283,16 @@ func RecordErrorCategory(ctx context.Context, category string, err error, attrs 
 		category = "operation"
 	}
 	typeName := redactText(fmt.Sprintf("%T", err), 120)
+	reason := errorReason(err)
+	attrs = append(attrs, attribute.String("nori.error.reason", reason))
 	span := trace.SpanFromContext(ctx)
 	span.SetStatus(codes.Error, "operation failed")
 	span.SetAttributes(attribute.String("error.type", typeName), attribute.String("nori.error.category", category))
+	for _, attr := range attrs {
+		if safe, ok := allowedAttribute(attr, false); ok {
+			span.SetAttributes(safe)
+		}
+	}
 	Event(ctx, "operation.failed", attribute.String("nori.error.category", category))
 	if !sentryEnabled.Load() || ctx.Value(suppressErrorCaptureKey{}) != nil {
 		return
@@ -266,7 +300,7 @@ func RecordErrorCategory(ctx context.Context, category string, err error, attrs 
 	event := sentry.NewEvent()
 	event.Level = sentry.LevelError
 	event.Exception = []sentry.Exception{{Type: "Nori/" + category, Value: category + " failed", Stacktrace: sentry.NewStacktrace()}}
-	event.Fingerprint = []string{"nori", category, typeName}
+	event.Fingerprint = []string{"{{ default }}", category, reason}
 	event.Tags = map[string]string{"nori.error.category": category, "error.type": typeName}
 	for _, attr := range attrs {
 		if safe, ok := allowedAttribute(attr, false); ok {
@@ -303,11 +337,7 @@ func scrubEvent(event *sentry.Event) *sentry.Event {
 		event.Tags = map[string]string{}
 	}
 	event.Tags["nori.error.category"] = category
-	typeName := event.Tags["error.type"]
-	if typeName == "" {
-		typeName = "unknown"
-	}
-	event.Fingerprint = []string{"nori", category, redactText(typeName, 120)}
+	event.Fingerprint = []string{"{{ default }}", category, event.Tags["nori.error.reason"]}
 	for i := range event.Exception {
 		event.Exception[i].Type = "Nori/" + category
 		event.Exception[i].Value = category + " failed"
@@ -345,4 +375,53 @@ func scrubEvent(event *sentry.Event) *sentry.Event {
 		}
 	}
 	return event
+}
+
+// Fatal captures startup failures before exiting; log.Fatal skips deferred flushes.
+func Fatal(err error) {
+	RecordErrorCategory(context.Background(), "startup", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	Flush(ctx)
+	fmt.Fprintln(os.Stderr, "nori: startup or process failure (details withheld)")
+	os.Exit(1)
+}
+
+func errorReason(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "deadline"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	var status interface{ HTTPStatusCode() int }
+	if errors.As(err, &status) && status.HTTPStatusCode() >= 400 && status.HTTPStatusCode() <= 599 {
+		return fmt.Sprintf("http_%d", status.HTTPStatusCode())
+	}
+	var network net.Error
+	if errors.As(err, &network) {
+		if network.Timeout() {
+			return "timeout"
+		}
+		return "network"
+	}
+	return "other"
+}
+
+var diagnosticMu sync.Mutex
+var diagnosticCounts = map[string]int{}
+var diagnosticLast = map[string]time.Time{}
+
+// Local diagnostics cannot recurse into either telemetry exporter. Names are
+// static at call sites and counters include suppressed repetitions.
+func diagnostic(destination, reason string, count int) {
+	diagnosticMu.Lock()
+	defer diagnosticMu.Unlock()
+	key := destination + "/" + reason
+	diagnosticCounts[key] += count
+	if time.Since(diagnosticLast[key]) < time.Minute {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "observability: destination=%s reason=%s count=%d\n", destination, reason, diagnosticCounts[key])
+	diagnosticLast[key] = time.Now()
 }

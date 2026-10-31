@@ -35,11 +35,11 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := spend.ValidateConfiguration(); err != nil {
-		log.Fatal(err)
-	}
 	stopTelemetry := observability.Init(ctx, "nori-worker")
 	defer observability.Shutdown(stopTelemetry)
+	if err := spend.ValidateConfiguration(); err != nil {
+		observability.Fatal(err)
+	}
 	if port := os.Getenv("PORT"); port != "" {
 		addr := ":" + port
 		if os.Getenv("TEMPORAL_LOCAL") == "true" {
@@ -55,14 +55,14 @@ func main() {
 		if err := wake.Listen(ctx, server, 5*time.Minute); err != nil {
 			observability.RecordErrorCategory(ctx, "http.listen", err)
 			observability.Shutdown(stopTelemetry)
-			log.Fatal(err)
+			observability.Fatal(err)
 		}
 		return
 	}
 	if err := run(ctx, false, "local", nil); err != nil {
 		observability.RecordErrorCategory(ctx, "worker.lifecycle", err)
 		observability.Shutdown(stopTelemetry)
-		log.Fatal(err)
+		observability.Fatal(err)
 	}
 }
 

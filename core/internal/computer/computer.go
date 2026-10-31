@@ -60,7 +60,7 @@ func Attach(ctx context.Context, c Config, run string) (*Client, error) {
 	return tracedConnect(ctx, c, run, false)
 }
 func tracedConnect(ctx context.Context, config Config, run string, allowStart bool) (*Client, error) {
-	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer.connect", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID), attribute.Bool("nori.computer.allow_start", allowStart)))
+	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer.connect", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.Bool("nori.computer.allow_start", allowStart)))
 	defer span.End()
 	client, err := connect(ctx, config, run, allowStart)
 	if err != nil && !errors.Is(err, ErrStopped) && !errors.Is(ctx.Err(), context.Canceled) {
@@ -280,7 +280,7 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) (resp
 	case "/browser/close":
 		operation = "browser_close"
 	}
-	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer."+operation, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID), attribute.String("nori.computer.operation", operation), attribute.String("nori.task.id", c.taskID), attribute.String("nori.operation.id", c.operation)))
+	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer."+operation, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.computer.operation", operation), attribute.String("nori.task.id", c.taskID), attribute.String("nori.operation.id", c.operation)))
 	defer func() {
 		if err != nil && !errors.Is(err, ErrDraining) && !errors.Is(err, ErrBrowserRestarted) && !errors.Is(ctx.Err(), context.Canceled) {
 			observability.RecordErrorCategory(ctx, "computer.rpc", err, attribute.String("nori.computer.operation", operation))

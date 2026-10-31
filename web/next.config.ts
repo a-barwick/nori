@@ -25,6 +25,10 @@ const nextConfig: NextConfig = {
   },
 };
 
+const uploadConfigured = !!(process.env.SENTRY_AUTH_TOKEN || process.env.SENTRY_ORG || process.env.SENTRY_PROJECT);
+if (uploadConfigured && !(process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT && process.env.SENTRY_RELEASE)) {
+  throw new Error("Source-map upload requires SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT, and SENTRY_RELEASE together.");
+}
 export default withSentryConfig(nextConfig, {
   tunnelRoute: "/monitoring",
   org: process.env.SENTRY_ORG,
@@ -33,5 +37,5 @@ export default withSentryConfig(nextConfig, {
   release: { name: process.env.SENTRY_RELEASE },
   sourcemaps: { disable: !(process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT) },
   silent: !process.env.CI,
-  errorHandler: () => console.warn("Sentry source-map upload failed; the application build will continue."),
+  errorHandler: () => { throw new Error("Sentry source-map upload failed; refusing an unsymbolicated release."); },
 });

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/felixge/httpsnoop"
-	"github.com/getsentry/sentry-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -27,13 +26,26 @@ func HTTPHandler(next http.Handler) http.Handler {
 			pending := &atomic.Bool{}
 			ctx = context.WithValue(ctx, requestFlushKey{}, pending)
 			defer func() {
+				panicValue := recover()
+				if panicValue != nil && panicValue != http.ErrAbortHandler {
+					RecordErrorCategory(ctx, "http.panic", errors.New("HTTP handler panicked"))
+					pending.Store(true)
+				}
 				if pending.Load() {
 					flushRequest()
 				}
+				if panicValue != nil {
+					panic(panicValue)
+				}
 			}()
-			next.ServeHTTP(w, r.WithContext(ctx))
+			result := httpsnoop.CaptureMetrics(next, w, r.WithContext(ctx))
+			if result.Code >= 500 {
+				RecordErrorCategory(ctx, "http.request", errors.New("HTTP request failed"), attribute.Int("http.response.status_code", result.Code))
+				pending.Store(true)
+			}
 			return
 		}
+		started := time.Now()
 		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 		ctx, span := otel.Tracer("nori/http").Start(ctx, "HTTP "+route, trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(attribute.String("http.route", route), attribute.String("http.request.method", safeMethod(r.Method))))
 		defer func() {
@@ -45,6 +57,8 @@ func HTTPHandler(next http.Handler) http.Handler {
 			}
 			span.End()
 			flushRequest()
+			// Include export overhead in locally observed handler time.
+			slog.InfoContext(ctx, "nori handler completed", "duration_ms", time.Since(started).Milliseconds(), "http.route", route)
 			if panicValue != nil {
 				panic(panicValue)
 			}
@@ -55,14 +69,10 @@ func HTTPHandler(next http.Handler) http.Handler {
 			span.SetStatus(codes.Error, "request failed")
 			RecordErrorCategory(ctx, "http.request", errors.New("HTTP request failed"), attribute.String("http.route", route), attribute.Int("http.response.status_code", result.Code))
 		}
-		// Logs and metrics are sampled with their trace and have independent
-		// SDK-side rate limits; they describe samples, not exact request totals.
-		if sentryEnabled.Load() && span.SpanContext().IsSampled() {
-			sentry.NewLogger(ctx).Info().String("http.route", route).Int("http.response.status_code", result.Code).Emit("nori request completed")
-			meter := sentry.NewMeter(ctx)
-			meter.Count("nori.http.requests", 1)
-			meter.Distribution("nori.http.duration_ms", float64(result.Duration)/float64(time.Millisecond))
-		}
+		Event(ctx, "nori request completed", attribute.String("http.route", route), attribute.Int("http.response.status_code", result.Code))
+		Metric(ctx, "nori.http.requests", 1)
+		Metric(ctx, "nori.http.duration_ms", float64(result.Duration)/float64(time.Millisecond))
+
 	})
 }
 
