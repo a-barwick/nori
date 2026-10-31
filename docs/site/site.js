@@ -93,7 +93,7 @@ heads.forEach(head => {
   const end = nodes.findIndex(n => n.matches?.('.tag, a, .mono'));
   const titleNodes = end < 0 ? nodes : nodes.slice(0, end);
   const title = titleNodes.map(n => n.textContent).join('').trim();
-  // The page title links to the page itself. Everything else links to its section.
+  // Sections link to themselves. The page title only gets the copy icon.
   const isPage = head.matches('h1');
   let id = head.id || slug(title);
   for (let n = 2; !isPage && usedIds.has(id); n++) id = `${slug(title)}-${n}`;
@@ -103,7 +103,7 @@ heads.forEach(head => {
   const link = document.createElement('a');
   link.className = 'head-link';
   link.href = target;
-  link.append(...titleNodes);
+  if (!isPage) link.append(...titleNodes);
   const copy = document.createElement('a');
   copy.className = 'copy-link';
   copy.href = target;
@@ -119,7 +119,7 @@ heads.forEach(head => {
     copy.title = 'Copied';
     setTimeout(() => { copy.innerHTML = LINK_ICON; copy.classList.remove('copied'); copy.title = 'Copy link to this section'; }, 1500);
   });
-  head.prepend(link, copy);
+  if (isPage) head.append(copy); else head.prepend(link, copy);
 });
 
 // The rail lists the current page's sections and follows the scroll position
