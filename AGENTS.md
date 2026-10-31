@@ -21,11 +21,9 @@ The selected models are:
 # Agent delivery
 
 Use a `codex/*` branch and a pull request for changes. Keep the PR draft while
-implementation is incomplete. Once required verification
-passes, mark it ready: GitHub automatically merges eligible owner/agent
-PRs after `Checks` succeeds for the exact head commit, then deploys from `main`.
-Do not add manual merge gates or branch protections for this personal repository.
-Do not run a competing local deployment while the `Release` workflow is active.
+implementation is incomplete. Verify locally and merge when the requested work
+is complete. CI/CD and automatic deployment are disabled; deployments use the
+operator commands only when requested.
 
 # Cost controls
 

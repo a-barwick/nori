@@ -41,80 +41,21 @@ Agent Platform service-agent grant, so sandbox uses the same secret. Apply any
 access and service changes through separately reviewed plans. The computer guest
 does not receive these credentials.
 
-The release bootstrap's optional `sentry_source_maps` setting references an
-existing token secret and the public Sentry organization/project names. GitHub
-Actions reads the token into a short-lived, owner-only file outside the web build
-context, supplies it through a BuildKit secret mount, and removes the file. No
-token value belongs in Terraform, image arguments, or source. Builds use the
-source commit as the release ID; the promoted web image obtains its Sentry
-environment from the deployed service at runtime.
-
 ## Delivery
 
-GitHub Actions owns checks, merging, and deployment:
+GitHub Actions, auto-merge, Cloud Build integration, and the CI release runner
+have been removed. Changes are verified locally and merged through pull requests.
+Deploy only through the existing [POC operator commands](poc/README.md) when
+requested. Application services and retained data are independent of CI/CD.
 
-- `Checks` runs Go, web, and release-process checks in parallel on pull requests.
-- `Auto merge` squash-merges a non-draft, same-repository `codex/*` PR authored by
-  the repository owner after all three checks pass for its exact head commit.
-  `NORI_AUTO_MERGE_USERS` can explicitly allow additional agent accounts. Forks
-  and other authors never receive automatic merge or cloud credentials.
-- `Release` runs after a push to `main`. Auto merge explicitly dispatches it
-  because GitHub does not emit another push workflow for a `GITHUB_TOKEN` merge.
-  Runtime, worker, web, and computer builds run in parallel with dependency/image
-  caches. One serialized job deploys the immutable artifacts to sandbox, runs a
-  real browser task there, then deploys those same artifacts to production and
-  checks web/runtime health. A newer main commit supersedes a queued deployment.
+Application Terraform state remains in the existing GCS bucket
+`bot-111549-nori-ci-state`, with production prefixes `nori/poc` and
+`nori/temporal` and sandbox prefixes under `nori/sandbox`. The bucket is retained
+because it owns the app's infrastructure state, despite its historical name.
+Use the existing GCS backend configuration and `NORI_TF_BACKEND=gcs` for operator
+commands. Do not initialize empty replacement state.
 
-Releases preserve databases, files, browser profiles, and retained worker
-versions. A busy session stops deployment before any mutation; finish its work
-and rerun `Release`. The deployment shuts down test compute and leaves production
-paused to honor the personal deployment's cost policy. Use the normal operator
-resume command when starting live work. No pipeline lock needs manual deletion.
-
-The `release-manifest` and `deployment-reports` workflow artifacts identify the
-commit, immutable images, binary checksum, verification, shutdown, and failure.
-If failure occurs before execution admission, deployment attempts restoration of
-the previous application version. After admission it preserves state and pauses;
-it does not roll back task history or external actions. Use **Re-run all jobs**
-to build a new release attempt; retrying only a deployment job would mix artifacts
-from the previous attempt and is rejected. If auto-merge succeeds but release
-dispatch fails, use **Run workflow** on `Release` for `main`.
-
-Sandbox is dedicated to synthetic validation. Retries reuse one $0.10 model
-allowance per source commit/workflow. Pending work is never resumed automatically
-under an older image or refreshed allowance; inspect the sandbox task and send a
-targeted Stop before retrying. Cancelled or
-failed deploy steps have a separate shutdown step only if that release began
-changing the environment. A refused busy-production preflight leaves it alone.
-[GitHub allows at most five minutes for normal cancellation cleanup](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation),
-so a slow drain, force-cancelling the run, or losing its runner can bypass cleanup: inspect native queues, worker
-requests, and the computer before resuming or retrying. Do not delete a Terraform
-lock until its owning operation is confirmed stopped.
-
-Bootstrap Terraform in `release/terraform` owns GitHub Workload Identity
-Federation, scoped existing CI identities, and native backup schedules. Its GCS
-backend is `bot-111549-nori-ci-state/nori/ci`. Set the non-secret repository
-variable `NORI_WIF_PROVIDER` from its output. Optional source map variables are
-`NORI_SENTRY_TOKEN_SECRET`, `NORI_SENTRY_TOKEN_VERSION`, `SENTRY_ORG`, and
-`SENTRY_PROJECT`; they contain references/settings, never token values.
-Cloud credentials are short-lived OIDC credentials restricted to this repository,
-`main`, and `release.yml`. Application secrets stay with their existing runtime
-configuration. Do not run bootstrap Terraform as part of an application release.
-
-The bootstrap also creates `nori-ci-spend-management-key` (CI-only access) and
-`nori-ci-spend-token` (per-run capped key versions), plus Firestore scope creation
-permission. After applying that reviewed bootstrap plan, populate the existing
-management-key container without printing or copying credentials into source:
-
-```sh
-python3 core/infrastructure/spend/keys.py --env /absolute/main/.env install-ci-secret
-```
-
-Release itself handles key issuance, binding, retries and revocation. No service,
-endpoint, GitHub URL variable or database provisioning is required for this.
-
-Production Firestore and the retained computer data disk have native daily
-backup schedules with seven-day retention. Disk snapshots are crash-consistent;
-the final snapshots survive deletion of the source disk. Schedules alone do not
-prove restore works: restore into a separate database/disk for a recovery drill,
-never over the retained source.
+Production and sandbox app services, databases, artifact buckets, disks, and
+application identities are retained. CI-only credentials and permission grants,
+GitHub federation, and CI-created backup schedules are removed; existing recovery
+copies remain.

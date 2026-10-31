@@ -116,22 +116,12 @@ does not update the deployed services, worker images, or Terraform state.
 
 ## Development inference limits
 
-CI issues its own expiring OpenRouter key with a $0.10 lifetime limit and revokes
-it after the run. Retries reuse its key, expiry and allowance. Normal build,
-type and lint checks do not acquire model keys. Automatic releases deploy directly
-to production with read-only health checks; they do not run browser tasks or model
-inference. Sandbox model smoke requires an explicitly requested operator run.
-No controller server is needed.
-Synthetic CI conversation context begins at that scope's issuance time, so old
-smoke conversations and terminal tasks do not accumulate in new requests.
-Retained data and production conversation context are unchanged.
-
 For local feature work, `core/infrastructure/spend/run.py` issues a key in the
 same development workspace. Feature chats start at $0.25 and can receive
 $0.25 increments, up to $1 total, when a subsequent command observes a new source
 fingerprint after at least 70% of the existing allowance is accounted for.
 This detects repeated attempts without code changes; it does not judge code
-quality. CI gets $0.10 per commit/workflow, including retries. Nori's controlled
+quality. Nori's controlled
 OpenRouter and Vertex calls share $2/day and $20/month UTC limits. Jev is excluded
 at Austin's request. Existing production keys are separate.
 
@@ -159,14 +149,6 @@ Jev remains on its existing direct adapter and does not block budget readiness.
 Run `python3 core/infrastructure/spend/e2e.py` for two no-cost native-key lifecycle
 journeys covering retry/cleanup and feature progress grants. External cloud and
 OpenRouter APIs are simulated; these checks do not establish live inference.
-
-CI setup uses the existing release Terraform: `nori-ci-spend-management-key` is
-readable only by the sandbox CI identity; `nori-ci-spend-token` holds each run's
-bounded key and is readable by its runtime. Populate the management secret from
-the main checkout's root `.env` after applying those bindings. The runtime and
-worker never receive the management key. The release script creates its scope
-and pool records in Firestore; it refuses pending old sandbox work before
-admission. There is no host, URL, proxy, or new database to provision.
 
 Local commands receive these controls through the wrapper. Arbitrary calls made
 with existing shared keys are not intercepted. Native key limits apply to other
