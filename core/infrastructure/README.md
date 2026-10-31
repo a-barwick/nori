@@ -81,6 +81,23 @@ Use the existing GCS backend configuration and `NORI_TF_BACKEND=gcs` for operato
 commands. Do not initialize empty replacement state.
 
 Production and sandbox app services, databases, artifact buckets, disks, and
-application identities are retained. CI-only credentials and permission grants,
-GitHub federation, and CI-created backup schedules are removed; existing recovery
-copies remain.
+application identities are retained. CI-only credentials, permission grants, and
+GitHub federation are removed.
+
+## Backups
+
+`poc/terraform/backups.tf` keeps seven days of daily copies of production's
+Firestore records and the computer's data disk, `bot-computer-data`. Removing CI
+doesn't affect them.
+
+- **Restore records:** `gcloud firestore databases restore` from a backup into a new database, or
+  `gcloud firestore import` from an export, then point the app at it deliberately.
+- **Restore the disk:** `gcloud compute disks create NAME --source-snapshot SNAPSHOT` makes a new disk.
+  Never overwrite `bot-computer-data` in place.
+
+The first copies are kept until deleted by hand: snapshot
+`nori-computer-data-first-20261031` and export
+`gs://bot-111549-nori-poc/firestore-exports/nori-poc-20261031`. On October 31, 2026,
+the export restored into a temporary database with matching counts for runs, steps,
+inputs, attempts, and usage, and the snapshot restored to a ready disk. Files inside
+the restored disk were not checked. The boot disk and sandbox have no scheduled copies.
