@@ -34,13 +34,13 @@ func (t *Tasks) deliver(ctx context.Context) {
 }
 
 func (t *Tasks) AcceptBatch(ctx context.Context, commands []state.Command, fence *state.ConversationFence) ([]state.CommandReceipt, error) {
-	ctx, span := conversationTracer.Start(ctx, "conversation.command_batch", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID), attribute.Int("nori.command.count", len(commands))))
+	ctx, span := conversationTracer.Start(ctx, "conversation.command_batch", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.Int("nori.command.count", len(commands))))
 	defer span.End()
 	started := time.Now()
 	receipts, err := t.Store.AcceptCommandBatch(ctx, commands, fence)
 	for _, cmd := range commands {
 		name := safeCommandName(cmd.Kind)
-		_, commandSpan := conversationTracer.Start(ctx, "conversation."+name, trace.WithTimestamp(started), trace.WithAttributes(attribute.String("openinference.span.kind", "TOOL"), attribute.String("session.id", observability.SessionID), attribute.String("tool.name", name), attribute.String("nori.task.id", cmd.RunID), attribute.String("nori.command.id", cmd.ID)))
+		_, commandSpan := conversationTracer.Start(ctx, "conversation."+name, trace.WithTimestamp(started), trace.WithAttributes(attribute.String("openinference.span.kind", "TOOL"), attribute.String("session.id", observability.SessionID()), attribute.String("tool.name", name), attribute.String("nori.task.id", cmd.RunID), attribute.String("nori.command.id", cmd.ID)))
 		outcome := "accepted"
 		if err != nil {
 			outcome = "rejected"

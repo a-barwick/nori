@@ -29,29 +29,41 @@ Sentry and Arize export are optional and fail open. Set `SENTRY_DSN` for
 operational errors, sampled request traces, logs, and metrics; set both
 `ARIZE_SPACE_ID` and `ARIZE_API_KEY` for OpenInference AI spans. The shared
 OpenTelemetry provider uses the same trace ID across HTTP, Cloud Tasks, and
-durable work. Health and polling endpoints are excluded. `SENTRY_RELEASE` and
+durable work. Successful health checks and polling are excluded; failures are captured. `SENTRY_RELEASE` and
 `SENTRY_ENVIRONMENT` identify the deployed version and environment.
 
 Set `ARIZE_PROJECT_URL` to the project's canonical HTTPS page on
 `app.arize.com` to add `nori.arize.url` to Sentry model spans. Each link selects
-that span using the shared trace and span IDs. Arize's independent export limit
-or a failed export may mean the span is unavailable there.
+that span using the shared trace and span IDs. A failed export may mean the span is unavailable there; local diagnostics identify the destination.
 
 Sentry receives operational attributes only, without request bodies, headers,
 cookies, or AI prompt/reply content. Arize receives metadata by default;
 `NORI_ARIZE_CAPTURE_CONTENT=true` explicitly enables best-effort redacted,
-bounded model prompts and replies. Redaction cannot guarantee removal of every
+bounded latest-user excerpts and model replies. These excerpts are not the complete prompt; release IDs, message counts, truncation flags, and byte counts describe the omitted context. Redaction cannot guarantee removal of every
 piece of personal information. Tool arguments, screenshots, and URLs are not
-intended for export. These settings do not provision credentials inside the
-private computer or guest.
+intended for export. The computer host and guest receive only a public Sentry DSN and release/environment metadata, never Arize or model credentials.
 
-`SENTRY_TRACES_SAMPLE_RATE` defaults to 0.05. The per-process hourly export
-limits in `.env.example` can drop individual spans, producing partial traces;
-request logs and metrics describe sampled requests, not exact totals. Limits
-reset on process restart and apply separately to each instance. Set account
-quotas and spending controls in Sentry and Arize to enforce the intended free
-tier across all services. Export batches are bounded and request/shutdown
-flushes are time-limited, so data may be lost during outages or scale-to-zero.
+`SENTRY_TRACES_SAMPLE_RATE` defaults to 0.05. Both destinations export the same
+sampled traces without independently dropping individual spans. Go and web
+errors/logs/metrics have per-process burst limits; these are not account quotas.
+Metrics carry bounded model/route/status dimensions and an explicit sampled
+flag. They are diagnostic distributions, not exact usage accounting.
+Sentry's Developer plan has no payment method configured; its account quota is
+the spending boundary. Keep Arize on its free plan and OpenRouter Broadcast
+disabled: only Nori's redacted exporter should send model excerpts.
+Export queues and flush deadlines remain bounded. Destination-specific local
+diagnostics report export failures and rate-limit drops without recursively
+sending them through the failed exporter. Browser latency requires a completed
+attempt; failures and timeouts are separate outcomes.
+
+Sandbox deployments use `nori-sandbox-openrouter-api-key` and the existing
+feature lease issued by `infrastructure/spend/run.py` for the same logical chat.
+Pass that scope as `sandbox_spend_scope` to Terraform and set new worker targets
+to `spend_profile = "feature"`; retained workers keep their original closed lease.
+Use `run.py --sandbox` to publish the same key and supply its version. Operator deployment and
+admission require its numeric `NORI_SPEND_KEY_SECRET_VERSION`; never restore a
+CI secret or substitute the production model key. Closing the lease stops
+inference while health and cleanup remain available.
 
 | Configuration | Purpose |
 | --- | --- |

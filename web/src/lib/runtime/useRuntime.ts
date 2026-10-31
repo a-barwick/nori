@@ -30,6 +30,17 @@ type Pending = { id: string; text: string; started: number; error?: string };
 type ReplyTiming = { started: number; span: Span; timer: ReturnType<typeof setTimeout> };
 const STORAGE_KEY = "nori-pending-turns-v1";
 const MAX_PENDING = 20;
+const TIMING_STORAGE_KEY = "nori-reply-timings-v1";
+function saveTimings(timings: Map<string, ReplyTiming>) {
+  try { sessionStorage.setItem(TIMING_STORAGE_KEY, JSON.stringify([...timings].map(([id, timing]) => ({ id, started: timing.started })))); } catch { /* Best effort in private browsing. */ }
+}
+function restoredTimings(): Pending[] {
+  try {
+    const values: unknown = JSON.parse(sessionStorage.getItem(TIMING_STORAGE_KEY) || "[]");
+    return Array.isArray(values) ? values.slice(-MAX_PENDING).filter((value) => typeof value?.id === "string" && /^[a-f0-9-]{36}$/.test(value.id) && Number.isFinite(value.started) && value.started <= Date.now()).map((value) => ({ id: value.id, started: value.started, text: "" })) : [];
+  } catch { return []; }
+}
+
 const COMMAND_STORAGE_KEY = "nori-pending-task-commands-v1";
 function restoreTaskCommands(): PendingTaskCommand[] {
   try {
@@ -142,21 +153,42 @@ export function useRuntime(agentMode = false) {
     updateTaskCommands((current) => current.filter((item) => !commandApplied(item, data.runs)));
   }, [updatePending, updateTaskCommands]);
 
+  const finishTiming = useCallback((id: string, outcome: "reply" | "error" | "timeout" | "unobserved") => {
+    const timing = replyTimings.current.get(id);
+    if (!timing) return;
+    clearTimeout(timing.timer);
+    timing.span.setAttribute("nori.outcome", outcome);
+    const attributes = { mode: agentMode ? "local" : "hosted", outcome };
+    Sentry.withActiveSpan(timing.span, () => {
+      Sentry.metrics.count("nori.reply.outcomes", 1, { attributes });
+      Sentry.metrics.distribution(outcome === "reply" ? "nori.submit_to_reply" : "nori.submit_to_terminal", Math.max(0, Date.now() - timing.started), { unit: "millisecond", attributes });
+    });
+    timing.span.end();
+    replyTimings.current.delete(id);
+    saveTimings(replyTimings.current);
+  }, [agentMode]);
+
+  const beginTiming = useCallback((item: Pending) => {
+    if (!Sentry.getClient() || replyTimings.current.has(item.id)) return;
+    const span = Sentry.startNewTrace(() => Sentry.startInactiveSpan({ name: "nori.submit_to_reply", op: "nori.conversation", parentSpan: null,
+      startTime: item.started / 1000, attributes: { "nori.mode": agentMode ? "local" : "hosted" } }));
+    const timer = setTimeout(() => finishTiming(item.id, "timeout"), Math.max(0, 15 * 60_000 - (Date.now() - item.started)));
+    replyTimings.current.set(item.id, { started: item.started, span, timer });
+    saveTimings(replyTimings.current);
+  }, [agentMode, finishTiming]);
+
   useEffect(() => {
     if (!session) return;
-    for (const [id, timing] of replyTimings.current) {
+    for (const [id] of replyTimings.current) {
       const input = session.messages.find((message) => message.id === `${id}-user`);
-      if (!input?.turn_id || !session.messages.some((message) => message.role === "assistant" && !message.run_id && message.turn_id === input.turn_id)) continue;
-      clearTimeout(timing.timer);
-      timing.span.setAttribute("nori.outcome", "reply");
-      Sentry.withActiveSpan(timing.span, () => Sentry.metrics.distribution("nori.submit_to_reply", performance.now() - timing.started, {
-        unit: "millisecond", attributes: { mode: agentMode ? "local" : "hosted" },
-      }));
-      timing.span.end();
+      if (!input?.turn_id) continue;
+      const attempt = session.traces?.filter((trace) => trace.turn_id === input.turn_id).sort((a,b) => b.attempt - a.attempt)[0];
+      if (attempt?.status === "error") { finishTiming(id, "error"); continue; }
+      if (attempt?.status !== "completed" || !session.messages.some((message) => message.role === "assistant" && !message.run_id && message.turn_id === input.turn_id)) continue;
+      finishTiming(id, "reply");
       Sentry.addBreadcrumb({ category: "nori", message: "reply received" });
-      replyTimings.current.delete(id);
     }
-  }, [agentMode, session]);
+  }, [finishTiming, session]);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const serial = ++requestSerial.current;
@@ -216,6 +248,7 @@ export function useRuntime(agentMode = false) {
   useEffect(() => {
     const currentControllers = controllers.current;
     const currentTimings = replyTimings.current;
+    for (const item of [...restoredTimings(), ...pendingRef.current]) beginTiming(item);
     const controller = new AbortController();
     currentControllers.add(controller);
     void refresh(controller.signal).then((data) => {
@@ -243,7 +276,7 @@ export function useRuntime(agentMode = false) {
       document.removeEventListener("visibilitychange", reconnect);
       window.removeEventListener("online", reconnect);
     };
-  }, [refresh, submit, submitTaskCommand]);
+  }, [refresh, submit, submitTaskCommand, beginTiming, finishTiming]);
 
   useEffect(() => {
     // Task pause does not pause the conversation. No continuous idle polling.
@@ -295,13 +328,9 @@ export function useRuntime(agentMode = false) {
     if (new TextEncoder().encode(text).length > 8192) { setError("Please keep the message within 8,192 UTF-8 bytes."); return; }
     if (pendingRef.current.length >= MAX_PENDING) { setError("Reconnect or retry your pending messages before sending more."); return; }
     const item = { id: crypto.randomUUID(), text, started: Date.now() };
-    if (Sentry.getClient()) {
-      const span = Sentry.startNewTrace(() => Sentry.startInactiveSpan({ name: "nori.submit_to_reply", op: "nori.conversation", parentSpan: null,
-        attributes: { "nori.mode": agentMode ? "local" : "hosted" } }));
-      const timer = setTimeout(() => { span.setAttribute("nori.outcome", "timeout"); span.end(); replyTimings.current.delete(item.id); }, 15 * 60_000);
-      replyTimings.current.set(item.id, { started: performance.now(), span, timer });
-      Sentry.addBreadcrumb({ category: "nori", message: "turn submitted" });
-    }
+    beginTiming(item);
+    Sentry.metrics.count("nori.submissions", 1, { attributes: { mode: agentMode ? "local" : "hosted" } });
+    Sentry.addBreadcrumb({ category: "nori", message: "turn submitted" });
     updatePending((current) => [...current, item]);
     setDraft(""); setError("");
     await submit(item);

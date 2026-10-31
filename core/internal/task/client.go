@@ -62,7 +62,7 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) (resul
 	if len(pending) == 0 {
 		return nil
 	}
-	ctx, span := taskTracer.Start(ctx, "task.deliver_pending", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID)))
+	ctx, span := taskTracer.Start(ctx, "task.deliver_pending", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID())))
 	defer func() {
 		if resultErr != nil && !errors.Is(ctx.Err(), context.Canceled) {
 			observability.RecordErrorCategory(ctx, "task.delivery", resultErr)

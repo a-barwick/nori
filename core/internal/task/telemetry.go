@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"errors"
-	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -19,7 +18,7 @@ var taskTracer = otel.Tracer("nori/task")
 func startActivity(ctx context.Context, name, kind string, run state.Run, revision int64) (context.Context, trace.Span) {
 	ctx = observability.ExtractTrace(ctx, run.TraceContext)
 	attrs := []attribute.KeyValue{
-		attribute.String("openinference.span.kind", kind), attribute.String("session.id", observability.SessionID),
+		attribute.String("openinference.span.kind", kind), attribute.String("session.id", observability.SessionID()),
 		attribute.String("nori.task.id", run.ID), attribute.Int64("nori.task.revision", revision),
 	}
 	if activity.IsActivity(ctx) {
@@ -48,19 +47,8 @@ func expectedBoundary(err error) bool {
 	return false
 }
 
-// Trace enrichment must not change the outcome if the optional read fails.
-func (a *Activities) activityRun(ctx context.Context, id string) state.Run {
-	if id == "" || !observability.TracingEnabled() {
-		return state.Run{ID: id}
-	}
-	readCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-	defer cancel()
-	run, err := a.Store.GetRun(readCtx, id)
-	if err != nil {
-		return state.Run{ID: id}
-	}
-	return run
-}
+// Optional activities correlate by task/workflow without a telemetry-only DB read.
+func (a *Activities) activityRun(_ context.Context, id string) state.Run { return state.Run{ID: id} }
 
 func recordActivityFailure(ctx context.Context, err error, operation string) {
 	if !expectedBoundary(err) && !errors.Is(ctx.Err(), context.Canceled) {

@@ -69,12 +69,25 @@ export const dataCollection = {
   frameContextLines: 0,
 } satisfies NonNullable<Options["dataCollection"]>;
 
+// Per-process/tab burst protection; billing limits remain account-side.
+const limits = new Map<string, { start: number; used: number; dropped: number }>();
+function allow(kind: string, maximum: number): boolean {
+ const now = Date.now();
+ let window = limits.get(kind);
+ if (!window || now - window.start >= 3_600_000) { window = { start: now, used: 0, dropped: 0 }; limits.set(kind, window); }
+ if (window.used++ < maximum) return true;
+ window.dropped++;
+ if (window.dropped === 1 || window.dropped % 100 === 0) console.warn(`Nori telemetry ${kind} rate limited (${window.dropped} dropped)`);
+ return false;
+}
+
 const operations = new Set(["session", "turn", "input", "cancel", "command", "artifact", "trace"]);
 const safeAttributes = (attributes: Record<string, unknown> = {}) => {
   const safe: Record<string, string | number> = {};
   if (typeof attributes.operation === "string" && operations.has(attributes.operation)) safe.operation = attributes.operation;
   if (typeof attributes.status === "number" && attributes.status >= 100 && attributes.status <= 599) safe.status = attributes.status;
   if (attributes.mode === "local" || attributes.mode === "hosted") safe.mode = attributes.mode;
+  if (["reply", "error", "timeout", "unobserved"].includes(String(attributes.outcome))) safe.outcome = String(attributes.outcome);
   return safe;
 };
 
@@ -98,7 +111,8 @@ export function beforeBreadcrumb(crumb: Breadcrumb): Breadcrumb | null {
   return { category: "nori", message: crumb.message, timestamp: crumb.timestamp, level: crumb.level };
 }
 
-export function beforeSend(event: ErrorEvent, hint: EventHint): ErrorEvent {
+export function beforeSend(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
+  if (!allow("errors", 50)) return null;
   // Exceptions can contain arbitrary server responses or user content. Preserve
   // the stack for diagnosis, but never send exception text or request details.
   delete event.message;
@@ -177,17 +191,18 @@ export function beforeSendSpan(span: StreamedSpan): StreamedSpan {
     else if (["sentry.sample_rate", "http.response.status_code", "http.status_code", "sentry.exclusive_time"].includes(key) && typeof value === "number") attrs[key] = value;
     else if (/^browser\.web_vital\.[a-z]+\.(?:value|load_time|render_time|size|request_time)$/.test(key) && typeof value === "number") attrs[key] = value;
     else if (key === "nori.mode" && (value === "local" || value === "hosted")) attrs[key] = value;
-    else if (key === "nori.outcome" && (value === "reply" || value === "timeout" || value === "unobserved")) attrs[key] = value;
+    else if (key === "nori.outcome" && (value === "reply" || value === "error" || value === "timeout" || value === "unobserved")) attrs[key] = value;
   }
   return { ...span, name: safeSpanName(span.name), attributes: attrs, links: undefined };
 }
 
 export function beforeSendLog(log: Log): Log | null {
   if (log.message !== "nori.runtime.unavailable" && log.message !== "nori.runtime.server_error") return null;
+  if (!allow("logs", 100)) return null;
   return { ...log, attributes: safeAttributes(log.attributes) };
 }
 
 export function beforeSendMetric(metric: Metric): Metric | null {
-  if (metric.name !== "nori.submit_to_reply") return null;
+  if (!["nori.submit_to_reply", "nori.submit_to_terminal", "nori.submissions", "nori.reply.outcomes"].includes(metric.name) || !allow("metrics", 200)) return null;
   return { ...metric, attributes: safeAttributes(metric.attributes) };
 }

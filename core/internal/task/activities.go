@@ -464,7 +464,7 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 	if err == nil {
 		if (run.Status == "running" || run.Status == "") && r.FinishedAt != nil && !r.StartedAt.IsZero() && !r.FinishedAt.Before(r.StartedAt) {
 			durationCtx := observability.ExtractTrace(ctx, r.OriginTraceContext)
-			_, durationSpan := taskTracer.Start(durationCtx, "task.acceptance_to_terminal", trace.WithTimestamp(r.StartedAt), trace.WithLinks(trace.Link{SpanContext: span.SpanContext()}), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID), attribute.String("nori.task.id", p.RunID), attribute.String("nori.task.status", r.Status), attribute.Bool("nori.output.present", r.Result != "")))
+			_, durationSpan := taskTracer.Start(durationCtx, "task.acceptance_to_terminal", trace.WithTimestamp(r.StartedAt), trace.WithLinks(trace.Link{SpanContext: span.SpanContext()}), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.task.id", p.RunID), attribute.String("nori.task.status", r.Status), attribute.Bool("nori.output.present", r.Result != "")))
 			if r.Status == "failed" {
 				durationSpan.SetStatus(codes.Error, "task failed")
 				observability.Event(ctx, "task.failed")

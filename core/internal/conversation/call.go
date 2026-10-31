@@ -38,7 +38,7 @@ func inputMessage(in state.ConversationInput) json.RawMessage {
 func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.ConversationTurn) (callErr error) {
 	ctx, span := conversationTracer.Start(ctx, "conversation.attempt", trace.WithAttributes(
 		attribute.String("openinference.span.kind", "CHAIN"),
-		attribute.String("session.id", observability.SessionID),
+		attribute.String("session.id", observability.SessionID()),
 		attribute.String("nori.turn.id", t.ID),
 		attribute.String("nori.attempt.id", t.Attempt.ID),
 		attribute.Int("nori.attempt.number", t.Attempt.Number),

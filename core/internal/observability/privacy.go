@@ -10,7 +10,9 @@ import (
 )
 
 // SessionID groups this single-owner application's AI spans without an email.
-const SessionID = "nori-conversation"
+func SessionID() string {
+	return "nori-" + firstNonempty(os.Getenv("SENTRY_ENVIRONMENT"), "development") + "-conversation"
+}
 
 var credentialNames = [...]string{
 	"OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY",

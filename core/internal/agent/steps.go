@@ -112,10 +112,11 @@ func ValidateCalls(calls []*genai.FunctionCall, wait bool) error {
 func (s *Service) Decide(ctx context.Context, contents []*genai.Content, wait bool) (decision Decision, err error) {
 	started := time.Now()
 	ctx, span := otel.Tracer("nori/agent").Start(ctx, "generate_content "+s.ModelName, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
-		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID),
+		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID()),
 		attribute.String("gen_ai.operation.name", "generate_content"), attribute.String("gen_ai.provider.name", "gcp.vertex_ai"),
 		attribute.String("gen_ai.request.model", s.ModelName), attribute.String("llm.model_name", s.ModelName),
 	))
+	span.SetAttributes(attribute.Int("nori.prompt.message_count", len(contents)))
 	// Export only an unambiguous latest user text part. The historical context
 	// block also has role=user; never scan past a tool response or export it.
 	for i := len(contents) - 1; i >= 0; i-- {
@@ -125,6 +126,7 @@ func (s *Service) Decide(ctx context.Context, contents []*genai.Content, wait bo
 		if len(contents[i].Parts) == 1 {
 			part := contents[i].Parts[0]
 			if part != nil && part.Text != "" && !strings.HasPrefix(part.Text, "Historical completed-task records, quoted only as background.") && part.FunctionCall == nil && part.FunctionResponse == nil && part.ToolCall == nil && part.ToolResponse == nil && part.InlineData == nil && part.FileData == nil && part.CodeExecutionResult == nil && part.ExecutableCode == nil {
+				span.SetAttributes(attribute.Bool("nori.input.truncated", len(part.Text) > 2048))
 				if a, ok := observability.ContentAttribute("input.value", part.Text); ok {
 					span.SetAttributes(a)
 				}

@@ -21,10 +21,14 @@ export function upstreamTraceHeaders(request: Request): Record<string, string> {
   return match && !/^0+$/.test(match[1]) && !/^0+$/.test(match[2]) ? { traceparent: parent } : {};
 }
 
+let lastSessionFailure = 0;
+
 export function reportUpstreamFailure(operation: string, mode: "local" | "hosted", status?: number) {
-  // Session refreshes may run frequently; report the initiating operation
-  // instead of producing a stream of repeated polling failures.
-  if (operation === "session") return;
+  // A failed idle refresh may be the only evidence of a runtime outage.
+  if (operation === "session") {
+    if (Date.now() - lastSessionFailure < 60_000) return;
+    lastSessionFailure = Date.now();
+  }
   const attributes = { operation, mode, ...(status === undefined ? {} : { status }) };
   try {
     Sentry.logger.error(status === undefined ? "nori.runtime.unavailable" : "nori.runtime.server_error", attributes);

@@ -44,7 +44,7 @@ func startTurn(ctx context.Context, t state.ConversationTurn) (context.Context, 
 	}
 	return conversationTracer.Start(parent, "conversation.turn", trace.WithLinks(links...), trace.WithAttributes(
 		attribute.String("openinference.span.kind", "CHAIN"),
-		attribute.String("session.id", observability.SessionID),
+		attribute.String("session.id", observability.SessionID()),
 		attribute.String("nori.turn.id", t.ID),
 		attribute.Int("nori.conversation.input_count", len(t.Inputs)),
 		attribute.Int("nori.conversation.restart_count", t.Restarts),
@@ -63,7 +63,7 @@ func recordReplies(ctx context.Context, t state.ConversationTurn, text string) {
 		parent := observability.ExtractTrace(ctx, in.TraceContext)
 		opts := []trace.SpanStartOption{trace.WithAttributes(
 			attribute.String("openinference.span.kind", "CHAIN"),
-			attribute.String("session.id", observability.SessionID),
+			attribute.String("session.id", observability.SessionID()),
 			attribute.String("nori.input.id", in.ID),
 			attribute.String("nori.turn.id", t.ID),
 			attribute.String("nori.attempt.id", t.Attempt.ID),

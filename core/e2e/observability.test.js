@@ -229,7 +229,7 @@ afterAll(async () => {
   if (directory) rmSync(directory, { recursive: true, force: true });
 });
 
-journey("a saved turn produces a traced, private reply or provider-failure event", async () => {
+journey("a saved turn produces a successful traced private reply", async () => {
   const { child, address } = await startAPI(1);
   const id = crypto.randomUUID();
   const trace = randomBytes(16).toString("hex"), parent = randomBytes(8).toString("hex");
@@ -242,6 +242,7 @@ journey("a saved turn produces a traced, private reply or provider-failure event
   const result = await visibleReply(address, id);
   expect(result.input.text === message).toBe(true);
   expect(result.reply.text.length > 0).toBe(true);
+  expect(result.attempt.status).toBe("completed");
   expect(result.attempt.model).toBe("anthropic/claude-opus-5.5");
   if (result.attempt.status === "error") expect(result.reply.text.includes("Your message is saved")).toBe(true);
   expect(result.session.runs.length).toBe(0);
@@ -277,6 +278,7 @@ journey("an unavailable telemetry receiver does not prevent a durable conversati
   const result = await visibleReply(address, id);
   expect(result.input.text === message).toBe(true);
   expect(result.reply.text.length > 0).toBe(true);
+  expect(result.attempt.status).toBe("completed");
   expect(result.session.runs.length).toBe(0);
   expect(exportAttempts > before).toBe(true);
   await stop(child);

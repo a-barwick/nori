@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--env", required=True, help="Existing mode-600 main checkout root .env")
     parser.add_argument("--task", required=True, help="Same logical chat ID for every paid command and retry")
     parser.add_argument("--repository", type=Path, default=Path.cwd(), help="Feature worktree for progress checks")
+    parser.add_argument("--sandbox", action="store_true", help="Publish the same bounded key to the existing sandbox secret")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--close", action="store_true")
     parser.add_argument("command", nargs=argparse.REMAINDER)
@@ -48,6 +49,8 @@ def main():
             child.pop(name)
     child.update(NORI_SPEND_SCOPE=scope, NORI_SPEND_PROFILE="feature", NORI_SPEND_DATABASE=keys.DATABASE,
                  OPENROUTER_BASE_URL="https://openrouter.ai/api/v1", OPENROUTER_API_KEY=key)
+    if args.sandbox:
+        child["NORI_SPEND_KEY_SECRET_VERSION"] = keys.publish_sandbox(scope, key)
     return subprocess.call(command, env=child)
 
 

@@ -82,10 +82,15 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		provider = "openrouter"
 	}
 	ctx, span := conversationTracer.Start(ctx, "chat "+m.Name, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
-		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID),
+		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID()),
 		attribute.String("gen_ai.operation.name", "chat"), attribute.String("gen_ai.provider.name", provider),
 		attribute.String("gen_ai.request.model", m.Name), attribute.String("llm.model_name", m.Name),
 	))
+	promptBytes := 0
+	for _, message := range messages {
+		promptBytes += len(message)
+	}
+	span.SetAttributes(attribute.Int("nori.prompt.message_count", len(messages)), attribute.Int("nori.prompt.bytes", promptBytes), attribute.Bool("nori.input.truncated", len(m.TelemetryInput) > 2048))
 	if a, ok := observability.ContentAttribute("input.value", m.TelemetryInput); ok {
 		span.SetAttributes(a)
 	}
@@ -164,6 +169,7 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	if err != nil {
 		return reply, err
 	}
+	span.SetAttributes(attribute.Int("nori.prompt.bytes", len(body)))
 	reservation, err := control.Reserve(ctx, "openrouter", m.Name, len(body), outputLimit, reply.Usage.ID)
 	if err != nil {
 		return reply, err
@@ -286,9 +292,16 @@ func hasUnboundedMessageFields(value any) bool {
 	return false
 }
 
+type providerHTTPError struct {
+	status int
+	detail string
+}
+
+func (e providerHTTPError) Error() string       { return e.detail }
+func (e providerHTTPError) HTTPStatusCode() int { return e.status }
 func modelHTTPError(url string, response *http.Response) error {
 	if response.StatusCode != http.StatusPaymentRequired || !strings.HasPrefix(url, "https://openrouter.ai/") {
-		return fmt.Errorf("model provider returned HTTP %d", response.StatusCode)
+		return providerHTTPError{response.StatusCode, fmt.Sprintf("model provider returned HTTP %d", response.StatusCode)}
 	}
 	// Only interpret documented enum values. Provider messages, raw metadata,
 	// account identities and balances must never enter chat, traces or logs.
@@ -302,7 +315,7 @@ func modelHTTPError(url string, response *http.Response) error {
 	}
 	detail := "OpenRouter rejected the conversation request for a billing or credit limit (HTTP 402). Check the account credits and API key spending limit."
 	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&body); err != nil {
-		return fmt.Errorf("%s", detail)
+		return providerHTTPError{response.StatusCode, detail}
 	}
 	switch body.Error.Metadata.LimitSource {
 	case "openrouter_in_flight_budget":
@@ -315,7 +328,7 @@ func modelHTTPError(url string, response *http.Response) error {
 			detail = "OpenRouter reports that this request is too large for its current spending allowance (HTTP 402). Check the request size and account credits before retrying."
 		}
 	}
-	return fmt.Errorf("%s", detail)
+	return providerHTTPError{response.StatusCode, detail}
 }
 
 func modelMessage(value any) json.RawMessage {

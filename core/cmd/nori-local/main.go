@@ -24,7 +24,7 @@ func main() {
 	defer observability.Shutdown(stopTelemetry)
 	runtime, err := wake.Open(ctx)
 	if err != nil {
-		log.Fatal(err)
+		observability.Fatal(err)
 	}
 	defer runtime.Close()
 	notifications := make(chan struct{}, 1)
@@ -42,7 +42,7 @@ func main() {
 	if err := wake.Listen(ctx, server, 5*time.Second); err != nil {
 		observability.RecordErrorCategory(ctx, "http.listen", err)
 		observability.Shutdown(stopTelemetry)
-		log.Fatal(err)
+		observability.Fatal(err)
 	}
 	stop()
 	<-loopDone
