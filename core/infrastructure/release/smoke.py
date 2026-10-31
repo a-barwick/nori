@@ -39,7 +39,13 @@ def _request(url, deadline, body=None, token=None, metadata=False, expected=200)
         try:
             with OPENER.open(Request(url, data=data, headers=headers), timeout=min(15, _left(deadline))) as response:
                 raw = response.read(4 * 1024 * 1024 + 1)
-                if response.status != expected or len(raw) > 4 * 1024 * 1024: raise SmokeError("Unexpected or oversized smoke response")
+                # Agent Runtime returns HTTP 200 for an accepted container RPC;
+                # the direct application endpoint returns HTTP 202 instead.
+                accepted = (200, 202) if expected == 202 else (expected,)
+                if response.status not in accepted:
+                    raise SmokeError("Smoke endpoint returned unexpected HTTP " + str(response.status))
+                if len(raw) > 4 * 1024 * 1024:
+                    raise SmokeError("Smoke response exceeded the size limit")
                 return response.headers, raw
         except HTTPError as error:
             if error.code == 401 and token and token.count(".") != 2 and not refreshed:
@@ -190,6 +196,13 @@ def run(config, deadline, evidence_callback=lambda _: None):
             session = _post(base, "session", {}, token, work_end)
             owned |= _owned(session, input_id)
             if len(owned) > 1: raise SmokeError("Smoke created multiple tasks")
+            failed = [trace for trace in session.get("traces", [])
+                      if input_id in trace.get("input_ids", []) and trace.get("status") == "error"]
+            if failed and not owned:
+                reason = "Smoke conversation failed before task dispatch"
+                if any(trace.get("error") == "model provider returned HTTP 403" for trace in failed):
+                    reason += ": model provider returned HTTP 403; check provider access and quota"
+                raise SmokeError(reason)
             conversation = session.get("conversation", {})
             if not conversation.get("pending") and not conversation.get("processing"):
                 break
