@@ -118,8 +118,10 @@ does not update the deployed services, worker images, or Terraform state.
 
 CI issues its own expiring OpenRouter key with a $0.10 lifetime limit and revokes
 it after the run. Retries reuse its key, expiry and allowance. Normal build,
-type and lint checks do not acquire model keys. Production uses health-only
-checks; full model smoke runs only in sandbox. No controller server is needed.
+type and lint checks do not acquire model keys. Automatic releases deploy directly
+to production with read-only health checks; they do not run browser tasks or model
+inference. Sandbox model smoke requires an explicitly requested operator run.
+No controller server is needed.
 Synthetic CI conversation context begins at that scope's issuance time, so old
 smoke conversations and terminal tasks do not accumulate in new requests.
 Retained data and production conversation context are unchanged.
