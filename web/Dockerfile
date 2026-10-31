@@ -5,7 +5,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 COPY . .
-RUN bun run build
+RUN mkdir -p public && bun run build
 
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
