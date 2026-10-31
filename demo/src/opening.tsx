@@ -84,7 +84,7 @@ const Pile: React.FC<(typeof piles)[number]> = ({ at, x, y, r, t }) => {
 
 const captions: [number, number, string][] = [[2, 30, "New chat."], [30, 60, "Pick a model."], [60, 90, "Add the files."], [90, 120, "Explain it again."], [120, 150, "Tomorrow, do it all again."]];
 
-/** Everything on screen by frame 149; scene 2 rolls this frozen mess up. */
+/** Everything on screen by frame 149, minus the caption; scene 2 rolls this frozen mess up. */
 const Mess: React.FC = () => {
   const frame = useCurrentFrame();
   const stop = cursorStops.findIndex(([f]) => f > frame);
@@ -101,24 +101,107 @@ const Mess: React.FC = () => {
         {piles.map((w) => frame >= w.at && <Pile key={w.at} {...w} />)}
       </AbsoluteFill>
       <Pointer x={a[1] + (b[1] - a[1]) * p} y={a[2] + (b[2] - a[2]) * p} down={down} />
-      {captions.map(([from, to, text]) => frame >= from && frame < to && <Sticker key={text} text={text} at={from} />)}
     </AbsoluteFill>
   );
 };
 
 /* ── Scene 2: a bamboo mat rolls the mess into rice, patted into the mark. ── */
 
-const SWEEP: [number, number] = [150, 176];
-const GATHER: [number, number] = [176, 190];
 const MARK = { x: 1325, y: 510 };
+const MAT = { x: 60, y: 70, w: 1800, h: 940 };
+const SLIDE: [number, number] = [150, 161];
+const ROLL: [number, number] = [161, 181];
+const TURN: [number, number] = [181, 189];
+const BAMBOO = ["#c9c77c", "#b5b568", "#d6d48c", "#a8ab5e"];
+const STRING = "#6b4a2b";
+const STRINGS = [0.12, 0.31, 0.5, 0.69, 0.88];
 
-const Roll: React.FC<{ x: number; width: number; y: number; height: number; turn: number; opacity?: number }> = ({ x, width, y, height, turn, opacity = 1 }) => (
-  <div style={{ position: "absolute", left: x, top: y, width, height, borderRadius: Math.min(width, height) * 0.12, overflow: "hidden", opacity, boxShadow: "0 0 70px #000a" }}>
-    <div style={{ position: "absolute", inset: 0, background: `repeating-linear-gradient(90deg, #9ca35a 0 26px, #b7b86c 26px 44px, #6f7a3c 44px 48px)`, backgroundPositionX: turn }} />
-    <div style={{ position: "absolute", inset: 0, background: "repeating-linear-gradient(0deg, transparent 0 150px, #3a2e1cbb 150px 156px)" }} />
-    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, #0009, #0000 26%, #fff3 52%, #0000 74%, #000a)" }} />
+/** A flat bamboo mat: slats side by side, bound by five lines of string. */
+const Mat: React.FC = () => (
+  <div style={{ position: "absolute", left: MAT.x, top: MAT.y, width: MAT.w, height: MAT.h, borderRadius: 10, overflow: "hidden", boxShadow: "0 12px 40px #0008" }}>
+    <div style={{ display: "flex", height: "100%" }}>
+      {Array.from({ length: 45 }, (_, i) => <div key={i} style={{ flex: 1, background: `linear-gradient(90deg, #0000, #fff3 30%, #0000 70%, #0003), ${BAMBOO[(i * 7) % 4]}`, borderRight: "2px solid #6f7238" }} />)}
+    </div>
+    {STRINGS.map((y) => <div key={y} style={{ position: "absolute", left: 0, right: 0, top: `${y * 100}%`, height: 6, background: `repeating-linear-gradient(90deg, ${STRING} 0 18px, #8a6339 18px 40px)` }} />)}
   </div>
 );
+
+/** The sheet the mat carries: the mat, with the frozen mess lying on it. */
+const Sheet: React.FC<{ settle: number; slide: number }> = ({ settle, slide }) => (
+  <AbsoluteFill>
+    <div style={{ position: "absolute", inset: 0, translate: `${slide}px 0` }}><Mat /></div>
+    <AbsoluteFill style={{ scale: String(1 - 0.17 * settle), rotate: `${-0.8 * settle}deg`, borderRadius: 20 * settle, overflow: "hidden", boxShadow: `0 14px 40px rgba(0,0,0,${0.45 * settle})` }}>
+      <Freeze frame={149}><Mess /></Freeze>
+    </AbsoluteFill>
+  </AbsoluteFill>
+);
+
+/** What lies ahead of the roll: flat, then lifting and bunching up as it's pulled in. */
+const PullIn: React.FC<{ contact: number; settle: number }> = ({ contact, settle }) => {
+  const reach = 340;
+  const slices = 10;
+  const edges = Array.from({ length: slices + 1 }, (_, i) => contact + (reach * i) / slices);
+  const at = (u: number) => contact + 0.42 * reach + 0.58 * reach * ((u - contact) / reach) ** 1.7;
+  return (
+    <>
+      <div style={{ position: "absolute", left: contact + reach, top: 0, right: 0, bottom: 0, overflow: "hidden" }}>
+        <div style={{ position: "absolute", left: -(contact + reach), top: 0, width: 1920, height: 1080 }}><Sheet settle={settle} slide={0} /></div>
+      </div>
+      {edges.slice(0, -1).map((u, i) => {
+        const x0 = at(u), x1 = at(edges[i + 1]);
+        return (
+          <div key={i} style={{ position: "absolute", left: x0, top: 0, width: x1 - x0 + 1, height: 1080, overflow: "hidden" }}>
+            <div style={{ position: "absolute", left: 0, top: 0, width: 1920, height: 1080, scale: `${(x1 - x0 + 1) / (edges[i + 1] - u)} 1`, transformOrigin: "left center" }}>
+              <div style={{ position: "absolute", left: -u, top: 0, width: 1920, height: 1080 }}><Sheet settle={settle} slide={0} /></div>
+            </div>
+            <div style={{ position: "absolute", inset: 0, background: `rgba(30,20,0,${0.42 * (1 - i / slices)})` }} />
+          </div>
+        );
+      })}
+    </>
+  );
+};
+
+const spiral = (r: number, turns: number, start: number) => {
+  let d = "";
+  for (let i = 0; i <= 90; i++) {
+    const t = i / 90;
+    const a = start + t * turns * 2 * Math.PI;
+    const k = r * (0.1 + 0.9 * t);
+    d += `${i ? "L" : "M"}${(Math.cos(a) * k).toFixed(1)} ${(Math.sin(a) * k).toFixed(1)}`;
+  }
+  return d;
+};
+
+/** The rolled mat: `open` turns the log from side-on (0) to its spiral end facing us (1). */
+const Log: React.FC<{ cx: number; cy: number; r: number; length: number; open: number; spin: number; rice: number; rim?: number }> = ({ cx, cy, r, length, open, spin, rice, rim = 1 }) => {
+  const ry = r * (0.3 + 0.7 * open);
+  const slats = 13;
+  return (
+    <div style={{ position: "absolute", left: cx - r, top: cy - length / 2, width: 2 * r, height: length, opacity: rim, filter: "drop-shadow(0 22px 34px #000a)" }}>
+      {length > 2 && (
+        <div style={{ position: "absolute", left: 0, top: 0, width: 2 * r, height: length, overflow: "hidden", borderRadius: `0 0 ${r}px ${r}px / 0 0 ${ry}px ${ry}px` }}>
+          {Array.from({ length: slats }, (_, i) => {
+            const a0 = ((i + (spin % 1)) / slats) * Math.PI;
+            const a1 = ((i + 1 + (spin % 1)) / slats) * Math.PI;
+            const x0 = r * (1 - Math.cos(Math.min(a0, Math.PI)));
+            const x1 = r * (1 - Math.cos(Math.min(a1, Math.PI)));
+            return <div key={i} style={{ position: "absolute", left: x0, top: 0, width: Math.max(0, x1 - x0), height: "100%", background: BAMBOO[(i + Math.floor(spin) * 3) & 3], borderRight: "2px solid #6f7238" }} />;
+          })}
+          {STRINGS.map((y) => <div key={y} style={{ position: "absolute", left: 0, right: 0, top: `${y * 100}%`, height: 6, background: STRING }} />)}
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, #0008, #0000 30%, #fff4 48%, #0000 66%, #0009)" }} />
+        </div>
+      )}
+      <svg width={2 * r} height={2 * ry} viewBox={`${-r} ${-ry} ${2 * r} ${2 * ry}`} style={{ position: "absolute", left: 0, top: -ry, overflow: "visible" }}>
+        <g transform={`scale(1 ${ry / r})`}>
+          <circle r={r} fill="#d6d48c" stroke="#6f7238" strokeWidth={3} />
+          <circle r={r * Math.max(0.42, rice)} fill={C.paper} />
+          <path d={spiral(r * 0.96, 2.6, spin * 2.4)} fill="none" stroke="#7a7a3f" strokeWidth={Math.max(5, r * 0.055)} strokeLinecap="round" />
+        </g>
+      </svg>
+    </div>
+  );
+};
 
 const body: [number, number][] = [
   [48, 11], [54.5, 11], [59.2, 14.3], [62.6, 20],
@@ -154,17 +237,21 @@ const Rice: React.FC<{ t: number; size: number; nori: number }> = ({ t, size, no
 
 export const Scene1And2: React.FC = () => {
   const frame = useCurrentFrame();
-  const sweep = interpolate(frame, SWEEP, [0, 1], { ...clamp, easing: (t) => t * t * (3 - 2 * t) });
-  const gather = interpolate(frame, GATHER, [0, 1], { ...clamp, easing: (t) => t * t });
-  const rollW = 150 + sweep * 460;
-  const rollX = -rollW + sweep * 1920;
-  const pressed = Math.max(0, rollX + rollW * 0.5);
-  const logW = rollW * (1 - gather) + 300 * gather;
-  const logH = 1200 * (1 - gather) + 340 * gather;
-  const logX = (rollX + rollW - logW / 2 - rollW / 2) * (1 - gather) + (960 - logW / 2) * gather;
-  const logY = 540 - logH / 2;
-  const ricePop = usePop(GATHER[1] - 1, 9);
-  const matOut = interpolate(frame, [188, 195], [1, 0], clamp);
+  const slideIn = interpolate(frame, SLIDE, [-1920, 0], { ...clamp, easing: easeOut });
+  const settle = interpolate(frame, SLIDE, [0, 1], { ...clamp, easing: easeOut });
+  const rolled = interpolate(frame, ROLL, [0, 1], { ...clamp, easing: (t) => t * t * (3 - 2 * t) });
+  const contact = -83 + rolled * 1800; // the sheet meets the log just past this point, ending at the mat's far edge
+  const r = 34 + 118 * Math.sqrt(rolled);
+  const turn = interpolate(frame, TURN, [0, 1], { ...clamp, easing: (t) => t * t * (3 - 2 * t) });
+  // Side-on and rolling, then swinging to centre with its spiral end facing us, full of rice.
+  const logX = (contact + 143 - r + 8) * (1 - turn) + 960 * turn;
+  const logY = (MAT.y + MAT.h / 2) * (1 - turn) + 540 * turn;
+  const logR = r * (1 - turn) + 205 * turn;
+  const logLen = MAT.h * (1 - turn);
+  const matOff = interpolate(frame, [189, 195], [1, 0], clamp);
+  const ricePop = usePop(TURN[1] + 2, 9);
+  const riceFill = interpolate(frame, [181, 190], [0.42, 1], clamp);
+  const capOut = interpolate(frame, [150, 156], [1, 0], { ...clamp, easing: easeOut });
 
   // Each pat on the beat sharpens the corners and squashes the rice.
   const pats = [195, 210, 225];
@@ -185,13 +272,15 @@ export const Scene1And2: React.FC = () => {
 
   return (
     <AbsoluteFill style={{ background: C.night, fontFamily, overflow: "hidden" }}>
-      {frame < 195 && <Freeze frame={149} active={(f) => f >= 150}>
-        <AbsoluteFill style={{ scale: `${(1920 - pressed) / 1920} 1`, transformOrigin: "right center", opacity: frame < GATHER[0] ? 1 : 0 }}><Mess /></AbsoluteFill>
-      </Freeze>}
-      {frame >= GATHER[1] - 1 && frame < 240 && (
-        <div style={{ position: "absolute", left: x - 205, top: y - 205, scale: frame < 195 ? String(ricePop) : `${2 - pat} ${pat}`, transformOrigin: "50% 88%" }}><Rice t={t} size={410} nori={nori} /></div>
+      {frame < SLIDE[1] + 1 && frame >= 150 && <Sheet settle={settle} slide={slideIn} />}
+      {frame < 150 && <Mess />}
+      {frame > SLIDE[1] && frame < ROLL[1] && <PullIn contact={contact} settle={1} />}
+      {frame < 150 && captions.map(([from, to, text]) => frame >= from && frame < to && <Sticker key={text} text={text} at={from} />)}
+      {frame >= 150 && capOut > 0 && <div style={{ position: "absolute", inset: 0, scale: String(capOut), transformOrigin: "1680px 110px" }}><Sticker text="Tomorrow, do it all again." at={120 - 150} /></div>}
+      {frame >= TURN[1] + 2 && frame < 240 && (
+        <div style={{ position: "absolute", left: x - 205, top: y - 205, scale: frame < 195 ? String(0.92 + 0.08 * ricePop) : `${2 - pat} ${pat}`, transformOrigin: "50% 88%" }}><Rice t={t} size={410} nori={nori} /></div>
       )}
-      {frame >= SWEEP[0] && frame < 195 && <Roll x={logX} y={logY} width={logW} height={logH} turn={frame * 26} opacity={matOut} />}
+      {frame > SLIDE[1] && frame < 195 && <Log cx={logX} cy={logY} r={logR} length={logLen} open={turn} spin={frame * 0.42} rice={riceFill} rim={matOff} />}
       {frame >= 240 && (
         <AbsoluteFill style={{ background: `radial-gradient(circle at 30% 0%, ${C.purple}, #2a0a7a 70%)` }}>
           <Ribbons start={240} muted />

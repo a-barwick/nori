@@ -11,7 +11,7 @@ Everything needed to change or reshoot the Nori film. Austin approved the look, 
 | Captions, camera, timing, deck scenes, music | [Edit and render](#edit-and-render) | None |
 | Messages, tasks, or what happens in the interface | [Refilm](#refilm), about two minutes | None |
 
-The video files stay out of Git. The v3 take is at `~/Documents/dev/agents/nori-film-media/2026-10-31-v3/`, the earlier approved film at `~/Documents/dev/agents/nori-film-media/2026-10-31/`, and worktree cleanup can't touch either.
+The video files stay out of Git. The v3 take is at `~/Documents/dev/agents/nori-film-media/2026-10-31-v3/`, the earlier approved film at `~/Documents/dev/agents/nori-film-media/2026-10-31/`, and worktree cleanup can't touch either. The Git tag `film-2026-10-31` holds that film's code and its real run data.
 
 ## Setup
 
@@ -95,6 +95,7 @@ Pass `desktop` or `phone` after `node capture/capture.mjs` to film just one.
 Details that were hard won:
 
 - Scene 5 is one unbroken clip. During frames 810 to 870 the capture narrows the real window around the Acme message, keeping that message on the same pixel, and writes each frame's window to `public/clips/markers.json` for the film's mask. It logs `drift` if the message moves.
+- The film scales the phone around the Acme message: zoom 1.5 through the morph, so the text stays large, then back to show the whole phone once it has formed.
 - The Acme message has hard line breaks so it wraps the same on desktop and phone.
 - Animations are off in the page. Pops, the panel's slide and the cursor are set per frame, and a frame where nothing changed reuses the last image, so holds are perfectly still.
 - `Element.scrollTo` is disabled and the thread has extra bottom padding, so the film alone decides where the thread sits. Without the padding the frontend pins the thread to the bottom.

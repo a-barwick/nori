@@ -133,7 +133,7 @@ keys(90, 116, 1.5, 0.7);
 [122, 126, 130, 134, 138, 142, 146].forEach((f) => { click(f, 0.8); pop(F(f), 0.5); });
 
 // Scene 2: the music cuts dead on 150. Squish, pats, then the drop on 240.
-squish(186);
+squish(189);
 [195, 210, 225].forEach(pat);
 whoosh(F(240), 0.3, 0.8);
 impact(F(240), 1.2);
