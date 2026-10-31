@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Frontend architecture · Nori</title>
+<title>Web client architecture · Nori</title>
 <link rel="stylesheet" href="site.css">
 <script src="site.js" defer></script>
 </head>
 <body>
-<h1>Frontend architecture</h1>
-<p class="lede">The browser talks to a Next.js server, and that server talks to the runtime. The client never calls a model.</p>
+<h1>Web client architecture</h1>
+<p class="lede">The browser talks to a Next.js server, and that server talks to the agent service. The client never calls a model.</p>
 <section><h2>Request path</h2>
 <div class="card"><div class="flow">
 <div class="node"><b>React client</b><small><code>NoriApp</code> and its components. All state comes from one hook, <code>useRuntime</code>.</small></div>
 <div class="arrow">↓ <span class="lbl">same-origin POST /api/{operation}</span></div>
 <div class="node"><b>Next.js server</b><small><code>proxy.ts</code> checks the owner on every private route. <code>lib/runtime/server.ts</code> checks the origin and the operation, then adds a Google token.</small></div>
 <div class="arrow">↓ <span class="lbl">POST /api/{operation} with server credentials</span></div>
-<div class="node"><b>Runtime</b><small>Saves commands and returns snapshots. See <a href="clients.html">Clients</a> for the endpoints.</small></div>
+<div class="node"><b>Agent service</b><small>Saves commands and returns snapshots. See <a href="api.html">Service API</a> for the endpoints.</small></div>
 </div></div>
 <div class="card"><table class="tall"><tr><th>Operation</th><th>Client use</th></tr>
 <tr><td><code>session</code></td><td>Loads a snapshot, or an older page with <code>before</code>.</td></tr>
@@ -31,7 +31,7 @@
 <div class="card"><div class="flow">
 <div class="node"><b>Enter</b><small><code>send()</code> creates a UUID and saves the message to <code>sessionStorage</code>.</small></div>
 <div class="arrow">↓</div>
-<div class="node"><b>POST /api/turn</b><small>The runtime returns a snapshot.</small></div>
+<div class="node"><b>POST /api/turn</b><small>The agent service returns a snapshot.</small></div>
 <div class="arrow">↓</div>
 <div class="node"><b>Acknowledged</b><small>The client removes its pending copy once the snapshot lists that UUID.</small></div>
 <div class="arrow">↓</div>
@@ -40,7 +40,7 @@
 <ul class="pts">
 <li>If a response is lost, Retry sends the same UUID. Pending messages also resend after a reload, a reconnect or a manual refresh.</li>
 <li>A message can be up to 8,192 UTF-8 bytes, and up to 20 messages can be pending.</li>
-<li>Task commands work the same way, with their own stored list. A command clears when the runtime accepts it or a snapshot shows the task has applied it.</li>
+<li>Task commands work the same way, with their own stored list. A command clears when the agent service accepts it or a snapshot shows the task has applied it.</li>
 <li>A <code>4xx</code> marks a command as rejected, and the panel offers Edit. Any other failure offers Retry.</li>
 </ul>
 </section>
@@ -63,8 +63,8 @@
 <details class="more"><summary>Sign-in and limits</summary>
 <ul class="pts">
 <li>Production sits behind Google IAP. The server verifies the signed assertion and the owner's email, and ignores unsigned identity headers.</li>
-<li>POST routes also require a matching <code>Origin</code>. Browser credentials are never forwarded to the runtime.</li>
-<li>The hosted route allows bodies up to 128,000 characters and waits up to 145 seconds. The runtime URL must use HTTPS.</li>
+<li>POST routes also require a matching <code>Origin</code>. Browser credentials are never forwarded to the agent service.</li>
+<li>The hosted route allows bodies up to 128,000 characters and waits up to 145 seconds. The agent service URL must use HTTPS.</li>
 <li>In development on loopback, the owner check passes. If <code>NORI_LOCAL_AGENT_URL</code> is set, the client uses <code>/api/agent/{operation}</code> instead, with limits of 64,000 characters and 100 seconds.</li>
 <li><code>/api/health</code> is the only API route with no owner check.</li>
 </ul>
@@ -97,7 +97,7 @@
 <section><h2>Run and build</h2>
 <div class="card"><table class="tall"><tr><th>Command, from the repo root</th><th>What it does</th></tr>
 <tr><td><code>make dev</code></td><td>Runs the client on port 3210 with the local Go agent.</td></tr>
-<tr><td><code>make web</code></td><td>Runs only the client. With no runtime configured, it shows the connection error and disables Send.</td></tr>
+<tr><td><code>make web</code></td><td>Runs only the client. With no agent service configured, it shows the connection error and disables Send.</td></tr>
 <tr><td><code>make web-build</code></td><td>Builds the Next.js standalone output.</td></tr>
 <tr><td><code>make check</code></td><td>Runs the repo checks before a merge.</td></tr>
 </table></div>

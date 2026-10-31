@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service API · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Service API</h1>
+<p class="lede">Clients send messages and task commands to the agent service over HTTP, and read back snapshots.</p>
+<section><h2>Endpoints today</h2>
+<div class="card"><table class="tall"><tr><th>Endpoint</th><th>What it does</th></tr>
+<tr><td><code>POST /api/session</code></td><td>Returns the conversation and tasks.</td></tr>
+<tr><td><code>POST /api/turn</code></td><td>Sends a message. Returns 202 once it's saved.</td></tr>
+<tr><td><code>POST /api/command</code></td><td>Sends a task command, such as an answer or a continue.</td></tr>
+<tr><td><code>POST /api/input</code></td><td>Sends an explicit update to one task.</td></tr>
+<tr><td><code>POST /api/cancel</code></td><td>Requests Stop for one task.</td></tr>
+<tr><td><code>POST /api/trace</code></td><td>Reads the debug trace for a turn or task.</td></tr>
+<tr><td><code>POST /api/artifact</code></td><td>Reads a saved file such as a screenshot.</td></tr>
+<tr><td><code>POST /api/process</code></td><td>The wake from Cloud Tasks. Clients don't call it.</td></tr>
+<tr><td><code>POST /api/resume</code></td><td>Redelivers saved commands and wakes tasks. Clients don't call it.</td></tr>
+</table></div>
+<p>The web client is the only caller today. It reaches these endpoints through its Next.js server, and polls for snapshots every 2 seconds while work is running. See <a href="frontend.html#polling">Polling</a>.</p>
+</section>
+<section class="designed"><h2>The protocol for many clients <span class="tag design">designed · milestones 8 and 12</span></h2>
+<p>Once there's more than one client, polling gives way to an ordered event log.</p>
+<div class="card"><div class="flow">
+<div class="node designed-node"><b>Start from a snapshot</b><small><code>GET /v1/snapshot</code> returns the state and the log position it reflects.</small></div><div class="arrow">↓</div>
+<div class="node designed-node"><b>Follow the stream</b><small><code>GET /v1/events</code> sends saved events plus live extras like reply text. A reconnect picks up from the last event.</small></div><div class="arrow">↓</div>
+<div class="node designed-node"><b>Send commands</b><small><code>POST /v1/commands</code> returns once a command is saved. Its effects arrive later as events.</small></div>
+</div></div>
+<details class="more"><summary>Commands and message parts</summary>
+<table class="tall"><tr><th>Command</th><th>Effect</th></tr>
+<tr><td><code>message.send</code></td><td>Saves the user's message and puts it in the inbox.</td></tr>
+<tr><td><code>message.edit</code></td><td>Saves a new message that replaces the old one, treated as a correction.</td></tr>
+<tr><td><code>task.stop</code></td><td>Requests Stop. Skips classification.</td></tr>
+<tr><td><code>approval.decide</code></td><td>Records approve or decline for one exact operation.</td></tr>
+<tr><td><code>doc.update</code></td><td>Edits soul or memory, with conflict detection.</td></tr>
+<tr><td><code>settings.update</code></td><td>Changes quiet hours, the daily cap and so on.</td></tr>
+<tr><td><code>device.register</code></td><td>Registers a device for push.</td></tr>
+</table>
+<p>Replies arrive as typed parts: <code>text</code>, <code>chips</code>, <code>image</code>, <code>artifact</code>, <code>approval</code> and <code>attachment</code>. Each non-text part has fallback text, so an older client can still show something.</p>
+</details>
+<details class="more"><summary>Decisions in that proposal</summary>
+<ul class="pts"><li>One log and one stream per owner, since tasks and badges span threads.</li><li>Server-sent events with a long-poll fallback. WebSockets were rejected for now because commands already use POST.</li><li>Clients don't read Firestore directly, so its schema doesn't become the contract.</li><li>Task results land in the thread that started the task.</li></ul>
+</details>
+<details class="more"><summary>Full protocol reference</summary>
+<p>Resource fields, event types, error codes, limits and rollout phases are in <a href="https://github.com/a-barwick/nori/blob/main/docs/client-contract.md">docs/client-contract.md</a>. Everything beyond today's API is a proposal.</p></details>
+</section>
+<details class="sources"><summary>Sources</summary><p><a href="https://github.com/a-barwick/nori/blob/main/core/internal/wake/http.go">core/internal/wake/http.go</a> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a> · <a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
+</body>
+</html>

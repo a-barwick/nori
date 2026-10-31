@@ -52,6 +52,7 @@ Use the same words everywhere: outer loop, inner loop, runtime, task, dispatch, 
 Then add the page to `NAV` in `site.js`. The script adds the navigation, previous and next links, section lists, copy links and the filter. Don't copy those into a page.
 
 - Keep each page to one topic. Link to another page instead of repeating it.
+- Each client gets one `<Platform> client` page in the Clients group. Rules that apply to every client go on `clients.html` or `api.html`.
 - Split a page that passes about 800 words into pages by topic. Reference pages such as Scenarios and Decisions can run longer.
 - Don't list every value just because the code has it. Put long lists of tokens, limits or fields in a `details.more` section.
 - Every heading gets a copy-link icon automatically. Only the icon is interactive, so don't make headings or subtitles clickable. Link IDs come from the heading text, so renaming a heading breaks old links to it.
