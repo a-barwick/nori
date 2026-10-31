@@ -2,6 +2,8 @@ package observability
 
 import (
 	"context"
+	"encoding/base64"
+	"net/url"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -51,7 +53,8 @@ func allowedAttribute(kv attribute.KeyValue, content bool) (attribute.KeyValue, 
 
 type filteredSpan struct {
 	sdktrace.ReadOnlySpan
-	content bool
+	content         bool
+	arizeProjectURL *url.URL
 }
 
 func (s filteredSpan) Name() string { return redactText(s.ReadOnlySpan.Name(), 120) }
@@ -63,8 +66,54 @@ func (s filteredSpan) Attributes() []attribute.KeyValue {
 			result = append(result, safe)
 		}
 	}
+	// This URL is generated only from validated configuration and OTel IDs.
+	// Never allow caller-provided URLs through the operational allowlist.
+	if s.arizeProjectURL != nil && s.SpanContext().IsValid() {
+		for _, attr := range attrs {
+			if attr.Key == "openinference.span.kind" && attr.Value.AsString() == "LLM" {
+				link := *s.arizeProjectURL
+				query := url.Values{
+					"selectedTraceId": {s.SpanContext().TraceID().String()},
+					"selectedSpanId":  {s.SpanContext().SpanID().String()},
+					"selectedTab":     {"spans"},
+				}
+				link.RawQuery = query.Encode()
+				result = append(result, attribute.String("nori.arize.url", link.String()))
+				break
+			}
+		}
+	}
 	return result
 }
+
+// arizeProjectURL accepts only an Arize project page with three opaque,
+// base64-encoded IDs. Queries, fragments, credentials, and other hosts cannot
+// become an export-side exception to URL redaction.
+func arizeProjectURL(raw string) *url.URL {
+	if raw == "" {
+		return nil
+	}
+	project, err := url.Parse(raw)
+	if err != nil || project.Scheme != "https" || project.Host != "app.arize.com" || project.User != nil || project.RawQuery != "" || project.ForceQuery || project.Fragment != "" {
+		return nil
+	}
+	parts := strings.Split(strings.TrimSuffix(project.EscapedPath(), "/"), "/")
+	if len(parts) != 7 || parts[0] != "" || parts[1] != "organizations" || parts[3] != "spaces" || parts[5] != "projects" {
+		return nil
+	}
+	for _, index := range []int{2, 4, 6} {
+		id, err := url.PathUnescape(parts[index])
+		if err != nil {
+			return nil
+		}
+		decoded, err := base64.StdEncoding.DecodeString(id)
+		if err != nil || len(decoded) == 0 || base64.StdEncoding.EncodeToString(decoded) != id {
+			return nil
+		}
+	}
+	return project
+}
+
 func (s filteredSpan) Events() []sdktrace.Event { return nil }
 func (s filteredSpan) Links() []sdktrace.Link {
 	links := append([]sdktrace.Link(nil), s.ReadOnlySpan.Links()...)
@@ -80,9 +129,10 @@ func (s filteredSpan) Status() sdktrace.Status {
 }
 
 type filteredExporter struct {
-	inner   sdktrace.SpanExporter
-	arize   bool
-	limiter *rate.Limiter
+	inner           sdktrace.SpanExporter
+	arize           bool
+	limiter         *rate.Limiter
+	arizeProjectURL *url.URL
 }
 
 func (e *filteredExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
@@ -103,7 +153,7 @@ func (e *filteredExporter) ExportSpans(ctx context.Context, spans []sdktrace.Rea
 		if !e.limiter.Allow() {
 			continue
 		}
-		filtered = append(filtered, filteredSpan{ReadOnlySpan: span, content: e.arize})
+		filtered = append(filtered, filteredSpan{ReadOnlySpan: span, content: e.arize, arizeProjectURL: e.arizeProjectURL})
 	}
 	if len(filtered) == 0 {
 		return nil

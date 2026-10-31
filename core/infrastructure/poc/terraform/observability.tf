@@ -6,6 +6,7 @@ variable "observability" {
     web_dsn                 = optional(string, "")
     arize_space_id          = optional(string, "")
     arize_project_name      = optional(string, "nori")
+    arize_project_url       = optional(string, "")
     arize_secret            = optional(string, "")
     arize_secret_version    = optional(string, "latest")
     arize_endpoint          = optional(string, "")
@@ -42,6 +43,7 @@ locals {
     }, var.observability.arize_secret == "" ? {} : {
     ARIZE_SPACE_ID             = var.observability.arize_space_id
     ARIZE_PROJECT_NAME         = var.observability.arize_project_name
+    ARIZE_PROJECT_URL          = var.observability.arize_project_url
     ARIZE_OTLP_ENDPOINT        = var.observability.arize_endpoint
     NORI_ARIZE_CAPTURE_CONTENT = tostring(var.observability.arize_capture_content)
     NORI_ARIZE_SPANS_PER_HOUR  = tostring(var.observability.arize_spans_per_hour)
