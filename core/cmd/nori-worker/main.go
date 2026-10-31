@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/genai"
@@ -17,6 +20,8 @@ import (
 	"nori/internal/state"
 	"nori/internal/task"
 	"nori/internal/wake"
+	"nori/internal/workerservice"
+	"nori/internal/workerwake"
 )
 
 func main() {
@@ -25,72 +30,152 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if port := os.Getenv("PORT"); port != "" {
+		addr := ":" + port
+		if os.Getenv("TEMPORAL_LOCAL") == "true" {
+			addr = "127.0.0.1:" + port
+		}
+		server := wake.Server(ctx, addr, workerservice.Handler(ctx, func(ctx context.Context, id string, ids []string) error { return run(ctx, true, id, ids) }))
+		server.WriteTimeout = 11 * time.Minute
+		wake.Listen(ctx, server, 5*time.Minute)
+		return
+	}
+	if err := run(ctx, false, "local", nil); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(ctx context.Context, bounded bool, sliceID string, known []string) (result error) {
+	build := os.Getenv("TEMPORAL_BUILD_ID")
+	if build == "" {
+		return fmt.Errorf("TEMPORAL_BUILD_ID is required; use an immutable release identifier")
+	}
+	if bounded && !workerwake.Enabled() {
+		return fmt.Errorf("request worker requires durable worker wake configuration")
+	}
+	pollWindow, err := time.ParseDuration(env.Get("NORI_WORKER_POLL_WINDOW", "240s"))
+	if err != nil || pollWindow <= 0 || pollWindow > 240*time.Second {
+		return fmt.Errorf("NORI_WORKER_POLL_WINDOW must be in (0,240s]")
+	}
+	idleWindow, err := time.ParseDuration(env.Get("NORI_WORKER_IDLE_WINDOW", "15s"))
+	if err != nil || idleWindow <= 0 {
+		return fmt.Errorf("NORI_WORKER_IDLE_WINDOW must be positive")
+	}
+	if bounded {
+		pollCtx, cancel := context.WithTimeout(ctx, pollWindow)
+		defer cancel()
+		ctx = pollCtx
+	}
 	project := env.Get("NORI_PROJECT_ID", "bot-111549")
 	store, e := state.NewGoogle(ctx, project, env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
 	if e != nil {
-		log.Fatal(e)
+		return e
 	}
 	defer store.Close()
 	control, e := store.Control(ctx)
 	if e != nil {
-		log.Fatal(e)
+		return e
 	}
 	if e = control.Check(); e != nil {
+		if bounded && len(known) > 0 {
+			// The operator fences the native queue before closing admission.
+			// Retain this dispatched wake without starting any SDK worker.
+			if err := workerwake.Schedule(ctx, build, known...); err != nil {
+				return err
+			}
+			log.Printf("worker_slice slice=%s build=%s phase=paused-retained workflows=%q", sliceID, build, known)
+		}
 		log.Print("execution paused; worker exiting without cancelling durable tasks")
-		return
+		return nil
 	}
 	c, e := task.Dial(ctx)
 	if e != nil {
-		log.Fatal(e)
+		return e
 	}
 	defer c.Close()
 	attempts := int32(1)
 	model, e := genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project: project, Location: env.Get("MODEL_LOCATION", "global"), HTTPOptions: genai.HTTPOptions{RetryOptions: &genai.HTTPRetryOptions{Attempts: &attempts}}})
 	if e != nil {
-		log.Fatal(e)
-	}
-	build := os.Getenv("TEMPORAL_BUILD_ID")
-	if build == "" {
-		log.Fatal("TEMPORAL_BUILD_ID is required; use an immutable release identifier")
+		return e
 	}
 	// Gemini 3.8 Flash global introductory pricing through 2026-12-31.
 	// https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing
 	price, e := agent.ParsePrice(env.Get("MODEL_INPUT_USD_PER_MTOK", "0.75"), env.Get("MODEL_OUTPUT_USD_PER_MTOK", "3.75"))
 	if e != nil {
-		log.Fatal(e)
+		return e
 	}
 	local := os.Getenv("TEMPORAL_LOCAL") == "true"
 	localComputer := os.Getenv("NORI_LOCAL_COMPUTER_URL")
 	if localComputer != "" && !local {
-		log.Fatal("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
+		return fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
 	}
 	var notify func(context.Context) error
 	if !local {
 		notifier, err := wake.NewCloud(ctx, os.Getenv("NORI_WAKE_QUEUE"), os.Getenv("NORI_RUNTIME_URL"), os.Getenv("NORI_WAKE_SERVICE_ACCOUNT"))
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		notify = notifier.Schedule
 	}
 	service := agent.New(store, model, env.Get("MODEL_NAME", "gemini-3.8-flash"), price, computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer})
-	w := worker.New(c, task.Queue(), worker.Options{MaxConcurrentActivityExecutionSize: 4, MaxConcurrentWorkflowTaskExecutionSize: 2, WorkerStopTimeout: 25 * time.Second, DeploymentOptions: worker.DeploymentOptions{UseVersioning: true, Version: worker.WorkerDeploymentVersion{DeploymentName: env.Get("TEMPORAL_DEPLOYMENT_NAME", "nori-task"), BuildID: build}, DefaultVersioningBehavior: workflow.VersioningBehaviorPinned}})
+	stopTimeout := 25 * time.Second
+	if bounded {
+		stopTimeout = 5 * time.Minute
+	}
+	tracker := workerservice.NewTracker(known...)
+	w := worker.New(c, task.Queue(), worker.Options{Interceptors: []interceptor.WorkerInterceptor{tracker}, MaxConcurrentActivityExecutionSize: 4, MaxConcurrentWorkflowTaskExecutionSize: 2, WorkerStopTimeout: stopTimeout, DeploymentOptions: worker.DeploymentOptions{UseVersioning: true, Version: worker.WorkerDeploymentVersion{DeploymentName: env.Get("TEMPORAL_DEPLOYMENT_NAME", "nori-task"), BuildID: build}, DefaultVersioningBehavior: workflow.VersioningBehaviorPinned}})
 	w.RegisterWorkflowWithOptions(task.Workflow, workflow.RegisterOptions{Name: task.WorkflowName, VersioningBehavior: workflow.VersioningBehaviorPinned})
 	w.RegisterActivity(&task.Activities{Agent: service, Store: store, Notify: notify})
 	if e = w.Start(); e != nil {
-		log.Fatal(e)
+		return e
 	}
-	defer w.Stop()
+	defer func() {
+		_, active, _ := tracker.Snapshot()
+		log.Printf("worker_slice slice=%s build=%s phase=draining active=%d", sliceID, build, active)
+		w.Stop()
+		log.Printf("worker_slice slice=%s build=%s phase=stopped", sliceID, build)
+		if bounded {
+			check, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			control, err := store.Control(check)
+			if err != nil {
+				result = errors.Join(result, err)
+				return
+			}
+			ids, _, _ := tracker.Snapshot()
+			if control.Paused {
+				if len(ids) > 0 {
+					result = errors.Join(result, workerwake.Schedule(check, build, ids...))
+				}
+				log.Printf("worker_slice slice=%s build=%s phase=paused-retained workflows=%q", sliceID, build, ids)
+				return
+			}
+			pending, err := task.Runnable(check, store, c, build, ids)
+			if err == nil && len(pending) > 0 {
+				err = workerwake.Schedule(check, build, pending...)
+			}
+			log.Printf("worker_slice slice=%s build=%s phase=handoff runnable=%q error=%v", sliceID, build, pending, err)
+			result = errors.Join(result, err)
+		}
+	}()
 	if e = task.RepairClosed(ctx, store, c, service.Computer); e != nil {
+		if bounded {
+			return e
+		}
 		log.Printf("terminal recovery: %v", e)
 	}
 	// Repair delivery on startup and while already running. This process never
 	// opens admission or resumes a paused task on its own.
+	log.Printf("worker_slice slice=%s build=%s phase=polling poll_window=%s", sliceID, build, pollWindow)
 	lastRepair := time.Now()
 	var lastWakeReceived int64
 	var lastWakeAttempt time.Time
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if time.Since(lastRepair) >= 30*time.Second {
 			lastRepair = time.Now()
 			if e = task.RepairClosed(ctx, store, c, service.Computer); e != nil && ctx.Err() == nil {
@@ -122,19 +207,34 @@ func main() {
 				log.Printf("pending task event wake: %v", err)
 			}
 		}
+		if bounded {
+			ids, active, quiet := tracker.Snapshot()
+			if active == 0 && quiet >= idleWindow {
+				pending, err := task.Runnable(ctx, store, c, build, ids)
+				if err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
+					return err
+				}
+				if len(pending) == 0 {
+					return nil
+				}
+			}
+		}
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 		}
 		control, e = store.Control(ctx)
 		if e != nil {
 			log.Print("control unavailable; worker exiting")
-			return
+			return nil
 		}
 		if e = control.Check(); e != nil {
 			log.Print("execution paused; worker exiting without cancelling durable tasks")
-			return
+			return nil
 		}
 	}
 }
