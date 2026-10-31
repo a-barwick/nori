@@ -223,6 +223,9 @@ func (s *Google) conversationBatch(tx *firestore.Transaction, after int64) ([]Co
 		inputBytes := len(in.Text)
 		if in.Event != nil {
 			inputBytes += len(in.Event.Text)
+			for _, hold := range in.Event.Holds {
+				inputBytes += len(hold.Question)
+			}
 		}
 		if bytes+inputBytes > 128<<10 && len(out) > 0 {
 			break
@@ -466,6 +469,10 @@ func (s *Google) PublishConversation(ctx context.Context, f ConversationFence, t
 		if e = conversationFresh(c, f); e != nil {
 			return e
 		}
+		heldRuns, e := s.holdAcknowledgements(tx, t, text)
+		if e != nil {
+			return e
+		}
 		now := time.Now().UTC()
 		t.Status = "completed"
 		t.FinishedAt = &now
@@ -477,6 +484,11 @@ func (s *Google) PublishConversation(ctx context.Context, f ConversationFence, t
 		c.Active = ""
 		c.Owner = ""
 		c.LeaseUntil = time.Time{}
+		for id, run := range heldRuns {
+			if e = tx.Set(s.runs().Doc(id), run); e != nil {
+				return e
+			}
+		}
 		if e = tx.Set(s.conversation(), c); e != nil {
 			return e
 		}

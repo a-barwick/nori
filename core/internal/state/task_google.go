@@ -27,7 +27,7 @@ func (s *Google) Accept(ctx context.Context, cmd Command) (Run, error) {
 }
 
 func sameCommand(a, b Command) bool {
-	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs)
+	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID && a.Interrupt == b.Interrupt && slices.Equal(a.SourceInputIDs, b.SourceInputIDs)
 }
 
 // AcceptCommandBatch validates every command before writing any of them. The
@@ -97,6 +97,7 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 		var err error
 		now := time.Now().UTC()
 		accepted := []Command{}
+		readyEvents := []TaskEvent{}
 		changed := map[string]bool{}
 		for _, original := range commands {
 			cmd := original
@@ -126,6 +127,39 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 				receipts = append(receipts, CommandReceipt{Command: *old, Run: run})
 				continue
 			}
+			if cmd.Interrupt && cmd.Kind != "steer" {
+				return fmt.Errorf("%w: only steer can request interruption", ErrCommandInvalid)
+			}
+			if cmd.Interrupt && run.WorkflowVersion < TaskWorkflowVersion {
+				return fmt.Errorf("%w: this task worker cannot safely interrupt active work", ErrCommandInvalid)
+			}
+			if cmd.Kind == "hold" {
+				if !exists[cmd.RunID] {
+					return ErrNotFound
+				}
+				if run.Status == "running" && run.WorkflowVersion < TaskWorkflowVersion {
+					return fmt.Errorf("%w: this task worker cannot deliver held results", ErrCommandInvalid)
+				}
+				holdBytes := len(cmd.Text)
+				for _, existing := range run.Holds {
+					holdBytes += len(existing.Question)
+				}
+				if strings.TrimSpace(cmd.Text) == "" || len(run.Holds) >= 32 || holdBytes > 32<<10 {
+					return fmt.Errorf("%w: held question is empty or task hold limit reached", ErrCommandInvalid)
+				}
+				hold := TaskHold{ID: cmd.ID, TaskID: cmd.RunID, Question: cmd.Text, SourceInputIDs: cmd.SourceInputIDs, Status: "pending", CreatedAt: now}
+				if run.Status != "running" {
+					hold.Status = "ready"
+					run.EventSequence++
+					readyEvents = append(readyEvents, TaskEvent{ID: "hold-" + cmd.ID, RunID: run.ID, Kind: "held_ready", Sequence: run.EventSequence, Revision: run.Revision, Text: run.Result, Reason: run.Error, Holds: []TaskHold{hold}, CreatedAt: now})
+				}
+				run.Holds = append(append([]TaskHold{}, run.Holds...), hold)
+				cmd.Position, cmd.Revision, cmd.CreatedAt, cmd.Delivered = run.Position, run.Revision, now, true
+				runs[run.ID], changed[run.ID] = run, true
+				accepted = append(accepted, cmd)
+				receipts = append(receipts, CommandReceipt{Command: cmd, Run: run})
+				continue
+			}
 			if err = control.Check(); err != nil && cmd.Kind != "stop" && cmd.Kind != "cancel" {
 				return err
 			}
@@ -146,7 +180,7 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 				if strings.TrimSpace(cmd.Text) == "" {
 					return fmt.Errorf("%w: start needs a task request", ErrCommandInvalid)
 				}
-				run = Run{ID: cmd.RunID, Request: cmd.Text, Status: "running", Temporal: true, ProtocolVersion: TaskProtocolVersion, StartedAt: now, Budget: 1, Events: []Event{}, Artifacts: []Artifact{}, TraceContext: traceContext, OriginTraceContext: traceContext}
+				run = Run{ID: cmd.RunID, Request: cmd.Text, Status: "running", Temporal: true, ProtocolVersion: TaskProtocolVersion, WorkflowVersion: TaskWorkflowVersion, StartedAt: now, Budget: 1, Events: []Event{}, Artifacts: []Artifact{}, TraceContext: traceContext, OriginTraceContext: traceContext}
 				exists[cmd.RunID] = true
 			}
 			if run.ProtocolVersion < TaskProtocolVersion {
@@ -171,6 +205,9 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 						return fmt.Errorf("%w: task instruction is empty", ErrCommandInvalid)
 					}
 					run.Revision++
+					if cmd.Kind == "steer" && cmd.Interrupt {
+						run.InterruptRevision = run.Revision
+					}
 					run.Question, run.Waiting, run.PublicationPending = nil, "", false
 				case "answer", "continue":
 					kind := "input"
@@ -209,6 +246,9 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 		}
 		for i := range receipts {
 			receipts[i].Run = runs[receipts[i].Command.RunID]
+		}
+		if err = s.appendHeldEvents(tx, readyEvents, traceContext); err != nil {
+			return err
 		}
 		for id := range changed {
 			if err = tx.Set(s.runs().Doc(id), runs[id]); err != nil {
@@ -303,7 +343,7 @@ func (s *Google) Reconcile(ctx context.Context, id string) (TaskSnapshot, error)
 		if e = d.DataTo(&c); e != nil {
 			return snap, e
 		}
-		if c.Position <= taskPosition(r) {
+		if c.Kind != "hold" && c.Position <= taskPosition(r) {
 			snap.Commands = append(snap.Commands, c)
 		}
 	}
@@ -488,7 +528,8 @@ func (s *Google) Publish(ctx context.Context, id string, revision int64, runStat
 			case "cancelled":
 				kind = "stopped"
 			}
-			event := TaskEvent{ID: id + "-terminal", RunID: id, Kind: kind, Sequence: run.EventSequence + 1, Revision: revision, Text: text, Reason: detail, OperationRefs: run.OperationRefs, CreatedAt: now}
+			run.Holds = readyTaskHolds(run.Holds)
+			event := TaskEvent{Holds: pendingTaskHolds(run.Holds), ID: id + "-terminal", RunID: id, Kind: kind, Sequence: run.EventSequence + 1, Revision: revision, Text: text, Reason: detail, OperationRefs: run.OperationRefs, CreatedAt: now}
 			eventTraceContext := traceContext
 			if len(eventTraceContext) == 0 {
 				eventTraceContext = run.TraceContext

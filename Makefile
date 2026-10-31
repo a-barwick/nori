@@ -10,19 +10,19 @@ dev:
 	$(MAKE) -j2 local-web local-core
 
 local-web:
-	cd web && NORI_LOCAL_AGENT_URL="$(NORI_LOCAL_AGENT_URL)" bun --env-file="$(NORI_ENV_FILE)" run dev $(NORI_WEB_DEV_ARGS) --port $(NORI_WEB_PORT)
+	cd web && NORI_LOCAL_AGENT_URL="$(NORI_LOCAL_AGENT_URL)" node ../scripts/run-with-env.mjs "$(NORI_ENV_FILE)" bun --no-env-file run dev $(NORI_WEB_DEV_ARGS) --port $(NORI_WEB_PORT)
 
 local-core:
 	cd core && NORI_ENV_FILE="$(NORI_ENV_FILE)" NORI_TASK_ENV_FILE="$(NORI_TASK_ENV_FILE)" go run ./cmd/nori-local
 
 web:
-	cd web && bun --env-file="$(NORI_ENV_FILE)" run dev $(NORI_WEB_DEV_ARGS) --port $(NORI_WEB_PORT)
+	cd web && node ../scripts/run-with-env.mjs "$(NORI_ENV_FILE)" bun --no-env-file run dev $(NORI_WEB_DEV_ARGS) --port $(NORI_WEB_PORT)
 
 web-build:
-	cd web && bun --env-file="$(NORI_ENV_FILE)" run build
+	cd web && node ../scripts/run-with-env.mjs "$(NORI_ENV_FILE)" bun --no-env-file run build
 
 web-start:
-	cd web && bun --env-file="$(NORI_ENV_FILE)" run start
+	cd web && node ../scripts/run-with-env.mjs "$(NORI_ENV_FILE)" bun --no-env-file run start
 
 core:
 	$(MAKE) -C core run

@@ -45,7 +45,16 @@ func (t *Tasks) AcceptBatch(ctx context.Context, commands []state.Command, fence
 		if err != nil {
 			outcome = "rejected"
 		}
-		commandSpan.SetAttributes(attribute.String("nori.tool.outcome", outcome))
+		commandSpan.SetAttributes(attribute.String("nori.tool.outcome", outcome), attribute.Bool("nori.command.interrupt", cmd.Interrupt))
+		if cmd.Kind == "hold" {
+			commandSpan.SetAttributes(attribute.String("nori.hold.id", cmd.ID))
+		}
+		if err == nil && cmd.Kind == "hold" {
+			observability.Event(ctx, "conversation.hold.accepted", attribute.String("nori.hold.id", cmd.ID), attribute.String("nori.task.id", cmd.RunID))
+		}
+		if err == nil && cmd.Kind == "steer" {
+			observability.Event(ctx, "conversation.correction.accepted", attribute.String("nori.task.id", cmd.RunID), attribute.String("nori.command.id", cmd.ID), attribute.Bool("nori.command.interrupt", cmd.Interrupt))
+		}
 		commandSpan.End()
 	}
 	if err != nil {
@@ -54,7 +63,12 @@ func (t *Tasks) AcceptBatch(ctx context.Context, commands []state.Command, fence
 		}
 		return nil, err
 	}
-	t.deliver(ctx)
+	for _, receipt := range receipts {
+		if receipt.Command.Kind != "hold" {
+			t.deliver(ctx)
+			break
+		}
+	}
 	t.repairPausedStops(ctx, receipts)
 	return receipts, nil
 }
@@ -63,7 +77,7 @@ func safeCommandName(kind string) string {
 	switch kind {
 	case "start":
 		return "dispatch"
-	case "steer", "answer", "continue", "stop", "input", "cancel":
+	case "steer", "answer", "continue", "stop", "input", "cancel", "hold":
 		return kind
 	default:
 		return "unknown"

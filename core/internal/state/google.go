@@ -16,7 +16,10 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/google/uuid"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -32,7 +35,19 @@ func NewGoogle(ctx context.Context, project, database, bucket string) (*Google, 
 	if e != nil {
 		return nil, e
 	}
-	db, e := firestore.NewClientWithDatabase(ctx, project, database)
+	// An app-only emulator endpoint keeps development spend enforcement on its
+	// real shared database. FIRESTORE_EMULATOR_HOST still supports unpaid tests.
+	var options []option.ClientOption
+	if address := os.Getenv("NORI_STATE_EMULATOR_HOST"); address != "" {
+		if !loopbackEmulator(address) || os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
+			if localArtifacts != nil {
+				_ = localArtifacts.Close()
+			}
+			return nil, fmt.Errorf("NORI_STATE_EMULATOR_HOST requires loopback and no FIRESTORE_EMULATOR_HOST")
+		}
+		options = append(options, option.WithEndpoint(address), option.WithoutAuthentication(), option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+	}
+	db, e := firestore.NewClientWithDatabase(ctx, project, database, options...)
 	if e != nil {
 		if localArtifacts != nil {
 			_ = localArtifacts.Close()
@@ -56,9 +71,11 @@ func openLocalArtifacts() (*os.Root, error) {
 	if directory == "" {
 		return nil, nil
 	}
-	host, _, err := net.SplitHostPort(os.Getenv("FIRESTORE_EMULATOR_HOST"))
-	ip := net.ParseIP(host)
-	if err != nil || (host != "localhost" && (ip == nil || !ip.IsLoopback())) || os.Getenv("TEMPORAL_LOCAL") != "true" {
+	address := os.Getenv("NORI_STATE_EMULATOR_HOST")
+	if address == "" {
+		address = os.Getenv("FIRESTORE_EMULATOR_HOST")
+	}
+	if !loopbackEmulator(address) || os.Getenv("TEMPORAL_LOCAL") != "true" {
 		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR requires a loopback Firestore emulator and TEMPORAL_LOCAL=true")
 	}
 	if !filepath.IsAbs(directory) {
@@ -83,6 +100,12 @@ func openLocalArtifacts() (*os.Root, error) {
 		return nil, err
 	}
 	return root, nil
+}
+
+func loopbackEmulator(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	ip := net.ParseIP(host)
+	return err == nil && (host == "localhost" || (ip != nil && ip.IsLoopback()))
 }
 
 func (s *Google) Close() error {

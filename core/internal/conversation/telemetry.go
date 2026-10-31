@@ -57,6 +57,22 @@ func recordReplies(ctx context.Context, t state.ConversationTurn, text string) {
 	turnSpan := trace.SpanContextFromContext(ctx)
 	now := time.Now()
 	for _, in := range t.Inputs {
+		if in.Event != nil {
+			for _, hold := range in.Event.Holds {
+				status := "answered"
+				if t.Attempt.Status == "error" || text != t.Attempt.Text {
+					status = "failed"
+				}
+				_, span := conversationTracer.Start(ctx, "conversation.hold.reply", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.hold.id", hold.ID), attribute.String("nori.task.id", hold.TaskID), attribute.String("nori.hold.status", status)))
+				if status == "failed" {
+					span.SetStatus(codes.Error, "held reply failed")
+				}
+				span.End()
+				if status == "answered" {
+					observability.Event(ctx, "conversation.hold.answered", attribute.String("nori.hold.id", hold.ID), attribute.String("nori.task.id", hold.TaskID))
+				}
+			}
+		}
 		if !in.IsUser() {
 			continue
 		}

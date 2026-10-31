@@ -275,6 +275,10 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) (resp
 		operation = "navigate"
 	case "/screenshot":
 		operation = "screenshot"
+	case "/operation":
+		operation = "operation_status"
+	case "/operation/cancel":
+		operation = "operation_cancel"
 	case "/cancel":
 		operation = "cancel"
 	case "/browser/close":
@@ -322,7 +326,7 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) (resp
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("computer %s returned HTTP %d", path, resp.StatusCode)
+		return nil, &RPCError{Path: path, Status: resp.StatusCode}
 	}
 	data, e = io.ReadAll(io.LimitReader(resp.Body, int64(max+1)))
 	if len(data) > max {

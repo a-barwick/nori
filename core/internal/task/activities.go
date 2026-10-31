@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,8 +26,10 @@ import (
 )
 
 type Activities struct {
-	Agent *agent.Service
-	Store state.TaskStore
+	JevKey    string
+	JevClient *http.Client
+	Agent     *agent.Service
+	Store     state.TaskStore
 	// Notify schedules existing outer processing after a durable task event.
 	Notify func(context.Context) error
 }
@@ -36,7 +39,8 @@ type Step struct {
 }
 type ModelInput struct {
 	Step
-	Contents []*genai.Content
+	Contents      []*genai.Content
+	Interruptible bool
 }
 
 // ModelOutcome preserves billed usage in Temporal history even when the
@@ -48,6 +52,7 @@ type ModelOutcome struct {
 type ToolInput struct {
 	Step
 	OperationID string
+	Durable     bool
 	Call        *genai.FunctionCall
 }
 type Publication struct {
@@ -56,6 +61,7 @@ type Publication struct {
 	StopConfirmed        bool
 	CostUnknown          bool
 	BypassRouting        bool
+	ExpectedIncomplete   bool
 }
 type Projection struct {
 	Step
@@ -152,7 +158,7 @@ func (a *Activities) Reconcile(ctx context.Context, id string) (state.TaskSnapsh
 
 // bounded tracks pause and Stop throughout I/O. Corrections invalidate
 // the next boundary; already admitted bounded work is allowed to finish.
-func (a *Activities) bounded(parent context.Context, step Step) (context.Context, func(), state.Run, error) {
+func (a *Activities) bounded(parent context.Context, step Step, interruptible ...bool) (context.Context, func(), state.Run, error) {
 	run, e := a.Store.Guard(parent, step.RunID, step.Revision)
 	if e != nil {
 		return nil, nil, state.Run{}, classified(e)
@@ -170,7 +176,7 @@ func (a *Activities) bounded(parent context.Context, step Step) (context.Context
 			case <-ticker.C:
 				activity.RecordHeartbeat(ctx)
 				current, e := a.Store.GetRun(ctx, step.RunID)
-				if e != nil || current.CancelRequested || current.Status != "running" {
+				if e != nil || current.CancelRequested || current.Status != "running" || (len(interruptible) > 0 && interruptible[0] && current.InterruptRevision > step.Revision) {
 					cancel()
 					return
 				}
@@ -203,7 +209,7 @@ func (a *Activities) ioError(step Step, err error) error {
 	return classified(err)
 }
 func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, error) {
-	ctx, done, run, e := a.bounded(ctx, in.Step)
+	ctx, done, run, e := a.bounded(ctx, in.Step, in.Interruptible)
 	if e != nil {
 		return ModelOutcome{}, e
 	}
@@ -241,6 +247,9 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	return outcome, nil
 }
 func (a *Activities) Tool(ctx context.Context, in ToolInput) (result map[string]any, err error) {
+	if in.Durable {
+		return a.durableTool(ctx, in)
+	}
 	ctx, done, run, e := a.bounded(ctx, in.Step)
 	if e != nil {
 		return nil, e
@@ -438,7 +447,7 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 	defer func() {
 		span.SetAttributes(attribute.String("nori.task.status", result.Status), attribute.Bool("nori.output.present", result.Result != ""))
 		recordActivityFailure(ctx, resultErr, "task.publish")
-		if resultErr == nil && result.Status == "failed" {
+		if resultErr == nil && result.Status == "failed" && !p.ExpectedIncomplete {
 			span.SetStatus(codes.Error, "task failed")
 			if run.Status == "running" || run.Status == "" {
 				observability.RecordErrorCategory(ctx, "task.failed", errors.New("task failed"))
@@ -465,11 +474,13 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 		if (run.Status == "running" || run.Status == "") && r.FinishedAt != nil && !r.StartedAt.IsZero() && !r.FinishedAt.Before(r.StartedAt) {
 			durationCtx := observability.ExtractTrace(ctx, r.OriginTraceContext)
 			_, durationSpan := taskTracer.Start(durationCtx, "task.acceptance_to_terminal", trace.WithTimestamp(r.StartedAt), trace.WithLinks(trace.Link{SpanContext: span.SpanContext()}), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.task.id", p.RunID), attribute.String("nori.task.status", r.Status), attribute.Bool("nori.output.present", r.Result != "")))
-			if r.Status == "failed" {
+			if r.Status == "failed" && p.ExpectedIncomplete {
+				observability.Event(ctx, "task.incomplete", attribute.String("nori.task.id", p.RunID))
+			} else if r.Status == "failed" {
 				durationSpan.SetStatus(codes.Error, "task failed")
-				observability.Event(ctx, "task.failed")
+				observability.Event(ctx, "task.failed", attribute.String("nori.task.id", p.RunID))
 			} else if r.Status == "completed" {
-				observability.Event(ctx, "task.completed")
+				observability.Event(ctx, "task.completed", attribute.String("nori.task.id", p.RunID))
 			}
 			observability.Metric(ctx, "nori.task.duration_ms", float64(r.FinishedAt.Sub(r.StartedAt).Milliseconds()))
 			durationSpan.End(trace.WithTimestamp(*r.FinishedAt))

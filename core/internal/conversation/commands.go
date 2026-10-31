@@ -35,13 +35,15 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 			command.Kind, command.Text = "start", strings.TrimSpace(args.Request)
 		case "steer":
 			var args struct {
-				RunID string `json:"run_id"`
-				Text  string `json:"text"`
+				RunID     string `json:"run_id"`
+				Text      string `json:"text"`
+				Interrupt bool   `json:"interrupt,omitempty"`
 			}
 			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
 				return nil, err
 			}
 			command.Kind, command.RunID, command.Text = "steer", args.RunID, strings.TrimSpace(args.Text)
+			command.Interrupt = args.Interrupt
 		case "answer":
 			var args struct {
 				RunID      string `json:"run_id"`
@@ -61,6 +63,15 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				return nil, err
 			}
 			command.Kind, command.RunID, command.QuestionID = "continue", args.RunID, args.QuestionID
+		case "hold":
+			var args struct {
+				TaskID   string `json:"task_id"`
+				Question string `json:"question"`
+			}
+			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
+				return nil, err
+			}
+			command.Kind, command.RunID, command.Text = "hold", args.TaskID, strings.TrimSpace(args.Question)
 		case "stop":
 			var args struct {
 				RunID string `json:"run_id"`
@@ -78,7 +89,7 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				return nil, fmt.Errorf("task command requires a canonical task UUID")
 			}
 		}
-		if command.Kind == "start" || command.Kind == "steer" || command.Kind == "answer" {
+		if command.Kind == "start" || command.Kind == "steer" || command.Kind == "answer" || command.Kind == "hold" {
 			if command.Text == "" || len(command.Text) > 8192 {
 				return nil, fmt.Errorf("task command text must contain 1 to 8192 UTF-8 bytes")
 			}

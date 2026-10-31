@@ -48,6 +48,9 @@ type Artifact struct {
 	Kind string `json:"kind" firestore:"kind"`
 }
 type Run struct {
+	WorkflowVersion       int               `json:"workflow_version,omitempty" firestore:"workflow_version,omitempty"`
+	InterruptRevision     int64             `json:"interrupt_revision,omitempty" firestore:"interrupt_revision,omitempty"`
+	Holds                 []TaskHold        `json:"holds,omitempty" firestore:"holds,omitempty"`
 	TraceContext          map[string]string `json:"-" firestore:"trace_context,omitempty"`
 	OriginTraceContext    map[string]string `json:"-" firestore:"origin_trace_context,omitempty"`
 	PublicationPending    bool              `json:"publication_pending,omitempty" firestore:"publication_pending,omitempty"`

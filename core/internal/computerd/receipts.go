@@ -2,6 +2,7 @@ package computerd
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,13 +16,15 @@ import (
 // Receipts live on the retained guest disk. They provide transport deduplication,
 // not a security boundary from shell code running as the same guest Unix user.
 type receipt struct {
-	ID          string `json:"id"`
-	RunID       string `json:"run_id"`
-	Digest      string `json:"digest"`
-	Status      string `json:"status"`
-	HTTPStatus  int    `json:"http_status,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
-	Body        []byte `json:"body,omitempty"`
+	ReadOperation bool   `json:"read_operation,omitempty"`
+	StopConfirmed bool   `json:"stop_confirmed,omitempty"`
+	ID            string `json:"id"`
+	RunID         string `json:"run_id"`
+	Digest        string `json:"digest"`
+	Status        string `json:"status"`
+	HTTPStatus    int    `json:"http_status,omitempty"`
+	ContentType   string `json:"content_type,omitempty"`
+	Body          []byte `json:"body,omitempty"`
 }
 
 func (s *server) receiptRoot() (*os.Root, error) {
@@ -172,7 +175,29 @@ func (s *server) receipted(next http.HandlerFunc) http.HandlerFunc {
 		s.receiptMu.Unlock()
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		response := &receiptResponse{header: make(http.Header)}
+		if r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" {
+			ctx, cancel := context.WithCancel(r.Context())
+			op := &readOperation{run: input.RunID, cancel: cancel, done: make(chan struct{})}
+			s.receiptMu.Lock()
+			s.readOperations[id] = op
+			s.receiptMu.Unlock()
+			defer func() {
+				cancel()
+				s.receiptMu.Lock()
+				delete(s.readOperations, id)
+				close(op.done)
+				s.receiptMu.Unlock()
+			}()
+			r = r.WithContext(ctx)
+		}
 		next(response, r)
+		if r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" {
+			rec.ReadOperation = true
+			s.runsMu.Lock()
+			run := s.runs[input.RunID]
+			rec.StopConfirmed = run != nil && run.stopErr == nil
+			s.runsMu.Unlock()
+		}
 		rec.Status = "completed"
 		rec.HTTPStatus = response.status
 		rec.ContentType = response.header.Get("Content-Type")

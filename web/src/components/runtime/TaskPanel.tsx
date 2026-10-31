@@ -9,19 +9,17 @@ import type { Artifact, PendingTaskCommand, Run, Session, TaskCommand } from "@/
 import { clock } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
+const unverified = (run: Run) => run.status === "failed" && /^(unverified\b|Completion verification was unavailable)/i.test(run.error || "");
+const incomplete = (run: Run) => run.status === "failed" && /^(incomplete\b|The completion checks still)/i.test(run.error || "");
+
 function statusLabel(run: Run) {
-  return run.status === "running" && run.cancel_requested
-    ? "Stopping…"
-    : run.status === "running" && run.question?.resolved_by
-      ? "Answer accepted"
-      : run.status === "running" && (run.question || run.waiting)
-        ? "Waiting for your answer"
-        : {
-          running: "Working on your task",
-          completed: "Completed",
-          failed: "Failed",
-          cancelled: "Stopped",
-        }[run.status];
+  if (unverified(run)) return "Answer unverified";
+  if (incomplete(run)) return "Incomplete";
+  if (run.status === "running" && run.cancel_requested) return "Stopping…";
+  if (run.status === "running" && run.question?.resolved_by) return run.question.kind === "budget" ? "Budget accepted" : "Answer accepted";
+  if (run.status === "running" && (run.question || run.waiting)) return run.question?.kind === "budget" ? "Waiting for budget approval" : "Waiting for your answer";
+  if (run.status === "running" && run.events.at(-1)?.kind === "checking") return "Checking the answer";
+  return { running: "Working on your task", completed: "Completed", failed: "Failed", cancelled: "Stopped" }[run.status];
 }
 
 function Screenshot({
@@ -176,8 +174,15 @@ export function TaskPanel({
       </Button>
       {question?.kind === "input" && <Button type="button" size="sm" variant="quiet" disabled={updateDisabled} onClick={() => void onCommand(selected.id, "steer", draft)}>Send task update</Button>}
     </form>}
+    {!!selected.holds?.length && <section className="mb-3 rounded-tile bg-fill-1 p-3 text-meta" aria-label="Held questions">
+      <h4 className="font-medium">Follow-up questions</h4>
+      <ul className="mt-2 space-y-2">{selected.holds.map((hold) => <li key={hold.id}>
+        <p className="whitespace-pre-wrap break-words">{hold.question}</p>
+        <p className="text-caption text-ink-3">{hold.status === "answered" ? "Answered in chat" : hold.status === "failed" ? "Chat reply unavailable" : hold.status === "ready" ? "Preparing a chat reply" : "Waiting for the task result"}</p>
+      </li>)}</ul>
+    </section>}
     {selected.result && <details className="mb-3 rounded-tile bg-fill-1 p-3 text-meta" open>
-      <summary className="cursor-pointer font-medium">Task result</summary>
+      <summary className="cursor-pointer font-medium">{unverified(selected) ? "Proposed answer · unverified" : incomplete(selected) ? "Partial answer" : "Task result"}</summary>
       <p className="mt-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{selected.result}</p>
     </details>}
     {!!selected.events?.length && <details className="mb-3" open>
@@ -228,11 +233,11 @@ export function TaskPanel({
                   </span>
                   <ChevronDown size={14} aria-hidden className={cn("shrink-0 text-ink-3", (selected?.id !== run.id || !expanded) && "-rotate-90")} />
                 </button>
-                {run.question?.resolved_by && run.status === "running" && <p className="mt-2 text-caption text-ink-3">Answer accepted. Waiting for the task to continue.</p>}
+                {run.question?.resolved_by && run.status === "running" && <p className="mt-2 text-caption text-ink-3">{run.question.kind === "budget" ? "Budget accepted." : "Answer accepted."} Waiting for the task to continue.</p>}
                 {(run.status === "running" || taskCommands.length > 0) && <div className="mt-2 space-y-2">
                   {run.status === "running" && <div className="flex flex-wrap gap-2">
                     {run.question?.kind === "input" && !run.question.resolved_by && !run.cancel_requested && <Button size="sm" disabled={unavailable || taskCommands.length > 0} onClick={() => answerQuestion(run.id)}>Answer question</Button>}
-                    {run.question?.kind === "budget" && !run.question.resolved_by && <Button size="sm" disabled={unavailable || taskCommands.length > 0 || run.cancel_requested} onClick={() => void onCommand(run.id, "continue", undefined, run.question!.id)}>Continue task</Button>}
+                    {run.question?.kind === "budget" && !run.question.resolved_by && <Button size="sm" disabled={unavailable || taskCommands.length > 0 || run.cancel_requested} onClick={() => void onCommand(run.id, "continue", undefined, run.question!.id)}>Continue task (+$1)</Button>}
                     <Button size="sm" variant="quiet" disabled={stopping || run.cancel_requested} onClick={() => void onCommand(run.id, "stop")}>
                       {run.cancel_requested || stopping ? "Stopping…" : "Stop task"}
                     </Button>

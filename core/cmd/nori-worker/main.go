@@ -108,6 +108,7 @@ func register(ctx context.Context) (result error) {
 			DefaultVersioningBehavior: workflow.VersioningBehaviorPinned},
 	})
 	w.RegisterWorkflowWithOptions(task.Workflow, workflow.RegisterOptions{Name: task.WorkflowName, VersioningBehavior: workflow.VersioningBehaviorPinned})
+	w.RegisterWorkflowWithOptions(task.WorkflowV2, workflow.RegisterOptions{Name: task.PriorWorkflowName, VersioningBehavior: workflow.VersioningBehaviorPinned})
 	w.RegisterActivity(&task.Activities{})
 	if err = w.Start(); err != nil {
 		return err
@@ -253,7 +254,8 @@ func run(ctx context.Context, bounded bool, sliceID string, known []string) (res
 	tracker := workerservice.NewTracker(known...)
 	w := worker.New(c, task.Queue(), worker.Options{Interceptors: []interceptor.WorkerInterceptor{tracker}, MaxConcurrentActivityExecutionSize: 4, MaxConcurrentWorkflowTaskExecutionSize: 2, WorkerStopTimeout: stopTimeout, DeploymentOptions: worker.DeploymentOptions{UseVersioning: true, Version: worker.WorkerDeploymentVersion{DeploymentName: env.Get("TEMPORAL_DEPLOYMENT_NAME", "nori-task"), BuildID: build}, DefaultVersioningBehavior: workflow.VersioningBehaviorPinned}})
 	w.RegisterWorkflowWithOptions(task.Workflow, workflow.RegisterOptions{Name: task.WorkflowName, VersioningBehavior: workflow.VersioningBehaviorPinned})
-	w.RegisterActivity(&task.Activities{Agent: service, Store: store, Notify: notify})
+	w.RegisterWorkflowWithOptions(task.WorkflowV2, workflow.RegisterOptions{Name: task.PriorWorkflowName, VersioningBehavior: workflow.VersioningBehaviorPinned})
+	w.RegisterActivity(&task.Activities{Agent: service, Store: store, Notify: notify, JevKey: os.Getenv("JEV_API_KEY")})
 	if e = w.Start(); e != nil {
 		return e
 	}

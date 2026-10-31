@@ -101,18 +101,16 @@ func (s *Service) respond(ctx context.Context, contents []*genai.Content, wait b
 		return decision, err
 	}
 	config := modelConfig(wait)
+	if enabled, _ := ctx.Value(completionProtocolKey{}).(bool); enabled {
+		config = completionModelConfig(wait)
+	}
 	tools := []any{}
 	for _, fn := range config.Tools[0].FunctionDeclarations {
-		properties := map[string]any{}
-		required := []string{}
-		if fn.Parameters != nil {
-			for name := range fn.Parameters.Properties {
-				properties[name] = map[string]any{"type": "string"}
-			}
-			required = fn.Parameters.Required
+		parameters := responseSchema(fn.Parameters)
+		if parameters == nil {
+			parameters = map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}, "additionalProperties": false}
 		}
-		tools = append(tools, map[string]any{"type": "function", "name": fn.Name, "description": fn.Description, "strict": true,
-			"parameters": map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}})
+		tools = append(tools, map[string]any{"type": "function", "name": fn.Name, "description": fn.Description, "strict": true, "parameters": parameters})
 	}
 	control, limit, err := spend.Prepare(ctx, "openrouter", modelOutputTokenLimit)
 	if err != nil {
@@ -236,4 +234,33 @@ func (s *Service) respond(ctx context.Context, contents []*genai.Content, wait b
 		decision.Content.Parts = append(decision.Content.Parts, &genai.Part{Text: decision.Answer})
 	}
 	return decision, nil
+}
+
+// responseSchema preserves nested object and array types for strict Responses tools.
+func responseSchema(schema *genai.Schema) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	result := map[string]any{"type": strings.ToLower(string(schema.Type))}
+	if schema.Description != "" {
+		result["description"] = schema.Description
+	}
+	if len(schema.Enum) > 0 {
+		result["enum"] = schema.Enum
+	}
+	if schema.Type == genai.TypeObject {
+		properties := map[string]any{}
+		for name, child := range schema.Properties {
+			properties[name] = responseSchema(child)
+		}
+		required := schema.Required
+		if required == nil {
+			required = []string{}
+		}
+		result["properties"], result["required"], result["additionalProperties"] = properties, required, false
+	}
+	if schema.Type == genai.TypeArray {
+		result["items"] = responseSchema(schema.Items)
+	}
+	return result
 }

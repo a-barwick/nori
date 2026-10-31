@@ -20,6 +20,7 @@ type TaskContext struct {
 }
 
 type TaskContextRecord struct {
+	Holds                   []state.TaskHold     `json:"held_questions,omitempty"`
 	ID                      string               `json:"id"`
 	Request                 string               `json:"request"`
 	Status                  string               `json:"status"`
@@ -70,7 +71,7 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 		run := snapshot.Run
 		record := &TaskContextRecord{ID: run.ID, Request: run.Request, Status: run.Status, Waiting: run.Waiting,
 			Revision: run.Revision, Position: run.Position, Incorporated: run.Incorporated, CancelRequested: run.CancelRequested,
-			Spent: run.Spent, Budget: run.Budget, Error: run.Error, Result: run.Result, Commands: []TaskContextCommand{}}
+			Holds: append([]state.TaskHold{}, run.Holds...), Spent: run.Spent, Budget: run.Budget, Error: run.Error, Result: run.Result, Commands: []TaskContextCommand{}}
 		if run.Question != nil {
 			question := *run.Question
 			record.Question = &question
@@ -133,6 +134,9 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			trimContextText(&record.Result, limit, &record.TextTruncated)
 			if record.Question != nil {
 				trimContextText(&record.Question.Text, limit, &record.TextTruncated)
+			}
+			for i := range record.Holds {
+				trimContextText(&record.Holds[i].Question, limit, &record.TextTruncated)
 			}
 			for i := range record.Commands {
 				trimContextText(&record.Commands[i].Text, limit, &record.Commands[i].TextTruncated)

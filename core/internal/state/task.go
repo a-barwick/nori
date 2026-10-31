@@ -13,7 +13,12 @@ var ErrRoutingPending = errors.New("accepted user input is awaiting conversation
 var ErrCommandInvalid = errors.New("invalid task command")
 var ErrQuestionStale = errors.New("question is no longer current")
 
+// TaskProtocolVersion tracks accepted-command and outer-publication semantics.
 const TaskProtocolVersion = 2
+
+// TaskWorkflowVersion tracks worker capabilities independently of that protocol.
+// Missing versions belong to retained workers that cannot preserve M4 fields.
+const TaskWorkflowVersion = 3
 
 type Question struct {
 	ResolvedBy string `json:"resolved_by,omitempty" firestore:"resolved_by,omitempty"`
@@ -25,16 +30,17 @@ type Question struct {
 }
 
 type TaskEvent struct {
-	ID            string    `json:"id" firestore:"id"`
-	RunID         string    `json:"run_id" firestore:"run_id"`
-	Kind          string    `json:"kind" firestore:"kind"`
-	Sequence      int64     `json:"sequence" firestore:"sequence"`
-	Revision      int64     `json:"instruction_revision" firestore:"revision"`
-	Text          string    `json:"text,omitempty" firestore:"text,omitempty"`
-	QuestionID    string    `json:"question_id,omitempty" firestore:"question_id,omitempty"`
-	Reason        string    `json:"reason,omitempty" firestore:"reason,omitempty"`
-	OperationRefs []string  `json:"operation_refs,omitempty" firestore:"operation_refs,omitempty"`
-	CreatedAt     time.Time `json:"created_at" firestore:"created_at"`
+	Holds         []TaskHold `json:"holds,omitempty" firestore:"holds,omitempty"`
+	ID            string     `json:"id" firestore:"id"`
+	RunID         string     `json:"run_id" firestore:"run_id"`
+	Kind          string     `json:"kind" firestore:"kind"`
+	Sequence      int64      `json:"sequence" firestore:"sequence"`
+	Revision      int64      `json:"instruction_revision" firestore:"revision"`
+	Text          string     `json:"text,omitempty" firestore:"text,omitempty"`
+	QuestionID    string     `json:"question_id,omitempty" firestore:"question_id,omitempty"`
+	Reason        string     `json:"reason,omitempty" firestore:"reason,omitempty"`
+	OperationRefs []string   `json:"operation_refs,omitempty" firestore:"operation_refs,omitempty"`
+	CreatedAt     time.Time  `json:"created_at" firestore:"created_at"`
 }
 
 type CommandReceipt struct {
@@ -45,6 +51,7 @@ type CommandReceipt struct {
 // Command and its delivery intent are committed in the acceptance transaction.
 // ID is supplied by the caller and is stable across HTTP and relay retries.
 type Command struct {
+	Interrupt      bool      `json:"interrupt,omitempty" firestore:"interrupt,omitempty"`
 	QuestionID     string    `json:"question_id,omitempty" firestore:"question_id,omitempty"`
 	SourceInputIDs []string  `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
 	ID             string    `json:"id" firestore:"id"`

@@ -13,6 +13,11 @@ import (
 // Only explicitly selected operational fields cross the export boundary.
 // This also protects Sentry when an Arize span opts into model text.
 var operationalKeys = map[string]bool{
+	"nori.completion.failure_count": true, "nori.completion.verified": true, "nori.completion.available": true,
+	"nori.completion.score": true, "nori.completion.choice": true,
+	"nori.hold.id": true, "nori.hold.count": true, "nori.hold.status": true, "nori.command.interrupt": true,
+	"nori.operation.effect_class": true, "nori.operation.attempt": true, "nori.operation.stop_confirmed": true,
+	"nori.history.bytes": true, "nori.history.blocks": true,
 	"openinference.span.kind": true, "session.id": true,
 	"gen_ai.operation.name": true, "gen_ai.provider.name": true, "gen_ai.request.model": true,
 	"gen_ai.usage.input_tokens": true, "gen_ai.usage.output_tokens": true,

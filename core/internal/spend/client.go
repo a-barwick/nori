@@ -84,6 +84,9 @@ func (c *Client) Close() {
 	}
 }
 func (c *Client) open(ctx context.Context) error {
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
+		return blocked("shared budget cannot use an emulator; use NORI_STATE_EMULATOR_HOST for app data")
+	}
 	store, err := firestore.NewClientWithDatabase(ctx, c.project, c.database)
 	if err != nil {
 		return blocked("budget database is unavailable")

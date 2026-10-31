@@ -26,7 +26,7 @@ func recoverExecutionWakes(ctx context.Context, c client.Client, seen map[string
 		}
 		for _, item := range page.GetExecutions() {
 			id := item.GetExecution().GetWorkflowId()
-			if seen[id] || !strings.HasPrefix(id, "nori-task-") || item.GetType().GetName() != WorkflowName && item.GetType().GetName() != LegacyWorkflowName {
+			if seen[id] || !strings.HasPrefix(id, "nori-task-") || item.GetType().GetName() != WorkflowName && item.GetType().GetName() != PriorWorkflowName && item.GetType().GetName() != LegacyWorkflowName {
 				continue
 			}
 			d, err := c.DescribeWorkflowExecution(ctx, id, item.GetExecution().GetRunId())
