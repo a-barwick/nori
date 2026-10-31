@@ -12,6 +12,38 @@ The approved script for the current film. It runs about 1:50 and can be trimmed 
 - **New surfaces, film only for now:** the invite card, notification, proposal preview and page, and tracker card.
 - **Keep from earlier films:** Figtree, the colour palette, sticker captions, overshoot pops, push-in camera moves, ribbons, the real Nori mark, and cuts on the beat.
 
+## Settled in review
+
+A marketing review of the storyboard challenged several things. Austin decided these, so don't reopen them without a new reason.
+
+**Taken from the review**
+
+- Cut ideas first, then apply the hold rule.
+- Nori asks before booking. Maya taps to book the table and send the invites.
+- Maya opens the proposal before she sends it.
+- Use the specific Priya line. Have an answer ready if the room asks about reading call data.
+- No detail about a teammate's diet on the invite card.
+- Give build-and-share more weight, with something more app-like than tiles.
+
+**Rejected**
+
+- Turning every unprompted step into a proposal. That would make Nori a nag, so reading and drafting just happen.
+- Cutting the weather ask. Unrelated "also" messages show the one thread and natural flow. Only the weather tile went.
+- "Jobs finish in the background." It's engineer-speak.
+- A cold "Morning. I have the proposal ready." Keep the warm opener and the 🍣.
+- Cutting "You didn't ask." It stays because what comes before it is reading and drafting.
+- "Nori works on its own computer for you." It's clunkier and doesn't answer the unmanaged-compute worry.
+- "It builds dashboards." It's too narrow for GTM's ask to build something and share it.
+
+**Other calls**
+
+- The 8:30 block is proposed with a tap, because blocking it unasked is a write.
+- "Pick a model." is out, so scene 1 can't mock Nova if Nova has a model picker. Nobody has confirmed whether it does.
+- Sam's cursor replaces "Sam opened it.", which read as surveillance.
+- The film-only surfaces are limited to ones Austin would commit to building. The notification is the least certain of them.
+
+**Still open:** the premise wording, a trim from 1:50, and Austin's review of the mix.
+
 ## Timing
 
 120 BPM at 30 fps. One beat is 15 frames.
