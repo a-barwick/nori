@@ -15,6 +15,10 @@ Use a `codex/*` branch and PR; merge completed, verified work without an extra a
 
 Nori's documentation lives in `docs/site/`. Check it first when you need to understand the system, and put new or updated documentation there. Read `docs/site/AGENTS.md` before changing a page, and run the site with `docs/serve.sh`.
 
+## Marketing film
+
+The Nori film and how to edit or reshoot it live in `demo/`. Read `demo/README.md` before any film work.
+
 ## Model choices
 
 Only Austin may authorize changing these models, providers, or versions, including defaults, launch overrides, experiments, and fallbacks. Cost, latency, availability, or failure does not authorize substitution.

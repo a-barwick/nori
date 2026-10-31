@@ -1,0 +1,37 @@
+{
+ "desktop": {
+  "markers": {
+   "type:Pull Docusig": 0.51,
+   "sent:Pull Docusig": 3.56,
+   "reply:On it! I'm s": 4.47,
+   "type:Also add the": 7.14,
+   "sent:Also add the": 9.01,
+   "reply:I'll update ": 10.24,
+   "type:Different qu": 12.21,
+   "sent:Different qu": 16.27,
+   "reply:Try: \"It's b": 16.28,
+   "type:Start a seco": 18.88,
+   "sent:Start a seco": 21.9,
+   "reply:I'm starting": 22.88,
+   "panel": 25.24,
+   "two-tasks": 26.39,
+   "screenshot": 30.4,
+   "panel-closed": 33.78,
+   "reply:Your DocuSig": 53.91,
+   "type:Continue. If": 44.66,
+   "sent:Continue. If": 49.58,
+   "reply:I'm giving t": 50.56,
+   "document": 59.53,
+   "end": 63.25
+  },
+  "seconds": 64.06
+ },
+ "phone": {
+  "markers": {
+   "type": 0.6,
+   "reply": 4.73,
+   "end": 8.13
+  },
+  "seconds": 8.93
+ }
+}
