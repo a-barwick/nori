@@ -31,10 +31,21 @@ async function initialize() {
     release: process.env.NEXT_PUBLIC_SENTRY_RELEASE,
     tracesSampleRate: process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE,
   };
-  try {
-    const response = await fetch("/api/observability", { cache: "no-store", signal: AbortSignal.timeout(10_000) });
-    if (response.ok) config = await response.json() as BrowserConfig;
-  } catch { /* Observability must not prevent the app from loading. */ }
+  // The owner-gated document includes public runtime settings before this
+  // script runs, so even the first submission gets a span and trace headers.
+  // The root attribute is parsed before any async Next scripts can execute.
+  // Keep the non-blocking fetch fallback for older documents.
+  let documentConfig: unknown;
+  try { documentConfig = JSON.parse(document.documentElement.getAttribute("data-nori-observability") || "null"); }
+  catch { /* Fall back if an older document contains invalid metadata. */ }
+  if (documentConfig && typeof documentConfig === "object" && "dsn" in documentConfig && typeof documentConfig.dsn === "string") {
+    config = documentConfig as BrowserConfig;
+  } else {
+    try {
+      const response = await fetch("/api/observability", { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+      if (response.ok) config = await response.json() as BrowserConfig;
+    } catch { /* Observability must not prevent the app from loading. */ }
+  }
   let initialized = false;
   try {
     if (!config.dsn) return;

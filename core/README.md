@@ -32,6 +32,11 @@ OpenTelemetry provider uses the same trace ID across HTTP, Cloud Tasks, and
 durable work. Health and polling endpoints are excluded. `SENTRY_RELEASE` and
 `SENTRY_ENVIRONMENT` identify the deployed version and environment.
 
+Set `ARIZE_PROJECT_URL` to the project's canonical HTTPS page on
+`app.arize.com` to add `nori.arize.url` to Sentry model spans. Each link selects
+that span using the shared trace and span IDs. Arize's independent export limit
+or a failed export may mean the span is unavailable there.
+
 Sentry receives operational attributes only, without request bodies, headers,
 cookies, or AI prompt/reply content. Arize receives metadata by default;
 `NORI_ARIZE_CAPTURE_CONTENT=true` explicitly enables best-effort redacted,

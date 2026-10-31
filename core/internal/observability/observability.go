@@ -58,6 +58,10 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 	}
 	project := firstNonempty(os.Getenv("ARIZE_PROJECT_NAME"), "nori")
 	res := resource.NewWithAttributes("", attribute.String("service.name", service), attribute.String("service.version", release), attribute.String("deployment.environment.name", environment), attribute.String("openinference.project.name", project))
+	arizeURL := arizeProjectURL(strings.TrimSpace(os.Getenv("ARIZE_PROJECT_URL")))
+	if strings.TrimSpace(os.Getenv("ARIZE_PROJECT_URL")) != "" && arizeURL == nil {
+		fmt.Fprintln(os.Stderr, "observability: invalid Arize project URL; model span links disabled")
+	}
 	rateValue := sampleRate("SENTRY_TRACES_SAMPLE_RATE", 0.05)
 	options := []sdktrace.TracerProviderOption{sdktrace.WithResource(res)}
 	exporters := 0
@@ -119,7 +123,7 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "observability: Sentry trace exporter unavailable")
 			} else {
-				options = append(options, batch(&filteredExporter{inner: exporter, limiter: hourlyLimiter("NORI_SENTRY_SPANS_PER_HOUR", 500)}))
+				options = append(options, batch(&filteredExporter{inner: exporter, limiter: hourlyLimiter("NORI_SENTRY_SPANS_PER_HOUR", 500), arizeProjectURL: arizeURL}))
 				exporters++
 			}
 		}
