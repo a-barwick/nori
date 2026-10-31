@@ -1,4 +1,5 @@
 import { localDevelopment, sameOrigin } from "@/lib/runtime/auth";
+import { reportUpstreamFailure, upstreamTraceHeaders } from "@/lib/observability/upstream";
 
 export async function POST(request: Request, context: { params: Promise<{ operation: string }> }) {
   const { operation } = await context.params;
@@ -25,17 +26,19 @@ export async function POST(request: Request, context: { params: Promise<{ operat
   try {
     const response = await fetch(new URL(`/api/${operation}`, base), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...upstreamTraceHeaders(request) },
       body,
       cache: "no-store",
       redirect: "error",
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(100_000)]),
     });
+    if (response.status >= 500) reportUpstreamFailure(operation, "local", response.status);
     return new Response(response.body, {
       status: response.status,
       headers: { "Content-Type": response.headers.get("content-type") || "application/json", "Cache-Control": "no-store" },
     });
   } catch {
+    if (!request.signal.aborted) reportUpstreamFailure(operation, "local");
     return Response.json({ error: "Could not reach the local agent. Check that the Go runner is running, then retry." }, { status: 502 });
   }
 }

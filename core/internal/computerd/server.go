@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"nori/internal/observability"
 )
 
 const maxOutput = 64 << 10
@@ -104,6 +106,13 @@ type activityState struct {
 func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle func()) http.Handler {
 	u := guestURL
 	p := httputil.NewSingleHostReverseProxy(u)
+	director := p.Director
+	p.Director = func(r *http.Request) {
+		director(r)
+		for name, value := range observability.InjectTrace(r.Context()) {
+			r.Header.Set(name, value)
+		}
+	}
 	p.Transport = &http.Transport{ResponseHeaderTimeout: 123 * time.Second}
 	p.ModifyResponse = func(response *http.Response) error {
 		// This admission signal belongs to the trusted host, never the guest.

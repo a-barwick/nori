@@ -48,20 +48,22 @@ type Artifact struct {
 	Kind string `json:"kind" firestore:"kind"`
 }
 type Run struct {
-	PublicationPending    bool      `json:"publication_pending,omitempty" firestore:"publication_pending,omitempty"`
-	PublicationGeneration int64     `json:"publication_generation,omitempty" firestore:"publication_generation,omitempty"`
-	CleanupPending        bool      `json:"cleanup_pending,omitempty" firestore:"cleanup_pending,omitempty"`
-	ProtocolVersion       int       `json:"protocol_version,omitempty" firestore:"protocol_version,omitempty"`
-	Request               string    `json:"request,omitempty" firestore:"request,omitempty"`
-	Position              int64     `json:"position,omitempty" firestore:"position,omitempty"`
-	Question              *Question `json:"question,omitempty" firestore:"question,omitempty"`
-	EventSequence         int64     `json:"event_sequence,omitempty" firestore:"event_sequence,omitempty"`
-	Result                string    `json:"result,omitempty" firestore:"result,omitempty"`
-	OperationRefs         []string  `json:"operation_refs,omitempty" firestore:"operation_refs,omitempty"`
-	Temporal              bool      `json:"temporal,omitempty" firestore:"temporal,omitempty"`
-	Revision              int64     `json:"revision,omitempty" firestore:"revision,omitempty"`
-	Incorporated          int64     `json:"incorporated,omitempty" firestore:"incorporated,omitempty"`
-	Waiting               string    `json:"waiting,omitempty" firestore:"waiting,omitempty"`
+	TraceContext          map[string]string `json:"-" firestore:"trace_context,omitempty"`
+	OriginTraceContext    map[string]string `json:"-" firestore:"origin_trace_context,omitempty"`
+	PublicationPending    bool              `json:"publication_pending,omitempty" firestore:"publication_pending,omitempty"`
+	PublicationGeneration int64             `json:"publication_generation,omitempty" firestore:"publication_generation,omitempty"`
+	CleanupPending        bool              `json:"cleanup_pending,omitempty" firestore:"cleanup_pending,omitempty"`
+	ProtocolVersion       int               `json:"protocol_version,omitempty" firestore:"protocol_version,omitempty"`
+	Request               string            `json:"request,omitempty" firestore:"request,omitempty"`
+	Position              int64             `json:"position,omitempty" firestore:"position,omitempty"`
+	Question              *Question         `json:"question,omitempty" firestore:"question,omitempty"`
+	EventSequence         int64             `json:"event_sequence,omitempty" firestore:"event_sequence,omitempty"`
+	Result                string            `json:"result,omitempty" firestore:"result,omitempty"`
+	OperationRefs         []string          `json:"operation_refs,omitempty" firestore:"operation_refs,omitempty"`
+	Temporal              bool              `json:"temporal,omitempty" firestore:"temporal,omitempty"`
+	Revision              int64             `json:"revision,omitempty" firestore:"revision,omitempty"`
+	Incorporated          int64             `json:"incorporated,omitempty" firestore:"incorporated,omitempty"`
+	Waiting               string            `json:"waiting,omitempty" firestore:"waiting,omitempty"`
 	// Spent and Budget are model USD from reported token usage; Budget grows
 	// only by Austin's explicit continue.
 	Spent           float64    `json:"spent_usd,omitempty" firestore:"spent_usd,omitempty"`

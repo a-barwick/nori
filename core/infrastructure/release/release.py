@@ -482,6 +482,9 @@ def release(cloud, candidate, build_id, started):
         temporal_key()
         config = poc.config()
         workers = poc.temporal_config()  # Refuse another environment before any mutation.
+        # Retain the worker stack's public telemetry settings and secret
+        # references; defaults would otherwise disable observability on old builds.
+        os.environ["TF_VAR_observability"] = json.dumps(workers.get("observability_config", {}))
         poc.production_workers(workers)
         for queue in poc.worker_queue_names(workers, all_queues=True):
             require(poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + queue).get("state") == "PAUSED", "Release requires all worker queues already paused")

@@ -8,7 +8,10 @@ import (
 	"net/url"
 	"strings"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/api/cloudtasks/v2"
+	"nori/internal/observability"
 )
 
 // Cloud enqueues notifications, never conversation contents. Firestore owns
@@ -36,9 +39,18 @@ func NewCloud(ctx context.Context, queue, invokeRoot, caller string) (*Cloud, er
 }
 
 func (c *Cloud) Schedule(ctx context.Context) error {
+	ctx, span := otel.Tracer("nori/wake").Start(ctx, "cloud_tasks.schedule", trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
+	headers := map[string]string{"Content-Type": "application/json"}
+	for name, value := range observability.InjectTrace(ctx) {
+		headers[name] = value
+	}
 	_, err := c.api.Projects.Locations.Queues.Tasks.Create(c.queue, &cloudtasks.CreateTaskRequest{Task: &cloudtasks.Task{
 		DispatchDeadline: "600s",
-		HttpRequest:      &cloudtasks.HttpRequest{Url: c.target, HttpMethod: "POST", Headers: map[string]string{"Content-Type": "application/json"}, Body: base64.StdEncoding.EncodeToString([]byte("{}")), OauthToken: &cloudtasks.OAuthToken{ServiceAccountEmail: c.caller, Scope: "https://www.googleapis.com/auth/cloud-platform"}},
+		HttpRequest:      &cloudtasks.HttpRequest{Url: c.target, HttpMethod: "POST", Headers: headers, Body: base64.StdEncoding.EncodeToString([]byte("{}")), OauthToken: &cloudtasks.OAuthToken{ServiceAccountEmail: c.caller, Scope: "https://www.googleapis.com/auth/cloud-platform"}},
 	}}).Context(ctx).Do()
+	if err != nil {
+		observability.RecordErrorCategory(ctx, "wake.conversation", err)
+	}
 	return err
 }

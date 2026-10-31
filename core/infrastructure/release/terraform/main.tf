@@ -32,6 +32,25 @@ variable "enable_triggers" {
   type        = bool
   default     = false
 }
+variable "sentry_source_maps" {
+  description = "Optional existing same-project source-map token secret and public Sentry organization/project slugs."
+  type = object({
+    secret       = string
+    version      = optional(string, "latest")
+    organization = string
+    project      = string
+  })
+  default = null
+  validation {
+    condition = var.sentry_source_maps == null ? true : (
+      can(regex("^projects/bot-111549/secrets/[A-Za-z0-9_-]+$", var.sentry_source_maps.secret)) &&
+      can(regex("^(latest|[1-9][0-9]*)$", var.sentry_source_maps.version)) &&
+      can(regex("^[A-Za-z0-9_-]+$", var.sentry_source_maps.organization)) &&
+      can(regex("^[A-Za-z0-9_-]+$", var.sentry_source_maps.project))
+    )
+    error_message = "Use an existing project secret/version and Sentry organization/project slugs."
+  }
+}
 locals {
   project = "bot-111549"
   region  = "us-central1"
@@ -47,6 +66,12 @@ resource "google_service_account" "ci" {
   for_each     = local.accounts
   account_id   = each.value
   display_name = "Nori CI ${each.key}"
+}
+resource "google_secret_manager_secret_iam_member" "sentry_source_maps" {
+  for_each  = var.sentry_source_maps == null ? toset([]) : toset([var.sentry_source_maps.secret])
+  secret_id = each.value
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.ci["prepare"].email}"
 }
 resource "google_project_iam_member" "logs" {
   for_each = local.accounts
@@ -200,6 +225,13 @@ resource "google_cloudbuild_trigger" "prepare" {
     repository = var.repository
     push { branch = "^main$" }
   }
+  substitutions = {
+    _SENTRY_TOKEN_SECRET  = var.sentry_source_maps == null ? "" : var.sentry_source_maps.secret
+    _SENTRY_TOKEN_VERSION = var.sentry_source_maps == null ? "latest" : var.sentry_source_maps.version
+    _SENTRY_ORG           = var.sentry_source_maps == null ? "" : var.sentry_source_maps.organization
+    _SENTRY_PROJECT       = var.sentry_source_maps == null ? "" : var.sentry_source_maps.project
+  }
+  depends_on = [google_secret_manager_secret_iam_member.sentry_source_maps]
 }
 resource "google_cloudbuild_trigger" "release" {
   disabled        = !var.enable_triggers

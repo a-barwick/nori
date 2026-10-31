@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"nori/internal/observability"
 	"nori/internal/state"
 )
 
@@ -72,6 +76,35 @@ func (c *Classifier) Classify(ctx context.Context, inputs []state.ConversationIn
 	if len(current) == 0 {
 		return Classification{Available: false}, nil
 	}
+	var requestStarted time.Time
+	ctx, span := conversationTracer.Start(ctx, "classify jev-latest", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID),
+		attribute.String("gen_ai.operation.name", "classify"), attribute.String("gen_ai.provider.name", "typesafe"),
+		attribute.String("gen_ai.request.model", "jev-latest"), attribute.String("llm.model_name", "jev-latest"),
+	))
+	for i := len(inputs) - 1; i >= 0; i-- {
+		if inputs[i].IsUser() {
+			if a, ok := observability.ContentAttribute("input.value", inputs[i].Text); ok {
+				span.SetAttributes(a)
+			}
+			break
+		}
+	}
+	defer func() {
+		span.SetAttributes(attribute.Bool("nori.output.present", classification.Available), attribute.String("nori.classification.intent", string(classification.Intent)), attribute.String("nori.cost.status", "unknown"))
+		if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+			observability.RecordErrorCategory(ctx, "model.classifier", err)
+			if !requestStarted.IsZero() {
+				observability.Event(ctx, "model.call.failed", attribute.String("gen_ai.provider.name", "typesafe"), attribute.String("gen_ai.request.model", "jev-latest"))
+			}
+		} else if err == nil && !requestStarted.IsZero() {
+			observability.Event(ctx, "model.call.completed", attribute.String("gen_ai.provider.name", "typesafe"), attribute.String("gen_ai.request.model", "jev-latest"))
+		}
+		if !requestStarted.IsZero() && !errors.Is(ctx.Err(), context.Canceled) {
+			observability.Metric(ctx, "nori.model.duration_ms", float64(time.Since(requestStarted).Milliseconds()))
+		}
+		span.End()
+	}()
 	// Jev does not supply a verified USD price in this integration. Record the
 	// request explicitly as unknown rather than estimate an undocumented cost.
 	classification.Usage = state.Usage{ID: uuid.NewString(), Provider: "jev", Model: "jev-latest", CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: time.Now().UTC()}
@@ -114,6 +147,7 @@ func (c *Classifier) Classify(ctx context.Context, inputs []state.ConversationIn
 		}
 	}
 	classification.Usage.RequestStatus = "unknown"
+	requestStarted = time.Now()
 	res, err := c.Client.Do(req)
 	if err != nil {
 		return classification, fmt.Errorf("classification unavailable")

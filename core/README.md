@@ -23,6 +23,31 @@ file; `NORI_TASK_ENV_FILE` can select distinct existing task configuration.
 Credentials are used in place. Required names are in
 [`.env.example`](../.env.example).
 
+## Observability
+
+Sentry and Arize export are optional and fail open. Set `SENTRY_DSN` for
+operational errors, sampled request traces, logs, and metrics; set both
+`ARIZE_SPACE_ID` and `ARIZE_API_KEY` for OpenInference AI spans. The shared
+OpenTelemetry provider uses the same trace ID across HTTP, Cloud Tasks, and
+durable work. Health and polling endpoints are excluded. `SENTRY_RELEASE` and
+`SENTRY_ENVIRONMENT` identify the deployed version and environment.
+
+Sentry receives operational attributes only, without request bodies, headers,
+cookies, or AI prompt/reply content. Arize receives metadata by default;
+`NORI_ARIZE_CAPTURE_CONTENT=true` explicitly enables best-effort redacted,
+bounded model prompts and replies. Redaction cannot guarantee removal of every
+piece of personal information. Tool arguments, screenshots, and URLs are not
+intended for export. These settings do not provision credentials inside the
+private computer or guest.
+
+`SENTRY_TRACES_SAMPLE_RATE` defaults to 0.05. The per-process hourly export
+limits in `.env.example` can drop individual spans, producing partial traces;
+request logs and metrics describe sampled requests, not exact totals. Limits
+reset on process restart and apply separately to each instance. Set account
+quotas and spending controls in Sentry and Arize to enforce the intended free
+tier across all services. Export batches are bounded and request/shutdown
+flushes are time-limited, so data may be lost during outages or scale-to-zero.
+
 | Configuration | Purpose |
 | --- | --- |
 | `OPENROUTER_API_KEY`, `JEV_API_KEY` | Required conversation provider credentials for both entrypoints |

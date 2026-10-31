@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"nori/internal/computerd"
+	"nori/internal/observability"
 )
 
 func main() {
@@ -23,6 +24,12 @@ func main() {
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	service := "nori-computer-guest"
+	if *proxy {
+		service = "nori-computer-host"
+	}
+	stopTelemetry := observability.Init(ctx, service)
+	defer observability.Shutdown(stopTelemetry)
 	idleStop := make(chan struct{})
 	var handler http.Handler
 	if *proxy {
@@ -42,7 +49,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 125 * time.Second, MaxHeaderBytes: 8192}
+	server := &http.Server{Addr: *listen, Handler: observability.HTTPHandler(handler), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 125 * time.Second, MaxHeaderBytes: 8192}
 	go func() {
 		<-ctx.Done()
 		deadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -51,11 +58,14 @@ func main() {
 	}()
 	log.Printf("computer RPC listening on %s", *listen)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		observability.RecordErrorCategory(ctx, "http.listen", err)
+		observability.Shutdown(stopTelemetry)
 		log.Fatal(err)
 	}
 	select {
 	case <-idleStop:
 		log.Print("computer idle; requesting graceful host stop")
+		observability.Shutdown(stopTelemetry)
 		os.Exit(75) // The host unit alone maps this code to graceful guest stop + poweroff.
 	default:
 	}

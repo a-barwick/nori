@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"nori/internal/env"
+	"nori/internal/observability"
 	"nori/internal/wake"
 )
 
@@ -19,6 +20,8 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	stopTelemetry := observability.Init(ctx, "nori-local")
+	defer observability.Shutdown(stopTelemetry)
 	runtime, err := wake.Open(ctx)
 	if err != nil {
 		log.Fatal(err)
@@ -36,7 +39,11 @@ func main() {
 	go func() { defer close(loopDone); runtime.LocalLoop(ctx, notifications) }()
 	server := wake.Server(ctx, net.JoinHostPort("127.0.0.1", env.Get("PORT", "8080")), runtime.Handler(schedule, true))
 	log.Printf("Nori durable conversation on http://%s model=%s; local processing recovers from Firestore", server.Addr, runtime.Model)
-	wake.Listen(ctx, server, 5*time.Second)
+	if err := wake.Listen(ctx, server, 5*time.Second); err != nil {
+		observability.RecordErrorCategory(ctx, "http.listen", err)
+		observability.Shutdown(stopTelemetry)
+		log.Fatal(err)
+	}
 	stop()
 	<-loopDone
 }

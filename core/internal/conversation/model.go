@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"nori/internal/observability"
 	"nori/internal/state"
 )
 
@@ -45,6 +49,8 @@ type Model struct {
 	URL        string
 	Key        string
 	Client     *http.Client
+	// TelemetryInput is the current user message, not the conversation history.
+	TelemetryInput string
 }
 
 type ToolCall struct {
@@ -69,6 +75,51 @@ func NewModel(baseURL, key, name string) *Model {
 }
 
 func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Reply, err error) {
+	var requestStarted time.Time
+	provider := "custom"
+	if strings.HasPrefix(m.URL, "https://openrouter.ai/") {
+		provider = "openrouter"
+	}
+	ctx, span := conversationTracer.Start(ctx, "chat "+m.Name, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID),
+		attribute.String("gen_ai.operation.name", "chat"), attribute.String("gen_ai.provider.name", provider),
+		attribute.String("gen_ai.request.model", m.Name), attribute.String("llm.model_name", m.Name),
+	))
+	if a, ok := observability.ContentAttribute("input.value", m.TelemetryInput); ok {
+		span.SetAttributes(a)
+	}
+	defer func() {
+		span.SetAttributes(attribute.Bool("nori.output.present", reply.Text != ""), attribute.Int("nori.tool.call_count", len(reply.Calls)), attribute.String("nori.cost.status", reply.Usage.CostStatus))
+		if reply.Usage.InputTokens != nil {
+			span.SetAttributes(attribute.Int64("gen_ai.usage.input_tokens", *reply.Usage.InputTokens), attribute.Int64("llm.token_count.prompt", *reply.Usage.InputTokens))
+			observability.Metric(ctx, "nori.model.input_tokens", float64(*reply.Usage.InputTokens))
+		}
+		if reply.Usage.OutputTokens != nil {
+			span.SetAttributes(attribute.Int64("gen_ai.usage.output_tokens", *reply.Usage.OutputTokens), attribute.Int64("llm.token_count.completion", *reply.Usage.OutputTokens))
+			observability.Metric(ctx, "nori.model.output_tokens", float64(*reply.Usage.OutputTokens))
+		}
+		if reply.Usage.TotalTokens != nil {
+			span.SetAttributes(attribute.Int64("llm.token_count.total", *reply.Usage.TotalTokens))
+		}
+		if reply.Usage.CostUSD != nil {
+			span.SetAttributes(attribute.Float64("nori.cost.usd", *reply.Usage.CostUSD), attribute.Float64("llm.cost.total", *reply.Usage.CostUSD))
+		}
+		if a, ok := observability.ContentAttribute("output.value", reply.Text); ok {
+			span.SetAttributes(a)
+		}
+		if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+			observability.RecordErrorCategory(ctx, "model.outer", err)
+			if !requestStarted.IsZero() {
+				observability.Event(ctx, "model.call.failed", attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", m.Name))
+			}
+		} else if err == nil && !requestStarted.IsZero() {
+			observability.Event(ctx, "model.call.completed", attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", m.Name))
+		}
+		if !requestStarted.IsZero() && !errors.Is(ctx.Err(), context.Canceled) {
+			observability.Metric(ctx, "nori.model.duration_ms", float64(time.Since(requestStarted).Milliseconds()))
+		}
+		span.End()
+	}()
 	reply.Usage = state.Usage{ID: uuid.NewString(), Provider: "outer", Model: m.Name, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: time.Now().UTC()}
 	tools := json.RawMessage(taskTools)
 	if m.NoDispatch {
@@ -99,6 +150,7 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		}
 	}
 	reply.Usage.RequestStatus = "unknown"
+	requestStarted = time.Now()
 	res, err := m.Client.Do(req)
 	if err != nil {
 		return reply, fmt.Errorf("model request interrupted or unavailable")

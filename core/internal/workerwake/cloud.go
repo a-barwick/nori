@@ -10,8 +10,11 @@ import (
 	"os"
 	"strings"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/api/cloudtasks/v2"
 	"google.golang.org/api/option"
+	"nori/internal/observability"
 )
 
 func Enabled() bool { return os.Getenv("NORI_WORKER_SERVICES") != "" }
@@ -22,6 +25,8 @@ func Schedule(ctx context.Context, build string, workflowIDs ...string) error {
 	if !Enabled() {
 		return nil // Existing local workers and retained native pool deployments.
 	}
+	ctx, span := otel.Tracer("nori/workerwake").Start(ctx, "worker_wake.schedule", trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
 	var services map[string]string
 	if err := json.Unmarshal([]byte(os.Getenv("NORI_WORKER_SERVICES")), &services); err != nil {
 		return fmt.Errorf("invalid NORI_WORKER_SERVICES: %w", err)
@@ -59,9 +64,16 @@ func Schedule(ctx context.Context, build string, workflowIDs ...string) error {
 	if err != nil {
 		return err
 	}
+	headers := map[string]string{"Content-Type": "application/json"}
+	for name, value := range observability.InjectTrace(ctx) {
+		headers[name] = value
+	}
 	_, err = api.Projects.Locations.Queues.Tasks.Create(queue, &cloudtasks.CreateTaskRequest{Task: &cloudtasks.Task{
 		DispatchDeadline: "720s",
-		HttpRequest:      &cloudtasks.HttpRequest{Url: root + "/run", HttpMethod: "POST", Headers: map[string]string{"Content-Type": "application/json"}, Body: base64.StdEncoding.EncodeToString(body), OidcToken: &cloudtasks.OidcToken{ServiceAccountEmail: caller, Audience: root}},
+		HttpRequest:      &cloudtasks.HttpRequest{Url: root + "/run", HttpMethod: "POST", Headers: headers, Body: base64.StdEncoding.EncodeToString(body), OidcToken: &cloudtasks.OidcToken{ServiceAccountEmail: caller, Audience: root}},
 	}}).Context(ctx).Do()
+	if err != nil {
+		observability.RecordErrorCategory(ctx, "wake.worker", err)
+	}
 	return err
 }

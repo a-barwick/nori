@@ -85,7 +85,7 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
         limits = { cpu = "1", memory = "512Mi" }
       }
       dynamic "env" {
-        for_each = merge(local.worker_env, { TEMPORAL_BUILD_ID = each.key })
+        for_each = merge(local.worker_env, local.telemetry_env, { TEMPORAL_BUILD_ID = each.key })
         content {
           name  = env.key
           value = env.value
@@ -97,6 +97,18 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
           secret_key_ref {
             secret  = local.temporal_api_key_secret
             version = "latest"
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.observability.arize_secret == "" ? [] : [1]
+        content {
+          name = "ARIZE_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = var.observability.arize_secret
+              version = var.observability.arize_secret_version
+            }
           }
         }
       }

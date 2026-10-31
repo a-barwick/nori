@@ -9,10 +9,13 @@ import (
 	"os"
 	"sync"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 	cloudrunid "go.temporal.io/sdk/contrib/gcp/cloudrun/id"
+	"nori/internal/observability"
 	"nori/internal/state"
 	"nori/internal/workerwake"
 )
@@ -48,11 +51,25 @@ var missingLegacyCommands sync.Map
 
 // Deliver is called after acceptance and on worker/API startup. A crash before
 // marking the durable intent delivered merely sends a duplicate on repair.
-func Deliver(ctx context.Context, store state.TaskStore, c client.Client) error {
+func Deliver(ctx context.Context, store state.TaskStore, c client.Client) (resultErr error) {
 	pending, e := store.Pending(ctx)
 	if e != nil {
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			observability.RecordErrorCategory(ctx, "task.delivery", e)
+		}
 		return e
 	}
+	if len(pending) == 0 {
+		return nil
+	}
+	ctx, span := taskTracer.Start(ctx, "task.deliver_pending", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID)))
+	defer func() {
+		if resultErr != nil && !errors.Is(ctx.Err(), context.Canceled) {
+			observability.RecordErrorCategory(ctx, "task.delivery", resultErr)
+		}
+		span.End()
+	}()
+	span.SetAttributes(attribute.Int("nori.command.count", len(pending)))
 	var failures []error
 	for _, cmd := range pending {
 		run, e := store.GetRun(ctx, cmd.RunID)

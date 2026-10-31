@@ -14,7 +14,7 @@ import (
 
 // appendTaskEvent is called after the task transaction's other reads and before
 // its writes. The state transition and outer inbox insertion commit together.
-func (s *Google) appendTaskEvent(tx *firestore.Transaction, event TaskEvent) (bool, error) {
+func (s *Google) appendTaskEvent(tx *firestore.Transaction, event TaskEvent, traceContext map[string]string) (bool, error) {
 	ref := s.conversationInputs().Doc("event-" + event.ID)
 	doc, err := tx.Get(ref)
 	if err == nil {
@@ -43,7 +43,7 @@ func (s *Google) appendTaskEvent(tx *firestore.Transaction, event TaskEvent) (bo
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = time.Now().UTC()
 	}
-	in := ConversationInput{ID: "event-" + event.ID, Position: c.Received, CreatedAt: event.CreatedAt, Event: &event}
+	in := ConversationInput{ID: "event-" + event.ID, Position: c.Received, CreatedAt: event.CreatedAt, Event: &event, TraceContext: traceContext}
 	if err := tx.Set(s.conversation(), c); err != nil {
 		return false, err
 	}

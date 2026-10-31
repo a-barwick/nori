@@ -1,15 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import * as Sentry from "@sentry/nextjs";
+import type { Span } from "@sentry/nextjs";
 import type { PendingTaskCommand, Run, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
 
 class RequestError extends Error {
   constructor(message: string, readonly status: number, readonly details?: TaskCommandResponse) { super(message); }
 }
 
-async function post<T>(operation: string, payload: object, signal?: AbortSignal, agentMode = false): Promise<T> {
+async function post<T>(operation: string, payload: object, signal?: AbortSignal, agentMode = false, span?: Span): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (span) {
+    const context = span.spanContext();
+    if (!/^0+$/.test(context.traceId) && !/^0+$/.test(context.spanId)) {
+      headers["sentry-trace"] = Sentry.spanToTraceHeader(span);
+      headers.traceparent = `00-${context.traceId}-${context.spanId}-${context.traceFlags & 1 ? "01" : "00"}`;
+    }
+  }
   const response = await fetch(`${agentMode ? "/api/agent" : "/api"}/${operation}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), cache: "no-store", signal,
+    method: "POST", headers, body: JSON.stringify(payload), cache: "no-store", signal,
   });
   const data = await response.json().catch(() => ({ error: "Nori returned an unreadable response." }));
   if (!response.ok) throw new RequestError(data.error || `Request failed (${response.status}).`, response.status, data);
@@ -17,6 +27,7 @@ async function post<T>(operation: string, payload: object, signal?: AbortSignal,
 }
 
 type Pending = { id: string; text: string; started: number; error?: string };
+type ReplyTiming = { started: number; span: Span; timer: ReturnType<typeof setTimeout> };
 const STORAGE_KEY = "nori-pending-turns-v1";
 const MAX_PENDING = 20;
 const COMMAND_STORAGE_KEY = "nori-pending-task-commands-v1";
@@ -83,6 +94,7 @@ export function useRuntime(agentMode = false) {
   const [visible, setVisible] = useState(true);
   const controllers = useRef(new Set<AbortController>());
   const submissions = useRef(new Set<string>());
+  const replyTimings = useRef(new Map<string, ReplyTiming>());
   const commandSubmissions = useRef(new Set<string>());
   const requestSerial = useRef(0);
   const appliedSerial = useRef(0);
@@ -130,6 +142,22 @@ export function useRuntime(agentMode = false) {
     updateTaskCommands((current) => current.filter((item) => !commandApplied(item, data.runs)));
   }, [updatePending, updateTaskCommands]);
 
+  useEffect(() => {
+    if (!session) return;
+    for (const [id, timing] of replyTimings.current) {
+      const input = session.messages.find((message) => message.id === `${id}-user`);
+      if (!input?.turn_id || !session.messages.some((message) => message.role === "assistant" && !message.run_id && message.turn_id === input.turn_id)) continue;
+      clearTimeout(timing.timer);
+      timing.span.setAttribute("nori.outcome", "reply");
+      Sentry.withActiveSpan(timing.span, () => Sentry.metrics.distribution("nori.submit_to_reply", performance.now() - timing.started, {
+        unit: "millisecond", attributes: { mode: agentMode ? "local" : "hosted" },
+      }));
+      timing.span.end();
+      Sentry.addBreadcrumb({ category: "nori", message: "reply received" });
+      replyTimings.current.delete(id);
+    }
+  }, [agentMode, session]);
+
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const serial = ++requestSerial.current;
     const data = await post<Session>("session", {}, signal, agentMode);
@@ -145,7 +173,7 @@ export function useRuntime(agentMode = false) {
     updatePending((current) => current.map((entry) => entry.id === item.id ? { ...entry, error: undefined } : entry));
     const serial = ++requestSerial.current;
     try {
-      const data = await post<Session>("turn", { id: item.id, message: item.text }, controller.signal, agentMode);
+      const data = await post<Session>("turn", { id: item.id, message: item.text }, controller.signal, agentMode, replyTimings.current.get(item.id)?.span);
       if (!controller.signal.aborted) { applySnapshot(data, serial); setError(""); }
     } catch (err) {
       if (!controller.signal.aborted) {
@@ -187,6 +215,7 @@ export function useRuntime(agentMode = false) {
 
   useEffect(() => {
     const currentControllers = controllers.current;
+    const currentTimings = replyTimings.current;
     const controller = new AbortController();
     currentControllers.add(controller);
     void refresh(controller.signal).then((data) => {
@@ -209,6 +238,8 @@ export function useRuntime(agentMode = false) {
     return () => {
       for (const active of currentControllers) active.abort();
       currentControllers.clear();
+      for (const timing of currentTimings.values()) { clearTimeout(timing.timer); timing.span.setAttribute("nori.outcome", "unobserved"); timing.span.end(); }
+      currentTimings.clear();
       document.removeEventListener("visibilitychange", reconnect);
       window.removeEventListener("online", reconnect);
     };
@@ -264,6 +295,13 @@ export function useRuntime(agentMode = false) {
     if (new TextEncoder().encode(text).length > 8192) { setError("Please keep the message within 8,192 UTF-8 bytes."); return; }
     if (pendingRef.current.length >= MAX_PENDING) { setError("Reconnect or retry your pending messages before sending more."); return; }
     const item = { id: crypto.randomUUID(), text, started: Date.now() };
+    if (Sentry.getClient()) {
+      const span = Sentry.startNewTrace(() => Sentry.startInactiveSpan({ name: "nori.submit_to_reply", op: "nori.conversation", parentSpan: null,
+        attributes: { "nori.mode": agentMode ? "local" : "hosted" } }));
+      const timer = setTimeout(() => { span.setAttribute("nori.outcome", "timeout"); span.end(); replyTimings.current.delete(item.id); }, 15 * 60_000);
+      replyTimings.current.set(item.id, { started: performance.now(), span, timer });
+      Sentry.addBreadcrumb({ category: "nori", message: "turn submitted" });
+    }
     updatePending((current) => [...current, item]);
     setDraft(""); setError("");
     await submit(item);

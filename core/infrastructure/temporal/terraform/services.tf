@@ -179,7 +179,7 @@ resource "google_cloud_run_v2_service" "worker" {
         cpu_idle = true
       }
       dynamic "env" {
-        for_each = merge(local.worker_env, {
+        for_each = merge(local.worker_env, local.telemetry_env, {
           FIRESTORE_DATABASE_ID    = var.request_worker_targets[each.key].firestore_database
           NORI_WAKE_QUEUE          = var.request_worker_targets[each.key].firestore_database == "nori-worker-candidate" ? google_cloud_tasks_queue.candidate_events[0].id : local.worker_env.NORI_WAKE_QUEUE
           TEMPORAL_BUILD_ID        = each.key
@@ -201,6 +201,18 @@ resource "google_cloud_run_v2_service" "worker" {
           secret_key_ref {
             secret  = local.temporal_api_key_secret
             version = "latest"
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.observability.arize_secret == "" ? [] : [1]
+        content {
+          name = "ARIZE_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = var.observability.arize_secret
+              version = var.observability.arize_secret_version
+            }
           }
         }
       }

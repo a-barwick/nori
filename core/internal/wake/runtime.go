@@ -15,6 +15,7 @@ import (
 	"nori/internal/computer"
 	"nori/internal/conversation"
 	"nori/internal/env"
+	"nori/internal/observability"
 	"nori/internal/state"
 	"nori/internal/task"
 )
@@ -121,7 +122,7 @@ func (r *Runtime) LocalLoop(ctx context.Context, notifications <-chan struct{}) 
 // Server builds the HTTP server shared by the local and hosted entrypoints.
 func Server(ctx context.Context, addr string, handler http.Handler) *http.Server {
 	return &http.Server{
-		Addr: addr, Handler: handler,
+		Addr: addr, Handler: observability.HTTPHandler(handler),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
 		WriteTimeout: 10 * time.Minute, IdleTimeout: 60 * time.Second,
 		BaseContext: func(net.Listener) context.Context { return ctx },
@@ -129,13 +130,13 @@ func Server(ctx context.Context, addr string, handler http.Handler) *http.Server
 }
 
 // Listen serves until ctx ends, then shuts down within the grace period.
-func Listen(ctx context.Context, server *http.Server, grace time.Duration) {
+func Listen(ctx context.Context, server *http.Server, grace time.Duration) error {
 	serving := make(chan error, 1)
 	go func() { serving <- server.ListenAndServe() }()
 	select {
 	case err := <-serving:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err)
+			return err
 		}
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), grace)
@@ -144,4 +145,5 @@ func Listen(ctx context.Context, server *http.Server, grace time.Duration) {
 			log.Printf("shutdown: %v", err)
 		}
 	}
+	return nil
 }
