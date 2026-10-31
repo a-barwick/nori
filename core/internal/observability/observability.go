@@ -234,6 +234,14 @@ func RecordError(ctx context.Context, err error, attrs ...attribute.KeyValue) {
 	RecordErrorCategory(ctx, "operation", err, attrs...)
 }
 
+type suppressErrorCaptureKey struct{}
+
+// SuppressErrorCapture leaves span status and logs intact when the caller
+// records the same failure as an exception at its own boundary.
+func SuppressErrorCapture(ctx context.Context) context.Context {
+	return context.WithValue(ctx, suppressErrorCaptureKey{}, true)
+}
+
 // RecordErrorCategory captures a caller stack and safe grouping category,
 // while never sending the original error text or request data.
 func RecordErrorCategory(ctx context.Context, category string, err error, attrs ...attribute.KeyValue) {
@@ -248,7 +256,7 @@ func RecordErrorCategory(ctx context.Context, category string, err error, attrs 
 	span.SetStatus(codes.Error, "operation failed")
 	span.SetAttributes(attribute.String("error.type", typeName), attribute.String("nori.error.category", category))
 	Event(ctx, "operation.failed", attribute.String("nori.error.category", category))
-	if !sentryEnabled.Load() {
+	if !sentryEnabled.Load() || ctx.Value(suppressErrorCaptureKey{}) != nil {
 		return
 	}
 	event := sentry.NewEvent()

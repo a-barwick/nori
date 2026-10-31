@@ -14,8 +14,8 @@ import (
 
 var conversationTracer = otel.Tracer("nori/conversation")
 
-// The queue wake is only a signal to drain the inbox. The durable input carries
-// the actual parent; the other inputs and the wake are links to the same batch.
+// The queue wake is only a signal to drain the inbox. Prefer the first sampled
+// input as parent, falling back to the first valid input; the others are links.
 func startTurn(ctx context.Context, t state.ConversationTurn) (context.Context, trace.Span) {
 	parent := ctx
 	var primary trace.SpanContext
@@ -30,6 +30,12 @@ func startTurn(ctx context.Context, t state.ConversationTurn) (context.Context, 
 			continue
 		}
 		if !primary.IsValid() {
+			parent = observability.ExtractTrace(ctx, in.TraceContext)
+			primary = sc
+		} else if !primary.IsSampled() && sc.IsSampled() {
+			if sc.TraceID() != primary.TraceID() || sc.SpanID() != primary.SpanID() {
+				links = append(links, trace.Link{SpanContext: primary})
+			}
 			parent = observability.ExtractTrace(ctx, in.TraceContext)
 			primary = sc
 		} else if sc.TraceID() != primary.TraceID() || sc.SpanID() != primary.SpanID() {

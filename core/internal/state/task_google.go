@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -192,10 +193,14 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 				}
 				run.Position++
 			}
-			// Subsequent activities follow the latest accepted correction or answer.
-			// The original parent remains available for full task latency and links.
+			// Prefer the latest sampled command; an unsampled correction must not
+			// discard a sampled parent needed by later activity spans.
 			if len(traceContext) != 0 {
-				run.TraceContext = traceContext
+				current := trace.SpanContextFromContext(observability.ExtractTrace(context.Background(), run.TraceContext))
+				incoming := trace.SpanContextFromContext(observability.ExtractTrace(context.Background(), traceContext))
+				if incoming.IsValid() && (!current.IsValid() || !current.IsSampled() || incoming.IsSampled()) {
+					run.TraceContext = traceContext
+				}
 			}
 			cmd.Position, cmd.Revision, cmd.CreatedAt, cmd.Delivered = run.Position, run.Revision, now, false
 			runs[run.ID], changed[run.ID] = run, true

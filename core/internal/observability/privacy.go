@@ -12,6 +12,11 @@ import (
 // SessionID groups this single-owner application's AI spans without an email.
 const SessionID = "nori-conversation"
 
+var credentialNames = [...]string{
+	"OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY",
+	"SENTRY_AUTH_TOKEN", "ARIZE_API_KEY",
+}
+
 var contentPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)https?://[^\s<>"']+`),
 	regexp.MustCompile(`(?i)\b(?:cookies?|set-cookie)["']?\s*[:=]\s*[^\r\n]+`),
@@ -39,6 +44,11 @@ func redactText(value string, limit int) string {
 		value = value[:8192]
 	}
 	value = strings.ToValidUTF8(value, "")
+	for _, name := range credentialNames {
+		if secret := os.Getenv(name); len(secret) >= 8 {
+			value = strings.ReplaceAll(value, secret, "[redacted]")
+		}
+	}
 	for _, pattern := range contentPatterns {
 		value = pattern.ReplaceAllString(value, "[redacted]")
 	}

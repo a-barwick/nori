@@ -217,7 +217,7 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	// model deadline that leaves room for both, while bounded still observes Stop.
 	modelCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
 	defer stop()
-	decision, e := a.Agent.Decide(modelCtx, in.Contents, true)
+	decision, e := a.Agent.Decide(observability.SuppressErrorCapture(modelCtx), in.Contents, true)
 	span.SetAttributes(attribute.Bool("nori.output.present", decision.Answer != ""), attribute.Int("nori.tool.call_count", len(decision.Calls)))
 	recordActivityFailure(modelCtx, e, "task.model")
 	outcome := ModelOutcome{Decision: decision}
@@ -247,6 +247,7 @@ func (a *Activities) Tool(ctx context.Context, in ToolInput) (result map[string]
 	}
 	defer done()
 	ctx, span := startActivity(ctx, "task.tool", "TOOL", run, in.Revision)
+	computerCtx := observability.SuppressErrorCapture(ctx)
 	span.SetAttributes(attribute.String("tool.name", safeToolName(in.Call.Name)), attribute.String("nori.operation.id", in.OperationID))
 	defer func() {
 		outcome := "completed"
@@ -284,7 +285,7 @@ func (a *Activities) Tool(ctx context.Context, in ToolInput) (result map[string]
 		a.recordStep(in.RunID, trace)
 	}()
 	for attempt := 0; ; attempt++ {
-		c, e := computer.Open(ctx, a.Agent.Computer, computerRun(in.Step))
+		c, e := computer.Open(computerCtx, a.Agent.Computer, computerRun(in.Step))
 		if e != nil {
 			return nil, a.ioError(in.Step, e)
 		}
@@ -299,7 +300,7 @@ func (a *Activities) Tool(ctx context.Context, in ToolInput) (result map[string]
 		if _, e = a.Store.Guard(ctx, in.RunID, in.Revision); e != nil {
 			return nil, classified(e)
 		}
-		toolCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		toolCtx, cancel := context.WithTimeout(computerCtx, 45*time.Second)
 		result, e := a.Agent.Tool(toolCtx, in.RunID, c, in.Call)
 		cancel()
 		if attempt == 0 && errors.Is(e, computer.ErrDraining) {
@@ -375,7 +376,7 @@ func (a *Activities) Stop(ctx context.Context, ids []string) (err error) {
 	}
 	ctx, span := startActivity(ctx, "task.stop_computer", "CHAIN", run, run.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.stop_computer"); span.End() }()
-	return classified(StopComputer(ctx, a.Agent.Computer, ids))
+	return classified(StopComputer(observability.SuppressErrorCapture(ctx), a.Agent.Computer, ids))
 }
 func StopComputer(ctx context.Context, config computer.Config, ids []string) error {
 	if len(ids) == 0 {
@@ -484,7 +485,8 @@ func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) (err e
 	run := a.activityRun(ctx, in.RunID)
 	ctx, span := startActivity(ctx, "task.browser_cleanup", "CHAIN", run, run.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.browser_cleanup"); span.End() }()
-	c, err := computer.Attach(ctx, a.Agent.Computer, in.Scope)
+	computerCtx := observability.SuppressErrorCapture(ctx)
+	c, err := computer.Attach(computerCtx, a.Agent.Computer, in.Scope)
 	if errors.Is(err, computer.ErrStopped) {
 		return a.Store.FinishCleanup(ctx, in.RunID)
 	}
@@ -492,7 +494,7 @@ func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) (err e
 		return classified(err)
 	}
 	defer c.Close()
-	if err = c.CloseTaskBrowser(ctx, in.RunID); err != nil {
+	if err = c.CloseTaskBrowser(computerCtx, in.RunID); err != nil {
 		return classified(err)
 	}
 	return a.Store.FinishCleanup(ctx, in.RunID)
