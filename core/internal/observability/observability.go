@@ -79,7 +79,9 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 				}
 				return scrubEvent(event)
 			},
-			BeforeBreadcrumb: func(*sentry.Breadcrumb, *sentry.BreadcrumbHint) *sentry.Breadcrumb { return nil },
+			// All traces use the filtered and rate-limited OpenTelemetry exporter.
+			BeforeSendTransaction: func(*sentry.Event, *sentry.EventHint) *sentry.Event { return nil },
+			BeforeBreadcrumb:      func(*sentry.Breadcrumb, *sentry.BreadcrumbHint) *sentry.Breadcrumb { return nil },
 			BeforeSendLog: func(event *sentry.Log) *sentry.Log {
 				if !eventNames[event.Body] || !logLimit.Allow() {
 					return nil
@@ -275,12 +277,20 @@ func scrubEvent(event *sentry.Event) *sentry.Event {
 	event.Attachments = nil
 	event.Modules = nil
 	event.Threads = nil
+	event.DebugMeta = nil
+	event.CheckIn = nil
+	event.MonitorConfig = nil
+	event.Logger = ""
 	event.Transaction = ""
 	event.Message = ""
 	category := event.Tags["nori.error.category"]
 	if !errorCategories[category] {
 		category = "operation"
 	}
+	if event.Tags == nil {
+		event.Tags = map[string]string{}
+	}
+	event.Tags["nori.error.category"] = category
 	typeName := event.Tags["error.type"]
 	if typeName == "" {
 		typeName = "unknown"
@@ -289,6 +299,8 @@ func scrubEvent(event *sentry.Event) *sentry.Event {
 	for i := range event.Exception {
 		event.Exception[i].Type = "Nori/" + category
 		event.Exception[i].Value = category + " failed"
+		event.Exception[i].Module = ""
+		event.Exception[i].Mechanism = nil
 		if stack := event.Exception[i].Stacktrace; stack != nil {
 			for j := range stack.Frames {
 				stack.Frames[j].Vars = nil
