@@ -91,10 +91,10 @@ A Data button shows the request, response and saved record behind a step or a ta
 
 ## Before you finish
 
-Run the site from this folder, then open http://127.0.0.1:3220:
+Run the site from the repo root. It opens at http://127.0.0.1:3220:
 
 ```bash
-python3 -m http.server 3220 --bind 127.0.0.1
+docs/serve.sh
 ```
 
 - Look at the page at desktop and phone widths. It shouldn't scroll sideways.
