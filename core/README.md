@@ -58,7 +58,9 @@ attempt; failures and timeouts are separate outcomes.
 
 Sandbox deployments use `nori-sandbox-openrouter-api-key` and the existing
 feature lease issued by `infrastructure/spend/run.py` for the same logical chat.
-Pass that scope as `sandbox_spend_scope` to Terraform. Operator deployment and
+Pass that scope as `sandbox_spend_scope` to Terraform and set new worker targets
+to `spend_profile = "feature"`; retained workers keep their original closed lease.
+Use `run.py --sandbox` to publish the same key and supply its version. Operator deployment and
 admission require its numeric `NORI_SPEND_KEY_SECRET_VERSION`; never restore a
 CI secret or substitute the production model key. Closing the lease stops
 inference while health and cleanup remain available.
