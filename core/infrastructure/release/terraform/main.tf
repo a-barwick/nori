@@ -1,7 +1,10 @@
 # This is a separate bootstrap state. It does not own POC or Temporal resources.
-# Do not apply until the GitHub connection and state migration are reviewed.
+# Retain the existing bootstrap state when replacing Cloud Build with GitHub Actions.
 terraform {
-  backend "local" {}
+  backend "gcs" {
+    bucket = "bot-111549-nori-ci-state"
+    prefix = "nori/ci"
+  }
   required_version = ">= 1.10"
   required_providers {
     google = { source = "hashicorp/google", version = "8.8.1" }
@@ -10,27 +13,6 @@ terraform {
 provider "google" {
   project = "bot-111549"
   region  = "us-central1"
-}
-variable "repository" {
-  description = "Existing Cloud Build v2 GitHub repository resource in us-central1"
-  type        = string
-  validation {
-    condition     = can(regex("^projects/bot-111549/locations/us-central1/connections/[^/]+/repositories/[^/]+$", var.repository))
-    error_message = "Pass the existing regional Cloud Build v2 repository resource name."
-  }
-}
-variable "release_tools_image" {
-  description = "Reviewed release-tools image built and published once during setup, by immutable digest"
-  type        = string
-  validation {
-    condition     = can(regex("^us-central1-docker\\.pkg\\.dev/bot-111549/nori-poc/release-tools@sha256:[a-f0-9]{64}$", var.release_tools_image))
-    error_message = "Use the immutable release-tools digest in the existing Nori registry."
-  }
-}
-variable "enable_triggers" {
-  description = "Enable only after separate live setup, state, and first-deployment review"
-  type        = bool
-  default     = false
 }
 variable "sentry_source_maps" {
   description = "Optional existing same-project source-map token secret and public Sentry organization/project slugs."
@@ -199,89 +181,53 @@ resource "google_secret_manager_secret_iam_member" "temporal" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.ci["deploy"].email}"
 }
-resource "google_cloudbuild_trigger" "check" {
-  disabled        = !var.enable_triggers
-  project         = local.project
-  location        = local.region
-  name            = "nori-pr-check"
-  service_account = google_service_account.ci["check"].id
-  filename        = "core/infrastructure/release/cloudbuild-pr.yaml"
-  repository_event_config {
-    repository = var.repository
-    pull_request {
-      branch          = "^main$"
-      comment_control = "COMMENTS_ENABLED_FOR_EXTERNAL_CONTRIBUTORS_ONLY"
-    }
-  }
+# GitHub supplies short-lived OIDC credentials; the existing CI identities keep
+# their resource-scoped permissions and never need service account keys.
+resource "google_project_service" "sts" {
+  project            = local.project
+  service            = "sts.googleapis.com"
+  disable_on_destroy = false
 }
-resource "google_cloudbuild_trigger" "prepare" {
-  disabled        = !var.enable_triggers
-  project         = local.project
-  location        = local.region
-  name            = "nori-main-prepare"
-  service_account = google_service_account.ci["prepare"].id
-  filename        = "core/infrastructure/release/cloudbuild-prepare.yaml"
-  repository_event_config {
-    repository = var.repository
-    push { branch = "^main$" }
-  }
-  substitutions = {
-    _SENTRY_TOKEN_SECRET  = var.sentry_source_maps == null ? "" : var.sentry_source_maps.secret
-    _SENTRY_TOKEN_VERSION = var.sentry_source_maps == null ? "latest" : var.sentry_source_maps.version
-    _SENTRY_ORG           = var.sentry_source_maps == null ? "" : var.sentry_source_maps.organization
-    _SENTRY_PROJECT       = var.sentry_source_maps == null ? "" : var.sentry_source_maps.project
-  }
-  depends_on = [google_secret_manager_secret_iam_member.sentry_source_maps]
+resource "google_iam_workload_identity_pool" "github" {
+  project                   = local.project
+  workload_identity_pool_id = "nori-github"
+  display_name              = "Nori GitHub Actions"
 }
-resource "google_cloudbuild_trigger" "release" {
-  disabled        = !var.enable_triggers
-  project         = local.project
-  location        = local.region
-  name            = "nori-release"
-  service_account = google_service_account.ci["deploy"].id
-  filename        = "core/infrastructure/release/cloudbuild-release.yaml"
-  repository_event_config {
-    repository = var.repository
-    push { tag = "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" }
+resource "google_iam_workload_identity_pool_provider" "github" {
+  project                            = local.project
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
+  workload_identity_pool_provider_id = "nori"
+  display_name                       = "Nori main release workflow"
+  attribute_mapping = {
+    "google.subject"                = "assertion.sub"
+    "attribute.repository_id"       = "assertion.repository_id"
+    "attribute.repository_owner_id" = "assertion.repository_owner_id"
+    "attribute.ref"                 = "assertion.ref"
+    "attribute.workflow_ref"        = "assertion.workflow_ref"
+    "attribute.event_name"          = "assertion.event_name"
   }
-  substitutions = { _TOOLS_IMAGE = var.release_tools_image }
+  # Numeric IDs cannot be reclaimed after a repository/owner rename or deletion.
+  # Exclude PR events, including pull_request_target, even when their ref is main.
+  attribute_condition = join(" && ", [
+    "assertion.repository_id == '1432795555'",
+    "assertion.repository_owner_id == '20868539'",
+    "assertion.ref == 'refs/heads/main'",
+    "assertion.workflow_ref == 'a-barwick/nori/.github/workflows/release.yml@refs/heads/main'",
+    "assertion.event_name in ['push', 'workflow_dispatch']",
+  ])
+  oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
+  depends_on = [google_project_service.sts]
 }
-resource "google_pubsub_topic" "prepared" {
-  name = "nori-prepared-builds"
+resource "google_service_account_iam_member" "github" {
+  for_each           = toset(["prepare", "sandbox", "deploy"])
+  service_account_id = google_service_account.ci[each.key].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository_id/1432795555"
 }
-resource "google_pubsub_topic_iam_member" "prepare_publish" {
-  topic  = google_pubsub_topic.prepared.name
-  role   = "roles/pubsub.publisher"
-  member = "serviceAccount:${google_service_account.ci["prepare"].email}"
+output "workload_identity_provider" {
+  description = "Set the private GitHub repository variable NORI_WIF_PROVIDER to this value."
+  value       = google_iam_workload_identity_pool_provider.github.name
 }
-resource "google_cloudbuild_trigger" "sandbox" {
-  disabled        = !var.enable_triggers
-  project         = local.project
-  location        = local.region
-  name            = "nori-sandbox"
-  service_account = google_service_account.ci["sandbox"].id
-  pubsub_config { topic = google_pubsub_topic.prepared.id }
-  source_to_build {
-    repository = var.repository
-    ref        = "refs/heads/main"
-    repo_type  = "GITHUB"
-  }
-  git_file_source {
-    repository = var.repository
-    path       = "core/infrastructure/release/cloudbuild-sandbox.yaml"
-    revision   = "refs/heads/main"
-    repo_type  = "GITHUB"
-  }
-  substitutions = {
-    _TOOLS_IMAGE      = var.release_tools_image
-    _SOURCE_COMMIT    = "$(body.message.data.substitutions.COMMIT_SHA)"
-    _PREPARE_BUILD_ID = "$(body.message.data.id)"
-    _PREPARE_STATUS   = "$(body.message.data.status)"
-    _PREPARE_TRIGGER  = "$(body.message.data.buildTriggerId)"
-  }
-  filter = "_PREPARE_STATUS == 'SUCCESS' && _PREPARE_TRIGGER == '${google_cloudbuild_trigger.prepare.trigger_id}'"
-}
-output "prepare_trigger_id" { value = google_cloudbuild_trigger.prepare.trigger_id }
 output "state_bucket" { value = google_storage_bucket.state.name }
 # Service-level, additive IAP grant for authenticated smoke requests.
 resource "google_iap_web_cloud_run_service_iam_member" "smoke" {
@@ -526,4 +472,39 @@ resource "google_cloud_tasks_queue_iam_member" "worker_queue" {
   name     = each.key
   role     = google_project_iam_custom_role.worker_queue.name
   member   = "serviceAccount:${google_service_account.ci[each.value].email}"
+}
+
+# Native daily recovery copies protect the existing production database and
+# retained computer data disk; this state owns only their backup schedules.
+resource "google_firestore_backup_schedule" "production" {
+  project   = local.project
+  database  = "nori-poc"
+  retention = "604800s"
+  daily_recurrence {}
+}
+resource "google_compute_resource_policy" "computer_backup" {
+  project = local.project
+  name    = "nori-computer-data-daily"
+  region  = local.region
+  snapshot_schedule_policy {
+    schedule {
+      daily_schedule {
+        days_in_cycle = 1
+        start_time    = "08:00"
+      }
+    }
+    retention_policy {
+      max_retention_days    = 7
+      on_source_disk_delete = "KEEP_AUTO_SNAPSHOTS"
+    }
+    snapshot_properties {
+      storage_locations = [local.region]
+    }
+  }
+}
+resource "google_compute_disk_resource_policy_attachment" "computer_backup" {
+  project = local.project
+  name    = google_compute_resource_policy.computer_backup.name
+  disk    = "bot-computer-data"
+  zone    = "us-central1-a"
 }

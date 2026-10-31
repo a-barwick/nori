@@ -18,6 +18,15 @@ The selected models are:
 | Implementation subagents | GPT-6.1 Sol, high reasoning |
 | CLI code reviewer | Claude Opus 5.5, high reasoning |
 
+# Agent delivery
+
+Use a `codex/*` branch and a pull request for changes. Keep the PR draft while
+implementation or independent review is incomplete. Once required verification
+and review pass, mark it ready: GitHub automatically merges eligible owner/agent
+PRs after `Checks` succeeds for the exact head commit, then deploys from `main`.
+Do not add manual merge gates or branch protections for this personal repository.
+Do not run a competing local deployment while the `Release` workflow is active.
+
 # GCP cost rules
 
 These apply to this repository's GCP project `bot-111549`. They are cost controls, not design constraints.

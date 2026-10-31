@@ -66,13 +66,14 @@ func (t *Tracker) Snapshot() ([]string, int, time.Duration) {
 
 // Handler never starts polling until a /run request owns this process. Cloud Run
 // IAM authenticates production calls; the mutex also bounds local concurrency.
-func Handler(process context.Context, run func(context.Context, string, []string) error) http.Handler {
+func Handler(process context.Context, run func(context.Context, string, []string, bool) error) http.Handler {
 	gate := make(chan struct{}, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("POST /run", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			WorkflowIDs []string `json:"workflow_ids"`
+			WorkflowIDs      []string `json:"workflow_ids"`
+			RegistrationOnly bool     `json:"registration_only"`
 		}
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 		decoder.DisallowUnknownFields()
@@ -85,6 +86,10 @@ func Handler(process context.Context, run func(context.Context, string, []string
 				http.Error(w, "invalid task identity", http.StatusBadRequest)
 				return
 			}
+		}
+		if body.RegistrationOnly && len(body.WorkflowIDs) != 0 {
+			http.Error(w, "registration cannot include workflows", http.StatusBadRequest)
+			return
 		}
 
 		select {
@@ -100,7 +105,7 @@ func Handler(process context.Context, run func(context.Context, string, []string
 		// run owns its polling cutoff and drains before returning this response.
 		workCtx := observability.ExtractTrace(process, observability.InjectTrace(r.Context()))
 		observability.Event(workCtx, "worker.slice.started")
-		if err := run(workCtx, id, body.WorkflowIDs); err != nil {
+		if err := run(workCtx, id, body.WorkflowIDs, body.RegistrationOnly); err != nil {
 			observability.RecordErrorCategory(workCtx, "worker.lifecycle", err)
 			observability.Event(workCtx, "worker.slice.failed")
 			log.Printf("worker_slice slice=%s phase=response status=503 error=%q", id, err)

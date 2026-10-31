@@ -1,0 +1,262 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'Full main commit SHA (blank selects current main)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  NORI_GCP_PROJECT: ${{ vars.NORI_GCP_PROJECT || 'bot-111549' }}
+  NORI_BUILD_REGION: ${{ vars.NORI_BUILD_REGION || 'us-central1' }}
+  NORI_RELEASE_BUCKET: ${{ vars.NORI_RELEASE_BUCKET || 'bot-111549-nori-poc' }}
+  NORI_STATE_BUCKET: ${{ vars.NORI_STATE_BUCKET || 'bot-111549-nori-ci-state' }}
+  NORI_TF_BACKEND: gcs
+  CLOUDSDK_CORE_DISABLE_PROMPTS: '1'
+  CLOUDSDK_CORE_DISABLE_USAGE_REPORTING: 'true'
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  source:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: source
+        name: Resolve a commit already on main
+        env:
+          REQUESTED_COMMIT: ${{ inputs.commit || github.sha }}
+          EVENT_COMMIT: ${{ github.sha }}
+        run: |
+          [[ "$REQUESTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$REQUESTED_COMMIT" origin/main
+          if [[ "$REQUESTED_COMMIT" != "$EVENT_COMMIT" ]]; then
+            echo 'Main advanced before dispatch; the newer release owns deployment.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          printf 'commit=%s\n' "$REQUESTED_COMMIT" >> "$GITHUB_OUTPUT"
+
+  images:
+    needs: source
+    if: needs.source.outputs.commit != ''
+    name: Build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - image: runtime
+            context: core
+            file: core/infrastructure/Dockerfile
+          - image: worker
+            context: core
+            file: core/infrastructure/temporal/Dockerfile.worker
+          - image: web
+            context: web
+            file: web/Dockerfile
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.NORI_WIF_PROVIDER }}
+          project_id: ${{ env.NORI_GCP_PROJECT }}
+          service_account: nori-ci-prepare@${{ env.NORI_GCP_PROJECT }}.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+      - name: Authenticate registry
+        run: gcloud auth configure-docker "$NORI_BUILD_REGION-docker.pkg.dev" --quiet
+      - name: Read optional source map upload token
+        if: matrix.image == 'web' && vars.NORI_SENTRY_TOKEN_SECRET != ''
+        env:
+          TOKEN_SECRET: ${{ vars.NORI_SENTRY_TOKEN_SECRET }}
+          TOKEN_VERSION: ${{ vars.NORI_SENTRY_TOKEN_VERSION || 'latest' }}
+        run: |
+          umask 077
+          gcloud secrets versions access "$TOKEN_VERSION" --secret="${TOKEN_SECRET##*/}" --out-file="$RUNNER_TEMP/sentry-upload-token"
+          test -s "$RUNNER_TEMP/sentry-upload-token"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: build
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.NORI_BUILD_REGION }}-docker.pkg.dev/${{ env.NORI_GCP_PROJECT }}/nori-poc/${{ matrix.image }}:${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          build-args: |
+            SENTRY_RELEASE=${{ needs.source.outputs.commit }}
+            SENTRY_ORG=${{ vars.SENTRY_ORG }}
+            SENTRY_PROJECT=${{ vars.SENTRY_PROJECT }}
+          secret-files: ${{ matrix.image == 'web' && vars.NORI_SENTRY_TOKEN_SECRET != '' && format('sentry_auth_token={0}/sentry-upload-token', runner.temp) || '' }}
+      - name: Save immutable image reference
+        env:
+          IMAGE: ${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p release-artifacts
+          printf '%s-docker.pkg.dev/%s/nori-poc/%s@%s\n' "$NORI_BUILD_REGION" "$NORI_GCP_PROJECT" "$IMAGE" "$DIGEST" > "release-artifacts/$IMAGE.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-${{ matrix.image }}
+          path: release-artifacts/*.txt
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove source map upload token
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sentry-upload-token"
+
+  computer:
+    needs: source
+    if: needs.source.outputs.commit != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: Build computer agent
+        working-directory: core
+        run: |
+          mkdir -p ../release-artifacts
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o ../release-artifacts/computer-agent ./cmd/computer-agent
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: computer-agent
+          path: release-artifacts/computer-agent
+          retention-days: 7
+          if-no-files-found: error
+
+  manifest:
+    needs: [source, images, computer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+      - name: Create immutable release manifest
+        env:
+          RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
+          RELEASE_BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          python3 core/infrastructure/release/release.py manifest \
+            --commit "$RELEASE_COMMIT" --build-id "$RELEASE_BUILD_ID" \
+            --web "$(cat release-artifacts/web.txt)" \
+            --runtime "$(cat release-artifacts/runtime.txt)" \
+            --worker "$(cat release-artifacts/worker.txt)" \
+            --computer release-artifacts/computer-agent > release-artifacts/manifest.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-manifest
+          path: release-artifacts/manifest.json
+          retention-days: 30
+          if-no-files-found: error
+
+  deploy:
+    needs: [source, manifest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    concurrency:
+      group: nori-live-deployment
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: current
+        name: Skip a release superseded on main
+        env:
+          RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
+        run: |
+          if [[ "$(git rev-parse origin/main)" == "$RELEASE_COMMIT" ]]; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Main has advanced; a newer release owns deployment.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          name: release-manifest
+          path: release-artifacts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          name: computer-agent
+          path: release-artifacts
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          terraform_version: 1.14.6
+          terraform_wrapper: false
+      - name: Install Temporal CLI
+        if: steps.current.outputs.deploy == 'true'
+        run: |
+          container=$(docker create temporalio/temporal:1.9.1)
+          trap 'docker rm "$container" >/dev/null' EXIT
+          docker cp "$container:/usr/local/bin/temporal" "$RUNNER_TEMP/temporal"
+          chmod +x "$RUNNER_TEMP/temporal"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          workload_identity_provider: ${{ vars.NORI_WIF_PROVIDER }}
+          project_id: ${{ env.NORI_GCP_PROJECT }}
+          service_account: nori-ci-sandbox@${{ env.NORI_GCP_PROJECT }}.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        if: steps.current.outputs.deploy == 'true'
+      - name: Deploy sandbox, exercise browser, and stop compute
+        if: steps.current.outputs.deploy == 'true'
+        run: python3 core/infrastructure/release/release.py deploy --manifest release-artifacts/manifest.json --computer release-artifacts/computer-agent --environment sandbox --smoke full
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          workload_identity_provider: ${{ vars.NORI_WIF_PROVIDER }}
+          project_id: ${{ env.NORI_GCP_PROJECT }}
+          service_account: nori-ci-deploy@${{ env.NORI_GCP_PROJECT }}.iam.gserviceaccount.com
+      - name: Deploy production, check health, and stop compute
+        if: steps.current.outputs.deploy == 'true'
+        run: python3 core/infrastructure/release/release.py deploy --manifest release-artifacts/manifest.json --computer release-artifacts/computer-agent --environment production --smoke health
+      - name: Preserve sanitized deployment reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: deployment-reports
+          path: release-artifacts/deployment-*.json
+          retention-days: 30
+          if-no-files-found: ignore
