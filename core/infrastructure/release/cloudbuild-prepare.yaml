@@ -97,7 +97,7 @@ substitutions:
   _SENTRY_PROJECT: ''
 options:
   logging: CLOUD_LOGGING_ONLY
-  pubsubTopic: projects/$PROJECT_ID/topics/nori-prepared-builds
+  pubsubTopic: projects/bot-111549/topics/nori-prepared-builds
 images:
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/web:$BUILD_ID'
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/runtime:$BUILD_ID'
