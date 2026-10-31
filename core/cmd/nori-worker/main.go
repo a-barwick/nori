@@ -7,9 +7,12 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
@@ -38,7 +41,12 @@ func main() {
 		if os.Getenv("TEMPORAL_LOCAL") == "true" {
 			addr = "127.0.0.1:" + port
 		}
-		server := wake.Server(ctx, addr, workerservice.Handler(ctx, func(ctx context.Context, id string, ids []string) error { return run(ctx, true, id, ids) }))
+		server := wake.Server(ctx, addr, workerservice.Handler(ctx, func(ctx context.Context, id string, ids []string, registration bool) error {
+			if registration {
+				return register(ctx)
+			}
+			return run(ctx, true, id, ids)
+		}))
 		server.WriteTimeout = 11 * time.Minute
 		if err := wake.Listen(ctx, server, 5*time.Minute); err != nil {
 			observability.RecordErrorCategory(ctx, "http.listen", err)
@@ -52,6 +60,121 @@ func main() {
 		observability.Shutdown(stopTelemetry)
 		log.Fatal(err)
 	}
+}
+
+// Registration polls only a fresh, non-current version. It never enters the
+// normal worker's recovery/delivery loop or constructs a model/computer client.
+func register(ctx context.Context) (result error) {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	build, deployment := os.Getenv("TEMPORAL_BUILD_ID"), os.Getenv("TEMPORAL_DEPLOYMENT_NAME")
+	if build == "" || deployment == "" {
+		return fmt.Errorf("registration requires an immutable build and deployment")
+	}
+	store, err := state.NewGoogle(ctx, env.Get("NORI_PROJECT_ID", "bot-111549"), env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	control, err := store.Control(ctx)
+	if err != nil {
+		return err
+	}
+	if !control.Paused {
+		return fmt.Errorf("registration requires paused execution admission")
+	}
+	c, err := task.Dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	handle := c.WorkerDeploymentClient().GetHandle(deployment)
+	_, err = handle.DescribeVersion(ctx, client.WorkerDeploymentDescribeVersionOptions{BuildID: build})
+	var missing *serviceerror.NotFound
+	if !errors.As(err, &missing) {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("registration requires a fresh deployment version")
+	}
+	guard := &registrationGuard{}
+	w := worker.New(c, task.Queue(), worker.Options{
+		Interceptors: []interceptor.WorkerInterceptor{guard}, WorkerStopTimeout: 5 * time.Second,
+		DeploymentOptions: worker.DeploymentOptions{UseVersioning: true,
+			Version:                   worker.WorkerDeploymentVersion{DeploymentName: deployment, BuildID: build},
+			DefaultVersioningBehavior: workflow.VersioningBehaviorPinned},
+	})
+	w.RegisterWorkflowWithOptions(task.Workflow, workflow.RegisterOptions{Name: task.WorkflowName, VersioningBehavior: workflow.VersioningBehaviorPinned})
+	w.RegisterActivity(&task.Activities{})
+	if err = w.Start(); err != nil {
+		return err
+	}
+	defer func() {
+		w.Stop()
+		if guard.unexpected.Load() {
+			result = errors.Join(result, fmt.Errorf("registration refused unexpected task execution"))
+		}
+	}()
+	for {
+		version, err := handle.DescribeVersion(ctx, client.WorkerDeploymentDescribeVersionOptions{BuildID: build})
+		if err == nil {
+			if !version.Info.CurrentSinceTime.IsZero() || !version.Info.RampingSinceTime.IsZero() {
+				return fmt.Errorf("registration version became current or ramping")
+			}
+			workflowQueue, activityQueue := false, false
+			for _, queue := range version.Info.TaskQueuesInfos {
+				if queue.Name == task.Queue() {
+					workflowQueue = workflowQueue || queue.Type == client.TaskQueueTypeWorkflow
+					activityQueue = activityQueue || queue.Type == client.TaskQueueTypeActivity
+				}
+			}
+			if workflowQueue && activityQueue {
+				return nil
+			}
+		} else if !errors.As(err, &missing) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+type registrationGuard struct {
+	interceptor.WorkerInterceptorBase
+	unexpected atomic.Bool
+}
+
+func (g *registrationGuard) InterceptWorkflow(_ workflow.Context, next interceptor.WorkflowInboundInterceptor) interceptor.WorkflowInboundInterceptor {
+	return &registrationWorkflow{WorkflowInboundInterceptorBase: interceptor.WorkflowInboundInterceptorBase{Next: next}, guard: g}
+}
+
+func (g *registrationGuard) InterceptActivity(_ context.Context, next interceptor.ActivityInboundInterceptor) interceptor.ActivityInboundInterceptor {
+	return &registrationActivity{ActivityInboundInterceptorBase: interceptor.ActivityInboundInterceptorBase{Next: next}, guard: g}
+}
+
+type registrationWorkflow struct {
+	interceptor.WorkflowInboundInterceptorBase
+	guard *registrationGuard
+}
+
+func (r *registrationWorkflow) ExecuteWorkflow(workflow.Context, *interceptor.ExecuteWorkflowInput) (any, error) {
+	r.guard.unexpected.Store(true)
+	// Fail only this workflow task if routing is unexpectedly violated; returning
+	// an error here would permanently fail the user's workflow execution.
+	panic("registration cannot execute workflows")
+}
+
+type registrationActivity struct {
+	interceptor.ActivityInboundInterceptorBase
+	guard *registrationGuard
+}
+
+func (r *registrationActivity) ExecuteActivity(context.Context, *interceptor.ExecuteActivityInput) (any, error) {
+	r.guard.unexpected.Store(true)
+	return nil, fmt.Errorf("registration cannot execute activities")
 }
 
 func run(ctx context.Context, bounded bool, sliceID string, known []string) (result error) {

@@ -69,8 +69,10 @@ def _json(url, deadline, body=None, token=None, metadata=False, expected=200):
         raise SmokeError("Smoke endpoint returned invalid JSON") from None
 
 def _token(deadline):
-    token = _json(METADATA, deadline, metadata=True).get("access_token")
-    if not isinstance(token, str) or not token: raise SmokeError("Build service account access token unavailable")
+    result = subprocess.run(["gcloud", "auth", "print-access-token", "--quiet"],
+                            capture_output=True, text=True, timeout=min(30, _left(deadline)))
+    token = result.stdout.strip()
+    if result.returncode or not token: raise SmokeError("Release service account access token unavailable")
     return token
 
 def _https(url):
@@ -152,6 +154,17 @@ def _iap_jwt(config, url, token, deadline):
     signed = _json(endpoint, deadline, {"payload": json.dumps(claims)}, token).get("signedJwt")
     if not isinstance(signed, str) or len(signed.split(".")) != 3: raise SmokeError("IAM did not return an IAP JWT")
     return signed
+
+def health(config, deadline, evidence_callback=lambda _: None):
+    """Read-only hosted checks: no conversation, task, browser or VM wake."""
+    token = _token(deadline)
+    url = _https(config["web_url"]) + "/api/health"
+    iap = _iap_jwt(config, url, token, deadline)
+    if _json(url, deadline, token=iap).get("status") != "ok":
+        raise SmokeError("Web health failed")
+    evidence_callback({"check": "web_health", "status": "passed"})
+    _post(_https(config["runtime_url"]), "healthz", {}, token, deadline)
+    evidence_callback({"check": "runtime_health", "status": "passed"})
 
 def run(config, deadline, evidence_callback=lambda _: None):
     """Run one browser task and preserve only its IDs as release evidence."""

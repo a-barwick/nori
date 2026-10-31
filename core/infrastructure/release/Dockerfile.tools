@@ -1,8 +1,0 @@
-# Versions match the operator's existing CLI tools. These images supply binaries
-# only; no credentials or application source are baked into the tools image.
-FROM hashicorp/terraform:1.14.6 AS terraform
-FROM temporalio/temporal:1.9.1 AS temporal
-FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:584.0.0-slim
-COPY --from=terraform /bin/terraform /usr/local/bin/terraform
-COPY --from=temporal /usr/local/bin/temporal /usr/local/bin/temporal
-ENV CLOUDSDK_CORE_DISABLE_PROMPTS=1 CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=true

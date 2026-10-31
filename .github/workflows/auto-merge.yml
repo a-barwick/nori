@@ -1,0 +1,73 @@
+name: Auto merge
+
+on:
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
+
+# No checkout: this privileged job runs only the code in main's workflow.
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-merge-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          TRUSTED_USERS: ${{ vars.NORI_AUTO_MERGE_USERS }}
+        with:
+          retries: 3
+          script: |
+            const run = context.payload.workflow_run;
+            const repo = context.repo;
+            const fullName = `${repo.owner}/${repo.repo}`;
+            if (run.head_repository?.full_name !== fullName || !run.head_branch.startsWith('codex/')) {
+              core.info('Only same-repository codex branches auto merge.');
+              return;
+            }
+            const trusted = new Set([repo.owner, ...(process.env.TRUSTED_USERS || '').split(',')]
+              .map(user => user.trim().toLowerCase()).filter(Boolean));
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
+              {...repo, run_id: run.id, filter: 'latest', per_page: 100});
+            if (!['Go', 'Web', 'Release process'].every(name =>
+              jobs.some(job => job.name === name && job.conclusion === 'success'))) {
+              core.setFailed('The completed run is missing a successful required check.');
+              return;
+            }
+            const pulls = await github.paginate(github.rest.pulls.list,
+              {...repo, state: 'open', base: 'main', head: `${repo.owner}:${run.head_branch}`, per_page: 100});
+            const candidate = pulls.find(pr => pr.head.sha === run.head_sha);
+            if (!candidate) {
+              core.info('The checked head is no longer an open pull request.');
+              return;
+            }
+            const {data: pr} = await github.rest.pulls.get({...repo, pull_number: candidate.number});
+            if (pr.draft || pr.state !== 'open' || pr.base.ref !== 'main' ||
+                pr.head.repo?.full_name !== fullName || pr.head.sha !== run.head_sha ||
+                !trusted.has(pr.user.login.toLowerCase())) {
+              core.info('The pull request is no longer eligible for automatic merge.');
+              return;
+            }
+            const {data: result} = await github.rest.pulls.merge({
+              ...repo, pull_number: pr.number, sha: run.head_sha, merge_method: 'squash'
+            });
+            if (!result.merged) {
+              core.setFailed(result.message || 'GitHub did not merge the pull request.');
+              return;
+            }
+            core.info(`Merged pull request #${pr.number} at ${result.sha}.`);
+            // GITHUB_TOKEN merges do not trigger push workflows. Dispatch explicitly.
+            await github.rest.actions.createWorkflowDispatch({
+              ...repo, workflow_id: 'release.yml', ref: 'main', inputs: {commit: result.sha}
+            });
