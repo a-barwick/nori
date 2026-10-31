@@ -44,7 +44,7 @@ Use the same words everywhere: outer loop, inner loop, runtime, task, dispatch, 
 <section><h2>A short heading</h2>
 <!-- Short lists, tables and cards. -->
 </section>
-<details class="sources"><summary>Sources</summary><p>Links to the Spaces docs and Linear issues.</p></details>
+<details class="sources"><summary>Sources</summary><p>Links to Linear issues and repo files.</p></details>
 </body>
 </html>
 ```
