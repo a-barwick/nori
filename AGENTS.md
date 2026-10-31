@@ -4,7 +4,7 @@ Follow Austin's current request. Older memory, plans, and skills do not add work
 
 Verify the requested behavior proportionally, including the real integration boundary when relevant. Repeat checks only for changed evidence or unresolved failures. Fix blockers; put nonblocking findings in Linear Backlog with evidence and why they can wait. Use related links, not blocking dependencies; do not implement follow-ups without authorization.
 
-Use a `codex/*` branch and PR; merge completed, verified work without an extra approval round. CI/CD is disabled, so run `make check` from the repo root before merging (`bun install --frozen-lockfile` in `web/` first if dependencies are missing). Deploy only when requested. Model/CLI/external reviews require an explicit request; reviewer selection alone does not require a review.
+Use a `codex/*` branch and PR; merge completed, verified work without an extra approval round. CI/CD is disabled, so run `make check` from the repo root before merging (`bun install --frozen-lockfile` in `web/` first if dependencies are missing). Deploy only when requested, with `make deploy` (see `core/infrastructure/README.md`). Model/CLI/external reviews require an explicit request; reviewer selection alone does not require a review.
 
 ## Threads
 

@@ -43,10 +43,35 @@ does not receive these credentials.
 
 ## Delivery
 
-GitHub Actions, auto-merge, Cloud Build integration, and the CI release runner
-have been removed. Changes are verified locally and merged through pull requests.
-Deploy only through the existing [POC operator commands](poc/README.md) when
-requested. Application services and retained data are independent of CI/CD.
+Changes are verified locally and merged through pull requests. There is no CI/CD.
+Deploy from the latest `main` on this Mac, only when requested, with Docker running
+and `gcloud` logged in as the owner. Keep the Mac awake for the 10 or so minutes
+it takes.
+
+| Command | What it does |
+| --- | --- |
+| `make deploy-check` | Read-only rehearsal: local check, real Terraform plan, open work, runtime health |
+| `make deploy` | Checks, builds, pauses, deploys, registers and switches to the new worker, verifies, and stays paused |
+| `make unpause` | Opens Nori for use. Nothing runs on new code before this |
+| `make smoke` | Sends one real browser task through production, about 7¢, into Austin's conversation. Run it only when asked |
+| `make pause` | Closes admission and stops paid compute |
+| `make deploy-status` | Shows paused state, Current worker, and the last deploy |
+| `make deploy-rollback` | Restores the previous release after an interrupted deploy |
+| `make deploy-unlock` | Removes a dead deploy's lock |
+
+`make deploy` refuses to start while a task is running or a message is unprocessed.
+It also refuses any Terraform plan that does more than add the new worker and give
+retained workers its route. A new worker keeps the Current worker's model.
+
+Any failure restores the previous release and leaves Nori paused, which is safe
+because nothing has run on the new code. Run `make deploy` again after fixing the
+cause; finished steps are reused, and images are reused by commit. If the process
+is killed, `make deploy` resumes it instead. Progress lives in
+`~/.local/state/nori/bot-111549/deploy/`.
+
+The web health page sits behind IAP, so the deploy checks the service's readiness
+and image instead of loading the page. Source maps upload only if `SENTRY_ORG` and
+`SENTRY_PROJECT` are in the root `.env`. Sandbox deploys are not covered.
 
 Application Terraform state remains in the existing GCS bucket
 `bot-111549-nori-ci-state`, with production prefixes `nori/poc` and

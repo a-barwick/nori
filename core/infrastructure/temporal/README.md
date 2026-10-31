@@ -73,6 +73,8 @@ unpause verifies that migration remains complete.
 
 ## Immutable releases
 
+`make deploy` adds production workers from the Terraform state ([Delivery](../README.md#delivery)). `worker-release.py` below only prepares isolated candidates against local state.
+
 `terraform/worker-releases.json` retains all deployed pool and service image
 digests, service routing targets, and billing-alert settings. Pass the complete
 manifest to every plan. Never change an image behind a retained build ID or
