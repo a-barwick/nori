@@ -103,7 +103,7 @@ def now():
 def fields(values):
     result = {}
     for key, value in values.items():
-        kind = "booleanValue" if type(value) is bool else "integerValue" if type(value) is int else "timestampValue" if key == "expires_at" else "stringValue"
+        kind = "booleanValue" if type(value) is bool else "integerValue" if type(value) is int else "timestampValue" if key in ("expires_at", "created_at") else "stringValue"
         result[key] = {kind: str(value) if type(value) is int else value}
     return result
 
@@ -190,7 +190,7 @@ def ensure(task, profile, persist_key, fingerprint=""):
         check_workspace()
         expires = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
         value = {"profile": profile, "allowance_nanos": 100_000_000 if profile == "ci" else 250_000_000,
-                 "used_nanos": 0, "closed": True, "expires_at": expires, "issuance_state": "creating",
+                 "used_nanos": 0, "closed": True, "created_at": now(), "expires_at": expires, "issuance_state": "creating",
                  "fingerprints": json.dumps([fingerprint] if fingerprint else [])}
         # Create-only claim prevents concurrent launchers minting fresh budgets.
         # A crash leaves it closed for reconciliation, never silently resets it.

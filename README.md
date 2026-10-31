@@ -120,6 +120,9 @@ CI issues its own expiring OpenRouter key with a $0.10 lifetime limit and revoke
 it after the run. Retries reuse its key, expiry and allowance. Normal build,
 type and lint checks do not acquire model keys. Production uses health-only
 checks; full model smoke runs only in sandbox. No controller server is needed.
+Synthetic CI conversation context begins at that scope's issuance time, so old
+smoke conversations and terminal tasks do not accumulate in new requests.
+Retained data and production conversation context are unchanged.
 
 For local feature work, `core/infrastructure/spend/run.py` issues a key in the
 same development workspace. Feature chats start at $0.25 and can receive
@@ -146,6 +149,9 @@ conservative full request bytes and maximum output in the existing Firestore
 `nori-sandbox` database before dispatch. Atomic reservations share the run and
 daily/monthly budgets across runtime and worker processes. Unknown outcomes
 remain reserved across restarts and calendar resets. Models remain unchanged.
+Controlled OpenRouter requests enforce the selected Opus model's standard
+regional price ceiling ($4.40 input/$22 output per million tokens), and reserve
+at those same rates; premium Fast endpoints cannot exceed that ceiling.
 Jev remains on its existing direct adapter and does not block budget readiness.
 
 Run `python3 core/infrastructure/spend/e2e.py` for two no-cost native-key lifecycle

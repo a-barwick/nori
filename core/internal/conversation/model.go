@@ -152,7 +152,7 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	}
 	var providerLimits any
 	if control != nil {
-		providerLimits = map[string]any{"max_price": map[string]int{"prompt": 8, "completion": 40}}
+		providerLimits = map[string]any{"max_price": map[string]float64{"prompt": 4.4, "completion": 22}}
 	}
 	body, err := json.Marshal(struct {
 		Model    string            `json:"model"`
