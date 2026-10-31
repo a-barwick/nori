@@ -487,6 +487,7 @@ def release(candidate, binary, smoke_mode, report_path):
         error = failure
         report.update(result="failed", failure=safe_error(failure))
     finally:
+        release_error = error
         os.environ["NORI_OPERATION_DEADLINE"] = str(end)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -502,7 +503,7 @@ def release(candidate, binary, smoke_mode, report_path):
                 report["compute_stopped"] = True
                 # Once task execution was admitted, never roll code back across
                 # possibly accepted workflow history or external side effects.
-                if error and changed and not admitted and before:
+                if release_error and changed and not admitted and before:
                     deploy_image("runtime", before["runtime"])
                     deploy_image("web", before["web"])
                     poc.metadata(before["computer"])
