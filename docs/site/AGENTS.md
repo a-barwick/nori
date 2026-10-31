@@ -54,7 +54,10 @@ Then add the page to `NAV` in `site.js`. The script adds the navigation, previou
 - Keep each page to one topic. Link to another page instead of repeating it.
 - Each client gets one `<Platform> client` page in the Clients group. Rules that apply to every client go on `clients.html` or `api.html`.
 - Split a page that passes about 800 words into pages by topic. Reference pages such as Scenarios and Decisions can run longer.
-- Don't list every value just because the code has it. Put long lists of tokens, limits or fields in a `details.more` section.
+- Don't list every value just because the code has it. Leave out what a reader can't act on, such as queue sizes, flush timeouts and fallback chains. Put long lists of tokens, limits or fields in one `details.more` section.
+- Give each question one section. Two tables that both answer "where does this go" should be one table.
+- In a table, each row describes one thing and each column is a property of it. Don't line up unrelated items in the same row. The first column renders bold, so keep it to a short name.
+- Describe the system. Setup steps and instructions for contributors or agents belong in `AGENTS.md` or a README.
 - Every heading gets a copy-link icon automatically. Only the icon is interactive, so don't make headings or subtitles clickable. Link IDs come from the heading text, so renaming a heading breaks old links to it.
 - Use relative links such as `tasks.html`, because the site won't always be hosted at the root of a domain.
 - Use what's already in `site.css`: `card`, `grid2`, `grid3`, `flow`, `node`, `branch`, `states`, `say`, `tag` and `pts`. Add new CSS only when a page needs something those can't do.
@@ -65,6 +68,10 @@ Then add the page to `NAV` in `site.js`. The script adds the navigation, previou
 - Prefer `.flow` and `.node` HTML diagrams because they adjust to the screen width. Use inline SVG when position carries meaning.
 - Keep the colors consistent. Blue is the outer loop, green is the inner loop and Temporal, orange is the computer, gray is the runtime and storage, and yellow is waiting.
 - Label every arrow whose meaning isn't obvious, and don't let lines cross boxes or text.
+- Keep box text to one short sentence, and move detail to a table or list below the diagram. Name a system part in each box, and say on each arrow what passes between them. A box such as "Filters" or "One request, one trace" is a concept, so it belongs in text.
+- Color boxes with `.outer`, `.inner` and `.computer` whenever those parts appear.
+- Keep `.branch` columns about the same depth, because a shorter column stretches into an empty box.
+- Start each `.branch` box after a `.decide` node with the answer it follows, such as "Yes" or "No".
 
 ## Built and planned
 
@@ -79,7 +86,8 @@ Readers must always be able to tell what runs today.
 
 When sources disagree, the code on `main` decides what's built. Linear and `decisions.html` decide what's planned.
 
-- Check limits, names, endpoints and tools against the code before writing them down. Don't copy them from an older doc.
+- Check limits, names, endpoints and tools against the code before writing them down. Don't copy them from an older doc. Keep units as the code has them: bytes and characters differ.
+- Refer to models by role, such as the outer model, unless the page is about model choice. Selected models change.
 - If a source is out of date, follow the code and add the conflict to `sources.html`.
 - Date any cost or measurement, and say that it's a planning figure if it is.
 - Never include secrets, API keys, personal email addresses, or real user messages and task IDs. The site may be public.
@@ -97,10 +105,11 @@ A Data button shows the request, response and saved record behind a step or a ta
 
 ## Before you finish
 
-Run the site from the repo root. It opens at http://127.0.0.1:3220:
+Run the site from the repo root. It opens at http://127.0.0.1:3220. Pass another port if that one is taken, as it often is in a worktree. If you can't bind a port, open the page file directly in a browser, because the site works without a server.
 
 ```bash
 docs/serve.sh
+docs/serve.sh 3221
 ```
 
 - Look at the page at desktop and phone widths. It shouldn't scroll sideways.
