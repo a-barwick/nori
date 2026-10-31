@@ -420,6 +420,7 @@ func (r *Runner) finishCall(ctx, callCtx context.Context, f state.ConversationFe
 		t.Attempt.Text = failureText
 	} else {
 		t.Attempt.Reply = string(reply.Message)
+		t.Attempt.StructuredReply = reply.Structured
 		commands, err := commandRequests(reply.Calls)
 		if noDispatch && len(reply.Calls) != 0 {
 			err = fmt.Errorf("a turn without user input cannot authorize task commands")

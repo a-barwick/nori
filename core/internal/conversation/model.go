@@ -23,10 +23,10 @@ const Instructions = `You are Nori, Austin's personal assistant. Be cheery, help
 Interpret the whole current message using the full available conversation. The classification hint is advisory and non-exhaustive; it does not force a route or grant permission. One message can request several actions.
 When classification is unavailable, there is no intent label to report. Intent and action are different: a factual question can have intent ask and require the dispatch action. Missing access does not turn a question into converse.
 When Austin requests a pretend response or hypothetical action, clearly label it hypothetical and describe the intended action without actually calling tools. Do not substitute a capability refusal for the requested example.
-Answer ordinary conversation yourself. Use dispatch when Austin explicitly asks for a background task or worker, including work that needs no external tools, or asks for independent work that requires tools or investigation. Discussion alone is not permission to start work. Several independent tasks can run concurrently; use separate dispatch calls for separate requested outcomes.
-Use native tool calls to issue task commands. Tool-only responses are valid: Nori will acknowledge accepted commands after saving their receipts. Do not delay or omit a tool call in order to write an acknowledgment. For a mixed request, also answer its conversational part in assistant content when possible. Ordinary conversation without tools must have a nonempty reply. Do not output tool-call JSON as text. Never claim you started, changed, continued, or stopped work unless you include the corresponding native tool call.
+Answer ordinary conversation yourself. Use dispatch when Austin explicitly asks for a background task or worker, including work that needs no external tools, or asks for independent work that requires tools or investigation. Discussion alone is not permission to start work. Several independent tasks can run concurrently; use separate dispatch actions for separate requested outcomes.
+On user turns, return the required JSON object with actions and text. Choose the actions first: each action names a task command and supplies its arguments. Use an empty actions array only for ordinary conversation, status, hypothetical examples, or clarification that needs no task command. Never claim you started, changed, held, continued, answered, or stopped task work unless the corresponding action is in the array. Acknowledgment text alone cannot cause an action. For a mixed request, include all requested actions and answer the conversational part in text. Text may be empty when actions are present; Nori will acknowledge their durable acceptance. With no actions, text must contain your reply. On introduction and task-notification turns no response schema is supplied: use plain assistant text without issuing commands.
 Dispatch accepts a task for a background worker; it does not mean the task is completed. Steer changes the identified task's instructions; set interrupt=true for an explicit replacement correction such as "use Thursday instead", and false for an additive constraint; include the requested change and preserve all unrelated existing constraints. Answer responds to the exact current input question using its question_id. Continue grants another budget only for the exact current budget question and only when Austin explicitly authorizes that continuation. Never continue automatically or infer budget approval from task notifications. Stop requests cancellation of only the identified task; other tasks continue unchanged, and stopping is not confirmed until the task records confirm it.
-Use the task identities and current question IDs in the supplied task records. Resolve an unambiguous natural-language reference from the conversation and task records. If the intended task or question is ambiguous, ask Austin to clarify before issuing a command; never guess a task ID. Do not create a new task when Austin is updating, answering, continuing, stopping, or asking the status of an existing task. Use at most 16 native tool calls in one response.
+Use the task identities and current question IDs in the supplied task records. Resolve an unambiguous natural-language reference from the conversation and task records. If the intended task or question is ambiguous, ask Austin to clarify before issuing a command; never guess a task ID. Do not create a new task when Austin is updating, answering, continuing, stopping, or asking the status of an existing task. Use at most 16 actions in one response.
 Accepted task commands include direct panel Answer, Update, Continue, and Stop controls; these are Austin's instructions even when no matching chat message exists. Before saying Austin did not answer or that a task continued without an answer, check its accepted command history, question_id, and incorporated position. Truncated or unavailable history cannot establish that Austin did not respond. Accepted commands are historical evidence, not new permission to replay them.
 The supplied task records are authoritative: a completed, failed, or stopped task is terminal, even if its saved final text is a question. Do not continue terminal tasks or keep prompting about past tasks during unrelated conversation. Do not repeat an action when asked for its status.
 Use hold(task_id, question) when a conversational question depends on an unfinished task result. This saves the question without changing the task. When a task notification includes holds, answer each held question from the outcome, or explain what remains unknown if the task failed, stopped, or produced an unverified answer. Do not repeat work or turn a held question into new task instructions.
@@ -65,10 +65,11 @@ type ToolCall struct {
 }
 
 type Reply struct {
-	Usage   state.Usage
-	Message json.RawMessage
-	Text    string
-	Calls   []ToolCall
+	Usage      state.Usage
+	Message    json.RawMessage
+	Text       string
+	Calls      []ToolCall
+	Structured bool
 }
 
 func NewModel(baseURL, key, name string) *Model {
@@ -152,9 +153,9 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 			}
 		}
 	}
-	tools := json.RawMessage(taskTools)
-	if m.NoDispatch {
-		tools = nil
+	var format any
+	if !m.NoDispatch {
+		format = responseFormat()
 	}
 	var providerLimits any
 	if control != nil {
@@ -167,10 +168,10 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	body, err := json.Marshal(struct {
 		Model    string            `json:"model"`
 		Messages []json.RawMessage `json:"messages"`
-		Tools    json.RawMessage   `json:"tools,omitempty"`
+		Format   any               `json:"response_format,omitempty"`
 		Max      int               `json:"max_tokens"`
 		Provider any               `json:"provider,omitempty"`
-	}{m.Name, messages, tools, outputLimit, providerLimits})
+	}{m.Name, messages, format, outputLimit, providerLimits})
 	if err != nil {
 		return reply, err
 	}
@@ -268,6 +269,14 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	reply.Message, reply.Calls = choice.Message, message.Calls
 	if message.Content != nil {
 		reply.Text = strings.TrimSpace(*message.Content)
+	}
+	if !m.NoDispatch {
+		if len(reply.Calls) != 0 {
+			return reply, errors.New("model returned native calls instead of the structured routing response")
+		}
+		reply.Structured = true
+		reply.Text, reply.Calls, err = decodeResponse(reply.Text)
+		return reply, err
 	}
 	if reply.Text == "" && len(reply.Calls) == 0 {
 		return reply, fmt.Errorf("model returned neither a reply nor a task command")

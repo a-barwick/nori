@@ -13,21 +13,38 @@ import (
 )
 
 // Exercise the HTTP response -> command transaction -> visible reply boundary
-// with a deterministic tool-only response. Real-model journeys cover dispatch;
+// with a deterministic structured action-only response. Real-model journeys cover dispatch;
 // this fixture does not depend on a model choosing to omit its content.
 func conversationBoundary(ctx context.Context, store *state.Google, taskID string) (map[string]bool, error) {
 	var calls atomic.Int32
+	var mode atomic.Int32
+	var required atomic.Bool
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		calls.Add(1)
-		args, _ := json.Marshal(map[string]string{"task_id": taskID, "question": "What does the result mean?"})
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
-			"finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "content": nil,
-				"tool_calls": []any{map[string]any{"id": "fixture-hold", "type": "function", "function": map[string]any{"name": "hold", "arguments": string(args)}}}},
-		}}})
+		var request struct {
+			ToolChoice string `json:"tool_choice"`
+			Format     struct {
+				Type string `json:"type"`
+			} `json:"response_format"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		required.Store(request.Format.Type == "json_schema" && request.ToolChoice == "")
+		if mode.Load() == 2 {
+			_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"I started that task."}}]}`))
+			return
+		}
+		actions := []any{map[string]any{"name": "hold", "arguments": map[string]string{"task_id": taskID, "question": "What does the result mean?"}}}
+		text := ""
+		if mode.Load() == 1 {
+			actions, text = []any{}, "4"
+		}
+		content, _ := json.Marshal(map[string]any{"actions": actions, "text": text})
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": string(content)}}}})
+
 	}))
 	defer provider.Close()
 	// The advisory classifier is unavailable locally; no outbound calls occur.
@@ -54,7 +71,7 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 	}
 	want := "I've saved your question to answer when the task has an outcome."
 	ack := len(first.Messages) == 2 && first.Messages[1].Text == want
-	native := len(history) == 1 && len(history[0].Attempt.Actions) == 1 && history[0].Attempt.Actions[0].Status == "accepted" && history[0].Attempt.Text == ""
+	structured := len(history) == 1 && len(history[0].Attempt.Actions) == 1 && history[0].Attempt.Actions[0].Status == "accepted" && history[0].Attempt.Text == "" && history[0].Attempt.StructuredReply
 	protocol := len(history) == 1 && len(history[0].Protocol) == 4
 	if protocol {
 		var message map[string]any
@@ -77,12 +94,37 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 	if err != nil {
 		return nil, err
 	}
-	return map[string]bool{
-		"tool-only native response admits a durable command":                         native && len(run.Holds) == 1,
-		"tool-only command publishes a receipt acknowledgment":                       ack,
-		"saved protocol retains native response and visible acknowledgment":          protocol,
-		"tool-only command replay after restart makes no new provider call or reply": calls.Load() == 1 && len(second.Messages) == len(first.Messages) && len(second.Traces) == 1,
-	}, nil
+	report := map[string]bool{
+		"structured response admits a durable command":                                 structured && len(run.Holds) == 1,
+		"action-only command publishes a receipt acknowledgment":                       ack,
+		"saved protocol retains structured response and visible acknowledgment":        protocol,
+		"action-only command replay after restart makes no new provider call or reply": calls.Load() == 1 && len(second.Messages) == len(first.Messages) && len(second.Traces) == 1,
+	}
+	mode.Store(1)
+	if _, err := runner.HandleInput(ctx, conversation.Input{ID: uuid.NewString(), Message: "What is 2 + 2?"}); err != nil {
+		return nil, err
+	}
+	if err := runner.Process(ctx); err != nil {
+		return nil, err
+	}
+	chat, err := runner.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	report["required routing permits ordinary conversation without task commands"] = required.Load() && chat.Messages[len(chat.Messages)-1].Text == "4" && len(chat.Traces[0].Actions) == 0 && len(chat.Runs) == len(first.Runs)
+	mode.Store(2)
+	if _, err := runner.HandleInput(ctx, conversation.Input{ID: uuid.NewString(), Message: "Start another fixture task."}); err != nil {
+		return nil, err
+	}
+	if err := runner.Process(ctx); err != nil {
+		return nil, err
+	}
+	missing, err := runner.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	report["provider omission of required routing cannot publish a false start acknowledgment"] = missing.Traces[0].Status == "error" && missing.Messages[len(missing.Messages)-1].Text != "I started that task." && len(missing.Runs) == len(first.Runs) && calls.Load() == 3
+	return report, nil
 }
 
 type unavailableClassifier struct{ base string }

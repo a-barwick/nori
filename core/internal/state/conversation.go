@@ -51,6 +51,7 @@ type ConversationAction struct {
 	Command   Command   `json:"command" firestore:"command"`
 }
 type ConversationAttempt struct {
+	StructuredReply  bool                 `firestore:"structured_reply,omitempty"`
 	ID               string               `firestore:"id"`
 	TurnID           string               `firestore:"turn_id"`
 	Number           int                  `firestore:"number"`

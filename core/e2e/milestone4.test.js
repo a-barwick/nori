@@ -67,7 +67,7 @@ async function start(request) {
   expect(attempt?.model).toBe("meta/muse-spark-1.3");
   expect(attempt.actions.filter((action) => action.status === "accepted" && action.command.kind === "start" && action.command.run_id === added[0].id)).toHaveLength(1);
   const reply = snapshot.messages.find((message) => message.role === "assistant" && message.turn_id === attempt.turn_id && !message.run_id);
-  expect(reply?.text.trim().length, "Native tool-only responses still publish an acknowledgment after acceptance.").toBeGreaterThan(0);
+  expect(reply?.text.trim().length, "Action-only responses still publish an acknowledgment after acceptance.").toBeGreaterThan(0);
   await post("turn", input, 202);
   expect((await settled()).runs.filter((run) => !before.has(run.id)).map((run) => run.id), "Replaying the accepted chat input must not dispatch twice.").toEqual([added[0].id]);
   return added[0].id;
@@ -149,7 +149,7 @@ journey("request_input persists across reload and one exact answer selects the o
     return result;
   };
   try {
-    id = await start(`Open http://127.0.0.1:18080/bills and report the selected bill's account and dollar amount for bill request ${prefix}. ` +
+    id = await start("Open http://127.0.0.1:18080/bills and report the selected bill's account and dollar amount. " +
       "Before opening the page, use request_input to ask whether I mean Home or Studio, and wait for my answer. After my selection, use browser_navigate to read the actual bill page, then complete with only the selected account's observed bill details and cite the tool evidence. Do not use shell commands or change any data.");
     const paused = find(await until(session, (value) => waiting(find(value, id)), "a durable Home or Studio question"), id);
     expect(paused.question.text).toMatch(/Home/i);
@@ -199,7 +199,7 @@ journey("a held shorts answer waits for the corrected Tucson weather fixture res
     return result;
   };
   try {
-    id = await start(`Read the synthetic Saturday weather fixture for city request ${prefix} and report the city, high, low, and conditions from the actual page. ` +
+    id = await start("Read the synthetic Saturday weather fixture and report the city, high, low, and conditions from the actual page. " +
       "First use request_input to ask which city I want, and wait for my answer. The fixture URLs are http://127.0.0.1:18080/phoenix for Phoenix and http://127.0.0.1:18080/tucson for Tucson. After I answer, use browser_navigate on the selected URL, then complete with concise observed weather details and cite the saved evidence. Do not use existing weather knowledge, run shell commands, or change any data.");
     const paused = find(await until(session, (value) => waiting(find(value, id)), "the weather city question"), id);
     await turn(`When existing task ${id} is finished, answer whether I should wear shorts for the Saturday weather in its final result, and name the city and high temperature supporting your advice. Hold this question for that task; do not change its instructions or answer its city question, and start no new task.`);
