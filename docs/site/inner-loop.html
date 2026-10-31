@@ -10,7 +10,7 @@
 <body>
 <h1>Inner loop</h1>
 <p class="lede">One loop per task: call the model, run the tools it asks for, save the results, repeat.</p>
-<p>Each task gets one workflow (<code>nori-task-v2</code>).</p><ul class="pts"><li>The workflow body in <span class="mono">task/workflow.go</span> contains only deterministic transitions.</li><li>Every model call, tool call and Firestore write is an activity with its own timeout.</li><li>Signals (<code>task-command</code>) only wake the workflow. It then reads commands from Firestore by position and incorporates each one exactly once.</li></ul>
+<p>On main, each task gets one workflow (<code>nori-task-v2</code>).</p><ul class="pts"><li>The workflow body in <span class="mono">task/workflow.go</span> contains only deterministic transitions.</li><li>Every model call, tool call and Firestore write is an activity with its own timeout.</li><li>Signals (<code>task-command</code>) only wake the workflow. It then reads commands from Firestore by position and incorporates each one exactly once.</li></ul>
   <div class="card">
     <div class="flow">
       <div class="node inner"><b>Context activity</b><small>Quick profile, 15s. Loads the original request into replayable workflow state.</small></div>
@@ -66,38 +66,26 @@
       <ul class="pts note"><li>The worker uses pinned deployment versions (<code>TEMPORAL_BUILD_ID</code> per release), and parked tasks resume on a compatible version.</li><li>It runs up to 4 activities at a time and exits cleanly when the project pauses.</li><li>In request-driven mode, each Cloud Tasks wake runs a worker for one bounded slice of up to 240s and hands remaining work to the next wake.</li></ul>
     </div>
     <div class="card designed">
-      <h3 style="margin-top:0">Completion, as designed <a href="completion.html" style="font-size:12px;font-weight:600">full page</a> <span class="tag design">designed · milestone 4</span></h3>
-      <div class="flow">
-        <div class="node designed-node"><b><code>complete(answer, evidence, unmet)</code></b><small>Must be the only call in its response. A plain text answer no longer finishes a task.</small></div>
-        <div class="arrow">↓</div>
-        <div class="node designed-node"><b>Execution-record checks</b><small>Checks that there are no unread steers, every call is paired, evidence references resolve, and claimed effects are confirmed.</small></div>
-        <div class="arrow">↓</div>
-        <div class="node designed-node"><b>Jev completeness check</b><small>Asks “Does this satisfy every instruction?” A yes needs at least 0.8 confidence.</small></div>
-        <div class="arrow">↓</div>
-        <div class="branch">
-          <div class="node designed-node"><b>Read-only task</b><small>Retries up to twice with corrections, then publishes if the task is still current.</small></div>
-          <div class="node designed-node"><b>Wrote or sent something</b><small>Asks the user. An uncertain write is never repeated automatically.</small></div>
-        </div>
-      </div>
-      <p class="note" style="margin-top:10px">Also designed: <code>request_work</code>, which creates subtasks whose cost rolls up to the
-      parent's budget, and safe interruption of model calls and reads. Writes always finish first.</p>
+      <h3 id="completion-as-designed" style="margin-top:0">Completion in milestone 4 <a href="completion.html" style="font-size:12px;font-weight:600">full page</a> <span class="tag design">PR #30 · not merged</span></h3>
+      <p><code>complete(answer, evidence, unmet)</code> proposes an answer. <a href="completion.html">Record checks and Jev verification</a> determine whether it can finish.</p>
+      <p>PR #30 uses <code>nori-task-v3</code>, <code>request_input</code> and saved history references. Explicit corrections can interrupt model calls and eligible reads; writes finish first.</p>
+      <p><code>request_work</code> remains planned for milestone 7.</p>
     </div>
   </div>
+<section class="designed"><h2>Failure handling in milestone 4</h2>
+<div class="card"><table><tr><th>Outcome</th><th>Behavior</th></tr>
+<tr><td>A tool returns a failure</td><td>The task receives the saved result and can ask for direction.</td></tr>
+<tr><td>The task fails</td><td>Report the failure and recorded operations. Wait for the user; do not re-issue it automatically.</td></tr>
+<tr><td>A write has an uncertain outcome</td><td>Preserve the operation record and ask for direction before another attempt.</td></tr>
+</table></div></section>
 <section><h2>When a tool fails</h2>
-<p>Today a nonzero shell exit reaches the model, but a transport error ends the task. The plan is for every error to come back as a tool result, with retries set by what the tool does.<span class="tag design">designed</span></p>
+<p>On main, a nonzero shell exit reaches the model, but a transport error ends the task. The broader action policy remains planned beyond milestone 4.<span class="tag design">designed</span></p>
 <div class="card designed"><table class="tall">
 <tr><th>Tool type</th><th>Temporary failure</th><th>Outcome unknown</th></tr>
 <tr><td>Read</td><td>Runtime retries within limits.</td><td>Safe to retry.</td></tr>
 <tr><td>Reversible write</td><td>Retry only with the same operation ID and duplicate protection.</td><td>Check the provider before any repeat.</td></tr>
 <tr><td>Sensitive send or purchase</td><td>Ask the user first.</td><td>Check safely, then ask the user.</td></tr>
 </table></div></section>
-<details class="more"><summary>How other systems deliver mid-run input</summary>
-<p>Nori collects steers at tool boundaries, and the runtime owns the timing.</p>
-<table class="tall"><tr><th>Mode</th><th>What happens</th><th>Examples</th></tr>
-<tr><td>Steer</td><td>Input joins the current turn at a safe boundary.</td><td>Codex Enter, Kiro, Claude Code, OpenClaw default</td></tr>
-<tr><td>Collect</td><td>Queued inputs are delivered together.</td><td>pydantic-deepagents, OpenClaw collect</td></tr>
-<tr><td>Follow-up</td><td>Input waits until the turn finishes.</td><td>Codex Tab, LangGraph enqueue</td></tr>
-<tr><td>Interrupt</td><td>Execution stops and progress is kept.</td><td>LangGraph interrupt</td></tr>
-<tr><td>Rollback</td><td>Execution stops and recorded progress is discarded. External effects aren't undone.</td><td>LangGraph rollback</td></tr></table></details>
+
 </body>
 </html>
