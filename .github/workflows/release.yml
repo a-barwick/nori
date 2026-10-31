@@ -100,6 +100,8 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           platforms: linux/amd64
+          provenance: false
+          sbom: false
           push: true
           tags: ${{ env.NORI_BUILD_REGION }}-docker.pkg.dev/${{ env.NORI_GCP_PROJECT }}/nori-poc/${{ matrix.image }}:${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.image }}
@@ -120,6 +122,7 @@ jobs:
         with:
           name: image-${{ matrix.image }}
           path: release-artifacts/*.txt
+          overwrite: true
           retention-days: 7
           if-no-files-found: error
       - name: Remove source map upload token
@@ -149,6 +152,7 @@ jobs:
         with:
           name: computer-agent
           path: release-artifacts/computer-agent
+          overwrite: true
           retention-days: 7
           if-no-files-found: error
 
@@ -163,8 +167,13 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
+          pattern: image-*
           path: release-artifacts
           merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: computer-agent
+          path: release-artifacts
       - name: Create immutable release manifest
         env:
           RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
@@ -180,11 +189,13 @@ jobs:
         with:
           name: release-manifest
           path: release-artifacts/manifest.json
+          overwrite: true
           retention-days: 30
           if-no-files-found: error
 
   deploy:
     needs: [source, manifest]
+    if: always() && needs.manifest.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 75
     concurrency:
@@ -241,8 +252,14 @@ jobs:
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         if: steps.current.outputs.deploy == 'true'
       - name: Deploy sandbox, exercise browser, and stop compute
+        id: sandbox
+        timeout-minutes: 32
         if: steps.current.outputs.deploy == 'true'
         run: python3 core/infrastructure/release/release.py deploy --manifest release-artifacts/manifest.json --computer release-artifacts/computer-agent --environment sandbox --smoke full
+      - name: Stop sandbox compute after interruption
+        if: (failure() || cancelled()) && steps.sandbox.outcome != '' && steps.sandbox.outcome != 'skipped'
+        timeout-minutes: 10
+        run: python3 core/infrastructure/release/release.py shutdown --environment sandbox
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         if: steps.current.outputs.deploy == 'true'
         with:
@@ -250,13 +267,20 @@ jobs:
           project_id: ${{ env.NORI_GCP_PROJECT }}
           service_account: nori-ci-deploy@${{ env.NORI_GCP_PROJECT }}.iam.gserviceaccount.com
       - name: Deploy production, check health, and stop compute
+        id: production
+        timeout-minutes: 32
         if: steps.current.outputs.deploy == 'true'
         run: python3 core/infrastructure/release/release.py deploy --manifest release-artifacts/manifest.json --computer release-artifacts/computer-agent --environment production --smoke health
+      - name: Stop production compute after interruption
+        if: (failure() || cancelled()) && steps.production.outcome != '' && steps.production.outcome != 'skipped'
+        timeout-minutes: 10
+        run: python3 core/infrastructure/release/release.py shutdown --environment production
       - name: Preserve sanitized deployment reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: deployment-reports
           path: release-artifacts/deployment-*.json
+          overwrite: true
           retention-days: 30
           if-no-files-found: ignore

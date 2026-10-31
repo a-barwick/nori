@@ -75,9 +75,19 @@ The `release-manifest` and `deployment-reports` workflow artifacts identify the
 commit, immutable images, binary checksum, verification, shutdown, and failure.
 If failure occurs before execution admission, deployment attempts restoration of
 the previous application version. After admission it preserves state and pauses;
-it does not roll back task history or external actions. Rerun failed jobs only
-when their artifacts and GitHub run attempt match; rerun the full workflow to
-build a new release attempt.
+it does not roll back task history or external actions. Use **Re-run all jobs**
+to build a new release attempt; retrying only a deployment job would mix artifacts
+from the previous attempt and is rejected. If auto-merge succeeds but release
+dispatch fails, use **Run workflow** on `Release` for `main`.
+
+Sandbox is dedicated to synthetic validation. Before a retry it may resume
+outstanding validation work for up to two minutes, then pause and recheck. If it
+still cannot settle, inspect the sandbox task and send a targeted Stop before
+retrying; production work is never resumed by this recovery path. Cancelled or
+failed deploy steps have a separate shutdown step. Force-cancelling the entire
+run or losing its runner can bypass cleanup: inspect native queues, worker
+requests, and the computer before resuming or retrying. Do not delete a Terraform
+lock until its owning operation is confirmed stopped.
 
 Bootstrap Terraform in `release/terraform` owns GitHub Workload Identity
 Federation, scoped existing CI identities, and native backup schedules. Its GCS

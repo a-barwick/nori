@@ -458,7 +458,7 @@ resource "google_project_iam_member" "sandbox_firestore" {
 resource "google_project_iam_custom_role" "worker_queue" {
   role_id     = "noriCiWorkerQueue"
   title       = "Nori CI worker queue fencing and registration"
-  permissions = ["cloudtasks.queues.get", "cloudtasks.queues.getIamPolicy", "cloudtasks.queues.pause", "cloudtasks.queues.resume", "cloudtasks.tasks.list", "cloudtasks.tasks.get", "cloudtasks.tasks.create", "cloudtasks.tasks.run"]
+  permissions = ["cloudtasks.queues.get", "cloudtasks.queues.getIamPolicy", "cloudtasks.queues.pause", "cloudtasks.queues.resume", "cloudtasks.tasks.list", "cloudtasks.tasks.get", "cloudtasks.tasks.create", "cloudtasks.tasks.run", "cloudtasks.tasks.delete"]
 }
 resource "google_cloud_tasks_queue_iam_member" "worker_queue" {
   for_each = {

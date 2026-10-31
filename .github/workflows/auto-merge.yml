@@ -27,6 +27,7 @@ jobs:
         env:
           TRUSTED_USERS: ${{ vars.NORI_AUTO_MERGE_USERS }}
         with:
+          retries: 3
           script: |
             const run = context.payload.workflow_run;
             const repo = context.repo;

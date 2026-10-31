@@ -212,8 +212,11 @@ def deploy_image(component, value):
 
 def warm_worker(build_id, workers, config, request_id, record):
     """One tracked request registers the SDK and returns only after its drain."""
+    def registered(info):
+        types = {q.get("type") for q in info.get("taskQueuesInfos", []) if q.get("name") == poc.TASK_QUEUE}
+        return {"TASK_QUEUE_TYPE_WORKFLOW", "TASK_QUEUE_TYPE_ACTIVITY"}.issubset(types)
     info = poc.version_info(build_id, missing_ok=True) or {}
-    if any(queue.get("name") == poc.TASK_QUEUE for queue in info.get("taskQueuesInfos", [])):
+    if registered(info):
         return
     queue = workers["worker_wake_queue"]
     root = poc.production_workers(workers)[build_id]
@@ -236,6 +239,12 @@ def warm_worker(build_id, workers, config, request_id, record):
             task = poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True)
             finished = task is None
             attempt = (task or {}).get("lastAttempt", {})
+            code = attempt.get("responseStatus", {}).get("code", 0)
+            if attempt.get("responseTime") and code not in (0, 7):
+                # This is our registration-only task, which cannot execute user
+                # work. Remove its completed failed delivery so pause is usable.
+                poc.api("DELETE", "https://cloudtasks.googleapis.com/v2/" + name)
+                raise RuntimeError(f"Worker registration failed (delivery code {code}); its completed request was removed")
             # A new invoker binding can lag Terraform completion. Only retry a
             # completed permission denial; never overlap an admitted request.
             if (attempt.get("responseTime") and attempt.get("responseStatus", {}).get("code") == 7 and
@@ -247,10 +256,13 @@ def warm_worker(build_id, workers, config, request_id, record):
                 retry_after = time.monotonic() + retry_delay
         if finished:
             info = poc.version_info(build_id, missing_ok=True) or {}
-            if any(q.get("name") == poc.TASK_QUEUE for q in info.get("taskQueuesInfos", [])):
+            if registered(info):
                 return
         time.sleep(2)
-    raise RuntimeError("Worker registration request did not finish; pause must verify drain")
+    task = poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True)
+    if task and task.get("lastAttempt", {}).get("responseTime"):
+        poc.api("DELETE", "https://cloudtasks.googleapis.com/v2/" + name)
+    raise RuntimeError("Worker registration did not finish; completed attempts removed, active requests must drain")
 
 
 def worker_url(build_id):
@@ -346,7 +358,32 @@ def github_identity(candidate):
         require(os.environ.get(key) == value, "Release identity mismatch: " + key)
     require(os.environ.get("GITHUB_EVENT_NAME") in {"push", "workflow_dispatch"}, "Release requires a trusted main event")
     require(candidate["build_id"] == os.environ.get("GITHUB_RUN_ID", "") + "-" + os.environ.get("GITHUB_RUN_ATTEMPT", ""),
-            "Release artifact belongs to a different GitHub run")
+            "Release artifact belongs to a different GitHub run or attempt; use Re-run all jobs")
+
+
+def idle_sandbox(smoke, config, record):
+    """Finish outstanding synthetic work within a bounded validation window."""
+    try:
+        smoke.preflight(config, time.monotonic() + poc.remaining(120))
+        return
+    except smoke.SmokeError as error:
+        if poc.ENVIRONMENT != "sandbox" or not str(error).startswith("Preflight refused:"):
+            raise
+    record(phase="sandbox-recovery")
+    try:
+        poc.unpause(config)
+        end = time.monotonic() + poc.remaining(120)
+        while time.monotonic() < end:
+            try:
+                smoke.preflight(config, min(end, time.monotonic() + poc.remaining(30)))
+                return
+            except smoke.SmokeError as error:
+                if not str(error).startswith("Preflight refused:"):
+                    raise
+            time.sleep(3)
+        raise RuntimeError("Sandbox work did not settle within two minutes; inspect its task and use targeted Stop before retrying")
+    finally:
+        poc.pause(config)
 
 
 def release(candidate, binary, smoke_mode, report_path):
@@ -380,7 +417,7 @@ def release(candidate, binary, smoke_mode, report_path):
                         "iap_service_account": account + "@bot-111549.iam.gserviceaccount.com"}
         # Never interrupt or replay user work to make a release pass. An idle
         # session can be paused automatically; a busy session needs a later run.
-        smoke.preflight(smoke_config, time.monotonic() + poc.remaining(120))
+        idle_sandbox(smoke, smoke_config, record)
         mutating = True
         poc.pause(config)
         before = snapshot(config)
@@ -477,6 +514,8 @@ def main():
     deploy.add_argument("--computer", type=Path, required=True)
     deploy.add_argument("--environment", choices=("sandbox", "production"), required=True)
     deploy.add_argument("--smoke", choices=("full", "health"), required=True)
+    shutdown = commands.add_parser("shutdown", help="Finish compute cleanup after an interrupted GitHub deployment")
+    shutdown.add_argument("--environment", choices=("sandbox", "production"), required=True)
     args = parser.parse_args()
     os.umask(0o077)
     if args.action == "manifest":
@@ -489,6 +528,17 @@ def main():
         require(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", args.build_id), "Invalid worker build ID")
         validate_worker_plan(json.loads(args.plan.read_text()), args.build_id)
         print(json.dumps({"valid": True, "worker_build": args.build_id}))
+    elif args.action == "shutdown":
+        commit = os.environ.get("GITHUB_SHA", "")
+        require(SHA.fullmatch(commit), "Invalid GitHub source commit")
+        github_identity({"commit": commit, "build_id": os.environ.get("GITHUB_RUN_ID", "") + "-" + os.environ.get("GITHUB_RUN_ATTEMPT", "")})
+        os.environ["NORI_ENVIRONMENT"] = args.environment
+        global poc
+        poc = load_module("nori_poc", ROOT.parent / "poc/poc.py")
+        os.environ["NORI_OPERATION_DEADLINE"] = str(time.time() + 540)
+        init_backends()
+        temporal_key()
+        poc.pause(poc.config())
     else:
         candidate = validate_manifest(json.loads(args.manifest.read_text()))
         github_identity(candidate)
@@ -497,7 +547,6 @@ def main():
         require(hashlib.sha256(args.computer.read_bytes()).hexdigest() == candidate["computer_sha256"],
                 "Computer artifact checksum mismatch")
         os.environ["NORI_ENVIRONMENT"] = args.environment
-        global poc
         poc = load_module("nori_poc", ROOT.parent / "poc/poc.py")
         signal.signal(signal.SIGTERM, cancelled)
         signal.signal(signal.SIGINT, cancelled)

@@ -162,7 +162,9 @@ type registrationWorkflow struct {
 
 func (r *registrationWorkflow) ExecuteWorkflow(workflow.Context, *interceptor.ExecuteWorkflowInput) (any, error) {
 	r.guard.unexpected.Store(true)
-	return nil, fmt.Errorf("registration cannot execute workflows")
+	// Fail only this workflow task if routing is unexpectedly violated; returning
+	// an error here would permanently fail the user's workflow execution.
+	panic("registration cannot execute workflows")
 }
 
 type registrationActivity struct {
