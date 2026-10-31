@@ -195,9 +195,9 @@ jobs:
 
   deploy:
     needs: [source, manifest]
-    if: always() && needs.manifest.result == 'success'
+    if: needs.manifest.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 85
     concurrency:
       group: nori-live-deployment
       cancel-in-progress: false
@@ -259,7 +259,7 @@ jobs:
       - name: Stop sandbox compute after interruption
         if: (failure() || cancelled()) && steps.sandbox.outcome != '' && steps.sandbox.outcome != 'skipped'
         timeout-minutes: 10
-        run: python3 core/infrastructure/release/release.py shutdown --environment sandbox
+        run: python3 core/infrastructure/release/release.py shutdown --environment sandbox --report release-artifacts/deployment-sandbox.json
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         if: steps.current.outputs.deploy == 'true'
         with:
@@ -274,7 +274,7 @@ jobs:
       - name: Stop production compute after interruption
         if: (failure() || cancelled()) && steps.production.outcome != '' && steps.production.outcome != 'skipped'
         timeout-minutes: 10
-        run: python3 core/infrastructure/release/release.py shutdown --environment production
+        run: python3 core/infrastructure/release/release.py shutdown --environment production --report release-artifacts/deployment-production.json
       - name: Preserve sanitized deployment reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

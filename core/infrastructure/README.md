@@ -84,8 +84,10 @@ Sandbox is dedicated to synthetic validation. Before a retry it may resume
 outstanding validation work for up to two minutes, then pause and recheck. If it
 still cannot settle, inspect the sandbox task and send a targeted Stop before
 retrying; production work is never resumed by this recovery path. Cancelled or
-failed deploy steps have a separate shutdown step. Force-cancelling the entire
-run or losing its runner can bypass cleanup: inspect native queues, worker
+failed deploy steps have a separate shutdown step only if that release began
+changing the environment. A refused busy-production preflight leaves it alone.
+[GitHub allows at most five minutes for normal cancellation cleanup](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation),
+so a slow drain, force-cancelling the run, or losing its runner can bypass cleanup: inspect native queues, worker
 requests, and the computer before resuming or retrying. Do not delete a Terraform
 lock until its owning operation is confirmed stopped.
 

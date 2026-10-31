@@ -76,8 +76,19 @@ def run(args, **kwargs):
 
 
 def write_json(path, value):
-    path.write_text(json.dumps(value, indent=2) + "\n")
-    path.chmod(0o600)
+    # Recovery must see either the complete old report or the complete new one.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix="." + path.name + ".", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(value, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def image(value, component):
@@ -265,6 +276,19 @@ def warm_worker(build_id, workers, config, request_id, record):
     raise RuntimeError("Worker registration did not finish; completed attempts removed, active requests must drain")
 
 
+def cleanup_registration(report, workers):
+    """Remove only this release's settled request; never discard an active one."""
+    name = report.get("registration_task")
+    if not name:
+        return
+    expected = workers["worker_wake_queue"] + "/tasks/nori-release-" + report["build_id"]
+    require(name == expected, "Registration cleanup task does not belong to this release and environment")
+    url = "https://cloudtasks.googleapis.com/v2/" + name
+    task = poc.api("GET", url, allow404=True)
+    if task and task.get("lastAttempt", {}).get("responseTime"):
+        poc.api("DELETE", url, allow404=True)
+
+
 def worker_url(build_id):
     prefix = "nori-task" if poc.ENVIRONMENT == "production" else "nori-sb"
     return f"https://{prefix}-{build_id}-8273801370.us-west1.run.app"
@@ -369,7 +393,7 @@ def idle_sandbox(smoke, config, record):
     except smoke.SmokeError as error:
         if poc.ENVIRONMENT != "sandbox" or not str(error).startswith("Preflight refused:"):
             raise
-    record(phase="sandbox-recovery")
+    record(phase="sandbox-recovery", sandbox_recovery=True)
     try:
         poc.unpause(config)
         end = time.monotonic() + poc.remaining(120)
@@ -391,11 +415,11 @@ def release(candidate, binary, smoke_mode, report_path):
     os.environ["NORI_OPERATION_DEADLINE"] = str(end - RECOVERY_SECONDS)
     report = {"commit": candidate["commit"], "candidate": candidate, "environment": poc.ENVIRONMENT,
               "build_id": candidate["build_id"], "phase": "preflight", "result": "pending"}
-    config, before, mutating, changed, admitted, error = None, None, False, False, False, None
+    config, before, changed, admitted, error = None, None, False, False, None
 
     def record(**values):
+        write_json(report_path, {**report, **values})
         report.update(values)
-        write_json(report_path, report)
         print(json.dumps({"phase": report["phase"], "result": report["result"], "report": str(report_path)}), flush=True)
 
     def evidence(event):
@@ -418,7 +442,7 @@ def release(candidate, binary, smoke_mode, report_path):
         # Never interrupt or replay user work to make a release pass. An idle
         # session can be paused automatically; a busy session needs a later run.
         idle_sandbox(smoke, smoke_config, record)
-        mutating = True
+        record(mutating=True)
         poc.pause(config)
         before = snapshot(config)
         smoke.preflight(smoke_config, time.monotonic() + poc.remaining(120))
@@ -466,7 +490,12 @@ def release(candidate, binary, smoke_mode, report_path):
         os.environ["NORI_OPERATION_DEADLINE"] = str(end)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        if mutating:
+        if report.get("mutating") is True or report.get("sandbox_recovery") is True:
+            try:
+                cleanup_registration(report, workers)
+            except Exception as failure:
+                error = error or failure
+                report.update(result="failed", registration_cleanup_failure=safe_error(failure))
             try:
                 report["phase"] = "shutdown"
                 poc.pause(config)
@@ -516,6 +545,7 @@ def main():
     deploy.add_argument("--smoke", choices=("full", "health"), required=True)
     shutdown = commands.add_parser("shutdown", help="Finish compute cleanup after an interrupted GitHub deployment")
     shutdown.add_argument("--environment", choices=("sandbox", "production"), required=True)
+    shutdown.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     os.umask(0o077)
     if args.action == "manifest":
@@ -529,16 +559,40 @@ def main():
         validate_worker_plan(json.loads(args.plan.read_text()), args.build_id)
         print(json.dumps({"valid": True, "worker_build": args.build_id}))
     elif args.action == "shutdown":
-        commit = os.environ.get("GITHUB_SHA", "")
-        require(SHA.fullmatch(commit), "Invalid GitHub source commit")
-        github_identity({"commit": commit, "build_id": os.environ.get("GITHUB_RUN_ID", "") + "-" + os.environ.get("GITHUB_RUN_ATTEMPT", "")})
+        if not args.report.exists():
+            print(json.dumps({"shutdown": "skipped", "reason": "No deployment report"}))
+            return
+        report = json.loads(args.report.read_text())
+        candidate = validate_manifest(report.get("candidate", {}))
+        github_identity(candidate)
+        require(report.get("environment") == args.environment, "Shutdown report belongs to a different environment")
+        require(report.get("commit") == candidate["commit"] and report.get("build_id") == candidate["build_id"],
+                "Shutdown report release identity differs from its candidate")
+        if report.get("mutating") is not True and report.get("sandbox_recovery") is not True:
+            print(json.dumps({"shutdown": "skipped", "reason": "Deployment did not mutate this environment"}))
+            return
         os.environ["NORI_ENVIRONMENT"] = args.environment
         global poc
         poc = load_module("nori_poc", ROOT.parent / "poc/poc.py")
         os.environ["NORI_OPERATION_DEADLINE"] = str(time.time() + 540)
         init_backends()
         temporal_key()
-        poc.pause(poc.config())
+        config, workers = poc.config(), poc.temporal_config()
+        error = None
+        try:
+            cleanup_registration(report, workers)
+        except Exception as failure:
+            error = failure
+            report["registration_cleanup_failure"] = safe_error(failure)
+        try:
+            poc.pause(config)
+            report["compute_stopped"] = True
+        except Exception as failure:
+            error = error or failure
+            report["cleanup_failure"] = safe_error(failure)
+        write_json(args.report, report)
+        if error:
+            raise RuntimeError("Deployment shutdown incomplete: " + safe_error(error))
     else:
         candidate = validate_manifest(json.loads(args.manifest.read_text()))
         github_identity(candidate)
