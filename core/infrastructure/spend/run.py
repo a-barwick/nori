@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run feature work with a native capped key and existing Firestore budget."""
+"""Run feature work with the shared Firestore budget and selected provider keys."""
 import argparse
 import json
 import os
@@ -49,6 +49,10 @@ def main():
             child.pop(name)
     child.update(NORI_SPEND_SCOPE=scope, NORI_SPEND_PROFILE="feature", NORI_SPEND_DATABASE=keys.DATABASE,
                  OPENROUTER_BASE_URL="https://openrouter.ai/api/v1", OPENROUTER_API_KEY=key)
+    # Direct OpenAI calls use Nori's atomic reservations in the same scope.
+    # This project key is not a native per-chat cap for arbitrary child commands.
+    if env.get("OPENAI_API_KEY"):
+        child["OPENAI_API_KEY"] = env["OPENAI_API_KEY"]
     if args.sandbox:
         child["NORI_SPEND_KEY_SECRET_VERSION"] = keys.publish_sandbox(scope, key)
     return subprocess.call(command, env=child)

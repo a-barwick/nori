@@ -27,7 +27,7 @@ func completionModelConfig(wait bool) *genai.GenerateContentConfig {
 		{Name: "browser_screenshot", Description: "Capture the current browser page as a private PNG artifact for Austin. Returns only an artifact reference."},
 	}}}}
 	if wait {
-		config.Tools[0].FunctionDeclarations = append(config.Tools[0].FunctionDeclarations, &genai.FunctionDeclaration{Name: "request_input", Description: "Durably pause this task when Austin must clarify or supply information. Use one question; do not combine with other tools.", Parameters: params("question")})
+		config.Tools[0].FunctionDeclarations = append(config.Tools[0].FunctionDeclarations, &genai.FunctionDeclaration{Name: "request_input", Description: "Durably pause this task when Austin must clarify or supply information. Include the observed failure or missing prerequisite so the question is self-contained. Use one question; do not combine with other tools.", Parameters: params("question")})
 	}
 	return config
 }

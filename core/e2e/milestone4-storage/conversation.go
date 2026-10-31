@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -26,27 +27,38 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 		}
 		calls.Add(1)
 		var request struct {
-			ToolChoice string `json:"tool_choice"`
-			Provider   struct {
-				RequireParameters bool `json:"require_parameters"`
-			} `json:"provider"`
-			Format struct {
+			Model      string          `json:"model"`
+			ToolChoice string          `json:"tool_choice"`
+			Provider   json.RawMessage `json:"provider"`
+			Effort     string          `json:"reasoning_effort"`
+			Tier       string          `json:"service_tier"`
+			Max        int             `json:"max_completion_tokens"`
+			Store      bool            `json:"store"`
+			Cache      struct {
+				Mode string `json:"mode"`
+			} `json:"prompt_cache_options"`
+			Messages []map[string]any `json:"messages"`
+			Format   struct {
 				Type string `json:"type"`
 			} `json:"response_format"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&request)
-		required.Store(request.Format.Type == "json_schema" && request.ToolChoice == "" && request.Provider.RequireParameters)
-		if mode.Load() == 2 {
-			_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"I started that task."}}]}`))
-			return
+		valid := request.Model == "gpt-6.1-sol" && request.Format.Type == "json_schema" && request.ToolChoice == "" && len(request.Provider) == 0 && request.Effort == "low" && request.Tier == "default" && request.Max == 4096 && !request.Store && request.Cache.Mode == "explicit"
+		for _, message := range request.Messages {
+			valid = valid && len(message) == 2 && message["role"] != "tool"
 		}
+		required.Store(valid)
+
 		actions := []any{map[string]any{"name": "hold", "arguments": map[string]string{"task_id": taskID, "question": "What does the result mean?"}}}
 		text := ""
 		if mode.Load() == 1 {
 			actions, text = []any{}, "4"
 		}
 		content, _ := json.Marshal(map[string]any{"actions": actions, "text": text})
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": string(content)}}}})
+		if mode.Load() == 2 {
+			content = []byte("I started that task.")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"model": "gpt-6.1-sol", "service_tier": "default", "usage": map[string]any{"prompt_tokens": 1500, "completion_tokens": 200, "total_tokens": 1700}, "choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": string(content), "reasoning_details": []any{map[string]string{"data": "fixture-private-provider-extension"}}}}}})
 
 	}))
 	defer provider.Close()
@@ -54,7 +66,9 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 	classifier := conversation.NewClassifier("")
 	classifier.Client = &http.Client{Transport: unavailableClassifier{provider.URL}}
 	newRunner := func() *conversation.Runner {
-		return conversation.New(conversation.NewModel(provider.URL, "fixture-only", "meta/muse-spark-1.3"), classifier, &conversation.Tasks{Store: store})
+		model := conversation.NewModel("https://api.openai.com/v1", "fixture-only", "gpt-6.1-sol")
+		model.Client = &http.Client{Transport: localModelTransport{provider.URL}}
+		return conversation.New(model, classifier, &conversation.Tasks{Store: store})
 	}
 	runner := newRunner()
 	input := conversation.Input{ID: uuid.NewString(), Message: "Hold my question for the existing fixture task."}
@@ -98,6 +112,7 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 		return nil, err
 	}
 	report := map[string]bool{
+		"direct OpenAI Sol low request and usage-based cost":                           required.Load() && first.Traces[0].Usage[len(first.Traces[0].Usage)-1].CostStatus == "calculated" && *first.Traces[0].Usage[len(first.Traces[0].Usage)-1].CostUSD == .005,
 		"structured response admits a durable command":                                 structured && len(run.Holds) == 1,
 		"action-only command publishes a receipt acknowledgment":                       ack,
 		"saved protocol retains structured response and visible acknowledgment":        protocol,
@@ -154,4 +169,18 @@ func (t unavailableClassifier) RoundTrip(r *http.Request) (*http.Response, error
 		return nil, err
 	}
 	return http.DefaultTransport.RoundTrip(local)
+}
+
+// Only the fixture transport rewrites the destination. Production still validates
+// and sends the exact api.openai.com URL before reserving paid requests.
+type localModelTransport struct{ base string }
+
+func (t localModelTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	u, err := url.Parse(t.base + "/chat/completions")
+	if err != nil {
+		return nil, err
+	}
+	r.URL, r.Host = u, u.Host
+	return http.DefaultTransport.RoundTrip(r)
 }

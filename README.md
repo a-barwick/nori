@@ -18,15 +18,15 @@ make check   # Go vet and gofmt, then TypeScript and ESLint
 ```
 
 Install web's dependencies first with `cd web && bun install --frozen-lockfile`.
-The local runner reads `OPENROUTER_API_KEY` and `JEV_API_KEY` from the existing
+The local runner reads `OPENAI_API_KEY`, `OPENROUTER_API_KEY` and `JEV_API_KEY` from the existing
 root `.env` by default. `NORI_ENV_FILE` selects an existing configuration file;
 `NORI_TASK_ENV_FILE` selects a separate existing task configuration when needed.
 Neither setting copies or moves credentials. Google Cloud access uses Application Default Credentials.
 Use `make dev NORI_ENV_FILE=/absolute/path/to/the/existing/.env` to select a different
 file or use a worktree without copying credentials. Keep the credential file
 gitignored and mode 600. Required names and optional model settings are in
-[.env.example](.env.example). The default model is `meta/muse-spark-1.3`.
-Austin selected Muse Spark 1.3 for conversation, `jev-latest` for intent hints,
+[.env.example](.env.example). The default conversation model is `gpt-6.1-sol`, low reasoning, through the
+OpenAI platform API at standard tier. Austin selected this for conversation, `jev-latest` for intent hints,
 and `openai/gpt-6.1-terra` through OpenRouter Responses for inner tasks. Agents must preserve these
 choices; the model policy in [AGENTS.md](AGENTS.md) also applies to overrides.
 
@@ -136,14 +136,19 @@ python3 core/infrastructure/spend/run.py --env /absolute/main/.env \
 
 Reuse the same task ID for every command/retry in a chat. `--close` disables its
 native key; the issuer can reopen the same unexpired allowance without resetting
-spend. Keys expire after 24 hours. Nori's OpenRouter adapters reserve
+spend. Keys expire after 24 hours. Nori's OpenAI and OpenRouter adapters reserve
 conservative full request bytes and maximum output in the existing Firestore
 `nori-sandbox` database before dispatch. Atomic reservations share the run and
 daily/monthly budgets across runtime and worker processes. Unknown outcomes
-remain reserved across restarts and calendar resets. Models remain unchanged.
+remain reserved across restarts and calendar resets.
 Controlled requests reserve at the selected models' price ceilings per million
-tokens: Muse $1.25 input/$4.25 output and Terra $1 input/$5 output. Requests
-exclude more expensive endpoints; token usage and reported cost settle the reservation.
+tokens: Sol $2 input/$10 output and Terra $1 input/$5 output. Sol uses standard
+tier and explicit cache mode without cache writes; its $0.10/M cached-input rate
+is applied only to reported cached tokens. Requests above the 272K input threshold
+are refused. OpenAI token usage produces a calculated cost, including reasoning
+output; OpenRouter reports cost. Missing or incompatible usage keeps the full
+reservation. Pricing checked October 31, 2026 against the
+[Sol model reference](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
 Jev remains on its existing direct adapter and does not block budget readiness.
 
 Run `python3 core/infrastructure/spend/e2e.py` for two no-cost native-key lifecycle
@@ -151,6 +156,7 @@ journeys covering retry/cleanup and feature progress grants. External cloud and
 OpenRouter APIs are simulated; these checks do not establish live inference.
 
 Local commands receive these controls through the wrapper. Arbitrary calls made
-with existing shared keys are not intercepted. Native key limits apply to other
-tools given the capped key, but Firestore request reservations apply to Nori's
-adapters only. CLI code review uses the selected subscription route.
+with existing shared keys are not intercepted. OpenRouter native key limits apply to other
+tools given its capped key. Direct OpenAI uses the project key and has no native
+per-chat cap; its budget enforcement is in Nori's adapters. The wrapper passes
+that key only from the main root `.env`, without management credentials. CLI code review uses the selected subscription route.

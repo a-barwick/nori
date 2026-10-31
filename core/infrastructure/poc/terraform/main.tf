@@ -7,6 +7,7 @@ locals {
   database          = coalesce(var.firestore_database, local.production ? "nori-poc" : "nori-sandbox")
   conversation_name = local.production ? "nori-conversation" : "nori-sandbox-conversation"
   conversation_secrets = {
+    OPENAI_API_KEY     = local.production ? "nori-openai-api-key" : "nori-sandbox-openai-api-key"
     OPENROUTER_API_KEY = local.production ? "nori-openrouter-api-key" : "nori-sandbox-openrouter-api-key"
     JEV_API_KEY        = "nori-jev-api-key"
   }
@@ -93,7 +94,7 @@ variable "worker_wake_queue" {
 
 variable "outer_model" {
   type    = string
-  default = "meta/muse-spark-1.3"
+  default = "gpt-6.1-sol"
 }
 
 variable "computer_release_sha256" {
@@ -555,7 +556,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
           NORI_WORKER_WAKE_QUEUE          = var.worker_wake_queue
           NORI_EXECUTION_MODE             = "temporal"
           NORI_AGENT_MODEL                = var.outer_model
-          NORI_AGENT_BASE_URL             = "https://openrouter.ai/api/v1"
+          NORI_AGENT_BASE_URL             = "https://api.openai.com/v1"
           NORI_WAKE_QUEUE                 = google_cloud_tasks_queue.conversation.id
           NORI_WAKE_SERVICE_ACCOUNT       = google_service_account.conversation_wake.email
           NORI_RUNTIME_URL                = var.runtime_invoke_root

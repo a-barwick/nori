@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// Reuse command schemas for Muse's supported structured response format. Its
-// native tool_choice supports only auto, which can omit an intended command.
+// Reuse the runtime's command schemas in one strict action-list response.
+// Validated actions enter the same durable admission and replay path.
 func responseFormat() any {
 	var tools []struct {
 		Function struct {

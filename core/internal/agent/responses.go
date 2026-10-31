@@ -223,15 +223,19 @@ func (s *Service) respond(ctx context.Context, contents []*genai.Content, wait b
 			}
 		}
 	}
+	visibleText := strings.TrimSpace(strings.Join(text, "\n"))
 	if len(calls) == 0 {
-		decision.Answer = strings.TrimSpace(strings.Join(text, "\n"))
+		decision.Answer = visibleText
 	}
 	if len(calls) == 0 && decision.Answer == "" {
 		return decision, errors.New("task model returned no answer")
 	}
 	decision.Calls = calls
-	if decision.Answer != "" {
-		decision.Content.Parts = append(decision.Content.Parts, &genai.Part{Text: decision.Answer})
+	// Preserve user-facing text that accompanies a control call. The exact
+	// provider items remain authoritative for replay; this projection lets an
+	// input question retain its explanation without exposing reasoning.
+	if visibleText != "" {
+		decision.Content.Parts = append(decision.Content.Parts, &genai.Part{Text: visibleText})
 	}
 	return decision, nil
 }

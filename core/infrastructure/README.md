@@ -101,3 +101,9 @@ The first copies are kept until deleted by hand: snapshot
 the export restored into a temporary database with matching counts for runs, steps,
 inputs, attempts, and usage, and the snapshot restored to a ready disk. Files inside
 the restored disk were not checked. The boot disk and sandbox have no scheduled copies.
+
+The outer runtime uses `gpt-6.1-sol` with low reasoning through the OpenAI
+platform API. Before a future deployment, provision the selected environment's
+`nori-openai-api-key` or `nori-sandbox-openai-api-key` Secret Manager version.
+The deployment config references it as `OPENAI_API_KEY`; it does not copy the
+local key or replace the inner worker's OpenRouter credential.

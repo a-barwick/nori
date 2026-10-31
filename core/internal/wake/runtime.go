@@ -32,17 +32,17 @@ func Open(ctx context.Context) (*Runtime, error) {
 	if err := spend.ValidateConfiguration(); err != nil {
 		return nil, err
 	}
-	key, jevKey := os.Getenv("OPENROUTER_API_KEY"), os.Getenv("JEV_API_KEY")
+	key, jevKey := os.Getenv("OPENAI_API_KEY"), os.Getenv("JEV_API_KEY")
 	if strings.TrimSpace(jevKey) == "" {
 		return nil, fmt.Errorf("JEV_API_KEY must be configured in the selected project environment")
 	}
 	if strings.TrimSpace(key) == "" {
-		return nil, fmt.Errorf("OPENROUTER_API_KEY must be configured in the selected project environment")
+		return nil, fmt.Errorf("OPENAI_API_KEY must be configured in the selected project environment")
 	}
-	base := env.Get("NORI_AGENT_BASE_URL", "https://openrouter.ai/api/v1")
+	base := env.Get("NORI_AGENT_BASE_URL", "https://api.openai.com/v1")
 	u, err := url.Parse(base)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, fmt.Errorf("NORI_AGENT_BASE_URL must be an HTTPS API base URL")
+	if err != nil || u.Scheme != "https" || u.Host != "api.openai.com" || u.Path != "/v1" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("NORI_AGENT_BASE_URL must be https://api.openai.com/v1")
 	}
 	project := env.Get("NORI_PROJECT_ID", "bot-111549")
 	store, err := state.NewGoogle(ctx, project, env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
@@ -61,7 +61,7 @@ func Open(ctx context.Context) (*Runtime, error) {
 		return nil, fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
 	}
 	tasks := &conversation.Tasks{Store: store, Client: temporal, Computer: computer.Config{Project: project, Zone: env.Get("COMPUTER_ZONE", "us-central1-a"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer}}
-	model := env.Get("NORI_AGENT_MODEL", "meta/muse-spark-1.3")
+	model := env.Get("NORI_AGENT_MODEL", "gpt-6.1-sol")
 	return &Runtime{Runner: conversation.New(conversation.NewModel(base, key, model), conversation.NewClassifier(jevKey), tasks), Tasks: tasks, Model: model}, nil
 }
 

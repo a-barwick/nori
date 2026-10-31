@@ -125,6 +125,21 @@ func completionBoundaries(ctx context.Context, store *state.Google, id, other st
 		{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: operation.CallID, Name: operation.Name, Args: map[string]any{"url": "http://127.0.0.1/bills"}}}}},
 		{Role: "tool", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: operation.CallID, Name: operation.Name, Response: map[string]any{"text": "DUPLICATE_TOOL_RESULT_SENTINEL"}}}}},
 	}
+	questionHistory := []*genai.Content{{Role: "model", Parts: []*genai.Part{
+		{Text: "PRIVATE_REASONING_SENTINEL", Thought: true},
+		{Text: "The command exited with status 7; the check failed."},
+		{FunctionCall: &genai.FunctionCall{ID: "failed-question", Name: "request_input", Args: map[string]any{"question": "What should happen next?"}}},
+	}}}
+	questionBytes, _ := json.Marshal(questionHistory)
+	questionRef, err := store.AppendHistory(ctx, id, "", questionBytes)
+	if err != nil {
+		return nil, err
+	}
+	question, err := a.InputRef(ctx, task.RefInput{Step: task.Step{RunID: id, Revision: run.Revision}, Ref: questionRef, Index: 0})
+	if err != nil {
+		return nil, err
+	}
+	report["saved input question preserves visible failure explanation without reasoning"] = question.Text == "The command exited with status 7; the check failed.\n\nWhat should happen next?" && question.CallID == "failed-question"
 	procedural, err := makeProposal(id, "complete-procedure", []any{operation.ID}, []any{}, procedure)
 	if err != nil {
 		return nil, err

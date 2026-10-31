@@ -19,6 +19,7 @@ var operationalKeys = map[string]bool{
 	"nori.operation.effect_class": true, "nori.operation.attempt": true, "nori.operation.stop_confirmed": true,
 	"nori.history.bytes": true, "nori.history.blocks": true,
 	"openinference.span.kind": true, "session.id": true,
+	"gen_ai.request.reasoning_effort": true, "gen_ai.request.service_tier": true,
 	"gen_ai.operation.name": true, "gen_ai.provider.name": true, "gen_ai.request.model": true,
 	"gen_ai.usage.input_tokens": true, "gen_ai.usage.output_tokens": true,
 	"gen_ai.usage.cache_read.input_tokens": true, "gen_ai.usage.reasoning.output_tokens": true,

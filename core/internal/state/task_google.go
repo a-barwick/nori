@@ -363,6 +363,12 @@ func (s *Google) Incorporate(ctx context.Context, id string, revision, position 
 		if position != taskPosition(r) || position < r.Incorporated {
 			return ErrSuperseded
 		}
+		// A wake without new commands must not rewrite the task while a user
+		// answers its question. Keep the revision/position fence, but release
+		// the read transaction without contending for an unchanged record.
+		if position == r.Incorporated {
+			return nil
+		}
 		updates := []firestore.Update{{Path: "incorporated", Value: position}}
 		if position > r.Incorporated {
 			if r.Question == nil || r.Question.ResolvedBy != "" || r.Question.Revision != revision {

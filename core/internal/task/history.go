@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go.temporal.io/sdk/activity"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -322,6 +323,25 @@ func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Quest
 		return out, classified(e)
 	}
 	text, _ := call.Args["question"].(string)
+	// A provider may explain a failure in output_text and put only the next
+	// question in request_input. Publish both so the user can make a decision.
+	for i := len(contents) - 1; i >= 0; i-- {
+		content := contents[i]
+		if content == nil || content.Role != "model" {
+			continue
+		}
+		var explanation []string
+		for _, part := range content.Parts {
+			if part != nil && !part.Thought && strings.TrimSpace(part.Text) != "" {
+				explanation = append(explanation, part.Text)
+			}
+		}
+		prefix := strings.TrimSpace(strings.Join(explanation, "\n"))
+		if room := min(4096, 8192-len(text)-5); prefix != "" && prefix != text && room > 0 {
+			text = clip(prefix, room) + "\n\n" + text
+		}
+		break
+	}
 	return state.Question{Kind: "input", Text: text, CallID: call.ID, Revision: in.Revision}, nil
 }
 func (a *Activities) AppendToolResult(ctx context.Context, in AppendResult) (ref string, err error) {

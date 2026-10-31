@@ -17,14 +17,14 @@
   // What the outer model sends, and what it gets back
   const toolFlow = (name, args, saved, note, rejected) => [
     { from: 'Outer model', to: 'Runtime', call: name, source: CODE.commands, note,
-      request: { id: 'call_1', type: 'function', function: { name, arguments: JSON.stringify(args) } } },
+      response: { actions: [{ name, arguments: args }], text: '' } },
     { from: 'Runtime', to: 'Firestore', call: 'task_commands/{id}', source: CODE.state, saved },
-    { from: 'Runtime', to: 'Outer model', call: 'tool result', source: CODE.call,
-      response: { role: 'tool', tool_call_id: 'call_1', content: JSON.stringify({ accepted: true, run_id: saved.run_id, status: 'running', command: { id: saved.id, kind: saved.kind, position: saved.position } }) },
-      other: rejected },
+    { from: 'Runtime', to: 'Firestore', call: 'saved command receipt', source: CODE.call,
+      saved: { command: { id: saved.id, kind: saved.kind, position: saved.position }, run: { id: saved.run_id, status: 'running' } },
+      note: 'Later model context contains historical receipt facts as text. No native tool-result message is sent to Sol.', other: rejected },
   ];
-  const STALE = ['A rejection comes back as a tool result, such as {"error": "question is no longer current"}. The turn itself doesn\'t fail.'];
-  const NOT_OPEN = ['A rejection comes back as a tool result, such as {"error": "task is not open"}. The turn itself doesn\'t fail.'];
+  const STALE = ['A rejection is saved as a command result, such as {"error": "question is no longer current"}. The turn itself doesn\'t fail.'];
+  const NOT_OPEN = ['A rejection is saved as a command result, such as {"error": "task is not open"}. The turn itself doesn\'t fail.'];
 
   // What a button in the task panel sends
   const panelFlow = (body, receipt, other) => ({ from: 'Browser', to: 'Go service', call: 'POST /api/command', source: CODE.http, request: body,
@@ -36,8 +36,8 @@
     saved: { id: `event-${id}`, position: 14, created_at: TIME, event: { id, run_id: TASK, kind, sequence, instruction_revision: 2, ...fields, created_at: TIME } } }];
 
   const askFlow = [
-    { from: 'Inner model', to: 'Worker', call: 'wait_for_input', source: CODE.steps, note: 'It must be the only call in the response.',
-      response: { functionCall: { id: 'call_7', name: 'wait_for_input', args: { question: QUESTION } } } },
+    { from: 'Inner model', to: 'Worker', call: 'request_input', source: CODE.steps, note: 'It must be the only call in the response.',
+      response: { functionCall: { id: 'call_7', name: 'request_input', args: { question: QUESTION } } } },
     { from: 'Worker', to: 'Firestore', call: 'runs/{id}', source: CODE.state, note: 'The record still says running. The question field is what makes it a waiting task.',
       saved: run({ waiting: QUESTION, event_sequence: 1, question: { id: QUESTION_ID, kind: 'input', text: QUESTION, call_id: 'call_7', instruction_revision: 1 } }) },
     ...event(QUESTION_ID, 'needs_input', 1, { text: QUESTION, reason: 'input' }, 'Saved in the same transaction as the run. This starts an outer turn.'),
@@ -47,7 +47,7 @@
     // ---- Contract page: outer loop tools
     dispatch: toolFlow('dispatch', { request: REQUEST }, command('start', { id: TASK, text: REQUEST, position: 1, revision: 1, source_input_ids: ['3f6c…'] }),
       'Every call in a response is validated before any is accepted, up to 16 calls.'),
-    'tool-steer': toolFlow('steer', { run_id: TASK, text: 'After seven, please.' }, command('steer', { text: 'After seven, please.', revision: 2, source_input_ids: ['8d21…'] }),
+    'tool-steer': toolFlow('steer', { run_id: TASK, text: 'After seven, please.', interrupt: false }, command('steer', { text: 'After seven, please.', revision: 2, source_input_ids: ['8d21…'] }),
       'The model has to use the exact task ID from the task records.', NOT_OPEN),
     'tool-answer': toolFlow('answer', { run_id: TASK, question_id: QUESTION_ID, text: 'Saturday.' }, command('answer', { text: 'Saturday.', question_id: QUESTION_ID }),
       'The question ID has to match the task\'s open question.', STALE),
@@ -65,9 +65,9 @@
     // ---- Task lifecycle page: commands
     start: [
       { from: 'Outer loop', to: 'Firestore', call: 'runs/{id}', source: CODE.state, note: 'Only dispatch creates this command. The panel API has no start.',
-        saved: run({ request: REQUEST, temporal: true, protocol_version: 2, revision: 1, position: 1, started_at: TIME }) },
+        saved: run({ request: REQUEST, temporal: true, protocol_version: 2, workflow_version: 3, revision: 1, position: 1, started_at: TIME }) },
       { from: 'Relay', to: 'Temporal', call: 'SignalWithStartWorkflow', source: 'core/internal/task/client.go',
-        request: { workflow_id: `nori-task-${TASK}`, workflow_type: 'nori-task-v2', args: [TASK], signal: 'task-command' } },
+        request: { workflow_id: `nori-task-${TASK}`, workflow_type: 'nori-task-v3', args: [TASK, {}], signal: 'task-command' } },
       { from: 'Workflow', to: 'Inner model', call: 'next model call', source: CODE.workflow, request: { role: 'user', parts: [{ text: REQUEST }] } },
     ],
     steer: [
@@ -81,8 +81,8 @@
       panelFlow({ id: CMD, run_id: TASK, kind: 'answer', text: 'Saturday.', question_id: QUESTION_ID },
         { command: command('answer', { text: 'Saturday.', question_id: QUESTION_ID }), run: run({ revision: 1, position: 2, question: { id: QUESTION_ID, resolved_by: CMD, '…': '…' } }) },
         ['409 “question is no longer current” if the ID doesn\'t match the open question', ...COMMON]),
-      { from: 'Workflow', to: 'Inner model', call: 'tool response', source: CODE.workflow, note: 'It reaches the model as the result of its wait_for_input call. The revision doesn\'t change.',
-        request: { functionResponse: { id: 'call_7', name: 'wait_for_input', response: { answer: 'Saturday.', question_id: QUESTION_ID } } } },
+      { from: 'Workflow', to: 'Inner model', call: 'tool response', source: CODE.workflow, note: 'It reaches the model as the result of its request_input call. The revision doesn\'t change.',
+        request: { functionResponse: { id: 'call_7', name: 'request_input', response: { answer: 'Saturday.', question_id: QUESTION_ID } } } },
     ],
     continue: [
       panelFlow({ id: CMD, run_id: TASK, kind: 'continue', question_id: BUDGET_ID },

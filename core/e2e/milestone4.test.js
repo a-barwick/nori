@@ -64,7 +64,7 @@ async function start(request) {
   expect(added, "One request must create one durable task.").toHaveLength(1);
   created.add(added[0].id);
   const attempt = snapshot.traces.find((trace) => trace.input_ids.includes(input.id) && trace.status === "completed");
-  expect(attempt?.model).toBe("meta/muse-spark-1.3");
+  expect(attempt?.model).toBe("gpt-6.1-sol");
   expect(attempt.actions.filter((action) => action.status === "accepted" && action.command.kind === "start" && action.command.run_id === added[0].id)).toHaveLength(1);
   const reply = snapshot.messages.find((message) => message.role === "assistant" && message.turn_id === attempt.turn_id && !message.run_id);
   expect(reply?.text.trim().length, "Action-only responses still publish an acknowledgment after acceptance.").toBeGreaterThan(0);

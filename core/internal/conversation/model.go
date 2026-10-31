@@ -80,7 +80,9 @@ func NewModel(baseURL, key, name string) *Model {
 func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Reply, err error) {
 	var requestStarted time.Time
 	provider := "custom"
-	if strings.HasPrefix(m.URL, "https://openrouter.ai/") {
+	if m.URL == "https://api.openai.com/v1/chat/completions" {
+		provider = "openai"
+	} else if strings.HasPrefix(m.URL, "https://openrouter.ai/") {
 		provider = "openrouter"
 	}
 	ctx, span := conversationTracer.Start(ctx, "chat "+m.Name, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
@@ -129,14 +131,14 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		span.End()
 	}()
 	reply.Usage = state.Usage{ID: uuid.NewString(), Provider: "outer", Model: m.Name, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: time.Now().UTC()}
-	control, outputLimit, err := spend.Prepare(ctx, "openrouter", 4096)
+	control, outputLimit, err := spend.Prepare(ctx, provider, 4096)
 	if err != nil {
 		return reply, err
 	}
 	defer control.Close()
 	if control != nil {
-		if !strings.HasPrefix(m.URL, "https://openrouter.ai/") {
-			return reply, errors.New("spend-controlled conversation requests require the selected OpenRouter endpoint")
+		if provider != "openai" && provider != "openrouter" {
+			return reply, errors.New("spend-controlled conversation requests require the selected provider endpoint")
 		}
 		for _, message := range messages {
 			var fields map[string]any
@@ -157,29 +159,40 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	if !m.NoDispatch {
 		format = responseFormat()
 	}
-	providerLimits := map[string]any{}
-	if !m.NoDispatch {
-		providerLimits["require_parameters"] = true
+	request := map[string]any{"model": m.Name, "messages": messages}
+	if format != nil {
+		request["response_format"] = format
 	}
-	if control != nil {
-		if m.Name == "meta/muse-spark-1.3" {
-			providerLimits["max_price"] = map[string]float64{"prompt": 1.25, "completion": 4.25}
-		} else {
-			providerLimits["max_price"] = map[string]float64{"prompt": 4.4, "completion": 22}
+	if provider == "openai" {
+		if m.Name != "gpt-6.1-sol" {
+			return reply, errors.New("unsupported direct OpenAI conversation model")
 		}
+		// Strip provider-specific reasoning extensions from retained historical
+		// messages. Their exact originals remain in private attempt records.
+		input, normalizeErr := openAIConversation(messages)
+		if normalizeErr != nil {
+			return reply, normalizeErr
+		}
+		request["messages"] = input
+		request["max_completion_tokens"] = outputLimit
+		request["reasoning_effort"] = "low"
+		request["service_tier"] = "default"
+		request["store"] = false
+		request["prompt_cache_options"] = map[string]string{"mode": "explicit"}
+		span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", "low"), attribute.String("gen_ai.request.service_tier", "default"))
+	} else {
+		providerLimits := map[string]any{"require_parameters": !m.NoDispatch}
+		if control != nil {
+			providerLimits["max_price"] = map[string]float64{"prompt": 1.25, "completion": 4.25}
+		}
+		request["provider"], request["max_tokens"] = providerLimits, outputLimit
 	}
-	body, err := json.Marshal(struct {
-		Model    string            `json:"model"`
-		Messages []json.RawMessage `json:"messages"`
-		Format   any               `json:"response_format,omitempty"`
-		Max      int               `json:"max_tokens"`
-		Provider any               `json:"provider,omitempty"`
-	}{m.Name, messages, format, outputLimit, providerLimits})
+	body, err := json.Marshal(request)
 	if err != nil {
 		return reply, err
 	}
 	span.SetAttributes(attribute.Int("nori.prompt.bytes", len(body)))
-	reservation, err := control.Reserve(ctx, "openrouter", m.Name, len(body), outputLimit, reply.Usage.ID)
+	reservation, err := control.Reserve(ctx, provider, m.Name, len(body), outputLimit, reply.Usage.ID)
 	if err != nil {
 		return reply, err
 	}
@@ -220,11 +233,19 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	}
 	var response struct {
 		ID    string `json:"id"`
+		Model string `json:"model"`
+		Tier  string `json:"service_tier"`
 		Usage *struct {
-			Input  *int64   `json:"prompt_tokens"`
-			Output *int64   `json:"completion_tokens"`
-			Total  *int64   `json:"total_tokens"`
-			Cost   *float64 `json:"cost"`
+			Input        *int64   `json:"prompt_tokens"`
+			Output       *int64   `json:"completion_tokens"`
+			Total        *int64   `json:"total_tokens"`
+			Cost         *float64 `json:"cost"`
+			InputDetails struct {
+				Cached int64 `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+			OutputDetails struct {
+				Reasoning int64 `json:"reasoning_tokens"`
+			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 		Choices []struct {
 			Message json.RawMessage `json:"message"`
@@ -241,6 +262,14 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		if strings.HasPrefix(m.URL, "https://openrouter.ai/") && response.Usage.Cost != nil && *response.Usage.Cost >= 0 {
 			reply.Usage.CostUSD = response.Usage.Cost
 			reply.Usage.CostStatus = "reported"
+		}
+		if provider == "openai" {
+			cost, costErr := spend.SolCost(response.Model, response.Tier, response.Usage.Input, response.Usage.Output, response.Usage.Total, response.Usage.InputDetails.Cached)
+			if costErr != nil {
+				return reply, costErr
+			}
+			reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
+			span.SetAttributes(attribute.Int64("gen_ai.usage.reasoning.output_tokens", response.Usage.OutputDetails.Reasoning), attribute.Int64("gen_ai.usage.cache_read.input_tokens", response.Usage.InputDetails.Cached))
 		}
 	}
 	if len(response.Choices) != 1 {
