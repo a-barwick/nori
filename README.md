@@ -113,3 +113,54 @@ capacity controls.
 
 Cloud lifecycle changes in source require separate deployment. Local validation
 does not update the deployed services, worker images, or Terraform state.
+
+## Development inference limits
+
+CI issues its own expiring OpenRouter key with a $0.10 lifetime limit and revokes
+it after the run. Retries reuse its key, expiry and allowance. Normal build,
+type and lint checks do not acquire model keys. Production uses health-only
+checks; full model smoke runs only in sandbox. No controller server is needed.
+
+For local feature work, `core/infrastructure/spend/run.py` issues a key in the
+same development workspace. Feature chats start at $0.25 and can receive
+$0.25 increments, up to $1 total, when a subsequent command observes a new source
+fingerprint after at least 70% of the existing allowance is accounted for.
+This detects repeated attempts without code changes; it does not judge code
+quality. CI gets $0.10 per commit/workflow, including retries. Nori's controlled
+OpenRouter and Vertex calls share $2/day and $20/month UTC limits. Jev is excluded
+at Austin's request. Existing production keys are separate.
+
+Use the main checkout's mode-600 root `.env`; never copy it into a worktree:
+
+```sh
+python3 core/infrastructure/spend/run.py --env /absolute/main/.env \
+  --task STABLE_CHAT_ID --repository /absolute/feature/worktree -- COMMAND ARGUMENTS
+python3 core/infrastructure/spend/run.py --env /absolute/main/.env \
+  --task STABLE_CHAT_ID --status
+```
+
+Reuse the same task ID for every command/retry in a chat. `--close` disables its
+native key; the issuer can reopen the same unexpired allowance without resetting
+spend. Keys expire after 24 hours. Nori's OpenRouter and Vertex adapters reserve
+conservative full request bytes and maximum output in the existing Firestore
+`nori-sandbox` database before dispatch. Atomic reservations share the run and
+daily/monthly budgets across runtime and worker processes. Unknown outcomes
+remain reserved across restarts and calendar resets. Models remain unchanged.
+Jev remains on its existing direct adapter and does not block budget readiness.
+
+Run `python3 core/infrastructure/spend/e2e.py` for two no-cost native-key lifecycle
+journeys covering retry/cleanup and feature progress grants. External cloud and
+OpenRouter APIs are simulated; these checks do not establish live inference.
+
+CI setup uses the existing release Terraform: `nori-ci-spend-management-key` is
+readable only by the sandbox CI identity; `nori-ci-spend-token` holds each run's
+bounded key and is readable by its runtime. Populate the management secret from
+the main checkout's root `.env` after applying those bindings. The runtime and
+worker never receive the management key. The release script creates its scope
+and pool records in Firestore; it refuses pending old sandbox work before
+admission. There is no host, URL, proxy, or new database to provision.
+
+Local commands receive these controls through the wrapper. Arbitrary calls made
+with existing shared keys are not intercepted. Native key limits apply to other
+tools given the capped key, but Firestore request reservations apply to Nori's
+adapters only. CLI code review uses the selected subscription route.

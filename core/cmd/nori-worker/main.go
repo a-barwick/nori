@@ -21,6 +21,7 @@ import (
 	"nori/internal/computer"
 	"nori/internal/env"
 	"nori/internal/observability"
+	"nori/internal/spend"
 	"nori/internal/state"
 	"nori/internal/task"
 	"nori/internal/wake"
@@ -34,6 +35,9 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := spend.Validate(ctx); err != nil {
+		log.Fatal(err)
+	}
 	stopTelemetry := observability.Init(ctx, "nori-worker")
 	defer observability.Shutdown(stopTelemetry)
 	if port := os.Getenv("PORT"); port != "" {

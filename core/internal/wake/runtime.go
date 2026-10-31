@@ -16,6 +16,7 @@ import (
 	"nori/internal/conversation"
 	"nori/internal/env"
 	"nori/internal/observability"
+	"nori/internal/spend"
 	"nori/internal/state"
 	"nori/internal/task"
 )
@@ -28,9 +29,15 @@ type Runtime struct {
 
 // Open uses the same durable outer loop in local and hosted entrypoints.
 func Open(ctx context.Context) (*Runtime, error) {
+	if err := spend.Validate(ctx); err != nil {
+		return nil, err
+	}
 	key, jevKey := os.Getenv("OPENROUTER_API_KEY"), os.Getenv("JEV_API_KEY")
-	if strings.TrimSpace(key) == "" || strings.TrimSpace(jevKey) == "" {
-		return nil, fmt.Errorf("OPENROUTER_API_KEY and JEV_API_KEY must be configured in the selected project environment")
+	if strings.TrimSpace(jevKey) == "" {
+		return nil, fmt.Errorf("JEV_API_KEY must be configured in the selected project environment")
+	}
+	if strings.TrimSpace(key) == "" {
+		return nil, fmt.Errorf("OPENROUTER_API_KEY must be configured in the selected project environment")
 	}
 	base := env.Get("NORI_AGENT_BASE_URL", "https://openrouter.ai/api/v1")
 	u, err := url.Parse(base)

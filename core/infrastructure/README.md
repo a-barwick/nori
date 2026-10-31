@@ -80,10 +80,10 @@ to build a new release attempt; retrying only a deployment job would mix artifac
 from the previous attempt and is rejected. If auto-merge succeeds but release
 dispatch fails, use **Run workflow** on `Release` for `main`.
 
-Sandbox is dedicated to synthetic validation. Before a retry it may resume
-outstanding validation work for up to two minutes, then pause and recheck. If it
-still cannot settle, inspect the sandbox task and send a targeted Stop before
-retrying; production work is never resumed by this recovery path. Cancelled or
+Sandbox is dedicated to synthetic validation. Retries reuse one $0.10 model
+allowance per source commit/workflow. Pending work is never resumed automatically
+under an older image or refreshed allowance; inspect the sandbox task and send a
+targeted Stop before retrying. Cancelled or
 failed deploy steps have a separate shutdown step only if that release began
 changing the environment. A refused busy-production preflight leaves it alone.
 [GitHub allows at most five minutes for normal cancellation cleanup](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation),
@@ -100,6 +100,18 @@ variable `NORI_WIF_PROVIDER` from its output. Optional source map variables are
 Cloud credentials are short-lived OIDC credentials restricted to this repository,
 `main`, and `release.yml`. Application secrets stay with their existing runtime
 configuration. Do not run bootstrap Terraform as part of an application release.
+
+The bootstrap also creates `nori-ci-spend-management-key` (CI-only access) and
+`nori-ci-spend-token` (per-run capped key versions), plus Firestore scope creation
+permission. After applying that reviewed bootstrap plan, populate the existing
+management-key container without printing or copying credentials into source:
+
+```sh
+python3 core/infrastructure/spend/keys.py --env /absolute/main/.env install-ci-secret
+```
+
+Release itself handles key issuance, binding, retries and revocation. No service,
+endpoint, GitHub URL variable or database provisioning is required for this.
 
 Production Firestore and the retained computer data disk have native daily
 backup schedules with seven-day retention. Disk snapshots are crash-consistent;

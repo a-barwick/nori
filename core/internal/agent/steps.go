@@ -2,18 +2,21 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/genai"
 	"nori/internal/computer"
 	"nori/internal/observability"
+	"nori/internal/spend"
 )
 
 const modelOutputTokenLimit = 8192
@@ -157,7 +160,63 @@ func (s *Service) Decide(ctx context.Context, contents []*genai.Content, wait bo
 		}
 		span.End()
 	}()
-	response, e := s.Model.Models.GenerateContent(ctx, s.ModelName, contents, modelConfig(wait))
+	control, outputLimit, e := spend.Prepare(ctx, "vertex", modelOutputTokenLimit)
+	if e != nil {
+		return decision, e
+	}
+	defer control.Close()
+	config := modelConfig(wait)
+	config.MaxOutputTokens = int32(outputLimit)
+	if control != nil {
+		// Media tokenization can expand a short URI or compressed blob beyond
+		// its JSON byte count. Keep controlled calls textual until provider
+		// token counting can reserve the actual multimedia input cost.
+		for _, content := range contents {
+			if content == nil {
+				continue
+			}
+			for _, part := range content.Parts {
+				if part == nil {
+					continue
+				}
+				media := part.InlineData != nil || part.FileData != nil
+				if response := part.FunctionResponse; response != nil {
+					for _, responsePart := range response.Parts {
+						media = media || (responsePart != nil && (responsePart.InlineData != nil || responsePart.FileData != nil))
+					}
+				}
+				if media {
+					return decision, errors.New("spend-controlled Vertex requests cannot include inline or file media until multimedia token counting is supported")
+				}
+			}
+		}
+		// Include the complete contents, system instructions and tool schemas.
+		// Use a byte-per-token bound plus framing allowance, never chars/4.
+		body, e := json.Marshal(struct {
+			Model    string                       `json:"model"`
+			Contents []*genai.Content             `json:"contents"`
+			Config   *genai.GenerateContentConfig `json:"config"`
+		}{s.ModelName, contents, config})
+		if e != nil {
+			return decision, fmt.Errorf("model request could not be encoded")
+		}
+		reservation, e := control.Reserve(ctx, "vertex", s.ModelName, len(body), outputLimit, uuid.NewString())
+		if e != nil {
+			return decision, e
+		}
+		defer func() {
+			var cost *float64
+			if decision.CostKnown {
+				cost = &decision.Cost
+			}
+			var usage *spend.TokenUsage
+			if u := decision.Usage; u != nil {
+				usage = &spend.TokenUsage{InputTokens: int64(u.PromptTokenCount) + int64(u.ToolUsePromptTokenCount), OutputTokens: int64(u.CandidatesTokenCount) + int64(u.ThoughtsTokenCount)}
+			}
+			err = errors.Join(err, reservation.Settle(ctx, cost, "", usage))
+		}()
+	}
+	response, e := s.Model.Models.GenerateContent(ctx, s.ModelName, contents, config)
 	if e != nil {
 		return Decision{}, fmt.Errorf("model request failed: %w", e)
 	}
@@ -178,7 +237,7 @@ func (s *Service) Decide(ctx context.Context, contents []*genai.Content, wait bo
 	// Never execute tools from a truncated or otherwise incomplete generation.
 	if candidate.FinishReason != genai.FinishReasonStop {
 		if candidate.FinishReason == genai.FinishReasonMaxTokens {
-			return d, fmt.Errorf("model response incomplete (%s; %d-token output limit includes thinking)", candidate.FinishReason, modelOutputTokenLimit)
+			return d, fmt.Errorf("model response incomplete (%s; %d-token output limit includes thinking)", candidate.FinishReason, outputLimit)
 		}
 		return d, fmt.Errorf("model response incomplete (%s)", candidate.FinishReason)
 	}

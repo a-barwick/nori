@@ -354,8 +354,12 @@ def worker_plan(candidate, directory):
     target = {"deployment_name": poc.DEPLOYMENT, "task_queue": poc.TASK_QUEUE,
               "wake_queue_name": "nori-worker" if poc.ENVIRONMENT == "production" else "nori-sandbox-worker",
               "poll_window_seconds": 240, "firestore_database": "nori-poc" if poc.ENVIRONMENT == "production" else "nori-sandbox"}
+    if poc.ENVIRONMENT == "sandbox":
+        target.update(spend_scope=os.environ["NORI_SPEND_SCOPE"])
+    existing = retained.get("request_worker_targets", {}).get(build_id, target)
+    existing = {key: value for key, value in existing.items() if value is not None}
     require(build_id not in pools and retained.get("request_worker_images", {}).get(build_id, candidate["worker"]) == candidate["worker"] and
-            retained.get("request_worker_targets", {}).get(build_id, target) == target, "A retained worker build cannot change image or routing target")
+            existing == target, "A retained worker build cannot change image or routing target")
     retained.setdefault("request_worker_images", {})[build_id] = candidate["worker"]
     retained.setdefault("request_worker_targets", {})[build_id] = target
     manifest_file = directory / "worker-releases.json"
@@ -368,6 +372,46 @@ def worker_plan(candidate, directory):
     plan = json.loads(run(["terraform", "-chdir=" + str(poc.TEMPORAL_TF), "show", "-json", str(plan_file)]))
     validate_worker_plan(plan, build_id)
     return build_id, retained, plan_file
+
+
+def spend_keys():
+    keys = load_module("nori_spend_keys", ROOT.parent / "spend/keys.py")
+    keys.cloud_api = Cloud().api
+    return keys
+
+
+def managed_ci_call(method, value):
+    """Only CI reads the management credential, entirely in process memory."""
+    previous = os.environ.get("OPENROUTER_MANAGEMENT_KEY")
+    if not previous:
+        os.environ["OPENROUTER_MANAGEMENT_KEY"] = run([
+            "gcloud", "--quiet", "--project=" + PROJECT, "secrets", "versions", "access", "latest",
+            "--secret=nori-ci-spend-management-key"])
+    try:
+        return getattr(spend_keys(), method)(value)
+    finally:
+        if previous is None:
+            os.environ.pop("OPENROUTER_MANAGEMENT_KEY", None)
+        else:
+            os.environ["OPENROUTER_MANAGEMENT_KEY"] = previous
+
+
+def ci_lease(candidate):
+    value = managed_ci_call("ensure_ci", candidate["commit"])
+    require(value.get("profile") == "ci" and value.get("limit_usd") == 0.1 and value.get("ready") is True and
+            re.fullmatch(r"[a-f0-9]{64}", value.get("scope", "")), "CI spend scope is not ready with its $0.10 allowance")
+    version = str(value.get("secret_version", ""))
+    require(version.isdigit() and int(version) > 0, "CI native-key secret version is invalid")
+    os.environ["NORI_SPEND_SCOPE"] = value["scope"]
+    os.environ["NORI_SPEND_KEY_SECRET_VERSION"] = version
+    os.environ["NORI_SPEND_PROFILE"] = "ci"
+
+
+def close_ci_lease(report):
+    if poc.ENVIRONMENT == "sandbox" and report.get("spend_lease_requested") is True:
+        scope = report.get("spend_scope") or spend_keys().ci_scope(report["commit"])
+        managed_ci_call("close_ci", scope)
+        report["spend_closed"] = True
 
 
 def cancelled(_signum, _frame):
@@ -387,28 +431,14 @@ def github_identity(candidate):
 
 
 def idle_sandbox(smoke, config, record):
-    """Finish outstanding synthetic work within a bounded validation window."""
+    """Inspect outstanding work without admitting old, potentially unguarded code."""
     try:
         smoke.preflight(config, time.monotonic() + poc.remaining(120))
         return
     except smoke.SmokeError as error:
         if poc.ENVIRONMENT != "sandbox" or not str(error).startswith("Preflight refused:"):
             raise
-    record(phase="sandbox-recovery", sandbox_recovery=True)
-    try:
-        poc.unpause(config)
-        end = time.monotonic() + poc.remaining(120)
-        while time.monotonic() < end:
-            try:
-                smoke.preflight(config, min(end, time.monotonic() + poc.remaining(30)))
-                return
-            except smoke.SmokeError as error:
-                if not str(error).startswith("Preflight refused:"):
-                    raise
-            time.sleep(3)
-        raise RuntimeError("Sandbox work did not settle within two minutes; inspect its task and use targeted Stop before retrying")
-    finally:
-        poc.pause(config)
+    raise RuntimeError("Sandbox contains pending work; keep admission closed and use targeted Stop or a reviewed guarded-image migration before retrying")
 
 
 def release(candidate, binary, smoke_mode, report_path):
@@ -432,6 +462,10 @@ def release(candidate, binary, smoke_mode, report_path):
         temporal_key()
         config = poc.config()
         workers = poc.temporal_config()
+        if poc.ENVIRONMENT == "sandbox":
+            record(spend_lease_requested=True)
+            ci_lease(candidate)
+            record(spend_scope=os.environ["NORI_SPEND_SCOPE"])
         poc.production_workers(workers)
         os.environ["TF_VAR_observability"] = json.dumps(workers.get("observability_config", {}))
         os.environ["TF_VAR_environment"] = poc.ENVIRONMENT
@@ -440,6 +474,8 @@ def release(candidate, binary, smoke_mode, report_path):
         account = "nori-ci-sandbox" if poc.ENVIRONMENT == "sandbox" else "nori-ci-deploy"
         smoke_config = {**config, "project": PROJECT, "temporal_deployment": poc.DEPLOYMENT,
                         "iap_service_account": account + "@bot-111549.iam.gserviceaccount.com"}
+        if poc.ENVIRONMENT == "sandbox":
+            smoke_config["spend_check"] = poc.spend_status
         # Never interrupt or replay user work to make a release pass. An idle
         # session can be paused automatically; a busy session needs a later run.
         idle_sandbox(smoke, smoke_config, record)
@@ -464,6 +500,8 @@ def release(candidate, binary, smoke_mode, report_path):
                           "computer-release-sha256": candidate["computer_sha256"]})
             deploy_image("runtime", candidate["runtime"])
             deploy_image("web", candidate["web"])
+            if poc.ENVIRONMENT == "sandbox":
+                poc.verify_spend_binding({**config, "expected_worker_build": worker})
             smoke_config["baseline_ids"] = smoke.preflight(smoke_config, time.monotonic() + poc.remaining(120))
             record(phase="verify")
             available = poc.remaining(SMOKE_SECONDS)
@@ -515,6 +553,11 @@ def release(candidate, binary, smoke_mode, report_path):
             except Exception as failure:
                 error = error or failure
                 report.update(result="failed", cleanup_failure=safe_error(failure))
+        try:
+            close_ci_lease(report)
+        except Exception as failure:
+            error = error or failure
+            report.update(result="failed", spend_closed=False, spend_close_failure=safe_error(failure))
         record(phase="finished" if not error else "failed")
         if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(summary, "a") as stream:
@@ -570,28 +613,38 @@ def main():
         require(report.get("environment") == args.environment, "Shutdown report belongs to a different environment")
         require(report.get("commit") == candidate["commit"] and report.get("build_id") == candidate["build_id"],
                 "Shutdown report release identity differs from its candidate")
-        if report.get("mutating") is not True and report.get("sandbox_recovery") is not True:
+        mutated = report.get("mutating") is True or report.get("sandbox_recovery") is True
+        close_needed = args.environment == "sandbox" and report.get("spend_lease_requested") is True and report.get("spend_closed") is not True
+        if not mutated and not close_needed:
             print(json.dumps({"shutdown": "skipped", "reason": "Deployment did not mutate this environment"}))
             return
         os.environ["NORI_ENVIRONMENT"] = args.environment
         global poc
         poc = load_module("nori_poc", ROOT.parent / "poc/poc.py")
         os.environ["NORI_OPERATION_DEADLINE"] = str(time.time() + 540)
-        init_backends()
-        temporal_key()
-        config, workers = poc.config(), poc.temporal_config()
         error = None
-        try:
-            cleanup_registration(report, workers)
-        except Exception as failure:
-            error = failure
-            report["registration_cleanup_failure"] = safe_error(failure)
-        try:
-            poc.pause(config)
-            report["compute_stopped"] = True
-        except Exception as failure:
-            error = error or failure
-            report["cleanup_failure"] = safe_error(failure)
+        if mutated:
+            try:
+                init_backends()
+                temporal_key()
+                config, workers = poc.config(), poc.temporal_config()
+                try:
+                    cleanup_registration(report, workers)
+                except Exception as failure:
+                    error = failure
+                    report["registration_cleanup_failure"] = safe_error(failure)
+                poc.pause(config)
+                report["compute_stopped"] = True
+            except Exception as failure:
+                error = error or failure
+                report["cleanup_failure"] = safe_error(failure)
+        if close_needed:
+            try:
+                # Closing a deterministic scope never issues or reopens a key.
+                close_ci_lease(report)
+            except Exception as failure:
+                error = error or failure
+                report.update(spend_closed=False, spend_close_failure=safe_error(failure))
         write_json(args.report, report)
         if error:
             raise RuntimeError("Deployment shutdown incomplete: " + safe_error(error))

@@ -168,6 +168,10 @@ def health(config, deadline, evidence_callback=lambda _: None):
 
 def run(config, deadline, evidence_callback=lambda _: None):
     """Run one browser task and preserve only its IDs as release evidence."""
+    check = config.get("spend_check")
+    if not callable(check):
+        raise SmokeError("Live smoke requires a ready CI spend lease before session reads can schedule a greeting")
+    check()
     end = min(deadline, time.monotonic() + 600)
     work_end = end - 25  # Reserve time for best-effort targeted Stop.
     old_handler, old_timer = signal.getsignal(signal.SIGALRM), signal.getitimer(signal.ITIMER_REAL)
