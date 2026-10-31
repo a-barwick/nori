@@ -1,6 +1,6 @@
 # Nori design
 
-> Snapshot from October 26, 2026, kept for reference and no longer maintained. Its implementation baseline is out of date. The current documentation is in `docs/site/`.
+> Snapshot from October 26, 2026, kept for reference and no longer maintained. Its implementation baseline is out of date. The current documentation is in `docs/site/`. Its links to Spaces pages no longer work.
 
 Nori is a personal assistant that keeps a conversation available while carrying work through to a useful result. the user can ask a question, delegate another task, correct work already underway, answer a question later, or return after closing the app. Nori keeps the instructions, progress, and results connected across those interactions.
 
