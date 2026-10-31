@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -312,7 +313,9 @@ func (s *server) screenshot(w http.ResponseWriter, r *http.Request) {
 	var result struct {
 		Data string `json:"data"`
 	}
+	captureStarted := time.Now()
 	if err = c.call(ctx, "Page.captureScreenshot", map[string]any{"format": "png", "captureBeyondViewport": false}, &result); err != nil {
+		log.Printf("browser screenshot failed task=%q run=%q operation=%q elapsed=%s context_error=%v error=%.512q", req.TaskID, req.RunID, r.Header.Get("Nori-Operation-ID"), time.Since(captureStarted).Round(time.Millisecond), ctx.Err(), err.Error())
 		http.Error(w, "screenshot unavailable", 502)
 		return
 	}
