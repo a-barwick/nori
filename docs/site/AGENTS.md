@@ -71,6 +71,7 @@ Then add the page to `NAV` in `site.js`. The script adds the navigation, previou
 - Keep box text to one short sentence, and move detail to a table or list below the diagram. Name a system part in each box, and say on each arrow what passes between them. A box such as "Filters" or "One request, one trace" is a concept, so it belongs in text.
 - Color boxes with `.outer`, `.inner` and `.computer` whenever those parts appear.
 - Keep `.branch` columns about the same depth, because a shorter column stretches into an empty box.
+- Start each `.branch` box after a `.decide` node with the answer it follows, such as "Yes" or "No".
 
 ## Built and planned
 
