@@ -7,6 +7,7 @@ from pathlib import Path
 
 SITE = Path(__file__).resolve().parents[4] / "docs" / "site"
 WORD_LIMIT = 800
+WORD_TARGET = 600
 LONG_PAGES = {"scenarios", "decisions", "reading", "sources", "words", "code", "open-questions"}
 VISUALS = {"table", "svg", "img", "pre"}
 VISUAL_CLASSES = {"flow", "states", "shots", "grid2", "grid3", "map"}
@@ -15,6 +16,9 @@ VOID = {"br", "hr", "img", "input", "link", "meta", "path", "circle", "rect", "l
 
 PHRASES = [
     (r"—", "em dash"),
+    (r";", "semicolon"),
+    (r"\b(?:sits? on|lives? in|sits? behind)\b", "figure of speech"),
+    (r"\b(?:main checkout|gitignored|mode-600)\b", "instructions for contributors"),
     (r"\b[\w-]+, not (?:a |an |the )?[\w-]+", "'X, not Y' construction"),
     (r"\b(?:isn't|is not|aren't) [^.]{1,40}[,;] (?:it's|it is|they're)", "'isn't X, it's Y' construction"),
     (r"\b(?:real|actual) (?:work|question|point|problem)\b", "empty emphasis"),
@@ -115,6 +119,10 @@ def check(path):
     words = visible_words(page)
     if words > WORD_LIMIT and name not in LONG_PAGES:
         fails.append(f"{words} words, over the {WORD_LIMIT} limit: split it by topic")
+    elif words > WORD_TARGET and name not in LONG_PAGES:
+        warns.append(f"{words} words, over the {WORD_TARGET} target: cut what a reader can't act on")
+    if [cls for tag, cls in page.order if tag == "details"].count(["more"]) > 1:
+        warns.append("more than one details.more section")
 
     if page.heading_links:
         fails.append("heading contains a link: only the copy icon is interactive")

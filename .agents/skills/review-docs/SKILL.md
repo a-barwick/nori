@@ -20,8 +20,11 @@ python3 .agents/skills/review-docs/scripts/check.py docs/site/page.html
 Read `docs/site/AGENTS.md` and `.agents/skills/plain-writing/SKILL.md`, then answer these questions:
 
 - Can a reader get the idea from the opening visual and the lede alone?
-- Does the visual show the mechanism, or is it a decorated list?
-- Does the page cover one topic? Could a reader skip any section?
+- Does the visual show the mechanism, with system parts in the boxes and what passes on the arrows?
+- Does the page cover one topic? Do two sections answer the same question?
+- What would a reader do with each number, name and setting? Cut those with no answer.
+- Does each table row describe one thing?
+- Does the page describe the system, with no instructions for contributors or agents?
 - Are details that most readers don't need behind `details.more`?
 - Does the page repeat another page where a link would do?
 - Does each sentence name what happened, in the glossary's words?
@@ -36,10 +39,10 @@ Pick at least five specific claims, and prefer names, numbers and statements abo
 
 ## 4. Look at it
 
-Serve the site with `docs/serve.sh`, and open the page at 1440 px and 375 px wide.
+Serve the site with `docs/serve.sh`, or `docs/serve.sh 3221` if the port is taken, or open the file directly. View the page at 1440 px and 375 px wide.
 
 - The page doesn't scroll sideways, and nothing is clipped or overlapping.
-- Diagram lines don't cross boxes or text, and colors follow the rules in `docs/site/AGENTS.md`.
+- Diagram lines don't cross boxes or text, no box is stretched empty, and colors follow the rules in `docs/site/AGENTS.md`.
 - The console shows no errors, and the filter and Data buttons work if present.
 
 If you can't render it, say that this part wasn't done.

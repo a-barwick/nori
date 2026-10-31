@@ -14,7 +14,7 @@ Write the way you'd explain something to a friend who is a good engineer. Every 
 3. **State checkable facts.** Cut praise and emphasis such as real, actual, honest, true, trust, natural, feel, useful, meaningful, seamless, robust and powerful unless the word states something a reader could check.
 4. **Use one noun for one thing.** Use the project's glossary and don't vary terms to sound interesting. Don't invent labels or analogies.
 5. **No slogans.** Avoid "X, not Y", "It isn't X, it's Y", "the real question", "load-bearing", rhetorical questions, aphorisms and punchy fragments.
-6. **Write full sentences.** Don't use `=`, `→`, `+` or `≠` as shorthand in a sentence, and avoid em dashes. Arrows are fine in diagrams and labels.
+6. **Write full sentences.** Don't use `=`, `→`, `+` or `≠` as shorthand in a sentence, and avoid em dashes and semicolons. Arrows are fine in diagrams and labels.
 7. **Use concrete examples.** Show a specific message, task or value in place of an abstract description.
 8. **Keep it short.** Use lists and tables where they scan better. Keep paragraphs to one or two sentences.
 9. **Don't narrate.** Remove "this section explains", "it's worth noting", "in short" and any mention of how the text was written.
@@ -36,6 +36,8 @@ These are the kinds of lines reviewers rejected, and what replaced them.
 | Stay quiet unless it matters. | "Matters" has no test. | No alert unless the condition is met. |
 | Logged every promise. | Sounds meaningful and says little. | Saved each scheduled delivery as a record. |
 | Task model, outer agent, lead, junior | New names for existing things. | Inner loop, outer loop. |
+| Spend alerts sit on Deployment. | Figure of speech. | Deployment lists the spend alerts. |
+| Export failures produce local diagnostics. | Doesn't say what happens. | A failed export writes one line to stderr. |
 
 ## Final read
 

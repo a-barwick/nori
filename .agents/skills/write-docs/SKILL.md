@@ -32,7 +32,7 @@ Read the code on the current branch before you write a claim. The code decides w
 - Keep a list of the files each fact came from, and use it for the Sources section.
 - Don't guess a name, limit, endpoint, field or default. If you can't confirm one, leave it out or add it to `open-questions.html`.
 - Mark anything that isn't on `main` as `designed`. Never describe planned work as running.
-- Select the facts a reader needs. A page with every constant from the code is too long.
+- Select the facts a reader needs. For each number, name or setting, ask what a reader would do with it, and cut it if there's no answer. Test files, queue sizes, flush timeouts and fallback orders usually go.
 
 ## 4. Choose the visual, then outline
 
@@ -47,7 +47,9 @@ The visual comes before any section text. Pick the one that shows the idea:
 | A set of options or fields | A compact table in a `.card` |
 | A screen | A screenshot from the running app, with made-up data |
 
-Outline the page as `h1`, one sentence of lede, the visual, then two to five short sections. Aim for 300 to 600 words.
+Where the topic allows, follow one concrete example through the visual. Each box names a system part and each arrow says what passes, as `docs/site/AGENTS.md` describes.
+
+Outline the page as `h1`, one sentence of lede, the visual, then two to four short sections that each answer a different question. Aim for 300 to 600 words. The 800-word limit is a ceiling, so a page near it usually has too much in it.
 
 ## 5. Write the page
 
@@ -55,14 +57,14 @@ Copy the skeleton in `docs/site/AGENTS.md`. Use its existing classes, and don't 
 
 - Lead each section with a table, list or diagram, and use prose only for what those can't show.
 - Use a concrete example the reader can follow, such as the Tucson weather and dinner tasks.
-- Put long lists of tokens, limits and fields in a `details.more` section.
+- Put long lists of tokens, limits and fields in one `details.more` section, and only if a reader would look them up.
 - End with `details.sources`, linking repo files and Linear issues.
 
 When you change an existing page, rework the affected sections so the page reads as one piece. Don't stack new text on top of old text, and remove anything the change makes untrue. Keep existing headings where possible, because link IDs come from them.
 
 ## 6. Update what the change touches
 
-- `words.html` for each new term, before using it
+- `words.html` for a term the page depends on and the reader may not know, usually one or two at most
 - `decisions.html` for a new design decision, with its date and what was rejected
 - `open-questions.html` for anything unresolved, and remove questions the change settles
 - `code.html` when the page adds a new area of code
@@ -78,8 +80,8 @@ Run the review checks on each page you changed, and fix every failure:
 python3 .agents/skills/review-docs/scripts/check.py docs/site/your-page.html
 ```
 
-Then follow `.agents/skills/review-docs/SKILL.md` on your own page. Serve the site with `docs/serve.sh` and look at the page at desktop and phone widths if you have a browser or a screenshot tool.
+Then follow `.agents/skills/review-docs/SKILL.md` on your own page, including looking at it at desktop and phone widths. Fix what you find, and cut anything the checks warn about unless you have a reason to keep it.
 
 ## 8. Report
 
-State the pages changed, the code files you checked, what you couldn't verify, and whether you viewed the rendered page. If you couldn't render it, say so.
+State the pages changed by repo path, the code files you checked, what you couldn't verify, and whether you viewed the rendered page. If you couldn't render it, say so. Don't link to a temporary local server.
