@@ -43,7 +43,7 @@
       <div class="branch3">
         <div class="node computer"><b>Tool activity · shell</b><small>Up to 45s in <code>/workspace</code>, capped by cgroups. Admission is recorded first (<code>operations/{id}</code>).</small></div>
         <div class="node computer"><b>Tool activity · browser</b><small><code>browser_navigate</code> returns the title and visible text. <code>browser_screenshot</code> saves a PNG artifact and gives the model a reference to it. The model doesn't see the image.</small></div>
-        <div class="node"><b>Skipped calls</b><small>If the revision changes mid-batch, calls that ran keep their real results and the rest get explicit <code>skipped</code> results. Every call always has a paired result.</small></div>
+        <div class="node"><b>Skipped calls</b><small>If the revision changes mid-batch, calls that ran keep their results and the rest get explicit <code>skipped</code> results. Every call always has a paired result.</small></div>
       </div>
       <div class="loopback">↺ results appended → back to Reconcile</div>
       <div class="node" style="border-width:2px"><b>Deferred <code>finish()</code> on every exit</b><small>Runs on a disconnected context. It projects final spend, confirms the computer stopped (Stop activity, 200s), and publishes failed or cancelled along with any effects so far. If the workflow can't confirm the computer stopped, it doesn't report success.</small></div>
@@ -63,7 +63,7 @@
         <tr><td><code>Stop</code></td><td>Cancel guest ops, confirm TERMINATED · 200s</td></tr>
         <tr><td><code>Publish</code></td><td>Terminal write + result message, revision-fenced · quick</td></tr>
       </table>
-      <ul class="pts note"><li>The worker uses pinned deployment versions (<code>TEMPORAL_BUILD_ID</code> per release), and parked tasks resume on a compatible version.</li><li>It runs up to 4 activities at a time and exits cleanly when the project pauses.</li><li>In request-driven mode, each Cloud Tasks wake runs a worker for one bounded slice of up to 240s and hands remaining work to the next wake. This mode is merged, and its rollout approval is still pending.</li></ul>
+      <ul class="pts note"><li>The worker uses pinned deployment versions (<code>TEMPORAL_BUILD_ID</code> per release), and parked tasks resume on a compatible version.</li><li>It runs up to 4 activities at a time and exits cleanly when the project pauses.</li><li>In request-driven mode, each Cloud Tasks wake runs a worker for one bounded slice of up to 240s and hands remaining work to the next wake.</li></ul>
     </div>
     <div class="card designed">
       <h3 style="margin-top:0">Completion, as designed <a href="completion.html" style="font-size:12px;font-weight:600">full page</a> <span class="tag design">designed · milestone 4</span></h3>
@@ -76,7 +76,7 @@
         <div class="arrow">↓</div>
         <div class="branch">
           <div class="node designed-node"><b>Read-only task</b><small>Retries up to twice with corrections, then publishes if the task is still current.</small></div>
-          <div class="node designed-node"><b>Wrote or sent something</b><small>Asks Austin. An uncertain write is never repeated automatically.</small></div>
+          <div class="node designed-node"><b>Wrote or sent something</b><small>Asks the user. An uncertain write is never repeated automatically.</small></div>
         </div>
       </div>
       <p class="note" style="margin-top:10px">Also designed: <code>request_work</code>, which creates subtasks whose cost rolls up to the
@@ -89,8 +89,16 @@
 <tr><th>Tool type</th><th>Temporary failure</th><th>Outcome unknown</th></tr>
 <tr><td>Read</td><td>Runtime retries within limits.</td><td>Safe to retry.</td></tr>
 <tr><td>Reversible write</td><td>Retry only with the same operation ID and duplicate protection.</td><td>Check the provider before any repeat.</td></tr>
-<tr><td>Sensitive send or purchase</td><td>Ask Austin first.</td><td>Check safely, then ask Austin.</td></tr>
+<tr><td>Sensitive send or purchase</td><td>Ask the user first.</td><td>Check safely, then ask the user.</td></tr>
 </table></div></section>
+<details class="more"><summary>How other systems deliver mid-run input</summary>
+<p>Nori collects steers at tool boundaries, and the runtime owns the timing.</p>
+<table class="tall"><tr><th>Mode</th><th>What happens</th><th>Examples</th></tr>
+<tr><td>Steer</td><td>Input joins the current turn at a safe boundary.</td><td>Codex Enter, Kiro, Claude Code, OpenClaw default</td></tr>
+<tr><td>Collect</td><td>Queued inputs are delivered together.</td><td>pydantic-deepagents, OpenClaw collect</td></tr>
+<tr><td>Follow-up</td><td>Input waits until the turn finishes.</td><td>Codex Tab, LangGraph enqueue</td></tr>
+<tr><td>Interrupt</td><td>Execution stops and progress is kept.</td><td>LangGraph interrupt</td></tr>
+<tr><td>Rollback</td><td>Execution stops and recorded progress is discarded. External effects aren't undone.</td><td>LangGraph rollback</td></tr></table></details>
 <details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65">Inner loop</a> · <a href="https://chatgpt.com/space/page_74dc49e1d54c81918c1b01fd477cdb8b">Outer–inner contract</a></p></details>
 </body>
 </html>

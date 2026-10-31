@@ -17,7 +17,7 @@
   <div class="trace">
   <div class="card">
     <div class="seq">
-      <div class="step outer"><div class="n">1</div><div><b class="t">Austin sends a message with a stable UUID</b><span class="boundary">accepted</span>
+      <div class="step outer"><div class="n">1</div><div><b class="t">The user sends a message with a stable UUID</b><span class="boundary">accepted</span>
         <ul class="pts"><li><code>POST /api/turn</code> writes the input to the Firestore inbox in the same transaction as the user message.</li><li>The API returns 202 only once the save and the wake scheduling are both confirmed.</li><li>Retrying with the same UUID does nothing. Sending the same UUID with different text returns a 409.</li><li>From this point the browser can close.</li></ul></div></div>
       <div class="step outer"><div class="n">2</div><div><b class="t">An outer turn claims the batch</b>
         <ul class="pts"><li>The local loop (every 2 seconds) or a Cloud Tasks wake starts <code>Process</code>.</li><li><code>Process</code> acquires the conversation lease with a fence token and takes everything pending, in the order it was accepted.</li><li>Follow-up messages that arrive during the turn are saved and wait their turn, and the sender never gets a busy error.</li></ul></div></div>
@@ -26,18 +26,18 @@
       <div class="step"><div class="n">4</div><div><b class="t">Commands are validated together, then accepted</b><span class="boundary">applied (later)</span>
         <ul class="pts"><li>Every tool call in the batch is validated before any of them is accepted.</li><li>Each <code>dispatch</code> becomes a <code>start</code> command whose ID is also the task ID for the life of the task. It's saved with its run record and delivery intent in one transaction.</li><li>After a final check for newer input, the reply is published in the same transaction that consumes the inbox batch.</li></ul></div></div>
       <div class="step inner"><div class="n">5</div><div><b class="t">The relay starts one Temporal workflow per task</b>
-        <ul class="pts"><li>The delivery relay starts <code>nori-task-v2</code>, or signals a workflow that already exists.</li><li>A signal is only a wakeup, because the positions in Firestore are authoritative.</li><li>Austin has already received the acknowledgment by now, and the weather and dinner tasks run independently.</li></ul></div></div>
+        <ul class="pts"><li>The delivery relay starts <code>nori-task-v2</code>, or signals a workflow that already exists.</li><li>A signal is only a wakeup, because the positions in Firestore are authoritative.</li><li>The user has already received the acknowledgment by now, and the weather and dinner tasks run independently.</li></ul></div></div>
       <div class="step inner"><div class="n">6</div><div><b class="t">Inner loops work, wait and finish</b><span class="boundary">completed</span>
         <ul class="pts"><li>Each task reads the instructions it has incorporated, calls its model, runs admitted tool operations on the computer, and saves the matching results.</li><li>A message like “after seven” steers only the dinner task.</li><li>If a task needs to ask for a location, it parks and starts an outer turn while the other task carries on.</li><li>Today a task completes when the model gives a final answer with no tool calls and that answer passes a revision recheck before publication.</li></ul></div></div>
       <div class="step outer"><div class="n">7</div><div><b class="t">The result comes back as a conversation event</b>
-        <ul class="pts"><li>The saved result goes into the same durable inbox as a task notification.</li><li>An outer turn without task tools explains it to Austin.</li><li>If new user input is waiting, publication holds until that input has been routed, so a result can't get ahead of a correction that's still pending.</li></ul></div></div>
+        <ul class="pts"><li>The saved result goes into the same durable inbox as a task notification.</li><li>An outer turn without task tools explains it to the user.</li><li>If new user input is waiting, publication holds until that input has been routed, so a result can't get ahead of a correction that's still pending.</li></ul></div></div>
     </div>
   </div>
     <aside class="trace-map" aria-label="Which systems the current step uses">
       <p class="trace-cap" id="traceCap"></p>
       <svg viewBox="0 0 300 432" role="img" aria-label="System map highlighting the current step">
         <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3d4557"/></marker></defs>
-        <path class="te" data-edge="austin-service" d="M150 52 V70"/>
+        <path class="te" data-edge="user-service" d="M150 52 V70"/>
         <path class="te" data-edge="tasks-service" d="M92 102 H100"/>
         <path class="te" data-edge="service-firestore" d="M100 150 L52 207"/>
         <path class="te" data-edge="service-temporal" d="M150 170 V207"/>
@@ -46,7 +46,7 @@
         <path class="te" data-edge="inner-computer" d="M150 341 V387"/>
         <path class="te" data-edge="inner-firestore" d="M104 319 L52 251"/>
         <path class="te" data-edge="inner-models" d="M196 319 L252 251"/>
-        <g class="tn c-outer" data-node="austin"><rect x="96" y="8" width="108" height="44" rx="8"/><text x="150" y="27">Austin</text><text class="sub" x="150" y="41">web client</text></g>
+        <g class="tn c-outer" data-node="user"><rect x="96" y="8" width="108" height="44" rx="8"/><text x="150" y="27">User</text><text class="sub" x="150" y="41">web client</text></g>
         <g class="tn c-store" data-node="tasks"><rect x="6" y="80" width="86" height="44" rx="8"/><text x="49" y="99">Cloud Tasks</text><text class="sub" x="49" y="113">wake queue</text></g>
         <g class="tn frame" data-node="service"><rect x="100" y="70" width="100" height="100" rx="9"/></g>
         <g class="tn c-outer" data-node="outer"><rect x="106" y="76" width="88" height="42" rx="7"/><text x="150" y="102">Outer loop</text></g>
@@ -59,6 +59,16 @@
       </svg>
     </aside>
   </div>
+<section><h2>Follow-ups and controls</h2>
+<div class="card"><table class="tall"><tr><th>Input</th><th>What should happen</th></tr>
+<tr><td>“Did you send it?”</td><td>Answer from the receipt, or dispatch a check. Never send it again.</td></tr>
+<tr><td>“Check that appointment again”</td><td>Steer the open task, or start a new task if it has finished.</td></tr>
+<tr><td>“Stop that”</td><td>Resolve which task is meant, and ask if it's unclear. The Stop button already has a target.</td></tr>
+<tr class="designed"><td>Approval button</td><td>Validate the exact pending operation and arguments before resuming.<span class="tag design">designed</span></td></tr>
+<tr><td>The app closes</td><td>Tasks keep running.</td></tr>
+<tr><td>The backend restarts</td><td>Resume from saved state and reconcile uncertain outcomes before any retry.</td></tr>
+<tr class="designed"><td>“Remind me tomorrow”</td><td>Save the time and delivery. A saved timer doesn't show the reminder arrived.<span class="tag design">designed</span></td></tr>
+</table></div></section>
 <details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_3959ad978c188191a33228e13c3421ad">Full agent process</a> · <a href="https://chatgpt.com/space/page_2c00c5ce6cac8191b153218029cf445e">Outer loop</a> · <a href="https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65">Inner loop</a></p></details>
 </body>
 </html>

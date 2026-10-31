@@ -52,7 +52,7 @@
     'tool-answer': toolFlow('answer', { run_id: TASK, question_id: QUESTION_ID, text: 'Saturday.' }, command('answer', { text: 'Saturday.', question_id: QUESTION_ID }),
       'The question ID has to match the task\'s open question.', STALE),
     'tool-continue': toolFlow('continue', { run_id: TASK, question_id: BUDGET_ID }, command('continue', { position: 4, question_id: BUDGET_ID }),
-      'Only when Austin has said to keep going. It takes no text.', STALE),
+      'Only when the user has said to keep going. It takes no text.', STALE),
     'tool-stop': toolFlow('stop', { run_id: TASK }, command('stop', { revision: 2 }), 'Other tasks carry on unchanged.', NOT_OPEN),
 
     // ---- Contract page: inner loop control tool and events
@@ -60,7 +60,7 @@
     'event-needs_input': event(QUESTION_ID, 'needs_input', 1, { text: QUESTION, reason: 'input' }, 'A budget question looks the same, with its own ID such as …-budget-p3.'),
     'event-result': event(`${TASK}-terminal`, 'result', 2, { text: 'Saturday at 7:30 is open.', operation_refs: ['op-…'] }, 'A task has one final event, so its ID ends in -terminal.'),
     'event-failure': event(`${TASK}-terminal`, 'failure', 2, { reason: 'Model cost is unknown for a provider request; task stopped before further model calls.', operation_refs: ['op-…'] }, 'operation_refs lists what the task did before it failed.'),
-    'event-stopped': event(`${TASK}-terminal`, 'stopped', 2, { reason: 'Stopped by Austin.', operation_refs: ['op-…'] }, 'operation_refs lists effects that had already happened.'),
+    'event-stopped': event(`${TASK}-terminal`, 'stopped', 2, { reason: 'Stopped by the user.', operation_refs: ['op-…'] }, 'operation_refs lists effects that had already happened.'),
 
     // ---- Task lifecycle page: commands
     start: [
@@ -89,13 +89,13 @@
         { command: command('continue', { position: 4, question_id: BUDGET_ID }), run: run({ revision: 1, position: 4, spent_usd: 1.0021, budget_usd: 1 }) },
         ['409 if there\'s no matching budget question open', ...COMMON]),
       { from: 'Workflow', to: 'Inner model', call: 'next model call', source: CODE.workflow, note: 'The workflow adds $1 to its budget, then tells the model. The Firestore copy catches up afterwards.',
-        request: { role: 'user', parts: [{ text: 'Austin approved another $1.00 of model spend for this task. Continue th…' }] } },
+        request: { role: 'user', parts: [{ text: 'The user approved another $1.00 of model spend for this task. Continue th…' }] } },
     ],
     stop: [
       { from: 'Browser', to: 'Go service', call: 'POST /api/cancel', source: CODE.http, note: 'The Stop button uses this endpoint. POST /api/command with kind stop does the same.',
         request: { id: TASK }, response: { status: 202, body: { run: run({ cancel_requested: true, revision: 2 }) } }, other: ['400 if the ID isn\'t a UUID', '404 if there\'s no such task', '409 if the task has finished', 'Stop is still accepted while the project is paused'] },
       { from: 'Worker', to: 'Firestore', call: 'runs/{id}', source: CODE.state, note: 'Requested isn\'t stopped. This is only written once the workflow has wound down.',
-        saved: run({ status: 'cancelled', error: 'Stopped by Austin.', cancel_requested: true, finished_at: TIME }) },
+        saved: run({ status: 'cancelled', error: 'Stopped by the user.', cancel_requested: true, finished_at: TIME }) },
     ],
 
     // ---- Task lifecycle page: moving between states
@@ -117,8 +117,8 @@
     ],
     'move-stopped': [
       { from: 'Worker', to: 'Firestore', call: 'runs/{id}', source: CODE.state,
-        saved: run({ status: 'cancelled', error: 'Stopped by Austin.', cancel_requested: true, finished_at: TIME }) },
-      ...event(`${TASK}-terminal`, 'stopped', 2, { reason: 'Stopped by Austin.', operation_refs: ['op-…'] }),
+        saved: run({ status: 'cancelled', error: 'Stopped by the user.', cancel_requested: true, finished_at: TIME }) },
+      ...event(`${TASK}-terminal`, 'stopped', 2, { reason: 'Stopped by the user.', operation_refs: ['op-…'] }),
     ],
   };
 })();

@@ -7,8 +7,8 @@ const MESSAGE = "Check Saturday's weather in Tucson. Also find a time for dinner
 const REQUEST = "Check Saturday's weather in Tucson.";
 
 window.REQUEST_FLOW = [
-  [ // 1. Austin sends a message
-    { from: 'Browser', to: 'Go service', edge: 'austin-service', call: 'POST /api/turn', source: 'core/internal/wake/http.go',
+  [ // 1. The user sends a message
+    { from: 'Browser', to: 'Go service', edge: 'user-service', call: 'POST /api/turn', source: 'core/internal/wake/http.go',
       request: { id: INPUT, message: MESSAGE },
       response: { status: 202, body: { messages: ['…'], runs: ['…'], paused: false, dispatches: [],
         conversation: { pending: true, processing: false, revision: 12, consumed: 11, input_ids: [], restart_count: 0, frozen: false, routing_blocked: false }, traces: ['…'] } },
@@ -48,10 +48,10 @@ window.REQUEST_FLOW = [
       note: 'The start command\'s ID is also the task ID. There\'s one of these per dispatch.' },
     { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'runs/{id}', source: 'core/internal/state/state.go',
       saved: { id: WEATHER, status: 'running', request: REQUEST, revision: 1, incorporated: 0, spent_usd: 0, budget_usd: 1, cancel_requested: false, started_at: TIME } },
-    { from: 'Browser', to: 'Go service', edge: 'austin-service', call: 'POST /api/session', source: 'core/internal/wake/http.go',
+    { from: 'Browser', to: 'Go service', edge: 'user-service', call: 'POST /api/session', source: 'core/internal/wake/http.go',
       request: {},
       response: { status: 200, body: { messages: [{ id: '…', turn_id: '…', role: 'assistant', text: "On it. I've started both.", created_at: TIME }], runs: [{ id: WEATHER, status: 'running', '…': '…' }], dispatches: ['…'], conversation: { pending: false, processing: false, revision: 13, consumed: 12, '…': '…' } } },
-      note: 'This is how the reply reaches Austin. The browser polls for it.' },
+      note: 'This is how the reply reaches the user. The browser polls for it.' },
   ],
   [ // 5. The relay starts one Temporal workflow per task
     { from: 'Go service', to: 'Temporal', edge: 'service-temporal', call: 'SignalWithStartWorkflow', source: 'core/internal/task/client.go',
@@ -62,7 +62,7 @@ window.REQUEST_FLOW = [
       saved: { id: WEATHER, delivered: true, '…': 'other fields unchanged' } },
     { from: 'Cloud Tasks', to: 'Worker', edge: 'temporal-inner', call: 'POST /run', source: 'core/internal/workerservice/lifecycle.go',
       request: { workflow_ids: [`nori-task-${WEATHER}`] },
-      note: 'Only in request-driven mode, whose rollout approval is pending. It wakes one worker slice and carries no task content.' },
+      note: 'Only in request-driven mode. It wakes one worker slice and carries no task content.' },
   ],
   [ // 6. Inner loops work, wait and finish
     { from: 'Worker', to: 'Vertex AI', edge: 'inner-models', call: 'generateContent', source: 'core/internal/agent/steps.go',
@@ -88,7 +88,7 @@ window.REQUEST_FLOW = [
       request: { model: 'anthropic/claude-opus-5.5', max_tokens: 4096, messages: ['…', { role: 'user', content: 'Task result: …' }] },
       response: { choices: [{ message: { role: 'assistant', content: 'Saturday in Tucson looks sunny, around 82°F.' } }], usage: { prompt_tokens: 2240, completion_tokens: 21, cost: 0.0118 } },
       note: 'Notification turns run without task tools, so this turn can only explain the result. The content format shown is simplified.' },
-    { from: 'Browser', to: 'Go service', edge: 'austin-service', call: 'POST /api/session', source: 'core/internal/wake/http.go',
+    { from: 'Browser', to: 'Go service', edge: 'user-service', call: 'POST /api/session', source: 'core/internal/wake/http.go',
       request: {},
       response: { status: 200, body: { messages: ['…', { role: 'assistant', run_id: WEATHER, text: 'Saturday in Tucson looks sunny, around 82°F.', created_at: TIME }], runs: [{ id: WEATHER, status: 'completed', result: '…', spent_usd: 0.0003, budget_usd: 1 }] } } },
   ],

@@ -9,28 +9,28 @@
 </head>
 <body>
 <h1>Approvals and writes</h1>
-<p class="lede">Nori can read freely. Before it changes anything outside its own computer, Austin approves the exact action.</p>
+<p class="lede">Nori can read freely. Before it changes anything outside its own computer, the user approves the exact action.</p>
 <div class="card"><div class="flow">
 <div class="node designed-node"><b>A task prepares an action</b><small>“Add dinner with Sam, Thursday 7pm, to the personal calendar.”</small></div><div class="arrow">↓</div>
-<div class="node designed-node wait"><b>The task parks and Austin sees exactly that</b><small>The target, the content and the account. Waiting uses no model calls.</small></div><div class="arrow">↓</div>
-<div class="branch"><div class="node designed-node"><b>Approve</b><small>The runtime checks nothing has changed, then runs it once.</small></div><div class="node designed-node"><b>Decline</b><small>That's a real decision. The task doesn't keep asking.</small></div></div><div class="arrow">↓</div>
+<div class="node designed-node wait"><b>The task parks and the user sees exactly that</b><small>The target, the content and the account. Waiting uses no model calls.</small></div><div class="arrow">↓</div>
+<div class="branch"><div class="node designed-node"><b>Approve</b><small>The runtime checks nothing has changed, then runs it once.</small></div><div class="node designed-node"><b>Decline</b><small>The task records the decline and doesn't ask again.</small></div></div><div class="arrow">↓</div>
 <div class="node designed-node"><b>A receipt records what happened</b><small>“Did you add it?” is answered from the receipt.</small></div>
 </div></div>
 <section><h2>Every tool declares what it does</h2>
 <div class="card"><table class="tall"><tr><th>Type</th><th>Examples</th><th>Retries</th></tr>
 <tr><td>Read</td><td><code>browser_navigate</code>, search, calendar read</td><td>The runtime retries within limits.</td></tr>
 <tr><td>Reversible write</td><td>A calendar event, <code>shell</code> by default</td><td>Only with duplicate protection. Otherwise check first.</td></tr>
-<tr><td>Sensitive send</td><td>An email, a purchase</td><td>Ask Austin before any repeat.</td></tr>
+<tr><td>Sensitive send</td><td>An email, a purchase</td><td>Ask the user before any repeat.</td></tr>
 </table><p class="note">The model can't give itself permission to retry.</p></div></section>
 <section><h2>What an approval covers</h2>
 <ul class="pts"><li>One operation, once. Changing the recipient, content, date or account makes it invalid.</li><li>A correction after approving a draft still counts.</li><li>It survives waits and restarts as long as the action is unchanged.</li><li>A restart or a repeated delivery can't use it twice.</li></ul></section>
 <section><h2>What can't grant permission</h2>
-<ul class="pts"><li>A Jev classification or a task category.</li><li>A tool being available.</li><li>Text in a web page, email, document or tool result.</li><li>A task's own summary of what it thinks it should do.</li></ul></section>
-<section><h2>Saying what really happened</h2>
+<ul class="pts"><li>A Jev classification or a task category.</li><li>A tool being available.</li><li>Text in a web page, email, document or tool result.</li><li>A task's own summary of its next step.</li></ul></section>
+<section><h2>Recording what happened</h2>
 <div class="states"><span class="state">Prepared</span><span class="state-arrow">→</span><span class="state">Attempted</span><span class="state-arrow">→</span><span class="state">Submitted</span><span class="state-arrow">→</span><span class="state run">Confirmed</span></div>
 <ul class="pts" style="margin-top:12px"><li>An action can also end as <b>failed</b> or <b>uncertain</b>, and uncertain is never shown as success.</li><li>If the response was lost, the runtime checks with the provider before any repeat: <a href="https://linear.app/a-barwick/issue/AB-205">AB-205</a>.</li><li>Stopping a task doesn't undo what it already did. Nori reports those effects.</li></ul></section>
 <section><h2>Still open</h2>
-<ul class="pts"><li>How standing permissions work, and how Austin takes them back.</li><li>When an approval expires.</li><li>Which changes count as material.</li></ul></section>
+<ul class="pts"><li>How standing permissions work, and how the user takes them back.</li><li>When an approval expires.</li><li>Which changes count as material.</li></ul></section>
 <details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65">Inner loop</a> · <a href="https://chatgpt.com/space/page_3959ad978c188191a33228e13c3421ad">Full agent process</a> · <a href="https://linear.app/a-barwick/issue/AB-141">AB-141</a> · <a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a> · <a href="https://linear.app/a-barwick/issue/AB-169">AB-169</a> · <a href="https://linear.app/a-barwick/issue/AB-170">AB-170</a> · <a href="https://linear.app/a-barwick/issue/AB-171">AB-171</a> · <a href="https://linear.app/a-barwick/issue/AB-172">AB-172</a> · <a href="https://linear.app/a-barwick/issue/AB-205">AB-205</a> · <a href="https://linear.app/a-barwick/issue/AB-216">AB-216</a></p></details>
 </body>
 </html>

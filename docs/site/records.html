@@ -53,6 +53,26 @@ owners/{owner}/
       </div>
     </div>
   </div>
+<section><h2>What happens when something dies</h2>
+<div class="card"><table class="tall"><tr><th>Interruption</th><th>Recovery</th></tr>
+<tr><td>The outer process dies after accepting input</td><td>Reclaim the saved turn and pending wake, with the original input ID.</td></tr>
+<tr><td>The outer process dies around a dispatch</td><td>Recover the saved model response and command receipts before accepting anything again.</td></tr>
+<tr><td>A task command is delivered twice</td><td>Recognize its ID and position, and don't apply it again.</td></tr>
+<tr><td>A worker restarts while a task waits</td><td>Resume the same task and question on a compatible worker version.</td></tr>
+<tr class="designed"><td>A provider's response is lost after a write</td><td>Reconcile the outcome before any retry.<span class="tag design">designed</span></td></tr>
+<tr><td>The result is saved, then the client disconnects</td><td>Reopen the saved result, and don't repeat the work.</td></tr>
+<tr><td>A task crashes before it can report</td><td>The runtime emits a failure event with completed and unresolved operations.</td></tr>
+</table></div></section>
+<details class="more"><summary>What each record has to hold</summary>
+<table class="tall"><tr><th>Record</th><th>Holds</th></tr>
+<tr><td>Conversation input</td><td>Stable ID, original content or event, accepted order, origin and processing state.</td></tr>
+<tr><td>Outer turn attempt</td><td>Input boundary, attempt ID, lease, model response, tool pairs, dispatch receipts, usage and publication state.</td></tr>
+<tr><td>Task</td><td>Stable ID, request, ordered instructions, incorporated position, revision, lifecycle, wait reason, budget and result references.</td></tr>
+<tr><td>Command or event</td><td>Stable ID, target, kind, order, revision, payload and delivery state.</td></tr>
+<tr><td>Operation</td><td>Stable ID, parameters, attempt state, confirmation or uncertainty, and evidence.</td></tr>
+<tr class="designed"><td>Artifact</td><td>Stable ID, task link, location, version and preview metadata.</td></tr>
+<tr class="designed"><td>Approval</td><td>Exact operation and argument revision, effect, scope, decision and validity.</td></tr>
+</table></details>
 <details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_fb462c68ef1c8191be51107a6118d6ac">Agent loop architecture</a> · <a href="https://chatgpt.com/space/page_3959ad978c188191a33228e13c3421ad">Full agent process</a></p></details>
 </body>
 </html>

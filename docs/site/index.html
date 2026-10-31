@@ -9,34 +9,34 @@
 </head>
 <body>
 <h1>How Nori works</h1>
-<p class="lede">Nori is Austin's assistant. You talk to it in one long conversation, and it does real work in the background while you keep talking.</p>
+<p class="lede">Nori is a personal assistant. One long conversation stays open while background tasks run.</p>
 <div class="card">
-<svg viewBox="0 0 820 300" width="100%" role="img" aria-label="Austin talks to the outer loop, which runs a separate inner loop for each task">
+<svg viewBox="0 0 820 300" width="100%" role="img" aria-label="The user talks to the outer loop, which runs a separate inner loop for each task">
 <defs><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6474"/></marker></defs>
-<rect x="10" y="84" width="130" height="72" rx="10" fill="#fff" stroke="#1e2430" stroke-width="2"/><text x="75" y="126" text-anchor="middle" font-size="16" font-weight="700">Austin</text>
-<rect x="240" y="72" width="190" height="96" rx="12" fill="#eef0ff" stroke="#2f2fd0" stroke-width="2"/><text x="335" y="114" text-anchor="middle" font-size="16" font-weight="700" fill="#2f2fd0">Outer loop</text><text x="335" y="136" text-anchor="middle" font-size="12" fill="#4a5163">talks, routes, reports back</text>
+<rect x="10" y="84" width="130" height="72" rx="10" fill="#fff" stroke="#1e2430" stroke-width="2"/><text x="75" y="126" text-anchor="middle" font-size="16" font-weight="700">User</text>
+<rect x="240" y="72" width="190" height="96" rx="12" fill="#eef0ff" stroke="#2f2fd0" stroke-width="2"/><text x="335" y="114" text-anchor="middle" font-size="16" font-weight="700" fill="#2f2fd0">Outer loop</text><text x="335" y="136" text-anchor="middle" font-size="12" fill="#4a5163">replies, routes, reports results</text>
 <g font-size="14" font-weight="700" fill="#0c7a5f" text-anchor="middle">
 <rect x="560" y="10" width="240" height="60" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/><text x="680" y="35">Inner loop</text>
 <rect x="560" y="90" width="240" height="60" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/><text x="680" y="115">Inner loop</text>
 <rect x="560" y="170" width="240" height="60" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/><text x="680" y="195">Inner loop</text></g>
-<g font-size="12" fill="#4a5163" text-anchor="middle"><text x="680" y="54">Check Saturday's weather</text><text x="680" y="134">Find a time for dinner</text><text x="680" y="214">Waiting for Austin's answer</text></g>
+<g font-size="12" fill="#4a5163" text-anchor="middle"><text x="680" y="54">Check Saturday's weather</text><text x="680" y="134">Find a time for dinner</text><text x="680" y="214">Waiting for the user's answer</text></g>
 <path d="M140 110 H236" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)"/><path d="M240 134 H144" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)"/>
 <path d="M430 104 C 490 104 500 40 556 40" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)" marker-start="url(#m)"/><path d="M430 120 H556" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)" marker-start="url(#m)"/><path d="M430 136 C 490 136 500 200 556 200" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)" marker-start="url(#m)"/>
 <rect x="10" y="252" width="790" height="38" rx="9" fill="#eef0f3" stroke="#5b6474" stroke-width="1.5"/><text x="405" y="276" text-anchor="middle" font-size="13" font-weight="650">Runtime: saves everything, delivers it, and enforces budgets and permissions</text>
 </svg></div>
 <div class="grid3">
-<div class="card tight"><p class="keyline">The outer loop talks</p><p class="note">It replies to Austin, starts tasks and passes along corrections. It stays quick because it never does the work itself.</p></div>
-<div class="card tight"><p class="keyline">Inner loops do the work</p><p class="note">Each task gets its own loop with its own instructions and budget. One can wait or fail without affecting the others.</p></div>
-<div class="card tight"><p class="keyline">The runtime keeps it honest</p><p class="note">Models propose things. Ordinary code saves them, checks them, and only reports what the records show happened.</p></div>
+<div class="card tight"><p class="keyline">The outer loop handles the conversation</p><p class="note">It replies to the user, starts tasks and passes on corrections. It only has task tools, so replies don't wait on task work.</p></div>
+<div class="card tight"><p class="keyline">Inner loops run tasks</p><p class="note">Each task gets its own loop with its own instructions and budget. One can wait or fail without affecting the others.</p></div>
+<div class="card tight"><p class="keyline">The runtime checks and records</p><p class="note">Models return proposed actions. The runtime saves and validates them, and replies report only what the records show.</p></div>
 </div>
 <section><h2>An example conversation</h2>
 <div class="card">
 <p><span class="say me">Check Saturday's weather in Tucson. Also find a time for dinner.</span></p>
 <p><span class="say">On it. I've started both.</span></p>
 <p><span class="say me">After seven, please.</span></p>
-<p class="note">That goes to the dinner task only. The weather task doesn't notice.</p>
+<p class="note">That goes to the dinner task only. The weather task's instructions don't change.</p>
 <p><span class="say">Saturday in Tucson looks sunny, around 82°F.</span></p>
-<p class="note">The result arrives on its own, without Austin asking. <a href="request.html">Follow this message through the system</a>.</p>
+<p class="note">The result arrives without another message from the user. <a href="request.html">Follow this message through the system</a>.</p>
 </div></section>
 <section><h2>Where it stands</h2>
 <ul class="pts">

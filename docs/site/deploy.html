@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>Deployment</h1>
-<p class="lede">Everything runs on GCP and Temporal Cloud, scales to zero when idle, and only Austin can reach it.</p>
+<p class="lede">Everything runs on GCP and Temporal Cloud, scales to zero when idle, and only the owner's account can reach it.</p>
 <div class="card"><table class="tall"><tr><th>Piece</th><th>Runs on</th><th>When idle</th></tr>
 <tr><td>Web client</td><td>Cloud Run, at noribot.chat</td><td>Scales to zero</td></tr>
 <tr><td>Go agent service</td><td>Agent Runtime</td><td>Scales to zero</td></tr>
@@ -22,13 +22,13 @@
 </table></div>
 <div class="grid2">
 <div class="card tight"><p class="keyline">Who can reach it</p><p class="note">Google IAP plus an exact owner email check. Signed-out requests and forged owner headers are rejected.</p></div>
-<div class="card tight"><p class="keyline">Worker change in progress</p><p class="note">The merged request-driven worker runs as a bounded slice per Cloud Tasks wake. Its demo and rollout approval are still pending, and older worker pools stay at zero.</p></div>
+<div class="card tight"><p class="keyline">Request-driven workers</p><p class="note">A worker runs as a bounded slice per Cloud Tasks wake, on authenticated Cloud Run services. Older worker pools stay at zero.</p></div>
 </div>
 <section><h2>Pausing</h2>
 <div class="branch"><div class="node"><b>What pause does</b><small>Blocks new execution, scales workers to zero and stops the computer.</small></div><div class="node"><b>What keeps working</b><small>The website, chat, saved history and any waiting tasks. Nothing is cancelled.</small></div></div>
 </section>
 <section><h2>Releases</h2>
-<ul class="pts"><li>Cloud Build runs checks on pull requests.</li><li>Worker builds are immutable and pinned, so running tasks stay on code that's compatible with them.</li><li>A sandbox gets new builds first, and a version tag promotes them to production.</li><li><code>core/infrastructure/release/</code> holds the release and smoke test scripts.</li></ul></section>
+<ul class="pts"><li>CI/CD is off. Deploys run by hand when requested.</li><li>Worker builds are immutable and pinned, so running tasks stay on code that's compatible with them.</li><li><code>core/infrastructure/release/</code> holds the release and smoke test scripts.</li></ul></section>
 <section><h2>Seeing what happened</h2>
 <ul class="pts"><li><b>Debug view:</b> each reply shows its recorded model, hint, latency and cost.</li><li><b>Sentry:</b> operational errors and traces, without request bodies or prompts.</li><li><b>Arize:</b> AI spans as metadata. Saving redacted content requires an explicit setting.</li><li>Both exporters are optional and can't block a request if they fail.</li></ul></section>
 <section><h2>What it costs</h2>
@@ -40,6 +40,15 @@
 <p class="note">Model calls and running compute are extra. GCP budget alerts don't cap Temporal, so a separate daily check alerts on Temporal spend.</p></div></section>
 <details class="more"><summary>Trial evidence for the computer</summary>
 <ul class="pts"><li>A file, an installed package, a browser cookie and local storage all survived a guest restart and a move to a new host.</li><li>This covers graceful restarts. RAM, live tabs and sudden crashes aren't covered.</li><li>The disk has no backup yet: <a href="https://linear.app/a-barwick/issue/AB-189">AB-189</a>.</li></ul></details>
+<details class="more"><summary>Network and credential checks</summary>
+<p>These are checks from the October 2026 trials. They don't establish production hardening.</p>
+<ul class="pts"><li>The computer has public IPv4 egress through host NAT, and guest IPv6 is off.</li><li>Guest attempts to reach cloud metadata and host SSH were rejected.</li><li>Chromium's debugging port binds to guest loopback, and host SSH accepts only IAP's source range.</li><li>The GCE host has no service account.</li><li>Credentials stay in a gitignored mode-600 <code>.env</code>, or in Secret Manager for hosted services. They're kept out of images, logs, model context and workflow history.</li></ul></details>
+<details class="more"><summary>Options considered for the computer</summary>
+<table class="tall"><tr><th>Option</th><th>Assessment</th></tr>
+<tr><td>Firecracker on a GCE host</td><td>Chosen. Smallest footprint and direct lifecycle control, but the guest image and startup are ours to own.</td></tr>
+<tr><td>GKE Sandbox</td><td>Managed, but adds a cluster and node pools.</td></tr>
+<tr><td>Agent Substrate</td><td>A possible later target on GKE, with more platform than one guest needs.</td></tr>
+<tr><td>Agent Compute Engine</td><td>Announced, with no self-service trial at the time.</td></tr></table></details>
 <details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_5ba2343bf15081918fd76de48444f8b9">GCP infrastructure plan</a> · <a href="https://chatgpt.com/space/page_cdb993135ff08191b1cbb33bdf95200b">Milestone 2 plan</a> · <a href="https://linear.app/a-barwick/issue/AB-181">AB-181</a> · <a href="https://linear.app/a-barwick/issue/AB-188">AB-188</a> · <a href="https://linear.app/a-barwick/issue/AB-189">AB-189</a></p></details>
 </body>
 </html>

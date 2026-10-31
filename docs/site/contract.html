@@ -34,14 +34,14 @@
 <tr data-flow="dispatch"><td><code>dispatch(request)</code></td><td>Start new work.</td></tr>
 <tr data-flow="tool-steer"><td><code>steer(task, text)</code></td><td>Change an unfinished task.</td></tr>
 <tr data-flow="tool-answer"><td><code>answer(task, question, text)</code></td><td>Answer that task's open question.</td></tr>
-<tr data-flow="tool-continue"><td><code>continue(task, question)</code></td><td>Add budget, only after Austin says to keep going.</td></tr>
+<tr data-flow="tool-continue"><td><code>continue(task, question)</code></td><td>Add budget, only after the user says to keep going.</td></tr>
 <tr data-flow="tool-stop"><td><code>stop(task)</code></td><td>Stop one task.</td></tr>
-<tr class="designed"><td><code>hold(task, question)</code></td><td>Answer one of Austin's questions when that task's result arrives.<span class="tag design">designed</span></td></tr>
+<tr class="designed"><td><code>hold(task, question)</code></td><td>Answer one of the user's questions when that task's result arrives.<span class="tag design">designed</span></td></tr>
 </table><p class="note">A plain reply or clarifying question is just text, with no tool call.</p></div></section>
 <section><h2>Inner loop control tools</h2>
 <p>These sit next to the task's work tools, and each must be the only call in its response.</p>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>What it does</th></tr>
-<tr data-flow="wait"><td><code>wait_for_input(question)</code></td><td>Ask Austin something. This is today's version.</td></tr>
+<tr data-flow="wait"><td><code>wait_for_input(question)</code></td><td>Ask the user something. This is today's version.</td></tr>
 <tr class="designed"><td><code>request_input(question)</code></td><td>Replaces <code>wait_for_input</code>.<span class="tag design">designed</span></td></tr>
 <tr class="designed"><td><code>complete(answer, evidence, unmet)</code></td><td>Propose that the task is done. <a href="completion.html">The checks decide</a>.<span class="tag design">designed</span></td></tr>
 <tr class="designed"><td><code>request_work(request, why)</code></td><td>Ask for work outside this task's own request.<span class="tag design">designed</span></td></tr>
@@ -58,11 +58,13 @@
 <p>A task sometimes needs work outside its request. It can't start that work itself, so it asks.</p>
 <div class="card"><div class="flow">
 <div class="node inner"><b>Task A calls <code>request_work</code></b><small>A parks and the question goes to the outer loop.</small></div><div class="arrow">↓</div>
-<div class="node outer"><b>Outer loop decides</b><small>Dispatch a subtask, answer directly, or ask Austin.</small></div><div class="arrow">↓</div>
-<div class="node inner"><b>Subtask B runs like any task</b><small>If B needs Austin, it asks him itself. A keeps waiting.</small></div><div class="arrow">↓</div>
+<div class="node outer"><b>Outer loop decides</b><small>Dispatch a subtask, answer directly, or ask the user.</small></div><div class="arrow">↓</div>
+<div class="node inner"><b>Subtask B runs like any task</b><small>If B needs the user, it asks the user itself. A keeps waiting.</small></div><div class="arrow">↓</div>
 <div class="node"><b>B's result goes back to A</b><small>Saved in the same transaction as B's outcome. No model call is spent delivering it.</small></div>
 </div></div>
 <ul class="pts"><li><b>Budget:</b> B's cost counts against A.</li><li><b>Stop:</b> stopping A stops B.</li><li><b>Permissions:</b> B never gets more than A has.</li></ul>
+<details class="more"><summary>Why it's built this way</summary>
+<p>It's the standard parent-waits-for-children pattern from job queues, built on the outbox Nori already uses for commands. Agent frameworks tend to wait inside a single run, which doesn't cover parking a parent for hours across restarts. <a href="decisions.html#subtasks">The rejected options are on Decisions</a>.</p></details>
 </section>
 <section class="designed"><h2>Interrupting a task <span class="tag design">designed</span></h2>
 <p>A steer normally waits for the current step to finish. The outer loop can ask to cut the step short, and the runtime decides whether that's safe.</p>
