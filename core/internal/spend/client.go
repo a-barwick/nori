@@ -22,11 +22,21 @@ const (
 	monthLimit   int64 = 20_000_000_000
 )
 
-type ControlError struct{ message string }
+type ControlError struct {
+	message         string
+	admissionDenied bool
+}
 
 func (e *ControlError) Error() string { return "spend control: " + e.message }
 func blocked(message string) error    { return &ControlError{message: message} }
 func IsControlError(err error) bool   { var e *ControlError; return errors.As(err, &e) }
+
+// IsAdmissionDenied identifies a valid budget refusing a new request. Invalid
+// configuration, unavailable storage and settlement errors remain failures.
+func IsAdmissionDenied(err error) bool {
+	var e *ControlError
+	return errors.As(err, &e) && e.admissionDenied
+}
 
 type Client struct {
 	project, database, scope, profile string
@@ -319,7 +329,7 @@ func (c *Client) Reserve(ctx context.Context, provider, model string, inputBytes
 		roll(&pool, time.Now())
 		// Subtraction comparisons avoid overflowing counters supplied by bad records.
 		if scope.Used > scope.Allowance-amount || pool.Pending > dayLimit-amount || pool.DayKnown > dayLimit-pool.Pending-amount || pool.Pending > monthLimit-amount || pool.MonthKnown > monthLimit-pool.Pending-amount {
-			return blocked(fmt.Sprintf("request reserve $%.6f (%d input bytes + %d framing, %d output tokens) exceeds remaining allowance $%.6f or shared budget", float64(amount)/1e9, inputBytes, FramingBytes, maxOutputTokens, float64(scope.Allowance-scope.Used)/1e9))
+			return &ControlError{admissionDenied: true, message: fmt.Sprintf("request reserve $%.6f (%d input bytes + %d framing, %d output tokens) exceeds remaining allowance $%.6f or shared budget", float64(amount)/1e9, inputBytes, FramingBytes, maxOutputTokens, float64(scope.Allowance-scope.Used)/1e9)}
 		}
 		scope.Used += amount
 		pool.Pending += amount

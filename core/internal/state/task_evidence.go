@@ -89,7 +89,7 @@ func boundedEvidenceText(values []string) bool {
 		return false
 	}
 	for _, value := range values {
-		if len(value) > 8192 {
+		if len(value) > MaxMessageBytes {
 			return false
 		}
 	}

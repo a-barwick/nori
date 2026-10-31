@@ -37,7 +37,7 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 		if !run.Temporal {
 			continue
 		}
-		if run.Status != "running" {
+		if run.Status != state.RunRunning {
 			if e := repairCleanup(ctx, store, config, run); e != nil {
 				failures = append(failures, e)
 			}
@@ -65,7 +65,7 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 			scopes = append(scopes, computerRun(Step{run.ID, revision}))
 		}
 		stopErr := StopComputer(ctx, config, scopes)
-		status, detail := "failed", "Interrupted: Temporal execution ended before its terminal result was persisted; work was not retried."
+		status, detail := state.RunFailed, "Interrupted: Temporal execution ended before its terminal result was persisted; work was not retried."
 		if neverStarted {
 			detail = "Cancelled before Temporal execution started."
 		}
@@ -132,7 +132,7 @@ func StopPaused(ctx context.Context, store state.TaskStore, config computer.Conf
 		return store.GetRun(ctx, id)
 	}
 	run, err := store.GetRun(ctx, id)
-	if err != nil || !run.CancelRequested || run.Status != "running" {
+	if err != nil || !run.CancelRequested || run.Status != state.RunRunning {
 		return run, err
 	}
 	revisions, err := store.OperationRevisions(ctx, id)

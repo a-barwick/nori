@@ -40,41 +40,11 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 	traceContext := observability.InjectTrace(ctx)
 	err := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		receipts = make([]CommandReceipt, 0, len(commands))
-		prior := map[string]*Command{}
-		runs := map[string]Run{}
-		exists := map[string]bool{}
-		seen := map[string]bool{}
-		// Firestore requires all reads before writes, including repeated task IDs.
-		for _, cmd := range commands {
-			if cmd.ID == "" || cmd.RunID == "" || seen[cmd.ID] || len(cmd.Text) > 8192 {
-				return fmt.Errorf("%w: invalid or repeated command ID, task ID, or text", ErrCommandInvalid)
-			}
-			seen[cmd.ID] = true
-			doc, err := tx.Get(s.commands().Doc(cmd.ID))
-			if err == nil {
-				var old Command
-				if err = doc.DataTo(&old); err != nil {
-					return err
-				}
-				prior[cmd.ID] = &old
-			} else if status.Code(err) != codes.NotFound {
-				return err
-			}
-			if _, read := exists[cmd.RunID]; !read {
-				doc, err = tx.Get(s.runs().Doc(cmd.RunID))
-				if err == nil {
-					r, err := decodeRun(doc, nil)
-					if err != nil {
-						return err
-					}
-					runs[cmd.RunID], exists[cmd.RunID] = r, true
-				} else if status.Code(err) == codes.NotFound {
-					exists[cmd.RunID] = false
-				} else {
-					return err
-				}
-			}
+		batch, err := s.readCommandBatch(tx, commands)
+		if err != nil {
+			return err
 		}
+		prior, runs, exists := batch.prior, batch.runs, batch.exists
 		allDuplicate := true
 		for _, cmd := range commands {
 			allDuplicate = allDuplicate && prior[cmd.ID] != nil
@@ -94,7 +64,6 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 				return err
 			}
 		}
-		var err error
 		now := time.Now().UTC()
 		accepted := []Command{}
 		readyEvents := []TaskEvent{}
@@ -113,11 +82,11 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 					cmd.Kind = InputKind(cmd.Text)
 					// Keep a receipt accepted before this translation fix stable.
 					// New commands use the pinned v1 worker's continue vocabulary.
-					if old := prior[cmd.ID]; old != nil && old.Kind == "input" && cmd.Kind == "continue" {
-						cmd.Kind = "input"
+					if old := prior[cmd.ID]; old != nil && old.Kind == CommandInput && cmd.Kind == CommandContinue {
+						cmd.Kind = CommandInput
 					}
 				case "stop":
-					cmd.Kind = "cancel"
+					cmd.Kind = CommandCancel
 				}
 			}
 			if old := prior[cmd.ID]; old != nil {
@@ -127,17 +96,17 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 				receipts = append(receipts, CommandReceipt{Command: *old, Run: run})
 				continue
 			}
-			if cmd.Interrupt && cmd.Kind != "steer" {
+			if cmd.Interrupt && cmd.Kind != CommandSteer {
 				return fmt.Errorf("%w: only steer can request interruption", ErrCommandInvalid)
 			}
 			if cmd.Interrupt && run.WorkflowVersion < TaskWorkflowVersion {
 				return fmt.Errorf("%w: this task worker cannot safely interrupt active work", ErrCommandInvalid)
 			}
-			if cmd.Kind == "hold" {
+			if cmd.Kind == CommandHold {
 				if !exists[cmd.RunID] {
 					return ErrNotFound
 				}
-				if run.Status == "running" && run.WorkflowVersion < TaskWorkflowVersion {
+				if run.Status == RunRunning && run.WorkflowVersion < TaskWorkflowVersion {
 					return fmt.Errorf("%w: this task worker cannot deliver held results", ErrCommandInvalid)
 				}
 				holdBytes := len(cmd.Text)
@@ -148,7 +117,7 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 					return fmt.Errorf("%w: held question is empty or task hold limit reached", ErrCommandInvalid)
 				}
 				hold := TaskHold{ID: cmd.ID, TaskID: cmd.RunID, Question: cmd.Text, SourceInputIDs: cmd.SourceInputIDs, Status: "pending", CreatedAt: now}
-				if run.Status != "running" {
+				if run.Status != RunRunning {
 					hold.Status = "ready"
 					run.EventSequence++
 					readyEvents = append(readyEvents, TaskEvent{ID: "hold-" + cmd.ID, RunID: run.ID, Kind: "held_ready", Sequence: run.EventSequence, Revision: run.Revision, Text: run.Result, Reason: run.Error, Holds: []TaskHold{hold}, CreatedAt: now})
@@ -160,21 +129,21 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 				receipts = append(receipts, CommandReceipt{Command: cmd, Run: run})
 				continue
 			}
-			if err = control.Check(); err != nil && cmd.Kind != "stop" && cmd.Kind != "cancel" {
+			if err = control.Check(); err != nil && cmd.Kind != CommandStop && cmd.Kind != CommandCancel {
 				return err
 			}
 			if exists[cmd.RunID] {
-				if !run.Temporal || run.Status != "running" {
+				if !run.Temporal || run.Status != RunRunning {
 					return ErrBusy
 				}
-				if cmd.Kind == "start" {
+				if cmd.Kind == CommandStart {
 					return ErrDuplicate
 				}
-				if run.CancelRequested && cmd.Kind != "stop" && cmd.Kind != "cancel" {
+				if run.CancelRequested && cmd.Kind != CommandStop && cmd.Kind != CommandCancel {
 					return ErrCancelled
 				}
 			} else {
-				if cmd.Kind != "start" {
+				if cmd.Kind != CommandStart {
 					return ErrNotFound
 				}
 				if strings.TrimSpace(cmd.Text) == "" {
@@ -184,19 +153,19 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 				exists[cmd.RunID] = true
 			}
 			if run.ProtocolVersion < TaskProtocolVersion {
-				if cmd.Kind != "input" && cmd.Kind != "continue" && cmd.Kind != "cancel" {
+				if cmd.Kind != CommandInput && cmd.Kind != CommandContinue && cmd.Kind != CommandCancel {
 					return fmt.Errorf("%w: unsupported legacy task command", ErrCommandInvalid)
 				}
-				if run.Revision >= 32 && cmd.Kind != "cancel" {
+				if run.Revision >= 32 && cmd.Kind != CommandCancel {
 					return fmt.Errorf("%w: task input limit reached (32 accepted commands)", ErrCommandInvalid)
 				}
 				run.Revision++
 				run.Position = run.Revision
-				if cmd.Kind == "cancel" {
+				if cmd.Kind == CommandCancel {
 					run.CancelRequested = true
 				}
 			} else {
-				if run.Position >= 32 && cmd.Kind != "stop" {
+				if run.Position >= 32 && cmd.Kind != CommandStop {
 					return fmt.Errorf("%w: task input limit reached (32 accepted commands)", ErrCommandInvalid)
 				}
 				switch cmd.Kind {
@@ -205,19 +174,19 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 						return fmt.Errorf("%w: task instruction is empty", ErrCommandInvalid)
 					}
 					run.Revision++
-					if cmd.Kind == "steer" && cmd.Interrupt {
+					if cmd.Kind == CommandSteer && cmd.Interrupt {
 						run.InterruptRevision = run.Revision
 					}
 					run.Question, run.Waiting, run.PublicationPending = nil, "", false
 				case "answer", "continue":
 					kind := "input"
-					if cmd.Kind == "continue" {
+					if cmd.Kind == CommandContinue {
 						kind = "budget"
 					}
 					if run.Question == nil || run.Question.ResolvedBy != "" || cmd.QuestionID == "" || run.Question.ID != cmd.QuestionID || run.Question.Revision != run.Revision || run.Question.Kind != kind {
 						return ErrQuestionStale
 					}
-					if cmd.Kind == "answer" && strings.TrimSpace(cmd.Text) == "" {
+					if cmd.Kind == CommandAnswer && strings.TrimSpace(cmd.Text) == "" {
 						return fmt.Errorf("%w: answer is empty", ErrCommandInvalid)
 					}
 					run.Question.ResolvedBy = cmd.ID
@@ -259,7 +228,7 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 			if err = tx.Create(s.commands().Doc(cmd.ID), cmd); err != nil {
 				return err
 			}
-			if runs[cmd.RunID].ProtocolVersion < TaskProtocolVersion && cmd.Kind != "cancel" {
+			if runs[cmd.RunID].ProtocolVersion < TaskProtocolVersion && cmd.Kind != CommandCancel {
 				message := Message{ID: cmd.ID + "-user", RunID: cmd.RunID, Role: "user", Text: cmd.Text, CreatedAt: now}
 				if fence != nil {
 					message.TurnID = fence.TurnID
@@ -485,7 +454,7 @@ func (s *Google) ProjectQuestion(ctx context.Context, id string, revision int64,
 	})
 }
 
-func (s *Google) Publish(ctx context.Context, id string, revision int64, runStatus, detail, text string, costUnknown bool, bypassRouting ...bool) (Run, error) {
+func (s *Google) Publish(ctx context.Context, id string, revision int64, runStatus RunStatus, detail, text string, costUnknown bool, bypassRouting bool) (Run, error) {
 	var run Run
 	routingPending := false
 	traceContext := observability.InjectTrace(ctx)
@@ -496,20 +465,20 @@ func (s *Google) Publish(ctx context.Context, id string, revision int64, runStat
 		if err != nil {
 			return err
 		}
-		if run.Status != "running" {
+		if run.Status != RunRunning {
 			return nil
 		}
-		if runStatus == "cancelled" && run.CancelRequested {
+		if runStatus == RunCancelled && run.CancelRequested {
 			revision = run.Revision
 		}
-		if runStatus == "completed" {
+		if runStatus == RunCompleted {
 			if err = guardTask(run, revision); err != nil {
 				return err
 			}
 		} else if run.Revision != revision {
 			return ErrSuperseded
 		}
-		bypass := runStatus == "cancelled" || costUnknown || (len(bypassRouting) > 0 && bypassRouting[0])
+		bypass := runStatus == RunCancelled || costUnknown || bypassRouting
 		if run.ProtocolVersion >= TaskProtocolVersion && !bypass {
 			pending, err := s.conversationRoutingPending(tx)
 			if err != nil {
@@ -522,7 +491,7 @@ func (s *Google) Publish(ctx context.Context, id string, revision int64, runStat
 				return tx.Update(s.runs().Doc(id), []firestore.Update{{Path: "publication_pending", Value: true}, {Path: "publication_generation", Value: run.PublicationGeneration}})
 			}
 		}
-		if run.CancelRequested && runStatus != "failed" {
+		if run.CancelRequested && runStatus != RunFailed {
 			runStatus, detail, text = "cancelled", "Stopped by Austin.", ""
 		}
 		now := time.Now().UTC()
@@ -631,7 +600,7 @@ func (s *Google) PublicationTasks(ctx context.Context) ([]Run, error) {
 		if err != nil {
 			return nil, err
 		}
-		if run.Status == "running" {
+		if run.Status == RunRunning {
 			runs = append(runs, run)
 		}
 	}
@@ -648,4 +617,48 @@ func (s *Google) PublicationWoken(ctx context.Context, id string, generation int
 		}
 		return tx.Update(s.runs().Doc(id), []firestore.Update{{Path: "publication_pending", Value: false}})
 	})
+}
+
+type commandBatch struct {
+	prior  map[string]*Command
+	runs   map[string]Run
+	exists map[string]bool
+}
+
+// readCommandBatch completes all document reads before the transaction writes.
+func (s *Google) readCommandBatch(tx *firestore.Transaction, commands []Command) (commandBatch, error) {
+	batch := commandBatch{prior: map[string]*Command{}, runs: map[string]Run{}, exists: map[string]bool{}}
+	seen := map[string]bool{}
+	// Firestore requires all reads before writes, including repeated task IDs.
+	for _, cmd := range commands {
+		if cmd.ID == "" || cmd.RunID == "" || seen[cmd.ID] || len(cmd.Text) > MaxMessageBytes {
+			return batch, fmt.Errorf("%w: invalid or repeated command ID, task ID, or text", ErrCommandInvalid)
+		}
+		seen[cmd.ID] = true
+		doc, err := tx.Get(s.commands().Doc(cmd.ID))
+		if err == nil {
+			var old Command
+			if err = doc.DataTo(&old); err != nil {
+				return batch, err
+			}
+			batch.prior[cmd.ID] = &old
+		} else if status.Code(err) != codes.NotFound {
+			return batch, err
+		}
+		if _, read := batch.exists[cmd.RunID]; !read {
+			doc, err = tx.Get(s.runs().Doc(cmd.RunID))
+			if err == nil {
+				r, err := decodeRun(doc, nil)
+				if err != nil {
+					return batch, err
+				}
+				batch.runs[cmd.RunID], batch.exists[cmd.RunID] = r, true
+			} else if status.Code(err) == codes.NotFound {
+				batch.exists[cmd.RunID] = false
+			} else {
+				return batch, err
+			}
+		}
+	}
+	return batch, nil
 }

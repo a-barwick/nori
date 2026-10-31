@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"nori/internal/httpjson"
 	"os"
 	"os/exec"
 	"regexp"
@@ -208,22 +209,18 @@ func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle fu
 }
 
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
-	d := json.NewDecoder(r.Body)
-	d.DisallowUnknownFields()
-	if err := d.Decode(value); err != nil {
-		http.Error(w, "invalid JSON request", 400)
-		return false
-	}
-	if err := d.Decode(new(any)); err != io.EOF {
-		http.Error(w, "one JSON object required", 400)
+	if err := httpjson.Decode(w, r, value, 128<<10); err != nil {
+		message := "invalid JSON request"
+		if errors.Is(err, httpjson.ErrMultiple) {
+			message = "one JSON object required"
+		}
+		http.Error(w, message, 400)
 		return false
 	}
 	return true
 }
 func respond(w http.ResponseWriter, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(value)
+	httpjson.Write(w, http.StatusOK, value)
 }
 
 // cappedWriter continues accepting data after the cap so tools cannot block on output.

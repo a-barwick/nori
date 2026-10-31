@@ -1,5 +1,7 @@
 "use client";
 
+import { taskControlKinds } from "../types";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import type { Span } from "@sentry/nextjs";
@@ -48,7 +50,7 @@ function restoreTaskCommands(): PendingTaskCommand[] {
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is PendingTaskCommand => item && typeof item.started === "number" &&
       typeof item.command?.id === "string" && /^[a-f0-9-]{36}$/.test(item.command.id) &&
-      typeof item.command.run_id === "string" && ["steer", "answer", "continue", "stop"].includes(item.command.kind) &&
+      typeof item.command.run_id === "string" && taskControlKinds.includes(item.command.kind) &&
       (item.command.text === undefined || (typeof item.command.text === "string" && new TextEncoder().encode(item.command.text).length <= 8192)) &&
       (item.command.question_id === undefined || typeof item.command.question_id === "string"))
       .map((item) => ({ ...item, sending: false }));
@@ -94,6 +96,7 @@ export function useRuntime(agentMode = false) {
   const draftValue = useRef("");
   const setDraft = (text: string) => { draftValue.current = text; setDraftState(text); };
   const [error, setError] = useState("");
+  const [pollError, setPollError] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [pending, setPending] = useState<Pending[]>(restorePending);
@@ -193,7 +196,7 @@ export function useRuntime(agentMode = false) {
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const serial = ++requestSerial.current;
     const data = await post<Session>("session", {}, signal, agentMode);
-    if (!signal?.aborted) applySnapshot(data, serial);
+    if (!signal?.aborted) { applySnapshot(data, serial); setPollError(""); }
     return data;
   }, [agentMode, applySnapshot]);
 
@@ -279,22 +282,32 @@ export function useRuntime(agentMode = false) {
   }, [refresh, submit, submitTaskCommand, beginTiming, finishTiming]);
 
   useEffect(() => {
-    // Task pause does not pause the conversation. No continuous idle polling.
-    if ((!taskPolling && !conversationBusy) || error || !visible) return;
+    // Only refresh saved history here; never resubmit messages or task commands.
+    // A transient read failure must not permanently strand an active task's UI.
+    if ((!taskPolling && !conversationBusy) || !visible) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
     const poll = async () => {
       try {
         const next = await refresh(controller.signal);
-        if (!controller.signal.aborted && (next.conversation?.pending || next.conversation?.processing || next.runs.some((run) => run.status === "running" && (!next.paused || run.cancel_requested)) || taskCommandsRef.current.some((item) => !item.rejected))) timer = setTimeout(poll, 2000);
-      } catch (err) { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "History refresh failed."); }
+        if (controller.signal.aborted) return;
+        failures = 0;
+        setPollError("");
+        if (next.conversation?.pending || next.conversation?.processing || next.runs.some((run) => run.status === "running" && (!next.paused || run.cancel_requested)) || taskCommandsRef.current.some((item) => !item.rejected)) timer = setTimeout(poll, 2000);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setPollError(err instanceof Error ? err.message : "History refresh failed.");
+        const transient = err instanceof TypeError || (err instanceof RequestError && [429, 502, 503, 504].includes(err.status));
+        if (transient && failures < 3) timer = setTimeout(poll, 2000 * 2 ** failures++);
+      }
     };
     timer = setTimeout(poll, 1000);
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [taskPolling, conversationBusy, error, visible, refresh]);
+  }, [taskPolling, conversationBusy, visible, refresh]);
 
   async function refreshHistory() {
-    setError(""); setLoading(true);
+    setError(""); setPollError(""); setLoading(true);
     const controller = new AbortController(); controllers.current.add(controller);
     try {
       const data = await refresh(controller.signal);
@@ -351,7 +364,7 @@ export function useRuntime(agentMode = false) {
     updateTaskCommands((current) => current.filter((item) => item.command.id !== id || !item.rejected));
   }
 
-  return { session, draft, setDraft, error, loading, loadingOlder, pending, selectedId, setSelectedId,
+  return { session, draft, setDraft, error: error || pollError, loading, loadingOlder, pending, selectedId, setSelectedId,
     activeTasks, selected, tasksUnavailable, busy, conversationBusy, taskCommands, taskDrafts,
     setTaskDraft: (id: string, text: string) => setTaskDrafts((current) => ({ ...current, [id]: text })),
     refreshHistory, loadOlder, send, retry: submit, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand };

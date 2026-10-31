@@ -101,6 +101,13 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		span.SetAttributes(a)
 	}
 	defer func() {
+		denied := requestStarted.IsZero() && spend.IsAdmissionDenied(err)
+		if denied {
+			zero := 0.0
+			reply.Usage.CostUSD, reply.Usage.CostStatus, reply.Usage.RequestStatus = &zero, "not_incurred", "denied"
+			span.SetAttributes(attribute.String("nori.reply.status", "budget_denied"))
+			observability.Event(ctx, "model.call.denied", attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", m.Name))
+		}
 		span.SetAttributes(attribute.Bool("nori.output.present", reply.Text != ""), attribute.Int("nori.tool.call_count", len(reply.Calls)), attribute.String("nori.cost.status", reply.Usage.CostStatus))
 		if reply.Usage.InputTokens != nil {
 			span.SetAttributes(attribute.Int64("gen_ai.usage.input_tokens", *reply.Usage.InputTokens), attribute.Int64("llm.token_count.prompt", *reply.Usage.InputTokens))
@@ -119,7 +126,7 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		if a, ok := observability.ContentAttribute("output.value", reply.Text); ok {
 			span.SetAttributes(a)
 		}
-		if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+		if err != nil && !denied && !errors.Is(ctx.Err(), context.Canceled) {
 			observability.RecordErrorCategory(ctx, "model.outer", err)
 			if !requestStarted.IsZero() {
 				observability.Event(ctx, "model.call.failed", attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", m.Name))
@@ -233,6 +240,12 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	if res.StatusCode != http.StatusOK {
 		return reply, modelHTTPError(m.URL, res)
 	}
+	return m.decodeReply(res, reply, provider, span)
+}
+
+// decodeReply preserves observed usage even when the provider response is unusable.
+func (m *Model) decodeReply(res *http.Response, reply Reply, provider string, span trace.Span) (Reply, error) {
+	var err error
 	var response struct {
 		ID    string `json:"id"`
 		Model string `json:"model"`

@@ -39,6 +39,10 @@ func main() {
 	if err := spend.ValidateConfiguration(); err != nil {
 		observability.Fatal(err)
 	}
+	wakes, err := env.WorkerWake(ctx)
+	if err != nil {
+		observability.Fatal(err)
+	}
 	if port := os.Getenv("PORT"); port != "" {
 		addr := ":" + port
 		if os.Getenv("TEMPORAL_LOCAL") == "true" {
@@ -48,7 +52,7 @@ func main() {
 			if registration {
 				return register(ctx)
 			}
-			return run(ctx, true, id, ids)
+			return run(ctx, wakes, true, id, ids)
 		}))
 		server.WriteTimeout = 11 * time.Minute
 		if err := wake.Listen(ctx, server, 5*time.Minute); err != nil {
@@ -58,7 +62,7 @@ func main() {
 		}
 		return
 	}
-	if err := run(ctx, false, "local", nil); err != nil {
+	if err := run(ctx, wakes, false, "local", nil); err != nil {
 		observability.RecordErrorCategory(ctx, "worker.lifecycle", err)
 		observability.Shutdown(stopTelemetry)
 		observability.Fatal(err)
@@ -181,12 +185,12 @@ func (r *registrationActivity) ExecuteActivity(context.Context, *interceptor.Exe
 	return nil, fmt.Errorf("registration cannot execute activities")
 }
 
-func run(ctx context.Context, bounded bool, sliceID string, known []string) (result error) {
+func run(ctx context.Context, wakes *workerwake.Cloud, bounded bool, sliceID string, known []string) (result error) {
 	build := os.Getenv("TEMPORAL_BUILD_ID")
 	if build == "" {
 		return fmt.Errorf("TEMPORAL_BUILD_ID is required; use an immutable release identifier")
 	}
-	if bounded && !workerwake.Enabled() {
+	if bounded && !wakes.Enabled() {
 		return fmt.Errorf("request worker requires durable worker wake configuration")
 	}
 	pollWindow, err := time.ParseDuration(env.Get("NORI_WORKER_POLL_WINDOW", "240s"))
@@ -216,7 +220,7 @@ func run(ctx context.Context, bounded bool, sliceID string, known []string) (res
 		if bounded && len(known) > 0 {
 			// The operator fences the native queue before closing admission.
 			// Retain this dispatched wake without starting any SDK worker.
-			if err := workerwake.Schedule(ctx, build, known...); err != nil {
+			if err := wakes.Schedule(ctx, build, known...); err != nil {
 				return err
 			}
 			log.Printf("worker_slice slice=%s build=%s phase=paused-retained workflows=%q", sliceID, build, known)
@@ -275,14 +279,14 @@ func run(ctx context.Context, bounded bool, sliceID string, known []string) (res
 			ids, _, _ := tracker.Snapshot()
 			if control.Paused {
 				if len(ids) > 0 {
-					result = errors.Join(result, workerwake.Schedule(check, build, ids...))
+					result = errors.Join(result, wakes.Schedule(check, build, ids...))
 				}
 				log.Printf("worker_slice slice=%s build=%s phase=paused-retained workflows=%q", sliceID, build, ids)
 				return
 			}
 			pending, err := task.Runnable(check, store, c, build, ids)
 			if err == nil && len(pending) > 0 {
-				err = workerwake.Schedule(check, build, pending...)
+				err = wakes.Schedule(check, build, pending...)
 			}
 			log.Printf("worker_slice slice=%s build=%s phase=handoff runnable=%q error=%v", sliceID, build, pending, err)
 			result = errors.Join(result, err)
@@ -312,12 +316,12 @@ func run(ctx context.Context, bounded bool, sliceID string, known []string) (res
 				log.Printf("terminal recovery: %v", e)
 			}
 		}
-		if e = task.Deliver(ctx, store, c); e != nil && ctx.Err() == nil {
+		if e = task.Deliver(ctx, store, c, wakes); e != nil && ctx.Err() == nil {
 			log.Printf("pending command delivery: %v", e)
 		}
 		// Reuse the same user-only routing fence as terminal publication.
 		if pending, err := store.UserRoutingPending(ctx); err == nil && !pending {
-			if err = task.WakePublications(ctx, store, c); err != nil && ctx.Err() == nil {
+			if err = task.WakePublications(ctx, store, c, wakes); err != nil && ctx.Err() == nil {
 				log.Printf("held publication wake: %v", err)
 			}
 		}

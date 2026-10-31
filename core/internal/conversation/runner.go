@@ -19,9 +19,6 @@ import (
 	"nori/internal/state"
 )
 
-var ErrBusy = state.ErrConversationBusy
-var ErrConflict = state.ErrConversationConflict
-
 type Input struct {
 	ID      string `json:"id"`
 	Message string `json:"message"`
@@ -88,7 +85,7 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 	if _, e := uuid.Parse(input.ID); e != nil {
 		return Session{}, fmt.Errorf("message ID must be a UUID")
 	}
-	if strings.TrimSpace(input.Message) == "" || len(input.Message) > 8192 {
+	if strings.TrimSpace(input.Message) == "" || len(input.Message) > state.MaxMessageBytes {
 		return Session{}, fmt.Errorf("message must contain 1–8192 bytes")
 	}
 	ctx, span := conversationTracer.Start(ctx, "conversation.accept", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.input.id", input.ID)))
@@ -114,7 +111,7 @@ func fenceFor(c state.ConversationControl, t state.ConversationTurn) state.Conve
 // wake never acknowledges away the only remaining notification.
 func (r *Runner) Process(ctx context.Context) error {
 	if !r.process.TryLock() {
-		return ErrBusy
+		return state.ErrConversationBusy
 	}
 	defer r.process.Unlock()
 	for {
@@ -260,7 +257,9 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		}
 		if e == nil {
 			span.SetAttributes(attribute.String("nori.reply.status", t.Attempt.Status), attribute.Bool("nori.output.present", text != ""))
-			if t.Attempt.Status == "error" {
+			if t.Attempt.Status == "error" && budgetDenied(t.Attempt) {
+				observability.Event(ctx, "conversation.denied")
+			} else if t.Attempt.Status == "error" {
 				span.SetStatus(codes.Error, "conversation reply failed")
 				observability.Event(ctx, "conversation.failed")
 			} else {

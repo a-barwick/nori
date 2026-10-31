@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// MaxMessageBytes bounds user instructions and individual tool arguments.
+const MaxMessageBytes = 8192
+
 const Owner = "austinbarwickdavis@gmail.com"
 
 // CleanupGrace reserves time for stopping computer work and persisting its result.
@@ -47,6 +50,15 @@ type Artifact struct {
 	ID   string `json:"id" firestore:"id"`
 	Kind string `json:"kind" firestore:"kind"`
 }
+type RunStatus string
+
+const (
+	RunRunning   RunStatus = "running"
+	RunCompleted RunStatus = "completed"
+	RunFailed    RunStatus = "failed"
+	RunCancelled RunStatus = "cancelled"
+)
+
 type Run struct {
 	WorkflowVersion       int               `json:"workflow_version,omitempty" firestore:"workflow_version,omitempty"`
 	InterruptRevision     int64             `json:"interrupt_revision,omitempty" firestore:"interrupt_revision,omitempty"`
@@ -73,7 +85,7 @@ type Run struct {
 	CostUnknown     bool       `json:"cost_unknown,omitempty" firestore:"cost_unknown,omitempty"`
 	Budget          float64    `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
 	ID              string     `json:"id" firestore:"id"`
-	Status          string     `json:"status" firestore:"status"`
+	Status          RunStatus  `json:"status" firestore:"status"`
 	CancelRequested bool       `json:"cancel_requested" firestore:"cancel_requested"`
 	StartedAt       time.Time  `json:"started_at" firestore:"started_at"`
 	Deadline        time.Time  `json:"deadline" firestore:"deadline"`

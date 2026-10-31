@@ -50,28 +50,41 @@ type CommandReceipt struct {
 
 // Command and its delivery intent are committed in the acceptance transaction.
 // ID is supplied by the caller and is stable across HTTP and relay retries.
+type CommandKind string
+
+const (
+	CommandStart    CommandKind = "start"
+	CommandSteer    CommandKind = "steer"
+	CommandAnswer   CommandKind = "answer"
+	CommandContinue CommandKind = "continue"
+	CommandStop     CommandKind = "stop"
+	CommandInput    CommandKind = "input"
+	CommandCancel   CommandKind = "cancel"
+	CommandHold     CommandKind = "hold"
+)
+
 type Command struct {
-	Interrupt      bool      `json:"interrupt,omitempty" firestore:"interrupt,omitempty"`
-	QuestionID     string    `json:"question_id,omitempty" firestore:"question_id,omitempty"`
-	SourceInputIDs []string  `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
-	ID             string    `json:"id" firestore:"id"`
-	RunID          string    `json:"run_id" firestore:"run_id"`
-	Kind           string    `json:"kind" firestore:"kind"`
-	Text           string    `json:"text" firestore:"text"`
-	Position       int64     `json:"position" firestore:"position"`
-	Revision       int64     `json:"revision" firestore:"revision"`
-	Delivered      bool      `json:"delivered" firestore:"delivered"`
-	CreatedAt      time.Time `json:"created_at" firestore:"created_at"`
+	Interrupt      bool        `json:"interrupt,omitempty" firestore:"interrupt,omitempty"`
+	QuestionID     string      `json:"question_id,omitempty" firestore:"question_id,omitempty"`
+	SourceInputIDs []string    `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
+	ID             string      `json:"id" firestore:"id"`
+	RunID          string      `json:"run_id" firestore:"run_id"`
+	Kind           CommandKind `json:"kind" firestore:"kind"`
+	Text           string      `json:"text" firestore:"text"`
+	Position       int64       `json:"position" firestore:"position"`
+	Revision       int64       `json:"revision" firestore:"revision"`
+	Delivered      bool        `json:"delivered" firestore:"delivered"`
+	CreatedAt      time.Time   `json:"created_at" firestore:"created_at"`
 }
 
 // InputKind makes a bare "continue" reply an explicit continue command. The
 // task grants another budget only if it has asked its budget question;
 // otherwise the command is ordinary input text.
-func InputKind(message string) string {
+func InputKind(message string) CommandKind {
 	if strings.EqualFold(strings.TrimSpace(message), "continue") {
-		return "continue"
+		return CommandContinue
 	}
-	return "input"
+	return CommandInput
 }
 
 type TaskSnapshot struct {
@@ -80,6 +93,8 @@ type TaskSnapshot struct {
 }
 
 type TaskStore interface {
+	GetPNG(ctx context.Context, run, id string) ([]byte, error)
+	TaskSteps(ctx context.Context, runID string) ([]TaskStep, error)
 	Store
 	Accept(context.Context, Command) (Run, error)
 	AcceptCommandBatch(context.Context, []Command, *ConversationFence) ([]CommandReceipt, error)
@@ -96,7 +111,7 @@ type TaskStore interface {
 	Incorporate(context.Context, string, int64, int64) error
 	Guard(context.Context, string, int64) (Run, error)
 	Admit(context.Context, string, int64, string) error
-	Publish(context.Context, string, int64, string, string, string, bool, ...bool) (Run, error)
+	Publish(context.Context, string, int64, RunStatus, string, string, bool, bool) (Run, error)
 	Project(context.Context, string, int64, string, string) error
 	RecordTaskStep(context.Context, string, TaskStep) error
 }

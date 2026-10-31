@@ -1,4 +1,4 @@
-// Package env is the single place entrypoints read process configuration.
+// Package env loads runtime configuration without management credentials.
 package env
 
 import (

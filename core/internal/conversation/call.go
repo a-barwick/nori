@@ -49,7 +49,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		span.SetAttributes(attribute.Int64("nori.phase.history_ms", historyMS), attribute.Int64("nori.phase.tasks_ms", tasksMS), attribute.Int64("nori.phase.visible_ms", visibleMS), attribute.Int64("nori.phase.classifier_ms", jevMS), attribute.Int64("nori.phase.prompt_ms", promptMS), attribute.Int64("nori.phase.outer_ms", outerMS), attribute.String("nori.reply.status", t.Attempt.Status))
 		if callErr != nil && !errors.Is(ctx.Err(), context.Canceled) && !errors.Is(callErr, state.ErrConversationStale) {
 			observability.RecordErrorCategory(ctx, "conversation.attempt", callErr)
-		} else if t.Attempt.Status == "error" {
+		} else if t.Attempt.Status == "error" && !budgetDenied(t.Attempt) {
 			span.SetStatus(codes.Error, "conversation reply failed")
 		}
 		span.End()
@@ -63,17 +63,6 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	defer close(done)
 	// The lease watcher also covers setup reads, not just provider latency.
 	// History and task state can load while Jev classifies the visible context.
-	type historyResult struct {
-		turns      []state.ConversationTurn
-		truncated  bool
-		err        error
-		durationMS int64
-	}
-	type taskResult struct {
-		session    state.Session
-		err        error
-		durationMS int64
-	}
 	historyReady := make(chan historyResult, 1)
 	tasksReady := make(chan taskResult, 1)
 	var work sync.WaitGroup
@@ -95,16 +84,8 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			callErr = nil
 		}
 	}()
-	work.Go(func() {
-		readStarted := time.Now()
-		history, truncated, err := r.tasks.Store.ConversationHistory(callCtx)
-		historyReady <- historyResult{history, truncated, err, time.Since(readStarted).Milliseconds()}
-	})
-	work.Go(func() {
-		readStarted := time.Now()
-		snapshot, err := r.tasks.Store.ConversationProjection(callCtx)
-		tasksReady <- taskResult{snapshot, err, time.Since(readStarted).Milliseconds()}
-	})
+	work.Go(func() { historyReady <- r.readAttemptHistory(callCtx) })
+	work.Go(func() { tasksReady <- r.readAttemptTasks(callCtx) })
 	readStarted := time.Now()
 	visible, next, e := r.tasks.Store.ConversationMessages(callCtx, "")
 	visibleMS = time.Since(readStarted).Milliseconds()
@@ -179,7 +160,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		// Keep active work visible even if it predates CI. Preflight normally
 		// refuses it; never hide it merely to make a smoke request cheaper.
 		snapshot.Runs = slices.DeleteFunc(snapshot.Runs, func(run state.Run) bool {
-			return run.StartedAt.Before(ciStart) && (run.Status == "completed" || run.Status == "failed" || run.Status == "cancelled")
+			return run.StartedAt.Before(ciStart) && (run.Status == state.RunCompleted || run.Status == state.RunFailed || run.Status == state.RunCancelled)
 		})
 	}
 	eventRunIDs := []string{}
@@ -256,7 +237,7 @@ func (r *Runner) modelFailureText(ctx context.Context, inputs []state.Conversati
 			text += "\n\nTask " + id + ": its notification is saved. Open the task panel for its current status."
 			continue
 		}
-		heading := "Task " + id + ": " + run.Status + "."
+		heading := "Task " + id + ": " + string(run.Status) + "."
 		output := ""
 		switch run.Status {
 		case "completed", "failed", "cancelled":
@@ -448,7 +429,7 @@ func (r *Runner) finishCall(ctx, callCtx context.Context, f state.ConversationFe
 				id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(t.Attempt.ID+":"+call.ID)).String()
 				command := commands[i]
 				command.ID = id
-				if command.Kind == "start" {
+				if command.Kind == state.CommandStart {
 					command.RunID = id
 				}
 				for _, input := range t.Inputs {
@@ -501,4 +482,38 @@ func (r *Runner) startHint(work *sync.WaitGroup, callCtx context.Context, classi
 		})
 	}
 	return hintReady, nil
+}
+
+// An admission denial ends the turn without sending a model request.
+func budgetDenied(attempt state.ConversationAttempt) bool {
+	for _, usage := range attempt.Usage {
+		if usage.Provider == "outer" && usage.RequestStatus == "denied" {
+			return true
+		}
+	}
+	return false
+}
+
+type historyResult struct {
+	turns      []state.ConversationTurn
+	truncated  bool
+	err        error
+	durationMS int64
+}
+type taskResult struct {
+	session    state.Session
+	err        error
+	durationMS int64
+}
+
+func (r *Runner) readAttemptHistory(ctx context.Context) historyResult {
+	started := time.Now()
+	history, truncated, err := r.tasks.Store.ConversationHistory(ctx)
+	return historyResult{history, truncated, err, time.Since(started).Milliseconds()}
+}
+
+func (r *Runner) readAttemptTasks(ctx context.Context) taskResult {
+	started := time.Now()
+	snapshot, err := r.tasks.Store.ConversationProjection(ctx)
+	return taskResult{snapshot, err, time.Since(started).Milliseconds()}
 }

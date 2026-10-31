@@ -169,7 +169,7 @@ func (s *Google) Artifact(ctx context.Context, id string, a Artifact) error {
 	_, e := s.runs().Doc(id).Update(ctx, []firestore.Update{{Path: "artifacts", Value: firestore.ArrayUnion(a)}})
 	return e
 }
-func (s *Google) Finish(ctx context.Context, id, runStatus, detail, text string) (Run, error) {
+func (s *Google) Finish(ctx context.Context, id string, runStatus RunStatus, detail, text string) (Run, error) {
 	var r Run
 	e := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		d, e := tx.Get(s.runs().Doc(id))
@@ -181,8 +181,8 @@ func (s *Google) Finish(ctx context.Context, id, runStatus, detail, text string)
 			return nil
 		}
 		now := time.Now().UTC()
-		if runStatus == "completed" && r.CancelRequested {
-			runStatus = "cancelled"
+		if runStatus == RunCompleted && r.CancelRequested {
+			runStatus = RunCancelled
 			detail = "Cancelled by Austin."
 			text = ""
 		}
@@ -200,22 +200,29 @@ func (s *Google) Finish(ctx context.Context, id, runStatus, detail, text string)
 	return r, e
 }
 func (s *Google) Session(ctx context.Context) (Session, error) {
-	return s.session(ctx, false, true)
+	return s.session(ctx, sessionWithMessages)
 }
 
 // ConversationProjection returns runs and usage without messages. Full
 // provider turns are selected separately; messages stay cursor-accessible.
 func (s *Google) ConversationProjection(ctx context.Context) (Session, error) {
-	return s.session(ctx, true, false)
+	return s.session(ctx, conversationProjection)
 }
 
-func (s *Google) session(ctx context.Context, fullConversation, includeMessages bool) (Session, error) {
+type sessionMode int
+
+const (
+	sessionWithMessages sessionMode = iota
+	conversationProjection
+)
+
+func (s *Google) session(ctx context.Context, mode sessionMode) (Session, error) {
 	c, e := s.Control(ctx)
 	if e != nil {
 		return Session{}, e
 	}
 	session := Session{Messages: []Message{}, Runs: []Run{}, Paused: c.Paused}
-	if includeMessages {
+	if mode == sessionWithMessages {
 		query := s.messages().OrderBy("created_at", firestore.Desc)
 		query = query.Limit(100)
 		iter := query.Documents(ctx)
@@ -275,7 +282,7 @@ func (s *Google) session(ctx context.Context, fullConversation, includeMessages 
 		}
 	}
 	sort.Slice(session.Runs, func(i, j int) bool { return session.Runs[i].StartedAt.After(session.Runs[j].StartedAt) })
-	if fullConversation {
+	if mode == conversationProjection {
 		usage := s.root().Collection("model_usage").OrderBy("created_at", firestore.Desc).Limit(100).Documents(ctx)
 		defer usage.Stop()
 		for {

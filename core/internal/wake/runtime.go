@@ -44,6 +44,10 @@ func Open(ctx context.Context) (*Runtime, error) {
 	if err != nil || u.Scheme != "https" || u.Host != "api.openai.com" || u.Path != "/v1" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("NORI_AGENT_BASE_URL must be https://api.openai.com/v1")
 	}
+	wakes, err := env.WorkerWake(ctx)
+	if err != nil {
+		return nil, err
+	}
 	project := env.Get("NORI_PROJECT_ID", "bot-111549")
 	store, err := state.NewGoogle(ctx, project, env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
 	if err != nil {
@@ -60,7 +64,7 @@ func Open(ctx context.Context) (*Runtime, error) {
 		store.Close()
 		return nil, fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
 	}
-	tasks := &conversation.Tasks{Store: store, Client: temporal, Computer: computer.Config{Project: project, Zone: env.Get("COMPUTER_ZONE", "us-central1-a"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer}}
+	tasks := &conversation.Tasks{Store: store, Wakes: wakes, Client: temporal, Computer: computer.Config{Project: project, Zone: env.Get("COMPUTER_ZONE", "us-central1-a"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer}}
 	model := env.Get("NORI_AGENT_MODEL", "gpt-6.1-sol")
 	return &Runtime{Runner: conversation.New(conversation.NewModel(base, key, model), conversation.NewClassifier(jevKey), tasks), Tasks: tasks, Model: model}, nil
 }
@@ -97,11 +101,11 @@ func (r *Runtime) Process(ctx context.Context) error {
 	// attempt. Keep the Cloud Tasks notification until delivery is confirmed.
 	delivery, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	deliveryErr := task.Deliver(delivery, r.Tasks.Store, r.Tasks.Client)
+	deliveryErr := task.Deliver(delivery, r.Tasks.Store, r.Tasks.Client, r.Tasks.Wakes)
 	pending, pendingErr := r.Tasks.Store.UserRoutingPending(delivery)
 	var wakeErr error
 	if pendingErr == nil && !pending {
-		wakeErr = task.WakePublications(delivery, r.Tasks.Store, r.Tasks.Client)
+		wakeErr = task.WakePublications(delivery, r.Tasks.Store, r.Tasks.Client, r.Tasks.Wakes)
 	}
 	return errors.Join(stopErr, processErr, deliveryErr, pendingErr, wakeErr)
 }

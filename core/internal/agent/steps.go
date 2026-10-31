@@ -11,8 +11,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/genai"
-	"nori/internal/computer"
 	"nori/internal/observability"
+	"nori/internal/state"
 )
 
 const modelOutputTokenLimit = 8192
@@ -89,12 +89,12 @@ func ValidateCalls(calls []*genai.FunctionCall, wait bool) error {
 		switch call.Name {
 		case "shell":
 			command, _ := call.Args["command"].(string)
-			if command == "" || len(command) > 8192 {
+			if command == "" || len(command) > state.MaxMessageBytes {
 				return errors.New("shell needs a command of 1–8192 bytes")
 			}
 		case "browser_navigate":
 			address, _ := call.Args["url"].(string)
-			if address == "" || len(address) > 8192 {
+			if address == "" || len(address) > state.MaxMessageBytes {
 				return errors.New("browser_navigate needs a URL of 1–8192 bytes")
 			}
 		case "browser_screenshot":
@@ -112,7 +112,7 @@ func ValidateCalls(calls []*genai.FunctionCall, wait bool) error {
 					return fmt.Errorf("complete %s must be an array with at most 256 items", key)
 				}
 				for _, value := range values {
-					if text, ok := value.(string); !ok || len(text) > 8192 {
+					if text, ok := value.(string); !ok || len(text) > state.MaxMessageBytes {
 						return fmt.Errorf("complete %s items must be strings", key)
 					}
 				}
@@ -125,7 +125,7 @@ func ValidateCalls(calls []*genai.FunctionCall, wait bool) error {
 				return errors.New("request_input must be the only tool call")
 			}
 			question, _ := call.Args["question"].(string)
-			if question == "" || len(question) > 8192 {
+			if question == "" || len(question) > state.MaxMessageBytes {
 				return errors.New("request_input needs a question of 1–8192 bytes")
 			}
 		default:
@@ -190,9 +190,4 @@ func (s *Service) Decide(ctx context.Context, contents []*genai.Content, wait bo
 		span.End()
 	}()
 	return s.respond(ctx, contents, wait)
-}
-
-// Tool performs one ordinary tool call; durable callers supply an operation-scoped client.
-func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call *genai.FunctionCall) (map[string]any, error) {
-	return s.tool(ctx, run, c, call)
 }
