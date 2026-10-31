@@ -1,14 +1,14 @@
-> AGENTS.md and CLAUDE.md are guidance, not law. Use judgment: follow the intent (keep costs low, keep things simple), and do not let a literal reading block reasonable work or add process. When a rule and good sense conflict, do the sensible thing and say so in one line.
+# Nori
 
-# Model choices are immutable to agents
+Follow Austin's current request. Older memory, plans, and skills do not add workflow gates. Complete authorized work without routine go-aheads or mandatory planning, demo, status, or review stages.
 
-Austin's model choices are explicit requirements. This restriction overrides the discretion described above and applies to every agent, including subagents and CLI reviewers.
+Verify the requested behavior proportionally, including the real integration boundary when relevant. Repeat checks only for changed evidence or unresolved failures. Fix blockers; put nonblocking findings in Linear Backlog with evidence and why they can wait. Use related links, not blocking dependencies; do not implement follow-ups without authorization.
 
-- Never change a selected model, provider, or version without Austin's explicit instruction for that change. This includes defaults, environment settings, launch overrides, infrastructure configuration, and fallback models. Do not switch between Austin's named choices on your own.
-- Cost, latency, availability, quality, or a failed tool call does not authorize a model substitution or comparison using other models. An agent's experimental configuration is not an approved model choice.
-- Continue solving problems autonomously within the selected models: investigate prompts, integration, concurrency, and implementation. If the selected model itself is a blocker, report the evidence and let Austin decide the model change.
+Use a `codex/*` branch and PR; merge completed, verified work without an extra approval round. CI/CD is disabled. Deploy only when requested. Model/CLI/external reviews require an explicit request; reviewer selection alone does not require a review.
 
-The selected models are:
+## Model choices
+
+Only Austin may authorize changing these models, providers, or versions, including defaults, launch overrides, experiments, and fallbacks. Cost, latency, availability, or failure does not authorize substitution.
 
 | Role | Model |
 | --- | --- |
@@ -18,43 +18,10 @@ The selected models are:
 | Implementation subagents | GPT-6.1 Sol, high reasoning |
 | CLI code reviewer | Claude Opus 5.5, high reasoning |
 
-# Agent delivery
+## Secrets, data, and cost
 
-Use a `codex/*` branch and a pull request for changes. Keep the PR draft while
-implementation is incomplete. Verify locally and merge when the requested work
-is complete. CI/CD and automatic deployment are disabled; deployments use the
-operator commands only when requested.
-
-# Cost controls
-
-## Paid development and CI calls
-
-Use `core/infrastructure/spend/run.py` with the same logical chat ID for every
-paid development command. Its issuer reads the main checkout's root `.env`;
-never copy credentials into a worktree or pass management credentials to
-the child process. See the README's development inference limits. If the
-budget or verified pricing is unavailable, continue unpaid builds/checks
-and stop paid calls. Do not fall back to a shared production key, invent a new
-task ID to refresh an allowance, or change models to get around a denial.
-
-Nori's adapters reserve the full request cost in existing Firestore before
-dispatch. The key limit also applies outside those adapters, but their request
-preflight does not. When Austin explicitly requests CLI review, use the verified Claude subscription; no paid
-API fallback is configured. Unknown provider cost
-is not zero. Do not retry a failed paid request automatically.
-
-## GCP capacity
-
-These apply to this repository's GCP project `bot-111549`. They are cost controls, not design constraints.
-
-- Keep Cloud Run and Agent Runtime minimum instances at zero and maximum instances at one.
-- When you finish live work, scale worker pools to zero and stop the computer. Don't leave paid compute running.
-- Never delete, replace, or rebuild retained user data (disks, browser profile, files) to save money.
-
-# Model reviews require an explicit request
-
-Do not autonomously launch model/CLI/external code reviews or require repeated review gates for Nori. Run a model review only when Austin explicitly requests that review. A selected reviewer model specifies what to use if requested; it does not require a review. This supersedes older feature-workflow and review-gate instructions. Continue ordinary deterministic tests, builds, lint, security checks, and direct verification within the authorized scope.
-
-# Docs site
-
-Before adding or changing a page in `docs/site/`, read `docs/site/AGENTS.md` and follow it.
+- Keep credentials in the main checkout's gitignored, mode-600 root `.env`; never print values, copy credentials into worktrees or other projects, or use 1Password. Ask for missing credentials. Keep management credentials out of child processes. Server env files stay outside the repo, root-owned and mode 600.
+- Preserve retained disks, browser profiles, files, history, pending user tasks, and unrelated work. Do not delete or rebuild user data for cleanup or cost savings.
+- Run paid development commands through `core/infrastructure/spend/run.py` with one stable logical chat ID. Preserve the [development inference limits](README.md#development-inference-limits): $0.25 initial allowance, eligible $0.25 increases up to $1 per chat; shared OpenRouter/Vertex caps of $2/day and $20/month UTC; Jev excluded. Preserve request reservations and the Opus ceiling of $4.40 input/$22 output per million tokens.
+- Without budget or verified pricing, stop paid calls and continue unpaid work. Unknown cost is not zero. No automatic retries of failed paid calls, new IDs to reset allowances, production-key borrowing, or cap bypasses. Requested CLI reviews use the verified Claude subscription, with no paid API fallback.
+- In GCP project `bot-111549`, keep Cloud Run and Agent Runtime minimum instances at zero and maximum at one. After live work, scale worker pools to zero and stop the computer without interrupting unrelated user work or deleting retained data.
