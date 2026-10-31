@@ -32,7 +32,7 @@ export const Sticker: React.FC<{ text: string; at: number; until?: number; size?
   const pop = usePop(at, 12) * interpolate(frame, [until - 5, until], [1, 0], clamp);
   return (
     <div style={{ position: "absolute", right: 64, top: 60, ...style }}>
-      <div style={{ scale: String(pop), rotate: "-1.5deg", padding: "20px 38px", borderRadius: 26, background: C.purple, color: "#fff", fontFamily, fontSize: size, fontWeight: 800, letterSpacing: -1.8, lineHeight: 1.08, boxShadow: "0 18px 50px #3a00b855", whiteSpace: "nowrap" }}>{text}</div>
+      <div style={{ scale: String(pop), rotate: "-1.5deg", padding: "20px 38px", borderRadius: 26, background: C.purple, color: "#fff", fontFamily, fontSize: size, fontWeight: 800, letterSpacing: -1.8, lineHeight: 1.08, boxShadow: "0 18px 50px #3a00b855", whiteSpace: "pre" }}>{text}</div>
     </div>
   );
 };

@@ -99,159 +99,81 @@ const Mess: React.FC = () => {
   );
 };
 
-/* ── Scene 2: a bamboo mat rolls the mess into rice, patted into the mark. ── */
+/* ── Scene 2: three walls press the mess into rice, patted into the mark. ── */
 
-const SHIFT = 135; // scene 2's frames below count from a mat that starts at 150, and the film's starts at 285
+const SHIFT = 135; // the press's frames below count from 150, and the film's start at 285
 const MARK = { x: 1325, y: 510 };
-const MAT = { x: 60, y: 70, w: 1800, h: 940 };
-const SLIDE: [number, number] = [150, 161];
-const ROLL: [number, number] = [161, 181];
-const TURN: [number, number] = [181, 189];
-const BAMBOO = ["#c9c77c", "#b5b568", "#d6d48c", "#a8ab5e"];
-const STRING = "#6b4a2b";
-const STRINGS = [0.12, 0.31, 0.5, 0.69, 0.88];
+const PURPLE_BG = `radial-gradient(circle at 30% 0%, ${C.purple}, #2a0a7a 70%)`;
 
-/** A flat bamboo mat: slats side by side, bound by five lines of string. */
-const Mat: React.FC = () => (
-  <div style={{ position: "absolute", left: MAT.x, top: MAT.y, width: MAT.w, height: MAT.h, borderRadius: 10, overflow: "hidden", boxShadow: "0 12px 40px #0008" }}>
-    <div style={{ display: "flex", height: "100%" }}>
-      {Array.from({ length: 45 }, (_, i) => <div key={i} style={{ flex: 1, background: `linear-gradient(90deg, #0000, #fff3 30%, #0000 70%, #0003), ${BAMBOO[(i * 7) % 4]}`, borderRight: "2px solid #6f7238" }} />)}
-    </div>
-    {STRINGS.map((y) => <div key={y} style={{ position: "absolute", left: 0, right: 0, top: `${y * 100}%`, height: 6, background: `repeating-linear-gradient(90deg, ${STRING} 0 18px, #8a6339 18px 40px)` }} />)}
-  </div>
-);
-
-/** The sheet the mat carries: the mat, with the frozen mess lying on it. */
-const Sheet: React.FC<{ settle: number; slide: number }> = ({ settle, slide }) => (
-  <AbsoluteFill>
-    <div style={{ position: "absolute", inset: 0, translate: `${slide}px 0` }}><Mat /></div>
-    <AbsoluteFill style={{ scale: String(1 - 0.17 * settle), rotate: `${-0.8 * settle}deg`, borderRadius: 20 * settle, overflow: "hidden", boxShadow: `0 14px 40px rgba(0,0,0,${0.45 * settle})` }}>
-      <Freeze frame={284}><Mess /></Freeze>
-    </AbsoluteFill>
-  </AbsoluteFill>
-);
-
-/** What lies ahead of the roll: flat, then lifting and bunching up as it's pulled in. */
-const PullIn: React.FC<{ contact: number; settle: number }> = ({ contact, settle }) => {
-  const reach = 340;
-  const slices = 10;
-  const edges = Array.from({ length: slices + 1 }, (_, i) => contact + (reach * i) / slices);
-  const at = (u: number) => contact + 0.42 * reach + 0.58 * reach * ((u - contact) / reach) ** 1.7;
-  return (
-    <>
-      <div style={{ position: "absolute", left: contact + reach, top: 0, right: 0, bottom: 0, overflow: "hidden" }}>
-        <div style={{ position: "absolute", left: -(contact + reach), top: 0, width: 1920, height: 1080 }}><Sheet settle={settle} slide={0} /></div>
-      </div>
-      {edges.slice(0, -1).map((u, i) => {
-        const x0 = at(u), x1 = at(edges[i + 1]);
-        return (
-          <div key={i} style={{ position: "absolute", left: x0, top: 0, width: x1 - x0 + 1, height: 1080, overflow: "hidden" }}>
-            <div style={{ position: "absolute", left: 0, top: 0, width: 1920, height: 1080, scale: `${(x1 - x0 + 1) / (edges[i + 1] - u)} 1`, transformOrigin: "left center" }}>
-              <div style={{ position: "absolute", left: -u, top: 0, width: 1920, height: 1080 }}><Sheet settle={settle} slide={0} /></div>
-            </div>
-            <div style={{ position: "absolute", inset: 0, background: `rgba(30,20,0,${0.42 * (1 - i / slices)})` }} />
-          </div>
-        );
-      })}
-    </>
-  );
-};
-
-const spiral = (r: number, turns: number, start: number) => {
-  let d = "";
-  for (let i = 0; i <= 90; i++) {
-    const t = i / 90;
-    const a = start + t * turns * 2 * Math.PI;
-    const k = r * (0.1 + 0.9 * t);
-    d += `${i ? "L" : "M"}${(Math.cos(a) * k).toFixed(1)} ${(Math.sin(a) * k).toFixed(1)}`;
-  }
-  return d;
-};
-
-/** The rolled mat: `open` turns the log from side-on (0) to its spiral end facing us (1). */
-const Log: React.FC<{ cx: number; cy: number; r: number; length: number; open: number; spin: number; rice: number; rim?: number }> = ({ cx, cy, r, length, open, spin, rice, rim = 1 }) => {
-  const ry = r * (0.3 + 0.7 * open);
-  const slats = 13;
-  return (
-    <div style={{ position: "absolute", left: cx - r, top: cy - length / 2, width: 2 * r, height: length, opacity: rim, filter: "drop-shadow(0 22px 34px #000a)" }}>
-      {length > 2 && (
-        <div style={{ position: "absolute", left: 0, top: 0, width: 2 * r, height: length, overflow: "hidden", borderRadius: `0 0 ${r}px ${r}px / 0 0 ${ry}px ${ry}px` }}>
-          {Array.from({ length: slats }, (_, i) => {
-            const a0 = ((i + (spin % 1)) / slats) * Math.PI;
-            const a1 = ((i + 1 + (spin % 1)) / slats) * Math.PI;
-            const x0 = r * (1 - Math.cos(Math.min(a0, Math.PI)));
-            const x1 = r * (1 - Math.cos(Math.min(a1, Math.PI)));
-            return <div key={i} style={{ position: "absolute", left: x0, top: 0, width: Math.max(0, x1 - x0), height: "100%", background: BAMBOO[(i + Math.floor(spin) * 3) & 3], borderRight: "2px solid #6f7238" }} />;
-          })}
-          {STRINGS.map((y) => <div key={y} style={{ position: "absolute", left: 0, right: 0, top: `${y * 100}%`, height: 6, background: STRING }} />)}
-          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, #0008, #0000 30%, #fff4 48%, #0000 66%, #0009)" }} />
-        </div>
-      )}
-      <svg width={2 * r} height={2 * ry} viewBox={`${-r} ${-ry} ${2 * r} ${2 * ry}`} style={{ position: "absolute", left: 0, top: -ry, overflow: "visible" }}>
-        <g transform={`scale(1 ${ry / r})`}>
-          <circle r={r} fill="#d6d48c" stroke="#6f7238" strokeWidth={3} />
-          <circle r={r * Math.max(0.42, rice)} fill={C.paper} />
-          <path d={spiral(r * 0.96, 2.6, spin * 2.4)} fill="none" stroke="#7a7a3f" strokeWidth={Math.max(5, r * 0.055)} strokeLinecap="round" />
-        </g>
-      </svg>
-    </div>
-  );
-};
-
-const body: [number, number][] = [
-  [48, 11], [54.5, 11], [59.2, 14.3], [62.6, 20],
-  [69.9, 32.8], [77.3, 45.6], [84.6, 58.4],
-  [91.5, 70.5], [84.6, 85], [70.6, 85],
-  [55.5, 85], [40.5, 85], [25.4, 85],
-  [11.4, 85], [4.5, 70.5], [11.4, 58.4],
-  [18.7, 45.6], [26.1, 32.8], [33.4, 20],
-  [36.8, 14.3], [41.5, 11], [48, 11],
+/** One wall per side of the rice: outward normal, the line it stops on, the screen-clearing distance, its beat. */
+const WALLS = [
+  { nx: -0.868, ny: -0.497, stop: -988.1, from: 1010, beat: 165 },
+  { nx: 0.868, ny: -0.497, stop: 678.5, from: 1010, beat: 180 },
+  { nx: 0, ny: 1, stop: 698, from: 400, beat: 195 },
 ];
 
-/** The mark's outline eased out of a ball: t=1 is exactly `RICE_PATH`. */
-const ricePath = (t: number) => {
-  const c = { x: 48, y: 52 };
-  const pts = body.map(([x, y]) => {
-    const a = Math.atan2(y - c.y, x - c.x);
-    return [c.x + (Math.cos(a) * 37 - (x - c.x)) * (1 - t) + (x - c.x), c.y + (Math.sin(a) * 37 - (y - c.y)) * (1 - t) + (y - c.y)];
-  });
-  if (t >= 1) return RICE_PATH;
-  let d = `M${pts[0][0]} ${pts[0][1]}`;
-  for (let i = 1; i < pts.length; i += 3) d += `C${pts[i].join(" ")} ${pts[i + 1].join(" ")} ${pts[i + 2].join(" ")}`;
-  return `${d}Z`;
-};
+const wallOffset = (frame: number, { from, beat }: (typeof WALLS)[number]) =>
+  frame < beat
+    ? interpolate(frame, [beat - 7, beat], [from, 0], { ...clamp, easing: (t) => t * t * t })
+    : interpolate(frame, [beat, beat + 3, beat + 8], [0, 12, 0], clamp);
 
-const Rice: React.FC<{ t: number; size: number; nori: number }> = ({ t, size, nori }) => (
-  <svg width={size} height={size} viewBox="0 0 96 96" style={{ overflow: "visible", display: "block" }}>
-    <defs><clipPath id="rice"><path d={ricePath(t)} /></clipPath></defs>
-    <path d={ricePath(t)} fill={C.paper} />
-    {nori < 1 && nori > -60 && <rect x="30" y={61 + nori} width="36" height="30" rx="3" fill="#101a30" />}
-    <path d={ricePath(t)} fill="none" stroke={C.ink} strokeWidth={1.75} strokeLinejoin="round" />
+const Walls: React.FC<{ frame: number }> = ({ frame }) => (
+  <svg width={1920} height={1080} style={{ position: "absolute", inset: 0 }}>
+    {WALLS.map((wall) => {
+      const d = wall.stop + wallOffset(frame, wall);
+      const angle = (Math.atan2(wall.ny, wall.nx) * 180) / Math.PI;
+      return (
+        <g key={wall.beat} transform={`translate(${wall.nx * d} ${wall.ny * d}) rotate(${angle})`}>
+          <rect x={0} y={-3000} width={3000} height={6000} fill={C.purple} />
+        </g>
+      );
+    })}
   </svg>
 );
+
+/** The frozen mess inside the walls: squeezed smaller and whiter on each beat. */
+const Pressed: React.FC<{ frame: number }> = ({ frame }) => {
+  const squeeze = interpolate(frame, [158, 165, 173, 180, 188, 195], [1, 0.74, 0.74, 0.52, 0.52, 0.34], clamp);
+  const white = interpolate(frame, [160, 165, 175, 180, 190, 196], [0, 0.22, 0.22, 0.58, 0.58, 1], clamp);
+  return (
+    <AbsoluteFill style={{ background: C.lavender }}>
+      <AbsoluteFill style={{ scale: String(squeeze), borderRadius: 40, overflow: "hidden" }}>
+        <Freeze frame={284}><Mess /></Freeze>
+      </AbsoluteFill>
+      <AbsoluteFill style={{ background: C.paper, opacity: white }} />
+    </AbsoluteFill>
+  );
+};
+
+const Rice: React.FC<{ size: number; nori: number }> = ({ size, nori }) => (
+  <svg width={size} height={size} viewBox="0 0 96 96" style={{ overflow: "visible", display: "block" }}>
+    <defs><clipPath id="rice"><path d={RICE_PATH} /></clipPath></defs>
+    <path d={RICE_PATH} fill={C.paper} />
+    {nori < 1 && nori > -60 && <rect x="30" y={61 + nori} width="36" height="30" rx="3" fill="#101a30" />}
+    <path d={RICE_PATH} fill="none" stroke={C.ink} strokeWidth={1.75} strokeLinejoin="round" />
+  </svg>
+);
+
+/** The opening card: the frozen first frame of the chat app waits underneath as it lifts. */
+export const Intro: React.FC = () => {
+  const frame = useCurrentFrame();
+  const title = usePop(8, 12);
+  const lift = interpolate(frame, [60, 75], [0, -1080], { ...clamp, easing: (t) => t * t * (3 - 2 * t) });
+  return (
+    <AbsoluteFill style={{ background: PURPLE_BG, translate: `0 ${lift}px`, fontFamily, overflow: "hidden" }}>
+      <Ribbons start={4} muted />
+      <div style={{ position: "absolute", left: 130, top: 400, color: "#fff", fontSize: 190, fontWeight: 900, letterSpacing: -7, scale: String(title), transformOrigin: "left center" }}>The problem</div>
+    </AbsoluteFill>
+  );
+};
 
 export const Scene1And2: React.FC = () => {
   const real = useCurrentFrame();
   const frame = real - SHIFT;
-  const slideIn = interpolate(frame, SLIDE, [-1920, 0], { ...clamp, easing: easeOut });
-  const settle = interpolate(frame, SLIDE, [0, 1], { ...clamp, easing: easeOut });
-  const rolled = interpolate(frame, ROLL, [0, 1], { ...clamp, easing: (t) => t * t * (3 - 2 * t) });
-  const contact = -83 + rolled * 1800; // the sheet meets the log just past this point, ending at the mat's far edge
-  const r = 34 + 118 * Math.sqrt(rolled);
-  const turn = interpolate(frame, TURN, [0, 1], { ...clamp, easing: (t) => t * t * (3 - 2 * t) });
-  // Side-on and rolling, then swinging to centre with its spiral end facing us, full of rice.
-  const logX = (contact + 143 - r + 8) * (1 - turn) + 960 * turn;
-  const logY = (MAT.y + MAT.h / 2) * (1 - turn) + 540 * turn;
-  const logR = r * (1 - turn) + 205 * turn;
-  const logLen = MAT.h * (1 - turn);
-  const matOff = interpolate(frame, [189, 195], [1, 0], clamp);
-  const ricePop = usePop(TURN[1] + 2 + SHIFT, 9);
-  const riceFill = interpolate(frame, [181, 190], [0.42, 1], clamp);
   const capOut = interpolate(frame, [150, 156], [1, 0], { ...clamp, easing: easeOut });
 
-  // Each pat on the beat sharpens the corners and squashes the rice.
-  const pats = [195, 210, 225];
-  const t = interpolate(frame, [190, 197, 210, 212, 225, 227, 240], [0, 0.3, 0.3, 0.62, 0.62, 0.88, 1], clamp);
+  // The walls finish on 195. Rice takes over at 203 with a squash, and one more pat on 225.
+  const pats = [203, 225];
   const lastPat = [...pats].reverse().find((p) => frame >= p) ?? -99;
   const pat = interpolate(frame - lastPat, [0, 3, 7, 12], [1, 0.84, 1.05, 1], clamp);
   const drift = interpolate(frame, [228, 240], [0, 1], { ...clamp, easing: easeOut });
@@ -268,17 +190,17 @@ export const Scene1And2: React.FC = () => {
 
   return (
     <AbsoluteFill style={{ background: C.night, fontFamily, overflow: "hidden" }}>
-      {frame < SLIDE[1] + 1 && real >= 285 && <Sheet settle={settle} slide={slideIn} />}
       {real < 285 && <Mess />}
-      {frame > SLIDE[1] && frame < ROLL[1] && <PullIn contact={contact} settle={1} />}
       {real < 285 && captions.map(([from, to, text]) => real >= from && real < to && <Sticker key={text} text={text} at={from} />)}
+      {real >= 285 && frame < 204 && <Pressed frame={frame} />}
       {real >= 285 && capOut > 0 && <div style={{ position: "absolute", inset: 0, scale: String(capOut), transformOrigin: "1680px 110px" }}><Sticker text="Tomorrow, do it all again." at={210} /></div>}
-      {frame >= TURN[1] + 2 && frame < 240 && (
-        <div style={{ position: "absolute", left: x - 205, top: y - 205, scale: frame < 195 ? String(0.92 + 0.08 * ricePop) : `${2 - pat} ${pat}`, transformOrigin: "50% 88%" }}><Rice t={t} size={410} nori={nori} /></div>
+      {real >= 285 && frame < 204 && <Walls frame={frame} />}
+      {frame >= 203 && frame < 240 && <AbsoluteFill style={{ background: PURPLE_BG }} />}
+      {frame >= 203 && frame < 240 && (
+        <div style={{ position: "absolute", left: x - 205, top: y - 205, scale: `${2 - pat} ${pat}`, transformOrigin: "50% 88%" }}><Rice size={410} nori={nori} /></div>
       )}
-      {frame > SLIDE[1] && frame < 195 && <Log cx={logX} cy={logY} r={logR} length={logLen} open={turn} spin={frame * 0.42} rice={riceFill} rim={matOff} />}
       {frame >= 240 && (
-        <AbsoluteFill style={{ background: `radial-gradient(circle at 30% 0%, ${C.purple}, #2a0a7a 70%)` }}>
+        <AbsoluteFill style={{ background: PURPLE_BG }}>
           <Ribbons start={240 + SHIFT} muted />
           <div style={{ position: "absolute", left: MARK.x - 295, top: MARK.y - 295, width: 590, height: 590, borderRadius: "50%", background: "#f6f2f6", boxShadow: "0 0 0 34px #ffffff14, 0 0 0 70px #ffffff0a", display: "grid", placeItems: "center", scale: String(ring) }}>
             <div style={{ scale: `${2 - land} ${land}`, transformOrigin: "50% 88%" }}>
