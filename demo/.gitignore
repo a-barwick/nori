@@ -12,3 +12,8 @@ public/audio
 # Installed by `npx skills add remotion-dev/skills`; skills-lock.json pins them.
 .agents
 .claude
+
+# Raw recordings from record/rec.py; build_run.py keeps what the film needs.
+record/snaps
+record/art
+__pycache__

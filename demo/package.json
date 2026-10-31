@@ -29,7 +29,7 @@
   "scripts": {
     "capture": "node capture/capture.mjs",
     "score": "node capture/score.mjs",
-    "render": "remotion render NoriFilm out/nori.mp4",
+    "render": "remotion render NoriFilm out/nori.mp4 --crf=18",
     "dev": "remotion studio",
     "build": "remotion bundle",
     "upgrade": "remotion upgrade",
