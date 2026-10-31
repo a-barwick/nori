@@ -1,8 +1,8 @@
 // Shared page shell: navigation, the built/planned filter, the request map and the roadmap grid.
 const NAV = [
   ['Start', [['index', 'Overview'], ['product', 'What Nori should do'], ['request', 'Following a request']]],
-  ['The loops', [['outer-loop', 'Outer loop'], ['inner-loop', 'Inner loop'], ['contract', 'How the loops talk'], ['tasks', 'Task lifecycle'], ['completion', 'Finishing a task']]],
-  ['Agent service', [['system', 'Service overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['budgets', 'Budgets and controls'], ['deploy', 'Deployment']]],
+  ['The loops', [['outer-loop', 'Outer loop'], ['classification', 'Classifying a message'], ['outer-model-failure', 'Outer model failure'], ['inner-loop', 'Inner loop'], ['contract', 'How the loops talk'], ['tasks', 'Task lifecycle'], ['completion', 'Finishing a task']]],
+  ['Agent service', [['system', 'Service overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['budgets', 'Budgets and controls'], ['observability', 'Observability'], ['deploy', 'Deployment']]],
   ['Clients', [['clients', 'Clients'], ['api', 'Service API'], ['web-client', 'Web client'], ['frontend', 'Web client architecture'], ['theme', 'Nova theme']]],
   ['Planned', [['tools', 'Tool discovery'], ['authority', 'Approvals and writes'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['schedules', 'Schedules and proactive'], ['roadmap', 'Roadmap']]],
   ['Reference', [['scenarios', 'Scenarios'], ['decisions', 'Decisions'], ['open-questions', 'Open questions'], ['code', 'Code map'], ['words', 'Words we use'], ['reading', 'Reading list'], ['sources', 'Sources']]],

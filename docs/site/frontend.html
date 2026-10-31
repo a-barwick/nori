@@ -74,6 +74,7 @@
 <li>The layout writes public Sentry settings to <code>data-nori-observability</code> at request time, so one image can move between environments.</li>
 <li><code>useRuntime</code> records the time from submit to reply as <code>nori.submit_to_reply</code>, with a 15-minute timeout, and sends trace headers on <code>turn</code>.</li>
 <li>Filters in <code>lib/observability/privacy.ts</code> run before events, spans, logs and metrics are sent. The <code>sentry-tunnel</code> route checks the owner and strips request headers before forwarding.</li>
+<li><a href="observability.html">Observability</a> covers the full trace and where each signal goes.</li>
 </ul>
 </details>
 </section>

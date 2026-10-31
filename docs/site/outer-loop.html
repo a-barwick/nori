@@ -18,10 +18,10 @@
         <div class="arrow">↓</div>
         <div class="branch">
           <div class="node"><b>Setup reads</b><small>Reads history, visible messages and the task snapshot in parallel.</small></div>
-          <div class="node"><b>Jev Classify</b><small>Returns advisory intent flags. An unavailable classifier does not stop the turn.</small></div>
+          <div class="node"><b>Jev Classify</b><small>Returns advisory intent flags. An unavailable classifier does not stop the turn. See <a href="classification.html">Classifying a message</a>.</small></div>
         </div>
         <div class="arrow">↓</div>
-        <div class="node outer"><b>Model call · GPT-6.1 Sol</b><small>Low reasoning through the OpenAI platform API. User turns return a strict JSON action list and reply text; intro and notification turns return text only.</small></div>
+        <div class="node outer"><b>Model call · GPT-6.1 Sol</b><small>Low reasoning through the OpenAI platform API. User turns return a strict JSON action list and reply text; intro and notification turns return text only. See <a href="outer-model-failure.html">Outer model failure</a>.</small></div>
         <div class="arrow">↓</div>
         <div class="node outer"><b>Save model response</b><small>Checkpointed before any dispatch, so a restart recovers the accepted command receipts instead of deciding again.</small></div>
         <div class="arrow">↓</div>
@@ -45,8 +45,7 @@
     <div class="card tight">
         <p class="keyline">Classification doesn't grant permission</p>
         <p class="note">“Could you check when my domain renews?” has the intent <code>ask</code>, and the model still has to
-        dispatch a task for it. We've also measured Jev over-firing: <code>request_work</code> and <code>provide_input</code>
-        trigger on “Who wrote Hamlet?”.</p>
+        dispatch a task for it.</p>
       </div>
   </div>
   <div class="card">
@@ -76,19 +75,7 @@
 <p><code>hold(task_id, question)</code> saves a question without changing the task's instructions. A terminal event supplies the outcome for its answer.</p>
 </details></section>
 <section><h2>What Jev is looking for</h2>
-<p>Jev tags each batch of messages with the intents it sees. The model still reads the original words and decides what to do.</p>
-<div class="card"><table class="tall">
-<tr><th>Intent</th><th>Example</th></tr>
-<tr><td><code>converse</code></td><td>“Let's discuss the architecture.”</td></tr>
-<tr><td><code>ask</code></td><td>“When is my appointment?”</td></tr>
-<tr><td><code>request_work</code></td><td>“Draft a reply to Sam.”</td></tr>
-<tr><td><code>steer</code></td><td>“Actually, use Thursday.”</td></tr>
-<tr><td><code>provide_input</code></td><td>“His address is…”</td></tr>
-<tr><td><code>decide</code></td><td>“Approve that draft.”</td></tr>
-<tr><td><code>inspect</code></td><td>“Did you send it?”</td></tr>
-<tr><td><code>control</code></td><td>“Stop the research.”</td></tr>
-<tr><td><code>update_memory</code></td><td>“Remember that I prefer evenings.”</td></tr>
-</table></div></section>
+<p>Jev marks which of nine intents are in each batch of user messages. The outer model reads that hint with the original messages. <a href="classification.html">Classifying a message</a> has the intents and the rules.</p></section>
 <section><h2>One message, several jobs</h2>
 <p>A single message can answer something, steer a task and start another. It all comes back as reply text plus one action per job, in one response.</p>
 <div class="card"><p><span class="say me">Like Saturday, should I wear shorts?</span></p>
