@@ -11,6 +11,12 @@ Use a `codex/*` branch and PR; merge completed, verified work without an extra a
 - One thread writes one deliverable. Start subagents or message other threads only when Austin asks in this thread.
 - A stop covers the action Austin named. Do not widen it into removing a check, changing a pipeline, or cancelling a running deployment without asking.
 
+## Monitored verification
+
+When Austin requests monitored verification, use the [verification-monitor](.agents/skills/verification-monitor/SKILL.md) skill. Establish the acceptance scope before verification begins. The monitor may stop further autonomous verification; only Austin may override that stop.
+
+Ordinary edits do not require a monitor. Monitoring does not authorize additional scope, spending, deployments, or model changes.
+
 ## Documentation
 
 Nori's documentation lives in `docs/site/`. Check it first when you need to understand the system, and put new or updated documentation there. Read `docs/site/AGENTS.md` before changing a page, and run the site with `docs/serve.sh`. Use the `write-docs`, `review-docs` and `plain-writing` skills in `.agents/skills/`.
