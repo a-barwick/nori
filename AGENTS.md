@@ -21,16 +21,38 @@ The selected models are:
 # Agent delivery
 
 Use a `codex/*` branch and a pull request for changes. Keep the PR draft while
-implementation or independent review is incomplete. Once required verification
-and review pass, mark it ready: GitHub automatically merges eligible owner/agent
+implementation is incomplete. Once required verification
+passes, mark it ready: GitHub automatically merges eligible owner/agent
 PRs after `Checks` succeeds for the exact head commit, then deploys from `main`.
 Do not add manual merge gates or branch protections for this personal repository.
 Do not run a competing local deployment while the `Release` workflow is active.
 
-# GCP cost rules
+# Cost controls
+
+## Paid development and CI calls
+
+Use `core/infrastructure/spend/run.py` with the same logical chat ID for every
+paid development command. Its issuer reads the main checkout's root `.env`;
+never copy credentials into a worktree or pass management credentials to
+the child process. See the README's development inference limits. If the
+budget or verified pricing is unavailable, continue unpaid builds/checks
+and stop paid calls. Do not fall back to a shared production key, invent a new
+task ID to refresh an allowance, or change models to get around a denial.
+
+Nori's adapters reserve the full request cost in existing Firestore before
+dispatch. The key limit also applies outside those adapters, but their request
+preflight does not. When Austin explicitly requests CLI review, use the verified Claude subscription; no paid
+API fallback is configured. Unknown provider cost
+is not zero. Do not retry a failed paid request automatically.
+
+## GCP capacity
 
 These apply to this repository's GCP project `bot-111549`. They are cost controls, not design constraints.
 
 - Keep Cloud Run and Agent Runtime minimum instances at zero and maximum instances at one.
 - When you finish live work, scale worker pools to zero and stop the computer. Don't leave paid compute running.
 - Never delete, replace, or rebuild retained user data (disks, browser profile, files) to save money.
+
+# Model reviews require an explicit request
+
+Do not autonomously launch model/CLI/external code reviews or require repeated review gates for Nori. Run a model review only when Austin explicitly requests that review. A selected reviewer model specifies what to use if requested; it does not require a review. This supersedes older feature-workflow and review-gate instructions. Continue ordinary deterministic tests, builds, lint, security checks, and direct verification within the authorized scope.

@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/observability"
+	"nori/internal/spend"
 	"nori/internal/state"
 )
 
@@ -121,18 +122,54 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		span.End()
 	}()
 	reply.Usage = state.Usage{ID: uuid.NewString(), Provider: "outer", Model: m.Name, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: time.Now().UTC()}
+	control, outputLimit, err := spend.Prepare(ctx, "openrouter", 4096)
+	if err != nil {
+		return reply, err
+	}
+	defer control.Close()
+	if control != nil {
+		if !strings.HasPrefix(m.URL, "https://openrouter.ai/") {
+			return reply, errors.New("spend-controlled conversation requests require the selected OpenRouter endpoint")
+		}
+		for _, message := range messages {
+			var fields map[string]any
+			if json.Unmarshal(message, &fields) != nil {
+				return reply, errors.New("invalid controlled conversation message")
+			}
+			if content := fields["content"]; content != nil {
+				if _, ok := content.(string); !ok {
+					return reply, errors.New("spend-controlled conversation requests require text content")
+				}
+			}
+			if hasUnboundedMessageFields(fields) {
+				return reply, errors.New("spend-controlled conversation requests cannot include media, plugins, or cache writes")
+			}
+		}
+	}
 	tools := json.RawMessage(taskTools)
 	if m.NoDispatch {
 		tools = nil
+	}
+	var providerLimits any
+	if control != nil {
+		providerLimits = map[string]any{"max_price": map[string]int{"prompt": 8, "completion": 40}}
 	}
 	body, err := json.Marshal(struct {
 		Model    string            `json:"model"`
 		Messages []json.RawMessage `json:"messages"`
 		Tools    json.RawMessage   `json:"tools,omitempty"`
 		Max      int               `json:"max_tokens"`
-	}{m.Name, messages, tools, 4096})
+		Provider any               `json:"provider,omitempty"`
+	}{m.Name, messages, tools, outputLimit, providerLimits})
 	if err != nil {
 		return reply, err
+	}
+	reservation, err := control.Reserve(ctx, "openrouter", m.Name, len(body), outputLimit, reply.Usage.ID)
+	if err != nil {
+		return reply, err
+	}
+	if reservation != nil {
+		defer func() { err = errors.Join(err, reservation.Settle(ctx, reply.Usage.CostUSD, "", nil)) }()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.URL, bytes.NewReader(body))
 	if err != nil {
@@ -151,7 +188,13 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	}
 	reply.Usage.RequestStatus = "unknown"
 	requestStarted = time.Now()
-	res, err := m.Client.Do(req)
+	client := m.Client
+	if control != nil {
+		boundedClient := *client
+		boundedClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &boundedClient
+	}
+	res, err := client.Do(req)
 	if err != nil {
 		return reply, fmt.Errorf("model request interrupted or unavailable")
 	}
@@ -219,6 +262,28 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		return reply, fmt.Errorf("model returned neither a reply nor a task command")
 	}
 	return reply, nil
+}
+
+func hasUnboundedMessageFields(value any) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, nested := range v {
+			switch key {
+			case "cache_control", "cacheControl", "plugins", "images", "audio", "video", "image_url", "file_data", "inline_data":
+				return true
+			}
+			if hasUnboundedMessageFields(nested) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range v {
+			if hasUnboundedMessageFields(nested) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func modelHTTPError(url string, response *http.Response) error {

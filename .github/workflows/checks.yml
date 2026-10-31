@@ -1,4 +1,5 @@
 name: Checks
+# Ordinary checks have a $0 model allowance: no provider or spend credentials.
 
 on:
   pull_request:

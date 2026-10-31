@@ -292,7 +292,7 @@ resource "google_cloud_run_v2_service_iam_member" "web_deploy" {
 resource "google_project_iam_custom_role" "firestore" {
   role_id     = "noriCiFirestore"
   title       = "Nori CI state access"
-  permissions = ["datastore.entities.get", "datastore.entities.list", "datastore.entities.update"]
+  permissions = ["datastore.entities.get", "datastore.entities.list", "datastore.entities.create", "datastore.entities.update"]
 }
 resource "google_project_iam_member" "firestore" {
   project = local.project
