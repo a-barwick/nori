@@ -266,3 +266,13 @@ nav.rail a.group:hover{color:var(--ink);background:none}
 .scn-body{padding:4px 0 6px}
 .scn-body p{font-size:13.5px;margin-bottom:6px}
 .scn>summary:hover .copy-link{opacity:1}
+/* web client page */
+.shot{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:var(--radius-s);margin-bottom:8px}
+.shots{display:grid;grid-template-columns:repeat(2,minmax(0,240px));gap:14px;margin-bottom:14px}
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+.color{display:flex;gap:9px;align-items:center;font-size:12.5px;line-height:1.35}
+.color i{width:30px;height:30px;border-radius:7px;border:1px solid var(--line);flex:none}
+.color code{display:block;background:none;padding:0;color:var(--ink2)}
+.marks{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-end}
+.marks span{display:flex;flex-direction:column;align-items:center;gap:6px}
+.marks small{font-size:12px;color:var(--ink2)}
