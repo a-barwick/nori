@@ -1,0 +1,211 @@
+{
+ "paused": false,
+ "runs": [
+  {
+   "id": "task-b",
+   "request": "Find the latest Docusign and Salesforce news.",
+   "status": "completed",
+   "cancel_requested": false,
+   "temporal": true,
+   "protocol_version": 2,
+   "position": 1,
+   "event_sequence": 4,
+   "revision": 1,
+   "incorporated": 1,
+   "budget_usd": 1,
+   "started_at": "2026-10-31T15:05:38.074Z",
+   "events": [
+    {
+     "id": "task-b-1",
+     "sequence": 1,
+     "instruction_revision": 1,
+     "kind": "model",
+     "text": "Thinking",
+     "created_at": "2026-10-31T15:05:38.081Z"
+    },
+    {
+     "id": "task-b-2",
+     "sequence": 2,
+     "instruction_revision": 1,
+     "kind": "tool",
+     "text": "browser_navigate",
+     "created_at": "2026-10-31T15:05:40.819Z"
+    }
+   ],
+   "artifacts": [
+    {
+     "id": "ir-salesforce",
+     "kind": "screenshot"
+    }
+   ],
+   "result": "Docusign and Salesforce launched IAM natively across Salesforce on October 13.",
+   "finished_at": "2026-10-31T15:05:47.021Z"
+  },
+  {
+   "id": "task-a",
+   "request": "Pull Docusign's Q2 results from the investor site and write me a brief.",
+   "status": "completed",
+   "cancel_requested": false,
+   "temporal": true,
+   "protocol_version": 2,
+   "position": 1,
+   "event_sequence": 5,
+   "revision": 1,
+   "incorporated": 1,
+   "budget_usd": 1,
+   "started_at": "2026-10-31T15:05:14.783Z",
+   "events": [
+    {
+     "id": "task-a-1",
+     "sequence": 1,
+     "instruction_revision": 1,
+     "kind": "model",
+     "text": "Thinking",
+     "created_at": "2026-10-31T15:05:17.366Z"
+    },
+    {
+     "id": "task-a-2",
+     "sequence": 2,
+     "instruction_revision": 1,
+     "kind": "tool",
+     "text": "browser_navigate",
+     "created_at": "2026-10-31T15:05:18.066Z"
+    },
+    {
+     "id": "task-a-4",
+     "sequence": 4,
+     "instruction_revision": 1,
+     "kind": "tool",
+     "text": "browser_screenshot",
+     "created_at": "2026-10-31T15:05:18.066Z"
+    }
+   ],
+   "artifacts": [
+    {
+     "id": "ir-home",
+     "kind": "screenshot"
+    }
+   ],
+   "result": "Brief written from the Q2 FY27 earnings release.",
+   "finished_at": "2026-10-31T15:05:43.419Z"
+  }
+ ],
+ "dispatches": [
+  {
+   "id": "task-a",
+   "request": "Pull Docusign's Q2 results from the investor site and write me a brief.",
+   "status": "accepted",
+   "created_at": "2026-10-31T15:05:14.783Z"
+  },
+  {
+   "id": "task-b",
+   "request": "Find the latest Docusign and Salesforce news.",
+   "status": "accepted",
+   "created_at": "2026-10-31T15:05:38.080Z"
+  }
+ ],
+ "traces": [],
+ "usage": [],
+ "messages": [
+  {
+   "id": "seed-1",
+   "run_id": "",
+   "role": "user",
+   "text": "Keep my briefs under 200 words, numbers first.",
+   "created_at": "2026-10-30T19:05:07.322Z"
+  },
+  {
+   "id": "seed-2",
+   "run_id": "",
+   "role": "assistant",
+   "text": "Got it. Briefs stay under 200 words, numbers first.",
+   "created_at": "2026-10-30T19:05:11.322Z"
+  },
+  {
+   "id": "e7527318-f539-4fb9-8d82-47b9dda2b4bf-user",
+   "run_id": "",
+   "role": "user",
+   "text": "Pull Docusign's Q2 results from the investor site and write me a brief.",
+   "created_at": "2026-10-31T15:05:13.481Z"
+  },
+  {
+   "id": "d7a37a19-5aa6-4dec-b8fb-b06eaeaeac09",
+   "run_id": "",
+   "role": "assistant",
+   "text": "On it. I'm opening the investor site on your computer now. Keep talking, I'll post the brief here.",
+   "created_at": "2026-10-31T15:05:14.783Z"
+  },
+  {
+   "id": "c322c5e0-ac42-4f35-848f-a36e08068bb3-user",
+   "run_id": "",
+   "role": "user",
+   "text": "Also add the full-year guidance.",
+   "created_at": "2026-10-31T15:05:25.339Z"
+  },
+  {
+   "id": "dc3d64eb-a99f-4291-b7f0-feed86f88587",
+   "run_id": "",
+   "role": "assistant",
+   "text": "Added. The brief will include full-year guidance.",
+   "created_at": "2026-10-31T15:05:26.542Z"
+  },
+  {
+   "id": "c7dc9699-609e-4bbb-b172-5d4ceac483c1-user",
+   "run_id": "",
+   "role": "user",
+   "text": "Different question. What time was the Q2 call?",
+   "created_at": "2026-10-31T15:05:31.372Z"
+  },
+  {
+   "id": "7034f162-021e-4c15-bc8e-911af4f63f01",
+   "run_id": "",
+   "role": "assistant",
+   "text": "September 3 at 2:00 p.m. Pacific. The brief is still running.",
+   "created_at": "2026-10-31T15:05:32.475Z"
+  },
+  {
+   "id": "41c773ed-6a34-4879-becd-af664a5d1aa7-user",
+   "run_id": "",
+   "role": "user",
+   "text": "Find the latest Docusign and Salesforce news.",
+   "created_at": "2026-10-31T15:05:37.069Z"
+  },
+  {
+   "id": "46c84648-380f-4f2f-826f-af64da99879f",
+   "run_id": "",
+   "role": "assistant",
+   "text": "Started that as a second task. Both are running.",
+   "created_at": "2026-10-31T15:05:38.080Z"
+  },
+  {
+   "id": "d868ff87-6bb6-45e2-9357-c7f6120bede8",
+   "run_id": "",
+   "role": "assistant",
+   "text": "Here's your brief, under 200 words with the numbers first.",
+   "created_at": "2026-10-31T15:05:43.419Z"
+  },
+  {
+   "id": "874121f3-b906-41cd-8e07-fb7e25082713",
+   "run_id": "",
+   "role": "assistant",
+   "text": "# Docusign Q2 FY27 brief\n\nReported September 3, 2026, for the quarter ended July 31.\n\n## The numbers\n\n- Revenue: **$875.7M**, up 9% year over year\n- Non-GAAP EPS: **$1.16**, up from $0.92\n- Free cash flow: **$295.8M**, a 34% margin\n- IAM: **15.1%** of total ARR, up from 12.6% last quarter\n\n## Full-year guidance, raised\n\n- Revenue: **$3,499M to $3,507M**\n- ARR growth: **8.5% to 9.0%**\n- IAM exiting Q4: about **18% to 19%** of ARR\n\n## Quote to reuse\n\n\"Our AI agents are now securely executing contract workflows end-to-end.\" Allan Thygesen, CEO\n\nSource: Docusign Q2 FY27 earnings release, investor.docusign.com",
+   "created_at": "2026-10-31T15:05:44.020Z"
+  },
+  {
+   "id": "e740584a-0507-488f-9132-d4fe326c8844",
+   "run_id": "",
+   "role": "assistant",
+   "text": "Second task done: on October 13, Docusign and Salesforce launched IAM natively across Salesforce and Slack.",
+   "created_at": "2026-10-31T15:05:47.021Z"
+  }
+ ],
+ "conversation": {
+  "pending": false,
+  "processing": false,
+  "input_ids": [],
+  "restart_count": 0,
+  "frozen": false,
+  "revision": 24,
+  "consumed": 0
+ }
+}
