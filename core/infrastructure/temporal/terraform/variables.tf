@@ -8,6 +8,10 @@ variable "environment" {
 }
 
 variable "worker_images" {
+  validation {
+    condition     = var.environment == "production" || length(var.worker_images) == 0
+    error_message = "Sandbox uses request-worker services only; retained legacy pools belong to production."
+  }
   description = "Immutable build ID => existing Artifact Registry image digest. Retain old builds while Pinned Workflows reference them."
   type        = map(string)
   default     = {}

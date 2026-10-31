@@ -168,7 +168,7 @@ resource "google_project_iam_custom_role" "deploy" {
   title   = "Nori CI deployment operations"
   permissions = [
     "cloudbuild.builds.get",
-    "aiplatform.reasoningEngines.get", "aiplatform.reasoningEngines.update", "aiplatform.reasoningEngines.query", "aiplatform.operations.get",
+    "aiplatform.reasoningEngines.get", "aiplatform.reasoningEngines.update", "aiplatform.reasoningEngines.query",
     "run.services.get", "run.services.create", "run.services.update", "run.services.getIamPolicy", "run.services.setIamPolicy", "run.operations.get", "run.revisions.get",
     "run.workerpools.list", "run.workerpools.get", "run.workerpools.create", "run.workerpools.update", "run.workerpools.getIamPolicy", "run.workerpools.setIamPolicy",
     "compute.instances.get", "compute.zoneOperations.get",
@@ -450,7 +450,8 @@ resource "google_project_iam_custom_role" "sandbox_runtime" {
   permissions = ["aiplatform.reasoningEngines.get", "aiplatform.reasoningEngines.update", "aiplatform.reasoningEngines.query"]
 }
 resource "google_vertex_ai_reasoning_engine_iam_member" "sandbox_runtime" {
-  project          = local.project
+  # Match the numeric project in runtime_name; the provider normalizes this field.
+  project          = "8273801370"
   region           = local.region
   reasoning_engine = var.sandbox_runtime_name
   role             = google_project_iam_custom_role.sandbox_runtime.name
