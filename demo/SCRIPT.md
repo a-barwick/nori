@@ -1,202 +1,127 @@
-# Nori film v3: script
+# Nori film v4: script
 
-The approved script for the next version of the film. It is 59 seconds: Maya's chat chores, then Nori, then one day of work, then the ask.
+The approved script for the current film. It runs about 1:50 and can be trimmed later. It opens the pitch, and the deck carries trust, data and the ask.
 
-Austin approved the 2026-10-31 film's look, theme and animation, and that quality is the bar. This script changes the content and order. Keep everything else.
+**The premise:** Nori reads and proposes on its own, and writes only when you say so. The wording on the Trust cards is still open.
 
-## Decisions already made
+## Decisions
 
-Build these as written. Don't reopen them.
+- **Hype film.** Scenes 3 to 7 are scripted, with fictional people and data, played through the real frontend from `capture/run.json`. No live run and no disclaimer.
+- **Dashed means it would write.** The table and invite, the 8:30 hold and the proposal are dashed until Maya taps, then solid. Reading and drafting just happen. No caption explains this.
+- **Hold rule.** Anything people must read holds for at least 0.4 s per word, with a 1.5 s minimum.
+- **New surfaces, film only for now:** the invite card, notification, proposal preview and page, and tracker card.
+- **Keep from earlier films:** Figtree, the colour palette, sticker captions, overshoot pops, push-in camera moves, ribbons, the real Nori mark, and cuts on the beat.
 
-- **It's a hype film.** Scenes 3 to 7 are scripted, with fictional people and data. Don't add a disclaimer, and remove the "Recorded from a real Nori run" label. This replaces the truth rules in `README.md`.
-- **No live run.** Write scripted snapshots in the same format as `capture/run.json`, and play them through the real frontend with `capture/capture.mjs`. No production or model spend is needed.
-- **Cut:** the 70% stat, "It forgot you. Again.", the Q2 brief, the bot check and the budget question.
-- **Don't add:** an automatic memory caption, the "why now" launches, or time back for each team.
-- **Keep from the current film:** Figtree, the colour palette, sticker captions, overshoot pops, push-in camera moves, ribbons, the real Nori mark, and the cut-to-the-beat approach with its music style.
+## Settled in review
+
+A marketing review of the storyboard challenged several things. Austin decided these, so don't reopen them without a new reason.
+
+**Taken from the review**
+
+- Cut ideas first, then apply the hold rule.
+- Nori asks before booking. Maya taps to book the table and send the invites.
+- Maya opens the proposal before she sends it.
+- Use the specific Priya line. Have an answer ready if the room asks about reading call data.
+- No detail about a teammate's diet on the invite card.
+- Give build-and-share more weight, with something more app-like than tiles.
+
+**Rejected**
+
+- Turning every unprompted step into a proposal. That would make Nori a nag, so reading and drafting just happen.
+- Cutting the weather ask. Unrelated "also" messages show the one thread and natural flow. Only the weather tile went.
+- "Jobs finish in the background." It's engineer-speak.
+- A cold "Morning. I have the proposal ready." Keep the warm opener and the 🍣.
+- Cutting "You didn't ask." It stays because what comes before it is reading and drafting.
+- "Nori works on its own computer for you." It's clunkier and doesn't answer the unmanaged-compute worry.
+- "It builds dashboards." It's too narrow for GTM's ask to build something and share it.
+
+**Other calls**
+
+- The 8:30 block is proposed with a tap, because blocking it unasked is a write.
+- "Pick a model." is out, so scene 1 can't mock Nova if Nova has a model picker. Nobody has confirmed whether it does.
+- Sam's cursor replaces "Sam opened it.", which read as surveillance.
+- The film-only surfaces are limited to ones Austin would commit to building. The notification is the least certain of them.
+
+**Still open:** the premise wording, a trim from 1:50, and Austin's review of the mix.
 
 ## Timing
 
-120 BPM at 30 fps. One beat is 15 frames, one bar is 60 frames. Every major hit below falls on a beat.
+120 BPM at 30 fps. One beat is 15 frames.
 
 | # | Scene | Time | Frames |
 |---|---|---|---|
-| 1 | The problem | 0:00–0:05 | 0–150 |
-| 2 | Meet Nori | 0:05–0:10 | 150–300 |
-| 3 | Just ask | 0:10–0:16 | 300–480 |
-| 4 | It handles it | 0:16–0:27 | 480–810 |
-| 5 | Same thread | 0:27–0:31 | 810–930 |
-| 6 | The next morning | 0:31–0:41 | 930–1230 |
-| 7 | Her own computer | 0:41–0:49 | 1230–1470 |
-| 8 | Trust | 0:49–0:53 | 1470–1590 |
-| 9 | Close | 0:53–0:59 | 1590–1770 |
+| 1 | The problem | 0:00–0:09.5 | 0–285 |
+| 2 | Meet Nori | 0:09.5–0:16 | 285–480 |
+| 3 | Just ask | 0:16–0:29.5 | 480–885 |
+| 4 | It handles it | 0:29.5–0:48 | 885–1440 |
+| 5 | Same thread | 0:48–0:53 | 1440–1590 |
+| 6 | The next morning | 0:53–1:23 | 1590–2490 |
+| 7 | Her own computer | 1:23–1:37 | 2490–2910 |
+| 8 | Trust | 1:37–1:42.5 | 2910–3075 |
+| 9 | Close | 1:42.5–1:50.5 | 3075–3315 |
 
 ## The cast
 
 | Name | Who | Details |
 |---|---|---|
 | Maya | The user, an enterprise account executive | Seen only through her messages |
-| Acme | Her customer, in Chicago | $1.2M a year, up 18%. 340 of 400 seats active. Renewal March 14 |
+| Acme | Her customer, in Chicago | $1.2M a year, up 18%. 340 of 400 seats active. Renews March 14 |
 | Priya | Her contact at Acme | Receives the renewal proposal |
-| Sam | Her teammate | Receives the dashboard |
-| Kaze | A fictional sushi restaurant | Two blocks from Acme's office |
+| Sam | Her teammate | Uses the app |
+| Kaze | A fictional restaurant | Two blocks from Acme's office |
+| Globex, Initech | Fictional accounts | Fill out the renewal tracker |
 
-## Scene 1: The problem (0:00–0:05)
+## Scene by scene
 
-**The point:** chat apps make you do setup before you can ask anything.
-
-An unbranded chat app fills the screen: a sidebar on the left and a message box with "How can I help?". Maya's cursor does each chore, one every 30 frames. Each action is faster and more frantic than the last, and a sticker caption pops in with each.
-
-| Frame | What happens | Caption |
+| Frame | What happens | Words on screen |
 |---|---|---|
-| 0 | The cursor clicks "+ New chat" and a blank chat appears | "New chat." |
-| 30 | A model menu drops open: Fast, Balanced, Advanced | "Pick a model." |
-| 60 | Three files land above the box: `Acme_notes.pdf`, `Q2_numbers.xlsx`, `Renewal_call.docx` | "Add the files." |
-| 90 | Text pours in: "Acme is a renewal customer. Their contract ends in March. Last time we talked about pricing, and I like short emails, and..." | "Explain it again." |
-| 120 | The sidebar overflows: Acme email, Acme email (2), Q2 numbers, Renewal new try, Untitled chat. Windows stack and tilt until the screen is a mess | "Tomorrow, do it all again." |
-
-**Sound:** the tense pulse from the current cold open, tightening. A pop on each caption and clicks for the cursor.
-
-**Into scene 2:** at frame 150 the music cuts dead and the mess stops moving.
-
-## Scene 2: Meet Nori (0:05–0:10)
-
-**The point:** Nori takes all of that away, and it's adorable about it.
-
-| Frame | What happens | Sound |
-|---|---|---|
-| 150–195 | A bamboo sushi mat slides in and rolls up the whole mess: menus, files, windows and all. It squishes into a ball of white rice | Near silence, then a soft squish |
-| 195, 210, 225 | The ball is patted into a triangle, a little sharper on each beat, with a small squash each time | One light tap per beat |
-| 240 | A sheet of seaweed slaps onto the bottom. The background snaps to the purple from the current Meet scene. The result is exactly the real Nori mark. The eyes pop open | **The bass drop and full music** |
-| 240–300 | The ribbons draw on. "Nori" and "The assistant inside Nova" pop in. The mark smiles, then blinks | Full music |
-
-**Into scene 3:** on frame 300 the purple wipes away from the mark's centre to reveal the real Nova interface, clean and empty, with the cursor in the message box.
-
-## Scene 3: Just ask (0:10–0:16)
-
-**The point:** she just says what she needs, however it comes to her.
-
-Use the real interface and a push-in camera. Keep the messages exactly as written.
-
-| Frame | What happens | Sound |
-|---|---|---|
-| 300–345 | She types: **"Grab numbers for the Acme account"** and sends it | Key ticks, send pop |
-| 345–375 | **Everything holds.** No reply, no movement | Music falls to a pulse |
-| 375 | Message pops in, without typing: **"Also find a good spot for dinner near their office"** | Pop |
-| 405 | Message pops in, without typing: **"Also what's the weather like over there?"** | Pop |
-| 435 | Nori replies: **"Not a problem! On it. I'll make that invite big enough for the whole team."** | Music returns |
-| 450–480 | Caption: **"Three asks. One thread."** | Pop |
-
-**Into scene 4:** a straight cut on frame 480, the camera keeping the thread framed. Show the messages arriving one by one, with no reply until frame 435.
-
-## Scene 4: It handles it (0:16–0:27)
-
-**The point:** three unrelated jobs land in one place, and she manages nothing.
-
-| Frame | What happens | Caption |
-|---|---|---|
-| 480 | Nori: **"Chicago: 48° and windy tonight. Bring a coat."** | "Quick answers come right back." |
-| 540 | The Activity panel slides open with two tasks running: "Find dinner near Acme" and "Pull Acme numbers" | "The rest keep running." |
-| 630 | The panel closes. Nori: **"Table for six at Kaze, 7:00 PM, two blocks from their office. There's a vegan menu. The invite's on everyone's calendar."** | "The whole team's invited." |
-| 720 | Nori: **"Acme is at $1.2M a year, up 18%. 340 of 400 seats are active. Renewal is March 14."** A document card appears below it | "Done. All in one thread." |
-| 780–810 | The caption clears and the camera settles until this last message is centred | |
-
-**Sound:** full music, with a pop on each Nori reply.
-
-**Into scene 5:** the last message stays exactly where it is.
-
-## Scene 5: Same thread, the "Apple moment" (0:27–0:31)
-
-**The point:** the thread goes with her. This is the film's most elegant moment, and it should feel calm and expensive after the bouncy demo.
-
-This is one unbroken shot with no cut. The Acme message must not move on screen until the phone has formed.
-
-| Frame | What happens | Sound |
-|---|---|---|
-| 810 | The music falls away to one sustained note | One held note |
-| 810–870 | The desktop edges glide smoothly inward. The corners round. Sidebar and header fade out as the text reflows to phone width | The note continues |
-| 870–900 | A phone body settles around the screen, turning slightly in 3D. The background darkens to warm evening | A soft, single tap at 900 |
-| 900–930 | Large, quiet text: **"Same thread."** No bounce on this one: a slow fade and slight rise | The note fades |
-
-Build it so the viewer can't find the join between desktop and phone footage: the same message, at the same place and size, while the frame changes around it.
-
-**Into scene 6:** the phone doesn't move.
-
-## Scene 6: The next morning (0:31–0:41)
-
-**The point:** the biggest moment in the film. Nori does something she never asked for.
-
-| Frame | What happens | Sound |
-|---|---|---|
-| 930–990 | The phone stays still. Its screen dims and goes dark. The background moves from evening through night to sunrise, and a clock races to **8:00 AM** | Almost silent, with a soft rising tone |
-| 990 | The phone buzzes on the beat and Nori's message appears, unprompted | Double buzz |
-| 990–1110 | The camera pushes in slowly as the message's lines appear one per beat | Light pulse returns |
-| 1110 | A single **Send it** button pops in, with the mark beside it | Pop |
-| 1125–1170 | Caption: **"You didn't ask."** Hold it long enough to land | Beat drops out, then one hit |
-| 1170 | Maya taps **Send it**. It changes to **"Sent to Priya at Acme."** | **Full music returns on the tap** |
-| 1200 | Maya's reply starts typing (see below) | Key ticks |
-
-Nori's message, exactly:
-
-> Morning! Hope dinner with Acme went well. 🍣
->
-> While you were out:
-> - Pulled the three things they raised on your last calls
-> - Drafted the renewal proposal around them
-> - Moved your 9:00 so you have time to read it
->
-> Ready to send when you are.
-
-**Into scene 7:** her message, sped up to send by frame 1230: **"Amazing. Now turn the Acme numbers into a dashboard and share it with Sam."**
-
-## Scene 7: Her own computer (0:41–0:49)
-
-**The point:** every user has their own computer, so Nori can build things and not just write them.
-
-| Frame | What happens | Caption | Sound |
-|---|---|---|---|
-| 1230–1260 | The camera flies through the phone screen into a full desktop | | Whoosh |
-| 1260 | A desktop appears with the Nori mark in the corner of the window | **"Everyone gets their own computer."** | Hit |
-| 1290–1380 | An "Acme renewal" dashboard builds itself on the beat: revenue tile ($1.2M), growth tile (+18%), seats gauge (340/400), a renewal date tile (March 14), then a chart line that draws itself | **"It builds apps and dashboards too."** | A pop per tile |
-| 1380–1410 | The camera flies back out, the dashboard shrinking into a card in the thread on her phone | | Reverse whoosh |
-| 1410 | Card: **"Acme renewal dashboard. Shared with Sam."** | | Pop |
-| 1440 | A small line appears under it: **"Sam opened it."** | | Soft pop |
-
-**Into scene 8:** a whoosh on frame 1470, with the card flying off.
-
-## Scene 8: Trust (0:49–0:53)
-
-**The point:** it's safe to use at work.
-
-White background. Four cards in the current Trust style land one every 15 frames from 1470, then hold. Titles only, with no body text:
-
-1. **Uses your permissions**
-2. **Asks before acting**
-3. **Logs every action**
-4. **Apps stay private**
-
-**Into scene 9:** a whoosh on frame 1590.
-
-## Scene 9: Close (0:53–0:59)
-
-Use the current End scene, with its timing adjusted to these frames.
-
-| Frame | What happens | Sound |
-|---|---|---|
-| 1590 | **"We delivered chat."** | Band drops out, one chord rings |
-| 1620 | **"Now let's deliver an assistant."** The ribbons draw on | Second chord |
-| 1680 | The mark pops in and smiles | Bell notes |
-| 1695 | **"Nori, inside Nova. Six-week pilot. One sales team."** | |
-| 1740 | The mark blinks | Music fades to the end at 1770 |
+| 0 | An unbranded chat app. The cursor clicks New chat | "New chat." |
+| 60 | Three files land | "Add the files." |
+| 120 | Text pours into the box | "Explain it again." |
+| 210 | Windows stack and tilt | "Tomorrow, do it all again." |
+| 285 | Music cuts dead. The bamboo mat rolls up the mess, and the rice is patted into a triangle | |
+| 375 | Seaweed, bass drop, purple, the eyes open | "Nori" / "The assistant inside Nova" |
+| 480 | The purple wipes to the real interface. She types and sends at 525 | "Grab numbers for the Acme account" |
+| 570 | Message pops in | "Also find a dinner spot near their office" |
+| 690 | Message pops in | "Also what's the weather there?" |
+| 780 | Nori replies, and the music returns | "On it!" |
+| 795 | Caption | "One thread for everything." |
+| 885 | Nori | "48° and windy in Chicago tonight. Bring a coat! 🧥" |
+| 1020 | Nori. The dashed invite card arrives at 1032 with a map, two pins and five faces | "Kaze has a table for 6 at 7PM, two blocks from their office." / "Book it and invite the team" |
+| 1200 | Maya clicks. The edge turns solid and faces get a check, one per beat from 1215 | "Booked. Invites sent." |
+| 1275 | Nori | "$1.2M a year, up 18%" / "340 of 400 seats active" / "Renews March 14" |
+| 1440 | One unbroken shot: the window narrows into a phone around the still bullets, over one held note | |
+| 1530 | Slow fade and rise | "Same thread." |
+| 1590 | The screen goes dark, the clock races overnight, and the mark pops at 1625, 1648 and 1671 | The clock |
+| 1680 | 8:00 AM. The lock screen lights, with a double buzz and a notification at 1684 | "Morning! Hope dinner went well. 🍣" |
+| 1755 | She taps and it opens into the thread | |
+| 1770 | Nori | "Priya asked about multi-year pricing on two of your last three calls." |
+| 1950 | Nori | "Proposal's ready." |
+| 1995 | Dashed chip. She taps at 2070 and it turns solid | "Hold 8:30 to read it?" / "8:30 held" |
+| 2115 | The dashed proposal card arrives | "Renewal proposal" / "To Priya at Acme" |
+| 2145 | Caption, with the beat out | "You didn't ask." |
+| 2220 | She taps and the proposal opens as a dashed page | "Acme renewal proposal", the pricing table, "Send to Priya" |
+| 2310 | She taps. The page goes solid and full music returns. It closes at 2340 | "Sent to Priya" |
+| 2385 | She types and sends at 2445 | "Amazing. Turn those numbers into an app for Sam." |
+| 2490 | The camera flies through the phone into a desktop with a menu bar, dock and empty window | |
+| 2523 | Caption, on the desktop | "Your Nori has its own computer." |
+| 2610 | The Renewal tracker builds on the beat: title, filter, three rows, detail chart | |
+| 2613 | Caption | "It builds dashboards and apps." |
+| 2745 | Sam's cursor arrives and clicks Globex at 2775. The detail panel follows | |
+| 2805 | The app shrinks into a card on the phone | "Renewal tracker. Shared with Sam." |
+| 2910 | A whoosh and three cards, one every two beats | "Uses your permissions" / "Proposes on its own" / "Writes when you say so" |
+| 3075 | The band drops out | "We delivered chat." |
+| 3120 | Second chord, and the ribbons draw on | "Now let's deliver an assistant." |
+| 3195 | The mark pops and smiles. It blinks at 3268 and the music fades to the end at 3315 | "Nori, inside Nova." |
 
 ## Finish standard
 
 Check rendered frames, not just the code:
 
 - Scenes 1 and 3 read with no sound.
-- The Acme message in scene 5 doesn't shift until the phone has formed. Step through frames 810 to 870.
+- The bullets in scene 5 don't shift until the phone has formed. Step through frames 1440 to 1500.
 - The final mark in scene 2 matches `Onigiri` in `src/kit.tsx` exactly.
 - Captions never cover the text they describe, and arrive with or after the event.
-- All copy matches this page word for word. Write "Docusign" with a lowercase s anywhere it appears.
-- Scene lengths match the timing table, and the music is rebuilt in `capture/score.mjs` to match the cues above.
-- Austin reviews the audio, since an agent can't hear it. Send a render at each milestone: scenes 1–2, then 3–5, then the full film.
-- Keep video files out of Git. Save the finished take to a new dated folder under `~/Documents/dev/agents/nori-film-media/`, and don't overwrite `2026-10-31`.
+- All copy matches this page word for word.
+- Austin reviews the audio, since an agent can't hear it.
+- Keep video files out of Git. Save each take to a new folder under `~/Documents/dev/agents/nori-film-media/`.

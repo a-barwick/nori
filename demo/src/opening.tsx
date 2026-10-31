@@ -2,12 +2,11 @@ import React from "react";
 import { AbsoluteFill, Freeze, interpolate, useCurrentFrame } from "remotion";
 import { C, Sticker, Onigiri, Ribbons, RICE_PATH, clamp, easeOut, fontFamily, usePop } from "./kit";
 
-/* ── Scene 1: the chores. An unbranded chat app, faster every 30 frames. ── */
+/* ── Scene 1: the chores. An unbranded chat app, then a pile of them. ── */
 
 const grey = { line: "#e3e1e8", text: "#2b2933", soft: "#8b8894", side: "#f3f2f5", hover: "#e7e5ec" };
 const oldChats = ["Acme email", "Acme email (2)", "Q2 numbers", "Renewal new try", "Untitled chat"];
 const files = ["Acme_notes.pdf", "Q2_numbers.xlsx", "Renewal_call.docx"];
-const models = ["Fast", "Balanced", "Advanced"];
 const explain = "Acme is a renewal customer. Their contract ends in March. Last time we talked about pricing, and I like short emails, and...";
 
 const Pointer: React.FC<{ x: number; y: number; down: boolean }> = ({ x, y, down }) => (
@@ -17,7 +16,7 @@ const Pointer: React.FC<{ x: number; y: number; down: boolean }> = ({ x, y, down
 );
 
 /** The cursor's path: (frame, x, y) stops, moving faster as the scene goes on. */
-const cursorStops: [number, number, number][] = [[0, 170, 92], [8, 170, 92], [26, 760, 62], [30, 620, 62], [44, 620, 62], [56, 1140, 500], [60, 1140, 540], [82, 1140, 540], [90, 880, 660], [110, 1200, 720], [118, 180, 500], [124, 1500, 300], [130, 500, 800], [136, 1700, 700], [142, 900, 150], [149, 1300, 900]];
+const cursorStops: [number, number, number][] = [[0, 170, 92], [10, 170, 92], [50, 1140, 540], [110, 1140, 540], [120, 880, 660], [170, 1200, 720], [205, 1200, 720], [212, 180, 500], [220, 1500, 300], [228, 500, 800], [236, 1700, 700], [246, 900, 150], [258, 1300, 900], [284, 1000, 400]];
 
 const File: React.FC<{ name: string; i: number }> = ({ name, i }) => {
   const pop = usePop(60 + i * 5, 10);
@@ -34,10 +33,8 @@ const File: React.FC<{ name: string; i: number }> = ({ name, i }) => {
 const ChatApp: React.FC<{ lively?: boolean; title?: string }> = ({ lively, title }) => {
   const frame = useCurrentFrame();
   const fresh = !lively || frame >= 2;
-  const menu = lively && frame >= 30 && frame < 58;
-  const typed = lively ? Math.round(interpolate(frame, [90, 116], [0, explain.length], clamp)) : 0;
-  const pick = Math.floor(interpolate(frame, [32, 52], [0, 3], clamp)) % 3;
-  const extra = lively ? Math.floor(interpolate(frame, [120, 149], [0, 14], clamp)) : 0;
+  const typed = lively ? Math.round(interpolate(frame, [120, 170], [0, explain.length], clamp)) : 0;
+  const extra = lively ? Math.floor(interpolate(frame, [210, 284], [0, 14], clamp)) : 0;
   const sidebar = [...oldChats, ...Array.from({ length: extra }, (_, i) => oldChats[i % 5])];
   return (
     <div style={{ position: "absolute", inset: 0, display: "flex", background: "#fff", color: grey.text, fontFamily }}>
@@ -48,10 +45,7 @@ const ChatApp: React.FC<{ lively?: boolean; title?: string }> = ({ lively, title
         </div>
       </div>
       <div style={{ position: "relative", flex: 1 }}>
-        <div style={{ position: "absolute", left: 44, top: 40, padding: "12px 22px", borderRadius: 12, background: menu ? grey.hover : "transparent", fontSize: 30, fontWeight: 700 }}>{title ?? "Balanced"} ▾</div>
-        {menu && <div style={{ position: "absolute", left: 44, top: 108, width: 340, padding: 12, borderRadius: 20, background: "#fff", boxShadow: "0 18px 50px #0003", border: `2px solid ${grey.line}`, scale: String(Math.min(1, (frame - 30) / 4 + 0.6)), transformOrigin: "top left" }}>
-          {models.map((model, i) => <div key={model} style={{ padding: "16px 22px", borderRadius: 12, fontSize: 32, fontWeight: 600, background: pick === i ? grey.hover : undefined }}>{model}</div>)}
-        </div>}
+        <div style={{ position: "absolute", left: 44, top: 40, padding: "12px 22px", borderRadius: 12, fontSize: 30, fontWeight: 700 }}>{title ?? "New chat"}</div>
         {!fresh && <div style={{ position: "absolute", left: 180, right: 180, top: 190, display: "flex", flexDirection: "column", gap: 28 }}>
           <div style={{ alignSelf: "flex-end", padding: "18px 26px", borderRadius: 22, background: grey.side, fontSize: 30 }}>Write the Acme email</div>
           <div style={{ fontSize: 30, lineHeight: 1.4 }}>Sure! Which Acme? What tone? What did you last discuss?</div>
@@ -69,8 +63,8 @@ const ChatApp: React.FC<{ lively?: boolean; title?: string }> = ({ lively, title
 };
 
 const piles = [
-  { at: 120, x: 400, y: 90, r: -6, t: "Fast" }, { at: 124, x: 980, y: 40, r: 5, t: "Advanced" }, { at: 128, x: 470, y: 470, r: 3, t: "Balanced" },
-  { at: 132, x: 1080, y: 500, r: -5, t: "Fast" }, { at: 136, x: 720, y: 280, r: 7, t: "Advanced" }, { at: 140, x: 300, y: 300, r: -8, t: "Balanced" }, { at: 144, x: 1180, y: 220, r: 9, t: "Fast" },
+  { at: 210, x: 400, y: 90, r: -6, t: "Acme email" }, { at: 218, x: 980, y: 40, r: 5, t: "Q2 numbers" }, { at: 226, x: 470, y: 470, r: 3, t: "Untitled chat" },
+  { at: 234, x: 1080, y: 500, r: -5, t: "Acme email (2)" }, { at: 242, x: 720, y: 280, r: 7, t: "Renewal new try" }, { at: 250, x: 300, y: 300, r: -8, t: "Untitled chat" }, { at: 258, x: 1180, y: 220, r: 9, t: "Acme email (3)" },
 ];
 
 const Pile: React.FC<(typeof piles)[number]> = ({ at, x, y, r, t }) => {
@@ -82,18 +76,18 @@ const Pile: React.FC<(typeof piles)[number]> = ({ at, x, y, r, t }) => {
   );
 };
 
-const captions: [number, number, string][] = [[2, 30, "New chat."], [30, 60, "Pick a model."], [60, 90, "Add the files."], [90, 120, "Explain it again."], [120, 150, "Tomorrow, do it all again."]];
+const captions: [number, number, string][] = [[2, 60, "New chat."], [60, 120, "Add the files."], [120, 210, "Explain it again."], [210, 285, "Tomorrow, do it all again."]];
 
-/** Everything on screen by frame 149, minus the caption; scene 2 rolls this frozen mess up. */
+/** Everything on screen by frame 284, minus the caption; scene 2 rolls this frozen mess up. */
 const Mess: React.FC = () => {
   const frame = useCurrentFrame();
   const stop = cursorStops.findIndex(([f]) => f > frame);
   const b = cursorStops[stop === -1 ? cursorStops.length - 1 : stop];
   const a = cursorStops[Math.max(0, (stop === -1 ? cursorStops.length : stop) - 1)];
   const p = a === b ? 1 : easeOut((frame - a[0]) / (b[0] - a[0]));
-  const down = [[0, 4], [30, 33], [60, 63], [120, 123]].some(([s, e]) => frame >= s && frame < e);
-  const shake = interpolate(frame, [60, 149], [0, 1], clamp);
-  const zoom = interpolate(frame, [0, 149], [1, 1.07], clamp);
+  const down = [[0, 4], [60, 63], [210, 213]].some(([s, e]) => frame >= s && frame < e);
+  const shake = interpolate(frame, [120, 284], [0, 1], clamp);
+  const zoom = interpolate(frame, [0, 284], [1, 1.07], clamp);
   return (
     <AbsoluteFill style={{ background: C.night, fontFamily, overflow: "hidden" }}>
       <AbsoluteFill style={{ scale: String(zoom), translate: `${Math.sin(frame * 1.7) * 9 * shake}px ${Math.cos(frame * 2.3) * 6 * shake}px`, rotate: `${Math.sin(frame * 1.1) * 0.55 * shake}deg` }}>
@@ -107,6 +101,7 @@ const Mess: React.FC = () => {
 
 /* ── Scene 2: a bamboo mat rolls the mess into rice, patted into the mark. ── */
 
+const SHIFT = 135; // scene 2's frames below count from a mat that starts at 150, and the film's starts at 285
 const MARK = { x: 1325, y: 510 };
 const MAT = { x: 60, y: 70, w: 1800, h: 940 };
 const SLIDE: [number, number] = [150, 161];
@@ -131,7 +126,7 @@ const Sheet: React.FC<{ settle: number; slide: number }> = ({ settle, slide }) =
   <AbsoluteFill>
     <div style={{ position: "absolute", inset: 0, translate: `${slide}px 0` }}><Mat /></div>
     <AbsoluteFill style={{ scale: String(1 - 0.17 * settle), rotate: `${-0.8 * settle}deg`, borderRadius: 20 * settle, overflow: "hidden", boxShadow: `0 14px 40px rgba(0,0,0,${0.45 * settle})` }}>
-      <Freeze frame={149}><Mess /></Freeze>
+      <Freeze frame={284}><Mess /></Freeze>
     </AbsoluteFill>
   </AbsoluteFill>
 );
@@ -236,7 +231,8 @@ const Rice: React.FC<{ t: number; size: number; nori: number }> = ({ t, size, no
 );
 
 export const Scene1And2: React.FC = () => {
-  const frame = useCurrentFrame();
+  const real = useCurrentFrame();
+  const frame = real - SHIFT;
   const slideIn = interpolate(frame, SLIDE, [-1920, 0], { ...clamp, easing: easeOut });
   const settle = interpolate(frame, SLIDE, [0, 1], { ...clamp, easing: easeOut });
   const rolled = interpolate(frame, ROLL, [0, 1], { ...clamp, easing: (t) => t * t * (3 - 2 * t) });
@@ -249,7 +245,7 @@ export const Scene1And2: React.FC = () => {
   const logR = r * (1 - turn) + 205 * turn;
   const logLen = MAT.h * (1 - turn);
   const matOff = interpolate(frame, [189, 195], [1, 0], clamp);
-  const ricePop = usePop(TURN[1] + 2, 9);
+  const ricePop = usePop(TURN[1] + 2 + SHIFT, 9);
   const riceFill = interpolate(frame, [181, 190], [0.42, 1], clamp);
   const capOut = interpolate(frame, [150, 156], [1, 0], { ...clamp, easing: easeOut });
 
@@ -266,24 +262,24 @@ export const Scene1And2: React.FC = () => {
   const land = interpolate(frame, [240, 244, 251, 258], [0.72, 0.72, 1.08, 1], clamp);
   const ring = interpolate(frame, [240, 249], [0.4, 1], { ...clamp, easing: easeOut });
   const eyes = interpolate(frame, [240, 247], [1, 0], clamp);
-  const blink = interpolate(frame, [288, 291, 294], [0, 1, 0], clamp);
-  const title = usePop(246, 12);
-  const sub = usePop(258, 14);
+  const blink = interpolate(frame, [325, 328, 331], [0, 1, 0], clamp);
+  const title = usePop(246 + SHIFT, 12);
+  const sub = usePop(258 + SHIFT, 14);
 
   return (
     <AbsoluteFill style={{ background: C.night, fontFamily, overflow: "hidden" }}>
-      {frame < SLIDE[1] + 1 && frame >= 150 && <Sheet settle={settle} slide={slideIn} />}
-      {frame < 150 && <Mess />}
+      {frame < SLIDE[1] + 1 && real >= 285 && <Sheet settle={settle} slide={slideIn} />}
+      {real < 285 && <Mess />}
       {frame > SLIDE[1] && frame < ROLL[1] && <PullIn contact={contact} settle={1} />}
-      {frame < 150 && captions.map(([from, to, text]) => frame >= from && frame < to && <Sticker key={text} text={text} at={from} />)}
-      {frame >= 150 && capOut > 0 && <div style={{ position: "absolute", inset: 0, scale: String(capOut), transformOrigin: "1680px 110px" }}><Sticker text="Tomorrow, do it all again." at={120 - 150} /></div>}
+      {real < 285 && captions.map(([from, to, text]) => real >= from && real < to && <Sticker key={text} text={text} at={from} />)}
+      {real >= 285 && capOut > 0 && <div style={{ position: "absolute", inset: 0, scale: String(capOut), transformOrigin: "1680px 110px" }}><Sticker text="Tomorrow, do it all again." at={210} /></div>}
       {frame >= TURN[1] + 2 && frame < 240 && (
         <div style={{ position: "absolute", left: x - 205, top: y - 205, scale: frame < 195 ? String(0.92 + 0.08 * ricePop) : `${2 - pat} ${pat}`, transformOrigin: "50% 88%" }}><Rice t={t} size={410} nori={nori} /></div>
       )}
       {frame > SLIDE[1] && frame < 195 && <Log cx={logX} cy={logY} r={logR} length={logLen} open={turn} spin={frame * 0.42} rice={riceFill} rim={matOff} />}
       {frame >= 240 && (
         <AbsoluteFill style={{ background: `radial-gradient(circle at 30% 0%, ${C.purple}, #2a0a7a 70%)` }}>
-          <Ribbons start={240} muted />
+          <Ribbons start={240 + SHIFT} muted />
           <div style={{ position: "absolute", left: MARK.x - 295, top: MARK.y - 295, width: 590, height: 590, borderRadius: "50%", background: "#f6f2f6", boxShadow: "0 0 0 34px #ffffff14, 0 0 0 70px #ffffff0a", display: "grid", placeItems: "center", scale: String(ring) }}>
             <div style={{ scale: `${2 - land} ${land}`, transformOrigin: "50% 88%" }}>
               <Onigiri size={410} happy={frame > 256 && frame < 282 ? 1 : 0} blink={Math.max(eyes, blink)} />

@@ -13,7 +13,7 @@ const StageRange: React.FC = () => {
 
 const NoriFilm: React.FC = () => (
   <AbsoluteFill style={{ background: "#fff" }}>
-    <Sequence name="Problem and Meet" durationInFrames={320} layout="none"><Scene1And2 /></Sequence>
+    <Sequence name="Problem and Meet" durationInFrames={scenes.ask.from + 20} layout="none"><Scene1And2 /></Sequence>
     <Sequence name="Trust" from={scenes.trust.from} durationInFrames={scenes.trust.frames}><Trust /></Sequence>
     <Sequence name="End" from={scenes.end.from} durationInFrames={scenes.end.frames}><End /></Sequence>
     <StageRange />

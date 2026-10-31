@@ -2,16 +2,16 @@
  "fps": 30,
  "bpm": 120,
  "framesPerBeat": 15,
- "total": 1770,
+ "total": 3315,
  "scenes": {
-  "problem": { "from": 0, "frames": 150 },
-  "meet": { "from": 150, "frames": 150 },
-  "ask": { "from": 300, "frames": 180 },
-  "handles": { "from": 480, "frames": 330 },
-  "same": { "from": 810, "frames": 120 },
-  "morning": { "from": 930, "frames": 300 },
-  "computer": { "from": 1230, "frames": 240 },
-  "trust": { "from": 1470, "frames": 120 },
-  "end": { "from": 1590, "frames": 180 }
+  "problem": { "from": 0, "frames": 285 },
+  "meet": { "from": 285, "frames": 195 },
+  "ask": { "from": 480, "frames": 405 },
+  "handles": { "from": 885, "frames": 555 },
+  "same": { "from": 1440, "frames": 150 },
+  "morning": { "from": 1590, "frames": 900 },
+  "computer": { "from": 2490, "frames": 420 },
+  "trust": { "from": 2910, "frames": 165 },
+  "end": { "from": 3075, "frames": 240 }
  }
 }
