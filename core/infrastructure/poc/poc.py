@@ -31,37 +31,57 @@ TOKEN = None
 SSL_CONTEXT = ssl.create_default_context(cafile="/etc/ssl/cert.pem") if sys.platform == "darwin" and Path("/etc/ssl/cert.pem").is_file() else ssl.create_default_context()
 
 
+def remaining(limit):
+    """Hosted releases share one deadline across subprocesses and API calls."""
+    deadline = os.environ.get("NORI_OPERATION_DEADLINE")
+    if deadline:
+        limit = min(limit, float(deadline) - time.time())
+    if limit <= 0:
+        raise TimeoutError("Operator operation deadline exceeded")
+    return limit
+
+
 def command(args, **kwargs):
-    return subprocess.check_output(args, text=True, **kwargs).strip()
+    return subprocess.check_output(args, text=True, timeout=remaining(900), **kwargs).strip()
 
 
 def gcloud(*args):
     return command(["gcloud", "--project", PROJECT, "--quiet", *args])
 
 
-def api(method, url, body=None, allow404=False):
+def api(method, url, body=None, allow404=False, refresh=True):
     global TOKEN
     if TOKEN is None:
         TOKEN = gcloud("auth", "print-access-token")
     data = None if body is None else json.dumps(body).encode()
     req = Request(url, data=data, method=method, headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json", "x-goog-user-project": PROJECT})
     try:
-        with urlopen(req, timeout=135, context=SSL_CONTEXT) as res:
+        with urlopen(req, timeout=remaining(135), context=SSL_CONTEXT) as res:
             data = res.read()
             return json.loads(data) if data else {}
     except HTTPError as error:
+        if error.code == 401 and refresh:
+            TOKEN = None
+            return api(method, url, body, allow404, refresh=False)
         if allow404 and error.code == 404:
             return None
         # Never dump a response that might contain IAP OAuth settings.
         raise RuntimeError(f"{method} {url.split('?')[0]} failed: HTTP {error.code}") from None
 
 
+def state_args(state):
+    backend = os.environ.get("NORI_TF_BACKEND", "local")
+    if backend not in {"local", "gcs"}:
+        raise RuntimeError("NORI_TF_BACKEND must be local or gcs")
+    return [] if backend == "gcs" else ["-state=" + str(state)]
+
+
 def config():
-    return {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TF}", "output", "-state=" + str(STATE), "-json"])).items()}
+    return {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TF}", "output", *state_args(STATE), "-json"])).items()}
 
 
 def temporal_config():
-    return {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TEMPORAL_TF}", "output", "-state=" + str(TEMPORAL_STATE), "-json"])).items()}
+    return {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TEMPORAL_TF}", "output", *state_args(TEMPORAL_STATE), "-json"])).items()}
 
 
 def temporal_env():
@@ -89,7 +109,7 @@ class VersionNotFound(RuntimeError):
 
 def temporal_command(*args):
     # Authentication is passed through the child environment, never argv/logs.
-    result = subprocess.run(["temporal", "--output=json", "--command-timeout=60s", *args], env=temporal_env(), text=True, capture_output=True)
+    result = subprocess.run(["temporal", "--output=json", "--command-timeout=60s", *args], env=temporal_env(), text=True, capture_output=True, timeout=remaining(65))
     if result.returncode:
         # Confirmed CLI response for a nonexistent registered version. Other
         # failures (including auth and unavailable service) remain failures.
@@ -174,6 +194,9 @@ def temporal_zero(t):
     for pool in t["worker_pools"].values():
         try:
             url = "https://run.googleapis.com/v2/" + pool["resource"]
+            current = api("GET", url)
+            if not current.get("reconciling") and current.get("scaling", {}).get("manualInstanceCount", 0) == 0 and current.get("observedGeneration") == current.get("generation") and current.get("terminalCondition", {}).get("state") == "CONDITION_SUCCEEDED":
+                continue
             result = api("PATCH", url + "?updateMask=scaling.manualInstanceCount", {"scaling": {"manualInstanceCount": 0}})
             end = time.monotonic() + 600
             while not result.get("done"):
@@ -192,15 +215,15 @@ def temporal_zero(t):
         raise RuntimeError("; ".join(failures))
 
 
-def temporal_pause():
-    t = temporal_config()
+def temporal_pause(t=None):
+    t = temporal_config() if t is None else t
     failures = []
     # Remove the native scaler configuration first; a zero-count PATCH alone
     # races WCI. Pinned workflows and their retained pools are not deleted.
     for build in t["worker_pools"]:
         try:
-            if version_info(build, missing_ok=True) is None:
-                continue # A newly staged zero-count pool may precede registration.
+            if not compute_config(version_info(build, missing_ok=True)):
+                continue # Already paused, or a staged pool preceding registration.
             temporal("update-version-compute-config", "--deployment-name=nori-task", "--build-id=" + build, "--remove")
             if compute_config(version_info(build, missing_ok=True)):
                 raise RuntimeError("Worker compute configuration still present: " + build)
@@ -230,7 +253,8 @@ def temporal_unpause():
             if compute_config(version_info(build, missing_ok=True)):
                 raise RuntimeError("Incompatible worker still has a scaler; pause before unpause: " + build)
             continue
-        temporal("update-version-compute-config", *version_config(build, pool, t["invoker_service_account"]))
+        action = "create-version" if version_info(build, missing_ok=True) is None else "update-version-compute-config"
+        temporal(action, *version_config(build, pool, t["invoker_service_account"]))
         config = compute_config(version_info(build)) or {}
         scaler = config.get("scalingGroups", {}).get("default", {}).get("scaler", {})
         if (scaler.get("minInstances"), scaler.get("maxInstances"), scaler.get("initialInstances")) != (0, 1, 0):
@@ -280,10 +304,10 @@ def control(c, paused):
     return api("PATCH", firestore(c, "system/control") + "?updateMask.fieldPaths=paused&updateMask.fieldPaths=expires_at", {"fields": {"paused": {"booleanValue": paused}}})
 
 
-def pause(c):
+def pause(c, worker_config=None):
     failures = []
     # Admission closes before pool shutdown. Waiting tasks remain durable.
-    for step in (lambda: control(c, True), temporal_pause, lambda: metadata({"computer-paused": "true"}), stop_vm):
+    for step in (lambda: control(c, True), lambda: metadata({"computer-paused": "true"}), stop_vm, lambda: temporal_pause(worker_config)):
         try:
             step()
         except Exception as error:
@@ -401,6 +425,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (RuntimeError, subprocess.CalledProcessError) as error:
+    except (RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(1)

@@ -126,3 +126,90 @@ The guest binds `172.30.0.2:8090`; the host proxy binds its primary NIC on the s
 | `POST /cancel` with `run_id` | `{ "stopped": true }` only after registered shell/browser work has finished cleanup |
 
 Shell work runs as `bot` in the run's persistent task directory. Every command starts atomically in its own delegated Linux cgroup v2; completion and cancellation use `cgroup.kill` and wait for `populated 0`, including detached/session descendants. Shell execution fails closed without delegation. Browser operations serialize against the existing Chromium CDP listener on loopback port 9222, use its persistent profile, and stop loading on cancellation. The runtime waits up to 180 seconds for computer and browser readiness within the bounded tool activity. Transport or tool errors fail the run immediately; ordinary nonzero shell exit codes remain available to the model. No tool-server secret is needed behind the IAP tunnel.
+
+## Hosted release workflow
+
+`../release/` contains a small Cloud Build flow. Live setup and state migration
+are separate review steps; these files do not activate the pipeline.
+
+1. `nori-pr-check` runs independent static checks, release contract checks, and
+   production image builds in parallel, without production credentials.
+2. `nori-main-prepare` checks the exact main commit, builds each artifact once,
+   and publishes immutable image digests and a content-addressed computer binary.
+3. `nori-release` takes a full main commit SHA, selects a successful trusted
+   preparation, acquires one GCS lock, applies only an additive worker plan,
+   deploys those artifacts, runs one real browser/screenshot task, and pauses.
+   Its tools image is prepared once during setup, not rebuilt on every release.
+
+All builds have a 30-minute ceiling. Smoke, including resume, has a ten-minute
+ceiling; five minutes are reserved for shutdown and narrow restoration. These
+are failure limits, not target durations. Releasing requires Nori already paused
+with no unfinished tasks or pending conversation. Retained workers, disks,
+browser data and history are preserved. Releasing the same artifact again reuses
+its matching worker pool and version; it does not require another build.
+
+The smoke verifies IAP web health, task ownership, the selected worker, browser
+navigation, a PNG screenshot, and completion. It adds a marked task to history.
+Keep owner activity quiescent during verification; there is no separate staging
+environment or exclusive application admission mode.
+
+On failure the runner attempts pause first. It attempts restoration only if the
+smoke has not started admitting work. Once a smoke input may have been accepted,
+it preserves that state and reports operator action instead of blindly rolling
+back or replaying it. A verified pre-smoke restoration releases the lock but still reports failure.
+Unresolved failures retain the lock and a `deployments/BUILD_ID.json` report containing the previous references,
+worker manifest, failure and known smoke input/task IDs. There is no recovery
+service, automatic lock expiry, or automated partial-state repair.
+
+Hard Cloud Build cancellation can bypass cleanup. After confirming the owning
+build is terminal, inspect its report and run the existing `poc.py pause` using
+the migrated backend. Reconcile any incomplete Terraform apply before another
+release: inspect the native operation and Terraform lock; force-unlock only after
+confirming its owner is gone, import an existing journaled pool if it was created
+without a state entry, and review any tainted resource rather than replacing it.
+Retain all pools and reconcile `deployments/worker-releases.json` to that state.
+Use the recorded IDs to inspect and stop/drain only the smoke work if necessary;
+never clear conversation documents to make a check pass. Verify pause and inspect
+the lock's current generation before removing that exact lock with GCS's
+`--if-generation-match` precondition. An unresolved release stays blocked.
+
+### Separate setup review
+
+Review `../release/terraform/main.tf` before activation. Enable Cloud Build and
+connect only `a-barwick/nori` through a regional GitHub connection after approval.
+Pass its repository resource as `repository`. Build and publish
+`../release/Dockerfile.tools` once to the existing registry's `release-tools`
+image and pass its immutable digest as `release_tools_image`. The separate
+bootstrap state owns CI identities, triggers and a versioned state bucket;
+it never owns existing application resources. Only Austin should be able to run
+privileged triggers or act as the deploy identity. No project keys are copied.
+
+Migrate the existing POC and Temporal states while other operators are idle.
+Back up the owner-only originals, initialize each existing local backend with its
+current absolute state path, then add an untracked `release_backend_override.tf`
+containing `terraform { backend "gcs" {} }`. Run `terraform init -migrate-state`
+with bucket `bot-111549-nori-ci-state` and prefix `nori/poc` or `nori/temporal`,
+respectively, and review the interactive migration prompt. Do not initialize an
+empty replacement state. Compare lineage, serial and resource inventory before
+and after, then review a full plan. Subsequent operators must use that GCS
+backend and `NORI_TF_BACKEND=gcs`. Hosted initialization refuses empty outputs
+and never migrates state. The old local-only worker preparation helper refuses
+migrated state; hosted preparation replaces that path.
+
+Before activation, reconcile the initial retained worker manifest with the
+current M3 release. New worker plans reject changes to existing or unrelated
+resources and all deletion/replacement. Native resources retain min-zero/max-one
+bounds. Cloud Build and model charges are separate from the runtime spend caps.
+
+After setup and the live demonstration are separately approved:
+
+```sh
+gcloud builds triggers run nori-release --project=bot-111549 --region=us-central1 \
+  --substitutions=_RELEASE_COMMIT=FULL_MAIN_COMMIT_SHA
+```
+
+`python3 core/e2e/release.test.py` exercises two offline process journeys for
+immutable artifacts and untrusted-provenance rejection. Both run in CI. Local
+builds, these boundary tests and Terraform validation do not prove hosted IAM,
+deployment, smoke, restoration, cancellation cleanup or actual pipeline latency;
+the first authorized live trial must establish those properties.

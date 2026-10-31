@@ -1,0 +1,75 @@
+# Main checks and image builds run concurrently. Only successful checks can
+# publish unique per-build tags; the runner records their immutable digests.
+steps:
+  - id: release-check
+    waitFor: ['-']
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:584.0.0-slim
+    entrypoint: python3
+    args: [core/e2e/release.test.py]
+  - id: go-check
+    waitFor: ['-']
+    name: golang:1.26
+    dir: core
+    entrypoint: bash
+    args: [-ceu, 'go vet ./... && test -z "$$(gofmt -l cmd internal)"']
+  - id: web-check
+    waitFor: ['-']
+    name: oven/bun:1.4.3-debian
+    dir: web
+    entrypoint: bash
+    args: [-ceu, 'bun install --frozen-lockfile && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src']
+  - id: runtime-build
+    waitFor: ['-']
+    name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
+    args: [build, -f, core/infrastructure/Dockerfile, -t, 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/runtime:$BUILD_ID', core]
+  - id: worker-build
+    waitFor: ['-']
+    name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
+    args: [build, -f, core/infrastructure/temporal/Dockerfile.worker, -t, 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/worker:$BUILD_ID', core]
+  - id: web-build
+    waitFor: ['-']
+    name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
+    args: [build, -t, 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/web:$BUILD_ID', web]
+  - id: computer-build
+    waitFor: ['-']
+    name: golang:1.26
+    dir: core
+    entrypoint: bash
+    args: [-ceu, 'mkdir -p /workspace/release-artifacts && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /workspace/release-artifacts/computer-agent ./cmd/computer-agent']
+  - id: runtime-push
+    waitFor: [runtime-build, release-check, go-check, web-check]
+    name: gcr.io/cloud-builders/docker
+    args: [push, 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/runtime:$BUILD_ID']
+  - id: worker-push
+    waitFor: [worker-build, release-check, go-check, web-check]
+    name: gcr.io/cloud-builders/docker
+    args: [push, 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/worker:$BUILD_ID']
+  - id: web-push
+    waitFor: [web-build, release-check, go-check, web-check]
+    name: gcr.io/cloud-builders/docker
+    args: [push, 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/web:$BUILD_ID']
+  - id: manifest
+    waitFor: [runtime-push, worker-push, web-push, computer-build]
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:584.0.0-slim
+    entrypoint: bash
+    env: ['NORI_RELEASE_BUCKET=bot-111549-nori-poc', 'BUILD_ID=$BUILD_ID', 'BRANCH_NAME=$BRANCH_NAME', 'COMMIT_SHA=$COMMIT_SHA']
+    args:
+      - -ceu
+      - |
+        registry='us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc'
+        digest() { gcloud artifacts docker images describe "$$registry/$$1:$BUILD_ID" --format='value(image_summary.fully_qualified_digest)'; }
+        web="$$(digest web)"
+        runtime="$$(digest runtime)"
+        worker="$$(digest worker)"
+        test -n "$$web" && test -n "$$runtime" && test -n "$$worker"
+        python3 core/infrastructure/release/release.py prepare --commit '$COMMIT_SHA' --build-id '$BUILD_ID' --web "$$web" --runtime "$$runtime" --worker "$$worker" --computer /workspace/release-artifacts/computer-agent
+timeout: 1800s
+options:
+  logging: CLOUD_LOGGING_ONLY
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/web:$BUILD_ID'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/runtime:$BUILD_ID'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/nori-poc/worker:$BUILD_ID'
