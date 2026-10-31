@@ -1,34 +1,21 @@
 "use client";
 
 import { useLayoutEffect, useRef } from "react";
-import { ArrowDown, ArrowUp, Square } from "lucide-react";
-import { IconButton } from "@/components/ui/primitives";
+import { ArrowDown, ArrowUp } from "lucide-react";
 
 /** Current chat composer, restricted to the runtime's text-only contract. */
 export function RuntimeComposer({
   draft,
   setDraft,
   disabled,
-  busy,
-  canUpdate,
-  canChat = false,
-  stopping,
-  stopDisabled,
   onSend,
-  onStop,
   unread,
   onJump,
 }: {
   draft: string;
   setDraft: (draft: string) => void;
   disabled: boolean;
-  busy: boolean;
-  canUpdate: boolean;
-  canChat?: boolean;
-  stopping: boolean;
-  stopDisabled: boolean;
   onSend: () => void;
-  onStop?: () => void;
   unread: number;
   onJump: () => void;
 }) {
@@ -70,18 +57,13 @@ export function RuntimeComposer({
           }}
           className="glass t-fast rounded-[28px] p-3 transition-[border-color] focus-within:border-hairline-strong"
         >
-          {canUpdate && (
-            <p className="mb-1 px-2 text-caption text-ink-3">
-              Your message updates the current task.
-            </p>
-          )}
           <div className="flex items-end gap-2 pl-2">
             <textarea
               ref={area}
               rows={1}
               value={draft}
               maxLength={8192}
-              disabled={disabled || (busy && !canUpdate && !canChat)}
+              disabled={disabled}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (
@@ -93,37 +75,18 @@ export function RuntimeComposer({
                   onSend();
                 }
               }}
-              placeholder={
-                canUpdate
-                  ? "Answer or update this task"
-                  : busy && !canChat
-                    ? "Nori is working…"
-                    : "Ask Nori anything…"
-              }
+              placeholder="Ask Nori anything…"
               aria-label="Message Nori"
               className="scrollbar-quiet max-h-[196px] min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1 text-input text-ink transition-[height] duration-150 ease-out placeholder:text-ink-3 focus-visible:outline-none disabled:opacity-60"
             />
-            {busy && onStop && (
-              <IconButton
-                size={32}
-                label={stopping ? "Stopping…" : "Stop task"}
-                disabled={stopDisabled}
-                onClick={onStop}
-                className="bg-fill-2 text-danger disabled:opacity-50"
-              >
-                <Square size={14} strokeWidth={2} fill="currentColor" />
-              </IconButton>
-            )}
-            {(!busy || canUpdate || canChat) && (
-              <button
-                type="submit"
-                aria-label={canUpdate ? "Send update" : "Send"}
-                disabled={disabled || !draft.trim()}
-                className="grid size-8 shrink-0 place-items-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:opacity-40"
-              >
-                <ArrowUp size={18} strokeWidth={2} />
-              </button>
-            )}
+            <button
+              type="submit"
+              aria-label="Send"
+              disabled={disabled || !draft.trim()}
+              className="grid size-8 shrink-0 place-items-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:opacity-40"
+            >
+              <ArrowUp size={18} strokeWidth={2} />
+            </button>
           </div>
         </form>
       </div>

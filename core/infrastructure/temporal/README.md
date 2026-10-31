@@ -90,7 +90,14 @@ can publish the exact archive. Publishing, applying, and promoting are separate
 authorized operations. The helper never performs them.
 
 After authorization, apply the reviewed plan and retain its candidate manifest
-as the repository's release manifest. Register the new version with
+as the repository's release manifest. The manifest also retains
+`runtime_invoke_root`, taken from the POC `runtime_url` output. Workers use this
+invoke root and the existing conversation queue/caller to wake the outer loop
+for durable task events. The worker shares `nori-poc-runtime`, so its scoped
+queue enqueue and wake-caller `actAs` permissions remain owned by the POC
+Terraform state; do not duplicate those IAM bindings here.
+
+Register the new version with
 `temporal worker deployment create-version`, its pool/provider identity and all
 five scaling flags, then promote it with `set-current-version`. For existing
 versions, use `update-version-compute-config`; `create-version` rejects an

@@ -3,28 +3,22 @@ package main
 
 import (
 	"context"
-	"github.com/joho/godotenv"
 	"log"
 	"nori/internal/computer"
+	"nori/internal/env"
 	"nori/internal/state"
 	"nori/internal/task"
 	"os"
 	"time"
 )
 
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 func main() {
-	if e := godotenv.Load(env("NORI_ENV_FILE", "../.env")); e != nil && !os.IsNotExist(e) {
-		log.Fatal("could not load root .env")
+	if e := env.Load(); e != nil {
+		log.Fatal(e)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	store, e := state.NewGoogle(ctx, env("NORI_PROJECT_ID", "bot-111549"), env("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
+	store, e := state.NewGoogle(ctx, env.Get("NORI_PROJECT_ID", "bot-111549"), env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
 	if e != nil {
 		log.Fatal(e)
 	}
@@ -41,7 +35,7 @@ func main() {
 		log.Fatal(e)
 	}
 	defer c.Close()
-	config := computer.Config{Project: env("NORI_PROJECT_ID", "bot-111549"), Zone: os.Getenv("COMPUTER_ZONE"), Instance: env("COMPUTER_INSTANCE", "nori-computer")}
+	config := computer.Config{Project: env.Get("NORI_PROJECT_ID", "bot-111549"), Zone: os.Getenv("COMPUTER_ZONE"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer")}
 	if e = task.RepairClosed(ctx, store, c, config); e != nil {
 		log.Fatal(e)
 	}

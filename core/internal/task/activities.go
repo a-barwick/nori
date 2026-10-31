@@ -22,6 +22,8 @@ import (
 type Activities struct {
 	Agent *agent.Service
 	Store state.TaskStore
+	// Notify schedules existing outer processing after a durable task event.
+	Notify func(context.Context) error
 }
 type Step struct {
 	RunID    string
@@ -48,11 +50,17 @@ type Publication struct {
 	Status, Detail, Text string
 	StopConfirmed        bool
 	CostUnknown          bool
+	BypassRouting        bool
 }
 type Projection struct {
 	Step
 	Kind, Text string
 }
+type QuestionProjection struct {
+	Step
+	Question state.Question
+}
+type BrowserCleanup struct{ RunID, Scope string }
 type Spending struct {
 	RunID         string
 	Spent, Budget float64
@@ -69,6 +77,8 @@ func classified(err error) error {
 		kind = "superseded"
 	case errors.Is(err, state.ErrCancelled):
 		kind = "cancelled"
+	case errors.Is(err, state.ErrRoutingPending):
+		kind = "routing_pending"
 	case errors.Is(err, state.ErrPaused):
 		kind = "paused"
 	}
@@ -127,7 +137,11 @@ func (a *Activities) Reconcile(ctx context.Context, id string) (state.TaskSnapsh
 	}
 	// Reconciliation and publication do not start paid work. Their revision
 	// and cancellation checks remain valid even while admission is paused.
-	e = a.Store.Incorporate(ctx, id, snap.Run.Revision, snap.Run.Revision)
+	position := snap.Run.Position
+	if snap.Run.ProtocolVersion < state.TaskProtocolVersion {
+		position = snap.Run.Revision
+	}
+	e = a.Store.Incorporate(ctx, id, snap.Run.Revision, position)
 	return snap, classified(e)
 }
 
@@ -192,7 +206,9 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	info := activity.GetInfo(ctx)
 	trace := state.TaskStep{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(info.WorkflowExecution.RunID+":"+info.ActivityID)).String(), Kind: "model", Status: "running", Revision: in.Revision, StartedAt: time.Now().UTC(), Model: a.Agent.ModelName, CostStatus: "unknown"}
 	a.recordStep(in.RunID, trace)
-	modelCtx, stop := context.WithTimeout(ctx, 45*time.Second)
+	// Detailed answers share the output allowance with thinking. Keep a bounded
+	// model deadline that leaves room for both, while bounded still observes Stop.
+	modelCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
 	defer stop()
 	decision, e := a.Agent.Decide(modelCtx, in.Contents, true)
 	outcome := ModelOutcome{Decision: decision}
@@ -242,8 +258,8 @@ func (a *Activities) Tool(ctx context.Context, in ToolInput) (result map[string]
 		}
 		c.SetOperation(in.OperationID)
 		c.SetTaskID(in.RunID)
-		// Starting the guest and connecting IAP can consume up to 180 seconds; execution
-		// itself retains the same 45-second limit as the inline path.
+		// Starting the guest and connecting IAP can consume up to 180 seconds;
+		// the tool execution itself is limited to 45 seconds below.
 		if _, e = a.Store.Guard(ctx, in.RunID, in.Revision); e != nil {
 			return nil, classified(e)
 		}
@@ -344,23 +360,57 @@ func StopComputer(ctx context.Context, config computer.Config, ids []string) err
 	}
 	return nil
 }
-func (a *Activities) Publish(ctx context.Context, p Publication) (state.Run, error) {
-	if p.Status != "completed" && p.StopConfirmed {
-		current, e := a.Store.GetRun(ctx, p.RunID)
-		if e != nil {
-			return state.Run{}, classified(e)
-		}
-		if current.CancelRequested {
-			p.Status = "cancelled"
-			p.Detail = "Cancelled by Austin."
-			p.Text = ""
+func (a *Activities) notify(ctx context.Context) {
+	if a.Notify != nil {
+		if err := a.Notify(ctx); err != nil {
+			log.Printf("task event saved; conversation wake remains pending: %v", err)
 		}
 	}
-	r, e := a.Store.Publish(ctx, p.RunID, p.Revision, p.Status, p.Detail, p.Text, p.CostUnknown)
-	return r, classified(e)
+}
+func (a *Activities) Ask(ctx context.Context, p QuestionProjection) error {
+	if err := a.Store.ProjectQuestion(ctx, p.RunID, p.Revision, p.Question); err != nil {
+		return classified(err)
+	}
+	a.notify(ctx)
+	return nil
+}
+func (a *Activities) Publish(ctx context.Context, p Publication) (state.Run, error) {
+	if p.Status != "completed" {
+		current, err := a.Store.GetRun(ctx, p.RunID)
+		if err != nil {
+			return state.Run{}, classified(err)
+		}
+		// Terminal cleanup cannot resume execution. Stop and unknown-cost facts
+		// apply to the whole task, including a correction accepted during cleanup.
+		if current.CancelRequested && p.StopConfirmed {
+			p.Status, p.Detail, p.Text, p.Revision = "cancelled", "Stopped by Austin.", "", current.Revision
+			p.BypassRouting = true
+		} else if p.CostUnknown || !p.StopConfirmed || p.Revision == 0 {
+			p.Revision = current.Revision
+		}
+	}
+	r, err := a.Store.Publish(ctx, p.RunID, p.Revision, p.Status, p.Detail, p.Text, p.CostUnknown, p.BypassRouting)
+	if err == nil {
+		a.notify(ctx)
+	}
+	return r, classified(err)
 }
 func (a *Activities) Project(ctx context.Context, p Projection) error {
 	return classified(a.Store.Project(ctx, p.RunID, p.Revision, p.Kind, p.Text))
+}
+func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) error {
+	c, err := computer.Attach(ctx, a.Agent.Computer, in.Scope)
+	if errors.Is(err, computer.ErrStopped) {
+		return a.Store.FinishCleanup(ctx, in.RunID)
+	}
+	if err != nil {
+		return classified(err)
+	}
+	defer c.Close()
+	if err = c.CloseTaskBrowser(ctx, in.RunID); err != nil {
+		return classified(err)
+	}
+	return a.Store.FinishCleanup(ctx, in.RunID)
 }
 
 // Spend is unguarded: cost already incurred is recorded even if a correction

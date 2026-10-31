@@ -106,12 +106,24 @@ for hypothetical work. Use a fresh isolated database and run from the repo root:
 real models. The older durable-task suite targets the retired direct-run route
 and is not validation of this revision's conversation contract.
 
-One Firestore transaction admits one active task. Repeating an identical command
-UUID returns its recorded acceptance; reusing that ID with different content is
-rejected. Accepted commands advance an ordered task revision. Effects and final
-publication check that revision so an unincorporated correction cannot receive a
-stale answer. Durable `system/control.paused` gates work; old `expires_at` fields
-are ignored. Missing or paused control rejects new task execution.
+The Milestone 3 journeys cover concurrent browser tasks, screenshot retrieval,
+answer replay/staleness, targeted Stop, and a detailed trip correction during a
+real model request. Start the local API, Temporal worker and browser computer
+against a fresh isolated database, then run from the repo root:
+`NORI_M3_E2E_API_URL=http://127.0.0.1:PORT bun test core/e2e/milestone3.test.js`.
+Use `NORI_M3_E2E_URL` for the local web proxy instead. This separate opt-in suite
+uses real providers, rejects preexisting tasks, and stops only tasks it creates.
+
+A Firestore transaction admits a whole command batch atomically, including
+commands for independent concurrent tasks. Repeating an identical command UUID
+returns its recorded acceptance; reusing that ID with different content is
+rejected. Every accepted command advances its task's command position; Start,
+Steer and Stop also advance the instruction revision. Answer and Continue must
+identify the current unresolved input or budget question, respectively. Effects
+and final publication require the current revision and incorporated command
+position; final publication also waits for accepted chat input to be routed.
+Durable `system/control.paused` gates work; old `expires_at` fields are ignored.
+Missing or paused control rejects new task execution.
 
 A durable task can wait for input, budget approval, or project resume without a
 wall-clock task deadline. It survives normal worker shutdown and project pause.
@@ -304,14 +316,5 @@ loss of the disk itself. The disk's numeric-ID check also rejects accidental
 replacement. Retained data continues to incur storage charges while compute is
 off; the daily shutdown policy never authorizes deleting it.
 
-## Research
-
-- [Assistant features](docs/research/assistant-features-research.md)
-- [Grok Bot](docs/research/grokbot-research.md)
-- [Muse](docs/research/muse-research.md)
-- [GCP execution infrastructure notes](docs/research/gcp-agent-infrastructure-notes.txt)
-
-These documents are research and proposals, not an implementation checklist.
 Go `core` and Next.js `web` share this monorepo and retain independent images
-and releases. Their current POC integration is described above; historical plans do
-not expand its scope.
+and releases. Their current POC integration is described above.

@@ -3,8 +3,8 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { clock } from "@/lib/time";
 import { cn } from "@/lib/utils";
-import type { ConversationTrace, TaskStep, Usage } from "@/lib/poc/types";
-import type { DebugInfo } from "./debug";
+import type { ConversationTrace, TaskStep, Usage } from "@/lib/types";
+import type { DebugInfo } from "@/lib/types";
 
 const n = (value: number) => value.toLocaleString("en-US");
 const secs = (ms: number | undefined) => ms === undefined ? undefined : `${(ms / 1000).toFixed(1)} s`;
@@ -54,6 +54,7 @@ export function DebugBlock({ info }: { info: DebugInfo }) {
         <div className={DETAIL}>
           <KV rows={[
             ["started", clock(Date.parse(run.started_at))],
+            ...(run.position !== undefined ? [["commands", `${run.incorporated ?? 0} applied / ${run.position} accepted`] as [string, ReactNode]] : []),
             ...(run.finished_at ? [["finished", clock(Date.parse(run.finished_at))] as [string, ReactNode]] : []),
             ...(run.budget_usd !== undefined ? [["budget", usd(run.budget_usd)] as [string, ReactNode]] : []),
           ]} />

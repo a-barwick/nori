@@ -2,10 +2,9 @@
 
 import { forwardRef } from "react";
 import { Tooltip } from "radix-ui";
-import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export function Tip({
+function Tip({
   label,
   shortcut,
   side = "top",
@@ -101,39 +100,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   );
 });
 
-export function Kbd({ children }: { children: React.ReactNode }) {
-  return <span className="font-mono text-mono-data text-ink-3">{children}</span>;
-}
 
 export function SectionHeader({ children, first, className }: { children: React.ReactNode; first?: boolean; className?: string }) {
   return (
     <h3 className={cn("text-section font-medium text-ink", first ? "mt-4" : "mt-6", "mb-1", className)}>{children}</h3>
-  );
-}
-
-/** Emoji in UI copy is fine; this renders Fluent 3D emoji directly on the paper. */
-export function Emoji3D({ name, size = 40, className }: { name: string; size?: number; className?: string }) {
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={`/emoji/${name}.png`}
-      alt=""
-      width={size}
-      height={size}
-      draggable={false}
-      className={cn("shrink-0 select-none", className)}
-      style={{ filter: "var(--drop-contact)" }}
-    />
-  );
-}
-
-/** A panel tab with nothing in it yet: icon, tab name, one quiet line. */
-export function EmptyTab({ icon: Icon, title, line }: { icon: LucideIcon; title: string; line: string }) {
-  return (
-    <div className="flex flex-col items-center py-12 text-center">
-      <Icon size={32} strokeWidth={1.5} className="text-ink-3" aria-hidden />
-      <div className="mt-3 text-section font-medium text-ink">{title}</div>
-      <div className="mt-0.5 text-meta text-ink-2">{line}</div>
-    </div>
   );
 }

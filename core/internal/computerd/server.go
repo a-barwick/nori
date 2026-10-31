@@ -25,7 +25,8 @@ var runPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$`)
 
 type server struct {
 	tasks          string
-	browser        chan struct{}
+	browserMu      sync.Mutex
+	browsers       map[string]*taskBrowser
 	runsMu         sync.Mutex
 	runs           map[string]*runState
 	receiptMu      sync.Mutex
@@ -43,7 +44,7 @@ func New(tasks string) (http.Handler, error) {
 	if err := os.MkdirAll(tasks, 0700); err != nil {
 		return nil, err
 	}
-	s := &server{tasks: tasks, browser: make(chan struct{}, 1), runs: make(map[string]*runState), activeReceipts: make(map[string]bool)}
+	s := &server{tasks: tasks, browsers: make(map[string]*taskBrowser), runs: make(map[string]*runState), activeReceipts: make(map[string]bool)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -53,11 +54,12 @@ func New(tasks string) (http.Handler, error) {
 			http.Error(w, "browser not ready", http.StatusServiceUnavailable)
 			return
 		}
-		// Readiness only validates the CDP page connection; it changes no page state.
+		// Readiness validates the browser CDP connection without creating a task tab.
 		_ = c.conn.CloseNow()
-		respond(w, map[string]bool{"ready": true, "operation_receipts_v1": true})
+		respond(w, map[string]bool{"ready": true, "operation_receipts_v1": true, "browser_task_tabs_v1": true})
 	})
 	mux.HandleFunc("POST /cancel", s.cancelRun)
+	mux.HandleFunc("POST /browser/close", s.closeTaskBrowser)
 	mux.HandleFunc("POST /exec", s.receipted(s.exec))
 	mux.HandleFunc("POST /navigate", s.receipted(s.navigate))
 	mux.HandleFunc("POST /screenshot", s.receipted(s.screenshot))
@@ -164,7 +166,7 @@ func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle fu
 		}
 	}()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation"))) {
+		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/browser/close" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation"))) {
 			http.NotFound(w, r)
 			return
 		}
@@ -375,13 +377,14 @@ func (s *server) begin(parent context.Context, id string) (context.Context, func
 }
 func (s *server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RunID string `json:"run_id"`
+		RunID  string `json:"run_id"`
+		TaskID string `json:"task_id"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	if !runPattern.MatchString(req.RunID) {
-		http.Error(w, "invalid run_id", 400)
+	if !runPattern.MatchString(req.RunID) || (req.TaskID != "" && !runPattern.MatchString(req.TaskID)) {
+		http.Error(w, "invalid run_id or task_id", 400)
 		return
 	}
 	s.runsMu.Lock()
@@ -418,15 +421,6 @@ func (s *server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "stop acknowledgment timed out", 504)
 	}
 }
-func (s *server) lockBrowser(ctx context.Context) bool {
-	select {
-	case s.browser <- struct{}{}:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-func (s *server) unlockBrowser() { <-s.browser }
 
 func (s *server) stopFailed(id string, err error) {
 	s.runsMu.Lock()

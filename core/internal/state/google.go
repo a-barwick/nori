@@ -6,6 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"sort"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -17,24 +21,80 @@ import (
 )
 
 type Google struct {
-	db      *firestore.Client
-	objects *storage.Client
-	bucket  string
+	db             *firestore.Client
+	objects        *storage.Client
+	bucket         string
+	localArtifacts *os.Root
 }
 
 func NewGoogle(ctx context.Context, project, database, bucket string) (*Google, error) {
+	localArtifacts, e := openLocalArtifacts()
+	if e != nil {
+		return nil, e
+	}
 	db, e := firestore.NewClientWithDatabase(ctx, project, database)
 	if e != nil {
+		if localArtifacts != nil {
+			_ = localArtifacts.Close()
+		}
 		return nil, e
 	}
-	objects, e := storage.NewClient(ctx)
+	store := &Google{db: db, bucket: bucket, localArtifacts: localArtifacts}
+	if localArtifacts != nil {
+		return store, nil
+	}
+	store.objects, e = storage.NewClient(ctx)
 	if e != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, e
 	}
-	return &Google{db: db, objects: objects, bucket: bucket}, nil
+	return store, nil
 }
-func (s *Google) Close() error                       { return errors.Join(s.db.Close(), s.objects.Close()) }
+
+func openLocalArtifacts() (*os.Root, error) {
+	directory := os.Getenv("NORI_LOCAL_ARTIFACT_DIR")
+	if directory == "" {
+		return nil, nil
+	}
+	host, _, err := net.SplitHostPort(os.Getenv("FIRESTORE_EMULATOR_HOST"))
+	ip := net.ParseIP(host)
+	if err != nil || (host != "localhost" && (ip == nil || !ip.IsLoopback())) || os.Getenv("TEMPORAL_LOCAL") != "true" {
+		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR requires a loopback Firestore emulator and TEMPORAL_LOCAL=true")
+	}
+	if !filepath.IsAbs(directory) {
+		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR must be an absolute directory")
+	}
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR must be a directory, not a symbolic link")
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, err
+	}
+	if err := root.Chmod(".", 0700); err != nil {
+		_ = root.Close()
+		return nil, err
+	}
+	return root, nil
+}
+
+func (s *Google) Close() error {
+	var objectErr, localErr error
+	if s.objects != nil {
+		objectErr = s.objects.Close()
+	}
+	if s.localArtifacts != nil {
+		localErr = s.localArtifacts.Close()
+	}
+	return errors.Join(s.db.Close(), objectErr, localErr)
+}
 func (s *Google) root() *firestore.DocumentRef       { return s.db.Collection("owners").Doc(Owner) }
 func (s *Google) runs() *firestore.CollectionRef     { return s.root().Collection("runs") }
 func (s *Google) messages() *firestore.CollectionRef { return s.root().Collection("messages") }
@@ -60,94 +120,6 @@ func decodeRun(d *firestore.DocumentSnapshot, e error) (Run, error) {
 }
 func (s *Google) GetRun(ctx context.Context, id string) (Run, error) {
 	return decodeRun(s.runs().Doc(id).Get(ctx))
-}
-func (s *Google) Begin(ctx context.Context, id, text string) (Run, error) {
-	var run Run
-	err := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		control, e := tx.Get(s.db.Collection("system").Doc("control"))
-		if e != nil {
-			return e
-		}
-		var c Control
-		if e = control.DataTo(&c); e != nil {
-			return e
-		}
-		if e = c.Check(); e != nil {
-			return e
-		}
-		_, e = tx.Get(s.runs().Doc(id))
-		if e == nil {
-			return ErrDuplicate
-		}
-		if status.Code(e) != codes.NotFound {
-			return e
-		}
-		root, e := tx.Get(s.root())
-		if e != nil && status.Code(e) != codes.NotFound {
-			return e
-		}
-		active := ""
-		if e == nil {
-			active, _ = root.Data()["active_run"].(string)
-		}
-		var previous *Run
-		if active != "" {
-			d, e := tx.Get(s.runs().Doc(active))
-			if e != nil {
-				return e
-			}
-			r, e := decodeRun(d, nil)
-			if e != nil {
-				return e
-			}
-			if r.Status == "running" {
-				if r.Temporal || r.Deadline.Add(CleanupGrace).After(time.Now()) {
-					return ErrBusy
-				}
-				previous = &r
-			}
-		}
-		now := time.Now().UTC()
-		deadline := now.Add(2 * time.Minute)
-		run = Run{ID: id, Status: "running", StartedAt: now, Deadline: deadline, Events: []Event{}, Artifacts: []Artifact{}}
-		if previous != nil {
-			previous.Status = "failed"
-			previous.Error = "Interrupted: execution deadline expired; no automatic recovery."
-			previous.FinishedAt = &now
-			if e = tx.Set(s.runs().Doc(previous.ID), previous); e != nil {
-				return e
-			}
-		}
-		if e = tx.Set(s.root(), map[string]any{"active_run": id}, firestore.MergeAll); e != nil {
-			return e
-		}
-		if e = tx.Create(s.runs().Doc(id), run); e != nil {
-			return e
-		}
-		return tx.Create(s.messages().Doc(id+"-user"), Message{ID: id + "-user", RunID: id, Role: "user", Text: text, CreatedAt: now})
-	})
-	return run, err
-}
-func (s *Google) RequestCancel(ctx context.Context, id string) (Run, error) {
-	var run Run
-	e := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		d, e := tx.Get(s.runs().Doc(id))
-		run, e = decodeRun(d, e)
-		if e != nil {
-			return e
-		}
-		if run.Status != "running" {
-			return nil
-		}
-		run.CancelRequested = true
-		return tx.Update(s.runs().Doc(id), []firestore.Update{{Path: "cancel_requested", Value: true}})
-	})
-	return run, e
-}
-func (s *Google) Event(ctx context.Context, id string, event Event) error {
-	event.CreatedAt = time.Now().UTC()
-	_, e := s.runs().Doc(id).Update(ctx, []firestore.Update{{Path: "events", Value: firestore.ArrayUnion(event)}})
-	return e
 }
 
 // Spend records model cost even after a correction or terminal state; it is a
@@ -208,12 +180,8 @@ func (s *Google) Session(ctx context.Context) (Session, error) {
 	return s.session(ctx, false, true)
 }
 
-// ConversationSession returns a bounded visible projection. Full provider turns
-// are selected separately and all stored messages remain cursor-accessible.
-func (s *Google) ConversationSession(ctx context.Context) (Session, error) {
-	return s.session(ctx, true, true)
-}
-
+// ConversationProjection returns runs and usage without messages. Full
+// provider turns are selected separately; messages stay cursor-accessible.
 func (s *Google) ConversationProjection(ctx context.Context) (Session, error) {
 	return s.session(ctx, true, false)
 }
@@ -269,6 +237,21 @@ func (s *Google) session(ctx context.Context, fullConversation, includeMessages 
 		}
 		session.Runs = append(session.Runs, r)
 	}
+	// Waiting tasks remain visible even after thirty newer tasks have started.
+	open, e := s.OpenTasks(ctx)
+	if e != nil {
+		return session, e
+	}
+	seen := map[string]bool{}
+	for _, run := range session.Runs {
+		seen[run.ID] = true
+	}
+	for _, run := range open {
+		if !seen[run.ID] {
+			session.Runs = append(session.Runs, run)
+		}
+	}
+	sort.Slice(session.Runs, func(i, j int) bool { return session.Runs[i].StartedAt.After(session.Runs[j].StartedAt) })
 	if fullConversation {
 		usage := s.root().Collection("model_usage").OrderBy("created_at", firestore.Desc).Limit(100).Documents(ctx)
 		defer usage.Stop()
@@ -291,14 +274,14 @@ func (s *Google) session(ctx context.Context, fullConversation, includeMessages 
 }
 func objectPath(run, id string) string { return "artifacts/" + run + "/" + id + ".png" }
 func (s *Google) PutPNG(ctx context.Context, run, id string, data []byte) error {
-	if _, e := uuid.Parse(run); e != nil {
-		return e
-	}
-	if _, e := uuid.Parse(id); e != nil {
-		return e
+	if err := validateArtifactIDs(run, id); err != nil {
+		return err
 	}
 	if len(data) > 2<<20 {
 		return fmt.Errorf("screenshot exceeds 2 MiB")
+	}
+	if s.localArtifacts != nil {
+		return s.putLocalPNG(ctx, run, id, data)
 	}
 	w := s.objects.Bucket(s.bucket).Object(objectPath(run, id)).If(storage.Conditions{DoesNotExist: true}).NewWriter(ctx)
 	w.ContentType = "image/png"
@@ -310,6 +293,9 @@ func (s *Google) PutPNG(ctx context.Context, run, id string, data []byte) error 
 	return w.Close()
 }
 func (s *Google) GetPNG(ctx context.Context, run, id string) ([]byte, error) {
+	if err := validateArtifactIDs(run, id); err != nil {
+		return nil, err
+	}
 	r, e := s.GetRun(ctx, run)
 	if e != nil {
 		return nil, e
@@ -323,7 +309,12 @@ func (s *Google) GetPNG(ctx context.Context, run, id string) ([]byte, error) {
 	if !found {
 		return nil, ErrNotFound
 	}
-	reader, e := s.objects.Bucket(s.bucket).Object(objectPath(run, id)).NewReader(ctx)
+	var reader io.ReadCloser
+	if s.localArtifacts != nil {
+		reader, e = s.localArtifacts.Open(filepath.Join(run, id+".png"))
+	} else {
+		reader, e = s.objects.Bucket(s.bucket).Object(objectPath(run, id)).NewReader(ctx)
+	}
 	if e != nil {
 		return nil, e
 	}
@@ -333,4 +324,48 @@ func (s *Google) GetPNG(ctx context.Context, run, id string) ([]byte, error) {
 		return nil, fmt.Errorf("artifact exceeds limit")
 	}
 	return data, e
+}
+
+func validateArtifactIDs(run, id string) error {
+	for _, value := range []string{run, id} {
+		parsed, err := uuid.Parse(value)
+		if err != nil || parsed.String() != value {
+			return fmt.Errorf("artifact run and ID must be canonical UUIDs")
+		}
+	}
+	return nil
+}
+
+func (s *Google) putLocalPNG(ctx context.Context, run, id string, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.localArtifacts.Mkdir(run, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	info, err := s.localArtifacts.Lstat(run)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("artifact task path must be a directory")
+	}
+	if err := s.localArtifacts.Chmod(run, 0700); err != nil {
+		return err
+	}
+	temporary := filepath.Join(run, "."+uuid.NewString()+".tmp")
+	file, err := s.localArtifacts.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	defer s.localArtifacts.Remove(temporary)
+	_, writeErr := file.Write(data)
+	if writeErr == nil {
+		writeErr = file.Sync()
+	}
+	if err := errors.Join(writeErr, file.Close(), ctx.Err()); err != nil {
+		return err
+	}
+	// Linking commits a complete file atomically and refuses to replace an ID.
+	return s.localArtifacts.Link(temporary, filepath.Join(run, id+".png"))
 }

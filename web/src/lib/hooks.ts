@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 const noop = () => () => {};
 
@@ -13,7 +13,7 @@ export function useHydrated() {
   );
 }
 
-export function useMedia(query: string) {
+function useMedia(query: string) {
   return useSyncExternalStore(
     (cb) => {
       const m = window.matchMedia(query);
@@ -26,14 +26,3 @@ export function useMedia(query: string) {
 }
 
 export const useWide = () => useMedia("(min-width: 1280px)");
-export const useReducedMotion = () => useMedia("(prefers-reduced-motion: reduce)");
-
-/** Re-renders every `ms` so relative times stay fresh. */
-export function useNow(ms = 30_000) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), ms);
-    return () => clearInterval(t);
-  }, [ms]);
-  return now;
-}

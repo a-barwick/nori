@@ -2,7 +2,7 @@ import { GoogleAuth } from "google-auth-library";
 import { isOwner, sameOrigin } from "./auth";
 
 const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
-const METHODS = new Set(["session", "turn", "input", "cancel", "artifact", "trace"]);
+const METHODS = new Set(["session", "turn", "input", "cancel", "command", "artifact", "trace"]);
 
 export async function runtimeRequest(request: Request, method: string) {
   if (!METHODS.has(method)) return Response.json({ error: "Not found." }, { status: 404 });

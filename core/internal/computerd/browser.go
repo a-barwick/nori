@@ -6,45 +6,81 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 )
 
 type page struct {
+	ID        string `json:"id"`
 	Type      string `json:"type"`
 	WebSocket string `json:"webSocketDebuggerUrl"`
 }
 type cdp struct {
-	conn *websocket.Conn
-	id   int
+	conn     *websocket.Conn
+	id       int
+	endpoint string
 }
 
 func browser(ctx context.Context) (*cdp, error) {
-	req, _ := http.NewRequestWithContext(ctx, "GET", "http://127.0.0.1:9222/json/list", nil)
-	res, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	var version struct {
+		WebSocket string `json:"webSocketDebuggerUrl"`
+	}
+	if err := browserJSON(ctx, "/json/version", &version); err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(version.WebSocket, "ws://127.0.0.1:9222/devtools/browser/") {
+		return nil, errors.New("invalid browser debugging endpoint")
+	}
+	return dialCDP(ctx, version.WebSocket)
+}
+
+var browserHTTP = &http.Client{
+	Timeout:       5 * time.Second,
+	Transport:     &http.Transport{IdleConnTimeout: 30 * time.Second},
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+func browserJSON(ctx context.Context, path string, result any) error {
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://127.0.0.1:9222"+path, nil)
+	res, err := browserHTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return errors.New("browser discovery unavailable")
+	}
+	return json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(result)
+}
+func dialCDP(ctx context.Context, address string) (*cdp, error) {
+	if !strings.HasPrefix(address, "ws://127.0.0.1:9222/devtools/") {
+		return nil, errors.New("invalid browser target endpoint")
+	}
+	conn, _, err := websocket.Dial(ctx, address, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	conn.SetReadLimit(4 << 20)
+	return &cdp{conn: conn, endpoint: address}, nil
+}
+func targetPage(ctx context.Context, target string) (*cdp, error) {
 	var pages []page
-	if err = json.NewDecoder(res.Body).Decode(&pages); err != nil {
+	if err := browserJSON(ctx, "/json/list", &pages); err != nil {
 		return nil, err
 	}
 	for _, p := range pages {
-		if p.Type == "page" && strings.HasPrefix(p.WebSocket, "ws://127.0.0.1:9222/") {
-			conn, _, err := websocket.Dial(ctx, p.WebSocket, nil)
-			if err != nil {
-				return nil, err
-			}
-			conn.SetReadLimit(4 << 20)
-			return &cdp{conn: conn}, nil
+		if p.ID == target && p.Type == "page" {
+			return dialCDP(ctx, p.WebSocket)
 		}
 	}
-	return nil, errors.New("browser page unavailable")
+	return nil, errTargetGone
 }
 func (c *cdp) call(ctx context.Context, method string, params any, result any) error {
 	c.id++
@@ -80,20 +116,47 @@ func (c *cdp) call(ctx context.Context, method string, params any, result any) e
 		return nil
 	}
 }
-func stopLoading() error {
+func stopLoading(owner browserAssociation) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	c, err := browser(ctx)
+	root, err := browser(ctx)
+	if err != nil {
+		return err
+	}
+	defer root.conn.CloseNow()
+	// A different browser identity proves the original process has exited.
+	if root.endpoint != owner.Browser {
+		return nil
+	}
+	c, err := targetPage(ctx, owner.Target)
+	if errors.Is(err, errTargetGone) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	defer c.conn.CloseNow()
 	return c.call(ctx, "Page.stopLoading", map[string]any{}, nil)
 }
+
+// Older workers send only a revision scope. Browser ownership must survive
+// instruction changes, while cancellation continues to use the full scope.
+func legacyBrowserTaskID(scope string) string {
+	if i := strings.LastIndex(scope, "-r"); i > 0 {
+		id, err := uuid.Parse(scope[:i])
+		_, revisionErr := strconv.ParseUint(scope[i+2:], 10, 64)
+		if err == nil && id.String() == scope[:i] && revisionErr == nil {
+			return scope[:i]
+		}
+	}
+	return scope
+}
+
 func (s *server) navigate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RunID string `json:"run_id"`
-		URL   string `json:"url"`
+		RunID  string `json:"run_id"`
+		TaskID string `json:"task_id"`
+		URL    string `json:"url"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -101,6 +164,13 @@ func (s *server) navigate(w http.ResponseWriter, r *http.Request) {
 	u, err := url.Parse(req.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 		http.Error(w, "HTTP or HTTPS URL required", 400)
+		return
+	}
+	if req.TaskID == "" {
+		req.TaskID = legacyBrowserTaskID(req.RunID)
+	}
+	if !runPattern.MatchString(req.TaskID) {
+		http.Error(w, "invalid task_id", 400)
 		return
 	}
 	operation, finish, err := s.begin(r.Context(), req.RunID)
@@ -111,25 +181,26 @@ func (s *server) navigate(w http.ResponseWriter, r *http.Request) {
 	defer finish()
 	ctx, cancel := context.WithTimeout(operation, 45*time.Second)
 	defer cancel()
-	if !s.lockBrowser(ctx) {
+	session := s.taskBrowser(req.TaskID)
+	if !session.lock(ctx) {
 		http.Error(w, "run canceled", 409)
 		return
 	}
-	defer s.unlockBrowser()
+	defer session.unlock()
 	if ctx.Err() != nil {
 		http.Error(w, "request canceled", 408)
 		return
 	}
-	c, err := browser(ctx)
+	c, owner, err := s.openTaskPage(ctx, req.TaskID, true)
 	if err != nil {
-		http.Error(w, "browser unavailable", 503)
+		http.Error(w, "task browser unavailable or ownership uncertain", 503)
 		return
 	}
 	defer c.conn.CloseNow()
 	complete := false
 	defer func() {
 		if !complete {
-			if err := stopLoading(); err != nil {
+			if err := stopLoading(owner); err != nil {
 				s.stopFailed(req.RunID, err)
 			}
 		}
@@ -197,9 +268,17 @@ func (s *server) navigate(w http.ResponseWriter, r *http.Request) {
 }
 func (s *server) screenshot(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RunID string `json:"run_id"`
+		RunID  string `json:"run_id"`
+		TaskID string `json:"task_id"`
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	if req.TaskID == "" {
+		req.TaskID = legacyBrowserTaskID(req.RunID)
+	}
+	if !runPattern.MatchString(req.TaskID) {
+		http.Error(w, "invalid task_id", 400)
 		return
 	}
 	operation, finish, err := s.begin(r.Context(), req.RunID)
@@ -210,14 +289,23 @@ func (s *server) screenshot(w http.ResponseWriter, r *http.Request) {
 	defer finish()
 	ctx, cancel := context.WithTimeout(operation, 20*time.Second)
 	defer cancel()
-	if !s.lockBrowser(ctx) {
+	session := s.taskBrowser(req.TaskID)
+	if !session.lock(ctx) {
 		http.Error(w, "run canceled", 409)
 		return
 	}
-	defer s.unlockBrowser()
-	c, err := browser(ctx)
+	defer session.unlock()
+	c, _, err := s.openTaskPage(ctx, req.TaskID, false)
+	if errors.Is(err, errBrowserRestarted) {
+		// No capture was attempted. Persist the typed refusal in the receipt
+		// body too, so replay gives the model the same safe recovery result.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "browser_restarted"})
+		return
+	}
 	if err != nil {
-		http.Error(w, "browser unavailable", 503)
+		http.Error(w, "task browser unavailable or ownership uncertain", 503)
 		return
 	}
 	defer c.conn.CloseNow()

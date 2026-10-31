@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { MarkLook, MarkState } from "@/lib/types";
+import type { MarkState } from "@/lib/types";
 
 /**
  * Nori's mark: at most five simple shapes, ink outline (1.75 at 96px,
@@ -18,52 +18,29 @@ interface Face {
   mouthY: number;
 }
 
-const LOOKS: Record<MarkLook, { face: Face; body: (clip: string) => React.ReactNode }> = {
-  onigiri: {
-    face: { eyes: [38.5, 57.5], y: 46, mouthY: 53.5 },
-    body: (clip) => (
-      <>
-        <defs>
-          <clipPath id={clip}>
-            <path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" />
-          </clipPath>
-        </defs>
-        <path
-          d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z"
-          fill="var(--mark-fill-soft)"
-        />
-        <rect x="30" y="61" width="36" height="30" rx="3" fill="var(--mark-fill)" clipPath={`url(#${clip})`} />
-        <path
-          d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z"
-          fill="none"
-          {...INK}
-        />
-      </>
-    ),
-  },
-  sprout: {
-    face: { eyes: [39, 57], y: 58, mouthY: 66 },
-    body: () => (
-      <>
-        <path
-          d="M48 34C37 22 27 22 21 25C25 33 34 38 48 36C62 38 71 31 75 22C68 18 57 20 48 34Z"
-          fill="var(--mark-fill)"
-          {...INK}
-        />
-        <path d="M48 35C68 35 81 47 81 61C81 75 67 86 48 86C29 86 15 75 15 61C15 47 28 35 48 35Z" fill="var(--mark-fill-soft)" {...INK} />
-      </>
-    ),
-  },
-  pebble: {
-    face: { eyes: [39.5, 56.5], y: 54, mouthY: 61.5 },
-    body: () => (
-      <>
-        <path d="M48 16C71 16 86 29 86 52C86 73 71 86 48 86C25 86 10 73 10 52C10 29 25 16 48 16Z" fill="var(--mark-fill)" {...INK} />
-        <ellipse cx="48" cy="57" rx="24" ry="18" fill="var(--mark-fill-soft)" />
-      </>
-    ),
-  },
-};
+const FACE_POS: Face = { eyes: [38.5, 57.5], y: 46, mouthY: 53.5 };
+
+function OnigiriBody(clip: string) {
+  return (
+    <>
+      <defs>
+        <clipPath id={clip}>
+          <path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" />
+        </clipPath>
+      </defs>
+      <path
+        d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z"
+        fill="var(--mark-fill-soft)"
+      />
+      <rect x="30" y="61" width="36" height="30" rx="3" fill="var(--mark-fill)" clipPath={`url(#${clip})`} />
+      <path
+        d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z"
+        fill="none"
+        {...INK}
+      />
+    </>
+  );
+}
 
 function useBlink(enabled: boolean) {
   const [blink, setBlink] = useState(false);
@@ -130,25 +107,22 @@ function useLook(enabled: boolean, attentive: boolean) {
 export function NoriMark({
   size = 32,
   state,
-  look,
   className,
   title,
   watch = false,
 }: {
   size?: number;
   state?: MarkState;
-  look?: MarkLook;
   className?: string;
   title?: string;
   /** Follow the pointer with its eyes (the presence medallion only). */
   watch?: boolean;
 }) {
   const s = state ?? "idle";
-  const l = look ?? "onigiri";
   const clip = useId().replace(/:/g, "");
   const blink = useBlink(s === "idle" || s === "attentive" || s === "writing");
   const { svg: svgRef, look: lookRef } = useLook(watch && s === "idle", watch && s === "attentive");
-  const { face, body } = LOOKS[l];
+  const face = FACE_POS;
   const [lx, rx] = face.eyes;
   const happy = s === "pleased";
 
@@ -166,7 +140,7 @@ export function NoriMark({
       aria-hidden={title ? undefined : true}
     >
       <g className="mark-body-group">
-        {body(`clip-${clip}`)}
+        {OnigiriBody(`clip-${clip}`)}
         <g ref={lookRef} className="mark-look">
         <g className="mark-eyes">
           {happy ? (
@@ -195,14 +169,12 @@ export function NoriMark({
 export function Medallion({
   size,
   state,
-  look,
   className,
   children,
   watch,
 }: {
   size: number;
   state?: MarkState;
-  look?: MarkLook;
   className?: string;
   children?: React.ReactNode;
   watch?: boolean;
@@ -212,7 +184,7 @@ export function Medallion({
       className={cn("relative inline-grid shrink-0 place-items-center", className)}
       style={{ width: size, height: size }}
     >
-      <NoriMark size={Math.round(size * 0.9)} state={state} look={look} watch={watch} />
+      <NoriMark size={Math.round(size * 0.9)} state={state} watch={watch} />
       {children}
     </span>
   );

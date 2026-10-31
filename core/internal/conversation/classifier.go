@@ -64,7 +64,7 @@ func NewClassifier(key string) *Classifier {
 func (c *Classifier) Classify(ctx context.Context, inputs []state.ConversationInput, history []Message) (classification Classification, err error) {
 	current := make([]map[string]any, 0, len(inputs))
 	for _, input := range inputs {
-		if input.Introduction {
+		if !input.IsUser() {
 			continue
 		}
 		current = append(current, map[string]any{"id": input.ID, "message": inputMessage(input)})

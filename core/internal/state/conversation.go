@@ -19,21 +19,25 @@ var ErrConversationStale = errors.New("conversation attempt superseded")
 const ConversationLease = 30 * time.Second
 
 type ConversationInput struct {
-	ID           string    `firestore:"id"`
-	Text         string    `firestore:"text"`
-	Position     int64     `firestore:"position"`
-	CreatedAt    time.Time `firestore:"created_at"`
-	Introduction bool      `firestore:"introduction,omitempty"`
+	ID           string     `firestore:"id"`
+	Text         string     `firestore:"text"`
+	Position     int64      `firestore:"position"`
+	CreatedAt    time.Time  `firestore:"created_at"`
+	Introduction bool       `firestore:"introduction,omitempty"`
+	Event        *TaskEvent `firestore:"event,omitempty"`
 }
 type ConversationControl struct {
-	Introducing bool      `firestore:"introducing,omitempty"`
-	Received    int64     `firestore:"received"`
-	Consumed    int64     `firestore:"consumed"`
-	Active      string    `firestore:"active"`
-	Owner       string    `firestore:"owner"`
-	Fence       int64     `firestore:"fence"`
-	LeaseUntil  time.Time `firestore:"lease_until"`
-	LatestAt    time.Time `firestore:"latest_at"`
+	ProtocolVersion int       `firestore:"protocol_version,omitempty"`
+	UserReceived    int64     `firestore:"user_received,omitempty"`
+	UserRouted      int64     `firestore:"user_routed,omitempty"`
+	Introducing     bool      `firestore:"introducing,omitempty"`
+	Received        int64     `firestore:"received"`
+	Consumed        int64     `firestore:"consumed"`
+	Active          string    `firestore:"active"`
+	Owner           string    `firestore:"owner"`
+	Fence           int64     `firestore:"fence"`
+	LeaseUntil      time.Time `firestore:"lease_until"`
+	LatestAt        time.Time `firestore:"latest_at"`
 }
 type ConversationAction struct {
 	ID        string    `json:"id" firestore:"id"`
@@ -42,6 +46,7 @@ type ConversationAction struct {
 	Status    string    `json:"status" firestore:"status"`
 	Error     string    `json:"error,omitempty" firestore:"error,omitempty"`
 	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
+	Command   Command   `json:"command" firestore:"command"`
 }
 type ConversationAttempt struct {
 	ID               string               `firestore:"id"`
@@ -66,24 +71,26 @@ type ConversationAttempt struct {
 	ContextBytes     int                  `firestore:"context_bytes"`
 }
 type ConversationTurn struct {
-	ID         string              `firestore:"id"`
-	Inputs     []ConversationInput `firestore:"inputs"`
-	Through    int64               `firestore:"through"`
-	Restarts   int                 `firestore:"restarts"`
-	Frozen     bool                `firestore:"frozen"`
-	StartedAt  time.Time           `firestore:"started_at"`
-	FinishedAt *time.Time          `firestore:"finished_at,omitempty"`
-	Status     string              `firestore:"status"`
-	Protocol   []string            `firestore:"protocol"`
-	Context    []string            `firestore:"context"`
-	Attempt    ConversationAttempt `firestore:"attempt"`
+	ID          string              `firestore:"id"`
+	Inputs      []ConversationInput `firestore:"inputs"`
+	Through     int64               `firestore:"through"`
+	UserThrough int64               `firestore:"user_through,omitempty"`
+	Restarts    int                 `firestore:"restarts"`
+	Frozen      bool                `firestore:"frozen"`
+	StartedAt   time.Time           `firestore:"started_at"`
+	FinishedAt  *time.Time          `firestore:"finished_at,omitempty"`
+	Status      string              `firestore:"status"`
+	Protocol    []string            `firestore:"protocol"`
+	Context     []string            `firestore:"context"`
+	Attempt     ConversationAttempt `firestore:"attempt"`
 }
 type ConversationFence struct {
-	Owner   string
-	Fence   int64
-	TurnID  string
-	Through int64
-	Frozen  bool
+	Owner       string
+	Fence       int64
+	TurnID      string
+	Through     int64
+	UserThrough int64
+	Frozen      bool
 }
 
 func (s *Google) conversation() *firestore.DocumentRef {
@@ -102,13 +109,34 @@ func readConversation(tx *firestore.Transaction, ref *firestore.DocumentRef) (Co
 	var c ConversationControl
 	d, e := tx.Get(ref)
 	if status.Code(e) == codes.NotFound {
+		c.ProtocolVersion = 2
 		return c, nil
 	}
 	if e != nil {
 		return c, e
 	}
 	e = d.DataTo(&c)
+	normalizeConversation(&c)
 	return c, e
+}
+
+func normalizeConversation(c *ConversationControl) {
+	if c.ProtocolVersion < 2 {
+		c.UserReceived, c.UserRouted = c.Received, c.Consumed
+		c.ProtocolVersion = 2
+	}
+}
+
+func (in ConversationInput) IsUser() bool { return !in.Introduction && in.Event == nil }
+
+func userThrough(inputs []ConversationInput) int64 {
+	var through int64
+	for _, in := range inputs {
+		if in.IsUser() && in.Position > through {
+			through = in.Position
+		}
+	}
+	return through
 }
 func (s *Google) ConversationStatus(ctx context.Context) (ConversationControl, *ConversationTurn, error) {
 	var c ConversationControl
@@ -122,6 +150,7 @@ func (s *Google) ConversationStatus(ctx context.Context) (ConversationControl, *
 	if e = d.DataTo(&c); e != nil {
 		return c, nil, e
 	}
+	normalizeConversation(&c)
 	if c.Active == "" {
 		return c, nil, nil
 	}
@@ -131,6 +160,9 @@ func (s *Google) ConversationStatus(ctx context.Context) (ConversationControl, *
 	}
 	var t ConversationTurn
 	e = d.DataTo(&t)
+	if t.UserThrough == 0 {
+		t.UserThrough = userThrough(t.Inputs)
+	}
 	return c, &t, e
 }
 func (s *Google) AcceptConversationInput(ctx context.Context, id, text string) error {
@@ -155,6 +187,7 @@ func (s *Google) AcceptConversationInput(ctx context.Context, id, text string) e
 		}
 		now := time.Now().UTC()
 		c.Received++
+		c.UserReceived = c.Received
 		c.LatestAt = now
 		in := ConversationInput{ID: id, Text: text, Position: c.Received, CreatedAt: now}
 		if e = tx.Set(s.conversation(), c); e != nil {
@@ -184,10 +217,14 @@ func (s *Google) conversationBatch(tx *firestore.Transaction, after int64) ([]Co
 		if e = d.DataTo(&in); e != nil {
 			return nil, e
 		}
-		if bytes+len(in.Text) > 128<<10 && len(out) > 0 {
+		inputBytes := len(in.Text)
+		if in.Event != nil {
+			inputBytes += len(in.Event.Text)
+		}
+		if bytes+inputBytes > 128<<10 && len(out) > 0 {
 			break
 		}
-		bytes += len(in.Text)
+		bytes += inputBytes
 		out = append(out, in)
 	}
 	return out, nil
@@ -217,6 +254,9 @@ func (s *Google) AcquireConversation(ctx context.Context, owner, turnID string) 
 			if e = d.DataTo(&t); e != nil {
 				return e
 			}
+			if t.UserThrough == 0 {
+				t.UserThrough = userThrough(t.Inputs)
+			}
 		} else {
 			ins, e := s.conversationBatch(tx, c.Consumed)
 			if e != nil {
@@ -226,6 +266,16 @@ func (s *Google) AcquireConversation(ctx context.Context, owner, turnID string) 
 				return nil
 			}
 			t = ConversationTurn{ID: turnID, Inputs: ins, Through: ins[len(ins)-1].Position, StartedAt: now, Status: "running"}
+			// A failed routing attempt stays unresolved until the next user turn.
+			// Replay its inputs as context without creating another visible message.
+			if userThrough(ins) > 0 && c.UserRouted < c.Consumed {
+				unresolved, err := s.unroutedInputs(tx, c.UserRouted, c.Consumed)
+				if err != nil {
+					return err
+				}
+				t.Inputs = append(unresolved, ins...)
+			}
+			t.UserThrough = max(userThrough(t.Inputs), min(c.UserReceived, c.Consumed))
 			t.Frozen = t.Through < c.Received
 			c.Active = t.ID
 		}
@@ -237,7 +287,7 @@ func (s *Google) AcquireConversation(ctx context.Context, owner, turnID string) 
 			return e
 		}
 		for _, in := range t.Inputs {
-			if in.Introduction {
+			if !in.IsUser() {
 				continue
 			}
 			if e = tx.Update(s.messages().Doc(in.ID+"-user"), []firestore.Update{{Path: "turn_id", Value: t.ID}}); e != nil {
@@ -258,7 +308,7 @@ func conversationFresh(c ConversationControl, f ConversationFence) error {
 	if e := conversationOwned(c, f); e != nil {
 		return e
 	}
-	if !f.Frozen && c.Received > f.Through {
+	if !f.Frozen && c.UserReceived > f.UserThrough {
 		return ErrConversationStale
 	}
 	return nil
@@ -272,10 +322,11 @@ func (s *Google) CheckConversation(ctx context.Context, f ConversationFence) (bo
 	if e = d.DataTo(&c); e != nil {
 		return false, e
 	}
+	normalizeConversation(&c)
 	if e = conversationOwned(c, f); e != nil {
 		return false, e
 	}
-	return !f.Frozen && c.Received > f.Through, nil
+	return !f.Frozen && c.UserReceived > f.UserThrough, nil
 }
 func (s *Google) RenewConversation(ctx context.Context, f ConversationFence) (bool, error) {
 	stale := false
@@ -287,7 +338,7 @@ func (s *Google) RenewConversation(ctx context.Context, f ConversationFence) (bo
 		if e = conversationOwned(c, f); e != nil {
 			return e
 		}
-		stale = !f.Frozen && c.Received > f.Through
+		stale = !f.Frozen && c.UserReceived > f.UserThrough
 		c.LeaseUntil = time.Now().UTC().Add(ConversationLease)
 		return tx.Set(s.conversation(), c)
 	})
@@ -342,7 +393,7 @@ func (s *Google) RestartConversation(ctx context.Context, f ConversationFence, t
 		if e = conversationOwned(c, f); e != nil {
 			return e
 		}
-		if c.Received <= t.Through || t.Frozen {
+		if c.UserReceived <= t.UserThrough || t.Frozen {
 			return nil
 		}
 		wait = time.Until(c.LatestAt.Add(time.Second))
@@ -352,6 +403,13 @@ func (s *Google) RestartConversation(ctx context.Context, f ConversationFence, t
 		ins, e := s.conversationBatch(tx, c.Consumed)
 		if e != nil {
 			return e
+		}
+		if c.UserRouted < c.Consumed {
+			unresolved, err := s.unroutedInputs(tx, c.UserRouted, c.Consumed)
+			if err != nil {
+				return err
+			}
+			ins = append(unresolved, ins...)
 		}
 		through := ins[len(ins)-1].Position
 		if through == t.Through {
@@ -380,11 +438,12 @@ func (s *Google) RestartConversation(ctx context.Context, f ConversationFence, t
 		}
 		t.Inputs = ins
 		t.Through = through
+		t.UserThrough = max(userThrough(ins), min(c.UserReceived, c.Consumed))
 		t.Restarts++
 		t.Frozen = t.Restarts >= 3 || t.Through < c.Received
 		t.Attempt = ConversationAttempt{}
 		for _, in := range t.Inputs {
-			if in.Introduction {
+			if !in.IsUser() {
 				continue
 			}
 			if e = tx.Update(s.messages().Doc(in.ID+"-user"), []firestore.Update{{Path: "turn_id", Value: t.ID}}); e != nil {
@@ -408,6 +467,9 @@ func (s *Google) PublishConversation(ctx context.Context, f ConversationFence, t
 		t.Status = "completed"
 		t.FinishedAt = &now
 		c.Consumed = t.Through
+		if t.Attempt.Status != "error" {
+			c.UserRouted = max(c.UserRouted, userThrough(t.Inputs))
+		}
 		c.Introducing = false
 		c.Active = ""
 		c.Owner = ""
@@ -498,13 +560,6 @@ func (s *Google) conversationAdmission(tx *firestore.Transaction, f *Conversatio
 		return e
 	}
 	return conversationFresh(c, *f)
-}
-func (s *Google) AcceptedConversationAction(ctx context.Context, id string) (bool, error) {
-	_, e := s.commands().Doc(id).Get(ctx)
-	if status.Code(e) == codes.NotFound {
-		return false, nil
-	}
-	return e == nil, e
 }
 func (s *Google) ConversationMessages(ctx context.Context, before string) ([]Message, string, error) {
 	q := s.messages().OrderBy("created_at", firestore.Desc).OrderBy(firestore.DocumentID, firestore.Desc)

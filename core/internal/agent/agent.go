@@ -1,13 +1,10 @@
-// Package agent implements the bounded agent loop independently of HTTP hosting.
+// Package agent holds the inner task model and tool steps. Durable
+// sequencing lives in the Temporal workflow that calls them.
 package agent
 
 import (
 	"context"
 	"errors"
-	"fmt"
-	"log"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/genai"
@@ -21,196 +18,16 @@ type Service struct {
 	ModelName string
 	Price     Price
 	Computer  computer.Config
-	mu        sync.Mutex
-	active    map[string]context.CancelFunc
 }
 
 func New(store state.Store, model *genai.Client, name string, price Price, c computer.Config) *Service {
-	return &Service{Store: store, Model: model, ModelName: name, Price: price, Computer: c, active: map[string]context.CancelFunc{}}
-}
-func (s *Service) Cancel(ctx context.Context, id string) (state.Run, error) {
-	r, e := s.Store.RequestCancel(ctx, id)
-	if e != nil {
-		return r, e
-	}
-	s.mu.Lock()
-	cancel := s.active[id]
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	return r, nil
-}
-func (s *Service) Shutdown() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, cancel := range s.active {
-		cancel()
-	}
+	return &Service{Store: store, Model: model, ModelName: name, Price: price, Computer: c}
 }
 
-// Run executes inline. It returns only after model, computer work and cleanup stop.
-func (s *Service) Run(parent context.Context, id, message string) (state.Run, error) {
-	run, e := s.Store.Begin(parent, id, message)
-	if e != nil {
-		return run, e
-	}
-	ctx, cancel := context.WithDeadline(parent, run.Deadline)
-	defer cancel()
-	s.mu.Lock()
-	s.active[id] = cancel
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); delete(s.active, id); s.mu.Unlock() }()
-	watchDone := make(chan struct{})
-	watchExited := make(chan struct{})
-	go func() {
-		defer close(watchExited)
-		ticker := time.NewTicker(750 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-watchDone:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				current, err := s.Store.GetRun(ctx, id)
-				if err != nil || current.CancelRequested {
-					cancel()
-					return
-				}
-				control, err := s.Store.Control(ctx)
-				if err != nil {
-					cancel()
-					return
-				}
-				if err = control.Check(); err != nil {
-					cancel()
-					return
-				}
-			}
-		}
-	}()
-	text, computerClient, executeErr := s.execute(ctx, run)
-	close(watchDone)
-	<-watchExited
-	// A separate, bounded cleanup context keeps IAP open long enough to prove the
-	// guest stopped; execution itself never escapes the request's deadline.
-	stopErr := error(nil)
-	if computerClient != nil {
-		// A tool may have returned a recoverable error to the model after its
-		// own cleanup failed. Require the same stop acknowledgment on success.
-		cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
-		stopErr = computerClient.Cancel(cleanup)
-		stop()
-		computerClient.Close()
-	}
-	finalCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
-	defer stop()
-	current, readErr := s.Store.GetRun(finalCtx, id)
-	runStatus, detail := "completed", ""
-	switch {
-	case stopErr != nil:
-		runStatus = "failed"
-		detail = "Interrupted: computer stop could not be confirmed."
-	case current.CancelRequested && readErr == nil:
-		runStatus = "cancelled"
-		detail = "Cancelled by Austin."
-	case executeErr != nil:
-		runStatus = "failed"
-		detail = executeErr.Error()
-	case ctx.Err() != nil:
-		runStatus = "failed"
-		detail = "Interrupted: request or execution deadline ended."
-	case readErr != nil:
-		runStatus = "failed"
-		detail = "Interrupted: durable run state could not be checked."
-	}
-	if runStatus != "completed" {
-		text = ""
-	}
-	finished, finishErr := s.Store.Finish(finalCtx, id, runStatus, detail, text)
-	if finishErr != nil {
-		return run, fmt.Errorf("could not persist terminal state: %w", finishErr)
-	}
-	return finished, nil
-}
-func (s *Service) execute(ctx context.Context, run state.Run) (string, *computer.Client, error) {
-	session, e := s.Store.Session(ctx)
-	if e != nil {
-		return "", nil, e
-	}
-	contents := Context(session)
-	var client *computer.Client
-	spent := 0.0
-	costUnknown := false
-	defer func() {
-		projection, stop := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stop()
-		if spendErr := s.Store.Spend(projection, run.ID, spent, BudgetUSD, costUnknown); spendErr != nil {
-			log.Printf("final model spend projection pending for run %s: %v", run.ID, spendErr)
-		}
-	}()
-	for {
-		if e = ctx.Err(); e != nil {
-			return "", client, e
-		}
-		// An inline request cannot wait for Austin, so it stops at the budget.
-		if spent >= BudgetUSD {
-			return "", client, fmt.Errorf("stopped at the $%.2f model budget ($%.4f spent); durable tasks can ask to continue", BudgetUSD, spent)
-		}
-		if e = s.Store.Event(ctx, run.ID, state.Event{Kind: "model", Text: "Thinking"}); e != nil {
-			return "", client, e
-		}
-		decision, modelErr := s.Decide(ctx, contents, false)
-		spent += decision.Cost
-		costUnknown = costUnknown || !decision.CostKnown
-		if spendErr := s.Store.Spend(ctx, run.ID, spent, BudgetUSD, costUnknown); spendErr != nil {
-			log.Printf("model spend projection pending for run %s: %v", run.ID, spendErr)
-		}
-		if costUnknown {
-			return "", client, state.ErrCostUnknown
-		}
-		if modelErr != nil {
-			return "", client, modelErr
-		}
-		contents = append(contents, decision.Content)
-		calls := decision.Calls
-		if len(calls) == 0 {
-			return decision.Answer, client, nil
-		}
-		parts := []*genai.Part{}
-		for _, call := range calls {
-			if e = s.Store.Event(ctx, run.ID, state.Event{Kind: "tool", Text: call.Name}); e != nil {
-				return "", client, e
-			}
-			if client == nil {
-				client, e = computer.Open(ctx, s.Computer, run.ID)
-				if e != nil {
-					return "", client, fmt.Errorf("computer unavailable: %w", e)
-				}
-			}
-			toolCtx, stop := context.WithTimeout(ctx, 45*time.Second)
-			result, e := s.tool(toolCtx, run.ID, client, call)
-			toolContextErr := toolCtx.Err()
-			stop()
-			if toolContextErr != nil {
-				return "", client, fmt.Errorf("tool interrupted: %w", toolContextErr)
-			}
-			if e != nil {
-				if ctx.Err() != nil {
-					return "", client, ctx.Err()
-				}
-				return "", client, fmt.Errorf("%s failed: %w", call.Name, e)
-			}
-			parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: call.ID, Name: call.Name, Response: result}})
-		}
-		contents = append(contents, &genai.Content{Role: "user", Parts: parts})
-	}
-}
 func params(name string) *genai.Schema {
 	return &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{name: {Type: genai.TypeString}}, Required: []string{name}}
 }
+
 func (s *Service) tool(ctx context.Context, run string, c *computer.Client, call *genai.FunctionCall) (map[string]any, error) {
 	switch call.Name {
 	case "shell":
@@ -227,6 +44,9 @@ func (s *Service) tool(ctx context.Context, run string, c *computer.Client, call
 		return c.Navigate(ctx, address)
 	case "browser_screenshot":
 		data, e := c.Screenshot(ctx)
+		if errors.Is(e, computer.ErrBrowserRestarted) {
+			return map[string]any{"page_available": false, "reason": "Browser restarted; navigate to the task's URL again before taking a screenshot."}, nil
+		}
 		if e != nil {
 			return nil, e
 		}

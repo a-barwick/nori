@@ -1,20 +1,42 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Run, Session } from "@/lib/poc/types";
+import type { PendingTaskCommand, Run, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
+
+class RequestError extends Error {
+  constructor(message: string, readonly status: number, readonly details?: TaskCommandResponse) { super(message); }
+}
 
 async function post<T>(operation: string, payload: object, signal?: AbortSignal, agentMode = false): Promise<T> {
   const response = await fetch(`${agentMode ? "/api/agent" : "/api"}/${operation}`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), cache: "no-store", signal,
   });
   const data = await response.json().catch(() => ({ error: "Nori returned an unreadable response." }));
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
+  if (!response.ok) throw new RequestError(data.error || `Request failed (${response.status}).`, response.status, data);
   return data as T;
 }
 
 type Pending = { id: string; text: string; started: number; error?: string };
 const STORAGE_KEY = "nori-pending-turns-v1";
 const MAX_PENDING = 20;
+const COMMAND_STORAGE_KEY = "nori-pending-task-commands-v1";
+function restoreTaskCommands(): PendingTaskCommand[] {
+  try {
+    const value: unknown = JSON.parse(sessionStorage.getItem(COMMAND_STORAGE_KEY) || "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is PendingTaskCommand => item && typeof item.started === "number" &&
+      typeof item.command?.id === "string" && /^[a-f0-9-]{36}$/.test(item.command.id) &&
+      typeof item.command.run_id === "string" && ["steer", "answer", "continue", "stop"].includes(item.command.kind) &&
+      (item.command.text === undefined || (typeof item.command.text === "string" && new TextEncoder().encode(item.command.text).length <= 8192)) &&
+      (item.command.question_id === undefined || typeof item.command.question_id === "string"))
+      .map((item) => ({ ...item, sending: false }));
+  } catch { return []; }
+}
+function commandApplied(item: PendingTaskCommand, runs: Run[]) {
+  const run = runs.find((run) => run.id === item.command.run_id);
+  return !!run && ((item.position !== undefined && ((run.incorporated ?? 0) >= item.position || (run.status !== "running" && (run.position ?? 0) >= item.position))) ||
+    (item.command.kind === "stop" && run.status !== "running"));
+}
 function restorePending(): Pending[] {
   try {
     const value: unknown = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "[]");
@@ -29,6 +51,21 @@ function mergeById<T extends { id: string }>(older: T[], newer: T[]): T[] {
   return [...new Map([...older, ...newer].map((item) => [item.id, item])).values()];
 }
 
+// Responses can arrive out of order; keep newer task progress.
+function mergeRuns(older: Run[], newer: Run[]): Run[] {
+  const runs = new Map(older.map((run) => [run.id, run]));
+  for (const run of newer) {
+    const previous = runs.get(run.id);
+    if (previous && ((previous.position ?? 0) > (run.position ?? 0) ||
+      (previous.event_sequence ?? 0) > (run.event_sequence ?? 0) ||
+      (previous.incorporated ?? 0) > (run.incorporated ?? 0) ||
+      (previous.status !== "running" && run.status === "running") ||
+      (previous.cancel_requested && !run.cancel_requested))) continue;
+    runs.set(run.id, run);
+  }
+  return [...runs.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
+}
+
 export function useRuntime(agentMode = false) {
   const [session, setSession] = useState<Session>();
   const [draft, setDraftState] = useState("");
@@ -39,23 +76,22 @@ export function useRuntime(agentMode = false) {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [pending, setPending] = useState<Pending[]>(restorePending);
   const pendingRef = useRef(pending);
-  const [stopPending, setStopPending] = useState(false);
-  const [stopIntent, setStopIntent] = useState<string>();
+  const [taskCommands, setTaskCommands] = useState<PendingTaskCommand[]>(restoreTaskCommands);
+  const taskCommandsRef = useRef(taskCommands);
+  const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string>();
   const [visible, setVisible] = useState(true);
   const controllers = useRef(new Set<AbortController>());
   const submissions = useRef(new Set<string>());
-  const taskUpdates = useRef(new Map<string, { id: string; message: string }>());
+  const commandSubmissions = useRef(new Set<string>());
   const requestSerial = useRef(0);
   const appliedSerial = useRef(0);
   const appliedRevision = useRef(-1);
-  const cancellationInFlight = useRef(false);
-  const running = session?.runs.find((run) => run.status === "running");
-  const activeId = running?.id;
-  const selected = session?.runs.find((run) => run.id === selectedId) || session?.runs[0];
+  const activeTasks = session?.runs.filter((run) => run.status === "running") ?? [];
+  const selected = session?.runs.find((run) => run.id === selectedId) || activeTasks[0] || session?.runs[0];
   const tasksUnavailable = !!session?.paused;
   const conversationBusy = !!(session?.conversation?.pending || session?.conversation?.processing);
-  const taskPolling = !!running && !tasksUnavailable;
+  const taskPolling = activeTasks.some((run) => run.cancel_requested) || (activeTasks.length > 0 && !tasksUnavailable) || taskCommands.some((item) => !item.rejected);
   const busy = taskPolling || conversationBusy || pending.some((item) => !item.error);
 
   const updatePending = useCallback((update: (current: Pending[]) => Pending[]) => {
@@ -68,6 +104,16 @@ export function useRuntime(agentMode = false) {
     } catch { /* Private browsing may disable storage; current-tab retries still work. */ }
   }, []);
 
+  const updateTaskCommands = useCallback((update: (current: PendingTaskCommand[]) => PendingTaskCommand[]) => {
+    const next = update(taskCommandsRef.current);
+    taskCommandsRef.current = next;
+    setTaskCommands(next);
+    try {
+      if (next.length) sessionStorage.setItem(COMMAND_STORAGE_KEY, JSON.stringify(next.map((item) => ({ ...item, sending: false }))));
+      else sessionStorage.removeItem(COMMAND_STORAGE_KEY);
+    } catch { /* Current-tab retries remain available without storage. */ }
+  }, []);
+
   const applySnapshot = useCallback((data: Session, serial: number) => {
     const revision = data.conversation?.revision ?? 0;
     if (revision < appliedRevision.current || (revision === appliedRevision.current && serial < appliedSerial.current)) return;
@@ -75,12 +121,14 @@ export function useRuntime(agentMode = false) {
     appliedRevision.current = revision;
     setSession((current) => ({ ...data,
       messages: mergeById(current?.messages ?? [], data.messages).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
+      runs: mergeRuns(current?.runs ?? [], data.runs),
       traces: mergeById(current?.traces ?? [], data.traces ?? []),
       // Preserve pages already loaded while refreshing the newest page.
       next_cursor: current ? current.next_cursor : data.next_cursor,
     }));
     updatePending((current) => current.filter((item) => !acknowledged(data, item.id)));
-  }, [updatePending]);
+    updateTaskCommands((current) => current.filter((item) => !commandApplied(item, data.runs)));
+  }, [updatePending, updateTaskCommands]);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const serial = ++requestSerial.current;
@@ -108,6 +156,35 @@ export function useRuntime(agentMode = false) {
     } finally { controllers.current.delete(controller); submissions.current.delete(item.id); }
   }, [agentMode, applySnapshot, refresh, updatePending]);
 
+  const submitTaskCommand = useCallback(async (item: PendingTaskCommand) => {
+    if (commandSubmissions.current.has(item.command.id)) return;
+    commandSubmissions.current.add(item.command.id);
+    updateTaskCommands((current) => current.map((entry) => entry.command.id === item.command.id ? { ...entry, sending: true, error: undefined } : entry));
+    const controller = new AbortController(); controllers.current.add(controller);
+    try {
+      const data = await post<TaskCommandResponse>("command", item.command, controller.signal, agentMode);
+      if (!data.command || data.command.id !== item.command.id || data.run?.id !== item.command.run_id) throw new Error("Task command acceptance could not be confirmed.");
+      if (!controller.signal.aborted) {
+        setSession((current) => current ? { ...current, runs: mergeRuns(current.runs, [data.run]) } : current);
+        updateTaskCommands((current) => current.filter((entry) => entry.command.id !== item.command.id));
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        const receipt = err instanceof RequestError ? err.details : undefined;
+        if (receipt?.accepted && receipt.run) setSession((current) => current ? { ...current, runs: mergeRuns(current.runs, [receipt.run]) } : current);
+        updateTaskCommands((current) => current.map((entry) => entry.command.id === item.command.id ? {
+          ...entry, sending: false, accepted: receipt?.accepted || entry.accepted,
+          position: receipt?.command?.position ?? entry.position,
+          rejected: err instanceof RequestError && err.status >= 400 && err.status < 500,
+          error: receipt?.accepted ? "Accepted. Delivery to the task is still pending." : err instanceof Error ? err.message : "Task command could not be confirmed.",
+        } : entry));
+      }
+    } finally {
+      controllers.current.delete(controller); commandSubmissions.current.delete(item.command.id);
+      if (!controller.signal.aborted) await refresh(controller.signal).catch(() => undefined);
+    }
+  }, [agentMode, refresh, updateTaskCommands]);
+
   useEffect(() => {
     const currentControllers = controllers.current;
     const controller = new AbortController();
@@ -115,6 +192,7 @@ export function useRuntime(agentMode = false) {
     void refresh(controller.signal).then((data) => {
       if (!controller.signal.aborted) {
         for (const item of pendingRef.current) if (!acknowledged(data, item.id)) void submit(item);
+        for (const item of taskCommandsRef.current) if (!item.rejected && !commandApplied(item, data.runs)) void submitTaskCommand(item);
       }
     }).catch((err) => { if (!controller.signal.aborted) setError(err.message); })
       .finally(() => { currentControllers.delete(controller); if (!controller.signal.aborted) setLoading(false); });
@@ -123,6 +201,7 @@ export function useRuntime(agentMode = false) {
       if (!document.hidden) void refresh().then((data) => {
         setError("");
         for (const item of pendingRef.current) if (!acknowledged(data, item.id)) void submit(item);
+        for (const item of taskCommandsRef.current) if (!item.rejected && !commandApplied(item, data.runs)) void submitTaskCommand(item);
       }).catch((err) => setError(err.message));
     };
     document.addEventListener("visibilitychange", reconnect);
@@ -133,7 +212,7 @@ export function useRuntime(agentMode = false) {
       document.removeEventListener("visibilitychange", reconnect);
       window.removeEventListener("online", reconnect);
     };
-  }, [refresh, submit]);
+  }, [refresh, submit, submitTaskCommand]);
 
   useEffect(() => {
     // Task pause does not pause the conversation. No continuous idle polling.
@@ -143,7 +222,7 @@ export function useRuntime(agentMode = false) {
     const poll = async () => {
       try {
         const next = await refresh(controller.signal);
-        if (!controller.signal.aborted && (next.conversation?.pending || next.conversation?.processing || (!next.paused && next.runs.some((run) => run.status === "running")))) timer = setTimeout(poll, 2000);
+        if (!controller.signal.aborted && (next.conversation?.pending || next.conversation?.processing || next.runs.some((run) => run.status === "running" && (!next.paused || run.cancel_requested)) || taskCommandsRef.current.some((item) => !item.rejected))) timer = setTimeout(poll, 2000);
       } catch (err) { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "History refresh failed."); }
     };
     timer = setTimeout(poll, 1000);
@@ -155,7 +234,10 @@ export function useRuntime(agentMode = false) {
     const controller = new AbortController(); controllers.current.add(controller);
     try {
       const data = await refresh(controller.signal);
-      if (!controller.signal.aborted) for (const item of pendingRef.current) if (!acknowledged(data, item.id)) void submit(item);
+      if (!controller.signal.aborted) {
+        for (const item of pendingRef.current) if (!acknowledged(data, item.id)) void submit(item);
+        for (const item of taskCommandsRef.current) if (!item.rejected && !commandApplied(item, data.runs)) void submitTaskCommand(item);
+      }
     }
     catch (err) { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "History unavailable."); }
     finally { controllers.current.delete(controller); if (!controller.signal.aborted) setLoading(false); }
@@ -169,7 +251,7 @@ export function useRuntime(agentMode = false) {
       const data = await post<Session>("session", { before: session.next_cursor }, controller.signal, agentMode);
       if (!controller.signal.aborted) setSession((current) => current ? { ...current,
         messages: mergeById(data.messages, current.messages).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
-        runs: mergeById(data.runs, current.runs),
+        runs: mergeRuns(data.runs, current.runs),
         traces: mergeById(data.traces ?? [], current.traces ?? []), next_cursor: data.next_cursor,
       } : data);
     } catch (err) { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "Older history unavailable."); }
@@ -187,33 +269,23 @@ export function useRuntime(agentMode = false) {
     await submit(item);
   }
 
-  async function updateTask(runId: string, message: string) {
-    const text = message.trim();
-    if (!text) return;
-    const previous = taskUpdates.current.get(runId);
-    const update = previous?.message === text ? previous : { id: crypto.randomUUID(), message: text };
-    taskUpdates.current.set(runId, update);
-    const controller = new AbortController(); controllers.current.add(controller);
-    try {
-      await post<{ run: Run }>("input", { ...update, run_id: runId }, controller.signal, agentMode);
-      await refresh(controller.signal);
-      if (taskUpdates.current.get(runId) === update) taskUpdates.current.delete(runId);
-    } finally { controllers.current.delete(controller); }
+  async function commandTask(runId: string, kind: TaskCommand["kind"], text?: string, questionId?: string) {
+    if (taskCommandsRef.current.some((item) => item.command.run_id === runId && (kind !== "stop" || item.command.kind === "stop"))) return;
+    if (text !== undefined && (!text.trim() || new TextEncoder().encode(text.trim()).length > 8192)) return;
+    const command: TaskCommand = { id: crypto.randomUUID(), run_id: runId, kind,
+      ...(text !== undefined ? { text: text.trim() } : {}), ...(questionId ? { question_id: questionId } : {}) };
+    const item: PendingTaskCommand = { command, started: Date.now() };
+    updateTaskCommands((current) => [...current, item]);
+    if (text !== undefined) setTaskDrafts((current) => ({ ...current, [runId]: "" }));
+    await submitTaskCommand(item);
   }
 
-  async function requestCancellation(id: string) {
-    if (cancellationInFlight.current) return;
-    cancellationInFlight.current = true; setStopPending(true); setError(""); setStopIntent(id);
-    const controller = new AbortController(); controllers.current.add(controller);
-    try {
-      const { run } = await post<{ run: Run }>("cancel", { id }, controller.signal, agentMode);
-      if (!controller.signal.aborted) setSession((current) => current ? { ...current, runs: [run, ...current.runs.filter((item) => item.id !== run.id)] } : current);
-    } catch (err) { if (!controller.signal.aborted) { setStopIntent(undefined); setError(err instanceof Error ? err.message : "Stop could not be confirmed."); } }
-    finally { controllers.current.delete(controller); cancellationInFlight.current = false; if (!controller.signal.aborted) setStopPending(false); }
+  function dismissTaskCommand(id: string) {
+    updateTaskCommands((current) => current.filter((item) => item.command.id !== id || !item.rejected));
   }
 
-  return { session, draft, setDraft, error, loading, loadingOlder, pending, stopPending, stopIntent, selectedId, setSelectedId,
-    running, activeId, selected, tasksUnavailable, busy, conversationBusy,
-    canUpdate: false, canChat: true, refreshHistory, loadOlder, send, retry: submit,
-    stop: () => { if (running && !running.cancel_requested) void requestCancellation(running.id); }, updateTask };
+  return { session, draft, setDraft, error, loading, loadingOlder, pending, selectedId, setSelectedId,
+    activeTasks, selected, tasksUnavailable, busy, conversationBusy, taskCommands, taskDrafts,
+    setTaskDraft: (id: string, text: string) => setTaskDrafts((current) => ({ ...current, [id]: text })),
+    refreshHistory, loadOlder, send, retry: submit, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand };
 }

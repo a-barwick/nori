@@ -18,5 +18,6 @@
     "cost_unit": "cents",
     "schedule": "0 17 * * *",
     "email": "austinbarwickdavis@gmail.com"
-  }
+  },
+  "runtime_invoke_root": "https://us-central1-aiplatform.googleapis.com/reasoningEngines/v1/projects/8273801370/locations/us-central1/reasoningEngines/6637323162226786304/api"
 }

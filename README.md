@@ -46,7 +46,7 @@ still join the normal ordered input flow. The UI shows connection and
 preparation status until a saved reply is available.
 
 The runner gets a Jev hint, then calls the configured conversational model with
-recent conversation, native tool-call results, and the `dispatch` tool.
+recent conversation, native tool-call results, and task command tools.
 Classification remains advisory. Nearby messages are coalesced; new input can
 supersede an unfinished answer up to three times. The fourth attempt finishes
 its fixed input batch, leaving later messages for the next turn. The runner
@@ -55,10 +55,18 @@ accepted actions when an answer is superseded.
 
 Dispatch reuses Firestore task acceptance and Temporal delivery. It returns task
 identity without waiting for execution. The existing worker executes tools and
-saves results. Ordinary chat stays available during a task. Stop and the panel's
-explicit task-update form target that task directly; a chat message does not
-automatically become a task update. One task can be active at a time. Paused task
-execution does not disable conversation.
+saves results. Several independent tasks can run concurrently, each with its own
+browser tab and Answer, Update, Continue, and Stop controls in Activity. Chat can
+target an existing task when the reference is unambiguous; unrelated conversation
+leaves tasks unchanged. Answers and budget continuations bind to the current
+question, and retries reuse command receipts. Paused task execution does not
+disable conversation.
+
+Task questions and results enter the durable conversation inbox. Notification-only
+turns cannot issue task commands. A newly accepted user message holds task-result
+publication until routing completes, so an in-flight result cannot ignore a
+pending correction. Task browser tabs share the retained profile's cookies and
+storage; they provide cooperative ownership, not security isolation.
 
 `POST /api/turn` accepts `{ "id": "UUID", "message": "text" }` and returns HTTP
 202 with a session snapshot after durable acceptance and wake confirmation.

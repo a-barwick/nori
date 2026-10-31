@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -12,16 +14,10 @@ import (
 
 	"nori/internal/computer"
 	"nori/internal/conversation"
+	"nori/internal/env"
 	"nori/internal/state"
 	"nori/internal/task"
 )
-
-func Env(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
-}
 
 type Runtime struct {
 	Runner *conversation.Runner
@@ -35,13 +31,13 @@ func Open(ctx context.Context) (*Runtime, error) {
 	if strings.TrimSpace(key) == "" || strings.TrimSpace(jevKey) == "" {
 		return nil, fmt.Errorf("OPENROUTER_API_KEY and JEV_API_KEY must be configured in the selected project environment")
 	}
-	base := Env("NORI_AGENT_BASE_URL", "https://openrouter.ai/api/v1")
+	base := env.Get("NORI_AGENT_BASE_URL", "https://openrouter.ai/api/v1")
 	u, err := url.Parse(base)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("NORI_AGENT_BASE_URL must be an HTTPS API base URL")
 	}
-	project := Env("NORI_PROJECT_ID", "bot-111549")
-	store, err := state.NewGoogle(ctx, project, Env("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
+	project := env.Get("NORI_PROJECT_ID", "bot-111549")
+	store, err := state.NewGoogle(ctx, project, env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
 	if err != nil {
 		return nil, err
 	}
@@ -50,8 +46,14 @@ func Open(ctx context.Context) (*Runtime, error) {
 		store.Close()
 		return nil, err
 	}
-	tasks := &conversation.Tasks{Store: store, Client: temporal, Computer: computer.Config{Project: project, Zone: Env("COMPUTER_ZONE", "us-central1-a"), Instance: Env("COMPUTER_INSTANCE", "nori-computer")}}
-	model := Env("NORI_AGENT_MODEL", "anthropic/claude-opus-5.5")
+	localComputer := os.Getenv("NORI_LOCAL_COMPUTER_URL")
+	if localComputer != "" && os.Getenv("TEMPORAL_LOCAL") != "true" {
+		temporal.Close()
+		store.Close()
+		return nil, fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
+	}
+	tasks := &conversation.Tasks{Store: store, Client: temporal, Computer: computer.Config{Project: project, Zone: env.Get("COMPUTER_ZONE", "us-central1-a"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer}}
+	model := env.Get("NORI_AGENT_MODEL", "anthropic/claude-opus-5.5")
 	return &Runtime{Runner: conversation.New(conversation.NewModel(base, key, model), conversation.NewClassifier(jevKey), tasks), Tasks: tasks, Model: model}, nil
 }
 
@@ -61,12 +63,39 @@ func (r *Runtime) Close() {
 }
 
 func (r *Runtime) Process(ctx context.Context) error {
+	// A paused worker cannot finish a queued Stop. Retry only accepted Stop
+	// targets here, including a timed-out cleanup from the submitting request.
+	var stopErr error
+	control, err := r.Tasks.Store.Control(ctx)
+	if err != nil {
+		return err
+	}
+	if control.Paused {
+		runs, err := r.Tasks.Store.OpenTasks(ctx)
+		if err != nil {
+			return err
+		}
+		for _, run := range runs {
+			if run.CancelRequested {
+				cleanup, cancel := context.WithTimeout(ctx, 10*time.Second)
+				_, err := task.StopPaused(cleanup, r.Tasks.Store, r.Tasks.Computer, run.ID)
+				cancel()
+				stopErr = errors.Join(stopErr, err)
+			}
+		}
+	}
 	processErr := r.Runner.Process(ctx)
 	// Dispatch and explicit controls can outlive their first Temporal delivery
 	// attempt. Keep the Cloud Tasks notification until delivery is confirmed.
 	delivery, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return errors.Join(processErr, task.Deliver(delivery, r.Tasks.Store, r.Tasks.Client))
+	deliveryErr := task.Deliver(delivery, r.Tasks.Store, r.Tasks.Client)
+	pending, pendingErr := r.Tasks.Store.UserRoutingPending(delivery)
+	var wakeErr error
+	if pendingErr == nil && !pending {
+		wakeErr = task.WakePublications(delivery, r.Tasks.Store, r.Tasks.Client)
+	}
+	return errors.Join(stopErr, processErr, deliveryErr, pendingErr, wakeErr)
 }
 
 // LocalLoop is tied to the application, so browser cancellation and reconnects
@@ -85,6 +114,34 @@ func (r *Runtime) LocalLoop(ctx context.Context, notifications <-chan struct{}) 
 			return
 		case <-notifications:
 		case <-ticker.C:
+		}
+	}
+}
+
+// Server builds the HTTP server shared by the local and hosted entrypoints.
+func Server(ctx context.Context, addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr: addr, Handler: handler,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
+		WriteTimeout: 10 * time.Minute, IdleTimeout: 60 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return ctx },
+	}
+}
+
+// Listen serves until ctx ends, then shuts down within the grace period.
+func Listen(ctx context.Context, server *http.Server, grace time.Duration) {
+	serving := make(chan error, 1)
+	go func() { serving <- server.ListenAndServe() }()
+	select {
+	case err := <-serving:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.Background(), grace)
+		defer cancel()
+		if err := server.Shutdown(shutdown); err != nil {
+			log.Printf("shutdown: %v", err)
 		}
 	}
 }

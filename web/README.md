@@ -27,13 +27,12 @@ No project API key is needed in the web image. Keep any local project configurat
 
 - The onigiri stays visible on desktop and mobile, responds to typing and task state, and opens Activity. The header also reports connection and execution status.
 - The composer and connection notices reserve their own space, including for multiline drafts. Saved structured replies use document cards with Copy, Open document, and Download.
-- `/redesign` is a development-only concept with fictional data; production returns not found for it.
 - The signed IAP assertion and exact owner email are verified before private routes are served. Unsigned identity headers are never trusted.
-- `/api/session`, `/api/run`, `/api/cancel`, `/api/input`, and `/api/artifact` proxy the existing API contract with server credentials. Browser credentials are not forwarded.
+- `/api/session`, `/api/turn`, `/api/input`, `/api/cancel`, `/api/artifact`, and `/api/trace` proxy the runtime API contract with server credentials. Browser credentials are not forwarded.
 - The conversation uses the current message bubbles, avatar/presence, document layout and reading view. Long saved replies can be opened and downloaded, with Back to chat preserving the conversation position.
 - The activity panel shows real task events, shell/browser output, statuses, and protected screenshots. Stop requests cancellation and waits for runtime confirmation.
 - History refreshes only while a task is active, the tab is visible, and task execution is resumed. Errors suspend automatic refresh until manual reconnection.
-- The old Library/Goals/Ideas/Settings URLs redirect to chat. Their demo shell, seeded local store, scripted agent, attachments, voice, and local edit/delete controls have been removed. The old `/api/nori` endpoint returns HTTP 410.
+- Chat is the only page. The old Library/Goals/Ideas/Settings demo shell, seeded local store, scripted agent, attachments, voice, local edit/delete controls, and the retired `/api/nori` endpoint have been removed.
 - Durable tasks accept corrections and answers through the composer while running; these use the existing `/api/input` contract. Questions from the runtime appear in Activity and in the conversation status. The local outer-agent adapter has a separate task-update form.
 - The UI does not invent response streaming: the existing contract returns saved messages and task activity.
 

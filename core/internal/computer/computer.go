@@ -18,13 +18,19 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-type Config struct{ Project, Zone, Instance string }
+type Config struct {
+	Project, Zone, Instance string
+	// LocalURL connects directly to a development computer RPC on a loopback IP.
+	// It never starts a VM or creates an IAP tunnel.
+	LocalURL string
+}
 type Client struct {
 	base      string
 	http      *http.Client
 	process   *exec.Cmd
 	once      sync.Once
 	receipts  bool
+	taskTabs  bool
 	operation string
 	taskID    string
 	run       string
@@ -32,6 +38,10 @@ type Client struct {
 }
 
 var ErrStopped = errors.New("computer is stopped")
+
+// ErrBrowserRestarted proves a screenshot was refused before capture because
+// its saved page belonged to a browser process that has exited.
+var ErrBrowserRestarted = errors.New("browser restarted; navigate again before taking a screenshot")
 
 // ErrDraining proves that the host rejected this RPC before forwarding it to
 // the guest. Only this explicit rejection is safe to reconnect and send again.
@@ -46,6 +56,9 @@ func Attach(ctx context.Context, c Config, run string) (*Client, error) {
 	return connect(ctx, c, run, false)
 }
 func connect(ctx context.Context, c Config, run string, allowStart bool) (*Client, error) {
+	if c.LocalURL != "" {
+		return connectLocal(ctx, c.LocalURL, run)
+	}
 	// An idle stop may already be flushing the guest when a new task arrives.
 	// Allow that stop to complete before starting it; no tool has been sent yet.
 	ctx, readyCancel := context.WithTimeout(ctx, 180*time.Second)
@@ -136,11 +149,13 @@ func connect(ctx context.Context, c Config, run string, allowStart bool) (*Clien
 			if err == nil {
 				var health struct {
 					Receipts bool `json:"operation_receipts_v1"`
+					TaskTabs bool `json:"browser_task_tabs_v1"`
 				}
 				decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&health)
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK && decodeErr == nil {
 					client.receipts = health.Receipts
+					client.taskTabs = health.TaskTabs
 					ready := client
 					client = nil
 					cancel()
@@ -157,6 +172,46 @@ func connect(ctx context.Context, c Config, run string, allowStart bool) (*Clien
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+func connectLocal(ctx context.Context, address, run string) (*Client, error) {
+	u, err := url.Parse(address)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return nil, errors.New("local computer URL must be an HTTP loopback origin")
+	}
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil || !ip.IsLoopback() {
+		return nil, errors.New("local computer URL must use a literal loopback IP")
+	}
+	u.Path = ""
+	c := &Client{base: u.String(), run: run, http: &http.Client{
+		Transport:     &http.Transport{}, // Never send local RPC through an environment proxy.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
+	check, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(check, http.MethodGet, c.base+"/healthz", nil)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.Close()
+		return nil, fmt.Errorf("local computer unavailable: %w", err)
+	}
+	var health struct {
+		Ready    bool `json:"ready"`
+		Receipts bool `json:"operation_receipts_v1"`
+		TaskTabs bool `json:"browser_task_tabs_v1"`
+	}
+	err = readJSON(resp, &health)
+	if err != nil || !health.Ready {
+		c.Close()
+		return nil, errors.New("local computer is not ready")
+	}
+	c.receipts, c.taskTabs = health.Receipts, health.TaskTabs
+	return c, nil
 }
 
 func tunnel(c Config, run string) (*Client, error) {
@@ -219,6 +274,14 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) ([]by
 	if resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get("Nori-Computer-Draining") == "true" {
 		return nil, ErrDraining
 	}
+	if path == "/screenshot" && resp.StatusCode == http.StatusConflict {
+		var refusal struct {
+			Error string `json:"error"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&refusal) == nil && refusal.Error == "browser_restarted" {
+			return nil, ErrBrowserRestarted
+		}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("computer %s returned HTTP %d", path, resp.StatusCode)
 	}
@@ -229,7 +292,7 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) ([]by
 	return data, e
 }
 func (c *Client) Cancel(ctx context.Context) error {
-	data, e := c.post(ctx, "/cancel", map[string]any{"run_id": c.run}, 4096)
+	data, e := c.post(ctx, "/cancel", map[string]any{"run_id": c.run, "task_id": c.taskID}, 4096)
 	if e != nil {
 		return e
 	}
@@ -264,7 +327,7 @@ func (c *Client) Navigate(ctx context.Context, address string) (map[string]any, 
 	if e != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return nil, errors.New("URL must use HTTP or HTTPS")
 	}
-	data, e := c.post(ctx, "/navigate", map[string]any{"run_id": c.run, "url": address}, 512<<10)
+	data, e := c.post(ctx, "/navigate", map[string]any{"run_id": c.run, "task_id": c.taskID, "url": address}, 512<<10)
 	if e != nil {
 		return nil, e
 	}
@@ -275,11 +338,30 @@ func (c *Client) Navigate(ctx context.Context, address string) (map[string]any, 
 	return bound(result), nil
 }
 func (c *Client) Screenshot(ctx context.Context) ([]byte, error) {
-	data, e := c.post(ctx, "/screenshot", map[string]any{"run_id": c.run}, 2<<20)
+	data, e := c.post(ctx, "/screenshot", map[string]any{"run_id": c.run, "task_id": c.taskID}, 2<<20)
 	if e == nil && (len(data) < 8 || !bytes.Equal(data[:8], []byte{137, 80, 78, 71, 13, 10, 26, 10})) {
 		return nil, errors.New("computer returned invalid PNG")
 	}
 	return data, e
+}
+
+// CloseTaskBrowser releases only this task's owned tab. Call after every revision
+// cancellation scope has acknowledged stopped work and terminal state is committed.
+func (c *Client) CloseTaskBrowser(ctx context.Context, taskID string) error {
+	data, err := c.post(ctx, "/browser/close", map[string]string{"task_id": taskID}, 4096)
+	if err != nil {
+		return err
+	}
+	var ack struct {
+		Closed bool `json:"closed"`
+	}
+	if err = json.Unmarshal(data, &ack); err != nil {
+		return err
+	}
+	if !ack.Closed {
+		return errors.New("computer did not acknowledge task browser cleanup")
+	}
+	return nil
 }
 func bound(result map[string]any) map[string]any {
 	encoded, _ := json.Marshal(result)
@@ -307,6 +389,9 @@ func (c *Client) SetTaskID(id string) { c.taskID = id }
 func (c *Client) RequireReceipts() error {
 	if !c.receipts {
 		return errors.New("guest operation receipts v1 is required before durable tool execution")
+	}
+	if !c.taskTabs {
+		return errors.New("guest task-owned browser tabs v1 is required before durable tool execution")
 	}
 	return nil
 }

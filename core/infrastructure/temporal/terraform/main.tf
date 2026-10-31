@@ -11,9 +11,14 @@ locals {
     "serverless-qtjow@prod-79z2c6d76au6g5fcq768buqf9.iam.gserviceaccount.com",
   ])
   worker_env = {
-    NORI_PROJECT_ID           = local.project
-    FIRESTORE_DATABASE_ID     = "nori-poc"
-    ARTIFACT_BUCKET           = "bot-111549-nori-poc"
+    NORI_PROJECT_ID       = local.project
+    FIRESTORE_DATABASE_ID = "nori-poc"
+    ARTIFACT_BUCKET       = "bot-111549-nori-poc"
+    # The worker uses the runtime identity, whose queue enqueue and wake-caller
+    # actAs grants are owned by the POC Terraform state (not duplicated here).
+    NORI_WAKE_QUEUE           = "projects/${local.project}/locations/us-central1/queues/nori-conversation"
+    NORI_WAKE_SERVICE_ACCOUNT = "nori-conversation-wake@${local.project}.iam.gserviceaccount.com"
+    NORI_RUNTIME_URL          = var.runtime_invoke_root
     COMPUTER_ZONE             = "us-central1-a"
     COMPUTER_INSTANCE         = "nori-computer"
     MODEL_LOCATION            = "global"

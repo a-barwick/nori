@@ -15,13 +15,32 @@ import (
 // execution is closed (or cancellation was requested before it started). It never
 // retries execution. Known computer scopes must report their real stop outcome.
 func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, config computer.Config) error {
-	session, e := store.Session(ctx)
+	runs, e := store.OpenTasks(ctx)
 	if e != nil {
 		return e
 	}
+	pendingCleanup, e := store.CleanupTasks(ctx)
+	if e != nil {
+		return e
+	}
+	seen := map[string]bool{}
+	for _, run := range runs {
+		seen[run.ID] = true
+	}
+	for _, run := range pendingCleanup {
+		if !seen[run.ID] {
+			runs = append(runs, run)
+		}
+	}
 	var failures []error
-	for _, run := range session.Runs {
-		if !run.Temporal || run.Status != "running" {
+	for _, run := range runs {
+		if !run.Temporal {
+			continue
+		}
+		if run.Status != "running" {
+			if e := repairCleanup(ctx, store, config, run); e != nil {
+				failures = append(failures, e)
+			}
 			continue
 		}
 		execution, e := c.DescribeWorkflowExecution(ctx, WorkflowID(run.ID), "")
@@ -59,9 +78,84 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 			detail = "Interrupted: computer stop could not be confirmed during terminal recovery."
 			failures = append(failures, stopErr)
 		}
-		if _, e = store.Publish(ctx, run.ID, run.Revision, status, detail, "", run.CostUnknown); e != nil {
+		if _, e = store.Publish(ctx, run.ID, run.Revision, status, detail, "", run.CostUnknown, true); e != nil {
 			failures = append(failures, e)
+		} else if stopErr == nil && run.CleanupPending {
+			if e = closeTaskBrowser(ctx, store, config, run.ID, scopes); e != nil {
+				failures = append(failures, e)
+			}
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func repairCleanup(ctx context.Context, store state.TaskStore, config computer.Config, run state.Run) error {
+	revisions, err := store.OperationRevisions(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	scopes := []string{}
+	for _, revision := range revisions {
+		scopes = append(scopes, computerRun(Step{run.ID, revision}))
+	}
+	if err = StopComputer(ctx, config, scopes); err != nil {
+		return err
+	}
+	return closeTaskBrowser(ctx, store, config, run.ID, scopes)
+}
+func closeTaskBrowser(ctx context.Context, store state.TaskStore, config computer.Config, id string, scopes []string) error {
+	if len(scopes) == 0 {
+		return store.FinishCleanup(ctx, id)
+	}
+	c, err := computer.Attach(ctx, config, scopes[0])
+	if errors.Is(err, computer.ErrStopped) {
+		return store.FinishCleanup(ctx, id)
+	}
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	if err = c.CloseTaskBrowser(ctx, id); err != nil {
+		return err
+	}
+	return store.FinishCleanup(ctx, id)
+}
+
+// StopPaused completes an accepted Stop without waking paid workers or starting
+// the retained computer. CancelRequested fences new work even if pause changes.
+func StopPaused(ctx context.Context, store state.TaskStore, config computer.Config, id string) (state.Run, error) {
+	control, err := store.Control(ctx)
+	if err != nil {
+		return state.Run{}, err
+	}
+	if !control.Paused {
+		return store.GetRun(ctx, id)
+	}
+	run, err := store.GetRun(ctx, id)
+	if err != nil || !run.CancelRequested || run.Status != "running" {
+		return run, err
+	}
+	revisions, err := store.OperationRevisions(ctx, id)
+	if err != nil {
+		return run, err
+	}
+	scopes := []string{}
+	for _, revision := range revisions {
+		scopes = append(scopes, computerRun(Step{id, revision}))
+	}
+	if err = StopComputer(ctx, config, scopes); err != nil {
+		return run, err
+	}
+	run, err = store.GetRun(ctx, id)
+	if err != nil {
+		return run, err
+	}
+	run, err = store.Publish(ctx, id, run.Revision, "cancelled", "Stopped by Austin.", "", run.CostUnknown, true)
+	if err != nil {
+		return run, err
+	}
+	if run.CleanupPending {
+		err = closeTaskBrowser(ctx, store, config, id, scopes)
+	}
+	return run, err
 }

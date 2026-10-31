@@ -4,9 +4,9 @@ import { gfm } from "micromark-extension-gfm";
 import type { List, Nodes, Paragraph, Root, RootContent } from "mdast";
 
 /** Pure markdown presentation: short replies are bubbles, structured replies are documents. */
-export const PAGE_WORDS = 150;
-export const MAX_BUBBLE_LIST_ITEMS = 5;
-export const MAX_BUBBLE_CODE_LINES = 3;
+const PAGE_WORDS = 150;
+const MAX_BUBBLE_LIST_ITEMS = 5;
+const MAX_BUBBLE_CODE_LINES = 3;
 
 export function extractHints(markdown: string): { body: string; hints: { mode?: "page" | "bubble" } } {
   const hints: { mode?: "page" | "bubble" } = {};
@@ -27,10 +27,6 @@ function textOf(node: Nodes): string {
   return "";
 }
 
-export function wordCount(markdown: string) {
-  const text = textOf(parse(markdown));
-  return text.split(/\s+/).filter((w) => /\w/.test(w)).length;
-}
 
 function isSourceList(list: List, prev?: RootContent) {
   const prevText = prev ? textOf(prev).trim().toLowerCase() : "";
@@ -73,7 +69,7 @@ function structureReasons(tree: Root): string[] {
   return [...reasons];
 }
 
-export interface Classified {
+interface Classified {
   mode: "bubble" | "page";
   /** The gist bubble that always precedes a page. */
   cover?: string;

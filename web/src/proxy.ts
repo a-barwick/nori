@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { isOwner } from "@/lib/poc/auth";
+import { isOwner } from "@/lib/runtime/auth";
 
 export async function proxy(request: NextRequest) {
   if (!(await isOwner(request.headers))) {

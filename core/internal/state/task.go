@@ -9,18 +9,52 @@ import (
 
 var ErrSuperseded = errors.New("task revision changed; reconcile accepted input")
 var ErrCancelled = errors.New("task cancellation requested")
+var ErrRoutingPending = errors.New("accepted user input is awaiting conversation routing")
+var ErrCommandInvalid = errors.New("invalid task command")
+var ErrQuestionStale = errors.New("question is no longer current")
+
+const TaskProtocolVersion = 2
+
+type Question struct {
+	ResolvedBy string `json:"resolved_by,omitempty" firestore:"resolved_by,omitempty"`
+	ID         string `json:"id" firestore:"id"`
+	Kind       string `json:"kind" firestore:"kind"`
+	Text       string `json:"text" firestore:"text"`
+	CallID     string `json:"call_id,omitempty" firestore:"call_id,omitempty"`
+	Revision   int64  `json:"instruction_revision" firestore:"revision"`
+}
+
+type TaskEvent struct {
+	ID            string    `json:"id" firestore:"id"`
+	RunID         string    `json:"run_id" firestore:"run_id"`
+	Kind          string    `json:"kind" firestore:"kind"`
+	Sequence      int64     `json:"sequence" firestore:"sequence"`
+	Revision      int64     `json:"instruction_revision" firestore:"revision"`
+	Text          string    `json:"text,omitempty" firestore:"text,omitempty"`
+	QuestionID    string    `json:"question_id,omitempty" firestore:"question_id,omitempty"`
+	Reason        string    `json:"reason,omitempty" firestore:"reason,omitempty"`
+	OperationRefs []string  `json:"operation_refs,omitempty" firestore:"operation_refs,omitempty"`
+	CreatedAt     time.Time `json:"created_at" firestore:"created_at"`
+}
+
+type CommandReceipt struct {
+	Command Command `json:"command"`
+	Run     Run     `json:"run"`
+}
 
 // Command and its delivery intent are committed in the acceptance transaction.
 // ID is supplied by the caller and is stable across HTTP and relay retries.
 type Command struct {
-	ID        string    `json:"id" firestore:"id"`
-	RunID     string    `json:"run_id" firestore:"run_id"`
-	Kind      string    `json:"kind" firestore:"kind"`
-	Text      string    `json:"text" firestore:"text"`
-	Position  int64     `json:"position" firestore:"position"`
-	Revision  int64     `json:"revision" firestore:"revision"`
-	Delivered bool      `json:"delivered" firestore:"delivered"`
-	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
+	QuestionID     string    `json:"question_id,omitempty" firestore:"question_id,omitempty"`
+	SourceInputIDs []string  `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
+	ID             string    `json:"id" firestore:"id"`
+	RunID          string    `json:"run_id" firestore:"run_id"`
+	Kind           string    `json:"kind" firestore:"kind"`
+	Text           string    `json:"text" firestore:"text"`
+	Position       int64     `json:"position" firestore:"position"`
+	Revision       int64     `json:"revision" firestore:"revision"`
+	Delivered      bool      `json:"delivered" firestore:"delivered"`
+	CreatedAt      time.Time `json:"created_at" firestore:"created_at"`
 }
 
 // InputKind makes a bare "continue" reply an explicit continue command. The
@@ -41,6 +75,13 @@ type TaskSnapshot struct {
 type TaskStore interface {
 	Store
 	Accept(context.Context, Command) (Run, error)
+	AcceptCommandBatch(context.Context, []Command, *ConversationFence) ([]CommandReceipt, error)
+	OpenTasks(context.Context) ([]Run, error)
+	PublicationTasks(context.Context) ([]Run, error)
+	PublicationWoken(context.Context, string, int64) error
+	CleanupTasks(context.Context) ([]Run, error)
+	FinishCleanup(context.Context, string) error
+	ProjectQuestion(context.Context, string, int64, Question) error
 	OperationRevisions(context.Context, string) ([]int64, error)
 	Pending(context.Context) ([]Command, error)
 	Delivered(context.Context, string) error
@@ -48,7 +89,7 @@ type TaskStore interface {
 	Incorporate(context.Context, string, int64, int64) error
 	Guard(context.Context, string, int64) (Run, error)
 	Admit(context.Context, string, int64, string) error
-	Publish(context.Context, string, int64, string, string, string, bool) (Run, error)
+	Publish(context.Context, string, int64, string, string, string, bool, ...bool) (Run, error)
 	Project(context.Context, string, int64, string, string) error
 	RecordTaskStep(context.Context, string, TaskStep) error
 }

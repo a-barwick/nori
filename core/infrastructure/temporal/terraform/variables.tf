@@ -19,3 +19,12 @@ variable "scalable_build_ids" {
     error_message = "Every scalable build must have a retained immutable worker image."
   }
 }
+
+variable "runtime_invoke_root" {
+  description = "Existing POC runtime_url output ending in /api, used to wake the outer conversation when a task emits an event."
+  type        = string
+  validation {
+    condition     = can(regex("^https://us-central1-aiplatform\\.googleapis\\.com/reasoningEngines/v1/projects/8273801370/locations/us-central1/reasoningEngines/[0-9]+/api$", var.runtime_invoke_root))
+    error_message = "Use the existing bot-111549 native Agent Runtime invoke root ending in /api."
+  }
+}
