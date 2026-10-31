@@ -26,7 +26,10 @@ locals {
     NORI_RUNTIME_URL          = var.runtime_invoke_root
     COMPUTER_ZONE             = "us-central1-a"
     COMPUTER_INSTANCE         = local.production ? "nori-computer" : "nori-sandbox-computer"
-    MODEL_NAME                = "openai/gpt-6.1-terra"
+    MODEL_NAME                = "gemini-3.8-flash"
+    MODEL_LOCATION            = "global"
+    MODEL_INPUT_USD_PER_MTOK  = "0.75"
+    MODEL_OUTPUT_USD_PER_MTOK = "3.75"
     TEMPORAL_ADDRESS          = "quickstart-nori.qtjow.tmprl.cloud:7233"
     TEMPORAL_NAMESPACE        = "quickstart-nori.qtjow"
     TEMPORAL_TASK_QUEUE       = local.task_queue
@@ -86,15 +89,6 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
         content {
           name  = env.key
           value = env.value
-        }
-      }
-      env {
-        name = "OPENROUTER_API_KEY"
-        value_source {
-          secret_key_ref {
-            secret  = local.production ? "nori-openrouter-api-key" : "nori-sandbox-openrouter-api-key"
-            version = "latest"
-          }
         }
       }
       env {

@@ -56,7 +56,7 @@ def main():
         parser.error("This local preparation helper requires local state; do not use it with the deployed GCS backend")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", args.build_id):
         parser.error("build-id must be lowercase DNS-safe and at most 40 characters")
-    target = {"deployment_name": args.temporal_deployment, "task_queue": args.temporal_task_queue, "wake_queue_name": args.wake_queue, "poll_window_seconds": args.poll_window_seconds, "firestore_database": args.firestore_database}
+    target = {"model_name": "openai/gpt-6.1-terra", "deployment_name": args.temporal_deployment, "task_queue": args.temporal_task_queue, "wake_queue_name": args.wake_queue, "poll_window_seconds": args.poll_window_seconds, "firestore_database": args.firestore_database}
     if not all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", value) for value in (args.temporal_deployment, args.temporal_task_queue)) or not re.fullmatch(r"nori-worker(?:-[a-z0-9][a-z0-9-]{0,50})?", args.wake_queue):
         parser.error("use DNS-safe Temporal names and a nori-worker queue name")
     if not 1 <= args.poll_window_seconds <= 240:

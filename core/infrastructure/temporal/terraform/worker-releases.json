@@ -1,11 +1,11 @@
 {
   "worker_images": {
-    "poc-20261024": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:1b871e3f8d34940a4111c37aca37f6beb145e5904d1305f44ef6c046fd5563f7",
-    "poc-20261025": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:13e37fa8d4337c735b5a884315be8120fe107e5dfb1de72893c284061090f24d",
-    "poc-20261025b": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:db310c169662a1731f0a524b17846155406950edc4ce68feb97a80056f2a30e9",
     "m1-20261025-r3": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:1225cbed48f00f4c25677b49626e4a070bd5f58238d29a9ddaa21d5953a59f75",
     "m2-20261027-51ab9db": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:8ad7adc8a781ea741cd5121809e4d0f46b1bb735f403391107306340ee218515",
-    "m3-20261030-860fba0": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:d3b327fb1438869e8f72d702749cb7e0f7a32a9065cf4acf620f8d7dbd36a723"
+    "m3-20261030-860fba0": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:d3b327fb1438869e8f72d702749cb7e0f7a32a9065cf4acf620f8d7dbd36a723",
+    "poc-20261024": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:1b871e3f8d34940a4111c37aca37f6beb145e5904d1305f44ef6c046fd5563f7",
+    "poc-20261025": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:13e37fa8d4337c735b5a884315be8120fe107e5dfb1de72893c284061090f24d",
+    "poc-20261025b": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:db310c169662a1731f0a524b17846155406950edc4ce68feb97a80056f2a30e9"
   },
   "scalable_build_ids": [
     "m1-20261025-r3",
@@ -23,23 +23,52 @@
   },
   "runtime_invoke_root": "https://us-central1-aiplatform.googleapis.com/reasoningEngines/v1/projects/8273801370/locations/us-central1/reasoningEngines/6637323162226786304/api",
   "request_worker_images": {
+    "gh-a305a05429-4986a0bdebc3": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:deba290f831708801002d590e369abd2dafc9249ce785f0e032ed49db16fd2ad",
     "request-20261030-c113958-r2": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:8a6ed72cb0be9bc95f4b677c3afe6a511a86e26ced83caf5f9afa2a5716b4726",
-    "request-prod-20261030-f7b8743": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:8a6ed72cb0be9bc95f4b677c3afe6a511a86e26ced83caf5f9afa2a5716b4726"
+    "request-prod-20261030-f7b8743": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:8a6ed72cb0be9bc95f4b677c3afe6a511a86e26ced83caf5f9afa2a5716b4726",
+    "models-fdbb1cc": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:1f488e8290a2a0bdfd0450983c69156e581364b9ebe859505c3d798881f2ac25",
+    "telemetry-20261031-49f3635": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:e41f2b08d1f9891b77ed2175c9caa327fdae7268bd41a220a51ef1350eb5ff22"
   },
   "request_worker_targets": {
+    "gh-a305a05429-4986a0bdebc3": {
+      "deployment_name": "nori-task",
+      "task_queue": "nori-tasks",
+      "wake_queue_name": "nori-worker",
+      "poll_window_seconds": 240,
+      "firestore_database": "nori-poc",
+      "model_name": "gemini-3.8-flash"
+    },
     "request-20261030-c113958-r2": {
       "deployment_name": "nori-task-candidate",
       "task_queue": "nori-tasks-candidate",
       "wake_queue_name": "nori-worker-candidate",
       "poll_window_seconds": 2,
-      "firestore_database": "nori-worker-candidate"
+      "firestore_database": "nori-worker-candidate",
+      "model_name": "gemini-3.8-flash"
     },
     "request-prod-20261030-f7b8743": {
       "deployment_name": "nori-task",
       "task_queue": "nori-tasks",
       "wake_queue_name": "nori-worker",
       "poll_window_seconds": 240,
-      "firestore_database": "nori-poc"
+      "firestore_database": "nori-poc",
+      "model_name": "gemini-3.8-flash"
+    },
+    "models-fdbb1cc": {
+      "deployment_name": "nori-task",
+      "task_queue": "nori-tasks",
+      "wake_queue_name": "nori-worker",
+      "poll_window_seconds": 240,
+      "firestore_database": "nori-poc",
+      "model_name": "openai/gpt-6.1-terra"
+    },
+    "telemetry-20261031-49f3635": {
+      "deployment_name": "nori-task",
+      "task_queue": "nori-tasks",
+      "wake_queue_name": "nori-worker",
+      "poll_window_seconds": 240,
+      "firestore_database": "nori-poc",
+      "model_name": "gemini-3.8-flash"
     }
   }
 }
