@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observability · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Observability</h1>
+<p class="lede">Each Nori process records traces, errors, logs and metrics, filters them, and exports them to Sentry and Arize when those are configured.</p>
+<div class="card"><div class="flow" role="img" aria-label="One trace follows a message from the browser through the web server, agent service, outer loop and inner loop to the computer">
+<div class="node"><b>Browser</b> <span class="mono">nori.submit_to_reply</span><small>Starts when the user sends “Check Saturday's weather in Tucson”. Ends at the reply, an error or 15 minutes.</small></div>
+<div class="arrow">↓ <span class="lbl">traceparent header</span></div>
+<div class="node"><b>Web server</b><small>Builds new trace headers and forwards no other browser headers.</small></div>
+<div class="arrow">↓ <span class="lbl">traceparent header</span></div>
+<div class="node"><b>Agent service</b> <span class="mono">HTTP /api/turn</span>, <span class="mono">conversation.accept</span><small>Saves the traceparent with the input in Firestore.</small></div>
+<div class="arrow">↓ <span class="lbl">saved traceparent</span></div>
+<div class="node outer"><b>Outer loop</b> <span class="mono">conversation.turn</span>, <span class="mono">conversation.acceptance_to_reply</span><small>Continues the trace from the saved input. The dispatch saves the traceparent on the task.</small></div>
+<div class="arrow">↓ <span class="lbl">saved traceparent</span></div>
+<div class="node inner"><b>Inner loop</b> <span class="mono">task.model</span>, <span class="mono">task.tool</span>, <span class="mono">task.acceptance_to_terminal</span><small>Each Temporal activity reads the traceparent from the task.</small></div>
+<div class="arrow">↓ <span class="lbl">traceparent header</span></div>
+<div class="node computer"><b>Computer</b> <span class="mono">computer.navigate</span>, <span class="mono">HTTP /navigate</span><small>The host and the guest each export as their own service.</small></div>
+</div>
+<ul class="pts note"><li>If a turn claims several messages, the first sampled message's trace becomes the parent. The others and the queue wake become links.</li><li>A sampled steer moves later activities to the steer's trace, with a link back to the trace that started the task.</li></ul></div>
+<section><h2>Where each signal goes</h2>
+<div class="card"><table class="tall"><tr><th>Signal</th><th>Sentry</th><th>Arize</th><th>Process stderr</th></tr>
+<tr><td>Spans</td><td>All spans in sampled traces</td><td>Spans in sampled traces with <code>openinference.span.kind</code></td><td>None</td></tr>
+<tr><td>Errors</td><td>Up to 50 per hour, not sampled</td><td>None</td><td><code>operation.failed</code></td></tr>
+<tr><td>Logs</td><td>Listed event names, up to 100 per hour</td><td>None</td><td>JSON lines, with <code>trace_id</code> when a span is active</td></tr>
+<tr><td>Metrics</td><td>From sampled traces, up to 200 per hour</td><td>None</td><td>None</td></tr>
+<tr><td>Model text</td><td>None</td><td>Off by default</td><td>None</td></tr>
+</table>
+<p class="note">Limits apply to each process and each browser tab.</p></div>
+</section>
+<section><h2>Where to look</h2>
+<div class="card"><table class="tall"><tr><th>To find</th><th>Open</th></tr>
+<tr><td>A reply's model, Jev hint, duration, cost and saved error</td><td>The debug view in the <a href="web-client.html">web client</a>. It reads saved records, so it works with telemetry off and covers unsampled replies.</td></tr>
+<tr><td>Where a message spent its time</td><td>The Sentry trace, if the message was sampled.</td></tr>
+<tr><td>Which kind of failure occurred</td><td>Sentry errors, grouped by <code>nori.error.category</code> and <code>nori.error.reason</code>.</td></tr>
+<tr><td>A model call's tokens and text</td><td>Arize. With <code>ARIZE_PROJECT_URL</code> set, Sentry model spans carry a <code>nori.arize.url</code> link to the span.</td></tr>
+</table>
+<p class="note">Metrics are sampled, so spend figures come from <a href="budgets.html">Budgets and controls</a>.</p></div>
+</section>
+<section><h2>What's removed before export</h2>
+<div class="card"><table class="tall"><tr><th>Data</th><th>What's sent</th></tr>
+<tr><td>Span and log attributes</td><td>Allowlisted names only. Strings are cut to 256 bytes after redaction.</td></tr>
+<tr><td>Errors</td><td>A category, a fixed reason such as <code>deadline</code> or <code>http_503</code>, the error type and a stack without variables or source lines. Error text is dropped.</td></tr>
+<tr><td>HTTP requests</td><td>Method, known route and status. URLs, headers and bodies are dropped.</td></tr>
+<tr><td>Model text in Arize</td><td>The latest user message and the reply, up to 2,048 bytes each. URLs, email addresses, tokens and known credentials are replaced with <code>[redacted]</code>. Other personal data can remain.</td></tr>
+<tr><td>Tool calls</td><td>Tool name, outcome and exit code. Arguments and screenshots aren't on the allowlist.</td></tr>
+<tr><td>Browser events</td><td>Sent to <code>/monitoring</code>, which checks the owner and removes request headers before forwarding.</td></tr>
+</table>
+<p class="note">The computer's host and guest get a Sentry DSN, and no Arize or model credentials.</p></div>
+</section>
+<section><h2>Sampling and failures</h2>
+<ul class="pts">
+<li>The browser and each process sample 5% of new traces by default. A child span follows its parent's decision, so a trace is kept or dropped as a whole.</li>
+<li>Successful health checks and session polling create no request spans. A 5xx response on those routes is still captured as an error.</li>
+<li>Each export has a 2-second timeout and no retries.</li>
+<li>A failed export writes one line to stderr, at most once a minute for each destination and reason.</li>
+<li>With no destination configured, processes sample nothing and still write logs to stderr.</li>
+</ul>
+</section>
+<details class="more"><summary>Settings</summary>
+<div class="card"><table class="tall"><tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
+<tr><td><code>SENTRY_DSN</code></td><td>Empty</td><td>Turns on Sentry for Go processes.</td></tr>
+<tr><td><code>NEXT_PUBLIC_SENTRY_DSN</code>, <code>SENTRY_WEB_DSN</code></td><td>Empty</td><td>Turn on Sentry for the web client. The second overrides the first on its server.</td></tr>
+<tr><td><code>ARIZE_SPACE_ID</code>, <code>ARIZE_API_KEY</code></td><td>Empty</td><td>Turn on Arize. Both are required.</td></tr>
+<tr><td><code>SENTRY_TRACES_SAMPLE_RATE</code></td><td>0.05</td><td>Share of new traces kept.</td></tr>
+<tr><td><code>NORI_SENTRY_ERRORS_PER_HOUR</code>, <code>NORI_SENTRY_LOGS_PER_HOUR</code>, <code>NORI_SENTRY_METRICS_PER_HOUR</code></td><td>50, 100, 200</td><td>Go process limits.</td></tr>
+<tr><td><code>NORI_ARIZE_CAPTURE_CONTENT</code></td><td>false</td><td>Sends redacted model text to Arize.</td></tr>
+</table>
+<p class="note">Deployed values come from the <code>observability</code> variable in the POC and Temporal Terraform stacks. See <a href="deploy.html">Deployment</a>.</p></div>
+</details>
+<details class="sources"><summary>Sources</summary><p><a href="https://github.com/a-barwick/nori/tree/main/core/internal/observability">core/internal/observability</a> · <a href="https://github.com/a-barwick/nori/blob/main/core/internal/conversation/telemetry.go">conversation/telemetry.go</a> · <a href="https://github.com/a-barwick/nori/blob/main/core/internal/task/telemetry.go">task/telemetry.go</a> · <a href="https://github.com/a-barwick/nori/blob/main/core/internal/state/task_google.go">state/task_google.go</a> · <a href="https://github.com/a-barwick/nori/blob/main/core/internal/computer/computer.go">computer/computer.go</a> · <a href="https://github.com/a-barwick/nori/blob/main/core/cmd/computer-agent/main.go">computer-agent/main.go</a> · <a href="https://github.com/a-barwick/nori/blob/main/core/infrastructure/poc/terraform/observability.tf">observability.tf</a> · <a href="https://github.com/a-barwick/nori/tree/main/web/src/lib/observability">web/src/lib/observability</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/lib/runtime/useRuntime.ts">useRuntime.ts</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/app/sentry-tunnel/route.ts">sentry-tunnel/route.ts</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/components/dev/DebugBlock.tsx">DebugBlock.tsx</a></p></details>
+</body>
+</html>
