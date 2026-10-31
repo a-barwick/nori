@@ -27,6 +27,7 @@ type server struct {
 	tasks          string
 	browserMu      sync.Mutex
 	browsers       map[string]*taskBrowser
+	screenshotGate chan struct{}
 	runsMu         sync.Mutex
 	runs           map[string]*runState
 	receiptMu      sync.Mutex
@@ -44,7 +45,7 @@ func New(tasks string) (http.Handler, error) {
 	if err := os.MkdirAll(tasks, 0700); err != nil {
 		return nil, err
 	}
-	s := &server{tasks: tasks, browsers: make(map[string]*taskBrowser), runs: make(map[string]*runState), activeReceipts: make(map[string]bool)}
+	s := &server{tasks: tasks, browsers: make(map[string]*taskBrowser), screenshotGate: make(chan struct{}, 1), runs: make(map[string]*runState), activeReceipts: make(map[string]bool)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
