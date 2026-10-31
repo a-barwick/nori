@@ -18,6 +18,8 @@ variable "request_worker_targets" {
     wake_queue_name     = string
     poll_window_seconds = optional(number, 240)
     firestore_database  = optional(string, "nori-poc")
+    # Retained binaries keep their original provider; new builds opt into Terra.
+    model_name = optional(string, "gemini-3.8-flash")
     # Per-build references preserve the allowance of retained workers on retry.
     spend_scope   = optional(string)
     spend_profile = optional(string, "ci") # Retained CI-era leases keep their original profile.
@@ -191,6 +193,7 @@ resource "google_cloud_run_v2_service" "worker" {
         for_each = merge(local.worker_env, local.telemetry_env, {
           FIRESTORE_DATABASE_ID    = var.request_worker_targets[each.key].firestore_database
           NORI_WAKE_QUEUE          = var.request_worker_targets[each.key].firestore_database == "nori-worker-candidate" ? google_cloud_tasks_queue.candidate_events[0].id : local.worker_env.NORI_WAKE_QUEUE
+          MODEL_NAME               = var.request_worker_targets[each.key].model_name
           TEMPORAL_BUILD_ID        = each.key
           TEMPORAL_DEPLOYMENT_NAME = var.request_worker_targets[each.key].deployment_name
           TEMPORAL_TASK_QUEUE      = var.request_worker_targets[each.key].task_queue
@@ -208,12 +211,15 @@ resource "google_cloud_run_v2_service" "worker" {
           value = env.value
         }
       }
-      env {
-        name = "OPENROUTER_API_KEY"
-        value_source {
-          secret_key_ref {
-            secret  = local.production && var.request_worker_targets[each.key].firestore_database == "nori-poc" && var.request_worker_targets[each.key].spend_scope == null ? "nori-openrouter-api-key" : "nori-sandbox-openrouter-api-key"
-            version = "latest"
+      dynamic "env" {
+        for_each = var.request_worker_targets[each.key].model_name == "openai/gpt-6.1-terra" ? [1] : []
+        content {
+          name = "OPENROUTER_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = local.production && var.request_worker_targets[each.key].firestore_database == "nori-poc" && var.request_worker_targets[each.key].spend_scope == null ? "nori-openrouter-api-key" : "nori-sandbox-openrouter-api-key"
+              version = "latest"
+            }
           }
         }
       }
