@@ -117,6 +117,10 @@ def check(path):
         fails.append("no visual before the second section")
 
     words = visible_words(page)
+    for box in re.findall(r'class="node[^"]*">(.*?)</div>', source, re.S):
+        text = re.sub(r"<[^>]+>", " ", box)
+        if len(text.split()) > 28:
+            warns.append(f"long diagram box, move detail below: {text.split()[0]} ...")
     if words > WORD_LIMIT and name not in LONG_PAGES:
         fails.append(f"{words} words, over the {WORD_LIMIT} limit: split it by topic")
     elif words > WORD_TARGET and name not in LONG_PAGES:

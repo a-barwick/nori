@@ -70,7 +70,9 @@ When you change an existing page, rework the affected sections so the page reads
 - `code.html` when the page adds a new area of code
 - Links from related pages
 
-Keep each of these edits small, and don't touch unrelated pages.
+Keep each of these edits small, and don't touch unrelated pages. Don't restructure existing content just to clear a warning that was already there. Mention it in your report.
+
+If a page you're changing makes a claim the code and sources don't support, remove it from that page. Add it to `open-questions.html` if it might still be true, and say so in your report.
 
 ## 7. Check it
 
@@ -80,7 +82,7 @@ Run the review checks on each page you changed, and fix every failure:
 python3 .agents/skills/review-docs/scripts/check.py docs/site/your-page.html
 ```
 
-Then follow `.agents/skills/review-docs/SKILL.md` on your own page, including looking at it at desktop and phone widths. Fix what you find, and cut anything the checks warn about unless you have a reason to keep it.
+Then follow `.agents/skills/review-docs/SKILL.md` on your own page, including looking at it at desktop and phone widths. A check that passes doesn't replace looking at the page. If a server won't start, open the file directly, and if no browser runs at all, state that plainly. Fix what you find, and cut anything the checks warn about unless you have a reason to keep it.
 
 ## 8. Report
 

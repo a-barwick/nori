@@ -38,6 +38,8 @@ These are the kinds of lines reviewers rejected, and what replaced them.
 | Task model, outer agent, lead, junior | New names for existing things. | Inner loop, outer loop. |
 | Spend alerts sit on Deployment. | Figure of speech. | Deployment lists the spend alerts. |
 | Export failures produce local diagnostics. | Doesn't say what happens. | A failed export writes one line to stderr. |
+| Confidence never gates action. | Jargon verb. | No code compares confidence to a threshold. |
+| The fallback stores no invented confidence. | Code doesn't invent things. | The fallback stores no confidence. |
 
 ## Final read
 
