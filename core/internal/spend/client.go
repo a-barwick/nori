@@ -156,6 +156,16 @@ func (c *Client) validate(ctx context.Context) error {
 	return validatePool(pool)
 }
 
+// ValidateConfiguration keeps health and cleanup endpoints available after a
+// lease closes. Prepare and Reserve still enforce live budgets before inference.
+func ValidateConfiguration() error {
+	c, err := FromEnv()
+	if c != nil {
+		c.Close()
+	}
+	return err
+}
+
 func Validate(ctx context.Context) error {
 	c, err := FromEnv()
 	if err != nil || c == nil {

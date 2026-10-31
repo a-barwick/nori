@@ -35,7 +35,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := spend.Validate(ctx); err != nil {
+	if err := spend.ValidateConfiguration(); err != nil {
 		log.Fatal(err)
 	}
 	stopTelemetry := observability.Init(ctx, "nori-worker")
