@@ -11,7 +11,7 @@ Everything needed to change or reshoot the Nori film. Austin approved the look, 
 | Captions, camera, timing, deck scenes, music | [Edit and render](#edit-and-render) | None |
 | Messages, tasks, or what happens in the interface | [Refilm](#refilm), about two minutes | None |
 
-The video files stay out of Git. The v4 take is at `~/Documents/dev/agents/nori-film-media/2026-10-31-v4/`, v3 at `.../2026-10-31-v3/`, the earlier approved film at `~/Documents/dev/agents/nori-film-media/2026-10-31/`, and worktree cleanup can't touch either. The Git tag `film-2026-10-31` holds that film's code and its real run data.
+The video files stay out of Git. The v4 take is at `~/Documents/dev/agents/nori-film-media/2026-10-31-v4/`, v3 at `.../2026-10-31-v3/`, the earlier approved film at `~/Documents/dev/agents/nori-film-media/2026-10-31/`, and worktree cleanup can't touch either. The Git tag `film-2026-10-31` holds that film's code and its real run data. The tag `film-v4` holds the code for the v4 take.
 
 ## Setup
 
