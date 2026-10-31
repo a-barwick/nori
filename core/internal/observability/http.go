@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/felixge/httpsnoop"
@@ -23,6 +24,13 @@ func HTTPHandler(next http.Handler) http.Handler {
 		route := safeRoute(r.URL.Path)
 		if route == "" {
 			ctx := context.WithValue(r.Context(), excludedRequestKey{}, true)
+			pending := &atomic.Bool{}
+			ctx = context.WithValue(ctx, requestFlushKey{}, pending)
+			defer func() {
+				if pending.Load() {
+					flushRequest()
+				}
+			}()
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -36,13 +44,7 @@ func HTTPHandler(next http.Handler) http.Handler {
 				RecordErrorCategory(ctx, "http.panic", errors.New("HTTP handler panicked"), attribute.String("http.route", route))
 			}
 			span.End()
-			if tracerProvider != nil || sentryEnabled.Load() {
-				// Cloud Run can suspend CPU after this handler returns. A short,
-				// bounded flush is best effort and never changes the response.
-				flush, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
-				Flush(flush)
-				cancel()
-			}
+			flushRequest()
 			if panicValue != nil {
 				panic(panicValue)
 			}
@@ -62,6 +64,26 @@ func HTTPHandler(next http.Handler) http.Handler {
 			meter.Distribution("nori.http.duration_ms", float64(result.Duration)/float64(time.Millisecond))
 		}
 	})
+}
+
+type requestFlushKey struct{}
+
+// RequireRequestFlush marks real work inside an otherwise excluded request.
+// Idle polls stay quiet; the HTTP handler flushes marked requests on return.
+func RequireRequestFlush(ctx context.Context) {
+	if pending, ok := ctx.Value(requestFlushKey{}).(*atomic.Bool); ok {
+		pending.Store(true)
+	}
+}
+
+func flushRequest() {
+	if tracerProvider != nil || sentryEnabled.Load() {
+		// Cloud Run can suspend CPU after this handler returns. A short,
+		// bounded flush is best effort and never changes the response.
+		flush, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+		defer cancel()
+		Flush(flush)
+	}
 }
 
 func safeRoute(path string) string {

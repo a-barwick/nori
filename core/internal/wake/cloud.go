@@ -39,6 +39,7 @@ func NewCloud(ctx context.Context, queue, invokeRoot, caller string) (*Cloud, er
 }
 
 func (c *Cloud) Schedule(ctx context.Context) error {
+	observability.RequireRequestFlush(ctx)
 	ctx, span := otel.Tracer("nori/wake").Start(ctx, "cloud_tasks.schedule", trace.WithSpanKind(trace.SpanKindProducer))
 	defer span.End()
 	headers := map[string]string{"Content-Type": "application/json"}
