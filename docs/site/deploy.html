@@ -28,7 +28,7 @@
 <div class="branch"><div class="node"><b>What pause does</b><small>Blocks new execution, scales workers to zero and stops the computer.</small></div><div class="node"><b>What keeps working</b><small>The website, chat, saved history and any waiting tasks. Nothing is cancelled.</small></div></div>
 </section>
 <section><h2>Releases</h2>
-<ul class="pts"><li>CI/CD is off. Deploys run by hand when requested.</li><li>Worker builds are immutable and pinned, so running tasks stay on code that's compatible with them.</li><li><code>core/infrastructure/release/</code> holds the release and smoke test scripts.</li></ul></section>
+<ul class="pts"><li>CI/CD is off. When requested, <code>make deploy</code> releases the latest <code>main</code> from the owner's Mac and leaves Nori paused until <code>make unpause</code>.</li><li>Worker builds are immutable and pinned, so running tasks stay on code that's compatible with them.</li><li><code>core/infrastructure/release/</code> holds the release and smoke test scripts.</li></ul></section>
 <section><h2>Seeing what happened</h2>
 <ul class="pts"><li><b>Debug view:</b> each reply shows its recorded model, hint, latency and cost.</li><li><b>Sentry:</b> operational errors and traces, without request bodies or prompts.</li><li><b>Arize:</b> AI spans as metadata. Saving redacted content requires an explicit setting.</li><li>Both exporters are optional and can't block a request if they fail.</li></ul></section>
 <section><h2>What it costs</h2>

@@ -1,4 +1,4 @@
-.PHONY: dev web web-build web-start core local-web local-core check
+.PHONY: dev web web-build web-start core local-web local-core check deploy deploy-check deploy-status deploy-rollback deploy-unlock pause unpause smoke
 
 NORI_ENV_FILE ?= $(abspath .env)
 NORI_TASK_ENV_FILE ?= $(NORI_ENV_FILE)
@@ -30,3 +30,13 @@ core:
 check:
 	$(MAKE) -C core check
 	cd web && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src
+
+# Production operations. See core/infrastructure/README.md.
+deploy deploy-check deploy-status deploy-rollback deploy-unlock:
+	python3 core/infrastructure/release/deploy.py $(patsubst deploy-%,%,$@)
+
+smoke:
+	python3 core/infrastructure/release/deploy.py smoke
+
+pause unpause:
+	cd core && NORI_TF_BACKEND=gcs python3 infrastructure/poc/poc.py $@

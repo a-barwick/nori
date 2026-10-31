@@ -32,7 +32,7 @@ The native IAP gate uses a custom OAuth client for Austin's consumer Gmail accou
 
 ## Deploy independently
 
-After the first full apply, these commands use native service APIs and preserve Terraform ownership of the infrastructure:
+Use `make deploy` for a full release ([Delivery](../README.md#delivery)). After the first full apply, these commands use native service APIs and preserve Terraform ownership of the infrastructure:
 
 ```sh
 python3 infrastructure/poc/poc.py publish-computer /tmp/nori-computer-agent

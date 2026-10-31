@@ -6,7 +6,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /nori-worker ./cmd/nori-worker
+# Both Go images share one compile cache, so the second build reuses the first.
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /nori-worker ./cmd/nori-worker
 
 FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:584.0.0-slim
 ARG SENTRY_RELEASE
