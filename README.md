@@ -95,10 +95,10 @@ does not validate this revision's conversation contract.
 `NORI_LOCAL_AGENT_URL` selects the local adapter only in development. Production
 keeps the owner-protected proxy and runtime IAM. `make core` starts the hosted
 entrypoint locally and additionally requires Cloud Tasks configuration; see
-[core setup](core/README.md). This source revision has not been deployed. Hosted
-rollout needs the queue/IAM configuration, server OpenRouter/Jev credentials, and
-verification of native Runtime retry/status forwarding. See
-[POC operations](core/infrastructure/poc/README.md) for the existing deployment.
+[core setup](core/README.md). Hosted deployment uses the configured conversation
+queue and scoped caller IAM, with OpenRouter/Jev credentials supplied through
+native secret references. Follow [POC operations](core/infrastructure/poc/README.md)
+for the operator deployment procedure.
 
 ## Durable tasks
 
