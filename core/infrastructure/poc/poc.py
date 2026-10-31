@@ -379,7 +379,7 @@ def firestore(c, path):
 
 def control(c, paused):
     # Omitted expires_at in the update mask removes the obsolete admission field.
-    return api("PATCH", firestore(c, "system/control") + "?updateMask.fieldPaths=paused&updateMask.fieldPaths=expires_at", {"fields": {"paused": {"booleanValue": paused}}})
+    return api("PATCH", firestore(c, "system/control") + "?currentDocument.exists=true&updateMask.fieldPaths=paused&updateMask.fieldPaths=expires_at", {"fields": {"paused": {"booleanValue": paused}}})
 
 
 def pause(c, worker_config=None):
