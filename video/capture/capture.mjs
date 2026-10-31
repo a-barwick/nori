@@ -1,6 +1,7 @@
-// Films the real Nori frontend (web/, on port 3211) with a scripted session and
-// real public Docusign data. Nothing here touches the runtime: /api/* is answered
-// in the browser. Outputs public/clips/{desktop,phone}.mp4 and markers.json.
+// Replays a recorded real Nori run (capture/run.json, polled from the live runtime
+// on 2026-10-31) through the real frontend (web/, on port 3211) and films it.
+// /api/* is answered in the browser from those snapshots; nothing touches the
+// runtime. Outputs public/clips/{desktop,phone}.mp4 and markers.json.
 //   node capture/capture.mjs [desktop|phone]
 import { chromium } from "playwright-core";
 import { spawnSync } from "node:child_process";
@@ -10,108 +11,48 @@ import { tmpdir } from "node:os";
 
 const ORIGIN = "http://127.0.0.1:3211";
 const root = resolve(import.meta.dirname, "..");
-const iso = (ms) => new Date(ms).toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const RUN = JSON.parse(readFileSync(join(root, "capture/run.json"), "utf8"));
 
-const BRIEF = `# Docusign Q2 FY27 brief
-
-Reported September 3, 2026, for the quarter ended July 31.
-
-## The numbers
-
-- Revenue: **$875.7M**, up 9% year over year
-- Non-GAAP EPS: **$1.16**, up from $0.92
-- Free cash flow: **$295.8M**, a 34% margin
-- IAM: **15.1%** of total ARR, up from 12.6% last quarter
-
-## Full-year guidance, raised
-
-- Revenue: **$3,499M to $3,507M**
-- ARR growth: **8.5% to 9.0%**
-- IAM exiting Q4: about **18% to 19%** of ARR
-
-## Quote to reuse
-
-"Our AI agents are now securely executing contract workflows end-to-end." Allan Thygesen, CEO
-
-Source: Docusign Q2 FY27 earnings release, investor.docusign.com`;
-
-const TASK_A = "Pull Docusign's Q2 results from the investor site and write me a brief.";
-const TASK_B = "Find the latest Docusign and Salesforce news.";
-
-class Backend {
-  session;
-  revision = 1;
-  constructor() {
-    const y = Date.now() - 20 * 3600e3;
-    this.session = {
-      paused: false, runs: [], dispatches: [], traces: [], usage: [],
-      messages: [
-        { id: "seed-1", run_id: "", role: "user", text: "Keep my briefs under 200 words, numbers first.", created_at: iso(y) },
-        { id: "seed-2", run_id: "", role: "assistant", text: "Got it. Briefs stay under 200 words, numbers first.", created_at: iso(y + 4000) },
-      ],
-      conversation: this.conversation(false),
-    };
+class Replay {
+  index = 0;
+  ids = new Map(); // real user message id -> id the UI generated when "sending" it
+  shown = new Set();
+  current;
+  apply(i) {
+    this.index = i;
+    const { session } = RUN[i];
+    this.current = { ...session, messages: session.messages.map((m) => this.ids.has(m.id) ? { ...m, id: this.ids.get(m.id) } : m) };
+    for (const m of session.messages) this.shown.add(m.id);
   }
-  conversation(processing) {
-    return { pending: false, processing, input_ids: this.session?.conversation?.input_ids ?? [], restart_count: 0, frozen: false, revision: ++this.revision, consumed: 0 };
-  }
-  touch(processing = false) { this.session.conversation = this.conversation(processing); }
-  user(id, text) {
-    this.session.messages.push({ id: `${id}-user`, run_id: "", role: "user", text, created_at: iso(Date.now()) });
-    this.touch(true);
-  }
-  reply(text) {
-    this.session.messages.push({ id: crypto.randomUUID(), run_id: "", role: "assistant", text, created_at: iso(Date.now()) });
-    this.touch(false);
-  }
-  startRun(id, request) {
-    this.session.runs.unshift({ id, request, status: "running", cancel_requested: false, temporal: true, protocol_version: 2, position: 1, event_sequence: 0, revision: 1, incorporated: 1, budget_usd: 1, started_at: iso(Date.now()), events: [], artifacts: [] });
-    this.session.dispatches.push({ id, request, status: "accepted", created_at: iso(Date.now()) });
-    this.touch();
-  }
-  run(id) { return this.session.runs.find((r) => r.id === id); }
-  event(id, kind, text) {
-    const r = this.run(id);
-    r.event_sequence += 1;
-    r.events.push({ id: `${id}-${r.event_sequence}`, sequence: r.event_sequence, instruction_revision: 1, kind, text, created_at: iso(Date.now()) });
-    this.touch();
-  }
-  artifact(id, name) {
-    const r = this.run(id);
-    r.event_sequence += 1;
-    r.artifacts.push({ id: name, kind: "screenshot" });
-    this.touch();
-  }
-  finish(id, result) {
-    const r = this.run(id);
-    Object.assign(r, { status: "completed", result, finished_at: iso(Date.now()) });
-    r.event_sequence += 1;
-    this.touch();
-  }
+  /** Messages this snapshot adds that the previous one lacked. */
+  fresh(i) { return RUN[i].session.messages.filter((m) => !this.shown.has(m.id)); }
+  hidden(m) { return RUN[this.index].session.dispatches.some((d) => m.id === `${d.id}-user`) || (m.run_id && m.id === `${m.run_id}-user`); }
 }
 
-async function mount(page, backend) {
+async function mount(page, replay) {
   await page.route("**/api/**", async (route) => {
-    const url = new URL(route.request().url());
-    const op = url.pathname.split("/").pop();
+    const op = new URL(route.request().url()).pathname.split("/").pop();
     const body = route.request().postDataJSON() ?? {};
     if (op === "artifact") {
       return route.fulfill({ status: 200, contentType: "image/png", body: readFileSync(join(root, "public/real", `${body.artifact_id}.png`)) });
     }
     if (op === "turn") {
-      backend.user(body.id, body.message);
-      backend.onTurn?.(body.message);
+      replay.ids.set(replay.sending, `${body.id}-user`);
+      replay.apply(replay.index);
     }
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(backend.session) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(replay.current) });
   });
-  // A visible pointer: headless screencasts do not draw one.
   await page.addInitScript(() => {
+    const real = Date.now.bind(Date);
+    window.__dt = 0;
+    Date.now = () => real() + window.__dt;
     addEventListener("DOMContentLoaded", () => {
       const style = document.createElement("style");
       style.textContent = "[role=tooltip],[data-radix-popper-content-wrapper]{display:none!important}" + (innerWidth > 2000 ? "html{zoom:2}" : "");
       document.documentElement.append(style);
       if (matchMedia("(pointer: coarse)").matches) return;
+      // A visible pointer: headless screencasts do not draw one.
       const c = document.createElement("div");
       c.id = "film-cursor";
       c.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 3l14 8-6.5 1.6L9.5 19z" fill="#120a2b" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
@@ -168,139 +109,139 @@ async function glide(page, locator, steps = 14) {
   await sleep(120);
 }
 
+const panel = (page) => page.locator('aside[aria-label="Agent panel"]');
+
 async function scrollPanel(page, dy, ticks = 6) {
-  await glide(page, page.locator('aside[aria-label="Agent panel"]'), 10);
+  await glide(page, panel(page), 10);
   for (let i = 0; i < ticks; i++) { await page.mouse.wheel(0, dy / ticks); await sleep(40); }
 }
 
-async function say(page, text, ms = 26) {
-  const box = page.getByLabel("Message Nori");
-  await glide(page, box);
-  await box.click();
-  await box.pressSequentially(text, { delay: ms });
-  await sleep(250);
-  await page.keyboard.press("Enter");
+/** Push snapshot i to the page: set its clock to that moment and ask it to refresh. */
+async function show(page, replay, i) {
+  replay.apply(i);
+  await page.evaluate((ts) => { window.__dt = ts - (Date.now() - window.__dt); dispatchEvent(new Event("online")); }, RUN[i].ts);
 }
+
+async function type(page, replay, message, film, ms) {
+  film?.mark(`type:${message.text.slice(0, 12)}`);
+  const box = page.getByLabel("Message Nori");
+  if (!page.viewportSize() || page.viewportSize().width > 500) await glide(page, box);
+  await box.click();
+  await box.pressSequentially(message.text, { delay: ms });
+  await sleep(220);
+  replay.sending = message.id;
+  await page.keyboard.press("Enter");
+  film?.mark(`sent:${message.text.slice(0, 12)}`);
+}
+
+async function open(page, replay, first) {
+  replay.apply(first);
+  await page.goto(ORIGIN, { waitUntil: "networkidle" });
+  await page.getByLabel("Message Nori").waitFor();
+  await page.evaluate((ts) => { window.__dt = ts - (Date.now() - window.__dt); }, RUN[first].ts);
+  await sleep(1200);
+}
+
+// How long each real moment stays on screen, in milliseconds of film.
+const HOLD = (text) => (text.length > 600 ? 3600 : text.length > 120 ? 2600 : 1900);
 
 async function desktop(browser) {
   const ctx = await browser.newContext({ viewport: { width: 2560, height: 1600 }, deviceScaleFactor: 1, timezoneId: "America/Los_Angeles", locale: "en-US" });
   const page = await ctx.newPage();
-  const be = new Backend();
-  await mount(page, be);
-  await page.goto(ORIGIN, { waitUntil: "networkidle" });
-  await page.locator("textarea").last().waitFor();
-  await sleep(1200);
+  const replay = new Replay();
+  const start = RUN.findIndex((s) => s.session.messages.some((m) => m.text.startsWith("Got it! For the rest")));
+  await mount(page, replay);
+  await open(page, replay, start);
   await page.mouse.move(1600, 960);
-
   const film = new Film(page, "desktop");
   await film.start();
   await sleep(500);
-  film.mark("type1");
-  await say(page, TASK_A);
-  film.mark("sent1");
-  await sleep(1300);
-  be.startRun("task-a", TASK_A);
-  be.reply("On it. I'm opening the investor site on your computer now. Keep talking, I'll post the brief here.");
-  await sleep(2100);
-  film.mark("reply1");
+  let panelOpen = false, shot = false;
 
-  await glide(page, page.locator(".nova-activity-button"), 18);
-  await page.locator(".nova-activity-button").click();
-  film.mark("panel");
-  be.event("task-a", "model", "Thinking");
-  await sleep(700);
-  be.event("task-a", "tool", "browser_navigate");
-  be.artifact("task-a", "ir-home");
-  be.event("task-a", "tool", "browser_screenshot");
-  await sleep(2300);
-  await scrollPanel(page, 1280);
-  film.mark("screenshot");
-  await sleep(2200);
+  for (let i = start + 1; i < RUN.length; i++) {
+    const fresh = replay.fresh(i);
+    if (fresh.some((m) => m.text.startsWith("Give me the full-year"))) break;
+    const user = fresh.find((m) => m.role === "user" && !RUN[i].session.dispatches.some((d) => m.id === `${d.id}-user`) && !(m.run_id && m.id === `${m.run_id}-user`));
+    if (user) {
+      await page.evaluate((ts) => { window.__dt = ts - (Date.now() - window.__dt); }, Date.parse(user.created_at));
+      await type(page, replay, user, film, user.text.length > 90 ? 11 : 26);
+      replay.index = i;
+    }
+    await show(page, replay, i);
+    const said = fresh.filter((m) => m.role === "assistant");
+    for (const m of said) {
+      film.mark(`reply:${m.text.slice(0, 12)}`);
+      await sleep(HOLD(m.text));
+    }
+    if (!said.length) await sleep(user ? 900 : 70);
 
-  film.mark("type2");
-  await say(page, "Also add the full-year guidance.", 30);
-  await sleep(1200);
-  film.mark("sent2");
-  be.reply("Added. The brief will include full-year guidance.");
-  await sleep(1900);
-
-  film.mark("type3");
-  await say(page, "Different question. What time was the Q2 call?", 26);
-  await sleep(1100);
-  be.reply("September 3 at 2:00 p.m. Pacific. The brief is still running.");
-  film.mark("reply3");
-  await sleep(2000);
-
-  film.mark("type4");
-  await say(page, TASK_B, 24);
-  await sleep(1000);
-  be.startRun("task-b", TASK_B);
-  be.reply("Started that as a second task. Both are running.");
-  be.event("task-b", "model", "Thinking");
-  await sleep(1800);
-  await scrollPanel(page, -6000, 3);
-  const hide = page.getByRole("button", { name: /Hide task details/ }).first();
-  await glide(page, hide);
-  await hide.click();
-  film.mark("two-tasks");
-  be.event("task-b", "tool", "browser_navigate");
-  be.artifact("task-b", "ir-salesforce");
-  await sleep(2600);
-
-  be.finish("task-a", "Brief written from the Q2 FY27 earnings release.");
-  be.reply("Here's your brief, under 200 words with the numbers first.");
-  await sleep(600);
-  be.reply(BRIEF);
-  film.mark("brief");
-  await sleep(3000);
-  be.finish("task-b", "Docusign and Salesforce launched IAM natively across Salesforce on October 13.");
-  be.reply("Second task done: on October 13, Docusign and Salesforce launched IAM natively across Salesforce and Slack.");
-  film.mark("task-b-done");
-  await sleep(1800);
-
-  const open = page.getByRole("button", { name: "Open document" }).last();
-  await open.scrollIntoViewIfNeeded();
-  await glide(page, open);
-  await open.click();
+    if (!panelOpen && said.some((m) => m.text.startsWith("I'm starting a second task"))) {
+      panelOpen = true;
+      const button = page.locator(".nova-activity-button");
+      await glide(page, button, 16);
+      await button.click();
+      film.mark("panel");
+      await sleep(700);
+      const hide = page.getByRole("button", { name: /Hide task details/ }).first();
+      await glide(page, hide);
+      await hide.click();
+      film.mark("two-tasks");
+      await sleep(2000);
+    }
+    const shots = RUN[i].session.runs.find((r) => r.id.startsWith("b2b631a1"))?.artifacts?.length;
+    if (panelOpen && !shot && shots) {
+      shot = true;
+      const card = panel(page).locator("article").last().getByRole("button").first();
+      await card.scrollIntoViewIfNeeded();
+      await glide(page, card);
+      await card.click();
+      await sleep(500);
+      await page.locator('img[alt^="Screenshot"]').first().waitFor();
+      await page.locator('img[alt^="Screenshot"]').first().scrollIntoViewIfNeeded();
+      film.mark("screenshot");
+      await sleep(3000);
+      const close = page.getByRole("button", { name: "Hide agent panel" });
+      await glide(page, close, 12);
+      await close.click();
+      panelOpen = "closed";
+      film.mark("panel-closed");
+    }
+  }
+  await sleep(1500);
+  const doc = page.getByRole("button", { name: "Open document" }).last();
+  await doc.scrollIntoViewIfNeeded();
+  await glide(page, doc);
+  await doc.click();
   film.mark("document");
   await sleep(2400);
   await page.mouse.move(1280, 960, { steps: 8 });
-  await sleep(1500);
+  await sleep(1200);
   film.mark("end");
   const result = await film.stop();
   await ctx.close();
-  return { ...result, session: be.session };
+  return result;
 }
 
 async function phone(browser) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, timezoneId: "America/Los_Angeles", locale: "en-US" });
   const page = await ctx.newPage();
-  const be = new Backend();
-  // The same thread, later: the phone opens on what the desktop just produced.
-  const now = Date.now();
-  be.session.messages.push(
-    { id: "p1-user", run_id: "", role: "user", text: TASK_A, created_at: iso(now - 300e3) },
-    { id: "p2", run_id: "", role: "assistant", text: "On it. I'm opening the investor site on your computer now. Keep talking, I'll post the brief here.", created_at: iso(now - 298e3) },
-    { id: "p3", run_id: "", role: "assistant", text: BRIEF, created_at: iso(now - 120e3) },
-  );
-  await mount(page, be);
-  await page.goto(ORIGIN, { waitUntil: "networkidle" });
-  await page.locator("textarea").last().waitFor();
-  await sleep(1200);
+  const replay = new Replay();
+  const ask = RUN.findIndex((s) => s.session.messages.some((m) => m.text.startsWith("Give me the full-year")));
+  await mount(page, replay);
+  await open(page, replay, ask - 1);
   const film = new Film(page, "phone");
   await film.start();
   await sleep(600);
   film.mark("type");
-  const box = page.getByLabel("Message Nori");
-  await box.tap();
-  await box.pressSequentially("Give me the guidance in one line I can paste.", { delay: 34 });
-  await sleep(300);
-  film.mark("send");
-  await page.keyboard.press("Enter");
-  await sleep(1400);
-  be.reply("FY27 revenue guidance is $3,499M to $3,507M, raised on September 3.");
+  const user = RUN[ask].session.messages.find((m) => m.text.startsWith("Give me the full-year"));
+  await type(page, replay, user, null, 30);
+  replay.index = ask;
+  for (let i = ask; i < RUN.length; i++) {
+    await show(page, replay, i);
+    await sleep(RUN[i].session.conversation.processing ? 900 : 120);
+  }
   film.mark("reply");
-  await sleep(3200);
+  await sleep(3400);
   film.mark("end");
   const result = await film.stop();
   await ctx.close();
@@ -312,7 +253,7 @@ const browser = await chromium.launch({ channel: "chrome" });
 const file = join(root, "public/clips/markers.json");
 let all = {};
 try { all = JSON.parse(readFileSync(file, "utf8")); } catch { /* first run */ }
-if (!which || which === "desktop") { const { session, ...d } = await desktop(browser); all.desktop = d; writeFileSync(join(root, "capture/session.json"), JSON.stringify(session, null, 1)); }
+if (!which || which === "desktop") all.desktop = await desktop(browser);
 if (!which || which === "phone") all.phone = await phone(browser);
 writeFileSync(file, JSON.stringify(all, null, 1));
 await browser.close();

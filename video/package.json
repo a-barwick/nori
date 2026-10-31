@@ -27,7 +27,6 @@
     "typescript": "5.9.3"
   },
   "scripts": {
-    "shots": "node capture/shots.mjs",
     "capture": "node capture/capture.mjs",
     "score": "node capture/score.mjs",
     "render": "remotion render NoriFilm out/nori.mp4",

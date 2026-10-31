@@ -153,13 +153,18 @@ for (const seg of T.demo) {
   pop(F(segFrom + 3), 0.8);
   segFrom += seg.frames;
 }
-const typing = [[markers.type1, markers.sent1], [markers.type2, markers.sent2 - 1.1], [markers.type3, markers.reply3 - 1], [markers.type4, markers["two-tasks"] - 2.8]];
-for (const [a, b] of typing) {
-  for (let s = a; s < b; s += 0.075) { const t = toEdit(s); if (t !== null) tick(t, 0.7 + Math.abs(noise()) * 0.5); }
-  const sent = toEdit(b);
+for (const [name, start] of Object.entries(markers)) {
+  if (!name.startsWith("type:")) continue;
+  const end = markers[`sent:${name.slice(5)}`];
+  for (let t = start; t < end; t += 0.075) { const at = toEdit(t); if (at !== null) tick(at, 0.7 + Math.abs(noise()) * 0.5); }
+  const sent = toEdit(end);
   if (sent !== null) pop(sent, 1.1);
 }
-for (const s of [markers.reply1, markers.sent2, markers.reply3, markers.brief, markers.document]) { const t = toEdit(s - 0.02); if (t !== null) pop(t, 0.8, -1); }
+for (const [name, time] of Object.entries(markers)) {
+  if (!name.startsWith("reply:") && !["screenshot", "document"].includes(name)) continue;
+  const at = toEdit(time);
+  if (at !== null) pop(at, 0.8, -1);
+}
 
 // Sidechain-style pump and soft limit.
 let peak = 0;

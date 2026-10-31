@@ -139,7 +139,10 @@ const stickerPlace: Record<string, React.CSSProperties> = {
   top: { left: 0, right: 0, top: 54, justifyContent: "center" },
   topLeft: { left: 64, top: 60 },
   topRight: { right: 64, top: 60 },
-  midRight: { right: 64, top: 190 },
+  briefTop: { right: 64, top: 20 },
+  topWide: { right: 64, top: 24 },
+  midRight: { right: 64, top: 285 },
+  lowerRight: { right: 64, top: 690 },
   bottomRight: { right: 64, bottom: 84 },
 };
 
@@ -149,7 +152,7 @@ const Sticker: React.FC<{ text: string; at: string; frames: number }> = ({ text,
   const out = interpolate(frame, [frames - 5, frames], [1, 0], clamp);
   return (
     <div style={{ position: "absolute", display: "flex", ...stickerPlace[at] }}>
-      <div style={{ scale: String(pop * out), rotate: "-1.5deg", padding: "20px 38px", borderRadius: 26, background: C.purple, color: "#fff", fontSize: 66, fontWeight: 800, letterSpacing: -1.8, boxShadow: "0 18px 50px #3a00b855", maxWidth: at === "midRight" ? 800 : 1180, lineHeight: 1.08 }}>{text}</div>
+      <div style={{ scale: String(pop * out), rotate: "-1.5deg", padding: "20px 38px", borderRadius: 26, background: C.purple, color: "#fff", fontSize: 66, fontWeight: 800, letterSpacing: -1.8, boxShadow: "0 18px 50px #3a00b855", maxWidth: at === "topLeft" || at === "lowerRight" || at === "topWide" ? 1180 : at === "briefTop" ? 800 : 720, lineHeight: 1.08 }}>{text}</div>
     </div>
   );
 };
@@ -169,7 +172,7 @@ export const Demo: React.FC = () => {
         );
       })}
       <div style={{ position: "absolute", right: 28, bottom: 22, padding: "7px 16px", borderRadius: 12, background: "#fff", fontSize: 21, fontWeight: 500, color: C.ink }}>
-        Real Nori interface. Scripted demo. Figures from Docusign's public Q2 FY27 release.
+        Recorded from a real Nori run on October 31, 2026. Sped up.
       </div>
     </Page>
   );
@@ -188,11 +191,11 @@ export const Phone: React.FC = () => {
       <Ribbons start={2} muted />
       <div style={{ position: "absolute", left: 130, top: 330, color: "#fff" }}>
         <div style={{ fontSize: 118, fontWeight: 900, letterSpacing: -4.5, lineHeight: 1.02, scale: String(title), transformOrigin: "left center" }}>Same thread.<br />On your phone.</div>
-        <div style={{ marginTop: 34, fontSize: 50, fontWeight: 600, color: C.lilac, scale: String(sub), transformOrigin: "left center" }}>Ask on the train. It keeps working.</div>
+        <div style={{ marginTop: 34, fontSize: 50, fontWeight: 600, color: C.lilac, scale: String(sub), transformOrigin: "left center" }}>Ask from anywhere.</div>
       </div>
       <div style={{ position: "absolute", right: 250, top: 76, width: 436, height: 928, translate: `0 ${rise}px`, rotate: `${tilt}deg`, borderRadius: 66, background: "#000", padding: 12, boxShadow: "0 50px 120px #000a, 0 0 0 2px #453a6b" }}>
         <div style={{ width: "100%", height: "100%", borderRadius: 54, overflow: "hidden", background: "#fff" }}>
-          <Video src={staticFile("clips/phone.mp4")} muted trimBefore={9} playbackRate={2.2} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <Video src={staticFile("clips/phone.mp4")} muted trimBefore={9} playbackRate={2} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         </div>
       </div>
     </Page>

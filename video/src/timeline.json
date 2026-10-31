@@ -1,29 +1,266 @@
 {
-  "fps": 30,
-  "bpm": 120,
-  "framesPerBeat": 15,
-  "total": 1440,
-  "scenes": {
-    "coldOpen": { "from": 0, "frames": 120 },
-    "stat": { "from": 120, "frames": 120 },
-    "meet": { "from": 240, "frames": 90 },
-    "demo": { "from": 330, "frames": 720 },
-    "phone": { "from": 1050, "frames": 120 },
-    "trust": { "from": 1170, "frames": 120 },
-    "end": { "from": 1290, "frames": 150 }
+ "fps": 30,
+ "bpm": 120,
+ "framesPerBeat": 15,
+ "total": 1440,
+ "scenes": {
+  "coldOpen": {
+   "from": 0,
+   "frames": 120
   },
-  "demo": [
-    { "id": "thread", "src": [0.2, 7.0], "frames": 150, "caption": "One thread.", "at": "topLeft",
-      "camera": [[0, 1.0, 0.5, 0.5], [0.22, 1.22, 0.5, 0.6], [1, 1.26, 0.5, 0.58]] },
-    { "id": "computer", "src": [7.05, 13.4], "frames": 90, "caption": "It gets its own computer.", "at": "topLeft",
-      "camera": [[0, 1.26, 0.5, 0.58], [0.34, 1.8, 0.82, 0.58], [1, 1.9, 0.83, 0.58]] },
-    { "id": "flow", "src": [13.4, 24.6], "frames": 180, "caption": "Keep talking while it works.", "at": "topLeft",
-      "camera": [[0, 1.9, 0.83, 0.58], [0.1, 1.62, 0.37, 0.7], [1, 1.62, 0.37, 0.7]] },
-    { "id": "tasks", "src": [24.6, 35.0], "frames": 120, "caption": "Start another. Both keep going.", "at": "topLeft",
-      "camera": [[0, 1.62, 0.37, 0.7], [0.45, 1.62, 0.37, 0.7], [0.72, 2.0, 0.82, 0.68], [1, 2.05, 0.82, 0.68]] },
-    { "id": "memory", "src": [36.2, 39.4], "frames": 120, "caption": "Under 200 words, numbers first. It remembered.", "at": "midRight",
-      "camera": [[0, 2.05, 0.82, 0.68], [0.14, 1.5, 0.36, 0.5], [1, 1.58, 0.36, 0.48]] },
-    { "id": "doc", "src": [39.4, 43.4], "frames": 60, "caption": "Real Q2 numbers, with the source.", "at": "topRight",
-      "camera": [[0, 1.45, 0.42, 0.44], [1, 1.6, 0.42, 0.42]] }
-  ]
+  "stat": {
+   "from": 120,
+   "frames": 120
+  },
+  "meet": {
+   "from": 240,
+   "frames": 90
+  },
+  "demo": {
+   "from": 330,
+   "frames": 720
+  },
+  "phone": {
+   "from": 1050,
+   "frames": 120
+  },
+  "trust": {
+   "from": 1170,
+   "frames": 120
+  },
+  "end": {
+   "from": 1290,
+   "frames": 150
+  }
+ },
+ "demo": [
+  {
+   "id": "thread",
+   "src": [
+    0.2,
+    7.0
+   ],
+   "frames": 120,
+   "caption": "One thread.",
+   "at": "topLeft",
+   "camera": [
+    [
+     0,
+     1.0,
+     0.5,
+     0.5
+    ],
+    [
+     0.25,
+     1.22,
+     0.5,
+     0.6
+    ],
+    [
+     1,
+     1.26,
+     0.5,
+     0.6
+    ]
+   ]
+  },
+  {
+   "id": "flow",
+   "src": [
+    7.0,
+    18.7
+   ],
+   "frames": 150,
+   "caption": "Keep talking while it works.",
+   "at": "topLeft",
+   "camera": [
+    [
+     0,
+     1.26,
+     0.5,
+     0.6
+    ],
+    [
+     0.12,
+     1.45,
+     0.5,
+     0.66
+    ],
+    [
+     1,
+     1.45,
+     0.5,
+     0.66
+    ]
+   ]
+  },
+  {
+   "id": "tasks",
+   "src": [
+    18.8,
+    30.1
+   ],
+   "frames": 105,
+   "caption": "Start another. Both run.",
+   "at": "topLeft",
+   "camera": [
+    [
+     0,
+     1.45,
+     0.5,
+     0.66
+    ],
+    [
+     0.56,
+     1.45,
+     0.5,
+     0.66
+    ],
+    [
+     0.76,
+     1.95,
+     0.82,
+     0.7
+    ],
+    [
+     1,
+     1.98,
+     0.82,
+     0.7
+    ]
+   ]
+  },
+  {
+   "id": "computer",
+   "src": [
+    30.3,
+    33.7
+   ],
+   "frames": 75,
+   "caption": "Its own computer hit a bot check. It kept going.",
+   "at": "topLeft",
+   "camera": [
+    [
+     0,
+     1.98,
+     0.82,
+     0.7
+    ],
+    [
+     0.25,
+     2.2,
+     0.84,
+     0.73
+    ],
+    [
+     1,
+     2.25,
+     0.84,
+     0.73
+    ]
+   ]
+  },
+  {
+   "id": "news",
+   "src": [
+    38.2,
+    41.9
+   ],
+   "frames": 60,
+   "caption": "7 minutes later, task two is done.",
+   "at": "topWide",
+   "camera": [
+    [
+     0,
+     1.5,
+     0.45,
+     0.48
+    ],
+    [
+     1,
+     1.56,
+     0.45,
+     0.46
+    ]
+   ]
+  },
+  {
+   "id": "budget",
+   "src": [
+    42.0,
+    53.7
+   ],
+   "frames": 90,
+   "caption": "Hit its $1 budget. So it asked.",
+   "at": "lowerRight",
+   "camera": [
+    [
+     0,
+     1.5,
+     0.45,
+     0.62
+    ],
+    [
+     0.2,
+     1.5,
+     0.45,
+     0.7
+    ],
+    [
+     1,
+     1.55,
+     0.45,
+     0.7
+    ]
+   ]
+  },
+  {
+   "id": "brief",
+   "src": [
+    54.9,
+    59.9
+   ],
+   "frames": 75,
+   "caption": "Under 200 words, numbers first.",
+   "at": "topWide",
+   "camera": [
+    [
+     0,
+     1.35,
+     0.5,
+     0.5
+    ],
+    [
+     1,
+     1.4,
+     0.5,
+     0.49
+    ]
+   ]
+  },
+  {
+   "id": "doc",
+   "src": [
+    60.4,
+    63.2
+   ],
+   "frames": 45,
+   "caption": "Every figure matches the release.",
+   "at": "topWide",
+   "camera": [
+    [
+     0,
+     1.4,
+     0.42,
+     0.42
+    ],
+    [
+     1,
+     1.48,
+     0.42,
+     0.41
+    ]
+   ]
+  }
+ ]
 }
