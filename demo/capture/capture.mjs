@@ -1,251 +1,353 @@
-// Replays a recorded real Nori run (capture/run.json, polled from the live runtime
-// on 2026-10-31) through the real frontend (web/, on port 3211) and films it.
-// /api/* is answered in the browser from those snapshots; nothing touches the
-// runtime. Outputs public/clips/{desktop,phone}.mp4 and markers.json.
+// Plays the scripted snapshots (capture/run.json) through the real frontend (web/,
+// on port 3211) one film frame at a time, so every message lands on its exact frame.
+// /api/* is answered in the browser; nothing touches the runtime.
+// Outputs public/clips/desktop.mp4 (film frames 300-870), phone.mp4 (960-1469) and markers.json.
 //   node capture/capture.mjs [desktop|phone]
 import { chromium } from "playwright-core";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { spring } from "remotion";
 
 const ORIGIN = "http://127.0.0.1:3211";
 const root = resolve(import.meta.dirname, "..");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const RUN = JSON.parse(readFileSync(join(root, "capture/run.json"), "utf8"));
+const SCALE = 1920 / 1664; // CSS pixels to film pixels at camera zoom 1
+const MARK = "M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z";
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+const clamp01 = (t) => Math.max(0, Math.min(1, t));
+const popAt = (age) => spring({ frame: age, fps: 30, config: { damping: 12, stiffness: 190, mass: 0.7 } });
 
-class Replay {
+const CSS = `
+*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}
+[role=tooltip],[data-radix-popper-content-wrapper],.anim-pop,.arrive{display:none!important}
+.film-card{display:flex;align-items:center;gap:12px;width:fit-content;margin:8px 0 0 44px;padding:12px 18px 12px 12px;border:1px solid var(--hairline-strong);border-radius:14px;background:#fff;font-size:15px;font-weight:600;color:var(--text-primary);box-shadow:0 3px 16px #26085a0d;transform-origin:left center}
+.film-card i{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#eee5fc;flex-shrink:0}
+.film-note{margin:6px 0 0 44px;font-size:14px;color:var(--text-secondary);transform-origin:left center}
+.film-send{display:flex;align-items:center;gap:10px;margin:12px 0 0 44px;transform-origin:left center}
+.film-send button{padding:11px 26px;border-radius:999px;background:#5000ff;color:#fff;font-size:16px;font-weight:650}
+.film-send span{font-size:15px;font-weight:600;color:var(--text-primary)}
+`;
+const ROOM = ".nova-live-body .thread-mask>div{padding-bottom:1400px!important}"; // lets the film scroll a message anywhere
+const markSvg = (size) => `<svg width="${size}" height="${size}" viewBox="0 0 96 96" style="flex-shrink:0"><path d="${MARK}" fill="#fdfcff"/><clipPath id="film-mark-${size}"><path d="${MARK}"/></clipPath><rect x="30" y="61" width="36" height="30" rx="3" fill="#101a30" clip-path="url(#film-mark-${size})"/><path d="${MARK}" fill="none" stroke="#190936" stroke-width="3" stroke-linejoin="round"/><ellipse cx="38.5" cy="46" rx="3.4" ry="4" fill="#190936"/><ellipse cx="57.5" cy="46" rx="3.4" ry="4" fill="#190936"/><path d="M44 53.5Q48 57.1 52 53.5" fill="none" stroke="#190936" stroke-width="2.6" stroke-linecap="round"/></svg>`;
+const DOC = `<i><svg width="20" height="24" viewBox="0 0 20 24"><path d="M3 1h9l6 6v14a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2z" fill="#5000ff"/><path d="M5 12h9M5 16h9" stroke="#fff" stroke-width="1.6"/></svg></i>`;
+const CHART = `<i><svg width="24" height="24" viewBox="0 0 24 24"><path d="M3 21V13M9 21V8M15 21V11M21 21V3" stroke="#5000ff" stroke-width="3.4" stroke-linecap="round"/></svg></i>`;
+
+class Stage {
   index = 0;
-  ids = new Map(); // real user message id -> id the UI generated when "sending" it
-  shown = new Set();
-  current;
-  apply(i) {
-    this.index = i;
-    const { session } = RUN[i];
-    this.current = { ...session, messages: session.messages.map((m) => this.ids.has(m.id) ? { ...m, id: this.ids.get(m.id) } : m) };
-    for (const m of session.messages) this.shown.add(m.id);
+  typed = new Map(); // scripted user message id -> id the UI generated when sending it
+  pops = [];
+  dirty = true;
+  constructor(page, name, firstFrame) { this.page = page; this.name = name; this.first = firstFrame; this.dir = join(tmpdir(), `nori-film-${name}`); this.count = 0; }
+  session() {
+    const { session } = RUN[this.index];
+    return { ...session, messages: session.messages.map((m) => this.typed.has(m.id) ? { ...m, id: this.typed.get(m.id) } : m) };
   }
-  /** Messages this snapshot adds that the previous one lacked. */
-  fresh(i) { return RUN[i].session.messages.filter((m) => !this.shown.has(m.id)); }
-  hidden(m) { return RUN[this.index].session.dispatches.some((d) => m.id === `${d.id}-user`) || (m.run_id && m.id === `${m.run_id}-user`); }
-}
-
-async function mount(page, replay) {
-  await page.route("**/api/**", async (route) => {
-    const op = new URL(route.request().url()).pathname.split("/").pop();
-    const body = route.request().postDataJSON() ?? {};
-    if (op === "artifact") {
-      return route.fulfill({ status: 200, contentType: "image/png", body: readFileSync(join(root, "public/real", `${body.artifact_id}.png`)) });
-    }
-    if (op === "turn") {
-      replay.ids.set(replay.sending, `${body.id}-user`);
-      replay.apply(replay.index);
-    }
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(replay.current) });
-  });
-  await page.addInitScript(() => {
-    const real = Date.now.bind(Date);
-    window.__dt = 0;
-    Date.now = () => real() + window.__dt;
-    addEventListener("DOMContentLoaded", () => {
-      const style = document.createElement("style");
-      style.textContent = "[role=tooltip],[data-radix-popper-content-wrapper]{display:none!important}" + (innerWidth > 2000 ? "html{zoom:2}" : "");
-      document.documentElement.append(style);
-      if (matchMedia("(pointer: coarse)").matches) return;
-      // A visible pointer: headless screencasts do not draw one.
-      const c = document.createElement("div");
-      c.id = "film-cursor";
-      c.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 3l14 8-6.5 1.6L9.5 19z" fill="#120a2b" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
-      c.style.cssText = "position:fixed;left:-40px;top:-40px;z-index:2147483647;pointer-events:none;transform-origin:5px 3px;transition:transform .1s;";
-      document.documentElement.append(c);
-      addEventListener("mousemove", (e) => { const z = innerWidth > 2000 ? 2 : 1; c.style.left = e.clientX / z - 5 + "px"; c.style.top = e.clientY / z - 3 + "px"; }, true);
-      addEventListener("mousedown", () => { c.style.transform = "scale(.82)"; }, true);
-      addEventListener("mouseup", () => { c.style.transform = ""; }, true);
+  async mount(clock, startIndex) {
+    this.index = startIndex;
+    await this.page.route("**/api/**", (route) => {
+      const body = route.request().postDataJSON() ?? {};
+      if (new URL(route.request().url()).pathname.endsWith("/turn")) this.typed.set(this.sending, `${body.id}-user`);
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(this.session()) });
     });
-  });
-}
-
-class Film {
-  constructor(page, name) { this.page = page; this.name = name; this.frames = []; this.markers = {}; this.dir = join(tmpdir(), `nori-film-${name}`); }
-  async start() {
+    await this.page.addInitScript(([css, now]) => {
+      window.__now = now;
+      Date.now = () => window.__now;
+      Element.prototype.scrollTo = () => {}; // The film places the thread itself.
+      addEventListener("DOMContentLoaded", () => {
+        const style = document.createElement("style");
+        style.textContent = css;
+        document.documentElement.append(style);
+      });
+    }, [CSS + (this.name === "desktop" ? ".nova-backdrop{padding:40px 172px 144px!important}" : ROOM), clock]);
+    await this.page.goto(ORIGIN, { waitUntil: "networkidle" });
+    await this.page.getByLabel("Message Nori").waitFor();
+    await sleep(800);
     rmSync(this.dir, { recursive: true, force: true });
     mkdirSync(this.dir, { recursive: true });
-    this.cdp = await this.page.context().newCDPSession(this.page);
-    this.cdp.on("Page.screencastFrame", (f) => {
-      const file = join(this.dir, `${String(this.frames.length).padStart(6, "0")}.jpg`);
-      writeFileSync(file, Buffer.from(f.data, "base64"));
-      this.frames.push({ file, t: f.metadata.timestamp });
-      this.cdp.send("Page.screencastFrameAck", { sessionId: f.sessionId }).catch(() => {});
-    });
-    await this.cdp.send("Page.startScreencast", { format: "jpeg", quality: 95, everyNthFrame: 1 });
-    await sleep(400);
-    this.t0 = Date.now() / 1000;
   }
-  mark(name) { this.markers[name] = +(Date.now() / 1000 - this.t0).toFixed(2); console.log(this.name, name, this.markers[name]); }
-  async stop() {
-    await sleep(800);
-    await this.cdp.send("Page.stopScreencast");
-    const end = Date.now() / 1000;
-    const usable = this.frames.filter((f) => f.t >= this.t0 - 2);
-    let list = "ffconcat version 1.0\n";
-    usable.forEach((f, i) => {
-      const next = usable[i + 1]?.t ?? end;
-      const start = i === 0 ? this.t0 : f.t;
-      list += `file '${f.file}'\nduration ${Math.max(0.001, next - start).toFixed(4)}\n`;
-    });
-    const listFile = join(this.dir, "list.txt");
-    writeFileSync(listFile, list);
+  /** Bring in the snapshot for this frame, if there is one, and wait for React to draw it. */
+  async snapshot(frame) {
+    const i = RUN.findIndex((s) => s.frame === frame);
+    if (i < 0) return [];
+    const before = new Set(RUN[this.index].session.messages.map((m) => m.id));
+    this.index = i;
+    await this.page.evaluate((ts) => { window.__now = ts; dispatchEvent(new Event("online")); }, RUN[i].ts);
+    await this.settle();
+    return RUN[i].session.messages.filter((m) => !before.has(m.id));
+  }
+  async settle() { this.dirty = true; await sleep(140); await this.page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); }
+  pop(selector, frame, origin) { this.pops.push({ selector, frame, origin }); }
+  async runPops(frame) {
+    const live = this.pops.filter((p) => frame - p.frame <= 24);
+    if (!live.length) return;
+    this.dirty = true;
+    await this.page.evaluate((items) => { for (const { selector, scale, origin } of items) { const el = document.querySelector(selector); if (el) { el.style.scale = String(scale); if (origin) el.style.transformOrigin = origin; } } },
+      live.map((p) => ({ selector: p.selector, origin: p.origin, scale: frame - p.frame >= 24 ? 1 : popAt(frame - p.frame) })));
+  }
+  /** One film frame. A frame where nothing changed reuses the last image, so holds are perfectly still. */
+  async shoot() {
+    const file = join(this.dir, `${String(this.count).padStart(5, "0")}.jpg`);
+    if (this.dirty || !this.count) await this.page.screenshot({ path: file, type: "jpeg", quality: 96, caret: "hide" });
+    else copyFileSync(join(this.dir, `${String(this.count - 1).padStart(5, "0")}.jpg`), file);
+    this.count++;
+    this.dirty = false;
+  }
+  encode(hold = 0) {
     const out = join(root, "public/clips", `${this.name}.mp4`);
-    const r = spawnSync("ffmpeg", ["-y", "-loglevel", "error", "-safe", "0", "-f", "concat", "-i", listFile, "-vf", "fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:v", "libx264", "-crf", "16", "-preset", "medium", "-g", "10", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out], { stdio: "inherit" });
+    const r = spawnSync("ffmpeg", ["-y", "-loglevel", "error", "-framerate", "30", "-i", join(this.dir, "%05d.jpg"), "-vf", `scale=trunc(iw/2)*2:trunc(ih/2)*2,tpad=stop_mode=clone:stop=${hold}`, "-c:v", "libx264", "-crf", "15", "-preset", "medium", "-g", "10", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out], { stdio: "inherit" });
     if (r.status) throw new Error("ffmpeg failed");
-    console.log(this.name, "frames", usable.length, "seconds", (end - this.t0).toFixed(1), out);
-    return { markers: this.markers, seconds: +(end - this.t0).toFixed(2) };
+    console.log(this.name, this.count, "frames", out);
   }
 }
 
-async function glide(page, locator, steps = 14) {
-  const b = await locator.boundingBox();
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps });
-  await sleep(120);
-}
-
-const panel = (page) => page.locator('aside[aria-label="Agent panel"]');
-
-async function scrollPanel(page, dy, ticks = 6) {
-  await glide(page, panel(page), 10);
-  for (let i = 0; i < ticks; i++) { await page.mouse.wheel(0, dy / ticks); await sleep(40); }
-}
-
-/** Push snapshot i to the page: set its clock to that moment and ask it to refresh. */
-async function show(page, replay, i) {
-  replay.apply(i);
-  await page.evaluate((ts) => { window.__dt = ts - (Date.now() - window.__dt); dispatchEvent(new Event("online")); }, RUN[i].ts);
-}
-
-async function type(page, replay, message, film, ms) {
-  film?.mark(`type:${message.text.slice(0, 12)}`);
-  const box = page.getByLabel("Message Nori");
-  if (!page.viewportSize() || page.viewportSize().width > 500) await glide(page, box);
-  await box.click();
-  await box.pressSequentially(message.text, { delay: ms });
-  await sleep(220);
-  replay.sending = message.id;
-  await page.keyboard.press("Enter");
-  film?.mark(`sent:${message.text.slice(0, 12)}`);
-}
-
-async function open(page, replay, first) {
-  replay.apply(first);
-  await page.goto(ORIGIN, { waitUntil: "networkidle" });
-  await page.getByLabel("Message Nori").waitFor();
-  await page.evaluate((ts) => { window.__dt = ts - (Date.now() - window.__dt); }, RUN[first].ts);
-  await sleep(1200);
-}
-
-// How long each real moment stays on screen, in milliseconds of film.
-const HOLD = (text) => (text.length > 600 ? 3600 : text.length > 120 ? 2600 : 1900);
+const typeInto = async (page, text, from, to, frame, stage) => {
+  if (frame < from || frame >= to) return;
+  const want = Math.round(((frame - from + 1) / (to - from)) * text.length);
+  await page.getByLabel("Message Nori").fill(text.slice(0, want));
+  stage.dirty = true;
+};
 
 async function desktop(browser) {
-  const ctx = await browser.newContext({ viewport: { width: 2560, height: 1600 }, deviceScaleFactor: 1, timezoneId: "America/Los_Angeles", locale: "en-US" });
+  const ctx = await browser.newContext({ viewport: { width: 1664, height: 1040 }, deviceScaleFactor: 2, reducedMotion: "reduce", timezoneId: "America/Los_Angeles", locale: "en-US" });
   const page = await ctx.newPage();
-  const replay = new Replay();
-  const start = RUN.findIndex((s) => s.session.messages.some((m) => m.text.startsWith("Got it! For the rest")));
-  await mount(page, replay);
-  await open(page, replay, start);
-  await page.mouse.move(1600, 960);
-  const film = new Film(page, "desktop");
-  await film.start();
-  await sleep(500);
-  let panelOpen = false, shot = false;
+  const stage = new Stage(page, "desktop", 300);
+  await stage.mount(RUN[0].ts, 0);
+  await page.evaluate(() => {
+    const c = document.createElement("div");
+    c.id = "film-cursor";
+    c.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 3l14 8-6.5 1.6L9.5 19z" fill="#120a2b" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+    c.style.cssText = "position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none;transform-origin:5px 3px";
+    const caret = document.createElement("div");
+    caret.id = "film-caret";
+    caret.style.cssText = "position:fixed;width:2px;background:#5000ff;z-index:2147483646";
+    document.documentElement.append(c, caret);
+    window.__caret = () => {
+      const box = document.querySelector('[aria-label="Message Nori"]');
+      const r = box.getBoundingClientRect();
+      const ctx = document.createElement("canvas").getContext("2d");
+      ctx.font = getComputedStyle(box).font;
+      caret.style.left = `${r.left + ctx.measureText(box.value).width + 1}px`;
+      caret.style.top = `${r.top + 5}px`;
+      caret.style.height = `${r.height - 10}px`;
+    };
+  });
+  const center = async (locator) => { const b = await locator.boundingBox(); return [b.x + b.width / 2, b.y + b.height / 2]; };
+  const rest = await center(page.getByLabel("Message Nori"));
+  let path = [[300, rest[0] + 330, rest[1] + 8], [660, rest[0] + 330, rest[1] + 8]];
+  const moveCursor = async (frame) => {
+    const i = path.findIndex(([f]) => f > frame);
+    const [fa, xa, ya] = path[Math.max(0, (i < 0 ? path.length : i) - 1)];
+    const [fb, xb, yb] = path[i < 0 ? path.length - 1 : i];
+    const t = fa === fb ? 1 : smooth((frame - fa) / (fb - fa));
+    const x = lerp(xa, xb, t), y = lerp(ya, yb, t);
+    await page.evaluate(([x, y]) => { document.getElementById("film-cursor").style.translate = `${x}px ${y}px`; }, [x, y]);
+    if (frame > path[0][0] && fa !== fb) stage.dirty = true;
+  };
+  const MSG = `[data-item-id="${RUN.at(-1).session.messages[6].id}"]`;
+  const groupOf = (el) => el.parentElement.parentElement;
+  let pin, T, final = {};
+  const rects = [];
 
-  for (let i = start + 1; i < RUN.length; i++) {
-    const fresh = replay.fresh(i);
-    if (fresh.some((m) => m.text.startsWith("Give me the full-year"))) break;
-    const user = fresh.find((m) => m.role === "user" && !RUN[i].session.dispatches.some((d) => m.id === `${d.id}-user`) && !(m.run_id && m.id === `${m.run_id}-user`));
-    if (user) {
-      await page.evaluate((ts) => { window.__dt = ts - (Date.now() - window.__dt); }, Date.parse(user.created_at));
-      await type(page, replay, user, film, user.text.length > 90 ? 11 : 26);
-      replay.index = i;
+  for (let frame = 300; frame <= 870; frame++) {
+    await typeInto(page, "Grab numbers for the Acme account", 303, 343, frame, stage);
+    if (frame <= 345) {
+      await page.evaluate((frame) => { window.__caret(); document.getElementById("film-caret").style.opacity = frame === 345 ? 0 : (frame % 30 < 18 || frame > 302) ? 1 : 0; }, frame);
+      if (frame <= 303) stage.dirty = true;
     }
-    await show(page, replay, i);
-    const said = fresh.filter((m) => m.role === "assistant");
-    for (const m of said) {
-      film.mark(`reply:${m.text.slice(0, 12)}`);
-      await sleep(HOLD(m.text));
+    if (frame === 345) { stage.sending = RUN[1].session.messages[0].id; await page.getByLabel("Message Nori").press("Enter"); await sleep(60); }
+    const fresh = await stage.snapshot(frame);
+    for (const m of fresh) {
+      const id = stage.typed.get(m.id) ?? m.id;
+      stage.pop(`[data-item-id="${id}"]`, frame, m.role === "user" ? "right center" : "left center");
     }
-    if (!said.length) await sleep(user ? 900 : 70);
 
-    if (!panelOpen && said.some((m) => m.text.startsWith("I'm starting a second task"))) {
-      panelOpen = true;
-      const button = page.locator(".nova-activity-button");
-      await glide(page, button, 16);
-      await button.click();
-      film.mark("panel");
-      await sleep(700);
-      const hide = page.getByRole("button", { name: /Hide task details/ }).first();
-      await glide(page, hide);
-      await hide.click();
-      film.mark("two-tasks");
-      await sleep(2000);
+    if (frame === 524) {
+      const button = await center(page.locator(".nova-activity-button"));
+      path = [[524, rest[0] + 330, rest[1] + 8], [538, ...button], [612, ...button]];
     }
-    const shots = RUN[i].session.runs.find((r) => r.id.startsWith("b2b631a1"))?.artifacts?.length;
-    if (panelOpen && !shot && shots) {
-      shot = true;
-      const card = panel(page).locator("article").last().getByRole("button").first();
-      await card.scrollIntoViewIfNeeded();
-      await glide(page, card);
-      await card.click();
-      await sleep(500);
-      await page.locator('img[alt^="Screenshot"]').first().waitFor();
-      await page.locator('img[alt^="Screenshot"]').first().scrollIntoViewIfNeeded();
-      film.mark("screenshot");
-      await sleep(3000);
-      const close = page.getByRole("button", { name: "Hide agent panel" });
-      await glide(page, close, 12);
-      await close.click();
-      panelOpen = "closed";
-      film.mark("panel-closed");
+    if (frame === 540) {
+      await page.locator(".nova-activity-button").click();
+      await sleep(60);
+      await page.getByRole("button", { name: /Hide task details/ }).first().click();
+      await page.evaluate(() => { const a = document.querySelector('aside[aria-label="Agent panel"]'); a.firstElementChild.style.minWidth = "var(--panel-w)"; a.style.width = "0px"; });
+      await stage.settle();
     }
+    if (frame >= 540 && frame <= 552) {
+      await page.evaluate((t) => { const a = document.querySelector('aside[aria-label="Agent panel"]'); a.style.width = `calc(var(--panel-w) * ${t})`; }, smooth((frame - 540) / 12));
+      stage.dirty = true;
+    }
+    if (frame === 612) {
+      const close = await center(page.getByRole("button", { name: "Hide agent panel" }));
+      const at = path.at(-1);
+      path = [[612, at[1], at[2]], [628, ...close], [634, ...close], [660, close[0] + 30, 1100]];
+    }
+    if (frame >= 630 && frame <= 642) {
+      await page.evaluate((t) => { const a = document.querySelector('aside[aria-label="Agent panel"]'); if (a) a.style.width = `calc(var(--panel-w) * ${1 - t})`; }, smooth((frame - 630) / 12));
+      stage.dirty = true;
+    }
+    if (frame === 643) { await page.getByRole("button", { name: "Hide agent panel" }).evaluate((el) => el.click()); await stage.settle(); }
+    await moveCursor(frame);
+    if (frame === 720) {
+      await page.evaluate(([selector, doc]) => {
+        const card = document.createElement("div");
+        card.className = "film-card";
+        card.id = "film-doc";
+        card.innerHTML = `${doc}Acme numbers`;
+        document.querySelector(selector).parentElement.parentElement.append(card);
+      }, [MSG, DOC]);
+      stage.pop("#film-doc", 723, "left center");
+      await stage.settle();
+    }
+    if (frame === 722) stage.dirty = true;
+    await stage.runPops(frame);
+
+    if (frame === 809) {
+      pin = await page.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; }, MSG);
+      T = pin.y + pin.h / 2 - 422;
+      final.camera = { tx: 960 - SCALE * (pin.x + 44 + (pin.w - 44) / 2), ty: 540 - SCALE * (pin.y + pin.h / 2) };
+      final.message = pin;
+      await page.evaluate((ROOM) => { const s = document.createElement("style"); s.textContent = ROOM + ".nova-live-body .thread-mask>div{padding-left:var(--pad)!important;padding-right:var(--pad)!important}.nova-composer>div{padding-left:var(--pad)!important;padding-right:var(--pad)!important}"; document.documentElement.append(s); }, ROOM);
+    }
+    if (frame >= 810) {
+      // The film masks to the smooth rectangle; the page snaps to whole pixels underneath it,
+      // so the pinned message and its medallion never land on a new pixel.
+      const t = smooth(clamp01((frame - 810) / 60));
+      const w = lerp(1320, 390, t), h = lerp(856, 844, t), top = lerp(40, T, t), r = lerp(22, 44, t), pad = lerp(40, 18, t);
+      const inset = (width, p) => Math.max((width - 920) / 2, 0) + p;
+      const wReal = 2 * Math.round(w / 2), padReal = Math.round(pad);
+      const rect = await page.evaluate(({ w, h, top, r, left, pad, header, pin, selector }) => {
+        const win = document.querySelector(".nova-window");
+        document.querySelector(".nova-backdrop").style.background = "#fff";
+        document.documentElement.style.setProperty("--pad", `${pad}px`);
+        document.querySelector(".nova-header").style.opacity = header;
+        Object.assign(win.style, { position: "fixed", maxWidth: "none", margin: "0", borderColor: "transparent", boxShadow: "none", width: `${w}px`, height: `${h}px`, top: `${top}px`, left: `${left}px`, borderRadius: `${r}px` });
+        const msg = document.querySelector(selector);
+        win.style.left = `${left + pin.x - msg.getBoundingClientRect().left}px`;
+        const scroller = win.querySelector(".thread-mask");
+        scroller.scrollTop += msg.getBoundingClientRect().top - pin.y;
+        const m = msg.getBoundingClientRect();
+        return { errX: m.left - pin.x, errY: m.top - pin.y };
+      }, { w: wReal, h: Math.ceil(h) + 2, top: Math.floor(top), r, left: pin.x - inset(wReal, padReal), pad: padReal, header: 1 - clamp01((frame - 810) / 36), pin, selector: MSG });
+      Object.assign(rect, { x: pin.x - inset(w, pad), y: top, w, h, r });
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
+      rects.push(rect);
+      if (Math.abs(rect.errX) > 0.01 || Math.abs(rect.errY) > 0.5) console.log("drift", frame, rect.errX, rect.errY);
+      stage.dirty = true;
+    }
+    await stage.shoot();
+    if (frame % 60 === 0) console.log("desktop frame", frame);
   }
-  await sleep(1500);
-  const doc = page.getByRole("button", { name: "Open document" }).last();
-  await doc.scrollIntoViewIfNeeded();
-  await glide(page, doc);
-  await doc.click();
-  film.mark("document");
-  await sleep(2400);
-  await page.mouse.move(1280, 960, { steps: 8 });
-  await sleep(1200);
-  film.mark("end");
-  const result = await film.stop();
+  stage.encode(120); // the phone screen holds until it goes dark
+  final.window = rects;
   await ctx.close();
-  return result;
+  return final;
 }
 
 async function phone(browser) {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, timezoneId: "America/Los_Angeles", locale: "en-US" });
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, reducedMotion: "reduce", timezoneId: "America/Los_Angeles", locale: "en-US" });
   const page = await ctx.newPage();
-  const replay = new Replay();
-  const ask = RUN.findIndex((s) => s.session.messages.some((m) => m.text.startsWith("Give me the full-year")));
-  await mount(page, replay);
-  await open(page, replay, ask - 1);
-  const film = new Film(page, "phone");
-  await film.start();
-  await sleep(600);
-  film.mark("type");
-  const user = RUN[ask].session.messages.find((m) => m.text.startsWith("Give me the full-year"));
-  await type(page, replay, user, null, 30);
-  replay.index = ask;
-  for (let i = ask; i < RUN.length; i++) {
-    await show(page, replay, i);
-    await sleep(RUN[i].session.conversation.processing ? 900 : 120);
+  const stage = new Stage(page, "phone", 960);
+  const before = RUN.findIndex((s) => s.frame === 990) - 1; // the thread as it stood at the end of the evening
+  stage.index = before;
+  await stage.mount(Date.parse("2027-02-17T16:00:00Z"), before);
+  await page.evaluate(([doc, selector]) => {
+    const card = document.createElement("div");
+    card.className = "film-card";
+    card.innerHTML = `${doc}Acme numbers`;
+    document.querySelector(selector).parentElement.parentElement.append(card);
+  }, [DOC, `[data-item-id="${RUN[before].session.messages[6].id}"]`]);
+  const morning = RUN[RUN.findIndex((s) => s.frame === 990)].session.messages[7].id;
+  let info = {};
+
+  for (let frame = 960; frame <= 1469; frame++) {
+    if (frame === 1230) { stage.sending = RUN.at(-1).session.messages[8].id; await page.getByLabel("Message Nori").press("Enter"); await sleep(60); }
+    await stage.snapshot(frame);
+    if (frame === 990) {
+      // Put the morning's message just under the header, with room for what follows it.
+      await page.evaluate((id) => {
+        const scroller = document.querySelector(".thread-mask");
+        const el = document.querySelector(`[data-item-id="${id}"]`);
+        scroller.scrollTop += el.getBoundingClientRect().top - 118;
+      }, morning);
+      await stage.settle();
+    }
+    if (frame === 1110) {
+      await page.evaluate(([id, mark]) => {
+        const row = document.createElement("div");
+        row.className = "film-send";
+        row.id = "film-send";
+        row.innerHTML = `${mark}<button>Send it</button>`;
+        document.querySelector(`[data-item-id="${id}"]`).parentElement.parentElement.append(row);
+        const dot = document.createElement("div");
+        dot.id = "film-tap";
+        dot.style.cssText = "position:fixed;width:44px;height:44px;margin:-22px;border-radius:50%;background:#19093640;opacity:0;z-index:99";
+        document.documentElement.append(dot);
+      }, [morning, markSvg(30)]);
+      stage.pop("#film-send", 1110, "left center");
+      await stage.settle();
+    }
+    if (frame >= 1164 && frame <= 1176) {
+      await page.evaluate((frame) => {
+        const b = document.querySelector("#film-send button");
+        const dot = document.getElementById("film-tap");
+        if (b) { const r = b.getBoundingClientRect(); dot.style.left = `${r.left + r.width / 2}px`; dot.style.top = `${r.top + r.height / 2}px`; }
+        dot.style.opacity = frame < 1170 ? (frame - 1164) / 6 : Math.max(0, 1 - (frame - 1170) / 6);
+        dot.style.scale = frame < 1170 ? 1.2 - (frame - 1164) * 0.05 : 0.9 + (frame - 1170) * 0.1;
+      }, frame);
+      stage.dirty = true;
+    }
+    if (frame === 1170) {
+      await page.evaluate((mark) => { document.getElementById("film-send").innerHTML = `${mark}<span>Sent to Priya at Acme.</span>`; }, markSvg(30));
+      stage.pop("#film-send", 1170, "left center");
+    }
+    if (frame === 1200) await page.getByLabel("Message Nori").evaluate((el) => el.focus());
+    await typeInto(page, "Amazing. Now turn the Acme numbers into a dashboard and share it with Sam.", 1200, 1229, frame, stage);
+    if (frame === 1405) {
+      // The dashboard flies into this spot, so measure it before the card appears.
+      await page.evaluate((chart) => {
+        const log = document.querySelector('[role="log"] > div[aria-live="off"]');
+        const card = document.createElement("div");
+        card.className = "film-card";
+        card.id = "film-dash";
+        card.style.visibility = "hidden";
+        card.style.margin = "14px 0 0";
+        card.innerHTML = `${chart}<span>Acme renewal dashboard.<br>Shared with Sam.</span>`;
+        const note = document.createElement("div");
+        note.className = "film-note";
+        note.id = "film-sam";
+        note.style.margin = "8px 0 0 4px";
+        note.style.visibility = "hidden";
+        note.textContent = "Sam opened it.";
+        log.append(card, note);
+      }, CHART);
+      info.card = await page.evaluate(() => { const r = document.getElementById("film-dash").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+      stage.dirty = true;
+    }
+    if (frame === 1410) {
+      await page.evaluate(() => { document.getElementById("film-dash").style.visibility = "visible"; });
+      stage.pop("#film-dash", 1410, "left center");
+      stage.dirty = true;
+    }
+    if (frame === 1440) {
+      await page.evaluate(() => { document.getElementById("film-sam").style.visibility = "visible"; });
+      stage.pop("#film-sam", 1440, "left center");
+      stage.dirty = true;
+    }
+    if (frame === 1462) { // Remotion flies a copy of the card off from here
+      await page.evaluate(() => { document.getElementById("film-dash").style.visibility = "hidden"; });
+      stage.dirty = true;
+    }
+    await stage.runPops(frame);
+    await stage.shoot();
+    if (frame % 60 === 0) console.log("phone frame", frame);
   }
-  film.mark("reply");
-  await sleep(3400);
-  film.mark("end");
-  const result = await film.stop();
+  stage.encode();
   await ctx.close();
-  return result;
+  return info;
 }
 
 const which = process.argv[2];
