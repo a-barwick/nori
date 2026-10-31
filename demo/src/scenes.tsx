@@ -11,14 +11,16 @@ const { camera: endCamera, window: morph } = markers.desktop;
 const phoneCss = morph[morph.length - 1];
 /** Where the phone's screen sits in the frame, set by the Acme message holding still. */
 const SCREEN = { x: endCamera.tx + SCALE * phoneCss.x, y: endCamera.ty + SCALE * phoneCss.y, w: SCALE * phoneCss.w, h: SCALE * phoneCss.h, r: SCALE * phoneCss.r };
-const PHONE_C = { x: SCREEN.x + SCREEN.w / 2, y: SCREEN.y + SCREEN.h / 2 };
+const PHONE_C = { x: 960, y: 540 }; // the Acme message's centre, which the phone scales around
+const MORPH_ZOOM = 1.5; // keeps the Acme text large while the desktop becomes the phone
+const SETTLED = 1.05; // the whole phone in frame
 
 /* ── Scenes 3 and 4: the real interface, with a camera and sticker captions. ── */
 
 // [film frame, zoom, the page point (CSS pixels) held at frame centre]
 const camera: [number, number, number, number][] = [
   [300, 1, 832, 468], [330, 1.5, 832, 660], [345, 1.85, 832, 372], [535, 1.85, 832, 372], [552, 1.3, 860, 420], [630, 1.3, 860, 420],
-  [648, 1.85, 832, 410], [710, 1.85, 832, 410], [728, 1.85, 832, 510], [780, 1.85, 832, 510], [810, 1, (960 - endCamera.tx) / SCALE, (540 - endCamera.ty) / SCALE],
+  [648, 1.85, 832, 410], [710, 1.85, 832, 410], [728, 1.85, 832, 510], [780, 1.85, 832, 510], [810, MORPH_ZOOM, (960 - endCamera.tx) / SCALE, (540 - endCamera.ty) / SCALE],
 ];
 
 const stageCamera = (frame: number) => {
@@ -51,8 +53,8 @@ const restY = 540 - (PHONE_C.y + (SCREEN.y + SCALE * (cardCss.y + cardCss.h / 2)
 /** The phone's move: formed around the screen, still all night, then pushed in and flown through. */
 const rig = (frame: number) => {
   const turn = interpolate(frame, [870, 888, 900], [0, -8, -5], { ...clamp, easing: easeOut }) * interpolate(frame, [1095, 1120], [1, 0], clamp);
-  const scale = frame < 1300
-    ? interpolate(frame, [990, 1110], [1, PUSH], { ...clamp, easing: inOut }) * interpolate(frame, [1230, 1260], [1, 15], { ...clamp, easing: easeIn })
+  const scale = frame < 810 ? 1 : frame < 1300
+    ? interpolate(frame, [870, 900, 990, 1110], [MORPH_ZOOM, SETTLED, SETTLED, PUSH], { ...clamp, easing: inOut }) * interpolate(frame, [1230, 1260], [1, 15], { ...clamp, easing: easeIn })
     : interpolate(frame, [1380, 1410], [11, REST], { ...clamp, easing: easeOut });
   const pan = frame < 1300
     ? interpolate(frame, [990, 1110, 1188, 1224], [0, 215, 215, -190], { ...clamp, easing: inOut })
@@ -153,7 +155,8 @@ const Computer: React.FC = () => {
 export const Stage: React.FC = () => {
   const frame = useCurrentFrame();
   const wipe = interpolate(frame, [300, 320], [0, 2300], { ...clamp, easing: Easing.bezier(0.5, 0, 0.3, 1) });
-  const cam = stageCamera(frame);
+  // From 810 the phone's scale carries the zoom, so the camera sits still at its own zoom 1.
+  const cam = frame < 810 ? stageCamera(frame) : { z: 1, x: endCamera.tx, y: endCamera.ty };
   const r = rig(frame);
   const i = Math.max(0, Math.min(morph.length - 1, frame - 810));
   const w = morph[i];
@@ -190,7 +193,7 @@ export const Stage: React.FC = () => {
         </AbsoluteFill>
       )}
       {stickers.map(([from, to, text]) => frame >= from && frame < to && <Sticker key={text} text={text} at={from} until={to} style={from === 543 ? { right: undefined, top: undefined, left: 64, bottom: 72 } : { top: undefined, right: 64, bottom: 72 }} />)}
-      {sameThread > 0 && <div style={{ position: "absolute", left: 60, top: 470, translate: `0 ${sameRise}px`, opacity: sameThread, color: "#fff", fontSize: 108, fontWeight: 800, letterSpacing: -4 }}>Same thread.</div>}
+      {sameThread > 0 && <div style={{ position: "absolute", left: 56, top: 470, translate: `0 ${sameRise}px`, opacity: sameThread, color: "#fff", fontSize: 108, fontWeight: 800, letterSpacing: -4 }}>Same thread.</div>}
       {frame >= 1125 && frame < 1170 && <Sticker text="You didn't ask." at={1125} until={1170} size={84} style={{ right: undefined, left: 44, top: 470 }} />}
       {frame >= 1260 && frame < 1411 && <Computer />}
     </AbsoluteFill>
