@@ -313,9 +313,33 @@ func (s *server) screenshot(w http.ResponseWriter, r *http.Request) {
 	var result struct {
 		Data string `json:"data"`
 	}
+	// Chromium can stall surface capture for background pages. Foreground
+	// visibility is shared, so keep activation and capture together across tasks.
 	captureStarted := time.Now()
-	if err = c.call(ctx, "Page.captureScreenshot", map[string]any{"format": "png", "captureBeyondViewport": false}, &result); err != nil {
-		log.Printf("browser screenshot failed task=%q run=%q operation=%q elapsed=%s context_error=%v error=%.512q", req.TaskID, req.RunID, r.Header.Get("Nori-Operation-ID"), time.Since(captureStarted).Round(time.Millisecond), ctx.Err(), err.Error())
+	stage := "queue"
+	err = func() error {
+		select {
+		case s.screenshotGate <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		defer func() { <-s.screenshotGate }()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		stage = "activation"
+		if err := c.call(ctx, "Page.bringToFront", map[string]any{}, nil); err != nil {
+			return err
+		}
+		stage = "capture"
+		return c.call(ctx, "Page.captureScreenshot", map[string]any{"format": "png", "captureBeyondViewport": false}, &result)
+	}()
+	if err != nil {
+		log.Printf("browser screenshot failed task=%q run=%q operation=%q stage=%s elapsed=%s context_error=%v error=%.512q", req.TaskID, req.RunID, r.Header.Get("Nori-Operation-ID"), stage, time.Since(captureStarted).Round(time.Millisecond), ctx.Err(), err.Error())
+		if stage == "queue" && errors.Is(err, context.Canceled) {
+			http.Error(w, "run canceled", 409)
+			return
+		}
 		http.Error(w, "screenshot unavailable", 502)
 		return
 	}
