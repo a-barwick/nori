@@ -12,7 +12,9 @@ ARG NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE
 ARG SENTRY_ORG
 ARG SENTRY_PROJECT
 ARG SENTRY_RELEASE
-RUN --mount=type=secret,id=sentry_auth_token,env=SENTRY_AUTH_TOKEN,required=false mkdir -p public && bun run build
+RUN --mount=type=secret,id=sentry_auth_token,required=false \
+    if [ -f /run/secrets/sentry_auth_token ]; then export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token)"; fi && \
+    mkdir -p public && bun run build
 
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
