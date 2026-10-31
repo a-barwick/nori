@@ -1,7 +1,7 @@
 // Plays the scripted snapshots (capture/run.json) through the real frontend (web/,
 // on port 3211) one film frame at a time, so every message lands on its exact frame.
 // /api/* is answered in the browser; nothing touches the runtime.
-// Outputs public/clips/desktop.mp4 (film frames 300-870), phone.mp4 (960-1469) and markers.json.
+// Outputs public/clips/desktop.mp4 (film frames 480-1500), phone.mp4 (1620-2909) and markers.json.
 //   node capture/capture.mjs [desktop|phone]
 import { chromium } from "playwright-core";
 import { spawnSync } from "node:child_process";
@@ -26,15 +26,37 @@ const CSS = `
 [role=tooltip],[data-radix-popper-content-wrapper],.anim-pop,.arrive{display:none!important}
 .film-card{display:flex;align-items:center;gap:12px;width:fit-content;margin:8px 0 0 44px;padding:12px 18px 12px 12px;border:1px solid var(--hairline-strong);border-radius:14px;background:#fff;font-size:15px;font-weight:600;color:var(--text-primary);box-shadow:0 3px 16px #26085a0d;transform-origin:left center}
 .film-card i{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#eee5fc;flex-shrink:0}
-.film-note{margin:6px 0 0 44px;font-size:14px;color:var(--text-secondary);transform-origin:left center}
-.film-send{display:flex;align-items:center;gap:10px;margin:12px 0 0 44px;transform-origin:left center}
-.film-send button{padding:11px 26px;border-radius:999px;background:#5000ff;color:#fff;font-size:16px;font-weight:650}
-.film-send span{font-size:15px;font-weight:600;color:var(--text-primary)}
+.film-pending{border:2px dashed #5000ff!important}
+.film-done{border:2px solid #5000ff!important}
+.film-invite{display:flex;gap:14px;width:440px;max-width:calc(100% - 44px);box-sizing:border-box;margin:8px 0 10px 44px;padding:10px;border-radius:18px;background:#fff;box-shadow:0 3px 16px #26085a12;transform-origin:left center}
+.film-invite svg.map{width:min(150px,30%);height:112px;border-radius:10px;flex-shrink:0;display:block}
+.film-invite .side{flex:1;display:flex;flex-direction:column;justify-content:space-between;gap:10px;min-width:0}
+.film-faces{display:flex}
+.film-faces b{position:relative;display:grid;place-items:center;width:40px;height:40px;margin-right:-6px;border-radius:50%;border:2px solid #fff;color:#fff;font-size:15px;font-weight:700}
+.film-faces u{position:absolute;right:-3px;bottom:-3px;display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#1fa463;border:2px solid #fff;color:#fff;font-size:10px;text-decoration:none;visibility:hidden}
+.film-btn{padding:10px 14px;border-radius:999px;background:#5000ff;color:#fff;font-size:14px;font-weight:650;text-align:center;white-space:nowrap}
+.film-state{padding:10px 0;font-size:15px;font-weight:650;color:var(--text-primary)}
+.film-chip{width:fit-content;margin:10px 0 0 44px;padding:9px 16px;border-radius:999px;background:#fff;font-size:15px;font-weight:600;color:var(--text-primary);transform-origin:left center}
+.film-proposal{width:280px;margin:10px 0 14px 44px;padding:10px;border-radius:16px;background:#fff;transform-origin:left center;box-shadow:0 3px 16px #26085a12}
+.film-proposal .page{height:92px;padding:10px 12px;border-radius:8px;background:#f6f2ff;display:flex;flex-direction:column;gap:7px;margin-bottom:9px}
+.film-proposal .page s{display:block;height:5px;border-radius:3px;background:#d8ccf5;text-decoration:none}
+.film-proposal strong{display:block;font-size:15px;font-weight:700;color:var(--text-primary)}
+.film-proposal span{display:block;margin-top:1px;font-size:13px;color:var(--text-secondary)}
+.film-sheet{position:fixed;inset:0;z-index:60;background:#f3edff;padding:62px 16px 26px;display:flex;flex-direction:column;font-family:inherit;color:#190936;overflow:hidden}
+.film-sheet .doc{flex:1;padding:24px 22px;border-radius:18px;background:#fff;overflow:hidden}
+.film-sheet h3{margin:0;font-size:30px;line-height:1.15;font-weight:800;letter-spacing:-.5px}
+.film-sheet h4{margin:30px 0 10px;font-size:20px;font-weight:700}
+.film-sheet p{margin:9px 0 0;font-size:18px;line-height:1.4;color:#4a4060}
+.film-sheet table{width:100%;margin-top:6px;border-collapse:collapse;font-size:18px}
+.film-sheet td{padding:13px 0;border-top:1px solid #ece6f7}
+.film-sheet td:last-child{text-align:right;font-weight:700}
+.film-sheet .film-btn{margin-top:14px;padding:18px;font-size:20px}
 `;
 const ROOM = ".nova-live-body .thread-mask>div{padding-bottom:1400px!important}"; // lets the film scroll a message anywhere
 const markSvg = (size) => `<svg width="${size}" height="${size}" viewBox="0 0 96 96" style="flex-shrink:0"><path d="${MARK}" fill="#fdfcff"/><clipPath id="film-mark-${size}"><path d="${MARK}"/></clipPath><rect x="30" y="61" width="36" height="30" rx="3" fill="#101a30" clip-path="url(#film-mark-${size})"/><path d="${MARK}" fill="none" stroke="#190936" stroke-width="3" stroke-linejoin="round"/><ellipse cx="38.5" cy="46" rx="3.4" ry="4" fill="#190936"/><ellipse cx="57.5" cy="46" rx="3.4" ry="4" fill="#190936"/><path d="M44 53.5Q48 57.1 52 53.5" fill="none" stroke="#190936" stroke-width="2.6" stroke-linecap="round"/></svg>`;
-const DOC = `<i><svg width="20" height="24" viewBox="0 0 20 24"><path d="M3 1h9l6 6v14a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2z" fill="#5000ff"/><path d="M5 12h9M5 16h9" stroke="#fff" stroke-width="1.6"/></svg></i>`;
-const CHART = `<i><svg width="24" height="24" viewBox="0 0 24 24"><path d="M3 21V13M9 21V8M15 21V11M21 21V3" stroke="#5000ff" stroke-width="3.4" stroke-linecap="round"/></svg></i>`;
+const APP = `<i><svg width="24" height="24" viewBox="0 0 24 24"><path d="M3 5h18M3 12h18M3 19h18" stroke="#5000ff" stroke-width="3.4" stroke-linecap="round"/></svg></i>`;
+const MAP = `<svg class="map" viewBox="0 0 150 112" preserveAspectRatio="xMidYMid slice"><rect width="150" height="112" fill="#eee5fc"/><path d="M0 34H150M0 80H150M42 0V112M108 0V112" stroke="#fff" stroke-width="9"/><path d="M42 80H108" stroke="#a98bff" stroke-width="4" stroke-dasharray="1 8" stroke-linecap="round"/><circle cx="42" cy="80" r="9" fill="#ff4b62" stroke="#fff" stroke-width="3"/><circle cx="108" cy="80" r="9" fill="#5000ff" stroke="#fff" stroke-width="3"/></svg>`;
+const FACES = [["M", "#5000ff"], ["J", "#ff4b62"], ["D", "#1a8f8a"], ["R", "#d9822b"], ["K", "#3f7cf0"]].map(([l, c]) => `<b style="background:${c}">${l}<u>✓</u></b>`).join("");
 
 class Stage {
   index = 0;
@@ -62,7 +84,7 @@ class Stage {
         style.textContent = css;
         document.documentElement.append(style);
       });
-    }, [CSS + (this.name === "desktop" ? ".nova-backdrop{padding:40px 172px 144px!important}" : ROOM), clock]);
+    }, [CSS + (this.name === "desktop" ? ".nova-backdrop{padding:40px 172px 304px!important}" : ROOM), clock]);
     await this.page.goto(ORIGIN, { waitUntil: "networkidle" });
     await this.page.getByLabel("Message Nori").waitFor();
     await sleep(800);
@@ -111,10 +133,30 @@ const typeInto = async (page, text, from, to, frame, stage) => {
   stage.dirty = true;
 };
 
+/** A finger's tap, on phone frames `at - 6` to `at + 6`. */
+const tapDot = async (page, stage, selector, frame, at) => {
+  if (frame < at - 6 || frame > at + 6) return;
+  await page.evaluate(([selector, age]) => {
+    let dot = document.getElementById("film-tap");
+    if (!dot) {
+      dot = document.createElement("div");
+      dot.id = "film-tap";
+      dot.style.cssText = "position:fixed;width:44px;height:44px;margin:-22px;border-radius:50%;background:#19093640;z-index:99";
+      document.documentElement.append(dot);
+    }
+    const el = document.querySelector(selector);
+    if (el) { const r = el.getBoundingClientRect(); dot.style.left = `${r.left + r.width / 2}px`; dot.style.top = `${r.top + r.height / 2}px`; }
+    dot.style.opacity = age < 0 ? (age + 6) / 6 : Math.max(0, 1 - age / 6);
+    dot.style.scale = age < 0 ? 1.2 + age * -0.05 - 0.3 : 0.9 + age * 0.1;
+  }, [selector, frame - at]);
+  stage.dirty = true;
+};
+
+
 async function desktop(browser) {
-  const ctx = await browser.newContext({ viewport: { width: 1664, height: 1040 }, deviceScaleFactor: 2, reducedMotion: "reduce", timezoneId: "America/Los_Angeles", locale: "en-US" });
+  const ctx = await browser.newContext({ viewport: { width: 1664, height: 1200 }, deviceScaleFactor: 2, reducedMotion: "reduce", timezoneId: "America/Los_Angeles", locale: "en-US" });
   const page = await ctx.newPage();
-  const stage = new Stage(page, "desktop", 300);
+  const stage = new Stage(page, "desktop", 480);
   await stage.mount(RUN[0].ts, 0);
   await page.evaluate(() => {
     const c = document.createElement("div");
@@ -137,7 +179,7 @@ async function desktop(browser) {
   });
   const center = async (locator) => { const b = await locator.boundingBox(); return [b.x + b.width / 2, b.y + b.height / 2]; };
   const rest = await center(page.getByLabel("Message Nori"));
-  let path = [[300, rest[0] + 330, rest[1] + 8], [660, rest[0] + 330, rest[1] + 8]];
+  let path = [[480, rest[0] + 330, rest[1] + 8], [1160, rest[0] + 330, rest[1] + 8]];
   const moveCursor = async (frame) => {
     const i = path.findIndex(([f]) => f > frame);
     const [fa, xa, ya] = path[Math.max(0, (i < 0 ? path.length : i) - 1)];
@@ -148,74 +190,65 @@ async function desktop(browser) {
     if (frame > path[0][0] && fa !== fb) stage.dirty = true;
   };
   const MSG = `[data-item-id="${RUN.at(-1).session.messages[6].id}"]`;
-  const groupOf = (el) => el.parentElement.parentElement;
+  const KAZE = `[data-item-id="${RUN.at(-1).session.messages[5].id}"]`;
   let pin, T, final = {};
   const rects = [];
 
-  for (let frame = 300; frame <= 870; frame++) {
-    await typeInto(page, "Grab numbers for the Acme account", 303, 343, frame, stage);
-    if (frame <= 345) {
-      await page.evaluate((frame) => { window.__caret(); document.getElementById("film-caret").style.opacity = frame === 345 ? 0 : (frame % 30 < 18 || frame > 302) ? 1 : 0; }, frame);
-      if (frame <= 303) stage.dirty = true;
+  for (let frame = 480; frame <= 1500; frame++) {
+    await typeInto(page, "Grab numbers for the Acme account", 483, 523, frame, stage);
+    if (frame <= 525) {
+      await page.evaluate((frame) => { window.__caret(); document.getElementById("film-caret").style.opacity = frame === 525 ? 0 : (frame % 30 < 18 || frame > 482) ? 1 : 0; }, frame);
+      if (frame <= 483) stage.dirty = true;
     }
-    if (frame === 345) { stage.sending = RUN[1].session.messages[0].id; await page.getByLabel("Message Nori").press("Enter"); await sleep(60); }
+    if (frame === 525) { stage.sending = RUN[1].session.messages[0].id; await page.getByLabel("Message Nori").press("Enter"); await sleep(60); }
     const fresh = await stage.snapshot(frame);
     for (const m of fresh) {
       const id = stage.typed.get(m.id) ?? m.id;
       stage.pop(`[data-item-id="${id}"]`, frame, m.role === "user" ? "right center" : "left center");
     }
 
-    if (frame === 524) {
-      const button = await center(page.locator(".nova-activity-button"));
-      path = [[524, rest[0] + 330, rest[1] + 8], [538, ...button], [612, ...button]];
-    }
-    if (frame === 540) {
-      await page.locator(".nova-activity-button").click();
-      await sleep(60);
-      await page.getByRole("button", { name: /Hide task details/ }).first().click();
-      await page.evaluate(() => { const a = document.querySelector('aside[aria-label="Agent panel"]'); a.firstElementChild.style.minWidth = "var(--panel-w)"; a.style.width = "0px"; });
-      await stage.settle();
-    }
-    if (frame >= 540 && frame <= 552) {
-      await page.evaluate((t) => { const a = document.querySelector('aside[aria-label="Agent panel"]'); a.style.width = `calc(var(--panel-w) * ${t})`; }, smooth((frame - 540) / 12));
-      stage.dirty = true;
-    }
-    if (frame === 612) {
-      const close = await center(page.getByRole("button", { name: "Hide agent panel" }));
-      const at = path.at(-1);
-      path = [[612, at[1], at[2]], [628, ...close], [634, ...close], [660, close[0] + 30, 1100]];
-    }
-    if (frame >= 630 && frame <= 642) {
-      await page.evaluate((t) => { const a = document.querySelector('aside[aria-label="Agent panel"]'); if (a) a.style.width = `calc(var(--panel-w) * ${1 - t})`; }, smooth((frame - 630) / 12));
-      stage.dirty = true;
-    }
-    if (frame === 643) { await page.getByRole("button", { name: "Hide agent panel" }).evaluate((el) => el.click()); await stage.settle(); }
-    await moveCursor(frame);
-    if (frame === 720) {
-      await page.evaluate(([selector, doc]) => {
+    if (frame === 1032) {
+      await page.evaluate(([selector, map, faces]) => {
         const card = document.createElement("div");
-        card.className = "film-card";
-        card.id = "film-doc";
-        card.innerHTML = `${doc}Acme numbers`;
-        document.querySelector(selector).parentElement.parentElement.append(card);
-      }, [MSG, DOC]);
-      stage.pop("#film-doc", 723, "left center");
+        card.className = "film-invite film-pending";
+        card.id = "film-invite";
+        card.innerHTML = `${map}<div class="side"><div class="film-faces">${faces}</div><div class="film-btn">Book it and invite the team</div></div>`;
+        document.querySelector(selector).parentElement.insertAdjacentElement("afterend", card);
+      }, [KAZE, MAP, FACES]);
+      stage.pop("#film-invite", 1032, "left center");
       await stage.settle();
     }
-    if (frame === 722) stage.dirty = true;
+    if (frame === 1165) {
+      const button = await center(page.locator("#film-invite .film-btn"));
+      path = [[1165, rest[0] + 330, rest[1] + 8], [1197, ...button], [1220, ...button], [1262, button[0] + 40, 1100]];
+    }
+    if (frame === 1200) {
+      await page.evaluate(() => {
+        const card = document.getElementById("film-invite");
+        card.className = "film-invite film-done";
+        card.querySelector(".film-btn").outerHTML = '<div class="film-state">Booked. Invites sent.</div>';
+      });
+      stage.pop("#film-invite .film-state", 1200, "left center");
+      await stage.settle();
+    }
+    if (frame >= 1215 && frame <= 1275 && (frame - 1215) % 15 === 0) {
+      await page.evaluate((n) => { document.querySelectorAll("#film-invite u")[n].style.visibility = "visible"; }, (frame - 1215) / 15);
+      stage.dirty = true;
+    }
+    await moveCursor(frame);
     await stage.runPops(frame);
 
-    if (frame === 809) {
+    if (frame === 1439) {
       pin = await page.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; }, MSG);
       T = pin.y + pin.h / 2 - 422;
       final.camera = { tx: 960 - SCALE * (pin.x + 44 + (pin.w - 44) / 2), ty: 540 - SCALE * (pin.y + pin.h / 2) };
       final.message = pin;
       await page.evaluate((ROOM) => { const s = document.createElement("style"); s.textContent = ROOM + ".nova-live-body .thread-mask>div{padding-left:var(--pad)!important;padding-right:var(--pad)!important}.nova-composer>div{padding-left:var(--pad)!important;padding-right:var(--pad)!important}"; document.documentElement.append(s); }, ROOM);
     }
-    if (frame >= 810) {
+    if (frame >= 1440) {
       // The film masks to the smooth rectangle; the page snaps to whole pixels underneath it,
       // so the pinned message and its medallion never land on a new pixel.
-      const t = smooth(clamp01((frame - 810) / 60));
+      const t = smooth(clamp01((frame - 1440) / 60));
       const w = lerp(1320, 390, t), h = lerp(856, 844, t), top = lerp(40, T, t), r = lerp(22, 44, t), pad = lerp(40, 18, t);
       const inset = (width, p) => Math.max((width - 920) / 2, 0) + p;
       const wReal = 2 * Math.round(w / 2), padReal = Math.round(pad);
@@ -231,7 +264,7 @@ async function desktop(browser) {
         scroller.scrollTop += msg.getBoundingClientRect().top - pin.y;
         const m = msg.getBoundingClientRect();
         return { errX: m.left - pin.x, errY: m.top - pin.y };
-      }, { w: wReal, h: Math.ceil(h) + 2, top: Math.floor(top), r, left: pin.x - inset(wReal, padReal), pad: padReal, header: 1 - clamp01((frame - 810) / 36), pin, selector: MSG });
+      }, { w: wReal, h: Math.ceil(h) + 2, top: Math.floor(top), r, left: pin.x - inset(wReal, padReal), pad: padReal, header: 1 - clamp01((frame - 1440) / 36), pin, selector: MSG });
       Object.assign(rect, { x: pin.x - inset(w, pad), y: top, w, h, r });
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
       rects.push(rect);
@@ -241,7 +274,7 @@ async function desktop(browser) {
     await stage.shoot();
     if (frame % 60 === 0) console.log("desktop frame", frame);
   }
-  stage.encode(120); // the phone screen holds until it goes dark
+  stage.encode(130); // the phone screen holds until it goes dark
   final.window = rects;
   await ctx.close();
   return final;
@@ -250,23 +283,28 @@ async function desktop(browser) {
 async function phone(browser) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, reducedMotion: "reduce", timezoneId: "America/Los_Angeles", locale: "en-US" });
   const page = await ctx.newPage();
-  const stage = new Stage(page, "phone", 960);
-  const before = RUN.findIndex((s) => s.frame === 990) - 1; // the thread as it stood at the end of the evening
+  const stage = new Stage(page, "phone", 1620);
+  const next = RUN.findIndex((s) => s.frame === 1750);
+  const before = next - 1; // the thread as it stood at the end of the evening
   stage.index = before;
   await stage.mount(Date.parse("2027-02-17T16:00:00Z"), before);
-  await page.evaluate(([doc, selector]) => {
+  await page.evaluate(([map, faces, selector]) => {
     const card = document.createElement("div");
-    card.className = "film-card";
-    card.innerHTML = `${doc}Acme numbers`;
-    document.querySelector(selector).parentElement.parentElement.append(card);
-  }, [DOC, `[data-item-id="${RUN[before].session.messages[6].id}"]`]);
-  const morning = RUN[RUN.findIndex((s) => s.frame === 990)].session.messages[7].id;
+    card.className = "film-invite film-done";
+    card.innerHTML = `${map}<div class="side"><div class="film-faces">${faces}</div><div class="film-state">Booked.</div></div>`;
+    card.querySelectorAll("u").forEach((u) => { u.style.visibility = "visible"; });
+    document.querySelector(selector).parentElement.insertAdjacentElement("afterend", card);
+  }, [MAP, FACES, `[data-item-id="${RUN[before].session.messages[5].id}"]`]);
+  const lastId = RUN.at(-1).session.messages;
+  const morning = lastId[7].id, ready = lastId[9].id;
+  const after = (id) => `document.querySelector('[data-item-id="${id}"]').parentElement`;
   let info = {};
 
-  for (let frame = 960; frame <= 1469; frame++) {
-    if (frame === 1230) { stage.sending = RUN.at(-1).session.messages[8].id; await page.getByLabel("Message Nori").press("Enter"); await sleep(60); }
-    await stage.snapshot(frame);
-    if (frame === 990) {
+  for (let frame = 1620; frame <= 2909; frame++) {
+    if (frame === 2445) { stage.sending = lastId[10].id; await page.getByLabel("Message Nori").press("Enter"); await sleep(60); }
+    const fresh = await stage.snapshot(frame);
+    for (const m of fresh) if (frame !== 1750) stage.pop(`[data-item-id="${stage.typed.get(m.id) ?? m.id}"]`, frame, m.role === "user" ? "right center" : "left center");
+    if (frame === 1750) {
       // Put the morning's message just under the header, with room for what follows it.
       await page.evaluate((id) => {
         const scroller = document.querySelector(".thread-mask");
@@ -275,69 +313,88 @@ async function phone(browser) {
       }, morning);
       await stage.settle();
     }
-    if (frame === 1110) {
-      await page.evaluate(([id, mark]) => {
-        const row = document.createElement("div");
-        row.className = "film-send";
-        row.id = "film-send";
-        row.innerHTML = `${mark}<button>Send it</button>`;
-        document.querySelector(`[data-item-id="${id}"]`).parentElement.parentElement.append(row);
-        const dot = document.createElement("div");
-        dot.id = "film-tap";
-        dot.style.cssText = "position:fixed;width:44px;height:44px;margin:-22px;border-radius:50%;background:#19093640;opacity:0;z-index:99";
-        document.documentElement.append(dot);
-      }, [morning, markSvg(30)]);
-      stage.pop("#film-send", 1110, "left center");
+    if (frame === 1995) {
+      await page.evaluate((after) => {
+        const chip = document.createElement("div");
+        chip.id = "film-chip";
+        chip.className = "film-chip film-pending";
+        chip.textContent = "Hold 8:30 to read it?";
+        eval(after).insertAdjacentElement("afterend", chip);
+      }, after(ready));
+      stage.pop("#film-chip", 1995, "left center");
       await stage.settle();
     }
-    if (frame >= 1164 && frame <= 1176) {
-      await page.evaluate((frame) => {
-        const b = document.querySelector("#film-send button");
-        const dot = document.getElementById("film-tap");
-        if (b) { const r = b.getBoundingClientRect(); dot.style.left = `${r.left + r.width / 2}px`; dot.style.top = `${r.top + r.height / 2}px`; }
-        dot.style.opacity = frame < 1170 ? (frame - 1164) / 6 : Math.max(0, 1 - (frame - 1170) / 6);
-        dot.style.scale = frame < 1170 ? 1.2 - (frame - 1164) * 0.05 : 0.9 + (frame - 1170) * 0.1;
-      }, frame);
+    await tapDot(page, stage, "#film-chip", frame, 2070);
+    if (frame === 2070) {
+      await page.evaluate(() => { const c = document.getElementById("film-chip"); c.className = "film-chip film-done"; c.textContent = "8:30 held"; });
+      stage.pop("#film-chip", 2070, "left center");
+      await stage.settle();
+    }
+    if (frame === 2115) {
+      await page.evaluate(() => {
+        const card = document.createElement("div");
+        card.id = "film-proposal";
+        card.className = "film-proposal film-pending";
+        card.innerHTML = "<div class=\"page\"><s style=\"width:55%\"></s><s></s><s></s><s style=\"width:80%\"></s><s></s></div><strong>Renewal proposal</strong><span>To Priya at Acme</span>";
+        document.getElementById("film-chip").insertAdjacentElement("afterend", card);
+      });
+      stage.pop("#film-proposal", 2115, "left center");
+      await stage.settle();
+    }
+    await tapDot(page, stage, "#film-proposal", frame, 2220);
+    if (frame === 2220) {
+      await page.evaluate(() => {
+        const sheet = document.createElement("div");
+        sheet.id = "film-sheet";
+        sheet.className = "film-sheet";
+        sheet.style.translate = "0 100%";
+        sheet.innerHTML = "<div class=\"doc film-pending\"><h3>Acme renewal proposal</h3><p>To Priya at Acme</p><h4>Multi-year pricing</h4><table><tr><td>1 year</td><td>$1.2M</td></tr><tr><td>2 years</td><td>$1.14M a year</td></tr><tr><td>3 years</td><td>$1.08M a year</td></tr></table><h4>Seats</h4><p>340 of 400 active. Renews March 14.</p></div><div class=\"film-btn\">Send to Priya</div>";
+        document.documentElement.append(sheet);
+      });
+    }
+    if (frame >= 2220 && frame <= 2234) {
+      await page.evaluate((t) => { document.getElementById("film-sheet").style.translate = `0 ${(1 - t) * 100}%`; }, smooth((frame - 2220) / 14));
       stage.dirty = true;
     }
-    if (frame === 1170) {
-      await page.evaluate((mark) => { document.getElementById("film-send").innerHTML = `${mark}<span>Sent to Priya at Acme.</span>`; }, markSvg(30));
-      stage.pop("#film-send", 1170, "left center");
+    await tapDot(page, stage, "#film-sheet .film-btn", frame, 2310);
+    if (frame === 2310) {
+      await page.evaluate(() => {
+        const sheet = document.getElementById("film-sheet");
+        sheet.querySelector(".doc").className = "doc film-done";
+        sheet.querySelector(".film-btn").textContent = "Sent to Priya";
+        const card = document.getElementById("film-proposal");
+        card.className = "film-proposal film-done";
+        card.querySelector("span").textContent = "Sent to Priya";
+      });
+      stage.dirty = true;
     }
-    if (frame === 1200) await page.getByLabel("Message Nori").evaluate((el) => el.focus());
-    await typeInto(page, "Amazing. Now turn the Acme numbers into a dashboard and share it with Sam.", 1200, 1229, frame, stage);
-    if (frame === 1405) {
-      // The dashboard flies into this spot, so measure it before the card appears.
-      await page.evaluate((chart) => {
+    if (frame >= 2340 && frame <= 2354) {
+      await page.evaluate((t) => { document.getElementById("film-sheet").style.translate = `0 ${t * 100}%`; }, smooth((frame - 2340) / 14));
+      stage.dirty = true;
+    }
+    if (frame === 2385) await page.getByLabel("Message Nori").evaluate((el) => el.focus());
+    await typeInto(page, "Amazing. Turn those numbers into an app for Sam.", 2385, 2444, frame, stage);
+    if (frame === 2830) {
+      // The app flies into this spot, so measure it before the card appears.
+      await page.evaluate((icon) => {
         const log = document.querySelector('[role="log"] > div[aria-live="off"]');
         const card = document.createElement("div");
         card.className = "film-card";
         card.id = "film-dash";
         card.style.visibility = "hidden";
         card.style.margin = "14px 0 0";
-        card.innerHTML = `${chart}<span>Acme renewal dashboard.<br>Shared with Sam.</span>`;
-        const note = document.createElement("div");
-        note.className = "film-note";
-        note.id = "film-sam";
-        note.style.margin = "8px 0 0 4px";
-        note.style.visibility = "hidden";
-        note.textContent = "Sam opened it.";
-        log.append(card, note);
-      }, CHART);
+        card.innerHTML = `${icon}<span>Renewal tracker.<br>Shared with Sam.</span>`;
+        log.append(card);
+      }, APP);
       info.card = await page.evaluate(() => { const r = document.getElementById("film-dash").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
       stage.dirty = true;
     }
-    if (frame === 1410) {
+    if (frame === 2835) {
       await page.evaluate(() => { document.getElementById("film-dash").style.visibility = "visible"; });
-      stage.pop("#film-dash", 1410, "left center");
+      stage.pop("#film-dash", 2835, "left center");
       stage.dirty = true;
     }
-    if (frame === 1440) {
-      await page.evaluate(() => { document.getElementById("film-sam").style.visibility = "visible"; });
-      stage.pop("#film-sam", 1440, "left center");
-      stage.dirty = true;
-    }
-    if (frame === 1462) { // Remotion flies a copy of the card off from here
+    if (frame === 2903) { // Remotion flies a copy of the card off from here
       await page.evaluate(() => { document.getElementById("film-dash").style.visibility = "hidden"; });
       stage.dirty = true;
     }
