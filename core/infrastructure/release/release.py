@@ -320,7 +320,7 @@ def deploy_image(component, value):
 def warm_worker(build_id, workers, config, request_id, record):
     """One tracked request registers the SDK and returns only after its drain."""
     info = poc.version_info(build_id, missing_ok=True) or {}
-    if any(queue.get("name") == poc.TASK_QUEUE for queue in info.get("taskQueueInfos", [])):
+    if any(queue.get("name") == poc.TASK_QUEUE for queue in info.get("taskQueuesInfos", [])):
         return
     queue = workers["worker_wake_queue"]
     root = poc.production_workers(workers)[build_id]
@@ -335,11 +335,14 @@ def warm_worker(build_id, workers, config, request_id, record):
         "oidcToken": {"serviceAccountEmail": config["conversation_wake_service_account"], "audience": root}}}})
     poc.api("POST", "https://cloudtasks.googleapis.com/v2/" + name + ":run", {})
     end = time.monotonic() + poc.remaining(180)
+    finished = False
     while time.monotonic() < end:
-        if poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True) is None:
+        if not finished:
+            finished = poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True) is None
+        if finished:
             info = poc.version_info(build_id, missing_ok=True) or {}
-            require(any(q.get("name") == poc.TASK_QUEUE for q in info.get("taskQueueInfos", [])), "Worker request did not register the expected task queue")
-            return
+            if any(q.get("name") == poc.TASK_QUEUE for q in info.get("taskQueuesInfos", [])):
+                return
         time.sleep(2)
     raise RuntimeError("Worker registration request did not finish; pause must verify drain")
 

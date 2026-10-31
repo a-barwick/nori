@@ -6,7 +6,7 @@ output "worker_pools" {
 }
 
 output "invoker_service_account" {
-  value = google_service_account.invoker.email
+  value = try(google_service_account.invoker[0].email, null)
 }
 
 output "runner_service_account" {
@@ -18,7 +18,7 @@ output "temporal_api_key_secret" {
 }
 
 output "wci_scaler_role" {
-  value = google_project_iam_custom_role.pool_scaler.name
+  value = try(google_project_iam_custom_role.pool_scaler[0].name, null)
 }
 
 output "scalable_build_ids" {

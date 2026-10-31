@@ -112,12 +112,14 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
 }
 
 resource "google_service_account" "invoker" {
-  account_id   = local.production ? "nori-temporal-invoker" : "nori-sandbox-temporal-invoker"
+  count        = local.production ? 1 : 0
+  account_id   = "nori-temporal-invoker"
   display_name = "Temporal WCI scaler (not worker runtime)"
 }
 
 resource "google_project_iam_custom_role" "pool_scaler" {
-  role_id     = local.production ? "noriTemporalPoolScaler" : "noriSandboxTemporalPoolScaler"
+  count       = local.production ? 1 : 0
+  role_id     = "noriTemporalPoolScaler"
   title       = "Nori Temporal pool read and scale"
   permissions = ["run.workerpools.get", "run.workerpools.update"]
 }
@@ -125,23 +127,24 @@ resource "google_project_iam_custom_role" "pool_scaler" {
 # Stable resource-scoped IAM. Removing a version's native compute configuration
 # pauses scaling without changing identities or deleting pinned workflows.
 resource "google_cloud_run_v2_worker_pool_iam_member" "wci" {
-  for_each = { for build, pool in google_cloud_run_v2_worker_pool.worker : build => pool if contains(var.scalable_build_ids, build) }
+  for_each = local.production ? { for build, pool in google_cloud_run_v2_worker_pool.worker : build => pool if contains(var.scalable_build_ids, build) } : {}
   project  = local.project
   location = local.region
   name     = each.value.name
-  role     = google_project_iam_custom_role.pool_scaler.name
-  member   = "serviceAccount:${google_service_account.invoker.email}"
+  role     = google_project_iam_custom_role.pool_scaler[0].name
+  member   = "serviceAccount:${google_service_account.invoker[0].email}"
 }
 
 resource "google_service_account_iam_member" "wci_runner" {
+  count              = local.production ? 1 : 0
   service_account_id = "projects/${local.project}/serviceAccounts/${local.runner}"
   role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:${google_service_account.invoker.email}"
+  member             = "serviceAccount:${google_service_account.invoker[0].email}"
 }
 
 resource "google_service_account_iam_member" "temporal_impersonation" {
-  for_each           = local.temporal_impersonators
-  service_account_id = google_service_account.invoker.name
+  for_each           = local.production ? local.temporal_impersonators : toset([])
+  service_account_id = google_service_account.invoker[0].name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "serviceAccount:${each.value}"
 }
@@ -149,4 +152,18 @@ resource "google_service_account_iam_member" "temporal_impersonation" {
 moved {
   from = google_secret_manager_secret.temporal_api_key
   to   = google_secret_manager_secret.temporal_api_key[0]
+}
+
+# Sandbox uses request workers only. Retain production scaler ownership in place.
+moved {
+  from = google_service_account.invoker
+  to   = google_service_account.invoker[0]
+}
+moved {
+  from = google_project_iam_custom_role.pool_scaler
+  to   = google_project_iam_custom_role.pool_scaler[0]
+}
+moved {
+  from = google_service_account_iam_member.wci_runner
+  to   = google_service_account_iam_member.wci_runner[0]
 }
