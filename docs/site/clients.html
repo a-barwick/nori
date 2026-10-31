@@ -11,49 +11,20 @@
 <h1>Clients</h1>
 <p class="lede">If two clients could disagree about something, the service owns it. A client only owns how that looks on its own screen.</p>
 <div class="card"><div class="flow">
-<div class="node outer"><b>Agent service</b><small>One copy. What was said, what's running, what was approved, what's in memory.</small></div><div class="arrow">↓</div>
+<div class="node outer"><b>Agent service</b><small>One copy. What was said, what's running, what was approved, what's in memory.</small></div><div class="arrow">↓ <span class="lbl"><a href="api.html">Service API</a></span></div>
 <div class="node designed-node designed"><b>Shared client kit</b><span class="tag design">designed</span><small>One copy, used by every client. Caching, sending, retrying and rendering rules.</small></div><div class="arrow">↓</div>
 <div class="node"><b>Platform shell</b><small>One per platform. Layout, navigation, input and notifications. Today this is the Next.js web app.</small></div>
 </div></div>
 <section><h2>What a client never does</h2>
 <ul class="pts"><li>Build prompts or send context. It only sends the user's own words and references.</li><li>Parse model output.</li><li>Assume a command has finished because it was accepted.</li><li>Talk to a model provider directly.</li></ul></section>
-<section><h2>The API today</h2>
-<p>The web app sends commands and polls for snapshots every 2 seconds while work is running. It doesn't poll when idle. See <a href="frontend.html#polling">Polling</a>.</p>
-<div class="card"><table class="tall"><tr><th>Endpoint</th><th>What it does</th></tr>
-<tr><td><code>POST /api/session</code></td><td>Returns the conversation and tasks.</td></tr>
-<tr><td><code>POST /api/turn</code></td><td>Sends a message. Returns 202 once it's saved.</td></tr>
-<tr><td><code>POST /api/command</code></td><td>Sends a task command, such as an answer or a continue.</td></tr>
-<tr><td><code>POST /api/input</code></td><td>Sends an explicit update to one task.</td></tr>
-<tr><td><code>POST /api/cancel</code></td><td>Requests Stop for one task.</td></tr>
-<tr><td><code>POST /api/trace</code></td><td>Reads the debug trace for a turn or task.</td></tr>
-<tr><td><code>POST /api/artifact</code></td><td>Reads a saved file such as a screenshot.</td></tr>
-<tr><td><code>POST /api/process</code></td><td>The wake from Cloud Tasks. Clients don't call it.</td></tr>
-<tr><td><code>POST /api/resume</code></td><td>Redelivers saved commands and wakes tasks. Clients don't call it.</td></tr>
-</table></div></section>
-<section class="designed"><h2>The protocol for many clients <span class="tag design">designed · milestones 8 and 12</span></h2>
-<p>Once there's more than one client, polling gives way to an ordered event log.</p>
-<div class="card"><div class="flow">
-<div class="node designed-node"><b>Start from a snapshot</b><small><code>GET /v1/snapshot</code> returns the state and the log position it reflects.</small></div><div class="arrow">↓</div>
-<div class="node designed-node"><b>Follow the stream</b><small><code>GET /v1/events</code> sends saved events plus live extras like reply text. A reconnect picks up from the last event.</small></div><div class="arrow">↓</div>
-<div class="node designed-node"><b>Send commands</b><small><code>POST /v1/commands</code> returns once a command is saved. Its effects arrive later as events.</small></div>
-</div></div>
-<details class="more"><summary>Commands and message parts</summary>
-<table class="tall"><tr><th>Command</th><th>Effect</th></tr>
-<tr><td><code>message.send</code></td><td>Saves the user's message and puts it in the inbox.</td></tr>
-<tr><td><code>message.edit</code></td><td>Saves a new message that replaces the old one, treated as a correction.</td></tr>
-<tr><td><code>task.stop</code></td><td>Requests Stop. Skips classification.</td></tr>
-<tr><td><code>approval.decide</code></td><td>Records approve or decline for one exact operation.</td></tr>
-<tr><td><code>doc.update</code></td><td>Edits soul or memory, with conflict detection.</td></tr>
-<tr><td><code>settings.update</code></td><td>Changes quiet hours, the daily cap and so on.</td></tr>
-<tr><td><code>device.register</code></td><td>Registers a device for push.</td></tr>
-</table>
-<p>Replies arrive as typed parts: <code>text</code>, <code>chips</code>, <code>image</code>, <code>artifact</code>, <code>approval</code> and <code>attachment</code>. Each non-text part has fallback text, so an older client can still show something.</p>
-</details>
-<details class="more"><summary>Decisions in that proposal</summary>
-<ul class="pts"><li>One log and one stream per owner, since tasks and badges span threads.</li><li>Server-sent events with a long-poll fallback. WebSockets were rejected for now because commands already use POST.</li><li>Clients don't read Firestore directly, so its schema doesn't become the contract.</li><li>Task results land in the thread that started the task.</li></ul>
-</details>
+<section><h2>Each client</h2>
+<div class="card"><table class="tall"><tr><th>Client</th><th>State</th><th>Pages</th></tr>
+<tr><td>Web, including phone widths</td><td>Built</td><td><a href="web-client.html">Web client</a>, <a href="frontend.html">Web client architecture</a>, <a href="theme.html">Nova theme</a></td></tr>
+<tr class="designed"><td>CLI or native app</td><td>Not built</td><td>One new page in this group, with the same sections as Web client</td></tr>
+</table></div>
+<p>Rules that apply to every client belong on this page and on <a href="api.html">Service API</a>. A client's own page links to them.</p>
 </section>
-<details class="more"><summary>Who owns what</summary>
+<details class="more designed"><summary>Who owns what <span class="tag design">designed</span></summary>
 <table class="tall"><tr><th>Concern</th><th>Service</th><th>Client kit</th><th>Platform shell</th></tr>
 <tr><td>Messages</td><td>Source of truth, order, IDs</td><td>Cache, optimistic sends</td><td>Layout</td></tr>
 <tr><td>Prompts and context</td><td>Builds them</td><td>Never sees them</td><td>Never sees them</td></tr>
@@ -64,9 +35,8 @@
 <tr><td>Memory and settings</td><td>Stores and enforces them</td><td>Edits with conflict detection</td><td>Editor and settings screens</td></tr>
 <tr><td>Notifications</td><td>Decides whether to interrupt</td><td>None</td><td>Push, badge, tab title</td></tr>
 <tr><td>Offline</td><td>Idempotent commands, replayable log</td><td>Outbox and catch-up</td><td>Offline indicator</td></tr>
-<tr><td>Drafts and open panels</td><td>None</td><td>None</td><td>Per device</td></tr></table></details>
-<details class="more"><summary>Full protocol reference</summary>
-<p>Resource fields, event types, error codes, limits and rollout phases are in <a href="https://github.com/a-barwick/nori/blob/main/docs/client-contract.md">docs/client-contract.md</a>. The service, kit and shell split is in <a href="https://github.com/a-barwick/nori/blob/main/docs/separation-of-concerns.md">docs/separation-of-concerns.md</a>. Everything beyond today's API is a proposal.</p></details>
-<details class="sources"><summary>Sources</summary><p><a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a> · <a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
+<tr><td>Drafts and open panels</td><td>None</td><td>None</td><td>Per device</td></tr></table>
+<p>The service, kit and shell split is in <a href="https://github.com/a-barwick/nori/blob/main/docs/separation-of-concerns.md">docs/separation-of-concerns.md</a>.</p></details>
+<details class="sources"><summary>Sources</summary><p><a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
 </body>
 </html>

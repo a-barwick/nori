@@ -14,7 +14,7 @@
 <img class="shot" src="img/web-desktop.png" width="1440" height="900" alt="The web client at desktop width. A white window on a lavender background holds the Nova and Nori header, a conversation with purple user bubbles and a saved document, a composer, and an Activity panel with a task waiting for an answer.">
 <p class="note">Screenshots come from the running client, with made-up data.</p>
 </div>
-<div class="grid2"><a class="card tight go" href="theme.html"><b>Theme</b><span>Colors, type, tokens and the mark.</span></a><a class="card tight go" href="frontend.html"><b>Frontend architecture</b><span>Components, requests, polling and builds.</span></a></div>
+<div class="grid2"><a class="card tight go" href="theme.html"><b>Nova theme</b><span>Colors, type, tokens and the mark.</span></a><a class="card tight go" href="frontend.html"><b>Web client architecture</b><span>Components, requests, polling and builds.</span></a></div>
 <section><h2>The screen</h2>
 <div class="card"><table class="tall"><tr><th>Part</th><th>What it shows</th><th>Component</th></tr>
 <tr><td>Header</td><td>Nova brand, Nori's mark and status, debug toggle, Refresh, Activity.</td><td><code>NovaShell</code></td></tr>
@@ -47,7 +47,7 @@
 <tr><td>Working on your task</td><td>Running</td><td>Stop task, Send task update</td></tr>
 <tr><td>Waiting for your answer</td><td>Running with a question or a waiting message</td><td>Answer question or Continue task, Stop task</td></tr>
 <tr><td>Answer accepted</td><td>Running, and the question is resolved</td><td>Stop task</td></tr>
-<tr><td>Stopping…</td><td>Running, and Stop was requested</td><td>None until the runtime confirms</td></tr>
+<tr><td>Stopping…</td><td>Running, and Stop was requested</td><td>None until the agent service confirms</td></tr>
 <tr><td>Completed, Failed, Stopped</td><td>Finished</td><td>None</td></tr>
 </table></div>
 <p>The thread status line can also say that task execution is paused. Chat still works during a pause. See <a href="tasks.html">Task lifecycle</a>.</p>
