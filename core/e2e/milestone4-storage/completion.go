@@ -28,6 +28,10 @@ type telemetryPacket struct {
 	body              []byte
 }
 
+type completionTransport func(*http.Request) (*http.Response, error)
+
+func (f completionTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 // All collectors and credentials here are disposable local fixture values. The
 // real exporter/filter code runs, but no telemetry leaves the loopback servers.
 func completionBoundaries(ctx context.Context, store *state.Google, id, other string, run state.Run, operation state.OperationRecord) (map[string]bool, error) {
@@ -115,6 +119,40 @@ func completionBoundaries(ctx context.Context, store *state.Google, id, other st
 		return nil, err
 	}
 	report["missing Jev key produces unverified outcome rather than completion"] = unavailable.Action == "unverified" && strings.Contains(unavailable.Detail, "not completed")
+	procedure := []*genai.Content{
+		{Role: "model", Parts: []*genai.Part{{Text: "PRIVATE_REASONING_SENTINEL", Thought: true}, {FunctionCall: &genai.FunctionCall{ID: "ask-account", Name: "request_input", Args: map[string]any{"question": "Home or Studio?"}}}}},
+		{Role: "tool", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: "ask-account", Name: "request_input", Response: map[string]any{"answer": "Home", "question_id": "account-question"}}}}},
+		{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: operation.CallID, Name: operation.Name, Args: map[string]any{"url": "http://127.0.0.1/bills"}}}}},
+		{Role: "tool", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: operation.CallID, Name: operation.Name, Response: map[string]any{"text": "DUPLICATE_TOOL_RESULT_SENTINEL"}}}}},
+	}
+	procedural, err := makeProposal(id, "complete-procedure", []any{operation.ID}, []any{}, procedure)
+	if err != nil {
+		return nil, err
+	}
+	var received []*genai.Content
+	var serialized string
+	a.JevKey = "fixture-only"
+	a.JevClient = &http.Client{Transport: completionTransport(func(r *http.Request) (*http.Response, error) {
+		var body struct {
+			State struct {
+				History []*genai.Content `json:"saved_action_history"`
+			} `json:"state"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		received = body.State.History
+		data, _ := json.Marshal(received)
+		serialized = string(data)
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"answers":{"completion":{"choice":"yes","confidence":0.95}}}`))}, nil
+	})}
+	verified, err := check("procedure", procedural, 0)
+	a.JevKey, a.JevClient = "", nil
+	if err != nil {
+		return nil, err
+	}
+	report["verifier receives ordered input question answer and action evidence"] = verified.Action == "publish" && len(received) == 3 && received[0].Parts[0].FunctionCall.Name == "request_input" && received[1].Parts[0].FunctionResponse.Response["answer"] == "Home" && received[2].Parts[0].FunctionCall.ID == operation.CallID
+	report["verification action context omits reasoning and duplicate tool result bodies"] = !strings.Contains(serialized, "PRIVATE_REASONING_SENTINEL") && !strings.Contains(serialized, "DUPLICATE_TOOL_RESULT_SENTINEL")
 	invalid, err := makeProposal(id, "complete-invalid", []any{"../../not-evidence"}, []any{}, nil)
 	if err != nil {
 		return nil, err

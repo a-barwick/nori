@@ -247,6 +247,7 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		}
 		if text == "" {
 			text = acceptedCommandText(t.Attempt.Actions)
+			span.SetAttributes(attribute.Bool("nori.reply.receipt_ack", true))
 			observability.Event(ctx, "conversation.command_acknowledgment", attribute.Int("nori.tool.call_count", len(t.Attempt.Actions)))
 		}
 		if t.Attempt.Status != "error" {

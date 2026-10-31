@@ -1,4 +1,4 @@
-// This executable exercises real Firestore transactions without model/provider
+// This executable exercises real Firestore transactions without external model/provider
 // calls. It accepts only unique, loopback-emulator fixture databases.
 package main
 
@@ -51,6 +51,13 @@ func run() error {
 		}
 	}
 	report := map[string]bool{}
+	conversation, err := conversationBoundary(ctx, store, id)
+	if err != nil {
+		return err
+	}
+	for name, passed := range conversation {
+		report[name] = passed
+	}
 	first := []byte(" {\n  \"opaque\": \"PRIVATE_HISTORY_SENTINEL\", \"items\": [1,2] } ")
 	second := []byte(`{"answer":"exact second block"}`)
 	ref, err := store.AppendHistory(ctx, id, "", first)

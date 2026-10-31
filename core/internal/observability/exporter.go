@@ -36,6 +36,7 @@ var operationalKeys = map[string]bool{
 	"nori.classification.intent": true, "nori.computer.operation": true, "nori.computer.allow_start": true, "nori.computer.reconnect_count": true,
 	"nori.workflow.id": true, "nori.workflow.run_id": true, "nori.activity.id": true, "nori.activity.attempt": true,
 	"nori.reply.status": true, "nori.output.present": true, "nori.conversation.input_count": true,
+	"nori.reply.receipt_ack":          true,
 	"nori.conversation.restart_count": true, "nori.cost.usd": true, "nori.cost.status": true,
 }
 

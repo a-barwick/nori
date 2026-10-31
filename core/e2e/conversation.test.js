@@ -108,29 +108,3 @@ live("rapid calendar follow-ups produce one ordered hypothetical reply without d
   const messages = after.messages.filter((message) => inputs.some((input) => message.id === `${input.id}-user`));
   expect(messages.map((message) => message.text)).toEqual(inputs.map((input) => input.message));
 }, 110_000);
-
-live("a native tool-only dispatch publishes a receipt acknowledgment and is not replayed", async () => {
-  const before = await settled();
-  const known = new Set(before.runs.map((run) => run.id));
-  const input = { id: crypto.randomUUID(), message: "Use exactly one native dispatch tool call with no assistant text. Start a background task with these instructions: use request_input to ask me which color I prefer, then wait for my answer. Do not use external tools or complete the task before I answer." };
-  let runID;
-  try {
-    await post("turn", input);
-    const accepted = await settled();
-    const runs = accepted.runs.filter((run) => !known.has(run.id));
-    expect(runs).toHaveLength(1);
-    runID = runs[0].id;
-    const reply = replyFor(accepted, [input.id]);
-    expect(reply.text).toBe("I've accepted your task. I'll let you know when it needs your input or has a result.");
-    const attempt = accepted.traces.find((trace) => trace.turn_id === reply.turn_id);
-    expect(attempt.actions).toHaveLength(1);
-    expect(attempt.actions[0].status).toBe("accepted");
-    expect(attempt.actions[0].command.run_id).toBe(runID);
-    await post("turn", input);
-    const replay = await settled();
-    expect(replay.runs.filter((run) => !known.has(run.id)).map((run) => run.id)).toEqual([runID]);
-    expect(replay.traces.filter((trace) => trace.input_ids.includes(input.id))).toHaveLength(1);
-  } finally {
-    if (runID) await post("command", { id: crypto.randomUUID(), run_id: runID, kind: "stop" });
-  }
-}, 120_000);
