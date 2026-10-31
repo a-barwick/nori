@@ -334,11 +334,23 @@ def warm_worker(build_id, workers, config, request_id, record):
         "headers": {"Content-Type": "application/json"}, "body": "e30=",
         "oidcToken": {"serviceAccountEmail": config["conversation_wake_service_account"], "audience": root}}}})
     poc.api("POST", "https://cloudtasks.googleapis.com/v2/" + name + ":run", {})
-    end = time.monotonic() + poc.remaining(180)
+    end = time.monotonic() + poc.remaining(300)
+    retry_after, retry_delay, attempts = time.monotonic() + 5, 5, 1
     finished = False
     while time.monotonic() < end:
         if not finished:
-            finished = poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True) is None
+            task = poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True)
+            finished = task is None
+            attempt = (task or {}).get("lastAttempt", {})
+            # A new invoker binding can lag Terraform completion. Only retry a
+            # completed permission denial; never overlap an admitted request.
+            if (attempt.get("responseTime") and attempt.get("responseStatus", {}).get("code") == 7 and
+                    time.monotonic() >= retry_after):
+                poc.api("POST", "https://cloudtasks.googleapis.com/v2/" + name + ":run", {})
+                attempts += 1
+                record(registration_attempts=attempts)
+                retry_delay = min(30, retry_delay * 2)
+                retry_after = time.monotonic() + retry_delay
         if finished:
             info = poc.version_info(build_id, missing_ok=True) or {}
             if any(q.get("name") == poc.TASK_QUEUE for q in info.get("taskQueuesInfos", [])):
