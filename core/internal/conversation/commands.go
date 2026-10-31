@@ -83,18 +83,18 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 		default:
 			return nil, fmt.Errorf("unknown task command tool")
 		}
-		if command.Kind != "start" {
+		if command.Kind != state.CommandStart {
 			id, err := uuid.Parse(command.RunID)
 			if err != nil || id.String() != command.RunID {
 				return nil, fmt.Errorf("task command requires a canonical task UUID")
 			}
 		}
-		if command.Kind == "start" || command.Kind == "steer" || command.Kind == "answer" || command.Kind == "hold" {
-			if command.Text == "" || len(command.Text) > 8192 {
+		if command.Kind == state.CommandStart || command.Kind == state.CommandSteer || command.Kind == state.CommandAnswer || command.Kind == state.CommandHold {
+			if command.Text == "" || len(command.Text) > state.MaxMessageBytes {
 				return nil, fmt.Errorf("task command text must contain 1 to 8192 UTF-8 bytes")
 			}
 		}
-		if command.Kind == "answer" || command.Kind == "continue" {
+		if command.Kind == state.CommandAnswer || command.Kind == state.CommandContinue {
 			if command.QuestionID == "" || strings.TrimSpace(command.QuestionID) != command.QuestionID || len(command.QuestionID) > 256 {
 				return nil, fmt.Errorf("task command requires a question ID within 256 bytes")
 			}
@@ -122,7 +122,7 @@ func acceptedCommandText(actions []state.ConversationAction) string {
 	counts := map[string]int{}
 	for _, action := range actions {
 		if action.Status == "accepted" {
-			counts[action.Command.Kind]++
+			counts[string(action.Command.Kind)]++
 		}
 	}
 	parts := []string{}

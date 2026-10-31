@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 
 	"go.opentelemetry.io/otel"
@@ -17,46 +16,69 @@ import (
 	"nori/internal/observability"
 )
 
-func Enabled() bool { return os.Getenv("NORI_WORKER_SERVICES") != "" }
+type Cloud struct {
+	api           *cloudtasks.Service
+	services      map[string]string
+	queue, caller string
+}
 
-// Schedule returns only after Cloud Tasks accepts the wake. The caller keeps its
-// existing durable command/publication intent unacknowledged on any failure.
-func Schedule(ctx context.Context, build string, workflowIDs ...string) error {
-	if !Enabled() {
-		return nil // Existing local workers and retained native pool deployments.
+// NewCloud validates immutable wake routes and creates one reusable client.
+// An empty services configuration disables wakes for local/native workers.
+func NewCloud(ctx context.Context, rawServices, queue, caller, emulator string, local bool) (*Cloud, error) {
+	if rawServices == "" {
+		return nil, nil
 	}
-	ctx, span := otel.Tracer("nori/workerwake").Start(ctx, "worker_wake.schedule", trace.WithSpanKind(trace.SpanKindProducer))
-	defer span.End()
 	var services map[string]string
-	if err := json.Unmarshal([]byte(os.Getenv("NORI_WORKER_SERVICES")), &services); err != nil {
-		return fmt.Errorf("invalid NORI_WORKER_SERVICES: %w", err)
+	if err := json.Unmarshal([]byte(rawServices), &services); err != nil {
+		return nil, fmt.Errorf("invalid NORI_WORKER_SERVICES: %w", err)
 	}
-	root := strings.TrimRight(services[build], "/")
-	u, err := url.Parse(root)
-	local := os.Getenv("TEMPORAL_LOCAL") == "true"
-	loopback := err == nil && u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1")
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || !(u.Scheme == "https" && strings.HasSuffix(u.Hostname(), ".run.app") || local && loopback) {
-		return fmt.Errorf("no valid immutable worker service for build %q; retained pinned versions require their own supported host", build)
+	if len(services) == 0 {
+		return nil, fmt.Errorf("NORI_WORKER_SERVICES must contain immutable worker routes")
 	}
-	queue, caller := os.Getenv("NORI_WORKER_WAKE_QUEUE"), os.Getenv("NORI_WAKE_SERVICE_ACCOUNT")
+	for build, root := range services {
+		root = strings.TrimRight(root, "/")
+		u, err := url.Parse(root)
+		loopback := err == nil && u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1")
+		if build == "" || err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || !(u.Scheme == "https" && strings.HasSuffix(u.Hostname(), ".run.app") || local && loopback) {
+			return nil, fmt.Errorf("no valid immutable worker service for build %q; retained pinned versions require their own supported host", build)
+		}
+		services[build] = root
+	}
 	parts := strings.Split(queue, "/")
-	if len(parts) != 6 || parts[0] != "projects" || parts[2] != "locations" || parts[4] != "queues" || caller == "" {
-		return fmt.Errorf("NORI_WORKER_WAKE_QUEUE and NORI_WAKE_SERVICE_ACCOUNT are required")
+	if len(parts) != 6 || parts[0] != "projects" || parts[1] == "" || parts[2] != "locations" || parts[3] == "" || parts[4] != "queues" || parts[5] == "" || strings.TrimSpace(caller) == "" {
+		return nil, fmt.Errorf("NORI_WORKER_WAKE_QUEUE and NORI_WAKE_SERVICE_ACCOUNT are required")
 	}
 	var options []option.ClientOption
-	if endpoint := os.Getenv("CLOUD_TASKS_EMULATOR_HOST"); endpoint != "" {
+	if emulator != "" {
 		if !local {
-			return fmt.Errorf("Cloud Tasks emulator requires TEMPORAL_LOCAL=true")
+			return nil, fmt.Errorf("Cloud Tasks emulator requires TEMPORAL_LOCAL=true")
 		}
-		e, err := url.Parse("http://" + endpoint)
+		e, err := url.Parse("http://" + emulator)
 		if err != nil || !(e.Hostname() == "127.0.0.1" || e.Hostname() == "localhost" || e.Hostname() == "::1") {
-			return fmt.Errorf("Cloud Tasks emulator must use loopback")
+			return nil, fmt.Errorf("Cloud Tasks emulator must use loopback")
 		}
 		options = []option.ClientOption{option.WithEndpoint(e.String() + "/"), option.WithoutAuthentication()}
 	}
 	api, err := cloudtasks.NewService(ctx, options...)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	return &Cloud{api: api, services: services, queue: queue, caller: caller}, nil
+}
+
+func (c *Cloud) Enabled() bool { return c != nil }
+
+// Schedule returns only after Cloud Tasks accepts the wake. The caller keeps its
+// durable command/publication intent unacknowledged on any failure.
+func (c *Cloud) Schedule(ctx context.Context, build string, workflowIDs ...string) error {
+	if c == nil {
+		return nil
+	}
+	ctx, span := otel.Tracer("nori/workerwake").Start(ctx, "worker_wake.schedule", trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
+	root, ok := c.services[build]
+	if !ok {
+		return fmt.Errorf("no valid immutable worker service for build %q; retained pinned versions require their own supported host", build)
 	}
 	body, err := json.Marshal(struct {
 		WorkflowIDs []string `json:"workflow_ids,omitempty"`
@@ -68,9 +90,9 @@ func Schedule(ctx context.Context, build string, workflowIDs ...string) error {
 	for name, value := range observability.InjectTrace(ctx) {
 		headers[name] = value
 	}
-	_, err = api.Projects.Locations.Queues.Tasks.Create(queue, &cloudtasks.CreateTaskRequest{Task: &cloudtasks.Task{
+	_, err = c.api.Projects.Locations.Queues.Tasks.Create(c.queue, &cloudtasks.CreateTaskRequest{Task: &cloudtasks.Task{
 		DispatchDeadline: "720s",
-		HttpRequest:      &cloudtasks.HttpRequest{Url: root + "/run", HttpMethod: "POST", Headers: headers, Body: base64.StdEncoding.EncodeToString(body), OidcToken: &cloudtasks.OidcToken{ServiceAccountEmail: caller, Audience: root}},
+		HttpRequest:      &cloudtasks.HttpRequest{Url: root + "/run", HttpMethod: "POST", Headers: headers, Body: base64.StdEncoding.EncodeToString(body), OidcToken: &cloudtasks.OidcToken{ServiceAccountEmail: c.caller, Audience: root}},
 	}}).Context(ctx).Do()
 	if err != nil {
 		observability.RecordErrorCategory(ctx, "wake.worker", err)

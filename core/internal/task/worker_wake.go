@@ -87,13 +87,13 @@ func deploymentName() string {
 	return "nori-task"
 }
 
-func wakeWorker(ctx context.Context, c client.Client, id string) error {
-	if !workerwake.Enabled() {
+func wakeWorker(ctx context.Context, c client.Client, wakes *workerwake.Cloud, id string) error {
+	if !wakes.Enabled() {
 		return nil
 	}
 	build, err := WorkerBuild(ctx, c, id)
 	if err != nil {
 		return err
 	}
-	return workerwake.Schedule(ctx, build, WorkflowID(id))
+	return wakes.Schedule(ctx, build, WorkflowID(id))
 }

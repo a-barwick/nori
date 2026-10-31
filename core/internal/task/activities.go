@@ -57,11 +57,12 @@ type ToolInput struct {
 }
 type Publication struct {
 	Step
-	Status, Detail, Text string
-	StopConfirmed        bool
-	CostUnknown          bool
-	BypassRouting        bool
-	ExpectedIncomplete   bool
+	Status             state.RunStatus
+	Detail, Text       string
+	StopConfirmed      bool
+	CostUnknown        bool
+	BypassRouting      bool
+	ExpectedIncomplete bool
 }
 type Projection struct {
 	Step
@@ -105,7 +106,7 @@ func (a *Activities) Context(ctx context.Context, id string) ([]*genai.Content, 
 	// current-task commands are incorporated separately in durable order.
 	completed := map[string]bool{}
 	for _, run := range session.Runs {
-		if run.ID != id && run.Status == "completed" {
+		if run.ID != id && run.Status == state.RunCompleted {
 			completed[run.ID] = true
 		}
 	}
@@ -143,7 +144,7 @@ func (a *Activities) Reconcile(ctx context.Context, id string) (state.TaskSnapsh
 	if snap.Run.CancelRequested {
 		return snap, classified(state.ErrCancelled)
 	}
-	if snap.Run.Status != "running" {
+	if snap.Run.Status != state.RunRunning {
 		return snap, classified(state.ErrBusy)
 	}
 	// Reconciliation and publication do not start paid work. Their revision
@@ -176,7 +177,7 @@ func (a *Activities) bounded(parent context.Context, step Step, interruptible ..
 			case <-ticker.C:
 				activity.RecordHeartbeat(ctx)
 				current, e := a.Store.GetRun(ctx, step.RunID)
-				if e != nil || current.CancelRequested || current.Status != "running" || (len(interruptible) > 0 && interruptible[0] && current.InterruptRevision > step.Revision) {
+				if e != nil || current.CancelRequested || current.Status != state.RunRunning || (len(interruptible) > 0 && interruptible[0] && current.InterruptRevision > step.Revision) {
 					cancel()
 					return
 				}
@@ -445,17 +446,17 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 	run := a.activityRun(ctx, p.RunID)
 	ctx, span := startActivity(ctx, "task.publish", "CHAIN", run, p.Revision)
 	defer func() {
-		span.SetAttributes(attribute.String("nori.task.status", result.Status), attribute.Bool("nori.output.present", result.Result != ""))
+		span.SetAttributes(attribute.String("nori.task.status", string(result.Status)), attribute.Bool("nori.output.present", result.Result != ""))
 		recordActivityFailure(ctx, resultErr, "task.publish")
 		if resultErr == nil && result.Status == "failed" && !p.ExpectedIncomplete {
 			span.SetStatus(codes.Error, "task failed")
-			if run.Status == "running" || run.Status == "" {
+			if run.Status == state.RunRunning || run.Status == "" {
 				observability.RecordErrorCategory(ctx, "task.failed", errors.New("task failed"))
 			}
 		}
 		span.End()
 	}()
-	if p.Status != "completed" {
+	if p.Status != state.RunCompleted {
 		current, err := a.Store.GetRun(ctx, p.RunID)
 		if err != nil {
 			return state.Run{}, classified(err)
@@ -471,9 +472,9 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 	}
 	r, err := a.Store.Publish(ctx, p.RunID, p.Revision, p.Status, p.Detail, p.Text, p.CostUnknown, p.BypassRouting)
 	if err == nil {
-		if (run.Status == "running" || run.Status == "") && r.FinishedAt != nil && !r.StartedAt.IsZero() && !r.FinishedAt.Before(r.StartedAt) {
+		if (run.Status == state.RunRunning || run.Status == "") && r.FinishedAt != nil && !r.StartedAt.IsZero() && !r.FinishedAt.Before(r.StartedAt) {
 			durationCtx := observability.ExtractTrace(ctx, r.OriginTraceContext)
-			_, durationSpan := taskTracer.Start(durationCtx, "task.acceptance_to_terminal", trace.WithTimestamp(r.StartedAt), trace.WithLinks(trace.Link{SpanContext: span.SpanContext()}), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.task.id", p.RunID), attribute.String("nori.task.status", r.Status), attribute.Bool("nori.output.present", r.Result != "")))
+			_, durationSpan := taskTracer.Start(durationCtx, "task.acceptance_to_terminal", trace.WithTimestamp(r.StartedAt), trace.WithLinks(trace.Link{SpanContext: span.SpanContext()}), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.task.id", p.RunID), attribute.String("nori.task.status", string(r.Status)), attribute.Bool("nori.output.present", r.Result != "")))
 			if r.Status == "failed" && p.ExpectedIncomplete {
 				observability.Event(ctx, "task.incomplete", attribute.String("nori.task.id", p.RunID))
 			} else if r.Status == "failed" {

@@ -15,12 +15,14 @@ import (
 	"nori/internal/observability"
 	"nori/internal/state"
 	"nori/internal/task"
+	"nori/internal/workerwake"
 )
 
 // Tasks delegates admission, command ordering, delivery and execution to the
 // existing task implementation. A dispatch ends at durable acceptance.
 type Tasks struct {
-	Store    *state.Google
+	Store    state.ConversationStore
+	Wakes    *workerwake.Cloud
 	Client   client.Client
 	Computer computer.Config
 }
@@ -28,7 +30,7 @@ type Tasks struct {
 func (t *Tasks) deliver(ctx context.Context) {
 	delivery, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := task.Deliver(delivery, t.Store, t.Client); err != nil {
+	if err := task.Deliver(delivery, t.Store, t.Client, t.Wakes); err != nil {
 		log.Printf("command accepted; Temporal delivery remains pending: %v", err)
 	}
 }
@@ -46,13 +48,13 @@ func (t *Tasks) AcceptBatch(ctx context.Context, commands []state.Command, fence
 			outcome = "rejected"
 		}
 		commandSpan.SetAttributes(attribute.String("nori.tool.outcome", outcome), attribute.Bool("nori.command.interrupt", cmd.Interrupt))
-		if cmd.Kind == "hold" {
+		if cmd.Kind == state.CommandHold {
 			commandSpan.SetAttributes(attribute.String("nori.hold.id", cmd.ID))
 		}
-		if err == nil && cmd.Kind == "hold" {
+		if err == nil && cmd.Kind == state.CommandHold {
 			observability.Event(ctx, "conversation.hold.accepted", attribute.String("nori.hold.id", cmd.ID), attribute.String("nori.task.id", cmd.RunID))
 		}
-		if err == nil && cmd.Kind == "steer" {
+		if err == nil && cmd.Kind == state.CommandSteer {
 			observability.Event(ctx, "conversation.correction.accepted", attribute.String("nori.task.id", cmd.RunID), attribute.String("nori.command.id", cmd.ID), attribute.Bool("nori.command.interrupt", cmd.Interrupt))
 		}
 		commandSpan.End()
@@ -64,7 +66,7 @@ func (t *Tasks) AcceptBatch(ctx context.Context, commands []state.Command, fence
 		return nil, err
 	}
 	for _, receipt := range receipts {
-		if receipt.Command.Kind != "hold" {
+		if receipt.Command.Kind != state.CommandHold {
 			t.deliver(ctx)
 			break
 		}
@@ -73,12 +75,12 @@ func (t *Tasks) AcceptBatch(ctx context.Context, commands []state.Command, fence
 	return receipts, nil
 }
 
-func safeCommandName(kind string) string {
+func safeCommandName(kind state.CommandKind) string {
 	switch kind {
 	case "start":
 		return "dispatch"
 	case "steer", "answer", "continue", "stop", "input", "cancel", "hold":
-		return kind
+		return string(kind)
 	default:
 		return "unknown"
 	}
@@ -100,7 +102,7 @@ func (t *Tasks) Update(ctx context.Context, id, runID, message string) (state.Ru
 	}
 	command := state.Command{ID: id, RunID: runID, Kind: state.InputKind(message), Text: message}
 	if current.ProtocolVersion >= state.TaskProtocolVersion {
-		command.Kind = "steer"
+		command.Kind = state.CommandSteer
 		if question := current.Question; question != nil && question.ResolvedBy == "" && question.Revision == current.Revision {
 			switch {
 			case question.Kind == "input":
@@ -132,7 +134,7 @@ func (t *Tasks) Cancel(ctx context.Context, id string) (state.Run, error) {
 func (t *Tasks) repairPausedStops(ctx context.Context, receipts []state.CommandReceipt) {
 	stops := map[string]bool{}
 	for _, receipt := range receipts {
-		if receipt.Command.Kind == "stop" || receipt.Command.Kind == "cancel" {
+		if receipt.Command.Kind == state.CommandStop || receipt.Command.Kind == state.CommandCancel {
 			stops[receipt.Command.RunID] = true
 		}
 	}

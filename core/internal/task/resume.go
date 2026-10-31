@@ -9,13 +9,14 @@ import (
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"nori/internal/state"
+	"nori/internal/workerwake"
 )
 
 // Explicit resume reconstructs disposable queue notifications from Temporal's
 // durable running executions. This also finds terminal Firestore projections
 // whose deferred activities outlived a long pause and Cloud Tasks retention.
 // It is never a periodic controller and never changes an Activity retry policy.
-func recoverExecutionWakes(ctx context.Context, c client.Client, seen map[string]bool) error {
+func recoverExecutionWakes(ctx context.Context, c client.Client, wakes *workerwake.Cloud, seen map[string]bool) error {
 	query := "ExecutionStatus = 'Running' AND TaskQueue = '" + strings.ReplaceAll(Queue(), "'", "''") + "'"
 	request := &workflowservice.ListWorkflowExecutionsRequest{Query: query, PageSize: 100}
 	var failures []error
@@ -62,7 +63,7 @@ func recoverExecutionWakes(ctx context.Context, c client.Client, seen map[string
 				}
 				continue
 			}
-			if err = wakeWorker(ctx, c, runID); err != nil {
+			if err = wakeWorker(ctx, c, wakes, runID); err != nil {
 				failures = append(failures, err)
 			}
 			seen[id] = true

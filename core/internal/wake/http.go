@@ -1,11 +1,8 @@
 package wake
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -13,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"nori/internal/conversation"
+	"nori/internal/httpjson"
 	"nori/internal/state"
 	"nori/internal/task"
 )
@@ -114,7 +112,7 @@ func (s *server) turn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Message = strings.TrimSpace(input.Message)
-	if !validID(input.ID) || input.Message == "" || len(input.Message) > 8192 {
+	if !validID(input.ID) || input.Message == "" || len(input.Message) > state.MaxMessageBytes {
 		writeJSON(w, 400, map[string]string{"error": "A UUID id and a message of 1–8192 bytes are required."})
 		return
 	}
@@ -153,11 +151,11 @@ func (s *server) resume(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	if err := task.Deliver(r.Context(), s.rt.Tasks.Store, s.rt.Tasks.Client); err != nil {
+	if err := task.Deliver(r.Context(), s.rt.Tasks.Store, s.rt.Tasks.Client, s.rt.Tasks.Wakes); err != nil {
 		writeError(w, err)
 		return
 	}
-	if err := task.Wake(r.Context(), s.rt.Tasks.Store, s.rt.Tasks.Client); err != nil {
+	if err := task.Wake(r.Context(), s.rt.Tasks.Store, s.rt.Tasks.Client, s.rt.Tasks.Wakes); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -174,7 +172,7 @@ func (s *server) input(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Message = strings.TrimSpace(body.Message)
-	if !validID(body.ID) || !validID(body.RunID) || body.Message == "" || len(body.Message) > 8192 {
+	if !validID(body.ID) || !validID(body.RunID) || body.Message == "" || len(body.Message) > state.MaxMessageBytes {
 		writeJSON(w, 400, map[string]string{"error": "UUID id, run_id, and a message of 1–8192 bytes are required."})
 		return
 	}
@@ -191,17 +189,17 @@ func (s *server) input(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) command(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ID         string `json:"id"`
-		RunID      string `json:"run_id"`
-		Kind       string `json:"kind"`
-		Text       string `json:"text,omitempty"`
-		QuestionID string `json:"question_id,omitempty"`
+		ID         string            `json:"id"`
+		RunID      string            `json:"run_id"`
+		Kind       state.CommandKind `json:"kind"`
+		Text       string            `json:"text,omitempty"`
+		QuestionID string            `json:"question_id,omitempty"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
 	body.Text = strings.TrimSpace(body.Text)
-	valid := validID(body.ID) && validID(body.RunID) && len(body.Text) <= 8192 && len(body.QuestionID) <= 256
+	valid := validID(body.ID) && validID(body.RunID) && len(body.Text) <= state.MaxMessageBytes && len(body.QuestionID) <= 256
 	switch body.Kind {
 	case "steer":
 		valid = valid && body.Text != "" && body.QuestionID == ""
@@ -313,34 +311,19 @@ func validID(value string) bool {
 	return err == nil && parsed.String() == value
 }
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-	var raw json.RawMessage
-	if err := d.Decode(&raw); err != nil {
-		writeJSON(w, 400, map[string]string{"error": "Send a valid JSON object."})
-		return false
-	}
-	if err := d.Decode(new(any)); err != io.EOF {
-		writeJSON(w, 400, map[string]string{"error": "Send one JSON object."})
-		return false
-	}
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || raw[0] != '{' {
-		writeJSON(w, 400, map[string]string{"error": "Send a valid JSON object."})
-		return false
-	}
-	body := json.NewDecoder(bytes.NewReader(raw))
-	body.DisallowUnknownFields()
-	if err := body.Decode(value); err != nil {
-		writeJSON(w, 400, map[string]string{"error": "Send a valid JSON object."})
+	if err := httpjson.Decode(w, r, value, 64<<10); err != nil {
+		message := "Send a valid JSON object."
+		if errors.Is(err, httpjson.ErrMultiple) {
+			message = "Send one JSON object."
+		}
+		writeJSON(w, 400, map[string]string{"error": message})
 		return false
 	}
 	return true
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	httpjson.Write(w, status, value)
 }
 func writeError(w http.ResponseWriter, err error) {
 	status := 502
@@ -351,7 +334,7 @@ func writeError(w http.ResponseWriter, err error) {
 		status = 404
 	case errors.Is(err, state.ErrCommandInvalid):
 		status = 400
-	case errors.Is(err, state.ErrBusy), errors.Is(err, state.ErrDuplicate), errors.Is(err, state.ErrQuestionStale), errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrCancelled), errors.Is(err, conversation.ErrBusy), errors.Is(err, conversation.ErrConflict):
+	case errors.Is(err, state.ErrBusy), errors.Is(err, state.ErrDuplicate), errors.Is(err, state.ErrQuestionStale), errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrCancelled), errors.Is(err, state.ErrConversationBusy), errors.Is(err, state.ErrConversationConflict):
 		status = 409
 	}
 	log.Printf("request failed: %v", err)

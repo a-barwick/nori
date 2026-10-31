@@ -23,7 +23,7 @@ type TaskContextRecord struct {
 	Holds                   []state.TaskHold     `json:"held_questions,omitempty"`
 	ID                      string               `json:"id"`
 	Request                 string               `json:"request"`
-	Status                  string               `json:"status"`
+	Status                  state.RunStatus      `json:"status"`
 	Question                *state.Question      `json:"question,omitempty"`
 	Waiting                 string               `json:"waiting,omitempty"`
 	Revision                int64                `json:"revision"`
@@ -40,16 +40,16 @@ type TaskContextRecord struct {
 }
 
 type TaskContextCommand struct {
-	ID             string   `json:"id"`
-	Kind           string   `json:"kind"`
-	Text           string   `json:"text,omitempty"`
-	QuestionID     string   `json:"question_id,omitempty"`
-	Position       int64    `json:"position"`
-	Revision       int64    `json:"revision"`
-	SourceInputIDs []string `json:"source_input_ids,omitempty"`
-	Accepted       bool     `json:"accepted"`
-	Applied        bool     `json:"applied"`
-	TextTruncated  bool     `json:"text_truncated,omitempty"`
+	ID             string            `json:"id"`
+	Kind           state.CommandKind `json:"kind"`
+	Text           string            `json:"text,omitempty"`
+	QuestionID     string            `json:"question_id,omitempty"`
+	Position       int64             `json:"position"`
+	Revision       int64             `json:"revision"`
+	SourceInputIDs []string          `json:"source_input_ids,omitempty"`
+	Accepted       bool              `json:"accepted"`
+	Applied        bool              `json:"applied"`
+	TextTruncated  bool              `json:"text_truncated,omitempty"`
 }
 
 // ContextRecords reads each selected task's accepted commands once. Direct panel
@@ -88,7 +88,7 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 		return nil
 	}
 	for _, run := range runs {
-		if run.Status == "running" {
+		if run.Status == state.RunRunning {
 			if err := add(run.ID, &result.ActiveTasks); err != nil {
 				return result, err
 			}

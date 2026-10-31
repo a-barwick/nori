@@ -42,26 +42,9 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 	}
 	var a *Activities
 	signals := workflow.GetSignalChannel(ctx, Signal)
-	spend := func(w workflow.Context) {
-		if e := workflow.ExecuteActivity(w, a.Spend, Spending{RunID: id, Spent: c.Spent, Budget: c.Budget, CostUnknown: c.CostUnknown}).Get(w, nil); e != nil {
-			workflow.GetLogger(ctx).Warn("Spend projection pending; workflow retains accounting", "run_id", id)
-		}
-	}
+	spend := func(w workflow.Context) { c.projectSpend(w, id) }
 	wait := func() error { var command state.Command; signals.Receive(ctx, &command); return ctx.Err() }
-	stop := func(w workflow.Context) error {
-		if c.Stopped {
-			return nil
-		}
-		scopes := make([]string, 0, len(c.ComputerRevisions))
-		for _, revision := range c.ComputerRevisions {
-			scopes = append(scopes, computerRun(Step{id, revision}))
-		}
-		if e := workflow.ExecuteActivity(w, a.Stop, scopes).Get(w, nil); e != nil {
-			return e
-		}
-		c.Stopped = true
-		return nil
-	}
+	stop := func(w workflow.Context) error { return c.stopComputer(w, id) }
 	boundary := func(e error) bool {
 		if superseded(e) {
 			return true
@@ -118,18 +101,8 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 			if err != nil {
 				return
 			}
-			oldRevision := c.Revision
-			c.Ref, c.Revision, c.Position, c.Request = synced.Ref, synced.Revision, synced.Position, synced.Request
-			if synced.QuestionResolved {
-				c.Question = nil
-				c.QuestionPublished = false
-			}
-			if c.Revision != oldRevision {
-				c.Corrections = 0
-				c.ReadOnly = false
-			}
+			c.applySync(synced)
 			if synced.Grants > 0 {
-				c.Budget += float64(synced.Grants) * agent.BudgetUSD
 				spend(spending)
 			}
 			if c.CostUnknown {
@@ -259,7 +232,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 						if err = stop(stopCtx); err != nil {
 							return
 						}
-						status := "completed"
+						status := state.RunCompleted
 						if check.Action != "publish" {
 							status = "failed"
 						}
@@ -349,7 +322,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 		if e := stop(cleanup); e != nil {
 			failure = fmt.Errorf("computer stop could not be confirmed: %w", e)
 		}
-		status := "failed"
+		status := state.RunFailed
 		if c.Stopped && (temporal.IsCanceledError(failure) || applicationKind(failure, "cancelled")) {
 			status = "cancelled"
 		}
@@ -361,7 +334,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				break
 			}
 			if e := wait(); e != nil {
-				p.Status = "cancelled"
+				p.Status = state.RunCancelled
 				p.Detail = e.Error()
 				p.BypassRouting = true
 			}
@@ -376,5 +349,47 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 			err = failure
 		}
 		return
+	}
+}
+
+func (c *Checkpoint) projectSpend(w workflow.Context, id string) {
+	var a *Activities
+
+	if e := workflow.ExecuteActivity(w, a.Spend, Spending{RunID: id, Spent: c.Spent, Budget: c.Budget, CostUnknown: c.CostUnknown}).Get(w, nil); e != nil {
+		workflow.GetLogger(w).Warn("Spend projection pending; workflow retains accounting", "run_id", id)
+	}
+}
+
+func (c *Checkpoint) stopComputer(w workflow.Context, id string) error {
+	var a *Activities
+
+	if c.Stopped {
+		return nil
+	}
+	scopes := make([]string, 0, len(c.ComputerRevisions))
+	for _, revision := range c.ComputerRevisions {
+		scopes = append(scopes, computerRun(Step{id, revision}))
+	}
+	if e := workflow.ExecuteActivity(w, a.Stop, scopes).Get(w, nil); e != nil {
+		return e
+	}
+	c.Stopped = true
+	return nil
+}
+
+// applySync updates only checkpoint state; the workflow retains activity order.
+func (c *Checkpoint) applySync(synced HistorySync) {
+	oldRevision := c.Revision
+	c.Ref, c.Revision, c.Position, c.Request = synced.Ref, synced.Revision, synced.Position, synced.Request
+	if synced.QuestionResolved {
+		c.Question = nil
+		c.QuestionPublished = false
+	}
+	if c.Revision != oldRevision {
+		c.Corrections = 0
+		c.ReadOnly = false
+	}
+	if synced.Grants > 0 {
+		c.Budget += float64(synced.Grants) * agent.BudgetUSD
 	}
 }

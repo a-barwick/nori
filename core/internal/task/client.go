@@ -51,7 +51,7 @@ var missingLegacyCommands sync.Map
 
 // Deliver is called after acceptance and on worker/API startup. A crash before
 // marking the durable intent delivered merely sends a duplicate on repair.
-func Deliver(ctx context.Context, store state.TaskStore, c client.Client) (resultErr error) {
+func Deliver(ctx context.Context, store state.TaskStore, c client.Client, wakes *workerwake.Cloud) (resultErr error) {
 	pending, e := store.Pending(ctx)
 	if e != nil {
 		if !errors.Is(ctx.Err(), context.Canceled) {
@@ -77,8 +77,8 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) (resul
 			failures = append(failures, e)
 			continue
 		}
-		if run.Status != "running" {
-			if run.CancelRequested && (cmd.Kind == "stop" || cmd.Kind == "cancel") {
+		if run.Status != state.RunRunning {
+			if run.CancelRequested && (cmd.Kind == state.CommandStop || cmd.Kind == state.CommandCancel) {
 				// A paused Stop may already be persisted while its workflow waits.
 				// Retain delivery intent until it receives a wake or is absent.
 				e = c.SignalWorkflow(ctx, WorkflowID(cmd.RunID), "", Signal, cmd)
@@ -87,7 +87,7 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) (resul
 					failures = append(failures, e)
 					continue
 				}
-				if e == nil && workerwake.Enabled() {
+				if e == nil && wakes.Enabled() {
 					control, err := store.Control(ctx)
 					if err != nil {
 						failures = append(failures, err)
@@ -99,7 +99,7 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) (resul
 					if control.Paused {
 						continue
 					}
-					if err = wakeWorker(ctx, c, cmd.RunID); err != nil {
+					if err = wakeWorker(ctx, c, wakes, cmd.RunID); err != nil {
 						failures = append(failures, err)
 						continue
 					}
@@ -131,7 +131,7 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) (resul
 			}
 		} else if e = control.Check(); e != nil {
 			// Stop can signal an existing workflow after pause; it must not start one.
-			if cmd.Kind == "cancel" || cmd.Kind == "stop" {
+			if cmd.Kind == state.CommandCancel || cmd.Kind == state.CommandStop {
 				e = c.SignalWorkflow(ctx, WorkflowID(cmd.RunID), "", Signal, cmd)
 			} else {
 				continue
@@ -150,11 +150,11 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) (resul
 			failures = append(failures, fmt.Errorf("command %s delivery: %w", cmd.ID, e))
 			continue
 		}
-		if control.Paused && workerwake.Enabled() {
+		if control.Paused && wakes.Enabled() {
 			continue
 		}
 		if !control.Paused {
-			if e = wakeWorker(ctx, c, cmd.RunID); e != nil {
+			if e = wakeWorker(ctx, c, wakes, cmd.RunID); e != nil {
 				failures = append(failures, e)
 				continue
 			}
@@ -169,7 +169,7 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) (resul
 // Wake signals existing durable tasks after admission reopens. User-input waits
 // reconcile and remain waiting when their revision has not changed. No workflow
 // or computer is started by this function.
-func Wake(ctx context.Context, store state.TaskStore, c client.Client) error {
+func Wake(ctx context.Context, store state.TaskStore, c client.Client, wakes *workerwake.Cloud) error {
 	control, err := store.Control(ctx)
 	if err != nil {
 		return err
@@ -184,7 +184,7 @@ func Wake(ctx context.Context, store state.TaskStore, c client.Client) error {
 	var failures []error
 	seen := map[string]bool{}
 	for _, run := range runs {
-		if !run.Temporal || run.Status != "running" {
+		if !run.Temporal || run.Status != state.RunRunning {
 			continue
 		}
 		if err = c.SignalWorkflow(ctx, WorkflowID(run.ID), "", Signal, state.Command{RunID: run.ID, Kind: "resume"}); err != nil {
@@ -192,21 +192,21 @@ func Wake(ctx context.Context, store state.TaskStore, c client.Client) error {
 			if !errors.As(err, &missing) {
 				failures = append(failures, err)
 			}
-		} else if err = wakeWorker(ctx, c, run.ID); err != nil {
+		} else if err = wakeWorker(ctx, c, wakes, run.ID); err != nil {
 			failures = append(failures, err)
 		} else {
 			seen[WorkflowID(run.ID)] = true
 		}
 	}
-	if workerwake.Enabled() {
-		failures = append(failures, recoverExecutionWakes(ctx, c, seen))
+	if wakes.Enabled() {
+		failures = append(failures, recoverExecutionWakes(ctx, c, wakes, seen))
 	}
 	return errors.Join(failures...)
 }
 
 // WakePublications delivers one durable wake for each held result. The generation
 // fence preserves a newer hold if another user input arrives during delivery.
-func WakePublications(ctx context.Context, store state.TaskStore, c client.Client) error {
+func WakePublications(ctx context.Context, store state.TaskStore, c client.Client, wakes *workerwake.Cloud) error {
 	runs, err := store.PublicationTasks(ctx)
 	if err != nil {
 		return err
@@ -217,7 +217,7 @@ func WakePublications(ctx context.Context, store state.TaskStore, c client.Clien
 			failures = append(failures, err)
 			continue
 		}
-		if err = wakeWorker(ctx, c, run.ID); err != nil {
+		if err = wakeWorker(ctx, c, wakes, run.ID); err != nil {
 			failures = append(failures, err)
 			continue
 		}

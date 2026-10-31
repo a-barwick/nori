@@ -30,19 +30,14 @@ func params(name string) *genai.Schema {
 	return &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{name: {Type: genai.TypeString}}, Required: []string{name}}
 }
 
-func (s *Service) tool(ctx context.Context, run string, c *computer.Client, call *genai.FunctionCall) (map[string]any, error) {
+// Tool executes a call after ValidateCalls has accepted its whole batch.
+func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call *genai.FunctionCall) (map[string]any, error) {
 	switch call.Name {
 	case "shell":
 		command, _ := call.Args["command"].(string)
-		if command == "" || len(command) > 8192 {
-			return nil, errors.New("invalid command")
-		}
 		return c.Exec(ctx, command)
 	case "browser_navigate":
 		address, _ := call.Args["url"].(string)
-		if len(address) > 8192 {
-			return nil, errors.New("invalid URL")
-		}
 		return c.Navigate(ctx, address)
 	case "browser_screenshot":
 		data, e := c.Screenshot(ctx)

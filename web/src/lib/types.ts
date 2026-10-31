@@ -26,14 +26,18 @@ export type Message = { id: string; run_id: string; turn_id?: string; role: "use
 export type RunEvent = { id?: string; sequence?: number; instruction_revision?: number; kind: string; text: string; created_at: string };
 export type TaskQuestion = { id: string; kind: "input" | "budget"; text: string; call_id?: string; instruction_revision: number; resolved_by?: string };
 export type TaskHold = { id: string; task_id: string; question: string; status: "pending" | "ready" | "answered" | "failed"; answered_turn_id?: string; created_at: string };
-export type TaskCommand = { interrupt?: boolean; id: string; run_id: string; kind: "steer" | "answer" | "continue" | "stop"; text?: string; question_id?: string };
+export type RunStatus = "running" | "completed" | "failed" | "cancelled";
+export const taskControlKinds = ["steer", "answer", "continue", "stop"] as const;
+export type TaskControlKind = typeof taskControlKinds[number];
+export type CommandKind = TaskControlKind | "start" | "input" | "cancel" | "hold";
+export type TaskCommand = { interrupt?: boolean; id: string; run_id: string; kind: TaskControlKind; text?: string; question_id?: string };
 export type TaskCommandReceipt = TaskCommand & { position: number; revision: number };
 export type TaskCommandResponse = { command: TaskCommandReceipt; run: Run; accepted?: boolean; retryable?: boolean; error?: string };
 export type PendingTaskCommand = { command: TaskCommand; started: number; sending?: boolean; error?: string; accepted?: boolean; position?: number; rejected?: boolean };
 export type Artifact = { id: string; kind: "screenshot" };
 export type Run = {
   id: string;
-  status: "running" | "completed" | "failed" | "cancelled";
+  status: RunStatus;
   cancel_requested: boolean;
   temporal?: boolean;
   protocol_version?: number;

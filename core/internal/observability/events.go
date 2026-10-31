@@ -29,6 +29,8 @@ var errorCategories = map[string]bool{
 }
 
 var eventNames = map[string]bool{
+	"model.call.denied":                   true,
+	"conversation.denied":                 true,
 	"conversation.command_acknowledgment": true,
 	"task.incomplete":                     true,
 	"conversation.hold.accepted":          true, "conversation.hold.answered": true, "conversation.correction.accepted": true,

@@ -21,6 +21,10 @@ func main() {
 	defer cancel()
 	stopTelemetry := observability.Init(ctx, "nori-deliver")
 	defer observability.Shutdown(stopTelemetry)
+	wakes, e := env.WorkerWake(ctx)
+	if e != nil {
+		observability.Fatal(e)
+	}
 	store, e := state.NewGoogle(ctx, env.Get("NORI_PROJECT_ID", "bot-111549"), env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
 	if e != nil {
 		observability.Fatal(e)
@@ -42,7 +46,7 @@ func main() {
 	if e = task.RepairClosed(ctx, store, c, config); e != nil {
 		observability.Fatal(e)
 	}
-	if e = task.Deliver(ctx, store, c); e != nil {
+	if e = task.Deliver(ctx, store, c, wakes); e != nil {
 		observability.Fatal(e)
 	}
 	log.Print("pending command delivery acknowledged")

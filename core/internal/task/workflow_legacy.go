@@ -121,7 +121,7 @@ func WorkflowV2(ctx workflow.Context, id string) (result state.Run, err error) {
 						contents = append(contents, toolResponse(question.CallID, "wait_for_input", map[string]any{"superseded": true, "reason": "Austin changed the task instructions."}))
 					}
 					question = nil
-					if cmd.Kind == "start" {
+					if cmd.Kind == state.CommandStart {
 						request = cmd.Text
 					}
 					contents = append(contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: cmd.Text}}})
@@ -329,7 +329,7 @@ func WorkflowV2(ctx workflow.Context, id string) (result state.Run, err error) {
 				stopConfirmed, stopped = true, true
 			}
 		}
-		status := "failed"
+		status := state.RunFailed
 		if stopConfirmed && (temporal.IsCanceledError(terminalErr) || applicationKind(terminalErr, "cancelled")) {
 			status = "cancelled"
 		}

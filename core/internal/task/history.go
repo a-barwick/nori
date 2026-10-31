@@ -198,7 +198,7 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 			q = nil
 			out.QuestionResolved = true
 			contents = append(contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: cmd.Text}}})
-			if cmd.Kind == "start" {
+			if cmd.Kind == state.CommandStart {
 				out.Request = clip(cmd.Text, 1500)
 			}
 		case "answer":
