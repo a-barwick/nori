@@ -56,7 +56,7 @@ export type Run = {
   deadline?: string;
   finished_at?: string;
   error?: string;
-  events: RunEvent[];
+  events: RunEvent[] | null;
   artifacts: Artifact[];
 };
 export type Usage = {

@@ -18,7 +18,7 @@ function statusLabel(run: Run) {
   if (run.status === "running" && run.cancel_requested) return "Stopping…";
   if (run.status === "running" && run.question?.resolved_by) return run.question.kind === "budget" ? "Budget accepted" : "Answer accepted";
   if (run.status === "running" && (run.question || run.waiting)) return run.question?.kind === "budget" ? "Waiting for budget approval" : "Waiting for your answer";
-  if (run.status === "running" && run.events.at(-1)?.kind === "checking") return "Checking the answer";
+  if (run.status === "running" && run.events?.at(-1)?.kind === "checking") return "Checking the answer";
   return { running: "Working on your task", completed: "Completed", failed: "Failed", cancelled: "Stopped" }[run.status];
 }
 
