@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"nori/internal/env"
+	"nori/internal/observability"
 	"nori/internal/wake"
 )
 
@@ -19,6 +20,8 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	stopTelemetry := observability.Init(ctx, "nori-api")
+	defer observability.Shutdown(stopTelemetry)
 	runtime, err := wake.Open(ctx)
 	if err != nil {
 		log.Fatal(err)
@@ -32,5 +35,9 @@ func main() {
 	// Tasks owns retry delivery across scale-to-zero and process termination.
 	server := wake.Server(ctx, net.JoinHostPort(env.Get("BIND_HOST", "127.0.0.1"), env.Get("PORT", "8080")), runtime.Handler(queue.Schedule, false))
 	log.Printf("Nori durable conversation listening on %s model=%s", server.Addr, runtime.Model)
-	wake.Listen(ctx, server, 25*time.Second)
+	if err := wake.Listen(ctx, server, 25*time.Second); err != nil {
+		observability.RecordErrorCategory(ctx, "http.listen", err)
+		observability.Shutdown(stopTelemetry)
+		log.Fatal(err)
+	}
 }

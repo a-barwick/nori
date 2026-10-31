@@ -1,5 +1,6 @@
 import { GoogleAuth } from "google-auth-library";
 import { isOwner, sameOrigin } from "./auth";
+import { reportUpstreamFailure, upstreamTraceHeaders } from "@/lib/observability/upstream";
 
 const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
 const METHODS = new Set(["session", "turn", "input", "cancel", "command", "artifact", "trace"]);
@@ -34,12 +35,13 @@ export async function runtimeRequest(request: Request, method: string) {
     const upstream = await fetch(target, {
       method: "POST",
       // Fresh headers: browser credentials and IAP headers are never forwarded.
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...upstreamTraceHeaders(request) },
       body,
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(145_000)]),
       redirect: "error",
       cache: "no-store",
     });
+    if (upstream.status >= 500) reportUpstreamFailure(method, "hosted", upstream.status);
     const contentType = upstream.headers.get("content-type") || "application/json";
     if (!contentType.includes("application/json") && !contentType.startsWith("image/png")) {
       return Response.json({ error: "The runtime returned an unsupported response." }, { status: 502 });
@@ -49,6 +51,7 @@ export async function runtimeRequest(request: Request, method: string) {
       headers: { "Content-Type": contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
     });
   } catch {
+    if (!request.signal.aborted) reportUpstreamFailure(method, "hosted");
     return Response.json({
       error: "Connection to Nori's runtime was interrupted. Refresh history to confirm the task's status.",
     }, { status: 502 });

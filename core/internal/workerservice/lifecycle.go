@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/interceptor"
+	"nori/internal/observability"
 )
 
 // Tracker remembers every execution seen by this slice, including executions
@@ -97,11 +98,16 @@ func Handler(process context.Context, run func(context.Context, string, []string
 		log.Printf("worker_slice slice=%s phase=request task=%q attempt=%q", id, r.Header.Get("X-CloudTasks-TaskName"), r.Header.Get("X-CloudTasks-TaskRetryCount"))
 		// A client disconnect must not cancel an already admitted paid Activity.
 		// run owns its polling cutoff and drains before returning this response.
-		if err := run(process, id, body.WorkflowIDs); err != nil {
+		workCtx := observability.ExtractTrace(process, observability.InjectTrace(r.Context()))
+		observability.Event(workCtx, "worker.slice.started")
+		if err := run(workCtx, id, body.WorkflowIDs); err != nil {
+			observability.RecordErrorCategory(workCtx, "worker.lifecycle", err)
+			observability.Event(workCtx, "worker.slice.failed")
 			log.Printf("worker_slice slice=%s phase=response status=503 error=%q", id, err)
 			http.Error(w, "worker wake will retry", http.StatusServiceUnavailable)
 			return
 		}
+		observability.Event(workCtx, "worker.slice.completed")
 		log.Printf("worker_slice slice=%s phase=response status=200", id)
 		w.WriteHeader(http.StatusOK)
 	})

@@ -10,6 +10,7 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"nori/internal/observability"
 )
 
 var ErrConversationBusy = errors.New("conversation lease is held by another processor")
@@ -19,12 +20,13 @@ var ErrConversationStale = errors.New("conversation attempt superseded")
 const ConversationLease = 30 * time.Second
 
 type ConversationInput struct {
-	ID           string     `firestore:"id"`
-	Text         string     `firestore:"text"`
-	Position     int64      `firestore:"position"`
-	CreatedAt    time.Time  `firestore:"created_at"`
-	Introduction bool       `firestore:"introduction,omitempty"`
-	Event        *TaskEvent `firestore:"event,omitempty"`
+	ID           string            `firestore:"id"`
+	Text         string            `firestore:"text"`
+	Position     int64             `firestore:"position"`
+	CreatedAt    time.Time         `firestore:"created_at"`
+	Introduction bool              `firestore:"introduction,omitempty"`
+	Event        *TaskEvent        `firestore:"event,omitempty"`
+	TraceContext map[string]string `json:"-" firestore:"trace_context,omitempty"`
 }
 type ConversationControl struct {
 	ProtocolVersion int       `firestore:"protocol_version,omitempty"`
@@ -166,6 +168,7 @@ func (s *Google) ConversationStatus(ctx context.Context) (ConversationControl, *
 	return c, &t, e
 }
 func (s *Google) AcceptConversationInput(ctx context.Context, id, text string) error {
+	traceContext := observability.InjectTrace(ctx)
 	return s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		d, e := tx.Get(s.conversationInputs().Doc(id))
 		if e == nil {
@@ -189,7 +192,7 @@ func (s *Google) AcceptConversationInput(ctx context.Context, id, text string) e
 		c.Received++
 		c.UserReceived = c.Received
 		c.LatestAt = now
-		in := ConversationInput{ID: id, Text: text, Position: c.Received, CreatedAt: now}
+		in := ConversationInput{ID: id, Text: text, Position: c.Received, CreatedAt: now, TraceContext: traceContext}
 		if e = tx.Set(s.conversation(), c); e != nil {
 			return e
 		}

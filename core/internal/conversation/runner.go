@@ -12,6 +12,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"nori/internal/observability"
 	"nori/internal/state"
 )
 
@@ -87,10 +91,20 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 	if strings.TrimSpace(input.Message) == "" || len(input.Message) > 8192 {
 		return Session{}, fmt.Errorf("message must contain 1–8192 bytes")
 	}
+	ctx, span := conversationTracer.Start(ctx, "conversation.accept", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID), attribute.String("nori.input.id", input.ID)))
+	defer span.End()
 	if e := r.tasks.Store.AcceptConversationInput(ctx, input.ID, input.Message); e != nil {
+		if !errors.Is(e, state.ErrConversationConflict) && !errors.Is(ctx.Err(), context.Canceled) {
+			observability.RecordErrorCategory(ctx, "conversation.accept", e)
+		}
 		return Session{}, e
 	}
-	return r.Snapshot(ctx)
+	observability.Event(ctx, "conversation.accepted")
+	session, err := r.Snapshot(ctx)
+	if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+		observability.RecordErrorCategory(ctx, "conversation.snapshot", err)
+	}
+	return session, err
 }
 func fenceFor(c state.ConversationControl, t state.ConversationTurn) state.ConversationFence {
 	return state.ConversationFence{Owner: c.Owner, Fence: c.Fence, TurnID: t.ID, Through: t.Through, UserThrough: t.UserThrough, Frozen: t.Frozen}
@@ -112,7 +126,12 @@ func (r *Runner) Process(ctx context.Context) error {
 			return nil
 		}
 		f := fenceFor(c, *t)
-		e = r.processTurn(ctx, c, *t)
+		turnCtx, turnSpan := startTurn(ctx, *t)
+		e = r.processTurn(turnCtx, c, *t)
+		if e != nil && !errors.Is(e, context.Canceled) && !errors.Is(e, state.ErrConversationStale) && !errors.Is(e, state.ErrConversationBusy) {
+			observability.RecordErrorCategory(turnCtx, "conversation.process", e)
+		}
+		turnSpan.End()
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = r.tasks.Store.ReleaseConversation(cleanup, f)
 		cancel()
@@ -188,6 +207,8 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 				return e
 			}
 		}
+		span := trace.SpanFromContext(ctx)
+		span.SetAttributes(attribute.String("nori.attempt.id", t.Attempt.ID), attribute.Int("nori.attempt.number", t.Attempt.Number), attribute.Int("nori.conversation.restart_count", t.Restarts))
 		f = fenceFor(c, t)
 		if t.Attempt.Reply == "" && t.Attempt.Status != "error" {
 			if e = r.call(ctx, f, &t); e != nil {
@@ -231,6 +252,16 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		e = r.tasks.Store.PublishConversation(ctx, f, t, text)
 		if errors.Is(e, state.ErrConversationStale) {
 			continue
+		}
+		if e == nil {
+			span.SetAttributes(attribute.String("nori.reply.status", t.Attempt.Status), attribute.Bool("nori.output.present", text != ""))
+			if t.Attempt.Status == "error" {
+				span.SetStatus(codes.Error, "conversation reply failed")
+				observability.Event(ctx, "conversation.failed")
+			} else {
+				observability.Event(ctx, "conversation.completed")
+			}
+			recordReplies(ctx, t, text)
 		}
 		return e
 	}

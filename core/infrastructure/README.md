@@ -32,3 +32,20 @@ Keep paid workers and the computer off after live work. Application deadlines
 bound individual work; cloud capacity policy and operator lifecycle are described
 in the POC and Temporal guides. Never delete or rebuild the retained user disk,
 browser profile, or files as part of capacity cleanup.
+
+Telemetry is optional. The POC and Temporal Terraform stacks each accept the same
+`observability` object for Sentry DSNs, AX space/project settings, capture consent,
+sampling, and per-process limits. `arize_secret` is the resource name of an
+existing Secret Manager secret, not its value. The POC state grants the runtime
+identity access for both the API and workers; its production state owns the shared
+Agent Platform service-agent grant, so sandbox uses the same secret. Apply any
+access and service changes through separately reviewed plans. The computer guest
+does not receive these credentials.
+
+The release bootstrap's optional `sentry_source_maps` setting references an
+existing token secret and the public Sentry organization/project names. Cloud
+Build reads the token into a short-lived, owner-only file outside the web build
+context, supplies it through a BuildKit secret mount, and removes the file. No
+token value belongs in Terraform, image arguments, or source. Builds use the
+source commit as the release ID; the promoted web image obtains its Sentry
+environment from the deployed service at runtime.

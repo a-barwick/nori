@@ -5,12 +5,21 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 COPY . .
-RUN mkdir -p public && bun run build
+ARG NEXT_PUBLIC_SENTRY_DSN
+ARG NEXT_PUBLIC_SENTRY_ENVIRONMENT
+ARG NEXT_PUBLIC_SENTRY_RELEASE
+ARG NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE
+ARG SENTRY_ORG
+ARG SENTRY_PROJECT
+ARG SENTRY_RELEASE
+RUN --mount=type=secret,id=sentry_auth_token,env=SENTRY_AUTH_TOKEN,required=false mkdir -p public && bun run build
 
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
+ARG SENTRY_RELEASE
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
+    SENTRY_RELEASE=${SENTRY_RELEASE} \
     HOSTNAME=0.0.0.0 \
     PORT=8080
 COPY --from=build --chown=node:node /app/.next/standalone ./

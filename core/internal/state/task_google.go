@@ -12,6 +12,7 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"nori/internal/observability"
 )
 
 func (s *Google) commands() *firestore.CollectionRef { return s.root().Collection("task_commands") }
@@ -35,6 +36,7 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 		return nil, fmt.Errorf("%w: a command batch needs 1–32 commands", ErrCommandInvalid)
 	}
 	var receipts []CommandReceipt
+	traceContext := observability.InjectTrace(ctx)
 	err := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		receipts = make([]CommandReceipt, 0, len(commands))
 		prior := map[string]*Command{}
@@ -143,7 +145,7 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 				if strings.TrimSpace(cmd.Text) == "" {
 					return fmt.Errorf("%w: start needs a task request", ErrCommandInvalid)
 				}
-				run = Run{ID: cmd.RunID, Request: cmd.Text, Status: "running", Temporal: true, ProtocolVersion: TaskProtocolVersion, StartedAt: now, Budget: 1, Events: []Event{}, Artifacts: []Artifact{}}
+				run = Run{ID: cmd.RunID, Request: cmd.Text, Status: "running", Temporal: true, ProtocolVersion: TaskProtocolVersion, StartedAt: now, Budget: 1, Events: []Event{}, Artifacts: []Artifact{}, TraceContext: traceContext, OriginTraceContext: traceContext}
 				exists[cmd.RunID] = true
 			}
 			if run.ProtocolVersion < TaskProtocolVersion {
@@ -189,6 +191,11 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 					return fmt.Errorf("%w: unknown command kind", ErrCommandInvalid)
 				}
 				run.Position++
+			}
+			// Subsequent activities follow the latest accepted correction or answer.
+			// The original parent remains available for full task latency and links.
+			if len(traceContext) != 0 {
+				run.TraceContext = traceContext
 			}
 			cmd.Position, cmd.Revision, cmd.CreatedAt, cmd.Delivered = run.Position, run.Revision, now, false
 			runs[run.ID], changed[run.ID] = run, true
@@ -398,6 +405,7 @@ func (s *Google) Project(ctx context.Context, id string, revision int64, kind, t
 
 // ProjectQuestion commits the durable wait and its outer inbox event together.
 func (s *Google) ProjectQuestion(ctx context.Context, id string, revision int64, question Question) error {
+	traceContext := observability.InjectTrace(ctx)
 	return s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		run, err := s.guardTx(tx, id, revision)
 		if err != nil {
@@ -410,7 +418,11 @@ func (s *Google) ProjectQuestion(ctx context.Context, id string, revision int64,
 			return nil
 		}
 		event := TaskEvent{ID: question.ID, RunID: id, Kind: "needs_input", Sequence: run.EventSequence + 1, Revision: revision, Text: question.Text, QuestionID: question.ID, Reason: question.Kind, OperationRefs: run.OperationRefs, CreatedAt: time.Now().UTC()}
-		inserted, err := s.appendTaskEvent(tx, event)
+		eventTraceContext := traceContext
+		if len(eventTraceContext) == 0 {
+			eventTraceContext = run.TraceContext
+		}
+		inserted, err := s.appendTaskEvent(tx, event, eventTraceContext)
 		if err != nil {
 			return err
 		}
@@ -425,6 +437,7 @@ func (s *Google) ProjectQuestion(ctx context.Context, id string, revision int64,
 func (s *Google) Publish(ctx context.Context, id string, revision int64, runStatus, detail, text string, costUnknown bool, bypassRouting ...bool) (Run, error) {
 	var run Run
 	routingPending := false
+	traceContext := observability.InjectTrace(ctx)
 	err := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		routingPending = false
 		var err error
@@ -471,7 +484,11 @@ func (s *Google) Publish(ctx context.Context, id string, revision int64, runStat
 				kind = "stopped"
 			}
 			event := TaskEvent{ID: id + "-terminal", RunID: id, Kind: kind, Sequence: run.EventSequence + 1, Revision: revision, Text: text, Reason: detail, OperationRefs: run.OperationRefs, CreatedAt: now}
-			inserted, err := s.appendTaskEvent(tx, event)
+			eventTraceContext := traceContext
+			if len(eventTraceContext) == 0 {
+				eventTraceContext = run.TraceContext
+			}
+			inserted, err := s.appendTaskEvent(tx, event, eventTraceContext)
 			if err != nil {
 				return err
 			}

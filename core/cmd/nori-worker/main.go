@@ -17,6 +17,7 @@ import (
 	"nori/internal/agent"
 	"nori/internal/computer"
 	"nori/internal/env"
+	"nori/internal/observability"
 	"nori/internal/state"
 	"nori/internal/task"
 	"nori/internal/wake"
@@ -30,6 +31,8 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	stopTelemetry := observability.Init(ctx, "nori-worker")
+	defer observability.Shutdown(stopTelemetry)
 	if port := os.Getenv("PORT"); port != "" {
 		addr := ":" + port
 		if os.Getenv("TEMPORAL_LOCAL") == "true" {
@@ -37,10 +40,16 @@ func main() {
 		}
 		server := wake.Server(ctx, addr, workerservice.Handler(ctx, func(ctx context.Context, id string, ids []string) error { return run(ctx, true, id, ids) }))
 		server.WriteTimeout = 11 * time.Minute
-		wake.Listen(ctx, server, 5*time.Minute)
+		if err := wake.Listen(ctx, server, 5*time.Minute); err != nil {
+			observability.RecordErrorCategory(ctx, "http.listen", err)
+			observability.Shutdown(stopTelemetry)
+			log.Fatal(err)
+		}
 		return
 	}
 	if err := run(ctx, false, "local", nil); err != nil {
+		observability.RecordErrorCategory(ctx, "worker.lifecycle", err)
+		observability.Shutdown(stopTelemetry)
 		log.Fatal(err)
 	}
 }

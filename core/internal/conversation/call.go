@@ -11,6 +11,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"nori/internal/observability"
 	"nori/internal/state"
 )
 
@@ -30,9 +34,23 @@ func inputMessage(in state.ConversationInput) json.RawMessage {
 }
 
 func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.ConversationTurn) (callErr error) {
+	ctx, span := conversationTracer.Start(ctx, "conversation.attempt", trace.WithAttributes(
+		attribute.String("openinference.span.kind", "CHAIN"),
+		attribute.String("session.id", observability.SessionID),
+		attribute.String("nori.turn.id", t.ID),
+		attribute.String("nori.attempt.id", t.Attempt.ID),
+		attribute.Int("nori.attempt.number", t.Attempt.Number),
+	))
 	started := time.Now()
 	historyMS, tasksMS, visibleMS, jevMS, promptMS, outerMS := int64(-1), int64(-1), int64(-1), int64(-1), int64(-1), int64(-1)
 	defer func() {
+		span.SetAttributes(attribute.Int64("nori.phase.history_ms", historyMS), attribute.Int64("nori.phase.tasks_ms", tasksMS), attribute.Int64("nori.phase.visible_ms", visibleMS), attribute.Int64("nori.phase.classifier_ms", jevMS), attribute.Int64("nori.phase.prompt_ms", promptMS), attribute.Int64("nori.phase.outer_ms", outerMS), attribute.String("nori.reply.status", t.Attempt.Status))
+		if callErr != nil && !errors.Is(ctx.Err(), context.Canceled) && !errors.Is(callErr, state.ErrConversationStale) {
+			observability.RecordErrorCategory(ctx, "conversation.attempt", callErr)
+		} else if t.Attempt.Status == "error" {
+			span.SetStatus(codes.Error, "conversation reply failed")
+		}
+		span.End()
 		log.Printf("conversation attempt %s phases: history_ms=%d tasks_ms=%d visible_ms=%d jev_ms=%d prompt_ms=%d outer_ms=%d total_ms=%d", t.Attempt.ID, historyMS, tasksMS, visibleMS, jevMS, promptMS, outerMS, time.Since(started).Milliseconds())
 	}()
 	callCtx, cancel := context.WithCancel(ctx)
@@ -120,7 +138,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	for _, input := range t.Inputs {
 		if input.IsUser() {
 			model.NoDispatch = false
-			break
+			model.TelemetryInput = input.Text
 		}
 	}
 	classifier := *r.classifier

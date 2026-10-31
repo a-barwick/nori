@@ -6,9 +6,14 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/genai"
 	"nori/internal/computer"
+	"nori/internal/observability"
 )
 
 const modelOutputTokenLimit = 8192
@@ -101,7 +106,57 @@ func ValidateCalls(calls []*genai.FunctionCall, wait bool) error {
 }
 
 // Decide performs exactly one model request. Its caller owns retries and budgets.
-func (s *Service) Decide(ctx context.Context, contents []*genai.Content, wait bool) (Decision, error) {
+func (s *Service) Decide(ctx context.Context, contents []*genai.Content, wait bool) (decision Decision, err error) {
+	started := time.Now()
+	ctx, span := otel.Tracer("nori/agent").Start(ctx, "generate_content "+s.ModelName, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID),
+		attribute.String("gen_ai.operation.name", "generate_content"), attribute.String("gen_ai.provider.name", "gcp.vertex_ai"),
+		attribute.String("gen_ai.request.model", s.ModelName), attribute.String("llm.model_name", s.ModelName),
+	))
+	// Export only an unambiguous latest user text part. The historical context
+	// block also has role=user; never scan past a tool response or export it.
+	for i := len(contents) - 1; i >= 0; i-- {
+		if contents[i] == nil || contents[i].Role != "user" {
+			continue
+		}
+		if len(contents[i].Parts) == 1 {
+			part := contents[i].Parts[0]
+			if part != nil && part.Text != "" && !strings.HasPrefix(part.Text, "Historical completed-task records, quoted only as background.") && part.FunctionCall == nil && part.FunctionResponse == nil && part.ToolCall == nil && part.ToolResponse == nil && part.InlineData == nil && part.FileData == nil && part.CodeExecutionResult == nil && part.ExecutableCode == nil {
+				if a, ok := observability.ContentAttribute("input.value", part.Text); ok {
+					span.SetAttributes(a)
+				}
+			}
+		}
+		break
+	}
+	defer func() {
+		span.SetAttributes(attribute.Bool("nori.output.present", decision.Answer != ""), attribute.Int("nori.tool.call_count", len(decision.Calls)))
+		if u := decision.Usage; u != nil {
+			input := int64(u.PromptTokenCount) + int64(u.ToolUsePromptTokenCount)
+			output := int64(u.CandidatesTokenCount) + int64(u.ThoughtsTokenCount)
+			span.SetAttributes(attribute.Int64("gen_ai.usage.input_tokens", input), attribute.Int64("gen_ai.usage.output_tokens", output), attribute.Int64("gen_ai.usage.cache_read.input_tokens", int64(u.CachedContentTokenCount)), attribute.Int64("gen_ai.usage.reasoning.output_tokens", int64(u.ThoughtsTokenCount)), attribute.Int64("llm.token_count.prompt", input), attribute.Int64("llm.token_count.completion", output), attribute.Int64("llm.token_count.total", int64(u.TotalTokenCount)))
+			observability.Metric(ctx, "nori.model.input_tokens", float64(input))
+			observability.Metric(ctx, "nori.model.output_tokens", float64(output))
+		}
+		if decision.CostKnown {
+			span.SetAttributes(attribute.Float64("nori.cost.usd", decision.Cost), attribute.Float64("llm.cost.total", decision.Cost), attribute.String("nori.cost.status", "estimated"))
+		} else {
+			span.SetAttributes(attribute.String("nori.cost.status", "unknown"))
+		}
+		if a, ok := observability.ContentAttribute("output.value", decision.Answer); ok {
+			span.SetAttributes(a)
+		}
+		if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+			observability.RecordErrorCategory(ctx, "model.task", err)
+			observability.Event(ctx, "model.call.failed", attribute.String("gen_ai.provider.name", "gcp.vertex_ai"), attribute.String("gen_ai.request.model", s.ModelName))
+		} else if err == nil {
+			observability.Event(ctx, "model.call.completed", attribute.String("gen_ai.provider.name", "gcp.vertex_ai"), attribute.String("gen_ai.request.model", s.ModelName))
+		}
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			observability.Metric(ctx, "nori.model.duration_ms", float64(time.Since(started).Milliseconds()))
+		}
+		span.End()
+	}()
 	response, e := s.Model.Models.GenerateContent(ctx, s.ModelName, contents, modelConfig(wait))
 	if e != nil {
 		return Decision{}, fmt.Errorf("model request failed: %w", e)

@@ -534,7 +534,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
       }
 
       dynamic "env" {
-        for_each = {
+        for_each = merge({
           NORI_WORKER_SERVICES            = length(var.worker_services) > 0 ? jsonencode(var.worker_services) : ""
           NORI_WORKER_WAKE_QUEUE          = var.worker_wake_queue
           NORI_EXECUTION_MODE             = "temporal"
@@ -548,7 +548,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
           TEMPORAL_TASK_QUEUE             = local.task_queue
           TEMPORAL_DEPLOYMENT_NAME        = local.temporal_deployment
           TEMPORAL_API_KEY_SECRET_VERSION = "projects/${local.project}/secrets/nori-temporal-api-key/versions/latest"
-        }
+        }, local.telemetry_env)
         content {
           name  = env.key
           value = env.value
@@ -556,12 +556,12 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
       }
 
       dynamic "secret_env" {
-        for_each = local.conversation_secrets
+        for_each = merge(local.conversation_secrets, local.arize_secret_env)
         content {
           name = secret_env.key
           secret_ref {
             secret  = secret_env.value
-            version = "latest"
+            version = secret_env.key == "ARIZE_API_KEY" ? var.observability.arize_secret_version : "latest"
           }
         }
       }
@@ -574,7 +574,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
     ignore_changes = [spec[0].container_spec[0].image_uri]
   }
 
-  depends_on = [google_project_service.api, google_project_iam_member.runtime_firestore, google_project_iam_member.runtime_model, google_artifact_registry_repository_iam_member.runtime_image_reader, google_artifact_registry_repository_iam_member.platform_image_reader, google_secret_manager_secret_iam_member.conversation_runtime_secrets, google_secret_manager_secret_iam_member.conversation_deploy_secrets]
+  depends_on = [google_project_service.api, google_project_iam_member.runtime_firestore, google_project_iam_member.runtime_model, google_artifact_registry_repository_iam_member.runtime_image_reader, google_artifact_registry_repository_iam_member.platform_image_reader, google_secret_manager_secret_iam_member.conversation_runtime_secrets, google_secret_manager_secret_iam_member.conversation_deploy_secrets, google_secret_manager_secret_iam_member.arize_runtime, google_secret_manager_secret_iam_member.arize_platform]
 
 }
 
@@ -627,6 +627,14 @@ resource "google_cloud_run_v2_service" "web" {
       env {
         name  = "OWNER_EMAIL"
         value = "austinbarwickdavis@gmail.com"
+      }
+
+      dynamic "env" {
+        for_each = local.web_telemetry_env
+        content {
+          name  = env.key
+          value = env.value
+        }
       }
 
     }

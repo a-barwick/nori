@@ -15,7 +15,11 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/oauth2/google"
+	"nori/internal/observability"
 )
 
 type Config struct {
@@ -48,12 +52,21 @@ var ErrBrowserRestarted = errors.New("browser restarted; navigate again before t
 var ErrDraining = errors.New("computer is stopping after idle; request was not dispatched")
 
 func Open(ctx context.Context, c Config, run string) (*Client, error) {
-	return connect(ctx, c, run, true)
+	return tracedConnect(ctx, c, run, true)
 }
 
 // Attach establishes cleanup access without starting paid compute.
 func Attach(ctx context.Context, c Config, run string) (*Client, error) {
-	return connect(ctx, c, run, false)
+	return tracedConnect(ctx, c, run, false)
+}
+func tracedConnect(ctx context.Context, config Config, run string, allowStart bool) (*Client, error) {
+	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer.connect", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID), attribute.Bool("nori.computer.allow_start", allowStart)))
+	defer span.End()
+	client, err := connect(ctx, config, run, allowStart)
+	if err != nil && !errors.Is(err, ErrStopped) && !errors.Is(ctx.Err(), context.Canceled) {
+		observability.RecordErrorCategory(ctx, "computer.connect", err)
+	}
+	return client, err
 }
 func connect(ctx context.Context, c Config, run string, allowStart bool) (*Client, error) {
 	if c.LocalURL != "" {
@@ -253,7 +266,30 @@ func (c *Client) Close() {
 		c.http.CloseIdleConnections()
 	})
 }
-func (c *Client) post(ctx context.Context, path string, body any, max int) ([]byte, error) {
+func (c *Client) post(ctx context.Context, path string, body any, max int) (response []byte, err error) {
+	operation := "other"
+	switch path {
+	case "/exec":
+		operation = "exec"
+	case "/navigate":
+		operation = "navigate"
+	case "/screenshot":
+		operation = "screenshot"
+	case "/cancel":
+		operation = "cancel"
+	case "/browser/close":
+		operation = "browser_close"
+	}
+	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer."+operation, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID), attribute.String("nori.computer.operation", operation), attribute.String("nori.task.id", c.taskID), attribute.String("nori.operation.id", c.operation)))
+	defer func() {
+		if err != nil && !errors.Is(err, ErrDraining) && !errors.Is(err, ErrBrowserRestarted) && !errors.Is(ctx.Err(), context.Canceled) {
+			observability.RecordErrorCategory(ctx, "computer.rpc", err, attribute.String("nori.computer.operation", operation))
+			observability.Event(ctx, "computer.rpc.failed", attribute.String("nori.computer.operation", operation))
+		} else if err == nil {
+			observability.Event(ctx, "computer.rpc.completed", attribute.String("nori.computer.operation", operation))
+		}
+		span.End()
+	}()
 	data, e := json.Marshal(body)
 	if e != nil {
 		return nil, e
@@ -265,6 +301,9 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) ([]by
 	req.Header.Set("Content-Type", "application/json")
 	if c.operation != "" {
 		req.Header.Set("Nori-Operation-ID", c.operation)
+	}
+	for key, value := range observability.InjectTrace(ctx) {
+		req.Header.Set(key, value)
 	}
 	resp, e := c.http.Do(req)
 	if e != nil {

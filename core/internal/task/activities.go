@@ -7,15 +7,20 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"google.golang.org/genai"
 	"nori/internal/agent"
 	"nori/internal/computer"
+	"nori/internal/observability"
 	"nori/internal/state"
 )
 
@@ -147,10 +152,10 @@ func (a *Activities) Reconcile(ctx context.Context, id string) (state.TaskSnapsh
 
 // bounded tracks pause and Stop throughout I/O. Corrections invalidate
 // the next boundary; already admitted bounded work is allowed to finish.
-func (a *Activities) bounded(parent context.Context, step Step) (context.Context, func(), error) {
-	_, e := a.Store.Guard(parent, step.RunID, step.Revision)
+func (a *Activities) bounded(parent context.Context, step Step) (context.Context, func(), state.Run, error) {
+	run, e := a.Store.Guard(parent, step.RunID, step.Revision)
 	if e != nil {
-		return nil, nil, classified(e)
+		return nil, nil, state.Run{}, classified(e)
 	}
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
@@ -181,7 +186,7 @@ func (a *Activities) bounded(parent context.Context, step Step) (context.Context
 			}
 		}
 	}()
-	return ctx, func() { cancel(); <-done }, nil
+	return ctx, func() { cancel(); <-done }, run, nil
 }
 
 // ioError distinguishes durable Stop from an ordinary canceled HTTP request.
@@ -198,11 +203,13 @@ func (a *Activities) ioError(step Step, err error) error {
 	return classified(err)
 }
 func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, error) {
-	ctx, done, e := a.bounded(ctx, in.Step)
+	ctx, done, run, e := a.bounded(ctx, in.Step)
 	if e != nil {
 		return ModelOutcome{}, e
 	}
 	defer done()
+	ctx, span := startActivity(ctx, "task.model", "AGENT", run, in.Revision)
+	defer span.End()
 	info := activity.GetInfo(ctx)
 	trace := state.TaskStep{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(info.WorkflowExecution.RunID+":"+info.ActivityID)).String(), Kind: "model", Status: "running", Revision: in.Revision, StartedAt: time.Now().UTC(), Model: a.Agent.ModelName, CostStatus: "unknown"}
 	a.recordStep(in.RunID, trace)
@@ -211,6 +218,8 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	modelCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
 	defer stop()
 	decision, e := a.Agent.Decide(modelCtx, in.Contents, true)
+	span.SetAttributes(attribute.Bool("nori.output.present", decision.Answer != ""), attribute.Int("nori.tool.call_count", len(decision.Calls)))
+	recordActivityFailure(modelCtx, e, "task.model")
 	outcome := ModelOutcome{Decision: decision}
 	if e != nil {
 		outcome.Failure = e.Error()
@@ -232,11 +241,38 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	return outcome, nil
 }
 func (a *Activities) Tool(ctx context.Context, in ToolInput) (result map[string]any, err error) {
-	ctx, done, e := a.bounded(ctx, in.Step)
+	ctx, done, run, e := a.bounded(ctx, in.Step)
 	if e != nil {
 		return nil, e
 	}
 	defer done()
+	ctx, span := startActivity(ctx, "task.tool", "TOOL", run, in.Revision)
+	span.SetAttributes(attribute.String("tool.name", safeToolName(in.Call.Name)), attribute.String("nori.operation.id", in.OperationID))
+	defer func() {
+		outcome := "completed"
+		if err != nil {
+			outcome = "failed"
+			if expectedBoundary(err) || errors.Is(ctx.Err(), context.Canceled) {
+				outcome = "interrupted"
+			}
+			recordActivityFailure(ctx, err, "task.tool")
+		} else if available, ok := result["page_available"].(bool); ok && !available {
+			outcome = "browser_restarted"
+		}
+		if code, ok := result["exit_code"].(float64); ok {
+			span.SetAttributes(attribute.Int64("nori.tool.exit_code", int64(code)))
+			if code != 0 {
+				outcome = "nonzero_exit"
+			}
+		}
+		span.SetAttributes(attribute.String("nori.tool.outcome", outcome))
+		if outcome == "failed" {
+			observability.Event(ctx, "task.tool.failed", attribute.String("tool.name", safeToolName(in.Call.Name)), attribute.String("nori.tool.outcome", outcome))
+		} else if outcome != "interrupted" {
+			observability.Event(ctx, "task.tool.completed", attribute.String("tool.name", safeToolName(in.Call.Name)), attribute.String("nori.tool.outcome", outcome))
+		}
+		span.End()
+	}()
 	if e = a.Store.Admit(ctx, in.RunID, in.Revision, in.OperationID); e != nil {
 		return nil, classified(e)
 	}
@@ -269,6 +305,7 @@ func (a *Activities) Tool(ctx context.Context, in ToolInput) (result map[string]
 		if attempt == 0 && errors.Is(e, computer.ErrDraining) {
 			// The host rejected this request before forwarding to the guest.
 			// Reconnect once, preserving its operation identity and admission.
+			span.SetAttributes(attribute.Int("nori.computer.reconnect_count", 1))
 			c.Close()
 			continue
 		}
@@ -319,7 +356,25 @@ func traceText(text string) string {
 	return text + "… [truncated]"
 }
 func computerRun(step Step) string { return fmt.Sprintf("%s-r%d", step.RunID, step.Revision) }
-func (a *Activities) Stop(ctx context.Context, ids []string) error {
+func (a *Activities) Stop(ctx context.Context, ids []string) (err error) {
+	// The workflow ID identifies the task without changing historical activity
+	// inputs. Recovery calls outside a workflow retain their existing context.
+	id := ""
+	if activity.IsActivity(ctx) {
+		workflowID := activity.GetInfo(ctx).WorkflowExecution.ID
+		if strings.HasPrefix(workflowID, "nori-task-") {
+			candidate := strings.TrimPrefix(workflowID, "nori-task-")
+			if _, parseErr := uuid.Parse(candidate); parseErr == nil {
+				id = candidate
+			}
+		}
+	}
+	run := state.Run{ID: id}
+	if id != "" {
+		run = a.activityRun(ctx, id)
+	}
+	ctx, span := startActivity(ctx, "task.stop_computer", "CHAIN", run, run.Revision)
+	defer func() { recordActivityFailure(ctx, err, "task.stop_computer"); span.End() }()
 	return classified(StopComputer(ctx, a.Agent.Computer, ids))
 }
 func StopComputer(ctx context.Context, config computer.Config, ids []string) error {
@@ -367,14 +422,29 @@ func (a *Activities) notify(ctx context.Context) {
 		}
 	}
 }
-func (a *Activities) Ask(ctx context.Context, p QuestionProjection) error {
+func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) {
+	ctx, span := startActivity(ctx, "task.wait_for_input", "CHAIN", a.activityRun(ctx, p.RunID), p.Revision)
+	defer func() { recordActivityFailure(ctx, err, "task.question"); span.End() }()
 	if err := a.Store.ProjectQuestion(ctx, p.RunID, p.Revision, p.Question); err != nil {
 		return classified(err)
 	}
 	a.notify(ctx)
 	return nil
 }
-func (a *Activities) Publish(ctx context.Context, p Publication) (state.Run, error) {
+func (a *Activities) Publish(ctx context.Context, p Publication) (result state.Run, resultErr error) {
+	run := a.activityRun(ctx, p.RunID)
+	ctx, span := startActivity(ctx, "task.publish", "CHAIN", run, p.Revision)
+	defer func() {
+		span.SetAttributes(attribute.String("nori.task.status", result.Status), attribute.Bool("nori.output.present", result.Result != ""))
+		recordActivityFailure(ctx, resultErr, "task.publish")
+		if resultErr == nil && result.Status == "failed" {
+			span.SetStatus(codes.Error, "task failed")
+			if run.Status == "running" || run.Status == "" {
+				observability.RecordErrorCategory(ctx, "task.failed", errors.New("task failed"))
+			}
+		}
+		span.End()
+	}()
 	if p.Status != "completed" {
 		current, err := a.Store.GetRun(ctx, p.RunID)
 		if err != nil {
@@ -391,6 +461,18 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (state.Run, err
 	}
 	r, err := a.Store.Publish(ctx, p.RunID, p.Revision, p.Status, p.Detail, p.Text, p.CostUnknown, p.BypassRouting)
 	if err == nil {
+		if (run.Status == "running" || run.Status == "") && r.FinishedAt != nil && !r.StartedAt.IsZero() && !r.FinishedAt.Before(r.StartedAt) {
+			durationCtx := observability.ExtractTrace(ctx, r.OriginTraceContext)
+			_, durationSpan := taskTracer.Start(durationCtx, "task.acceptance_to_terminal", trace.WithTimestamp(r.StartedAt), trace.WithLinks(trace.Link{SpanContext: span.SpanContext()}), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID), attribute.String("nori.task.id", p.RunID), attribute.String("nori.task.status", r.Status), attribute.Bool("nori.output.present", r.Result != "")))
+			if r.Status == "failed" {
+				durationSpan.SetStatus(codes.Error, "task failed")
+				observability.Event(ctx, "task.failed")
+			} else if r.Status == "completed" {
+				observability.Event(ctx, "task.completed")
+			}
+			observability.Metric(ctx, "nori.task.duration_ms", float64(r.FinishedAt.Sub(r.StartedAt).Milliseconds()))
+			durationSpan.End(trace.WithTimestamp(*r.FinishedAt))
+		}
 		a.notify(ctx)
 	}
 	return r, classified(err)
@@ -398,7 +480,10 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (state.Run, err
 func (a *Activities) Project(ctx context.Context, p Projection) error {
 	return classified(a.Store.Project(ctx, p.RunID, p.Revision, p.Kind, p.Text))
 }
-func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) error {
+func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) (err error) {
+	run := a.activityRun(ctx, in.RunID)
+	ctx, span := startActivity(ctx, "task.browser_cleanup", "CHAIN", run, run.Revision)
+	defer func() { recordActivityFailure(ctx, err, "task.browser_cleanup"); span.End() }()
 	c, err := computer.Attach(ctx, a.Agent.Computer, in.Scope)
 	if errors.Is(err, computer.ErrStopped) {
 		return a.Store.FinishCleanup(ctx, in.RunID)
