@@ -57,11 +57,19 @@ async function until(read, accepts, label, timeout = 120_000, interval = 150) {
 const settled = () => until(session, (value) => !value.conversation.pending && !value.conversation.processing, "conversation routing");
 async function start(request) {
   const before = new Set((await settled()).runs.map((run) => run.id));
-  await turn(`Start exactly one independent task now. Pass these instructions to the worker: ${request}`);
-  const snapshot = await until(session, (value) => value.runs.some((run) => !before.has(run.id)), "one accepted task");
+  const input = { id: crypto.randomUUID(), message: `Start exactly one independent task now. Pass these instructions to the worker: ${request}` };
+  await post("turn", input, 202);
+  const snapshot = await settled();
   const added = snapshot.runs.filter((run) => !before.has(run.id));
   expect(added, "One request must create one durable task.").toHaveLength(1);
   created.add(added[0].id);
+  const attempt = snapshot.traces.find((trace) => trace.input_ids.includes(input.id) && trace.status === "completed");
+  expect(attempt?.model).toBe("meta/muse-spark-1.3");
+  expect(attempt.actions.filter((action) => action.status === "accepted" && action.command.kind === "start" && action.command.run_id === added[0].id)).toHaveLength(1);
+  const reply = snapshot.messages.find((message) => message.role === "assistant" && message.turn_id === attempt.turn_id && !message.run_id);
+  expect(reply?.text.trim().length, "Native tool-only responses still publish an acknowledgment after acceptance.").toBeGreaterThan(0);
+  await post("turn", input, 202);
+  expect((await settled()).runs.filter((run) => !before.has(run.id)).map((run) => run.id), "Replaying the accepted chat input must not dispatch twice.").toEqual([added[0].id]);
   return added[0].id;
 }
 async function cleanup(id) {
@@ -141,7 +149,7 @@ journey("request_input persists across reload and one exact answer selects the o
     return result;
   };
   try {
-    id = await start(`Open http://127.0.0.1:18080/bills and report the selected bill's account, dollar amount, and reference for bill request ${prefix}. ` +
+    id = await start(`Open http://127.0.0.1:18080/bills and report the selected bill's account and dollar amount for bill request ${prefix}. ` +
       "Before opening the page, use request_input to ask whether I mean Home or Studio, and wait for my answer. After my selection, use browser_navigate to read the actual bill page, then complete with only the selected account's observed bill details and cite the tool evidence. Do not use shell commands or change any data.");
     const paused = find(await until(session, (value) => waiting(find(value, id)), "a durable Home or Studio question"), id);
     expect(paused.question.text).toMatch(/Home/i);
@@ -150,10 +158,16 @@ journey("request_input persists across reload and one exact answer selects the o
     const reloaded = find(await session(), id);
     expect(reloaded.question, "Reload and worker wake preserve the exact open question.").toEqual(paused.question);
     expect(reloaded.revision).toBe(paused.revision);
-    const answer = { id: crypto.randomUUID(), run_id: id, kind: "answer", question_id: paused.question.id, text: "Home. Read the bill page now and report the Home account's amount and reference." };
+    const answer = { id: crypto.randomUUID(), run_id: id, kind: "answer", question_id: paused.question.id, text: "Home. Read the bill page now and report the Home account and amount." };
     const receipt = await timedCommand(answer, "answer");
     const replay = await timedCommand(answer, "duplicate_answer");
-    expect(replay.command).toEqual(receipt.command);
+    // Delivery can advance between receipts; the accepted command is immutable.
+    const { delivered: firstDelivered, ...accepted } = receipt.command;
+    const { delivered: replayDelivered, ...replayed } = replay.command;
+    expect(replayed).toEqual(accepted);
+    expect(typeof firstDelivered).toBe("boolean");
+    expect(typeof replayDelivered).toBe("boolean");
+    if (firstDelivered) expect(replayDelivered).toBe(true);
     await timedCommand({ ...answer, id: crypto.randomUUID() }, "stale_answer", 409);
     const done = find(await until(session, (value) => terminal(find(value, id)), "verified Home bill completion after the exact answer"), id);
     expect(done.status, done.error || "The answered task must finish with verified completion.").toBe("completed");

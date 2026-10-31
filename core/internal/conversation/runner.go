@@ -245,6 +245,10 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 				break
 			}
 		}
+		if text == "" {
+			text = acceptedCommandText(t.Attempt.Actions)
+			observability.Event(ctx, "conversation.command_acknowledgment", attribute.Int("nori.tool.call_count", len(t.Attempt.Actions)))
+		}
 		if t.Attempt.Status != "error" {
 			attemptEnd(&t.Attempt, "completed", "")
 		}

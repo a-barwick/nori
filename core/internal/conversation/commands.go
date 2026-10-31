@@ -115,3 +115,32 @@ func decodeCommandArguments(arguments string, target any) error {
 	}
 	return nil
 }
+
+// Tool-only model messages are valid. Acknowledge only durable receipts, after
+// admission (or recovery), without another model call or a claim of completion.
+func acceptedCommandText(actions []state.ConversationAction) string {
+	counts := map[string]int{}
+	for _, action := range actions {
+		if action.Status == "accepted" {
+			counts[action.Command.Kind]++
+		}
+	}
+	parts := []string{}
+	if n := counts["start"]; n == 1 {
+		parts = append(parts, "I've accepted your task. I'll let you know when it needs your input or has a result.")
+	} else if n > 1 {
+		parts = append(parts, fmt.Sprintf("I've accepted your %d tasks. I'll let you know when they need your input or have results.", n))
+	}
+	for _, item := range []struct{ kind, text string }{
+		{"steer", "I've saved your task updates."},
+		{"answer", "I've saved your answer."},
+		{"continue", "I've accepted your request to continue."},
+		{"hold", "I've saved your question to answer when the task has an outcome."},
+		{"stop", "I've requested that the task work stop. I'll confirm when it has stopped."},
+	} {
+		if counts[item.kind] > 0 {
+			parts = append(parts, item.text)
+		}
+	}
+	return strings.Join(parts, " ")
+}
