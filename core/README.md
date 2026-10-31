@@ -3,7 +3,7 @@
 The Go API owns durable conversation and task admission in Firestore. Both
 `cmd/nori-local` and `cmd/nori` use the same conversation runner, OpenRouter
 model, and advisory Jev hints. Temporal owns inner task execution; a separate Go
-worker calls Vertex Gemini and the retained Firecracker computer. Screenshots
+worker calls OpenRouter Responses and the retained Firecracker computer. Screenshots
 live in a private GCS bucket. The browser uses a same-origin Next.js proxy and
 owner authentication; hosted runtime IAM admits the web and queue caller
 service accounts.
@@ -68,13 +68,12 @@ inference while health and cleanup remain available.
 | Configuration | Purpose |
 | --- | --- |
 | `OPENROUTER_API_KEY`, `JEV_API_KEY` | Required conversation provider credentials for both entrypoints |
-| `NORI_AGENT_MODEL`, `NORI_AGENT_BASE_URL` | Conversation model and HTTPS endpoint; defaults `anthropic/claude-opus-5.5`, `https://openrouter.ai/api/v1` |
+| `NORI_AGENT_MODEL`, `NORI_AGENT_BASE_URL` | Conversation model and HTTPS endpoint; defaults `meta/muse-spark-1.3`, `https://openrouter.ai/api/v1` |
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
 | `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Defaults `bot-111549`, `nori-poc`; Google APIs use Application Default Credentials |
 | `FIRESTORE_EMULATOR_HOST`, `TEMPORAL_LOCAL` | Explicit local Firestore endpoint and local Temporal mode; absent/false uses configured services |
 | `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and native Agent Runtime invoke root ending in `/api` |
-| `MODEL_LOCATION`, `MODEL_NAME` | Inner worker's Vertex model; defaults `global`, `gemini-3.8-flash` |
-| `MODEL_INPUT_USD_PER_MTOK`, `MODEL_OUTPUT_USD_PER_MTOK` | Inner task model prices for spend accounting |
+| `MODEL_NAME` | Inner worker model; default `openai/gpt-6.1-terra` through OpenRouter Responses |
 | `ARTIFACT_BUCKET` | Private screenshot bucket |
 | `COMPUTER_ZONE`, `COMPUTER_INSTANCE` | Existing retained computer |
 | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | Shared API/worker connection and task queue |

@@ -93,7 +93,7 @@ variable "worker_wake_queue" {
 
 variable "outer_model" {
   type    = string
-  default = "anthropic/claude-opus-5.5"
+  default = "meta/muse-spark-1.3"
 }
 
 variable "computer_release_sha256" {
@@ -110,7 +110,7 @@ variable "computer_release_sha256" {
 
 variable "model" {
   type    = string
-  default = "gemini-3.8-flash"
+  default = "openai/gpt-6.1-terra"
 }
 
 variable "firestore_database" {

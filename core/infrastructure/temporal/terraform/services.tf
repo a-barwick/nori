@@ -209,6 +209,15 @@ resource "google_cloud_run_v2_service" "worker" {
         }
       }
       env {
+        name = "OPENROUTER_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = local.production && var.request_worker_targets[each.key].firestore_database == "nori-poc" && var.request_worker_targets[each.key].spend_scope == null ? "nori-openrouter-api-key" : "nori-sandbox-openrouter-api-key"
+            version = "latest"
+          }
+        }
+      }
+      env {
         name = "TEMPORAL_API_KEY"
         value_source {
           secret_key_ref {

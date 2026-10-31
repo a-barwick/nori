@@ -157,7 +157,11 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	}
 	var providerLimits any
 	if control != nil {
-		providerLimits = map[string]any{"max_price": map[string]float64{"prompt": 4.4, "completion": 22}}
+		if m.Name == "meta/muse-spark-1.3" {
+			providerLimits = map[string]any{"max_price": map[string]float64{"prompt": 1.25, "completion": 4.25}}
+		} else {
+			providerLimits = map[string]any{"max_price": map[string]float64{"prompt": 4.4, "completion": 22}}
+		}
 	}
 	body, err := json.Marshal(struct {
 		Model    string            `json:"model"`

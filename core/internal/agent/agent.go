@@ -5,6 +5,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/genai"
@@ -14,14 +16,14 @@ import (
 
 type Service struct {
 	Store     state.Store
-	Model     *genai.Client
+	Key       string
+	Client    *http.Client
 	ModelName string
-	Price     Price
 	Computer  computer.Config
 }
 
-func New(store state.Store, model *genai.Client, name string, price Price, c computer.Config) *Service {
-	return &Service{Store: store, Model: model, ModelName: name, Price: price, Computer: c}
+func New(store state.Store, key string, name string, c computer.Config) *Service {
+	return &Service{Store: store, Key: key, Client: &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, ModelName: name, Computer: c}
 }
 
 func params(name string) *genai.Schema {

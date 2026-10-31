@@ -29,7 +29,7 @@
         <div class="node inner"><b>Proceed</b><small>An unknown-cost flag also stops the loop here, so unpriced work is never treated as free.</small></div>
       </div>
       <div class="arrow">↓</div>
-      <div class="node inner"><b>Model activity</b> <span class="mono" style="font-size:11px">240s · heartbeat 10s · MaxAttempts 1</span><small>One Gemini 3.8 Flash call on Vertex, with retries off. Usage is priced from reported tokens and added to <code>spent</code> in workflow state. The Spend activity then projects it to Firestore, with 3 retries. The projection may lag, so the workflow's figure is the one that counts.</small></div>
+      <div class="node inner"><b>Model activity</b> <span class="mono" style="font-size:11px">240s · heartbeat 10s · MaxAttempts 1</span><small>One GPT-6.1 Terra call through OpenRouter Responses, with retries off. Reported model cost is recorded and added to <code>spent</code> in workflow state. The Spend activity then projects it to Firestore, with 3 retries. The projection may lag, so the workflow's figure is the one that counts.</small></div>
       <div class="arrow">↓</div>
       <div class="node"><b>Reconcile again</b><small>A steer or Stop accepted during the model call invalidates the decision before anything acts on it.</small></div>
       <div class="arrow">↓</div>

@@ -25,9 +25,9 @@ Neither setting copies or moves credentials. Google Cloud access uses Applicatio
 Use `make dev NORI_ENV_FILE=/absolute/path/to/the/existing/.env` to select a different
 file or use a worktree without copying credentials. Keep the credential file
 gitignored and mode 600. Required names and optional model settings are in
-[.env.example](.env.example). The default model is `anthropic/claude-opus-5.5`.
-Austin selected Claude Opus 5.5 for conversation, `jev-latest` for intent hints,
-and `gemini-3.8-flash` on Vertex for inner tasks. Agents must preserve these
+[.env.example](.env.example). The default model is `meta/muse-spark-1.3`.
+Austin selected Muse Spark 1.3 for conversation, `jev-latest` for intent hints,
+and `openai/gpt-6.1-terra` through OpenRouter Responses for inner tasks. Agents must preserve these
 choices; the model policy in [AGENTS.md](AGENTS.md) also applies to overrides.
 
 Both Go entrypoints use the same durable conversation runner. Each message is
@@ -122,7 +122,7 @@ $0.25 increments, up to $1 total, when a subsequent command observes a new sourc
 fingerprint after at least 70% of the existing allowance is accounted for.
 This detects repeated attempts without code changes; it does not judge code
 quality. Nori's controlled
-OpenRouter and Vertex calls share $2/day and $20/month UTC limits. Jev is excluded
+model calls share $2/day and $20/month UTC limits. Jev is excluded
 at Austin's request. Existing production keys are separate.
 
 Use the main checkout's mode-600 root `.env`; never copy it into a worktree:
@@ -136,14 +136,14 @@ python3 core/infrastructure/spend/run.py --env /absolute/main/.env \
 
 Reuse the same task ID for every command/retry in a chat. `--close` disables its
 native key; the issuer can reopen the same unexpired allowance without resetting
-spend. Keys expire after 24 hours. Nori's OpenRouter and Vertex adapters reserve
+spend. Keys expire after 24 hours. Nori's OpenRouter adapters reserve
 conservative full request bytes and maximum output in the existing Firestore
 `nori-sandbox` database before dispatch. Atomic reservations share the run and
 daily/monthly budgets across runtime and worker processes. Unknown outcomes
 remain reserved across restarts and calendar resets. Models remain unchanged.
-Controlled OpenRouter requests enforce the selected Opus model's standard
-regional price ceiling ($4.40 input/$22 output per million tokens), and reserve
-at those same rates; premium Fast endpoints cannot exceed that ceiling.
+Controlled requests reserve at the selected models' price ceilings per million
+tokens: Muse $1.25 input/$4.25 output and Terra $1 input/$5 output. Requests
+exclude more expensive endpoints; token usage and reported cost settle the reservation.
 Jev remains on its existing direct adapter and does not block budget readiness.
 
 Run `python3 core/infrastructure/spend/e2e.py` for two no-cost native-key lifecycle

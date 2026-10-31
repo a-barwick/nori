@@ -61,7 +61,7 @@ func Open(ctx context.Context) (*Runtime, error) {
 		return nil, fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
 	}
 	tasks := &conversation.Tasks{Store: store, Client: temporal, Computer: computer.Config{Project: project, Zone: env.Get("COMPUTER_ZONE", "us-central1-a"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer}}
-	model := env.Get("NORI_AGENT_MODEL", "anthropic/claude-opus-5.5")
+	model := env.Get("NORI_AGENT_MODEL", "meta/muse-spark-1.3")
 	return &Runtime{Runner: conversation.New(conversation.NewModel(base, key, model), conversation.NewClassifier(jevKey), tasks), Tasks: tasks, Model: model}, nil
 }
 

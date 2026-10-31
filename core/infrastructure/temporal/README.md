@@ -153,8 +153,8 @@ pools at zero/no scalers, and the retained computer stopped before finishing.
 The existing Secret Manager container `nori-temporal-api-key` supplies the worker
 credential by reference. Its payload never enters Terraform, state, images,
 plans or logs. The root `.env` remains the local source. Models are unchanged:
-intent `jev-latest`, outer `anthropic/claude-opus-5.5` through the existing
-OpenRouter adapter, and task worker `gemini-3.8-flash` through Vertex.
+intent `jev-latest`, outer `meta/muse-spark-1.3` through the existing
+OpenRouter adapter, and task worker `openai/gpt-6.1-terra` through OpenRouter Responses.
 
 Measure acceptance to first activity, active activity completion across polling
 cutoff, response after SDK drain, automatic successor delivery, durable input

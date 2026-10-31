@@ -16,7 +16,6 @@ import (
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
-	"google.golang.org/genai"
 	"nori/internal/agent"
 	"nori/internal/computer"
 	"nori/internal/env"
@@ -229,16 +228,9 @@ func run(ctx context.Context, bounded bool, sliceID string, known []string) (res
 		return e
 	}
 	defer c.Close()
-	attempts := int32(1)
-	model, e := genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project: project, Location: env.Get("MODEL_LOCATION", "global"), HTTPOptions: genai.HTTPOptions{RetryOptions: &genai.HTTPRetryOptions{Attempts: &attempts}}})
-	if e != nil {
-		return e
-	}
-	// Gemini 3.8 Flash global introductory pricing through 2026-12-31.
-	// https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing
-	price, e := agent.ParsePrice(env.Get("MODEL_INPUT_USD_PER_MTOK", "0.75"), env.Get("MODEL_OUTPUT_USD_PER_MTOK", "3.75"))
-	if e != nil {
-		return e
+	key := os.Getenv("OPENROUTER_API_KEY")
+	if key == "" {
+		return fmt.Errorf("OPENROUTER_API_KEY must be configured for the task worker")
 	}
 	local := os.Getenv("TEMPORAL_LOCAL") == "true"
 	localComputer := os.Getenv("NORI_LOCAL_COMPUTER_URL")
@@ -253,7 +245,7 @@ func run(ctx context.Context, bounded bool, sliceID string, known []string) (res
 		}
 		notify = notifier.Schedule
 	}
-	service := agent.New(store, model, env.Get("MODEL_NAME", "gemini-3.8-flash"), price, computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer})
+	service := agent.New(store, key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra"), computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer})
 	stopTimeout := 25 * time.Second
 	if bounded {
 		stopTimeout = 5 * time.Minute
