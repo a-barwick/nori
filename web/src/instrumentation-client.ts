@@ -53,6 +53,9 @@ async function initialize() {
       dsn: config.dsn,
       environment: config.environment,
       release: config.release,
+      // The owner-protected first-party tunnel needs the app's IAP cookie.
+      // Its route forwards only the envelope, never these request headers.
+      transportOptions: { fetchOptions: { credentials: "same-origin" } },
       dataCollection,
       tracesSampler: sampler(sampleRate(config.tracesSampleRate)),
       // Turn requests carry the explicit submit span. Automatic propagation
