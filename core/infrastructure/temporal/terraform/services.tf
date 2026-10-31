@@ -20,6 +20,8 @@ variable "request_worker_targets" {
     firestore_database  = optional(string, "nori-poc")
     # Retained binaries keep their original provider; new builds opt into Terra.
     model_name = optional(string, "gemini-3.8-flash")
+    # New completion-capable builds need Jev; retained builds keep their env.
+    jev_completion = optional(bool, false)
     # Per-build references preserve the allowance of retained workers on retry.
     spend_scope   = optional(string)
     spend_profile = optional(string, "ci") # Retained CI-era leases keep their original profile.
@@ -229,6 +231,18 @@ resource "google_cloud_run_v2_service" "worker" {
           secret_key_ref {
             secret  = local.temporal_api_key_secret
             version = "latest"
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.request_worker_targets[each.key].jev_completion ? [1] : []
+        content {
+          name = "JEV_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = "nori-jev-api-key"
+              version = "latest"
+            }
           }
         }
       }

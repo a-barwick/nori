@@ -158,6 +158,10 @@ plans or logs. The root `.env` remains the local source. Selected models:
 intent `jev-latest`, outer `gpt-6.1-sol` with low reasoning through the
 OpenAI platform API, and task worker `openai/gpt-6.1-terra` through OpenRouter Responses.
 
+New release targets enable `jev_completion`, which passes `JEV_API_KEY` from
+the existing `nori-jev-api-key` secret to the worker. Retained targets default
+to disabled so adding a release does not change their credential configuration.
+
 Measure acceptance to first activity, active activity completion across polling
 cutoff, response after SDK drain, automatic successor delivery, durable input
 wait/Answer, and targeted Stop with retained browser ownership. Record actual
