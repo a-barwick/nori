@@ -27,12 +27,15 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 		calls.Add(1)
 		var request struct {
 			ToolChoice string `json:"tool_choice"`
-			Format     struct {
+			Provider   struct {
+				RequireParameters bool `json:"require_parameters"`
+			} `json:"provider"`
+			Format struct {
 				Type string `json:"type"`
 			} `json:"response_format"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&request)
-		required.Store(request.Format.Type == "json_schema" && request.ToolChoice == "")
+		required.Store(request.Format.Type == "json_schema" && request.ToolChoice == "" && request.Provider.RequireParameters)
 		if mode.Load() == 2 {
 			_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"I started that task."}}]}`))
 			return
@@ -124,6 +127,22 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 		return nil, err
 	}
 	report["provider omission of required routing cannot publish a false start acknowledgment"] = missing.Traces[0].Status == "error" && missing.Messages[len(missing.Messages)-1].Text != "I started that task." && len(missing.Runs) == len(first.Runs) && calls.Load() == 3
+	history, _, err = store.ConversationHistory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	retained := false
+	for _, turn := range history {
+		if turn.Attempt.Status == "error" {
+			retained = turn.Attempt.ProtocolInvalid && turn.Attempt.StructuredReply && turn.Attempt.Reply != ""
+			for _, message := range turn.Protocol {
+				if message == turn.Attempt.Reply {
+					retained = false
+				}
+			}
+		}
+	}
+	report["rejected response retained privately and excluded from model history"] = retained
 	return report, nil
 }
 

@@ -287,7 +287,7 @@ storageJourney("real Firestore preserves exact task evidence, refuses foreign/ta
         NORI_M4_STORAGE_TEMPORAL_ADDRESS: process.env.NORI_M4_STORAGE_TEMPORAL_ADDRESS || "" },
       encoding: "utf8", timeout: 90_000,
     });
-    expect(run.status, `Real storage boundary executable: ${run.stderr.slice(0, 800)}`).toBe(0);
+    expect(run.status, `Real storage boundary executable: ${run.stderr.slice(-1800)}`).toBe(0);
     const report = JSON.parse(run.stdout);
     for (const [name, passed] of Object.entries(report)) expect(passed, name).toBe(true);
     expect(Object.keys(report).length).toBeGreaterThanOrEqual(8);

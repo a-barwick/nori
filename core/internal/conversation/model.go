@@ -157,12 +157,15 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	if !m.NoDispatch {
 		format = responseFormat()
 	}
-	var providerLimits any
+	providerLimits := map[string]any{}
+	if !m.NoDispatch {
+		providerLimits["require_parameters"] = true
+	}
 	if control != nil {
 		if m.Name == "meta/muse-spark-1.3" {
-			providerLimits = map[string]any{"max_price": map[string]float64{"prompt": 1.25, "completion": 4.25}}
+			providerLimits["max_price"] = map[string]float64{"prompt": 1.25, "completion": 4.25}
 		} else {
-			providerLimits = map[string]any{"max_price": map[string]float64{"prompt": 4.4, "completion": 22}}
+			providerLimits["max_price"] = map[string]float64{"prompt": 4.4, "completion": 22}
 		}
 	}
 	body, err := json.Marshal(struct {

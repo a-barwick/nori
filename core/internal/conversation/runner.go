@@ -295,7 +295,7 @@ func decodeSavedReply(a state.ConversationAttempt, reply *Reply) error {
 	return nil
 }
 func (r *Runner) recoverActions(ctx context.Context, t *state.ConversationTurn) error {
-	if t.Attempt.Reply == "" {
+	if t.Attempt.Reply == "" || t.Attempt.ProtocolInvalid {
 		return nil
 	}
 	var reply Reply

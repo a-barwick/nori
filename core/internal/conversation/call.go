@@ -416,6 +416,11 @@ func (r *Runner) finishCall(ctx, callCtx context.Context, f state.ConversationFe
 		if stale {
 			return r.checkpoint(ctx, f, *t)
 		}
+		// Retain rejected provider messages in private attempt records for diagnosis.
+		// They must never become conversation history or accepted commands.
+		t.Attempt.Reply = string(reply.Message)
+		t.Attempt.StructuredReply = reply.Structured
+		t.Attempt.ProtocolInvalid = len(reply.Message) > 0
 		attemptEnd(&t.Attempt, "error", modelErr.Error())
 		t.Attempt.Text = failureText
 	} else {
