@@ -3,3 +3,4 @@ terraform/*.tfstate*
 terraform/*.tfplan
 terraform/*.plan
 terraform/*.auto.tfvars*
+release_backend_override.tf

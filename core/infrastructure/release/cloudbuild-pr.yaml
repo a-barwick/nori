@@ -1,0 +1,42 @@
+# PRs use the check-only identity; no images or credentials are published.
+steps:
+  - id: release-check
+    waitFor: ['-']
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:584.0.0-slim
+    entrypoint: python3
+    args: [core/e2e/release.test.py]
+  - id: go-check
+    waitFor: ['-']
+    name: golang:1.26
+    dir: core
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        go vet ./...
+        test -z "$$(gofmt -l cmd internal)" || { echo 'Run gofmt on cmd/ and internal/'; exit 1; }
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/nori-computer-agent ./cmd/computer-agent
+  - id: web-check
+    waitFor: ['-']
+    name: oven/bun:1.4.3-debian
+    dir: web
+    entrypoint: bash
+    args: [-ceu, 'bun install --frozen-lockfile && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src']
+  - id: runtime-build
+    waitFor: ['-']
+    name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
+    args: [build, -f, core/infrastructure/Dockerfile, -t, nori-runtime-check, core]
+  - id: worker-build
+    waitFor: ['-']
+    name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
+    args: [build, -f, core/infrastructure/temporal/Dockerfile.worker, -t, nori-worker-check, core]
+  - id: web-build
+    waitFor: ['-']
+    name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
+    args: [build, -t, nori-web-check, web]
+timeout: 1800s
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -50,6 +50,8 @@ def main():
     parser.add_argument("--state", type=Path, default=STATE)
     parser.add_argument("--output", type=Path, help="new owner-only directory; defaults beside external Terraform state")
     args = parser.parse_args()
+    if os.environ.get("NORI_TF_BACKEND") == "gcs":
+        parser.error("This local preparation helper cannot manage migrated state; use the hosted nori-main-prepare and nori-release triggers")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", args.build_id):
         parser.error("build-id must be lowercase DNS-safe and at most 40 characters")
     target = {"deployment_name": args.temporal_deployment, "task_queue": args.temporal_task_queue, "wake_queue_name": args.wake_queue, "poll_window_seconds": args.poll_window_seconds, "firestore_database": args.firestore_database}
