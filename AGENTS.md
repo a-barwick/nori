@@ -6,6 +6,10 @@ Verify the requested behavior proportionally, including the real integration bou
 
 Use a `codex/*` branch and PR; merge completed, verified work without an extra approval round. CI/CD is disabled. Deploy only when requested. Model/CLI/external reviews require an explicit request; reviewer selection alone does not require a review.
 
+## Documentation
+
+Nori's documentation lives in `docs/site/`. Check it first when you need to understand the system, and put new or updated documentation there. Read `docs/site/AGENTS.md` before changing a page, and run the site with `docs/serve.sh`.
+
 ## Model choices
 
 Only Austin may authorize changing these models, providers, or versions, including defaults, launch overrides, experiments, and fallbacks. Cost, latency, availability, or failure does not authorize substitution.

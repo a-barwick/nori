@@ -73,7 +73,7 @@ if (filtered.length && !PLANNED.includes(current)) {
   setBar();
 }
 
-// Section links: every heading links to itself, with a copy-link icon on hover
+// Section IDs: every heading gets an ID and a copy-link icon on hover. Only the icon is interactive.
 const slug = text => text.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const LINK_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M6.5 9.5a3 3 0 0 0 4.4.1l2-2a3.1 3.1 0 0 0-4.4-4.4l-1 1"/><path d="M9.5 6.5a3 3 0 0 0-4.4-.1l-2 2a3.1 3.1 0 0 0 4.4 4.4l1-1"/></svg>';
 const DONE_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>';
@@ -93,17 +93,12 @@ heads.forEach(head => {
   const end = nodes.findIndex(n => n.matches?.('.tag, a, .mono'));
   const titleNodes = end < 0 ? nodes : nodes.slice(0, end);
   const title = titleNodes.map(n => n.textContent).join('').trim();
-  // Sections link to themselves. The page title only gets the copy icon.
   const isPage = head.matches('h1');
   let id = head.id || slug(title);
   for (let n = 2; !isPage && usedIds.has(id); n++) id = `${slug(title)}-${n}`;
   if (!isPage) { usedIds.add(id); head.id = id; }
   const target = isPage ? location.pathname : `#${id}`;
   head.dataset.title = title;
-  const link = document.createElement('a');
-  link.className = 'head-link';
-  link.href = target;
-  if (!isPage) link.append(...titleNodes);
   const copy = document.createElement('a');
   copy.className = 'copy-link';
   copy.href = target;
@@ -119,7 +114,7 @@ heads.forEach(head => {
     copy.title = 'Copied';
     setTimeout(() => { copy.innerHTML = LINK_ICON; copy.classList.remove('copied'); copy.title = 'Copy link to this section'; }, 1500);
   });
-  if (isPage) head.append(copy); else head.prepend(link, copy);
+  head.insertBefore(copy, end < 0 ? null : nodes[end]);
 });
 
 // The rail lists the current page's sections and follows the scroll position
