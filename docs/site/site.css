@@ -250,7 +250,7 @@ h2,h3,.step .t{scroll-margin-top:calc(var(--bar,0px) + 18px)}
 .head-link{color:inherit;text-decoration:none}
 .head-link:hover{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 .copy-link{display:inline-flex;margin-left:6px;color:var(--ink2);opacity:0;vertical-align:-1px;transition:opacity .12s}
-h2:hover .copy-link,h3:hover .copy-link,.step .t:hover .copy-link,.copy-link:focus-visible{opacity:1}
+h1:hover .copy-link,h2:hover .copy-link,h3:hover .copy-link,.step .t:hover .copy-link,.copy-link:focus-visible{opacity:1}
 .copy-link:hover{color:var(--outer)}
 .copy-link.copied{color:var(--ok);opacity:1}
 @media (hover:none){.copy-link{opacity:.5}}
@@ -258,3 +258,5 @@ h2:hover .copy-link,h3:hover .copy-link,.step .t:hover .copy-link,.copy-link:foc
 nav.rail .subs a{font-size:12.5px;font-weight:500;padding:3px 8px;margin:0;line-height:1.3}
 nav.rail .subs a.on{color:var(--outer);background:none;font-weight:650}
 body.only-design nav.rail .subs a.designed{outline:none;background:none}
+nav.rail a.group{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#a39a83;margin:16px 0 4px;padding:3px 10px}
+nav.rail a.group:hover{color:var(--ink);background:none}

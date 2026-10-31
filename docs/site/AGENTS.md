@@ -50,7 +50,7 @@ Use the same words everywhere: outer loop, inner loop, runtime, task, dispatch, 
 Then add the page to `NAV` in `site.js`. The script adds the navigation, previous and next links, section links, copy links and the filter. Don't copy those into a page.
 
 - Keep each page to one topic. Link to another page instead of repeating it.
-- Headings get their link IDs from their text, so renaming a heading breaks old links to it.
+- The page title and every heading get a link and a copy icon automatically. Headings get their link IDs from their text, so renaming a heading breaks old links to it.
 - Use relative links such as `tasks.html`, because the site won't always be hosted at the root of a domain.
 - Use what's already in `site.css`: `card`, `grid2`, `grid3`, `flow`, `node`, `branch`, `states`, `say`, `tag` and `pts`. Add new CSS only when a page needs something those can't do.
 - Don't add a framework, a build step or external scripts without asking Austin.

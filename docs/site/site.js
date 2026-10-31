@@ -19,7 +19,7 @@ const rail = document.createElement('nav');
 rail.className = 'rail';
 rail.setAttribute('aria-label', 'Pages');
 rail.innerHTML = `<div class="brand"><a href="index.html">Nori</a><button class="menu-btn" type="button">Pages</button></div>
-  <div class="links">${NAV.map(([group, pages]) => `<div class="group">${group}</div>` + pages.map(([id, title]) =>
+  <div class="links">${NAV.map(([group, pages]) => `<a class="group" href="${pages[0][0]}.html">${group}</a>` + pages.map(([id, title]) =>
     `<a href="${id}.html"${id === current ? ' aria-current="page"' : ''}>${title}</a>`).join('')).join('')}</div>`;
 rail.querySelector('.menu-btn').addEventListener('click', () => rail.classList.toggle('open'));
 const layout = document.createElement('div');
@@ -87,30 +87,32 @@ const copyText = async text => {
   area.remove();
 };
 const usedIds = new Set();
-const heads = [...main.querySelectorAll('h2, h3, .step .t')].filter(h => !h.closest('details'));
+const heads = [...main.querySelectorAll('h1, h2, h3, .step .t')].filter(h => !h.closest('details'));
 heads.forEach(head => {
   const nodes = [...head.childNodes];
   const end = nodes.findIndex(n => n.matches?.('.tag, a, .mono'));
   const titleNodes = end < 0 ? nodes : nodes.slice(0, end);
   const title = titleNodes.map(n => n.textContent).join('').trim();
+  // The page title links to the page itself. Everything else links to its section.
+  const isPage = head.matches('h1');
   let id = head.id || slug(title);
-  for (let n = 2; usedIds.has(id); n++) id = `${slug(title)}-${n}`;
-  usedIds.add(id);
-  head.id = id;
+  for (let n = 2; !isPage && usedIds.has(id); n++) id = `${slug(title)}-${n}`;
+  if (!isPage) { usedIds.add(id); head.id = id; }
+  const target = isPage ? location.pathname : `#${id}`;
   head.dataset.title = title;
   const link = document.createElement('a');
   link.className = 'head-link';
-  link.href = `#${id}`;
+  link.href = target;
   link.append(...titleNodes);
   const copy = document.createElement('a');
   copy.className = 'copy-link';
-  copy.href = `#${id}`;
+  copy.href = target;
   copy.title = 'Copy link to this section';
   copy.setAttribute('aria-label', `Copy link to ${title}`);
   copy.innerHTML = LINK_ICON;
   copy.addEventListener('click', async e => {
     e.preventDefault();
-    history.replaceState(null, '', `#${id}`);
+    history.replaceState(null, '', target);
     await copyText(location.href);
     copy.innerHTML = DONE_ICON;
     copy.classList.add('copied');
