@@ -11,7 +11,7 @@ import ssl
 import sys
 import time
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 PROJECT = "bot-111549"
@@ -142,16 +142,6 @@ def temporal(*args):
     return temporal_command("worker", "deployment", *args)
 
 
-def version_config(build, pool, invoker):
-    return ["--deployment-name=" + DEPLOYMENT, "--build-id=" + build,
-            "--gcp-cloud-run-project=" + PROJECT, "--gcp-cloud-run-region=us-west1",
-            "--gcp-cloud-run-worker-pool=" + pool["name"],
-            "--gcp-cloud-run-service-account=" + invoker,
-            "--gcp-cloud-run-min-instances=0", "--gcp-cloud-run-max-instances=1",
-            "--gcp-cloud-run-initial-instances=0", "--gcp-cloud-run-utilization-target=0.8",
-            "--gcp-cloud-run-scale-down-stabilization-duration=90s"]
-
-
 def version_info(build, missing_ok=False):
     try:
         result = temporal("describe-version", "--deployment-name=" + DEPLOYMENT, "--build-id=" + build)
@@ -167,9 +157,8 @@ def compute_config(info):
 
 
 def compatible_builds(t):
-    builds = set(t.get("scalable_build_ids", []))
-    if not builds or not builds.issubset(t["worker_pools"]):
-        raise RuntimeError("No valid sessionless worker release is configured; prepare and register a compatible build first")
+    services = production_workers(t)
+    builds = set(services)
     deployment = temporal("describe", "--name=" + DEPLOYMENT)
     routing = deployment.get("routingConfig", {})
     current = routing.get("currentVersionBuildID") or routing.get("currentDeploymentVersion", {}).get("buildId")
@@ -234,9 +223,80 @@ def temporal_zero(t):
         raise RuntimeError("; ".join(failures))
 
 
+def production_workers(t):
+    services = t.get("production_worker_services", {})
+    if not services or not t.get("worker_wake_queue"):
+        raise RuntimeError("No " + ENVIRONMENT + " request-worker release is configured; candidate builds and retained pools cannot open admission")
+    return services
+
+
+def worker_queue_names(t, all_queues=False):
+    if all_queues:
+        names = set(t.get("worker_wake_queues", {}).values())
+        names.update(t[key] for key in ("worker_wake_queue", "candidate_event_queue") if t.get(key))
+        return sorted(names)
+    return [t["worker_wake_queue"]] if t.get("worker_wake_queue") else []
+
+
+def worker_queue_state(t, paused, all_queues=False):
+    failures = []
+    for name in worker_queue_names(t, all_queues):
+        try:
+            url = "https://cloudtasks.googleapis.com/v2/" + name
+            wanted = "PAUSED" if paused else "RUNNING"
+            current = api("GET", url)
+            if current.get("state") != wanted:
+                api("POST", url + (":pause" if paused else ":resume"), {})
+            if api("GET", url).get("state") != wanted:
+                raise RuntimeError("Worker wake queue did not reach " + wanted)
+        except Exception as error:
+            failures.append(str(error))
+    if failures:
+        raise RuntimeError("; ".join(failures))
+
+
+def wait_worker_requests(t):
+    # Pausing a native queue does not interrupt its dispatched HTTP requests.
+    # The worker responds only after SDK drain. A failed/ambiguous delivery
+    # needs native stopped/response log inspection, not an assumed VM stop.
+    end = time.monotonic() + 780
+    while True:
+        active = []
+        ambiguous = []
+        for name in worker_queue_names(t, all_queues=True):
+            token = ""
+            while True:
+                query = {"pageSize": 1000}
+                if token:
+                    query["pageToken"] = token
+                page = api("GET", "https://cloudtasks.googleapis.com/v2/" + name + "/tasks?" + urlencode(query))
+                for task in page.get("tasks", []):
+                    attempt = task.get("lastAttempt", {})
+                    if not attempt.get("dispatchTime"):
+                        continue
+                    if not attempt.get("responseTime"):
+                        active.append(task["name"])
+                    elif attempt.get("responseStatus", {}).get("code", 0):
+                        ambiguous.append(task["name"])
+                token = page.get("nextPageToken")
+                if not token:
+                    break
+        if ambiguous:
+            raise RuntimeError("Worker delivery failed; inspect native stopped/response logs before stopping the computer: " + ", ".join(ambiguous))
+        if not active:
+            return
+        if time.monotonic() >= end:
+            raise RuntimeError("Worker requests have not drained; computer retained for cleanup: " + ", ".join(active))
+        time.sleep(3)
+
+
 def temporal_pause(t=None):
     t = temporal_config() if t is None else t
     failures = []
+    try:
+        worker_queue_state(t, True, all_queues=True)
+    except Exception as error:
+        failures.append(str(error))
     # Remove the native scaler configuration first; a zero-count PATCH alone
     # races WCI. Pinned workflows and their retained pools are not deleted.
     for build in t["worker_pools"]:
@@ -258,26 +318,25 @@ def temporal_pause(t=None):
         temporal_zero(t)
     except Exception as error:
         failures.append(str(error))
+    if not failures:
+        try:
+            wait_worker_requests(t)
+        except Exception as error:
+            failures.append(str(error))
     if failures:
         raise RuntimeError("Worker pause incomplete: " + "; ".join(failures))
 
 
 def temporal_unpause():
     t = temporal_config()
-    builds = compatible_builds(t)
-    # Legacy immutable workers cancel tasks on missing session expiry. Retain
-    # their pools/images but never wake their binaries under the new control.
-    for build, pool in t["worker_pools"].items():
-        if build not in builds:
-            if compute_config(version_info(build, missing_ok=True)):
-                raise RuntimeError("Incompatible worker still has a scaler; pause before unpause: " + build)
-            continue
-        action = "create-version" if version_info(build, missing_ok=True) is None else "update-version-compute-config"
-        temporal(action, *version_config(build, pool, t["invoker_service_account"]))
-        config = compute_config(version_info(build)) or {}
-        scaler = config.get("scalingGroups", {}).get("default", {}).get("scaler", {})
-        if (scaler.get("minInstances"), scaler.get("maxInstances"), scaler.get("initialInstances")) != (0, 1, 0):
-            raise RuntimeError("Worker scaling bounds not verified: " + build)
+    compatible_builds(t)
+    # Keep all retained/candidate queues fenced while pending wakes are prepared.
+    # Only the production queue is resumed after admission opens successfully.
+    worker_queue_state(t, True, all_queues=True)
+    for build in t["worker_pools"]:
+        if compute_config(version_info(build, missing_ok=True)):
+            raise RuntimeError("Retained pool scaler is still enabled; pause before request-worker rollout: " + build)
+    temporal_zero(t)
 
 
 def operation(result, service="compute"):
@@ -325,15 +384,22 @@ def control(c, paused):
 
 def pause(c, worker_config=None):
     failures = []
-    # Admission closes before pool shutdown. Waiting tasks remain durable.
-    for step in (lambda: control(c, True), lambda: metadata({"computer-paused": "true"}), stop_vm, lambda: temporal_pause(worker_config)):
+    # Fence delivery before paused handlers preserve successor wakes. Queue
+    # creation remains available while paused; only dispatch is disabled.
+    for step in (lambda: worker_queue_state(temporal_config() if worker_config is None else worker_config, True, all_queues=True),
+                 lambda: control(c, True), lambda: temporal_pause(worker_config), lambda: metadata({"computer-paused": "true"})):
         try:
             step()
         except Exception as error:
             failures.append(str(error))
+    if not failures:
+        try:
+            stop_vm()
+        except Exception as error:
+            failures.append(str(error))
     if failures:
-        raise RuntimeError("Pause incomplete: " + "; ".join(failures))
-    print("Paused: new work blocked, worker scalers removed, all retained pools at zero, computer stopped; waiting tasks preserved.")
+        raise RuntimeError("Pause incomplete; computer stop withheld when request drain is uncertain: " + "; ".join(failures))
+    print("Paused: admission closed, worker queue paused, native scalers removed, retained pools at zero, computer stopped; waiting tasks preserved.")
 
 
 def stop_vm():
@@ -367,13 +433,16 @@ def clear_deadline():
 
 def unpause(c):
     verify_no_deadline()
-    # Keep application admission closed until native worker scaling is restored.
+    # Fence delivery before changing admission; accepted pending wakes remain
+    # durable until routing is verified and the production queue is resumed.
+    worker_queue_state(temporal_config(), True, all_queues=True)
     control(c, True)
     try:
         temporal_unpause()
         metadata({"computer-paused": "false"})
         control(c, False)
         api("POST", c["runtime_url"].rstrip("/") + "/api/resume", {})
+        worker_queue_state(temporal_config(), False)
     except Exception:
         pause(c)
         raise
@@ -413,7 +482,11 @@ def main():
         base = f"https://{REGION}-aiplatform.googleapis.com/v1beta1/{name}"
         current = api("GET", base)
         env = {entry["name"]: entry for entry in current.get("spec", {}).get("deploymentSpec", {}).get("env", [])}
+        workers = temporal_config()
+        services = production_workers(workers)
         env.update({key: {"name": key, "value": value} for key, value in {
+            "NORI_WORKER_SERVICES": json.dumps(services),
+            "NORI_WORKER_WAKE_QUEUE": workers.get("worker_wake_queue", ""),
             "NORI_AGENT_MODEL": c["outer_model"],
             "NORI_AGENT_BASE_URL": "https://openrouter.ai/api/v1",
             "NORI_WAKE_QUEUE": c["conversation_queue"],
@@ -423,6 +496,7 @@ def main():
             "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",
             "TEMPORAL_NAMESPACE": "quickstart-nori.qtjow",
             "TEMPORAL_TASK_QUEUE": TASK_QUEUE,
+            "TEMPORAL_DEPLOYMENT_NAME": DEPLOYMENT,
             "TEMPORAL_API_KEY_SECRET_VERSION": f"projects/{PROJECT}/secrets/nori-temporal-api-key/versions/latest",
         }.items()})
         operation(api("PATCH", base + "?updateMask=spec.containerSpec.imageUri,spec.deploymentSpec.env", {"spec": {"containerSpec": {"imageUri": args.value, "port": 8080}, "deploymentSpec": {"env": list(env.values())}}}), "vertex")

@@ -1,14 +1,17 @@
 # Nori infrastructure
 
-The current application uses Cloud Run for the Next.js web client, Agent Runtime
-for the Go API, Temporal Cloud for durable task orchestration, Cloud Run worker
-pools for task execution, Firestore for saved task state, and Cloud Storage for
-screenshots. Computer tools connect through IAP to the retained Firecracker guest.
+The application uses Cloud Run for the Next.js web client, Agent Runtime for
+the Go API, Temporal Cloud for durable task orchestration, Firestore for saved
+task state, and Cloud Storage for screenshots. The request-driven worker
+candidate uses authenticated Cloud Run services; its demonstration and rollout
+approval are pending. Production is paused, with retained legacy worker pools
+at zero and native WCI scalers removed. Computer tools connect through IAP to
+the retained Firecracker guest.
 
 | Source | Owns |
 | --- | --- |
 | [POC operations](poc/README.md) | Existing web/API deployment, retained computer, operator pause/resume |
-| [Temporal operations](temporal/README.md) | Worker images, immutable worker versions, worker pool configuration |
+| [Temporal operations](temporal/README.md) | Immutable worker images, request services, wake queues, and retained legacy pools |
 | `Dockerfile` | Go API image; build from `core/` |
 | `temporal/Dockerfile.worker` | Go worker image; build from `core/` |
 | `../../web/Dockerfile` | Next.js image; build from `web/` |

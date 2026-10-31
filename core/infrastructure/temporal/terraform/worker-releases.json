@@ -21,5 +21,25 @@
     "schedule": "0 17 * * *",
     "email": "austinbarwickdavis@gmail.com"
   },
-  "runtime_invoke_root": "https://us-central1-aiplatform.googleapis.com/reasoningEngines/v1/projects/8273801370/locations/us-central1/reasoningEngines/6637323162226786304/api"
+  "runtime_invoke_root": "https://us-central1-aiplatform.googleapis.com/reasoningEngines/v1/projects/8273801370/locations/us-central1/reasoningEngines/6637323162226786304/api",
+  "request_worker_images": {
+    "request-20261030-c113958-r2": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:8a6ed72cb0be9bc95f4b677c3afe6a511a86e26ced83caf5f9afa2a5716b4726",
+    "request-prod-20261030-f7b8743": "us-central1-docker.pkg.dev/bot-111549/nori-poc/worker@sha256:8a6ed72cb0be9bc95f4b677c3afe6a511a86e26ced83caf5f9afa2a5716b4726"
+  },
+  "request_worker_targets": {
+    "request-20261030-c113958-r2": {
+      "deployment_name": "nori-task-candidate",
+      "task_queue": "nori-tasks-candidate",
+      "wake_queue_name": "nori-worker-candidate",
+      "poll_window_seconds": 2,
+      "firestore_database": "nori-worker-candidate"
+    },
+    "request-prod-20261030-f7b8743": {
+      "deployment_name": "nori-task",
+      "task_queue": "nori-tasks",
+      "wake_queue_name": "nori-worker",
+      "poll_window_seconds": 240,
+      "firestore_database": "nori-poc"
+    }
+  }
 }

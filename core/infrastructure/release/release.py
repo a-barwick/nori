@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Immutable Cloud Build releases. Cloud setup and state migration are separate."""
 import argparse
+import copy
 from datetime import datetime
 import hashlib
 import importlib.util
@@ -316,33 +317,70 @@ def deploy_image(component, value):
     run([sys.executable, str(poc.ROOT / "poc.py"), "deploy-" + component, value])
 
 
-def warm_worker(build_id, pool):
-    """Register real queue pollers before asking Temporal to route new tasks."""
-    if any(queue.get("name") == poc.TASK_QUEUE for queue in poc.version_info(build_id).get("taskQueueInfos", [])):
+def warm_worker(build_id, workers, config, request_id, record):
+    """One tracked request registers the SDK and returns only after its drain."""
+    info = poc.version_info(build_id, missing_ok=True) or {}
+    if any(queue.get("name") == poc.TASK_QUEUE for queue in info.get("taskQueueInfos", [])):
         return
-    operation = poc.api("PATCH", "https://run.googleapis.com/v2/" + pool["resource"] + "?updateMask=scaling.manualInstanceCount",
-                        {"scaling": {"manualInstanceCount": 1}})
+    queue = workers["worker_wake_queue"]
+    root = poc.production_workers(workers)[build_id]
+    name = queue + "/tasks/nori-release-" + request_id
+    record(registration_task=name)
+    # The queue stays fenced; run dispatches only this content-free wake. Closing
+    # admission on any failure lets the normal pause path verify request drain.
+    require(poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + queue).get("state") == "PAUSED", "Worker registration requires a paused queue")
+    poc.api("POST", "https://cloudtasks.googleapis.com/v2/" + queue + "/tasks", {"task": {
+        "name": name, "dispatchDeadline": "720s", "httpRequest": {"url": root + "/run", "httpMethod": "POST",
+        "headers": {"Content-Type": "application/json"}, "body": "e30=",
+        "oidcToken": {"serviceAccountEmail": config["conversation_wake_service_account"], "audience": root}}}})
+    poc.api("POST", "https://cloudtasks.googleapis.com/v2/" + name + ":run", {})
     end = time.monotonic() + poc.remaining(180)
-    while not operation.get("done"):
-        require(time.monotonic() < end, "Candidate worker warm-up timed out")
-        time.sleep(2)
-        operation = poc.api("GET", "https://run.googleapis.com/v2/" + operation["name"])
-    require(not operation.get("error"), "Candidate worker failed to start")
     while time.monotonic() < end:
-        info = poc.version_info(build_id)
-        if any(queue.get("name") == poc.TASK_QUEUE for queue in info.get("taskQueueInfos", [])):
+        if poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True) is None:
+            info = poc.version_info(build_id, missing_ok=True) or {}
+            require(any(q.get("name") == poc.TASK_QUEUE for q in info.get("taskQueueInfos", [])), "Worker request did not register the expected task queue")
             return
         time.sleep(2)
-    raise RuntimeError("Candidate worker did not register the expected task queue")
+    raise RuntimeError("Worker registration request did not finish; pause must verify drain")
+
+
+def worker_url(build_id):
+    prefix = "nori-task" if poc.ENVIRONMENT == "production" else "nori-sb"
+    return f"https://{prefix}-{build_id}-8273801370.us-west1.run.app"
+
+
+def route_only_update(change, build_id):
+    # Google provider 8.8.1 computed status fields are not configuration. Retain
+    # every configurable field, including image, identity, limits and other env.
+    computed = {"conditions", "create_time", "creator", "delete_time", "effective_annotations", "effective_labels", "etag",
+                "expire_time", "generation", "last_modifier", "latest_created_revision", "latest_ready_revision", "observed_generation",
+                "reconciling", "terminal_condition", "terraform_labels", "traffic_statuses", "uid", "update_time", "uri", "urls"}
+    before, after = copy.deepcopy(change["before"]), copy.deepcopy(change["after"])
+    routes = []
+    for value in (before, after):
+        for key in computed:
+            value.pop(key, None)
+        template = value["template"][0]
+        template.pop("revision", None)  # Provider-generated revision identifier.
+        for container in template["containers"]:
+            container.pop("build_info", None)
+            env = {item["name"]: item for item in container["env"]}
+            routes.append(json.loads(env.pop("NORI_WORKER_SERVICES")["value"]))
+            container["env"] = sorted(env.values(), key=lambda item: item["name"])
+    return (len(routes) == 2 and routes[1] == {**routes[0], build_id: worker_url(build_id)} and before == after)
 
 
 def validate_worker_plan(plan, build_id):
-    allowed = {f'google_cloud_run_v2_worker_pool.worker["{build_id}"]',
-               f'google_cloud_run_v2_worker_pool_iam_member.wci["{build_id}"]'}
+    allowed = {f'google_cloud_run_v2_service.worker["{build_id}"]',
+               f'google_cloud_run_v2_service_iam_member.worker_invoke["{build_id}"]'}
     for resource in plan.get("resource_changes", []):
         require(not resource.get("previous_address"), "Review and apply Terraform address moves separately before deployment")
-        actions = resource["change"]["actions"]
+        change = resource["change"]
+        actions = change["actions"]
         if actions in (["no-op"], ["read"]):
+            continue
+        if resource.get("type") == "google_cloud_run_v2_service" and resource.get("name") == "worker" and actions == ["update"]:
+            require(route_only_update(change, build_id), "Retained worker update changes more than the added route")
             continue
         require(resource["address"] in allowed and actions == ["create"],
                 "Worker plan changes an existing or unrelated resource: " + resource["address"])
@@ -357,11 +395,19 @@ def worker_plan(cloud, candidate, directory):
     resources = state.get("values", {}).get("root_module", {}).get("resources", [])
     pools = {resource["index"]: resource["values"]["template"][0]["containers"][0]["image"]
              for resource in resources if resource.get("type") == "google_cloud_run_v2_worker_pool"}
-    require(pools == retained["worker_images"], "Retained worker manifest differs from live state; reconcile before releasing")
+    services = {resource["index"]: resource["values"]["template"][0]["containers"][0]["image"]
+                for resource in resources if resource.get("type") == "google_cloud_run_v2_service" and resource.get("name") == "worker"}
+    targets = state.get("values", {}).get("outputs", {}).get("request_worker_targets", {}).get("value", {})
+    require(pools == retained["worker_images"] and services == retained.get("request_worker_images", {}) and
+            targets == retained.get("request_worker_targets", {}), "Retained worker manifest differs from state; reconcile before releasing")
     build_id = "ci-" + candidate["commit"][:12] + "-" + candidate["build_id"][:8]
-    require(retained["worker_images"].get(build_id, candidate["worker"]) == candidate["worker"], "A retained worker build cannot change image")
-    retained["worker_images"][build_id] = candidate["worker"]
-    retained["scalable_build_ids"] = sorted(set(retained["scalable_build_ids"]) | {build_id})
+    target = {"deployment_name": poc.DEPLOYMENT, "task_queue": poc.TASK_QUEUE,
+              "wake_queue_name": "nori-worker" if poc.ENVIRONMENT == "production" else "nori-sandbox-worker",
+              "poll_window_seconds": 240, "firestore_database": "nori-poc" if poc.ENVIRONMENT == "production" else "nori-sandbox"}
+    require(build_id not in pools and retained.get("request_worker_images", {}).get(build_id, candidate["worker"]) == candidate["worker"] and
+            retained.get("request_worker_targets", {}).get(build_id, target) == target, "A retained worker build cannot change image or routing target")
+    retained.setdefault("request_worker_images", {})[build_id] = candidate["worker"]
+    retained.setdefault("request_worker_targets", {})[build_id] = target
     manifest_file = directory / "worker-releases.json"
     write_json(manifest_file, retained)
     plan_file = directory / "worker.plan"
@@ -420,7 +466,11 @@ def release(cloud, candidate, build_id, started):
         init_backends()
         temporal_key()
         config = poc.config()
-        poc.temporal_config()  # Refuse another environment before any mutation.
+        workers = poc.temporal_config()  # Refuse another environment before any mutation.
+        poc.production_workers(workers)
+        for queue in poc.worker_queue_names(workers, all_queues=True):
+            require(poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + queue).get("state") == "PAUSED", "Release requires all worker queues already paused")
+        poc.wait_worker_requests(workers)
         os.environ["TF_VAR_environment"] = poc.ENVIRONMENT
         os.environ["TF_VAR_runtime_invoke_root"] = config["runtime_url"]
         smoke = load_module("nori_smoke", ROOT / "smoke.py")
@@ -442,8 +492,6 @@ def release(cloud, candidate, build_id, started):
             run(["terraform", "-chdir=" + str(poc.TEMPORAL_TF), "apply", "-input=false", str(plan)])
             cloud.put(prefix + "worker-releases.json", retained)
             workers = poc.temporal_config()
-            if poc.version_info(worker, missing_ok=True) is None:
-                poc.temporal("create-version", *poc.version_config(worker, workers["worker_pools"][worker], workers["invoker_service_account"]))
             publisher = Cloud()
             publisher.bucket = config["artifact_bucket"]
             object_name = "releases/computer-agent-" + candidate["computer_sha256"]
@@ -453,15 +501,17 @@ def release(cloud, candidate, build_id, started):
                           "computer-release-sha256": candidate["computer_sha256"]})
             deploy_image("runtime", candidate["runtime"])
             deploy_image("web", candidate["web"])
-            warm_worker(worker, workers["worker_pools"][worker])
-            poc.temporal("set-current-version", "--deployment-name=" + poc.DEPLOYMENT, "--build-id=" + worker, "--allow-no-pollers", "--yes")
             smoke_config["baseline_ids"] = smoke.preflight(smoke_config, time.monotonic() + poc.remaining(120))
             record(phase="smoke")
             available = poc.remaining(SMOKE_SECONDS)
             require(available > 30, "Insufficient time remains for smoke and shutdown")
             deadline = time.monotonic() + available
             os.environ["NORI_OPERATION_DEADLINE"] = str(time.time() + available)
-            smoke_started = True
+            smoke_started = True  # Registration opens admission too; restoration ends here.
+            poc.temporal_unpause()  # Fence queues and verify all retained pools have no scaler.
+            poc.control(config, False)
+            warm_worker(worker, workers, config, build_id, record)
+            poc.temporal("set-current-version", "--deployment-name=" + poc.DEPLOYMENT, "--build-id=" + worker, "--allow-no-pollers", "--yes")
             poc.unpause(config)
             smoke_config["expected_worker_build"] = worker
             smoke.run(smoke_config, deadline, lambda event: record(smoke=[*report.get("smoke", []), event]))
@@ -512,6 +562,9 @@ def main():
         for key in ("commit", "build-id", "web", "runtime", "worker"):
             sub.add_argument("--" + key, required=True)
         sub.add_argument("--computer", type=Path, required=True)
+    check_plan = commands.add_parser("check-worker-plan", help="Read-only validation of Terraform show -json for a request-worker release")
+    check_plan.add_argument("plan", type=Path)
+    check_plan.add_argument("--build-id", required=True)
     preview = commands.add_parser("inspect", help="Validate an artifact manifest locally; no cloud access")
     preview.add_argument("manifest", type=Path)
     release = commands.add_parser("release", help="Deploy a successful preparation for an explicitly selected main commit")
@@ -520,6 +573,11 @@ def main():
     release.add_argument("--check-only", action="store_true", help="Verify trigger, provenance and promotion evidence without changing cloud resources")
     args = parser.parse_args()
     os.umask(0o077)
+    if args.action == "check-worker-plan":
+        require(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", args.build_id), "Invalid worker build ID")
+        validate_worker_plan(json.loads(args.plan.read_text()), args.build_id)
+        print(json.dumps({"valid": True, "environment": poc.ENVIRONMENT, "worker_build": args.build_id}))
+        return
     if args.action == "manifest":
         print(json.dumps(manifest(args), indent=2))
         return

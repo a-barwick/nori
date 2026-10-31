@@ -1,66 +1,85 @@
 # Temporal task workers
 
-Nori runs one pinned Temporal workflow per task. Ordinary Go model/computer
-functions execute in bounded activities on versioned Cloud Run worker pools.
-Firestore stores task state, commands and receipts; Cloud Storage stores large
-artifacts. Temporal Cloud owns durable waiting and sequencing.
+Nori keeps one pinned Temporal workflow per task. New worker releases run bounded
+HTTP slices on authenticated Cloud Run services; Firestore stores task state,
+commands and receipts, and Cloud Storage stores artifacts. Temporal Cloud owns
+durable waiting and sequencing. Retained worker pools and images remain in place
+at zero, with native WCI compute configurations removed.
 
-The live namespace is `quickstart-nori.qtjow`, deployment `nori-task`, queue
-`nori-tasks`, with pools in `us-west1`. Terraform uses the existing external state
-at `~/.local/state/nori/bot-111549/temporal/terraform.tfstate`.
+The request-driven implementation awaits its native candidate demonstration and
+rollout approval. Production is paused; retained worker pools remain at zero
+without WCI compute configurations.
 
-## Scaling and pause
+The production request-worker target uses namespace `quickstart-nori.qtjow`,
+deployment `nori-task`, task queue `nori-tasks`, and worker wake queue `nori-worker`
+in `us-west1`. Terraform
+uses only the existing external state at
+`~/.local/state/nori/bot-111549/temporal/terraform.tfstate`.
 
-Worker versions use min **0**, max **1**, initial **0**, utilization **0.8** and
-scale-down stabilization **90s**. Pass all five scaling flags together. These
-bounds apply per retained version; overlapping pinned versions can each need a
-pool. Keep old pools and immutable images while their pinned workflows remain.
+## Request slices and pause
 
-`scalable_build_ids` records which retained builds support pause-only control.
-The release helper adds each new compatible build; its default is empty. The
-legacy `poc-*` workers enforce expiry and can cancel other tasks, so their images
-and pools remain retained at zero with no scaler configuration or WCI pool grant.
-Unpause refuses a Current/ramping build outside this set, or an open workflow
-pinned to an incompatible or unknown build. Such histories need an explicit
-migration decision; unpause never moves or cancels them.
+Each immutable build has a service named `nori-task-BUILD`. Service-level scaling
+is min **0**, max **1**, with concurrency **1**, request-based CPU billing, and a
+**660s** request timeout. Cloud Tasks sends OIDC-authenticated `POST /run`
+requests with a **720s** dispatch deadline. `GET /healthz` does not start polling.
+The worker polls for at most **240s**, stops after **15s** idle, and drains the
+SDK for up to **300s** before responding. Accepted commands require a queued
+wake; runnable work discovered after drain is handed to a successor request.
+Waiting for user input leaves the workflow durable without a polling request.
 
-IAM is stable and scoped to each compatible pool. There are no execution sessions,
-admission expiry, expiring IAM grants, disabled invoker, or scheduled worker
-shutdowns. A normal task starts without an operator resume step.
+`NORI_WORKER_SERVICES` is the complete immutable build-to-root-URL map for one
+Temporal deployment/task-queue/wake-queue group. `NORI_WORKER_WAKE_QUEUE` is that
+group's full native queue path. Services use the existing runtime identity and
+`NORI_WAKE_SERVICE_ACCOUNT`; only queue-scoped enqueue and service-scoped invoker
+grants are added. The caller's existing `actAs` permission remains owned by the
+POC state. Hosted Temporal TLS and Secret Manager authentication are unchanged.
 
-From `core/`, the explicit cost-control switch is:
+The predictable service URL uses Cloud Run's documented
+[`SERVICE_NAME-PROJECT_NUMBER.REGION.run.app` format](https://docs.cloud.google.com/run/docs/triggering/https-request#deterministic_url).
+The 40-character build limit keeps its DNS segment below 64 characters. The same
+root URL is configured as an accepted audience, avoiding a Terraform cycle.
+
+From `core/`, use the explicit cost-control switch:
 
 ```sh
 python3 infrastructure/poc/poc.py pause
 python3 infrastructure/poc/poc.py unpause
 ```
 
+Pause first fences dispatch on all retained worker wake queues, then closes
+application admission, removes retained pool compute configurations, and
+reconciles those pools to zero. Paused handlers can retain successor wakes in
+the paused queue without starting paid work.
+It waits for dispatched worker requests to finish before stopping the computer.
+A failed or ambiguous Cloud Tasks delivery requires inspection of matching native
+worker `stopped`/`response` logs; pause reports incomplete and withholds computer
+stop when drain is uncertain. It preserves queued wakes and waiting tasks.
+Request completion proves SDK drain in the normal successful flow; it does not
+prove that Cloud Run has physically removed every idle container. Request-based
+billing also includes startup and shutdown. Explicit task Stop remains separate.
+
+Unpause requires a production request-service route for Current, any ramping
+version, and every open pinned workflow. Unknown pins or overrides fail closed;
+there is no implicit migration or cancellation. It keeps candidate queues paused,
+opens admission, asks the runtime to deliver pending commands, then resumes only
+the production worker queue. It never reinstates WCI compute configurations.
+The next computer tool starts the retained VM on demand.
+
 The helper reads `TEMPORAL_API_KEY` from the existing root `.env` without logging
-it. `NORI_ENV_FILE` can select the existing project file when operating from a
-worktree. No credentials are copied into the worktree or Terraform.
-
-Pause closes application admission, removes each retained version's native
-compute configuration with `temporal worker deployment
-update-version-compute-config --remove`, and reconciles every pool to zero.
-It stops the retained computer and preserves waiting tasks. Removing the scaler
-configuration fences WCI before the zero-count update; merely setting a pool to
-zero would allow the controller to start it again. A partial failure is reported
-as incomplete pause. Explicit Stop remains a separate task operation.
-
-Unpause restores compatible native compute configurations with the bounds above, opens
-admission, and asks the runtime to deliver pending commands and wake existing
-workflows. It does not create a replacement task or start the computer. The next
-computer tool starts the retained VM on demand.
+it. `NORI_ENV_FILE` selects that existing file from a worktree. Credentials are
+never copied into the worktree or Terraform. The retained VM must have its old
+termination schedule cleared in place with `poc.py clear-deadline` while stopped;
+unpause verifies that migration remains complete.
 
 ## Immutable releases
 
-`terraform/worker-releases.json` retains every deployed build ID and image digest,
-the compatible build set, and the enabled billing-alert configuration. Pass this
-complete file to every plan so future releases preserve those resources.
-Never change an image behind a live build ID. New pools begin at zero. Always
-plan with the complete release manifest; omitting it selects an empty default,
-which deletion protection rejects for existing pools. Preserve the compatible
-build set alongside the image map.
+`terraform/worker-releases.json` retains all deployed pool and service image
+digests, service routing targets, and billing-alert settings. Pass the complete
+manifest to every plan. Never change an image behind a retained build ID or
+remove a retained target while pinned workflows or queued wakes need it.
+`worker_images` and `scalable_build_ids` preserve old pool resources and IAM;
+new releases are added only to `request_worker_images` and
+`request_worker_targets`. Neither preparation nor unpause enables old scalers.
 
 Prepare a local image archive and an exact Terraform plan from `core/`:
 
@@ -68,65 +87,81 @@ Prepare a local image archive and an exact Terraform plan from `core/`:
 python3 infrastructure/temporal/worker-release.py --build-id BUILD_ID
 ```
 
-This requires a running OCI-capable Docker Buildx builder. If the default driver
-does not export OCI, create a local `docker-container` builder and select it with
-`--builder NAME`. It exports a single-platform OCI
-archive without pushing it, records the immutable image digest and source
-fingerprint, preserves all old manifest entries, and saves `release.json`, the
-candidate manifest, `release.plan`, and `plan.txt` in an owner-only directory
-beside the external state. Preparation fails if sources change during the build. Provenance records both
-the base commit and whether the working tree is dirty; the source fingerprint
-identifies the actual worker inputs. Each build has an immutable image digest,
-without claiming byte-identical rebuilds across changing base tags.
-When optional Terraform features are configured, include their settings with
-`--var-file PATH` so preparation preserves them in the same plan.
-An already built registry digest can instead be supplied with `--image URI`;
-the operator must ensure it corresponds to the intended source.
+For an isolated native candidate, select separate names together:
 
-Review `plan.txt` before any publishing or infrastructure change. The prepared
-image must be published preserving the recorded OCI digest before applying the
-saved plan; an OCI-aware registry tool such as `skopeo copy --preserve-digests`
-can publish the exact archive. Publishing, applying, and promoting are separate
-authorized operations. The helper never performs them.
+```sh
+python3 infrastructure/temporal/worker-release.py --build-id BUILD_ID \
+  --temporal-deployment nori-task-candidate \
+  --temporal-task-queue nori-tasks-candidate \
+  --wake-queue nori-worker-candidate --poll-window-seconds 2 \
+  --firestore-database nori-worker-candidate
+```
 
-After authorization, apply the reviewed plan and retain its candidate manifest
-as the repository's release manifest. The manifest also retains
-`runtime_invoke_root`, taken from the POC `runtime_url` output. Workers use this
-invoke root and the existing conversation queue/caller to wake the outer loop
-for durable task events. The worker shares `nori-poc-runtime`, so its scoped
-queue enqueue and wake-caller `actAs` permissions remain owned by the POC
-Terraform state; do not duplicate those IAM bindings here.
+Candidate targets remain retained when later production releases are added.
+All production versions share `nori-worker` and the fixed `nori-poc` database.
+Candidates use separate routing and the retained native `nori-worker-candidate`
+Firestore database in `us-central1`; the production database is unchanged.
+The existing runtime identity receives only a candidate-database-scoped
+conditional datastore binding. Existing store queries need only automatic
+single-field indexes; no composite indexes or data migration are added.
+Terraform validates complete targets and rejects groups sharing only part of a
+routing identity. Production polling stays 240s. The operator injects only
+`production_worker_services` and `worker_wake_queue` outputs into the production
+runtime; `request_worker_services`, `request_worker_targets` and
+`worker_wake_queues` expose all retained resources for candidate verification.
+New queues start **PAUSED**; applying infrastructure never opens admission.
 
-Register the new version with
-`temporal worker deployment create-version`, its pool/provider identity and all
-five scaling flags, then promote it with `set-current-version`. For existing
-versions, use `update-version-compute-config`; `create-version` rejects an
-existing build ID. Current routes new tasks; retained pinned tasks continue to
-require their original versions. Registration alone does not promote a build.
+Candidate worker Notify requests go to `nori-worker-candidate-events`, a separate
+queue retained **PAUSED** with a queue-scoped enqueue grant. It exercises native
+enqueue without dispatching to the inherited production runtime URL or changing
+the production conversation queue. The local candidate API's LocalLoop consumes
+the candidate database; native outer delivery is untested in this demonstration.
+`candidate_firestore_database` and `candidate_event_queue` outputs identify these
+resources for candidate-only cleanup. Fence candidate queues, close only the
+candidate database's control, verify request drain, and restore the retained
+computer's paused/stopped state. Do not use the global POC pause helper for an
+isolated candidate: it deliberately writes production control.
 
-**First migration from execution sessions:** run the new `pause` helper before
-applying the stable-IAM Terraform change. Existing versions can still have
-compute configurations while the old disabled account/expired IAM currently
-blocks them. Remove those configurations before enabling stable scaler access.
-Clear the old VM schedule in place with `poc.py clear-deadline` while stopped
-(Google provider 8.8.1 would replace the instance when removing that field).
-Unpause verifies the schedule is absent. Apply the runtime and computer changes, register the new worker version, then unpause
-when authorized. Verify native bounds and zero pools before reporting paused.
-Never recreate the retained disks, browser profile, or task files during this
-migration.
+Preparation requires an OCI-capable Docker Buildx builder; select an existing
+`docker-container` builder with `--builder NAME` if necessary. It exports one
+Linux/amd64 archive without pushing, records its immutable digest and source
+fingerprint, preserves the full manifest, and saves `release.json`,
+`worker-releases.json`, `release.plan` and `plan.txt` in an owner-only directory
+beside the external state (or `--output PATH`). It fails if worker sources change
+during preparation. `--var-file PATH` preserves additional reviewed Terraform
+settings. `--image URI` accepts an already-built immutable registry digest;
+the operator must verify that digest corresponds to the intended source.
+
+Review `plan.txt` before publishing or applying. Publish the exact OCI archive
+with digest preservation, then apply the reviewed saved plan only after approval.
+Preparation never publishes, applies or promotes. After application, retain the
+candidate manifest as the repository's complete release manifest. Retain the
+existing `runtime_invoke_root`, conversation queue/caller, Secret Manager
+container and existing IAM ownership; no secret payload enters a plan or image.
+
+The service SDK registers its deployment version when a request starts polling.
+Register or promote only the reviewed build in its exact deployment, without
+adding WCI compute configuration. Candidate registration or demonstration never
+promotes that build to production; a production build must name the production
+Temporal deployment and queue. Keep old pools, service targets, immutable images,
+workflow histories, browser profile, disks and task files through rollout and
+rollback. Native verification must confirm queue fences, request drain, all old
+pools at zero/no scalers, and the retained computer stopped before finishing.
 
 ## Credentials and measurements
 
-The existing Secret Manager container `nori-temporal-api-key` supplies the server
-credential to workers through a secret reference. Its payload must never enter
-Terraform, state, images, plans, or logs. The root `.env` remains the local source.
+The existing Secret Manager container `nori-temporal-api-key` supplies the worker
+credential by reference. Its payload never enters Terraform, state, images,
+plans or logs. The root `.env` remains the local source. Models are unchanged:
+intent `jev-latest`, outer `anthropic/claude-opus-5.5` through the existing
+OpenRouter adapter, and task worker `gemini-3.8-flash` through Vertex.
 
-Measure a representative real task from acceptance to first worker activity,
-computer start to readiness, final activity to pool zero, and last tool activity
-to VM termination. Record actual model token usage and estimated model USD
-separately from observed compute duration and delayed provider billing. A local
-smoke check cannot establish WCI scale-in, GCE stop/restart, or exact billed task
-cost. Model, network, build, registry and retained storage charges are separate.
+Measure acceptance to first activity, active activity completion across polling
+cutoff, response after SDK drain, automatic successor delivery, durable input
+wait/Answer, and targeted Stop with retained browser ownership. Record actual
+model token usage separately from observed compute duration and delayed billing.
+Local checks do not establish native OIDC, Cloud Tasks delivery, service billing,
+or GCE stop/restart. Do not infer physical container zero from a response.
 
 ## Optional daily spend alert
 

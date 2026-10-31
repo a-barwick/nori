@@ -14,6 +14,7 @@ import (
 	"go.temporal.io/sdk/client"
 	cloudrunid "go.temporal.io/sdk/contrib/gcp/cloudrun/id"
 	"nori/internal/state"
+	"nori/internal/workerwake"
 )
 
 func Queue() string {
@@ -69,6 +70,23 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) error 
 					failures = append(failures, e)
 					continue
 				}
+				if e == nil && workerwake.Enabled() {
+					control, err := store.Control(ctx)
+					if err != nil {
+						failures = append(failures, err)
+						continue
+					}
+					// A paused Stop may have projected cancellation before its
+					// parked workflow drains. Keep this existing command intent
+					// until resume can durably enqueue the exact workflow wake.
+					if control.Paused {
+						continue
+					}
+					if err = wakeWorker(ctx, c, cmd.RunID); err != nil {
+						failures = append(failures, err)
+						continue
+					}
+				}
 			}
 			if e = store.Delivered(ctx, cmd.ID); e != nil {
 				failures = append(failures, e)
@@ -108,6 +126,15 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client) error 
 			failures = append(failures, fmt.Errorf("command %s delivery: %w", cmd.ID, e))
 			continue
 		}
+		if control.Paused && workerwake.Enabled() {
+			continue
+		}
+		if !control.Paused {
+			if e = wakeWorker(ctx, c, cmd.RunID); e != nil {
+				failures = append(failures, e)
+				continue
+			}
+		}
 		if e = store.Delivered(ctx, cmd.ID); e != nil {
 			failures = append(failures, e)
 		}
@@ -131,6 +158,7 @@ func Wake(ctx context.Context, store state.TaskStore, c client.Client) error {
 		return err
 	}
 	var failures []error
+	seen := map[string]bool{}
 	for _, run := range runs {
 		if !run.Temporal || run.Status != "running" {
 			continue
@@ -140,7 +168,14 @@ func Wake(ctx context.Context, store state.TaskStore, c client.Client) error {
 			if !errors.As(err, &missing) {
 				failures = append(failures, err)
 			}
+		} else if err = wakeWorker(ctx, c, run.ID); err != nil {
+			failures = append(failures, err)
+		} else {
+			seen[WorkflowID(run.ID)] = true
 		}
+	}
+	if workerwake.Enabled() {
+		failures = append(failures, recoverExecutionWakes(ctx, c, seen))
 	}
 	return errors.Join(failures...)
 }
@@ -155,6 +190,10 @@ func WakePublications(ctx context.Context, store state.TaskStore, c client.Clien
 	var failures []error
 	for _, run := range runs {
 		if err = c.SignalWorkflow(ctx, WorkflowID(run.ID), "", Signal, state.Command{RunID: run.ID, Kind: "routing-resolved"}); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if err = wakeWorker(ctx, c, run.ID); err != nil {
 			failures = append(failures, err)
 			continue
 		}

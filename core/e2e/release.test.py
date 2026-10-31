@@ -5,6 +5,7 @@ The CLI is real. A loopback HTTP endpoint and a fake gcloud executable stand in
 for Cloud Storage/Cloud Build at the process boundary; no credentials or cloud
 resources are used. Run: python3 core/e2e/release.test.py
 """
+import copy
 import hashlib
 import json
 import os
@@ -275,6 +276,45 @@ class ReleaseProcessTest(unittest.TestCase):
             self.assertNotEqual(rejected.returncode, 0)
             self.assertIn(message, rejected.stderr)
         self.assertEqual(self.http.writes, [], "selection and rejected promotions must not mutate cloud state")
+
+    def test_saved_request_worker_plan_preserves_retained_workers(self):
+        build = "ci-example-12345678"
+        old_url = "https://nori-task-retained-8273801370.us-west1.run.app"
+        new_url = "https://nori-task-" + build + "-8273801370.us-west1.run.app"
+        before = {"name": "nori-task-retained", "generation": 1, "etag": "old",
+                  "scaling": [{"min_instance_count": 0, "max_instance_count": 1}],
+                  "template": [{"revision": "old-generated-revision", "service_account": "nori-poc-runtime@bot-111549.iam.gserviceaccount.com",
+                                "containers": [{"image": IMAGES["worker"], "build_info": [], "env": [
+                                    {"name": "NORI_WORKER_SERVICES", "value": json.dumps({"retained": old_url})},
+                                    {"name": "FIRESTORE_DATABASE_ID", "value": "nori-poc"}]}]}]}
+        after = copy.deepcopy(before)
+        after.update(generation=None, etag=None)
+        after["template"][0]["revision"] = None
+        after["template"][0]["containers"][0]["env"][0]["value"] = json.dumps({"retained": old_url, build: new_url})
+        changes = [{"address": 'google_cloud_run_v2_service.worker["retained"]', "type": "google_cloud_run_v2_service", "name": "worker",
+                    "change": {"actions": ["update"], "before": before, "after": after}},
+                   {"address": 'google_cloud_run_v2_service.worker["' + build + '"]', "change": {"actions": ["create"]}},
+                   {"address": 'google_cloud_run_v2_service_iam_member.worker_invoke["' + build + '"]', "change": {"actions": ["create"]}}]
+        path = self.directory / "worker-plan.json"
+        def check(resources):
+            path.write_text(json.dumps({"resource_changes": resources}))
+            return self.cli("check-worker-plan", path, "--build-id", build)
+        accepted = check(changes)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertTrue(json.loads(accepted.stdout)["valid"])
+        for label in ("image", "database", "removed-route", "delete", "replacement", "state-move", "old-pool"):
+            bad = copy.deepcopy(changes)
+            container = bad[0]["change"]["after"]["template"][0]["containers"][0]
+            if label == "image": container["image"] = IMAGES["worker"].replace("d" * 64, "e" * 64)
+            elif label == "database": container["env"][1]["value"] = "nori-sandbox"
+            elif label == "removed-route": container["env"][0]["value"] = json.dumps({build: new_url})
+            elif label == "delete": bad[0]["change"]["actions"] = ["delete"]
+            elif label == "replacement": bad[0]["change"]["actions"] = ["delete", "create"]
+            elif label == "state-move": bad[0]["previous_address"] = "old.address"
+            elif label == "old-pool": bad[1]["address"] = 'google_cloud_run_v2_worker_pool.worker["' + build + '"]'
+            with self.subTest(label=label):
+                self.assertNotEqual(check(bad).returncode, 0)
+        self.assertEqual(self.http.writes, [])
 
 
 if __name__ == "__main__":

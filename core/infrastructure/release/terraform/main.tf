@@ -144,7 +144,7 @@ resource "google_project_iam_custom_role" "deploy" {
   permissions = [
     "cloudbuild.builds.get",
     "aiplatform.reasoningEngines.get", "aiplatform.reasoningEngines.update", "aiplatform.reasoningEngines.query", "aiplatform.operations.get",
-    "run.services.get", "run.operations.get", "run.revisions.get",
+    "run.services.get", "run.services.create", "run.services.update", "run.services.getIamPolicy", "run.services.setIamPolicy", "run.operations.get", "run.revisions.get",
     "run.workerpools.list", "run.workerpools.get", "run.workerpools.create", "run.workerpools.update", "run.workerpools.getIamPolicy", "run.workerpools.setIamPolicy",
     "compute.instances.get", "compute.zoneOperations.get",
     # Temporal-state refresh, including the optional billing monitor resources.
@@ -163,7 +163,7 @@ resource "google_project_iam_member" "deploy" {
   member  = "serviceAccount:${google_service_account.ci["deploy"].email}"
 }
 resource "google_service_account_iam_member" "deploy_act_as" {
-  for_each           = toset(["nori-poc-runtime", "nori-poc-web", "nori-poc-computer"])
+  for_each           = toset(["nori-poc-runtime", "nori-poc-web", "nori-poc-computer", "nori-conversation-wake"])
   service_account_id = "projects/${local.project}/serviceAccounts/${each.key}@${local.project}.iam.gserviceaccount.com"
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.ci["deploy"].email}"
@@ -293,10 +293,9 @@ resource "google_project_iam_member" "computer_deploy" {
   }
 }
 
-# Cloud Run service IAM can scope deployment to this existing service. Worker
-# pool create/update and IAM operations remain project-scoped: pools are new
-# during release and Cloud Run administrative resource-name conditions are not
-# supported. The release runner validates the saved Terraform plan before apply.
+# Worker service create/update and IAM operations require trusted project-level
+# CI permissions. The release runner checks the saved plan before apply; retained
+# services may only gain the new route, never change image or other configuration.
 resource "google_project_iam_custom_role" "web_deploy" {
   role_id     = "noriCiWebDeploy"
   title       = "Nori CI web deployment"
@@ -400,9 +399,9 @@ resource "google_storage_bucket_iam_member" "sandbox_computer_list" {
   role   = google_project_iam_custom_role.release_list.name
   member = "serviceAccount:${google_service_account.ci["sandbox"].email}"
 }
-# Cloud Run pool administration cannot be constrained by resource-name IAM
-# conditions. Like production, the trusted sandbox runner validates its saved
-# plan and acts only on its isolated worker state. This is not a project boundary.
+# Cloud Run service/pool administration requires trusted project-level CI
+# permissions. The sandbox runner validates its saved plan and uses isolated
+# worker state. This is not a project security boundary.
 resource "google_project_iam_custom_role" "sandbox" {
   role_id     = "noriCiSandbox"
   title       = "Nori sandbox CI operations"
@@ -426,7 +425,7 @@ resource "google_vertex_ai_reasoning_engine_iam_member" "sandbox_runtime" {
   member           = "serviceAccount:${google_service_account.ci["sandbox"].email}"
 }
 resource "google_service_account_iam_member" "sandbox_act_as" {
-  for_each           = toset(["nori-sandbox-runtime", "nori-sandbox-web", "nori-sandbox-computer"])
+  for_each           = toset(["nori-sandbox-runtime", "nori-sandbox-web", "nori-sandbox-computer", "nori-sandbox-conversation-wake"])
   service_account_id = "projects/${local.project}/serviceAccounts/${each.key}@${local.project}.iam.gserviceaccount.com"
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.ci["sandbox"].email}"
@@ -473,4 +472,25 @@ resource "google_project_iam_member" "sandbox_firestore" {
     title      = "sandbox-state-only"
     expression = "resource.name == 'projects/bot-111549/databases/nori-sandbox' || resource.name.startsWith('projects/bot-111549/databases/nori-sandbox/') || resource.name == 'projects/8273801370/databases/nori-sandbox' || resource.name.startsWith('projects/8273801370/databases/nori-sandbox/')"
   }
+}
+
+# Queue creation and IAM are setup-owned. CI only dispatches one recorded warm
+# request and uses the existing pause/resume/drain commands on retained queues.
+resource "google_project_iam_custom_role" "worker_queue" {
+  role_id     = "noriCiWorkerQueue"
+  title       = "Nori CI worker queue fencing and registration"
+  permissions = ["cloudtasks.queues.get", "cloudtasks.queues.getIamPolicy", "cloudtasks.queues.pause", "cloudtasks.queues.resume", "cloudtasks.tasks.list", "cloudtasks.tasks.get", "cloudtasks.tasks.create", "cloudtasks.tasks.run"]
+}
+resource "google_cloud_tasks_queue_iam_member" "worker_queue" {
+  for_each = {
+    nori-worker                  = "deploy"
+    nori-worker-candidate        = "deploy"
+    nori-worker-candidate-events = "deploy"
+    nori-sandbox-worker          = "sandbox"
+  }
+  project  = local.project
+  location = "us-west1"
+  name     = each.key
+  role     = google_project_iam_custom_role.worker_queue.name
+  member   = "serviceAccount:${google_service_account.ci[each.value].email}"
 }

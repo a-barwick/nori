@@ -40,7 +40,7 @@ python3 infrastructure/poc/poc.py deploy-runtime IMAGE_URI
 python3 infrastructure/poc/poc.py deploy-web IMAGE_URI
 ```
 
-`deploy-runtime` updates the image and enables Temporal execution with the namespace, task queue, address, and `TEMPORAL_API_KEY_SECRET_VERSION=projects/bot-111549/secrets/nori-temporal-api-key/versions/latest`. It also sets the selected outer model (`anthropic/claude-opus-5.5`) and the durable conversation queue/caller from Terraform outputs. Other runtime environment entries and native secret references are preserved. Prepare and deploy workers independently through the [Temporal release procedure](../temporal/README.md).
+`deploy-runtime` updates the image and enables Temporal execution with the production namespace, deployment, task queue, address, and `TEMPORAL_API_KEY_SECRET_VERSION=projects/bot-111549/secrets/nori-temporal-api-key/versions/latest`. It injects only the Temporal state's `production_worker_services` and `worker_wake_queue` outputs; isolated candidate routes cannot enter the production runtime through this command. It requires a configured production request-worker release. It also sets the selected outer model (`anthropic/claude-opus-5.5`) and durable conversation queue/caller. Other runtime environment entries and native secret references are preserved. For a full Terraform plan, supply the same reviewed outputs as `worker_services` and `worker_wake_queue` together. Prepare workers independently through the [Temporal release procedure](../temporal/README.md).
 
 For Milestone 2, supply the existing native invoke root as `runtime_invoke_root` before applying the full plan. The root ends in `/api`; the Go API's `/api/process` suffix is intentionally appended to it. Terraform creates the `nori-conversation` Cloud Tasks queue, its scoped OAuth caller, and retained `nori-openrouter-api-key` / `nori-jev-api-key` secret containers. Upload the existing Nori credential payloads directly to Secret Manager, outside Terraform, before applying the runtime's native `secret_env` references. Only the named runtime and Agent Platform deployment identities may read those two secrets. No payload enters Terraform, state, images, or command arguments. `bootstrap-identities` includes the Cloud Tasks managed service identity.
 
@@ -63,11 +63,17 @@ python3 infrastructure/poc/poc.py unpause
 ```
 
 Tasks normally start without an operator resume ceremony or execution-session
-expiry. Pause closes `system/control.paused`, removes native Temporal compute
-configurations before reconciling all retained pools to zero, and stops the
-retained computer. It preserves waiting tasks and website/history access.
-Unpause restores min-zero/max-one worker scaling, opens admission, and wakes
-existing tasks through the runtime. Explicit task Stop remains separate.
+expiry. Pause first fences dispatch on all retained worker wake queues, then
+closes `system/control.paused`, removes native Temporal compute configurations,
+and reconciles retained
+pools to zero. It waits for dispatched worker requests to drain before stopping
+the retained computer. Ambiguous or failed deliveries require matching native
+worker stopped/response logs; an incomplete drain withholds computer stop and is
+reported. Waiting tasks and website/history remain available. Unpause verifies
+production service routes for Current and every open pin, opens admission,
+wakes existing tasks, and resumes only the production worker queue. Candidate
+queues stay paused and old WCI scalers are never restored. Explicit task Stop
+remains separate. A completed request does not establish physical container zero.
 The helper reads the existing root `.env` for `TEMPORAL_API_KEY`; use
 `NORI_ENV_FILE` to select that existing file from a worktree.
 
@@ -98,9 +104,9 @@ Inspect `journalctl -u nori-computer-proxy` before retrying those failures.
 For the one-time session-removal migration, run `poc.py clear-deadline` while
 paused to clear the old VM schedule in place. Google provider 8.8.1 would replace
 the retained VM if Terraform removed that field, so native scheduling owns this
-migration; unpause verifies the schedule is absent. Run the new pause command
-before applying stable WCI IAM,
-as described in the [Temporal migration procedure](../temporal/README.md).
+migration; unpause verifies the schedule is absent. Keep retained WCI compute
+configurations removed before request-service rollout, as described in the
+[Temporal release procedure](../temporal/README.md).
 The operator needs native Compute/Firestore and Temporal deployment-management
 permissions. No IAM Policy Troubleshooter or per-session shutdown proof is
 required. The web service account only queries the runtime; the runtime retains
@@ -111,7 +117,7 @@ access. The computer service account only reads release objects.
 
 Native monthly service spend caps already exist on billing account `010FFA-6C77F1-18FF6D`: Cloud Run $10 (`ec91d69c-af6f-4582-8a57-fc5d74df3922`) and Agent Platform $20 (`c288b003-c839-4ef0-9327-7ae10d3e762b`). The existing $50 alert budget remains. Do not create duplicates. `python3 infrastructure/poc/poc.py spend-caps` reads the existing budgets through the native Billing Budgets REST API; this provider version does not model the spend-cap field.
 
-Pause retains the VM boot disk, original guest disk, GCS objects, images, and Firestore data, so their storage charges continue. Check the project's paid-service inventory by day end. Worker pools scale on Temporal demand; the computer starts only for a tool. No scheduled starts or automatic VM restart are provisioned.
+Pause retains the VM boot disk, original guest disk, GCS objects, images, and Firestore data, so their storage charges continue. Check the project's paid-service inventory by day end. New request-worker services scale on authenticated Cloud Tasks requests; retained worker pools stay at zero without scalers. The computer starts only for a tool. No scheduled starts or automatic VM restart are provisioned.
 
 ## Computer RPC
 
@@ -153,7 +159,7 @@ Protect `main`, version tags, CI definitions, and privileged trigger access.
 
 The tools image is built and pinned once during setup. Each preparation or
 deployment build has a 30-minute ceiling; preparation and automatic sandbox
-are separate builds, so their ceilings can total 60 minutes. Smoke, including
+are separate builds, so their ceilings can total 60 minutes. Smoke, including request-worker registration and
 resume, has a ten-minute ceiling within deployment; five minutes are reserved
 for shutdown and narrow restoration. These are failure limits, not measured
 normal durations. Hosted timings still need the first reviewed live run.
@@ -167,6 +173,7 @@ normal durations. Hosted timings still need the first reviewed live run.
 | Artifact bucket | `bot-111549-nori-poc` | `bot-111549-nori-sandbox` |
 | Computer / retained disk | `nori-computer` / `bot-computer-data` | `nori-sandbox-computer` / `nori-sandbox-computer-data` |
 | Task queue / deployment | `nori-tasks` / `nori-task` | `nori-sandbox-tasks` / `nori-sandbox-task` |
+| Worker wake queue | `nori-worker` | `nori-sandbox-worker` |
 | Conversation queue | `nori-conversation` | `nori-sandbox-conversation` |
 | Terraform state prefixes | `nori/poc`, `nori/temporal` | `nori/sandbox/poc`, `nori/sandbox/temporal` |
 | CI identity | `nori-ci-deploy` | `nori-ci-sandbox` |
@@ -175,7 +182,7 @@ Runtime, web, computer, wake, and Temporal scaler identities are also separate.
 The GCP project, immutable image registry, existing model/API secret references,
 and Temporal namespace remain shared. No credentials or production browser data
 are copied. This is application/data isolation, not a separate project security
-boundary: Cloud Run worker-pool creation/administration still requires trusted
+boundary: Cloud Run worker-service creation/administration still requires trusted
 project-level CI permissions, and the existing Temporal credential is shared.
 Selected models remain unchanged.
 
@@ -189,12 +196,15 @@ leave compute paused; use the existing operator unpause action for later use.
 Sandbox builds wait for an active deployment's lock within their own time budget.
 They never steal a failed build's lock. Delayed preparation notifications cannot
 replace a newer successful sandbox preparation. A repeated artifact can reuse its
-matching worker pool and version.
+matching request-worker service and version.
 
 ### Failure handling
 
 The runner pauses first on failure. It restores previous images, computer binary,
-and worker routing only if smoke has not begun admitting work. After a smoke
+and worker routing only before the smoke/registration phase opens admission.
+Registration uses one recorded Cloud Tasks request to the new request-worker
+service while its queue remains paused, then verifies response/drain and Temporal
+queue registration before promotion. No WCI pool scaling is reintroduced. After a smoke
 input may have been accepted, it preserves state and reports operator action.
 A verified pre-smoke restoration releases the lock but still fails the build.
 Unresolved failures retain `deployments/ENVIRONMENT/lock.json` and a report at
@@ -206,8 +216,8 @@ Hard Cloud Build cancellation can bypass cleanup. After confirming the owning
 build is terminal, inspect its report and use `poc.py pause` with the matching
 `NORI_ENVIRONMENT` and migrated backend. Inspect incomplete Terraform operations
 and locks before another deployment. Force-unlock only after the owner is gone;
-import a created-but-unjournaled pool rather than replacing it. Review tainted
-resources manually, preserve all retained pools, and reconcile that environment's
+import a created-but-unjournaled service rather than replacing it. Review tainted
+resources manually, preserve all retained workers, and reconcile that environment's
 `worker-releases.json` journal. Inspect only the recorded smoke task/input IDs;
 never clear conversation documents. Verify pause before removing the exact GCS
 lock generation. There is no recovery service or automatic lock expiry.
@@ -235,7 +245,7 @@ reviewed setup operation using the existing guest-building tools; production
 startup deliberately refuses blank/partial filesystems and never formats them.
 Do not copy the production disk, browser profile, or task history. Existing
 model secrets are referenced in place. Establish owner-only IAP/runtime access,
-initial immutable image references, a compatible registered sandbox worker,
+initial immutable image references, a compatible sandbox request-worker service and its paused native wake queue,
 an initialized conversation/control record, and a paused/stopped idle baseline.
 Seed `deployments/sandbox/worker-releases.json` from that sandbox's actual worker
 state. These are setup prerequisites, not implicit actions performed by CI.
@@ -246,7 +256,10 @@ Back up production's owner-only local states while other operators are idle.
 The new `moved` blocks preserve the production registry, domain, service-agent
 grants, and Temporal secret as their Terraform addresses gain `[0]`; review a
 plan showing moves without replacement before committing those state updates.
-Hosted worker plans still reject every existing-resource mutation and deletion.
+Hosted plans reject pending address moves, deletions, replacements, and unrelated
+updates. Retained request-worker services may only gain the new build in their
+route map; their images, routing targets, identities, and other configuration stay
+unchanged. Legacy pools are retained at zero, never reactivated by CI.
 
 Initialize each existing local backend with its current absolute state path,
 then add an untracked `release_backend_override.tf` containing

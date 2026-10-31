@@ -57,6 +57,30 @@ variable "runtime_invoke_root" {
   description = "Native Agent Runtime invoke root ending in /api; required before deploying the durable conversation image."
 }
 
+variable "worker_services" {
+  description = "Active environment build/URL map from the reviewed Temporal production_worker_services output. Retain old pinned routes; exclude isolated candidate builds."
+  type        = map(string)
+  default     = {}
+  validation {
+    condition = alltrue([for build, url in var.worker_services :
+      can(regex("^[a-z0-9][a-z0-9-]{0,39}$", build)) && url == "https://${var.environment == "production" ? "nori-task" : "nori-sb"}-${build}-8273801370.us-west1.run.app"
+    ])
+    error_message = "Use the complete reviewed request-worker build/URL map for the selected environment."
+  }
+}
+
+variable "worker_wake_queue" {
+  description = "Worker wake queue output from the reviewed Temporal infrastructure for this environment."
+  type        = string
+  default     = ""
+  validation {
+    condition = (length(var.worker_services) == 0 && var.worker_wake_queue == "") || (
+      length(var.worker_services) > 0 && var.worker_wake_queue == "projects/bot-111549/locations/us-west1/queues/${var.environment == "production" ? "nori-worker" : "nori-sandbox-worker"}"
+    )
+    error_message = "Configure the worker route map and its environment-specific wake queue together."
+  }
+}
+
 variable "outer_model" {
   type    = string
   default = "anthropic/claude-opus-5.5"
@@ -511,6 +535,8 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
 
       dynamic "env" {
         for_each = {
+          NORI_WORKER_SERVICES            = length(var.worker_services) > 0 ? jsonencode(var.worker_services) : ""
+          NORI_WORKER_WAKE_QUEUE          = var.worker_wake_queue
           NORI_EXECUTION_MODE             = "temporal"
           NORI_AGENT_MODEL                = var.outer_model
           NORI_AGENT_BASE_URL             = "https://openrouter.ai/api/v1"
@@ -520,6 +546,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
           TEMPORAL_ADDRESS                = "quickstart-nori.qtjow.tmprl.cloud:7233"
           TEMPORAL_NAMESPACE              = "quickstart-nori.qtjow"
           TEMPORAL_TASK_QUEUE             = local.task_queue
+          TEMPORAL_DEPLOYMENT_NAME        = local.temporal_deployment
           TEMPORAL_API_KEY_SECRET_VERSION = "projects/${local.project}/secrets/nori-temporal-api-key/versions/latest"
         }
         content {
