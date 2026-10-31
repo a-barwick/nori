@@ -247,8 +247,6 @@ td .data-btn{margin-left:6px}
 
 /* section links */
 h2,h3,.step .t{scroll-margin-top:calc(var(--bar,0px) + 18px)}
-.head-link{color:inherit;text-decoration:none}
-.head-link:hover{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 .copy-link{display:inline-flex;margin-left:6px;color:var(--ink2);opacity:0;vertical-align:-1px;transition:opacity .12s}
 h1:hover .copy-link,h2:hover .copy-link,h3:hover .copy-link,.step .t:hover .copy-link,.copy-link:focus-visible{opacity:1}
 .copy-link:hover{color:var(--outer)}

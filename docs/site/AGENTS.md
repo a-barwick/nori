@@ -1,12 +1,106 @@
-# Nori docs site
+# Writing Nori docs pages
 
-Keep pages visual, concise, and focused on one topic. Use a diagram, flow, or table where helpful, short explanations, and optional depth in Data buttons or `details.more`. Use plain sentences and concrete examples; avoid slogans, repeated captions, prose shorthand, and em dashes. Use the terms defined in `words.html`.
+This folder is the Nori docs site. Read this file before adding or changing a page. These rules exist because Austin reviewed the site and asked for this style, so follow them unless he says otherwise.
 
-Reuse existing static HTML, `site.css`, and `site.js`. Add pages to `NAV`; let the script generate navigation and links. Use relative links and preserve heading anchors. Reuse existing CSS classes rather than adding a framework or build step.
+## What a page should feel like
 
-- Prefer responsive `.flow`/`.node` diagrams; use SVG when position matters. Colors: blue outer loop, green inner loop/Temporal, orange computer, gray runtime/storage, yellow waiting. Label ambiguous arrows and avoid overlaps.
-- Code on `main` establishes what is built; Austin's accepted decisions establish what is planned. Mark work outside `main` with `class="designed"` and uncommitted work with `class="in-review"`. Put wholly planned pages in the Planned navigation group. Keep text readable when the filter hides marked content.
-- Verify technical facts against code. Link sources at the bottom, use issue identifiers for Linear links, and date costs or measurements. Record material source conflicts in `sources.html`. Never publish secrets, personal email addresses, or real user messages/task IDs.
-- Data buttons describe implemented behavior: use real endpoints/field names and source-file references, synthetic values, and `…` for shortened examples. Connect `data-flow` keys to `window.FLOWS` in `task-data.js`, loaded before `site.js`; request steps use `request-data.js`.
+A reader should get the idea from the picture, understand it from a few short lines, and only open details if they want them. Write the way you'd explain it to a friend who is a good engineer.
 
-For rendered page changes, use `docs/serve.sh` at port 3220 to check affected pages at desktop/phone widths and exercise changed filters or Data buttons. No site run is needed for instruction-only edits.
+1. **Visual first.** Open with a diagram, a state flow or a compact table. If a page has no visual, ask what it should be before writing more text.
+2. **Easy to scan.** Use short lists and tables. Keep paragraphs to one or two sentences.
+3. **Details stay hidden until asked for.** Put depth in a Data button or a `details.more` section.
+4. **Minimal UI.** Add a control or label only if the page needs it.
+
+## Writing rules
+
+- Use full, plain sentences with concrete nouns and verbs. "The runtime saves the message, then schedules a wake."
+- Don't write slogans, aphorisms or punchy fragments. Avoid "X, not Y", "It isn't X, it's Y", "the real question", "load-bearing" and similar lines.
+- In sentences, don't use `=`, `→`, `+` or `≠` as shorthand, and avoid em dashes. Arrows are fine in diagrams and labels.
+- Use real examples, such as the Tucson weather and dinner tasks, instead of abstract descriptions.
+- Keep labels short. Don't add subtitles, captions or helper text that only repeat what's on screen.
+- Don't narrate the page ("this section explains") or mention how it was written.
+- Read each line as a skeptical reader would and cut anything vague or odd-sounding.
+
+Use the same words everywhere: outer loop, inner loop, runtime, task, dispatch, steer, command, event. `words.html` defines them. Don't add synonyms, and add a new term there before using it.
+
+## Page structure
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page title · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Page title</h1>
+<p class="lede">One sentence on what this is, in plain words.</p>
+<!-- A diagram, state flow or table goes here. -->
+<section><h2>A short heading</h2>
+<!-- Short lists, tables and cards. -->
+</section>
+<details class="sources"><summary>Sources</summary><p>Links to the Spaces docs and Linear issues.</p></details>
+</body>
+</html>
+```
+
+Then add the page to `NAV` in `site.js`. The script adds the navigation, previous and next links, section lists, copy links and the filter. Don't copy those into a page.
+
+- Keep each page to one topic. Link to another page instead of repeating it.
+- Every heading gets a copy-link icon automatically. Only the icon is interactive, so don't make headings or subtitles clickable. Link IDs come from the heading text, so renaming a heading breaks old links to it.
+- Use relative links such as `tasks.html`, because the site won't always be hosted at the root of a domain.
+- Use what's already in `site.css`: `card`, `grid2`, `grid3`, `flow`, `node`, `branch`, `states`, `say`, `tag` and `pts`. Add new CSS only when a page needs something those can't do.
+- Don't add a framework, a build step or external scripts without asking Austin.
+
+## Diagrams
+
+- Prefer `.flow` and `.node` HTML diagrams because they adjust to the screen width. Use inline SVG when position carries meaning.
+- Keep the colors consistent. Blue is the outer loop, green is the inner loop and Temporal, orange is the computer, gray is the runtime and storage, and yellow is waiting.
+- Label every arrow whose meaning isn't obvious, and don't let lines cross boxes or text.
+
+## Built and planned
+
+Readers must always be able to tell what runs today.
+
+- Mark anything not on `main` with `class="designed"`. Mark uncommitted work with `class="in-review"`. The filter finds both.
+- Add `<span class="tag design">designed</span>` where the marking alone isn't clear.
+- A page that is entirely planned goes in the Planned group in `NAV`, which labels it automatically.
+- If a marked sentence is hidden, the text around it must still read properly.
+
+## Facts
+
+When sources disagree, the code on `main` decides what's built. Linear and the Spaces docs decide what's planned.
+
+- Check limits, names, endpoints and tools against the code before writing them down. Don't copy them from an older doc.
+- If a source is out of date, follow the code and add the conflict to `sources.html`.
+- Date any cost or measurement, and say that it's a planning figure if it is.
+- Never include secrets, API keys, personal email addresses, or real user messages and task IDs. The site may be public.
+- Link Linear issues as `AB-123`, and list the sources at the bottom of the page.
+
+## Data buttons
+
+A Data button shows the request, response and saved record behind a step or a table row.
+
+- Add `data-flow="key"` to a table row, add the key to `window.FLOWS` in `task-data.js`, and load that script before `site.js`. Request page steps read `request-data.js`.
+- Take endpoints and field names from the code, and set `source` to the file they came from.
+- Values are invented, so use made-up examples. Mark anything shortened with `…`.
+- Don't add a Data button to something that isn't built yet, because there's no code to base it on.
+
+## Before you finish
+
+Run the site from the repo root. It opens at http://127.0.0.1:3220:
+
+```bash
+docs/serve.sh
+```
+
+- Look at the page at desktop and phone widths. It shouldn't scroll sideways.
+- Try the filter and any Data buttons, and check the console for errors.
+- Read the text once more against the writing rules above.
+
+## Publishing
+
+The site runs locally with `docs/serve.sh` and isn't hosted right now. `.github/workflows/docs.yml` can publish this folder, without this file, but it stays off unless the repo variable `NORI_DOCS_PAGES` is `true`. Don't commit unfinished pages to `main`.
