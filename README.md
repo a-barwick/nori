@@ -125,6 +125,12 @@ quality. Nori's controlled
 model calls share $2/day and $20/month UTC limits. Jev is excluded
 at Austin's request. Existing production keys are separate.
 
+An explicit approval can raise one existing chat's allowance up to $2. The
+operator records `approved_allowance_nanos` on that chat's existing spend record
+and updates its allowance and native key limit together. This preserves spent
+amounts, reservations and expiry. Automatic increases still stop at $1, and
+shared daily/monthly limits remain unchanged.
+
 Use the main checkout's mode-600 root `.env`; never copy it into a worktree:
 
 ```sh

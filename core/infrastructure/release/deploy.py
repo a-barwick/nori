@@ -101,13 +101,18 @@ def release_lock():
 
 
 def refuse_open_work(c):
-    """Never interrupt a running task or an unprocessed message to make a deploy pass."""
+    """Never interrupt running work; preserve failed, already-attempted input."""
     root = poc.firestore(c, "owners/" + quote(OWNER, safe=""))
     control = poc.api("GET", root + "/conversation/control", allow404=True)
     if control:
         f = control.get("fields", {})
         count = lambda key: int(f.get(key, {}).get("integerValue", "0"))
-        require(count("received") == count("consumed") and count("user_received") == count("user_routed") and not f.get("active", {}).get("stringValue"),
+        # A failed turn consumes its attempt but leaves user_routed behind.
+        # While paused, its saved input can survive a repair deployment. It is
+        # retried only after a user follow-up; never mark it routed here.
+        paused = poc.api("GET", poc.firestore(c, "system/control"))["fields"]["paused"].get("booleanValue", False)
+        routed_or_waiting = count("user_received") == count("user_routed") or (paused and count("protocol_version") == 2)
+        require(count("received") == count("consumed") and routed_or_waiting and not f.get("active", {}).get("stringValue"),
                 "Nori has unprocessed messages. Wait for them to settle, then deploy again.")
     cursor = ""
     while True:

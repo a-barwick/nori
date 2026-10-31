@@ -59,7 +59,9 @@ it takes.
 | `make deploy-rollback` | Restores the previous release after an interrupted deploy |
 | `make deploy-unlock` | Removes a dead deploy's lock |
 
-`make deploy` refuses to start while a task is running or a message is unprocessed.
+`make deploy` refuses to start while a task is running or a message has not been
+attempted. While paused, a failed turn's saved input can survive a repair deploy;
+it still needs a user follow-up before another attempt.
 It also refuses any Terraform plan that does more than add the new worker and give
 retained workers its route. A new worker keeps the Current worker's model.
 

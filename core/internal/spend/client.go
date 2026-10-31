@@ -34,12 +34,14 @@ type Client struct {
 }
 
 type scopeRecord struct {
-	Profile   string    `firestore:"profile"`
-	Allowance int64     `firestore:"allowance_nanos"`
-	Used      int64     `firestore:"used_nanos"`
-	Closed    bool      `firestore:"closed"`
-	ExpiresAt time.Time `firestore:"expires_at"`
-	CreatedAt time.Time `firestore:"created_at"`
+	Profile   string `firestore:"profile"`
+	Allowance int64  `firestore:"allowance_nanos"`
+	// Only an explicit operator approval raises this chat above the default.
+	ApprovedAllowance int64     `firestore:"approved_allowance_nanos,omitempty"`
+	Used              int64     `firestore:"used_nanos"`
+	Closed            bool      `firestore:"closed"`
+	ExpiresAt         time.Time `firestore:"expires_at"`
+	CreatedAt         time.Time `firestore:"created_at"`
 }
 type poolRecord struct {
 	Day        string `firestore:"day"`
@@ -105,6 +107,11 @@ func (c *Client) validateScope(s scopeRecord, now time.Time) error {
 	max := int64(1_000_000_000)
 	if c.profile == "ci" {
 		max = 100_000_000
+	} else if s.ApprovedAllowance != 0 {
+		if s.ApprovedAllowance < max || s.ApprovedAllowance > dayLimit {
+			return blocked("approved chat allowance is invalid")
+		}
+		max = s.ApprovedAllowance
 	}
 	if s.Profile != c.profile || s.Allowance <= 0 || s.Allowance > max || s.Used < 0 || s.Closed || !now.Before(s.ExpiresAt) {
 		return blocked("development allowance is invalid, closed, expired, or has a different profile")
