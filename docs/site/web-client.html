@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web client · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Web client</h1>
+<p class="lede">A Next.js app that shows one conversation with Nori and the activity of its tasks. Messages and tasks come from the runtime, and the client never calls a model.</p>
+<div class="card">
+<img class="shot" src="img/web-desktop.png" width="1440" height="900" alt="The web client at desktop width. A white window on a lavender background holds the Nova and Nori header, a conversation with purple user bubbles and a saved document, a composer, and an Activity panel with a task waiting for an answer.">
+<p class="note">Screenshots come from the running client, with made-up data.</p>
+</div>
+
+<section><h2>The screen</h2>
+<div class="card"><table class="tall"><tr><th>Part</th><th>What it shows</th><th>Component</th></tr>
+<tr><td>Header</td><td>Nova brand, Nori's mark and status, debug toggle, Refresh, Activity.</td><td><code>NovaShell</code></td></tr>
+<tr><td>Thread</td><td>Saved messages, documents, time separators, older-message loading and one status line.</td><td><code>Thread</code></td></tr>
+<tr><td>Composer</td><td>A text box that grows to 196 px, Send and a count of new messages. Enter sends and Shift+Enter adds a line.</td><td><code>RuntimeComposer</code></td></tr>
+<tr><td>Activity panel</td><td>Running tasks, recent tasks, questions, events, results and screenshots. <code>⌘.</code> or <code>Ctrl+.</code> toggles it.</td><td><code>TaskPanel</code></td></tr>
+<tr><td>Reading view</td><td>A full-screen copy of a saved reply, with Download as Markdown and Back to chat.</td><td><code>DocumentViewer</code></td></tr>
+</table></div>
+<div class="shots">
+<img class="shot" src="img/web-phone.png" width="780" height="1688" alt="The conversation at phone width. The Nova brand is hidden and the window fills the screen.">
+<img class="shot" src="img/web-phone-activity.png" width="780" height="1688" alt="The Activity panel at phone width, open as a sheet over the conversation.">
+</div>
+<div class="card"><table class="tall"><tr><th>Width</th><th>Layout</th></tr>
+<tr><td>1280 px and up</td><td>Activity docks beside the thread at 360 px.</td></tr>
+<tr><td>Below 1280 px</td><td>Activity opens as a sheet from the right, over a scrim.</td></tr>
+<tr><td>900 px and below</td><td>The lavender margin shrinks from 28 px to 16 px.</td></tr>
+<tr><td>600 px and below</td><td>The window fills the screen, the Nova brand is hidden and the Activity button shows only its icon.</td></tr>
+</table></div>
+<p>Chat is the only page. <code>/goals</code>, <code>/ideas</code>, <code>/library</code> and <code>/settings</code> redirect to <code>/</code>.</p>
+</section>
+
+<section><h2>Status and task labels</h2>
+<div class="card"><table class="tall"><tr><th>Header status</th><th>When</th></tr>
+<tr><td>Connecting…</td><td>The first session request is loading.</td></tr>
+<tr><td>Disconnected</td><td>A request failed or there is no session. Send stays disabled until a first session loads.</td></tr>
+<tr><td>Waiting for you</td><td>A task has an open question or a waiting message.</td></tr>
+<tr><td>Working…</td><td>A message, turn, task or command is in progress.</td></tr>
+<tr><td>Ready when you are</td><td>Nothing is in progress.</td></tr>
+</table></div>
+<div class="card"><table class="tall"><tr><th>Task label</th><th>Task state</th><th>Controls</th></tr>
+<tr><td>Working on your task</td><td>Running</td><td>Stop task, Send task update</td></tr>
+<tr><td>Waiting for your answer</td><td>Running with a question or a waiting message</td><td>Answer question or Continue task, Stop task</td></tr>
+<tr><td>Answer accepted</td><td>Running, and the question is resolved</td><td>Stop task</td></tr>
+<tr><td>Stopping…</td><td>Running, and Stop was requested</td><td>None until the runtime confirms</td></tr>
+<tr><td>Completed, Failed, Stopped</td><td>Finished</td><td>None</td></tr>
+</table></div>
+<p>The thread status line can also say that task execution is paused. Chat still works during a pause. See <a href="tasks.html">Task lifecycle</a>.</p>
+</section>
+
+<section><h2>Bubbles and documents</h2>
+<p>The client picks the layout from the Markdown of each saved reply. User messages are always bubbles.</p>
+<div class="card"><div class="flow">
+<div class="node"><b>Saved reply</b><small><code>&lt;!-- nori:page --&gt;</code> or <code>&lt;!-- nori:bubble --&gt;</code> in the text forces a layout.</small></div>
+<div class="arrow">↓</div>
+<div class="node decide">Does it have structure?</div>
+<div class="branch">
+<div class="node"><b>No: bubble</b><small>Short text beside the mark.</small></div>
+<div class="node"><b>Yes: bubble and document</b><small>A short opening sentence or paragraph becomes the bubble, and the rest becomes a document card.</small></div>
+</div>
+</div></div>
+<ul class="pts">
+<li>A reply counts as structured if it has a heading, a table, a nested list, a list of more than 5 items, a code block of more than 3 lines, a source list, or more than 150 words.</li>
+<li>A document taller than 70% of the window folds behind Keep reading, unless it arrived in the last 15 seconds.</li>
+<li>Messages from one sender within 3 minutes share a group, with pinched bubble corners where they touch. A gap of more than 15 minutes adds a time separator.</li>
+</ul>
+<p class="note">Rules are in <code>lib/hybrid.ts</code> and <code>lib/units.ts</code>.</p>
+</section>
+
+<section><h2>Theme</h2>
+<p>The theme is Nova: a white window on a lavender background, with one purple accent. It is light only.</p>
+<div class="card"><div class="swatches">
+<div class="color"><i style="background:#eee5fc"></i><span>Backdrop<code>#eee5fc</code></span></div>
+<div class="color"><i style="background:#ffffff"></i><span>Canvas, surface<code>#ffffff</code></span></div>
+<div class="color"><i style="background:#f7f5fb"></i><span>Fill 1<code>#f7f5fb</code></span></div>
+<div class="color"><i style="background:#eee8fa"></i><span>Fill 2<code>#eee8fa</code></span></div>
+<div class="color"><i style="background:#e7e2ef"></i><span>Hairline<code>#e7e2ef</code></span></div>
+<div class="color"><i style="background:#cfc3e9"></i><span>Hairline strong<code>#cfc3e9</code></span></div>
+<div class="color"><i style="background:#190936"></i><span>Ink<code>#190936</code></span></div>
+<div class="color"><i style="background:#726d82"></i><span>Ink 2<code>#726d82</code></span></div>
+<div class="color"><i style="background:#777185"></i><span>Ink 3<code>#777185</code></span></div>
+<div class="color"><i style="background:#5000ff"></i><span>Accent<code>#5000ff</code></span></div>
+<div class="color"><i style="background:#4200d6"></i><span>Accent hover<code>#4200d6</code></span></div>
+<div class="color"><i style="background:#3500ae"></i><span>Accent pressed<code>#3500ae</code></span></div>
+<div class="color"><i style="background:#7943ff"></i><span>Signal, focus<code>#7943ff</code></span></div>
+<div class="color"><i style="background:#f1ebff"></i><span>Accent subtle<code>#f1ebff</code></span></div>
+<div class="color"><i style="background:#e9dfff"></i><span>Accent muted<code>#e9dfff</code></span></div>
+<div class="color"><i style="background:#a56800"></i><span>Warning<code>#a56800</code></span></div>
+<div class="color"><i style="background:#fff4dc"></i><span>Warning fill<code>#fff4dc</code></span></div>
+<div class="color"><i style="background:#e82b40"></i><span>Danger<code>#e82b40</code></span></div>
+<div class="color"><i style="background:#fff0f2"></i><span>Danger fill<code>#fff0f2</code></span></div>
+</div></div>
+<div class="card"><table class="tall"><tr><th>Token group</th><th>Values</th></tr>
+<tr><td>Fonts</td><td>Figtree for text. IBM Plex Mono for code and debug data.</td></tr>
+<tr><td>Text</td><td><code>display</code> 32, <code>title</code> 22, <code>h-page</code> 18, <code>body</code> and <code>read</code> 16, <code>input</code> 15, <code>row-title</code> 14, <code>meta</code> and <code>code</code> 13, <code>caption</code> 12, <code>mono-label</code> 11.</td></tr>
+<tr><td>Radius</td><td><code>bubble</code> and <code>sheet</code> 22, <code>card</code> 16, <code>row</code> 14, <code>tile</code> 12, <code>chip</code> 10, <code>check</code> 5, <code>full</code>.</td></tr>
+<tr><td>Shadow</td><td><code>pill</code> for notices and screenshots, <code>float</code> for the new-messages button, <code>pop</code> for sheets and tooltips.</td></tr>
+<tr><td>Motion</td><td>150 ms for state changes, 320 ms with a spring ease for sheets, 450 ms for arrivals.</td></tr>
+</table></div>
+<h3>How the tokens work</h3>
+<ul class="pts">
+<li><code>globals.css</code> sets the values as CSS variables on <code>:root</code>. A Tailwind <code>@theme</code> block maps them to utilities such as <code>bg-accent</code>, <code>text-ink-2</code> and <code>rounded-tile</code>.</li>
+<li>The theme clears Tailwind's default colors, fonts, text sizes, radii, shadows and easings, so only these tokens produce utilities. A new token needs both entries.</li>
+<li>Plain <code>.nova-*</code> rules at the end of <code>globals.css</code> set the shell and win over utilities. For example, the composer has <code>rounded-[28px]</code> in its markup and renders at 16 px, and the thread is 920 px wide instead of 768 px.</li>
+<li>With reduced motion on, arrivals and sheets only fade, and the mark doesn't move.</li>
+</ul>
+<details class="more"><summary>Defined but not used</summary>
+<ul class="pts"><li>Mark states <code>writing</code>, <code>listening</code> and <code>pleased</code>.</li><li>Variables <code>--soul-*</code>, <code>--memory-*</code>, <code>--heartbeat</code>, <code>--waveform-on-accent</code>, <code>--rail-w</code> and <code>--drawer-w</code>.</li><li>The <code>artifact</code> view transition styles. Nothing starts a view transition.</li><li>The <code>motion</code> package supplies only <code>MotionConfig</code>. All animation is CSS.</li></ul>
+</details>
+</section>
+
+<section><h2>The mark</h2>
+<div class="card">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<clipPath id="mark-clip"><path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z"/></clipPath>
+<symbol id="mark" viewBox="0 0 96 96">
+<path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" fill="#fdfcff"/>
+<rect x="30" y="61" width="36" height="30" rx="3" fill="#101a30" clip-path="url(#mark-clip)"/>
+<path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" fill="none" stroke="#190936" stroke-width="1.75" stroke-linejoin="round"/>
+<ellipse cx="38.5" cy="46" rx="3.4" ry="4" fill="#190936"/><ellipse cx="57.5" cy="46" rx="3.4" ry="4" fill="#190936"/>
+<path d="M44 53.5Q48 57.1 52 53.5" fill="none" stroke="#190936" stroke-width="2.6" stroke-linecap="round"/>
+</symbol></defs></svg>
+<div class="marks" role="img" aria-label="Nori's onigiri mark at the four sizes the client uses">
+<span><svg width="86" height="86"><use href="#mark"/></svg><small>86 px, panel</small></span>
+<span><svg width="43" height="43"><use href="#mark"/></svg><small>43 px, header</small></span>
+<span><svg width="29" height="29"><use href="#mark"/></svg><small>29 px, bubble</small></span>
+<span><svg width="16" height="16"><use href="#mark"/></svg><small>16 px, status</small></span>
+</div></div>
+<div class="card"><table class="tall"><tr><th>State</th><th>When</th><th>What moves</th></tr>
+<tr><td><code>idle</code></td><td>Nothing is in progress.</td><td>Blinks every 6 to 9 seconds. In the header and panel, the eyes follow the pointer.</td></tr>
+<tr><td><code>attentive</code></td><td>The composer has text.</td><td>Blinks, and the header mark's eyes look down at the composer.</td></tr>
+<tr><td><code>thinking</code></td><td>The client is busy, or a status line is showing.</td><td>The eyes loop every 2 seconds.</td></tr>
+</table></div>
+</section>
+
+<section><h2>Components</h2>
+<div class="card"><table class="tall"><tr><th>File in <code>web/src/</code></th><th>Job</th></tr>
+<tr><td><code>app/page.tsx</code></td><td>Server entry. Chooses local agent mode, then renders <code>NoriApp</code>.</td></tr>
+<tr><td><code>components/runtime/NoriApp.tsx</code></td><td>Composes the screen. Converts the session into thread items, sets status text and owns panel, debug and document state.</td></tr>
+<tr><td><code>components/nova/NovaShell.tsx</code></td><td>Window frame and header.</td></tr>
+<tr><td><code>components/chat/Thread.tsx</code></td><td>Scrolling, follow-to-bottom, unread counts, older-message anchoring, documents and the status line.</td></tr>
+<tr><td><code>components/chat/Message.tsx</code></td><td>One bubble.</td></tr>
+<tr><td><code>components/chat/Markdown.tsx</code></td><td>Renders Markdown in a <code>bubble</code> or <code>page</code> variant, with copy buttons on page code blocks.</td></tr>
+<tr><td><code>components/runtime/RuntimeComposer.tsx</code></td><td>Message input.</td></tr>
+<tr><td><code>components/runtime/TaskPanel.tsx</code></td><td>Task list, task commands, events, results and protected screenshots.</td></tr>
+<tr><td><code>components/runtime/DocumentViewer.tsx</code></td><td>Reading view and Download.</td></tr>
+<tr><td><code>components/dev/DebugBlock.tsx</code></td><td>Saved outer attempts, usage, cost and task steps, shown by the debug toggle.</td></tr>
+<tr><td><code>components/mark/NoriMark.tsx</code></td><td>The mark, plus <code>Medallion</code>, which gives it a fixed box.</td></tr>
+<tr><td><code>components/ui/primitives.tsx</code></td><td><code>Button</code>, <code>IconButton</code>, <code>SectionHeader</code>.</td></tr>
+</table></div>
+<p class="note">Radix supplies dialogs and tooltips, lucide supplies icons, and <code>react-markdown</code> with <code>remark-gfm</code> renders Markdown.</p>
+</section>
+
+<section><h2>Frontend architecture</h2>
+<div class="card"><div class="flow">
+<div class="node"><b>React client</b><small><code>NoriApp</code> and its components. All state comes from one hook, <code>useRuntime</code>.</small></div>
+<div class="arrow">↓ <span class="lbl">same-origin POST /api/{operation}</span></div>
+<div class="node"><b>Next.js server</b><small><code>proxy.ts</code> checks the owner on every private route. <code>lib/runtime/server.ts</code> checks the origin and the operation, then adds a Google token.</small></div>
+<div class="arrow">↓ <span class="lbl">POST /api/{operation} with server credentials</span></div>
+<div class="node"><b>Runtime</b><small>Saves commands and returns snapshots. See <a href="clients.html">Clients</a> for the endpoints.</small></div>
+</div></div>
+<div class="card"><table class="tall"><tr><th>Operation</th><th>Client use</th></tr>
+<tr><td><code>session</code></td><td>Loads a snapshot, or an older page with <code>before</code>.</td></tr>
+<tr><td><code>turn</code></td><td>Sends a message with a client-made UUID.</td></tr>
+<tr><td><code>command</code></td><td>Sends <code>steer</code>, <code>answer</code>, <code>continue</code> or <code>stop</code> for one task.</td></tr>
+<tr><td><code>artifact</code></td><td>Fetches a screenshot as PNG bytes.</td></tr>
+<tr><td><code>trace</code></td><td>Fetches task steps when a debug row is open, every 3 seconds while the task runs.</td></tr>
+</table></div>
+<p>The server also forwards <code>input</code> and <code>cancel</code>, but the client doesn't call them.</p>
+<h3>Sending a message</h3>
+<div class="card"><div class="flow">
+<div class="node"><b>Enter</b><small><code>send()</code> creates a UUID and saves the message to <code>sessionStorage</code>.</small></div>
+<div class="arrow">↓</div>
+<div class="node"><b>POST /api/turn</b><small>The runtime returns a snapshot.</small></div>
+<div class="arrow">↓</div>
+<div class="node"><b>Acknowledged</b><small>The client removes its pending copy once the snapshot lists that UUID.</small></div>
+<div class="arrow">↓</div>
+<div class="node"><b>Poll</b><small>The reply appears in a later snapshot. The client doesn't stream.</small></div>
+</div></div>
+<ul class="pts">
+<li>If a response is lost, Retry sends the same UUID. Pending messages also resend after a reload, a reconnect or a manual refresh.</li>
+<li>A message can be up to 8,192 UTF-8 bytes, and up to 20 messages can be pending.</li>
+<li>Task commands work the same way, with their own stored list. A command clears when the runtime accepts it or a snapshot shows the task has applied it.</li>
+<li>A <code>4xx</code> marks a command as rejected, and the panel offers Edit. Any other failure offers Retry.</li>
+</ul>
+<h3>Polling</h3>
+<div class="card"><table class="tall"><tr><th>Situation</th><th>Client behavior</th></tr>
+<tr><td>A turn, unpaused task, Stop or command is in progress</td><td>Polls after 1 second, then every 2 seconds.</td></tr>
+<tr><td>Nothing is in progress</td><td>Doesn't poll.</td></tr>
+<tr><td>The tab is hidden</td><td>Stops polling, then fetches once when the tab is visible again.</td></tr>
+<tr><td>The browser comes back online</td><td>Fetches once.</td></tr>
+<tr><td>A request fails</td><td>Stops polling and shows the error, with a link to refresh.</td></tr>
+</table></div>
+<p>While the client is idle with the tab open, a new message from Nori doesn't appear until a refresh. Refresh history and returning to the tab both fetch a snapshot.</p>
+<details class="more"><summary>How snapshots merge</summary>
+<ul class="pts">
+<li>A snapshot with an older conversation revision, or the same revision from an older request, is ignored.</li>
+<li>Messages and traces merge by ID, so older pages stay loaded.</li>
+<li>A saved task only replaces the one in memory if its position, event sequence, applied commands, status and Stop flag haven't moved backward.</li>
+</ul>
+</details>
+<details class="more"><summary>Sign-in and limits</summary>
+<ul class="pts">
+<li>Production sits behind Google IAP. The server verifies the signed assertion and the owner's email, and ignores unsigned identity headers.</li>
+<li>POST routes also require a matching <code>Origin</code>. Browser credentials are never forwarded to the runtime.</li>
+<li>The hosted route allows bodies up to 128,000 characters and waits up to 145 seconds. The runtime URL must use HTTPS.</li>
+<li>In development on loopback, the owner check passes. If <code>NORI_LOCAL_AGENT_URL</code> is set, the client uses <code>/api/agent/{operation}</code> instead, with limits of 64,000 characters and 100 seconds.</li>
+<li><code>/api/health</code> is the only API route with no owner check.</li>
+</ul>
+</details>
+<details class="more"><summary>Observability</summary>
+<ul class="pts">
+<li>The layout writes public Sentry settings to <code>data-nori-observability</code> at request time, so one image can move between environments.</li>
+<li><code>useRuntime</code> records the time from submit to reply as <code>nori.submit_to_reply</code>, with a 15-minute timeout, and sends trace headers on <code>turn</code>.</li>
+<li>Filters in <code>lib/observability/privacy.ts</code> run before events, spans, logs and metrics are sent. The <code>sentry-tunnel</code> route checks the owner and strips request headers before forwarding.</li>
+</ul>
+</details>
+</section>
+
+<section><h2>Run and build</h2>
+<div class="card"><table class="tall"><tr><th>Command, from the repo root</th><th>What it does</th></tr>
+<tr><td><code>make dev</code></td><td>Runs the client on port 3210 with the local Go agent.</td></tr>
+<tr><td><code>make web</code></td><td>Runs only the client. With no runtime configured, it shows the connection error and disables Send.</td></tr>
+<tr><td><code>make web-build</code></td><td>Builds the Next.js standalone output.</td></tr>
+<tr><td><code>make check</code></td><td>Runs the repo checks before a merge.</td></tr>
+</table></div>
+<p>The stack is Next.js 16, React 19, Tailwind 4 and Bun. Production runs the Docker image on Cloud Run with <code>NORI_RUNTIME_URL</code>, <code>IAP_AUDIENCE</code> and <code>NORI_APP_ORIGIN</code>. See <a href="deploy.html">Deployment</a>.</p>
+</section>
+
+<details class="sources"><summary>Sources</summary><p><a href="https://github.com/a-barwick/nori/tree/main/web/src">web/src</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/app/globals.css">globals.css</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/lib/runtime/useRuntime.ts">useRuntime.ts</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/lib/runtime/server.ts">server.ts</a> · <a href="https://github.com/a-barwick/nori/blob/main/Makefile">Makefile</a></p></details>
+</body>
+</html>

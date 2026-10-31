@@ -18,7 +18,7 @@
 <section><h2>What a client never does</h2>
 <ul class="pts"><li>Build prompts or send context. It only sends the user's own words and references.</li><li>Parse model output.</li><li>Assume a command has finished because it was accepted.</li><li>Talk to a model provider directly.</li></ul></section>
 <section><h2>The API today</h2>
-<p>The web app sends commands and polls for snapshots: every 2 seconds while work is running, and every 30 seconds during long waits.</p>
+<p>The web app sends commands and polls for snapshots every 2 seconds while work is running. It doesn't poll when idle. See <a href="web-client.html">Web client</a>.</p>
 <div class="card"><table class="tall"><tr><th>Endpoint</th><th>What it does</th></tr>
 <tr><td><code>POST /api/session</code></td><td>Returns the conversation and tasks.</td></tr>
 <tr><td><code>POST /api/turn</code></td><td>Sends a message. Returns 202 once it's saved.</td></tr>
