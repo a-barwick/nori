@@ -123,88 +123,94 @@ function keys(from, to, step = 2.5, g = 0.8) { for (let f = from; f < to; f += s
 const S = T.scenes;
 
 // Scene 1: the cold open's tense pulse, tightening with each chore.
-pulse(0, 60, 15, 0.45, 0.7);
-pulse(60, 120, 7.5, 0.7, 0.95);
-pulse(120, 150, 3.75, 0.95, 1.15);
-[2, 30, 60, 90, 120].forEach((f) => pop(F(f), 1.2));
-[0, 30, 60, 120].forEach((f) => click(f));
-[64, 69].forEach((f) => pop(F(f), 0.7));
-keys(90, 116, 1.5, 0.7);
-[122, 126, 130, 134, 138, 142, 146].forEach((f) => { click(f, 0.8); pop(F(f), 0.5); });
+pulse(0, 60, 15, 0.45, 0.6);
+pulse(60, 120, 15, 0.6, 0.75);
+pulse(120, 210, 7.5, 0.75, 0.95);
+pulse(210, 285, 3.75, 0.95, 1.15);
+[2, 60, 120, 210].forEach((f) => pop(F(f), 1.2));
+[0, 60, 210].forEach((f) => click(f));
+[64, 69, 74].forEach((f) => pop(F(f), 0.7));
+keys(120, 170, 1.5, 0.7);
+[218, 226, 234, 242, 250, 258].forEach((f) => { click(f, 0.8); pop(F(f), 0.5); });
 
-// Scene 2: the music cuts dead on 150. Squish, pats, then the drop on 240.
-squish(189);
-[195, 210, 225].forEach(pat);
-whoosh(F(240), 0.3, 0.8);
-impact(F(240), 1.2);
-band(240, 300);
-pop(F(246)); pop(F(258), 0.7);
+// Scene 2: the music cuts dead on 285. Squish, pats, then the drop on 375.
+squish(324);
+[330, 345, 360].forEach(pat);
+whoosh(F(375), 0.3, 0.8);
+impact(F(375), 1.2);
+band(375, 480);
+pop(F(381)); pop(F(393), 0.7);
 
-// Scene 3: the band falls to a pulse while she waits, and returns with the reply.
+// Scene 3: the band falls to a pulse while she asks, and returns with the reply.
 whoosh(F(S.ask.from), 0.25, 0.8);
-band(300, 345, 0.7);
-keys(303, 343, 1.4);
-pop(F(345), 1.1);
-pulse(345, 435, 15, 0.55, 0.7);
-pop(F(375), 1.2); pop(F(405), 1.2);
-band(435, 810);
-pop(F(435), 1.1, -1);
-pop(F(450), 1.1);
+band(480, 525, 0.7);
+keys(483, 523, 1.4);
+pop(F(525), 1.1);
+pulse(525, 780, 15, 0.5, 0.7);
+pop(F(570), 1.2); pop(F(690), 1.2);
+band(780, 1440);
+pop(F(780), 1.1, -1);
+pop(F(795), 1.1);
 
-// Scene 4: a pop on every reply, and the panel opening and closing.
-[480, 630, 720].forEach((f) => pop(F(f), 1, -1));
-[483, 543, 633, 723].forEach((f) => pop(F(f), 0.8));
-click(538); click(628);
-whoosh(F(540), 0.2, 0.5);
+// Scene 4: a pop on every reply and card, and her tap.
+[885, 1020, 1275].forEach((f) => pop(F(f), 1, -1));
+pop(F(1032), 0.9);
+click(1200); pop(F(1200), 1.2);
+[1215, 1230, 1245, 1260, 1275].forEach((f, i) => pluck(F(f), 76 + i * 2, 0.8));
 
-// Scene 5: one held note and a single soft tap at 900.
-stab(F(810), [53, 57, 60], 1.4, 0.8);
-held(810, 930, 69, 1.2);
-add(F(900), 0.09, (s) => Math.sin(2 * Math.PI * 660 * s) * Math.exp(-s * 34), 0.2);
+// Scene 5: one held note and a single soft tap at 1530.
+stab(F(1440), [53, 57, 60], 1.4, 0.8);
+held(1440, 1590, 69, 1.2);
+add(F(1530), 0.09, (s) => Math.sin(2 * Math.PI * 660 * s) * Math.exp(-s * 34), 0.2);
 
-// Scene 6: near silence and a rising tone, the buzz, a light pulse, then the hit.
-rise(930, 990, 0.8);
-buzz(990); buzz(998);
-pulse(990, 1125, 15, 0.45, 0.65);
-for (let f = 990; f < 1125; f += 30) kick(F(f), 0.35);
-[1005, 1020, 1035, 1050, 1080].forEach((f) => pop(F(f), 0.45));
-pop(F(1110), 1.2);
-impact(F(1125), 0.75);
-pop(F(1128), 0.9);
-band(1170, 1470);
-impact(F(1170), 0.7);
-click(1170);
-pop(F(1173), 1);
-keys(1200, 1228, 1);
-pop(F(1230), 0.6);
+// Scene 6: near silence and a rising tone with the mark's three pops, the buzz, a light pulse, then the hit.
+rise(1590, 1680, 0.8);
+[1625, 1648, 1671].forEach((f) => pluck(F(f), 84, 0.5));
+buzz(1683); buzz(1691);
+click(1755);
+pulse(1770, 2145, 15, 0.4, 0.6);
+for (let f = 1770; f < 2145; f += 30) kick(F(f), 0.32);
+pop(F(1770), 0.7, -1); pop(F(1950), 0.7, -1); pop(F(1995), 0.8);
+click(2070); pop(F(2070), 0.9);
+pop(F(2115), 1.2);
+impact(F(2145), 0.75);
+pop(F(2148), 0.9);
+pulse(2220, 2310, 30, 0.35, 0.45);
+click(2220); whoosh(F(2234), 0.2, 0.4);
+impact(F(2310), 0.7);
+click(2310);
+pop(F(2313), 1);
+band(2310, 3075);
+whoosh(F(2354), 0.2, 0.35);
+keys(2385, 2443, 1.6);
+pop(F(2445), 0.8);
 
-// Scene 7: fly in, tiles on the beat, fly out.
-whoosh(F(1260), 0.9, 1.3);
-impact(F(1260), 0.9);
-pop(F(1263), 0.9);
-[1290, 1305, 1320, 1335, 1350].forEach((f) => pop(F(f), 1.2));
-pop(F(1293), 0.6);
-whoosh(F(1410), 0.9, 1.2);
-pop(F(1410), 1.1);
-pop(F(1440), 0.55);
+// Scene 7: fly in, the app on the beat, Sam's click, fly out.
+whoosh(F(2520), 0.9, 1.3);
+impact(F(2520), 0.9);
+pop(F(2523), 0.9);
+[2610, 2625, 2640, 2655, 2670, 2685].forEach((f) => pop(F(f), 1.1));
+pop(F(2613), 0.6);
+click(2775, 1.1); pop(F(2775), 0.8);
+whoosh(F(2835), 0.9, 1.2);
+pop(F(2835), 1.1);
 
-// Scene 8: a whoosh and four pops on the beat.
-whoosh(F(1470), 0.28);
-[0, 15, 30, 45].forEach((o) => pop(F(1470 + o), 1.3));
-band(1470, 1590, 1.05);
+// Scene 8: a whoosh and three pops, one every two beats.
+whoosh(F(2910), 0.28);
+[0, 30, 60].forEach((o) => pop(F(2910 + o), 1.3));
 
 // Scene 9: the band drops out, one chord rings, a second, then bells.
-whoosh(F(1590), 0.32, 0.9);
-kick(F(1590));
-stab(F(1590), [57, 60, 64, 69], 2.4, 1.5);
-bass(F(1590), 33, 2.2);
-kick(F(1620), 0.7);
-stab(F(1620), [53, 57, 60, 65], 2.4, 1.3);
-bass(F(1620), 29, 2.2, 0.8);
-stab(F(1680), [48, 55, 60, 64], 3, 1.5);
-bass(F(1680), 36, 2.8);
-kick(F(1680), 0.8);
-[84, 88, 91, 96].forEach((n, i) => pluck(F(1680) + i * 0.12, n, 1.1, (i - 1.5) * 0.3));
+whoosh(F(3075), 0.32, 0.9);
+kick(F(3075));
+stab(F(3075), [57, 60, 64, 69], 2.4, 1.5);
+bass(F(3075), 33, 2.2);
+kick(F(3120), 0.7);
+stab(F(3120), [53, 57, 60, 65], 2.4, 1.3);
+bass(F(3120), 29, 2.2, 0.8);
+stab(F(3195), [48, 55, 60, 64], 3, 1.5);
+bass(F(3195), 36, 2.8);
+kick(F(3195), 0.8);
+[84, 88, 91, 96].forEach((n, i) => pluck(F(3195) + i * 0.12, n, 1.1, (i - 1.5) * 0.3));
 
 // Sidechain-style pump and soft limit.
 let peak = 0;
