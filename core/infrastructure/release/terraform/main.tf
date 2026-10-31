@@ -508,3 +508,19 @@ resource "google_compute_disk_resource_policy_attachment" "computer_backup" {
   disk    = "bot-computer-data"
   zone    = "us-central1-a"
 }
+
+# Terraform refresh needs metadata for this retained legacy database, not data access.
+resource "google_project_iam_custom_role" "database_metadata" {
+  role_id     = "noriCiDatabaseMetadata"
+  title       = "Nori CI retained database metadata"
+  permissions = ["datastore.databases.getMetadata"]
+}
+resource "google_project_iam_member" "candidate_database_metadata" {
+  project = local.project
+  role    = google_project_iam_custom_role.database_metadata.name
+  member  = "serviceAccount:${google_service_account.ci["deploy"].email}"
+  condition {
+    title      = "retained-candidate-database-only"
+    expression = "resource.name == 'projects/bot-111549/databases/nori-worker-candidate' || resource.name == 'projects/8273801370/databases/nori-worker-candidate'"
+  }
+}
