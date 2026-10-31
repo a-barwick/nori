@@ -150,7 +150,7 @@ async function startAPI(index) {
     ...process.env,
     NORI_ENV_FILE: rootEnv, NORI_TASK_ENV_FILE: rootEnv,
     OPENROUTER_API_KEY: credentials.OPENROUTER_API_KEY, JEV_API_KEY: credentials.JEV_API_KEY,
-    NORI_AGENT_BASE_URL: "https://openrouter.ai/api/v1", NORI_AGENT_MODEL: "anthropic/claude-opus-5.5",
+    NORI_AGENT_BASE_URL: "https://openrouter.ai/api/v1", NORI_AGENT_MODEL: "meta/muse-spark-1.3",
     NORI_PROJECT_ID: project, FIRESTORE_DATABASE_ID: database, FIRESTORE_EMULATOR_HOST: firestore,
     NORI_LOCAL_ARTIFACT_DIR: resolve(directory, `artifacts-${index}`), ARTIFACT_BUCKET: "unused-e2e",
     PORT: String(port), TEMPORAL_ADDRESS: temporal, TEMPORAL_NAMESPACE: "default", TEMPORAL_LOCAL: "true",
@@ -243,7 +243,7 @@ journey("a saved turn produces a successful traced private reply", async () => {
   expect(result.input.text === message).toBe(true);
   expect(result.reply.text.length > 0).toBe(true);
   expect(result.attempt.status).toBe("completed");
-  expect(result.attempt.model).toBe("anthropic/claude-opus-5.5");
+  expect(result.attempt.model).toBe("meta/muse-spark-1.3");
   if (result.attempt.status === "error") expect(result.reply.text.includes("Your message is saved")).toBe(true);
   expect(result.session.runs.length).toBe(0);
   await until(() => exportedSpans(), (spans) => spans.some((span) => span.trace === trace && span.name === "conversation.acceptance_to_reply"), "exported reply trace", 15_000);

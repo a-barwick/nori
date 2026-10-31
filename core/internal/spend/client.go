@@ -262,6 +262,10 @@ func (c *Client) Reserve(ctx context.Context, provider, model string, inputBytes
 	case provider == "openrouter" && model == "anthropic/claude-opus-5.5":
 		// Matches provider.max_price in the request, including regional pricing.
 		inRate, outRate = 4400, 22000
+	case provider == "openrouter" && model == "meta/muse-spark-1.3":
+		inRate, outRate = 1250, 4250
+	case provider == "openrouter" && model == "openai/gpt-6.1-terra":
+		inRate, outRate = 1000, 5000
 	case provider == "vertex" && model == "gemini-3.8-flash":
 		inRate, outRate = 1500, 7500
 	default:

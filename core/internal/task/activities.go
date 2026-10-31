@@ -230,7 +230,7 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 		trace.InputTokens, trace.OutputTokens, trace.CachedTokens, trace.ThinkingTokens = &input, &output, &cached, &thinking
 	}
 	if decision.CostKnown {
-		trace.CostUSD, trace.CostStatus = &decision.Cost, "estimated"
+		trace.CostUSD, trace.CostStatus = &decision.Cost, "reported"
 	}
 	for _, call := range decision.Calls {
 		trace.Calls = append(trace.Calls, state.TraceCall{Name: call.Name, Arguments: traceJSON(call.Args)})

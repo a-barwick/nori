@@ -22,15 +22,15 @@ Only Austin may authorize changing these models, providers, or versions, includi
 | Role | Model |
 | --- | --- |
 | Intent classification | `jev-latest` |
-| Outer conversation | Claude Opus 5.5 via the existing OpenRouter adapter, canonical ID `anthropic/claude-opus-5.5` (Austin named `anthropic/opus-5-5`) |
-| Inner task worker | `gemini-3.8-flash` via Vertex |
-| Implementation subagents | GPT-6.1 Sol, high reasoning |
-| CLI code reviewer | Claude Opus 5.5, high reasoning |
+| Outer conversation | Muse Spark 1.3 via OpenRouter, `meta/muse-spark-1.3` (standard tier) |
+| Inner task worker | GPT-6.1 Terra via OpenRouter Responses, `openai/gpt-6.1-terra` |
+| Implementation subagents (developing Nori, not product workers) | GPT-6.1 Sol, high reasoning |
+| CLI code reviewer (only when requested) | Claude Opus 5.5, medium reasoning |
 
 ## Secrets, data, and cost
 
 - Keep credentials in the main checkout's gitignored, mode-600 root `.env`; never print values, copy credentials into worktrees or other projects, or use 1Password. Ask for missing credentials. Keep management credentials out of child processes. Server env files stay outside the repo, root-owned and mode 600.
 - Preserve retained disks, browser profiles, files, history, pending user tasks, and unrelated work. Do not delete or rebuild user data for cleanup or cost savings.
-- Run paid development commands through `core/infrastructure/spend/run.py` with one stable logical chat ID. Preserve the [development inference limits](README.md#development-inference-limits): $0.25 initial allowance, eligible $0.25 increases up to $1 per chat; shared OpenRouter/Vertex caps of $2/day and $20/month UTC; Jev excluded. Preserve request reservations and the Opus ceiling of $4.40 input/$22 output per million tokens.
+- Run paid development commands through `core/infrastructure/spend/run.py` with one stable logical chat ID. Preserve the [development inference limits](README.md#development-inference-limits): $0.25 initial allowance, eligible $0.25 increases up to $1 per chat; shared model caps of $2/day and $20/month UTC; Jev excluded. Preserve request reservations and per-million-token price ceilings: Muse $1.25 input/$4.25 output; Terra $1 input/$5 output.
 - Without budget or verified pricing, stop paid calls and continue unpaid work. Unknown cost is not zero. No automatic retries of failed paid calls, new IDs to reset allowances, production-key borrowing, or cap bypasses. Requested CLI reviews use the verified Claude subscription, with no paid API fallback.
 - In GCP project `bot-111549`, keep Cloud Run and Agent Runtime minimum instances at zero and maximum at one. After live work, scale worker pools to zero and stop the computer without interrupting unrelated user work or deleting retained data.

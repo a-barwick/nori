@@ -34,7 +34,7 @@ async function settled() {
 function replyFor(session, inputIDs) {
   const turn = session.traces.find((trace) => trace.status === "completed" && inputIDs.every((id) => trace.input_ids.includes(id)));
   expect(turn).toBeDefined();
-  expect(turn.model).toBe("anthropic/claude-opus-5.5");
+  expect(turn.model).toBe("meta/muse-spark-1.3");
   const message = session.messages.find((item) => item.role === "assistant" && item.turn_id === turn.turn_id && !item.run_id);
   expect(message).toBeDefined();
   return message;
