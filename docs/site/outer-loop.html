@@ -24,11 +24,7 @@
           <div class="node"><b>Jev Classify</b><small>Sets nine intent flags and a self-contained flag from the visible conversation. The result is advisory. If Jev is unavailable, the turn continues with the hint marked unavailable.</small></div>
         </div>
         <div class="arrow">↓</div>
-        <div class="node decide outer in-review">Model tier?<span class="tag review">in progress</span></div>
-        <div class="branch">
-          <div class="node in-review" style="border-style:dotted"><b>Light · Muse Spark 1.3</b><small>Used when the message is self-contained, has no steer, decide, control or memory flag, and no task is waiting for an answer. <b>It has no task tools.</b> On failure it retries once on the primary model.</small></div>
-          <div class="node outer"><b>Primary · Muse Spark 1.3</b><small>Used for everything else, including anything uncertain. It gets the full tool set below, except on intro and notification turns, where tools are withheld.</small></div>
-        </div>
+        <div class="node outer"><b>Model call · Muse Spark 1.3</b><small>It gets the full tool set below, except on intro and notification turns, where tools are withheld.</small></div>
         <div class="arrow">↓</div>
         <div class="node outer"><b>Save model response</b><small>Checkpointed before any dispatch, so a restart recovers the accepted command receipts instead of deciding again.</small></div>
         <div class="arrow">↓</div>
@@ -53,7 +49,7 @@
         <p class="keyline">Classification doesn't grant permission</p>
         <p class="note">“Could you check when my domain renews?” has the intent <code>ask</code>, and the model still has to
         dispatch a task for it. We've also measured Jev over-firing: <code>request_work</code> and <code>provide_input</code>
-        trigger on “Who wrote Hamlet?”<span class="in-review">, which is why those flags don't rule out the light tier</span>.</p>
+        trigger on “Who wrote Hamlet?”.</p>
       </div>
   </div>
   <div class="card">
@@ -96,7 +92,7 @@
 <details class="more"><summary>Task categories</summary>
 <p>Lookup, research, create, modify, communicate and monitor are optional descriptions for discovery and display. They don't set permissions, behavior or a required dispatch field.</p></details>
 <details class="more"><summary>Early model trials</summary>
-<p>These were development tests on October 25, 2026, with samples too small for percentiles. They don't measure Opus 5.5.</p>
+<p>These were development tests on October 25, 2026, with samples too small for percentiles. They don't measure the current models.</p>
 <ul class="pts"><li>Muse wrote good replies but once claimed a dispatch without making the tool call.</li><li>GPT-5.4 mini and Qwen3.6 made tool calls with no reply text, and the runner rejected them.</li><li>Requiring reply text before the tool call gave three successful Sonnet 4.6 dispatches in a row.</li><li>Sonnet 4.6 replies took 1.12–2.01 seconds, and message acceptance took 9–95 ms.</li></ul></details>
 <details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_2c00c5ce6cac8191b153218029cf445e">Outer loop</a> · <a href="https://chatgpt.com/space/page_74dc49e1d54c81918c1b01fd477cdb8b">Outer–inner contract</a> · <a href="https://chatgpt.com/space/page_cdb993135ff08191b1cbb33bdf95200b">Milestone 2 plan</a></p></details>
 </body>
