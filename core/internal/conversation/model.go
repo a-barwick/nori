@@ -47,10 +47,12 @@ type Model struct {
 	RecordUsage func(context.Context, state.Usage) error
 	// NoDispatch disables every task tool for introduction and notification-only turns.
 	NoDispatch bool
-	Name       string
-	URL        string
-	Key        string
-	Client     *http.Client
+	// Supplied by the runtime from the same task records included in context.
+	TaskIDs []string
+	Name    string
+	URL     string
+	Key     string
+	Client  *http.Client
 	// TelemetryInput is the current user message, not the conversation history.
 	TelemetryInput string
 }
@@ -157,7 +159,7 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 	}
 	var format any
 	if !m.NoDispatch {
-		format = responseFormat()
+		format = responseFormat(m.TaskIDs)
 	}
 	request := map[string]any{"model": m.Name, "messages": messages}
 	if format != nil {

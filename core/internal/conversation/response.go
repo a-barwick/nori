@@ -8,7 +8,7 @@ import (
 
 // Reuse the runtime's command schemas in one strict action-list response.
 // Validated actions enter the same durable admission and replay path.
-func responseFormat() any {
+func responseFormat(taskIDs []string) any {
 	var tools []struct {
 		Function struct {
 			Name, Description string
@@ -18,6 +18,17 @@ func responseFormat() any {
 	_ = json.Unmarshal([]byte(taskTools), &tools)
 	variants := []any{}
 	for _, tool := range tools {
+		if tool.Function.Name != "dispatch" {
+			if len(taskIDs) == 0 {
+				continue
+			}
+			properties := tool.Function.Parameters["properties"].(map[string]any)
+			key := "run_id"
+			if tool.Function.Name == "hold" {
+				key = "task_id"
+			}
+			properties[key].(map[string]any)["enum"] = taskIDs
+		}
 		variants = append(variants, map[string]any{
 			"type": "object", "description": tool.Function.Description,
 			"properties": map[string]any{"name": map[string]any{"type": "string", "enum": []string{tool.Function.Name}}, "arguments": tool.Function.Parameters},
