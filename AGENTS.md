@@ -56,3 +56,7 @@ These apply to this repository's GCP project `bot-111549`. They are cost control
 # Model reviews require an explicit request
 
 Do not autonomously launch model/CLI/external code reviews or require repeated review gates for Nori. Run a model review only when Austin explicitly requests that review. A selected reviewer model specifies what to use if requested; it does not require a review. This supersedes older feature-workflow and review-gate instructions. Continue ordinary deterministic tests, builds, lint, security checks, and direct verification within the authorized scope.
+
+# Docs site
+
+Before adding or changing a page in `docs/site/`, read `docs/site/AGENTS.md` and follow it.

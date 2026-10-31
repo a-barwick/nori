@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task lifecycle · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="task-data.js" defer></script>
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Task lifecycle</h1>
+<p class="lede">A task keeps one ID for its whole life, from dispatch until it finishes, fails or is stopped.</p>
+<div class="card">
+    <div class="states" role="img" aria-label="Task state machine">
+      <span class="state run">Running</span>
+      <span class="state-arrow">⇄<small>needs input / budget · answer, continue</small></span>
+      <span class="state waitst">Waiting</span>
+      <span class="state-arrow">→<small>checks pass</small></span>
+      <span class="state term">Completed</span>
+      <span class="state-arrow">·</span>
+      <span class="state term">Failed</span>
+      <span class="state-arrow">·</span>
+      <span class="state term">Cancelled</span>
+    </div>
+    <p class="note" style="margin:12px 0 0;font-weight:600">While a task is waiting</p><ul class="pts note"><li>It has exactly one open question and a reason: <code>input</code>, <code>budget</code><span class="designed">, <code>work</code><span class="tag design">designed</span></span>.</li><li>It doesn't expire on its own, and it survives reloads, pauses, restarts and worker deploys.</li><li>If a steer arrives while the task is over budget, the task asks its budget question again with a new ID.</li></ul><p class="note" style="margin:8px 0 0;font-weight:600">When a task ends</p><ul class="pts note"><li>Finished tasks stay closed, so follow-up work becomes a new task.</li><li>Stop is shown as <b>requested → stopping → confirmed</b>, and any effects that already happened are reported.</li></ul>
+    </div>
+<section><h2>Moving between states</h2>
+<div class="card"><table>
+<tr><th>What happens</th><th>Change</th></tr>
+<tr data-flow="move-ask"><td>The task asks a question</td><td>Running → waiting</td></tr>
+<tr data-flow="move-budget"><td>The task reaches its budget</td><td>Running → waiting, with no model call</td></tr>
+<tr data-flow="move-done"><td>The task finishes</td><td>Running → completed</td></tr>
+<tr data-flow="move-failed"><td>The task can't continue</td><td>Running → failed</td></tr>
+<tr data-flow="move-stopped"><td>A Stop takes effect</td><td>Running or waiting → cancelled</td></tr>
+</table>
+<p class="note">In the records, a waiting task still has status <code>running</code>. Its open question is what makes it wait.</p></div></section>
+<section><h2>Commands</h2>
+<div class="card"><table>
+          <tr><th>Kind</th><th>What it does</th></tr>
+          <tr data-flow="start"><td><code>start</code></td><td>Creates the task. The command ID becomes the task ID.</td></tr>
+          <tr data-flow="steer"><td><code>steer</code></td><td>Adds new instructions and increments the revision.</td></tr>
+          <tr data-flow="answer"><td><code>answer</code></td><td>Resolves the question in <code>question_id</code>.</td></tr>
+          <tr data-flow="continue"><td><code>continue</code></td><td>Resolves the budget question and adds $1.</td></tr>
+          <tr data-flow="stop"><td><code>stop</code></td><td>Cancels this task<span class="designed"> and its descendants<span class="tag design">designed</span></span>.</td></tr>
+          <tr class="designed"><td><code>subtask_result</code></td><td>The runtime delivers a subtask's outcome to its parent.</td></tr>
+        </table>
+<p class="note">Only steer and stop are corrections. Answers and continuations resume work without rewriting its instructions.</p></div></section>
+<section><h2>Steering keeps what still applies</h2>
+<div class="card"><table>
+          <tr><th>Sequence</th><th>Means</th></tr>
+          <tr><td>Tuesday → “no, Thursday” → “Thu 2pm Seattle”</td><td>Thursday, 2pm, Seattle.</td></tr>
+          <tr><td>Vegetarian → under $60 → near home</td><td>All three constraints.</td></tr>
+          <tr><td>Under $60 → “budget doesn't matter”</td><td>Drop price, keep the rest.</td></tr>
+          <tr><td>Still contradictory</td><td>Ask, keeping both instructions.</td></tr>
+        </table></div></section>
+<details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65">Inner loop</a> · <a href="https://chatgpt.com/space/page_74dc49e1d54c81918c1b01fd477cdb8b">Outer–inner contract</a></p></details>
+</body>
+</html>

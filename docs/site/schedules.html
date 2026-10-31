@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Schedules and proactive help · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Schedules and proactive help</h1>
+<p class="lede">Work Austin asks for later, and help nobody asked for. These are different features with different rules.</p>
+<div class="branch">
+<div class="card"><h3 style="margin-top:0">Requested</h3><p><span class="say me">Remind me tomorrow at 9.</span></p><p class="note">Austin asked, so it's already authorized. Milestone 9.</p></div>
+<div class="card"><h3 style="margin-top:0">Proactive</h3><p><span class="say">Your appointment ends at 1:45, and the meeting is 30 minutes away. Want me to find another time?</span></p><p class="note">Nobody asked, so it offers instead of acting. Milestone 11.</p></div>
+</div>
+<section><h2>Task results aren't proactive</h2>
+<p>A result arriving later is ordinary follow-through on something Austin asked for. It's always saved, and it doesn't count against any cap on proactive messages.</p></section>
+<section><h2>A one-time reminder</h2>
+<div class="card"><div class="flow">
+<div class="node designed-node"><b>Save the time and the promise</b><small>In Austin's time zone. A durable timer waits with no compute running.</small></div><div class="arrow">↓</div>
+<div class="node designed-node"><b>The timer starts an outer turn</b><small>It writes the reminder like any other message.</small></div><div class="arrow">↓</div>
+<div class="node designed-node"><b>Confirm delivery</b><small>A saved timer isn't proof. Delivery works with the app closed, and quiet hours can hold it back.</small></div>
+</div></div></section>
+<section><h2>What the rest need</h2>
+<div class="grid2">
+<div class="card tight"><p class="keyline">Recurring schedules <a href="https://linear.app/a-barwick/issue/AB-223">AB-223</a></p><ul class="pts note"><li>Local time across daylight saving, and business days</li><li>Skip and snooze</li><li>Exactly one catch-up after a missed run</li><li>List, change, pause and cancel</li><li>Honest reports when nothing ran</li></ul></div>
+<div class="card tight"><p class="keyline">Monitors <a href="https://linear.app/a-barwick/issue/AB-224">AB-224</a></p><ul class="pts note"><li>A threshold, a cadence and an end date</li><li>Stay quiet unless it matters</li><li>No duplicate alerts</li></ul></div>
+</div></section>
+<section><h2>Proactive help is still being designed</h2>
+<p>A proactive turn starts with no request and can interrupt Austin, so these get decided before building: <a href="https://linear.app/a-barwick/issue/AB-225">AB-225</a>.</p>
+<ul class="pts"><li>The first trigger, such as a scheduled calendar check for travel conflicts.</li><li>What it may do alone. The current proposal is to offer only.</li><li>When it should interrupt.</li><li>Pacing and cost.</li></ul></section>
+<details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_2c00c5ce6cac8191b153218029cf445e">Outer loop</a> · <a href="https://chatgpt.com/space/page_3959ad978c188191a33228e13c3421ad">Full agent process</a> · <a href="https://chatgpt.com/space/page_593a06e74e988191975cfbb5c20e378a">Client contract</a> · <a href="https://linear.app/a-barwick/issue/AB-178">AB-178</a> · <a href="https://linear.app/a-barwick/issue/AB-183">AB-183</a> · <a href="https://linear.app/a-barwick/issue/AB-208">AB-208</a> · <a href="https://linear.app/a-barwick/issue/AB-222">AB-222</a></p></details>
+</body>
+</html>

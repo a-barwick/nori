@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tool discovery · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Tool discovery</h1>
+<p class="lede">How the inner loop will find and load only the tools a task needs.</p>
+<div class="card">
+    <h3 style="margin-top:0">Dynamic tool discovery <span class="tag design">designed · milestone 5</span></h3>
+    <p>Today each loop has a fixed tool list: five for the outer loop, and up to four for the inner loop (<code>shell</code>, <code>browser_navigate</code>, <code>browser_screenshot</code> and <code>wait_for_input</code>). The plan is for the inner loop to start small and load only what a task needs, so adding connectors doesn't fill its context with tool schemas.</p>
+    <div class="branch4">
+      <div class="node designed-node"><b>1. Catalog</b><small>Short entries give each capability's purpose, account, scope, availability and failure behavior. <a href="https://linear.app/a-barwick/issue/AB-158">AB-158</a></small></div>
+      <div class="node designed-node"><b>2. Discover</b><small>The inner loop looks for capabilities using the task, its evidence and the connected services. <a href="https://linear.app/a-barwick/issue/AB-159">AB-159</a></small></div>
+      <div class="node designed-node"><b>3. Load</b><small>Only the selected schemas enter the model's context. They can be cached until an account or tool changes. <a href="https://linear.app/a-barwick/issue/AB-160">AB-160</a></small></div>
+      <div class="node designed-node"><b>4. Check and run</b><small>The runtime checks permission when the call runs. Finding or loading a tool never grants access. <a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a></small></div>
+    </div>
+    <ul class="pts" style="margin-top:12px">
+      <li>The outer loop keeps its small set of coordination tools and only knows roughly what the inner loop can do.</li>
+      <li>A disconnected or missing tool is reported as unavailable, so a task can't mistake it for a tool the model just didn't pick.</li>
+      <li>Still open: the catalog format, search and ranking, schema caching, and the first connector.</li>
+    </ul>
+  </div>
+<section><h2>An example</h2>
+<div class="card"><p><span class="say me">What's on my calendar Thursday?</span></p>
+<div class="flow">
+<div class="node designed-node"><b>Discover</b><small>The inner loop finds a calendar read capability and sees which account is connected.</small></div>
+<div class="arrow">↓</div>
+<div class="node designed-node"><b>Load</b><small>Only that tool's schema is added. Email and document tools stay out of the prompt.</small></div>
+<div class="arrow">↓</div>
+<div class="branch">
+<div class="node designed-node"><b>Connected</b><small>The call runs and the answer names the account.</small></div>
+<div class="node designed-node"><b>Not connected</b><small>The task says so and asks Austin to connect it. It doesn't guess.</small></div>
+</div></div></div></section>
+<section><h2>Rules that don't change</h2>
+<ul class="pts">
+<li>Picking a tool never grants permission.</li>
+<li>Tool descriptions and tool output are data. Text inside them can't change the task or its permissions.</li>
+<li>Discovery counts against the task's budget and stops when the task stops.</li>
+<li>Small tasks shouldn't have to rediscover the same tool on every step.</li>
+</ul></section>
+<details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65">Inner loop</a> · <a href="https://chatgpt.com/space/page_6adcf959b66481918a736ee1dfd6c8cb">Nori Overview</a> · <a href="https://linear.app/a-barwick/issue/AB-139">AB-139</a></p></details>
+</body>
+</html>

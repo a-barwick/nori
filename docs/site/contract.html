@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the loops talk · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="task-data.js" defer></script>
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>How the loops talk</h1>
+<p class="lede">The outer loop sends commands in. Tasks send events back. Nothing else crosses between them. Open Data on a row to see what's sent.</p>
+<div class="card">
+<svg viewBox="0 0 820 250" width="100%" role="img" aria-label="Commands go from the outer loop to a task, and events come back">
+<defs><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6474"/></marker></defs>
+<rect x="10" y="20" width="190" height="130" rx="12" fill="#eef0ff" stroke="#2f2fd0" stroke-width="2"/><text x="105" y="80" text-anchor="middle" font-size="16" font-weight="700" fill="#2f2fd0">Outer loop</text><text x="105" y="102" text-anchor="middle" font-size="12" fill="#4a5163">calls task tools</text>
+<rect x="620" y="20" width="190" height="130" rx="12" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/><text x="715" y="80" text-anchor="middle" font-size="16" font-weight="700" fill="#0c7a5f">Inner loop</text><text x="715" y="102" text-anchor="middle" font-size="12" fill="#4a5163">calls control tools</text>
+<path d="M200 58 H616" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)"/><text x="410" y="46" text-anchor="middle" font-size="13" font-weight="650">Commands</text><text x="410" y="76" text-anchor="middle" font-size="12" fill="#4a5163">start · steer · answer · continue · stop</text>
+<path d="M620 116 H204" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)"/><text x="410" y="104" text-anchor="middle" font-size="13" font-weight="650">Events</text><text x="410" y="134" text-anchor="middle" font-size="12" fill="#4a5163">question · result · failure · stopped</text>
+<rect x="10" y="184" width="800" height="52" rx="9" fill="#eef0f3" stroke="#5b6474" stroke-width="1.5"/><text x="410" y="207" text-anchor="middle" font-size="13" font-weight="650">Runtime</text><text x="410" y="225" text-anchor="middle" font-size="12" fill="#4a5163">assigns IDs and revisions, validates calls, delivers everything, records it in Firestore</text>
+</svg></div>
+<section><h2>The rules</h2>
+<ul class="pts">
+<li><b>Only the outer loop starts tasks.</b> This stops tasks from spawning more tasks on their own.</li>
+<li><b>One task, one ID.</b> The start command's ID is the task ID, and every later command and event uses it.</li>
+<li><b>Finished tasks stay finished.</b> More work means a new task.</li>
+<li><b>Accepted comes before applied.</b> A command is saved first, and the task picks it up later.</li>
+<li><b>Buttons skip the models.</b> Stop and panel edits send the same commands directly.</li>
+<li><b>New work never gets more permission</b> than the request it serves.</li>
+</ul></section>
+<section><h2>Outer loop tools</h2>
+<div class="card"><table class="tall"><tr><th>Tool</th><th>When it's used</th></tr>
+<tr data-flow="dispatch"><td><code>dispatch(request)</code></td><td>Start new work.</td></tr>
+<tr data-flow="tool-steer"><td><code>steer(task, text)</code></td><td>Change an unfinished task.</td></tr>
+<tr data-flow="tool-answer"><td><code>answer(task, question, text)</code></td><td>Answer that task's open question.</td></tr>
+<tr data-flow="tool-continue"><td><code>continue(task, question)</code></td><td>Add budget, only after Austin says to keep going.</td></tr>
+<tr data-flow="tool-stop"><td><code>stop(task)</code></td><td>Stop one task.</td></tr>
+<tr class="designed"><td><code>hold(task, question)</code></td><td>Answer one of Austin's questions when that task's result arrives.<span class="tag design">designed</span></td></tr>
+</table><p class="note">A plain reply or clarifying question is just text, with no tool call.</p></div></section>
+<section><h2>Inner loop control tools</h2>
+<p>These sit next to the task's work tools, and each must be the only call in its response.</p>
+<div class="card"><table class="tall"><tr><th>Tool</th><th>What it does</th></tr>
+<tr data-flow="wait"><td><code>wait_for_input(question)</code></td><td>Ask Austin something. This is today's version.</td></tr>
+<tr class="designed"><td><code>request_input(question)</code></td><td>Replaces <code>wait_for_input</code>.<span class="tag design">designed</span></td></tr>
+<tr class="designed"><td><code>complete(answer, evidence, unmet)</code></td><td>Propose that the task is done. <a href="completion.html">The checks decide</a>.<span class="tag design">designed</span></td></tr>
+<tr class="designed"><td><code>request_work(request, why)</code></td><td>Ask for work outside this task's own request.<span class="tag design">designed</span></td></tr>
+</table></div></section>
+<section><h2>Events</h2>
+<p>Each event goes into the conversation inbox in the same transaction as the task's new state, then starts an outer turn.</p>
+<div class="card"><table class="tall"><tr><th>Event</th><th>When it's sent</th></tr>
+<tr data-flow="event-needs_input"><td><code>needs_input</code></td><td>The task has a question, or it reached its budget.</td></tr>
+<tr data-flow="event-result"><td><code>result</code></td><td>The task finished.</td></tr>
+<tr data-flow="event-failure"><td><code>failure</code></td><td>The task ended without finishing.</td></tr>
+<tr data-flow="event-stopped"><td><code>stopped</code></td><td>The task stopped after a Stop request.</td></tr>
+</table></div></section>
+<section class="designed"><h2>Subtasks <span class="tag design">designed · milestone 7</span></h2>
+<p>A task sometimes needs work outside its request. It can't start that work itself, so it asks.</p>
+<div class="card"><div class="flow">
+<div class="node inner"><b>Task A calls <code>request_work</code></b><small>A parks and the question goes to the outer loop.</small></div><div class="arrow">↓</div>
+<div class="node outer"><b>Outer loop decides</b><small>Dispatch a subtask, answer directly, or ask Austin.</small></div><div class="arrow">↓</div>
+<div class="node inner"><b>Subtask B runs like any task</b><small>If B needs Austin, it asks him itself. A keeps waiting.</small></div><div class="arrow">↓</div>
+<div class="node"><b>B's result goes back to A</b><small>Saved in the same transaction as B's outcome. No model call is spent delivering it.</small></div>
+</div></div>
+<ul class="pts"><li><b>Budget:</b> B's cost counts against A.</li><li><b>Stop:</b> stopping A stops B.</li><li><b>Permissions:</b> B never gets more than A has.</li></ul>
+</section>
+<section class="designed"><h2>Interrupting a task <span class="tag design">designed</span></h2>
+<p>A steer normally waits for the current step to finish. The outer loop can ask to cut the step short, and the runtime decides whether that's safe.</p>
+<div class="branch"><div class="node inner"><b>Can be cut short</b><small>A running model call, or a read such as loading a page. Stopping only loses time.</small></div>
+<div class="node wait"><b>Runs to the end</b><small>A write such as sending an email, which may already have happened. Shell and browser actions count as writes unless declared read-only.</small></div></div>
+</section>
+<details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_74dc49e1d54c81918c1b01fd477cdb8b">Outer–inner contract</a> · <a href="https://linear.app/a-barwick/issue/AB-180">AB-180</a> · <a href="https://linear.app/a-barwick/issue/AB-211">AB-211</a> · <a href="https://linear.app/a-barwick/issue/AB-214">AB-214</a> · <a href="https://linear.app/a-barwick/issue/AB-215">AB-215</a> · <a href="https://linear.app/a-barwick/issue/AB-221">AB-221</a></p></details>
+</body>
+</html>

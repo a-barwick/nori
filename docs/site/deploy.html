@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Deployment</h1>
+<p class="lede">Everything runs on GCP and Temporal Cloud, scales to zero when idle, and only Austin can reach it.</p>
+<div class="card"><table class="tall"><tr><th>Piece</th><th>Runs on</th><th>When idle</th></tr>
+<tr><td>Web client</td><td>Cloud Run, at noribot.chat</td><td>Scales to zero</td></tr>
+<tr><td>Go agent service</td><td>Agent Runtime</td><td>Scales to zero</td></tr>
+<tr><td>Conversation wakes</td><td>Cloud Tasks</td><td>No resident process</td></tr>
+<tr><td>Task workflows</td><td>Temporal Cloud</td><td>Waiting workflows hold no compute</td></tr>
+<tr><td>Task worker</td><td>Cloud Run</td><td>Scales to zero</td></tr>
+<tr><td>Computer</td><td>Firecracker guest on a GCE host</td><td>Stops after 15 idle minutes and keeps its disk</td></tr>
+<tr><td>Records</td><td>Firestore, database <code>nori-poc</code></td><td>Storage cost only</td></tr>
+<tr><td>Screenshots</td><td>Cloud Storage</td><td>Storage cost only</td></tr>
+</table></div>
+<div class="grid2">
+<div class="card tight"><p class="keyline">Who can reach it</p><p class="note">Google IAP plus an exact owner email check. Signed-out requests and forged owner headers are rejected.</p></div>
+<div class="card tight"><p class="keyline">Worker change in progress</p><p class="note">The merged request-driven worker runs as a bounded slice per Cloud Tasks wake. Its demo and rollout approval are still pending, and older worker pools stay at zero.</p></div>
+</div>
+<section><h2>Pausing</h2>
+<div class="branch"><div class="node"><b>What pause does</b><small>Blocks new execution, scales workers to zero and stops the computer.</small></div><div class="node"><b>What keeps working</b><small>The website, chat, saved history and any waiting tasks. Nothing is cancelled.</small></div></div>
+</section>
+<section><h2>Releases</h2>
+<ul class="pts"><li>Cloud Build runs checks on pull requests.</li><li>Worker builds are immutable and pinned, so running tasks stay on code that's compatible with them.</li><li>A sandbox gets new builds first, and a version tag promotes them to production.</li><li><code>core/infrastructure/release/</code> holds the release and smoke test scripts.</li></ul></section>
+<section><h2>Seeing what happened</h2>
+<ul class="pts"><li><b>Debug view:</b> each reply shows its recorded model, hint, latency and cost.</li><li><b>Sentry:</b> operational errors and traces, without request bodies or prompts.</li><li><b>Arize:</b> AI spans as metadata. Saving redacted content requires an explicit setting.</li><li>Both exporters are optional and can't block a request if they fail.</li></ul></section>
+<section><h2>What it costs</h2>
+<p>These are planning rates from October 24, 2026. They aren't measurements or caps.</p>
+<div class="card"><table class="tall"><tr><th>Usage per month</th><th>About</th></tr>
+<tr><td>10,000 Temporal actions</td><td>$0.55</td></tr><tr><td>100,000 Temporal actions</td><td>$5.50</td></tr>
+<tr><td>Cloud Run worker, 10 hours</td><td>$0.45</td></tr><tr><td>Cloud Run worker, 100 hours</td><td>$4.49</td></tr>
+<tr><td>Retained 20 GiB computer disk</td><td>$0.80</td></tr></table>
+<p class="note">Model calls and running compute are extra. GCP budget alerts don't cap Temporal, so a separate daily check alerts on Temporal spend.</p></div></section>
+<details class="more"><summary>Trial evidence for the computer</summary>
+<ul class="pts"><li>A file, an installed package, a browser cookie and local storage all survived a guest restart and a move to a new host.</li><li>This covers graceful restarts. RAM, live tabs and sudden crashes aren't covered.</li><li>The disk has no backup yet: <a href="https://linear.app/a-barwick/issue/AB-189">AB-189</a>.</li></ul></details>
+<details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_5ba2343bf15081918fd76de48444f8b9">GCP infrastructure plan</a> · <a href="https://chatgpt.com/space/page_cdb993135ff08191b1cbb33bdf95200b">Milestone 2 plan</a> · <a href="https://linear.app/a-barwick/issue/AB-181">AB-181</a> · <a href="https://linear.app/a-barwick/issue/AB-188">AB-188</a> · <a href="https://linear.app/a-barwick/issue/AB-189">AB-189</a></p></details>
+</body>
+</html>

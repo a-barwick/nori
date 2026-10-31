@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System overview · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>System overview</h1>
+<p class="lede">Every box Nori runs on, and what each one is responsible for.</p>
+<p>Firestore is the source of truth for what Nori has <b>accepted</b>, and Temporal is the source
+  of truth for <b>how far execution has got</b>. The task view in Firestore is a projection of the
+  workflow, and budget decisions are made inside the workflow.</p>
+  <div class="card">
+  <svg viewBox="0 0 920 430" width="100%" role="img" aria-label="System diagram">
+    <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5b6474"/></marker></defs>
+    <!-- Austin / client -->
+    <rect x="10" y="150" width="130" height="86" rx="10" fill="#fff" stroke="#1e2430" stroke-width="2"/>
+    <text x="75" y="182" text-anchor="middle" font-size="15" font-weight="700">Austin</text>
+    <text x="75" y="202" text-anchor="middle" font-size="11.5" fill="#4a5163">Next.js web client</text>
+    <text x="75" y="218" text-anchor="middle" font-size="11.5" fill="#4a5163">web/ · :3210</text>
+    <!-- Go service -->
+    <rect x="210" y="96" width="250" height="196" rx="12" fill="#eef0ff" stroke="#2f2fd0" stroke-width="2"/>
+    <text x="335" y="122" text-anchor="middle" font-size="14.5" font-weight="700" fill="#2f2fd0">Go agent service · core/</text>
+    <rect x="230" y="136" width="210" height="58" rx="8" fill="#fff" stroke="#2f2fd0" stroke-width="1.5"/>
+    <text x="335" y="158" text-anchor="middle" font-size="13.5" font-weight="650">Outer loop</text>
+    <text x="335" y="176" text-anchor="middle" font-size="11" fill="#4a5163">conversation · dispatch · steer</text>
+    <rect x="230" y="206" width="210" height="66" rx="8" fill="#fff" stroke="#5b6474" stroke-width="1.5"/>
+    <text x="335" y="228" text-anchor="middle" font-size="13.5" font-weight="650">Runtime (in-process)</text>
+    <text x="335" y="246" text-anchor="middle" font-size="11" fill="#4a5163">accept · order · lease · deliver</text>
+    <text x="335" y="261" text-anchor="middle" font-size="11" fill="#4a5163">wake/ + state/</text>
+    <!-- Firestore -->
+    <rect x="230" y="322" width="210" height="72" rx="10" fill="#eef0f3" stroke="#5b6474" stroke-width="2"/>
+    <text x="335" y="350" text-anchor="middle" font-size="14" font-weight="700">Firestore</text>
+    <text x="335" y="368" text-anchor="middle" font-size="11" fill="#4a5163">inbox · commands · runs · usage</text>
+    <text x="335" y="383" text-anchor="middle" font-size="11" fill="#4a5163">database nori-poc</text>
+    <!-- Cloud Tasks -->
+    <rect x="210" y="14" width="250" height="52" rx="10" fill="#fff" stroke="#5b6474" stroke-width="1.5"/>
+    <text x="335" y="37" text-anchor="middle" font-size="13" font-weight="650">Cloud Tasks wake queue</text>
+    <text x="335" y="54" text-anchor="middle" font-size="11" fill="#4a5163">hosted mode → POST /api/process</text>
+    <!-- Temporal -->
+    <rect x="530" y="96" width="170" height="88" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/>
+    <text x="615" y="126" text-anchor="middle" font-size="14" font-weight="700" fill="#0c7a5f">Temporal Cloud</text>
+    <text x="615" y="145" text-anchor="middle" font-size="11" fill="#4a5163">1 workflow per task</text>
+    <text x="615" y="161" text-anchor="middle" font-size="11" fill="#4a5163">nori-task-v2 · signals</text>
+    <!-- Worker -->
+    <rect x="530" y="214" width="170" height="88" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/>
+    <text x="615" y="244" text-anchor="middle" font-size="14" font-weight="700" fill="#0c7a5f">Inner loop</text>
+    <text x="615" y="263" text-anchor="middle" font-size="11" fill="#4a5163">runs in the Go task worker</text>
+    <text x="615" y="279" text-anchor="middle" font-size="11" fill="#4a5163">one per task · pinned builds</text>
+    <!-- Computer -->
+    <rect x="530" y="332" width="170" height="72" rx="10" fill="#faf0e4" stroke="#a8551c" stroke-width="2"/>
+    <text x="615" y="360" text-anchor="middle" font-size="14" font-weight="700" fill="#a8551c">Persistent computer</text>
+    <text x="615" y="378" text-anchor="middle" font-size="11" fill="#4a5163">GCE host · Firecracker guest</text>
+    <text x="615" y="393" text-anchor="middle" font-size="11" fill="#4a5163">shell · Chromium · retained disk</text>
+    <!-- Providers -->
+    <rect x="752" y="96" width="158" height="206" rx="10" fill="#fff" stroke="#b9b2a0" stroke-width="1.5"/>
+    <text x="831" y="121" text-anchor="middle" font-size="13" font-weight="700">Providers</text>
+    <text x="831" y="148" text-anchor="middle" font-size="11.5" fill="#4a5163">OpenRouter</text>
+    <text x="831" y="164" text-anchor="middle" font-size="11" fill="#4a5163">Opus 5.5 · outer</text>
+    <text x="831" y="192" text-anchor="middle" font-size="11.5" fill="#4a5163">TypeSafe Jev</text>
+    <text x="831" y="208" text-anchor="middle" font-size="11" fill="#4a5163">intent hints</text>
+    <text x="831" y="236" text-anchor="middle" font-size="11.5" fill="#4a5163">Vertex AI</text>
+    <text x="831" y="252" text-anchor="middle" font-size="11" fill="#4a5163">Gemini 3.8 Flash · inner</text>
+    <text x="831" y="280" text-anchor="middle" font-size="11.5" fill="#4a5163">Cloud Storage</text>
+    <text x="831" y="296" text-anchor="middle" font-size="11" fill="#4a5163">PNG artifacts</text>
+    <!-- arrows -->
+    <path class="flow-anim" d="M140 180 H206" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+    <path d="M210 212 H144" stroke="#5b6474" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+    <text x="175" y="168" text-anchor="middle" font-size="10.5" fill="#4a5163">/api/turn</text>
+    <text x="175" y="232" text-anchor="middle" font-size="10.5" fill="#4a5163">202 + polls</text>
+    <path d="M335 292 V318" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#ah)" marker-start="url(#ah)"/>
+    <path d="M335 66 V92" stroke="#5b6474" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+    <path class="flow-anim" d="M460 150 C 495 150 495 140 526 140" stroke="#0c7a5f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+    <text x="493" y="132" text-anchor="middle" font-size="10.5" fill="#0c7a5f">start / signal</text>
+    <path d="M615 184 V210" stroke="#0c7a5f" stroke-width="2" fill="none" marker-end="url(#ah)" marker-start="url(#ah)"/>
+    <text x="657" y="202" font-size="10.5" fill="#4a5163">activities</text>
+    <path d="M615 302 V328" stroke="#a8551c" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+    <text x="657" y="320" font-size="10.5" fill="#4a5163">IAP tunnel</text>
+    <path d="M460 112 C 500 62 720 62 750 130" stroke="#8b93a5" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+    <text x="610" y="69" text-anchor="middle" font-size="10.5" fill="#4a5163">model calls</text>
+    <path d="M700 258 H748" stroke="#8b93a5" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+    <text x="725" y="250" text-anchor="middle" font-size="10.5" fill="#4a5163">models</text>
+    <path d="M530 286 C 490 300 470 340 444 350" stroke="#5b6474" stroke-width="1.5" fill="none" marker-start="url(#ah)" marker-end="url(#ah)"/>
+    <text x="492" y="356" text-anchor="middle" font-size="10.5" fill="#4a5163">task state</text>
+  </svg>
+  </div>
+  <div class="grid3">
+    <div class="card tight"><p class="keyline">Accepted, applied and completed are different states</p>
+      <p class="note">A saved command only shows that it was accepted, and a tool attempt doesn't show that it had any effect. Nori's reply describes the furthest outcome the records support.</p></div>
+    <div class="card tight"><p class="keyline">Chat keeps working when tasks are paused</p>
+      <p class="note">The conversation wakes through Cloud Tasks or the local loop, which is separate from task delivery. Nori can still reply while task execution is paused.</p></div>
+    <div class="card tight"><p class="keyline">The service owns shared state</p>
+      <p class="note">Clients display state and send what the user wants to do. Anything two clients could disagree about belongs to the service.</p></div>
+  </div>
+<section><h2>Who answers what</h2>
+<div class="card"><table>
+<tr><th>Question</th><th>Where the answer lives</th></tr>
+<tr><td>What did Austin ask for?</td><td>Firestore inbox and messages</td></tr>
+<tr><td>How far has a task got?</td><td>Temporal workflow</td></tr>
+<tr><td>What did a task cost?</td><td>Workflow state, with <code>model_usage</code> rows in Firestore</td></tr>
+<tr><td>Did a tool call really run?</td><td>The operation record and the guest's receipt</td></tr>
+<tr><td>Where's that screenshot?</td><td>Cloud Storage, linked from the task</td></tr>
+</table></div></section>
+<details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_fb462c68ef1c8191be51107a6118d6ac">Agent loop architecture</a> · <a href="https://chatgpt.com/space/page_5ba2343bf15081918fd76de48444f8b9">GCP infrastructure plan</a></p></details>
+</body>
+</html>

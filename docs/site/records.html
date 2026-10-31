@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Records and delivery · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Records and delivery</h1>
+<p class="lede">What gets saved, where, and how a saved command reaches Temporal.</p>
+<p>Records are small and explicit, with stable IDs. Firestore and Temporal can't share a transaction, so a relay connects them:</p><ul class="pts"><li>Acceptance is a Firestore commit.</li><li>Delivery is retried until it's acknowledged.</li><li>Consumers deduplicate by ID and position.</li></ul>
+  <div class="grid2">
+    <div class="card">
+      <h3 style="margin-top:0">Firestore layout <span class="mono" style="font-size:11px;color:#8a8268">database nori-poc</span></h3>
+      <pre class="mono" style="font-size:12.5px;line-height:1.65;margin:0;white-space:pre-wrap">system/control            ← project pause switch
+owners/{owner}/
+├─ conversation/control   ← lease, fence, consumed
+├─ conversation_inputs/   ← durable inbox (ordered)
+├─ conversation_turns/    ← captured batches
+├─ conversation_attempts/ ← traces: model, hint, usage
+├─ messages/              ← the visible transcript
+├─ runs/{taskId}          ← task projection
+│   ├─ steps/             ← per-activity traces
+│   └─ operations/        ← admission receipts
+├─ task_commands/         ← delivery intent → Temporal
+└─ model_usage/           ← pre-recorded provider calls</pre>
+      <p class="note" style="margin-top:10px">Cloud Storage holds binaries, which today means screenshots at <code>artifacts/{run}/{id}.png</code>.
+      Large transcripts and outputs stay out of workflow history, and workflows carry references to them.</p>
+    </div>
+    <div>
+      <div class="card">
+        <h3 style="margin-top:0">The cross-service relay</h3>
+        <div class="flow">
+          <div class="node"><b>Accept</b><small>The command, run and delivery intent are saved in one Firestore transaction.</small></div>
+          <div class="arrow">↓</div>
+          <div class="node inner"><b>Deliver</b><small><code>task.Deliver</code> starts workflow <code>nori-task-{id}</code> or sends the <code>task-command</code> signal. It retries on every process cycle and worker startup.</small></div>
+          <div class="arrow">↓</div>
+          <div class="node"><b>Acknowledge</b><small>Marks the command as delivered. If the process crashes before this step, the command is delivered again, and positions make that harmless.</small></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Who owns what</h3>
+        <table>
+          <tr><th>Question</th><th>Answer lives in</th></tr>
+          <tr><td>Was it accepted?</td><td>Firestore command record</td></tr>
+          <tr><td>What has the task spent?</td><td>Workflow state (Firestore holds a projection)</td></tr>
+          <tr><td>Which instructions are current?</td><td>Commands up to the incorporated position</td></tr>
+          <tr><td>Did that tool call happen?</td><td>Operation admission and guest receipt</td></tr>
+          <tr><td>What did the models cost?</td><td><code>model_usage</code>, written before each call</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+<details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_fb462c68ef1c8191be51107a6118d6ac">Agent loop architecture</a> · <a href="https://chatgpt.com/space/page_3959ad978c188191a33228e13c3421ad">Full agent process</a></p></details>
+</body>
+</html>

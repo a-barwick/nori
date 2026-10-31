@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sources · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Sources</h1>
+<p class="lede">This site is a guide to the design docs, the Linear project and the code. When they disagree, the code wins for what's running today.</p>
+<div class="card"><table class="tall"><tr><th>Spaces page</th><th>Covers</th><th>Status</th></tr>
+<tr><td><a href="https://chatgpt.com/space/page_6adcf959b66481918a736ee1dfd6c8cb">Nori Overview</a></td><td>Product goals and the original roadmap</td><td class="nw">Current</td></tr><tr><td><a href="https://chatgpt.com/space/page_fb462c68ef1c8191be51107a6118d6ac">Agent loop architecture</a></td><td>How the loops fit together</td><td class="nw">Partly dated</td></tr><tr><td><a href="https://chatgpt.com/space/page_2c00c5ce6cac8191b153218029cf445e">Outer loop</a></td><td>Conversation, routing and Jev</td><td class="nw">Partly dated</td></tr><tr><td><a href="https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65">Inner loop</a></td><td>Execution, steering, completion</td><td class="nw">Current design</td></tr><tr><td><a href="https://chatgpt.com/space/page_3959ad978c188191a33228e13c3421ad">Full agent process</a></td><td>End-to-end flow</td><td class="nw">Partly dated</td></tr><tr><td><a href="https://chatgpt.com/space/page_74dc49e1d54c81918c1b01fd477cdb8b">Outer–inner contract</a></td><td>Tools, commands, events, subtasks</td><td class="nw">Current design</td></tr><tr><td><a href="https://chatgpt.com/space/page_593a06e74e988191975cfbb5c20e378a">Client contract</a></td><td>Today's API and the proposed protocol</td><td class="nw">Partly dated</td></tr><tr><td><a href="https://chatgpt.com/space/page_efd8068da4fc8191a54ae575d8a1c57d">Separation of concerns</a></td><td>Service, kit and shell</td><td class="nw">Current design</td></tr><tr><td><a href="https://chatgpt.com/space/page_5ba2343bf15081918fd76de48444f8b9">GCP infrastructure plan</a></td><td>Deployment and cost</td><td class="nw">Partly dated</td></tr><tr><td><a href="https://chatgpt.com/space/page_cdb993135ff08191b1cbb33bdf95200b">Milestone 2 plan</a></td><td>Durable conversation, delivered</td><td class="nw">Historical</td></tr><tr><td><a href="https://chatgpt.com/space/page_1f019cba14848191b02d281e9bf5189b">106 conversation scenarios</a></td><td>The progress yardstick</td><td class="nw">Current</td></tr><tr><td><a href="https://chatgpt.com/space/page_0d8a35bf3b6881918f5892177858a5e9">Technical sources</a></td><td>Background reading</td><td class="nw">Background</td></tr><tr><td><a href="https://chatgpt.com/space/page_9657ae9444288191bf5a7ca78ed598fc">Project review</a></td><td>Defects found on October 25</td><td class="nw">Historical</td></tr><tr><td><a href="https://chatgpt.com/space/page_e947b82e73ac81919ee1e366cf32ab96">Bot architecture review</a></td><td>An older architecture</td><td class="nw">Superseded</td></tr><tr><td><a href="https://chatgpt.com/space/page_a1540bc8bf20819190e07f4d49a417c8">The assistant inside Nova</a></td><td>The enterprise concept</td><td class="nw">Separate scope</td></tr><tr><td><a href="https://chatgpt.com/space/page_6adcf7f07df48191b5773fd001c46cb7">Nori Space</a></td><td>Space home page</td><td class="nw">Dated</td></tr>
+</table></div>
+<div class="grid2">
+<a class="card tight go" href="https://linear.app/a-barwick/project/nori-73a68f0b2a10"><b>Linear project</b><span>The plan: 12 milestones, 11 epics, 90 issues.</span></a>
+<a class="card tight go" href="https://github.com/a-barwick/nori"><b>Code</b><span><code>core/</code> and <code>web/</code> in a-barwick/nori.</span></a>
+</div>
+<section><h2>Where the sources are out of date</h2>
+<p>These came up while building this site. The site follows the code on each one, and the sources haven't been changed.</p>
+<div class="card"><table class="tall"><tr><th>Source</th><th>It says</th><th>The code on main</th></tr>
+<tr><td>Space home page</td><td>Muse is the outer model</td><td>Opus 5.5 through OpenRouter</td></tr>
+<tr><td>Outer–inner contract, “Current code”</td><td>One task at a time. The outer loop only has <code>dispatch</code>. A second message is rejected.</td><td>Several tasks. Five task tools. Follow-ups are saved.</td></tr>
+<tr><td>Outer loop page, status</td><td>Task events and steering aren't done</td><td>Task events reach the inbox, and <code>steer</code> exists</td></tr>
+<tr><td>Client contract, today's API</td><td><code>/api/turn</code> waits for the reply, and history is in memory</td><td>It returns 202, and history is in Firestore</td></tr>
+<tr><td>Infrastructure plan</td><td>Three-hour sessions, and the worker in a Cloud Run worker pool</td><td>Sessions removed, and a request-driven worker is merged</td></tr>
+<tr><td>Milestone 3 in Linear</td><td>All 13 issues in Backlog</td><td>The code is merged ahead of its tickets</td></tr>
+</table></div></section>
+
+</body>
+</html>

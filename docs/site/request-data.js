@@ -1,0 +1,95 @@
+// Simulated data for each step on the request page. Endpoints and field names follow the code on main.
+// Values are invented, and "…" marks a shortened value or fields left out to keep the example readable.
+const INPUT = '3f6c1e94-8a27-4d0b-9c35-71be20d4a6f1';
+const WEATHER = 'a41d7c02-5e3b-4f68-b2c9-0d8e6f13a975';
+const TIME = '2026-10-31T16:04:12Z';
+const MESSAGE = "Check Saturday's weather in Tucson. Also find a time for dinner.";
+const REQUEST = "Check Saturday's weather in Tucson.";
+
+window.REQUEST_FLOW = [
+  [ // 1. Austin sends a message
+    { from: 'Browser', to: 'Go service', edge: 'austin-service', call: 'POST /api/turn', source: 'core/internal/wake/http.go',
+      request: { id: INPUT, message: MESSAGE },
+      response: { status: 202, body: { messages: ['…'], runs: ['…'], paused: false, dispatches: [],
+        conversation: { pending: true, processing: false, revision: 12, consumed: 11, input_ids: [], restart_count: 0, frozen: false, routing_blocked: false }, traces: ['…'] } },
+      other: ['400 if the ID isn\'t a UUID or the message isn\'t 1–8192 bytes', '409 if the same ID arrives with different text', '503 if the message saved but the wake couldn\'t be confirmed. Retrying with the same ID is safe.'] },
+    { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'conversation_inputs/{id}', source: 'core/internal/state/conversation.go',
+      saved: { id: INPUT, text: MESSAGE, position: 12, created_at: TIME } },
+    { from: 'Go service', to: 'Cloud Tasks', edge: 'tasks-service', call: 'Create task', source: 'core/internal/wake/cloud.go',
+      request: { httpRequest: { url: 'https://…/api/process', httpMethod: 'POST', body: '{}', oauthToken: { serviceAccountEmail: '…' } }, dispatchDeadline: '600s' },
+      note: 'The wake carries no message content. The handler reads the inbox instead.' },
+  ],
+  [ // 2. An outer turn claims the batch
+    { from: 'Cloud Tasks', to: 'Go service', edge: 'tasks-service', call: 'POST /api/process', source: 'core/internal/wake/http.go',
+      request: {}, response: { status: 200, body: { processed: true } },
+      other: ['503 if another request holds the lease or work remains, so Cloud Tasks retries'] },
+    { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'conversation/control', source: 'core/internal/state/conversation.go',
+      saved: { received: 12, consumed: 11, active: 'turn-…', owner: 'process-…', fence: 37, lease_until: '2026-10-31T16:04:42Z' },
+      note: 'Only the current fence can write, so a stale turn can\'t publish anything.' },
+  ],
+  [ // 3. Jev classifies and the model decides
+    { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'model_usage/{id}', source: 'core/internal/state/state.go',
+      saved: { id: 'c90e…', input_id: INPUT, provider: 'outer', model: 'anthropic/claude-opus-5.5', cost_status: 'unknown', request_status: 'pending', created_at: TIME },
+      note: 'Written before the call. If the call is rejected or the process dies, the row still shows it was attempted.' },
+    { from: 'Go service', to: 'Jev', edge: 'service-models', call: 'POST api.typesafe.ai/v1/systemone', source: 'core/internal/conversation/classifier.go',
+      request: { model: 'jev-latest', state: { messages: [MESSAGE], conversation: ['…'] }, questions: { request_work: { type: 'choice', instructions: 'Independently check whether the CURRENT input batch contains this intent…', criteria: { present: 'The current input batch contains this intent.', absent: '…' } }, '…': 'one question per intent' } },
+      response: { answers: { request_work: { choice: 'present', confidence: 0.97 }, converse: { choice: 'absent', confidence: 0.88 }, '…': '…' } } },
+    { from: 'Go service', to: 'OpenRouter', edge: 'service-models', call: 'POST /chat/completions', source: 'core/internal/conversation/model.go',
+      request: { model: 'anthropic/claude-opus-5.5', max_tokens: 4096, messages: [{ role: 'system', content: '…' }, { role: 'user', content: MESSAGE }], tools: ['dispatch', 'steer', 'answer', 'continue', 'stop'] },
+      response: { choices: [{ message: { role: 'assistant', content: "On it. I've started both.", tool_calls: [
+        { id: 'call_1', type: 'function', function: { name: 'dispatch', arguments: JSON.stringify({ request: REQUEST }) } },
+        { id: 'call_2', type: 'function', function: { name: 'dispatch', arguments: '{"request":"Find a time for dinner."}' } } ] } }],
+        usage: { prompt_tokens: 2104, completion_tokens: 88, cost: 0.0127 } },
+      note: 'The tools field holds full JSON schemas, shortened to their names here.' },
+  ],
+  [ // 4. Commands are validated together, then accepted
+    { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'task_commands/{id}', source: 'core/internal/state/task.go',
+      saved: { id: WEATHER, run_id: WEATHER, kind: 'start', text: REQUEST, position: 1, revision: 1, delivered: false, source_input_ids: [INPUT], created_at: TIME },
+      note: 'The start command\'s ID is also the task ID. There\'s one of these per dispatch.' },
+    { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'runs/{id}', source: 'core/internal/state/state.go',
+      saved: { id: WEATHER, status: 'running', request: REQUEST, revision: 1, incorporated: 0, spent_usd: 0, budget_usd: 1, cancel_requested: false, started_at: TIME } },
+    { from: 'Browser', to: 'Go service', edge: 'austin-service', call: 'POST /api/session', source: 'core/internal/wake/http.go',
+      request: {},
+      response: { status: 200, body: { messages: [{ id: '…', turn_id: '…', role: 'assistant', text: "On it. I've started both.", created_at: TIME }], runs: [{ id: WEATHER, status: 'running', '…': '…' }], dispatches: ['…'], conversation: { pending: false, processing: false, revision: 13, consumed: 12, '…': '…' } } },
+      note: 'This is how the reply reaches Austin. The browser polls for it.' },
+  ],
+  [ // 5. The relay starts one Temporal workflow per task
+    { from: 'Go service', to: 'Temporal', edge: 'service-temporal', call: 'SignalWithStartWorkflow', source: 'core/internal/task/client.go',
+      request: { workflow_id: `nori-task-${WEATHER}`, workflow_type: 'nori-task-v2', args: [WEATHER], signal: 'task-command',
+        signal_payload: { id: WEATHER, run_id: WEATHER, kind: 'start', text: REQUEST, position: 1, revision: 1 } },
+      note: 'A retry reaches the same workflow ID, so redelivery can\'t start a second workflow.' },
+    { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'task_commands/{id}', source: 'core/internal/state/task.go',
+      saved: { id: WEATHER, delivered: true, '…': 'other fields unchanged' } },
+    { from: 'Cloud Tasks', to: 'Worker', edge: 'temporal-inner', call: 'POST /run', source: 'core/internal/workerservice/lifecycle.go',
+      request: { workflow_ids: [`nori-task-${WEATHER}`] },
+      note: 'Only in request-driven mode, whose rollout approval is pending. It wakes one worker slice and carries no task content.' },
+  ],
+  [ // 6. Inner loops work, wait and finish
+    { from: 'Worker', to: 'Vertex AI', edge: 'inner-models', call: 'generateContent', source: 'core/internal/agent/steps.go',
+      request: { model: 'gemini-3.8-flash', config: { maxOutputTokens: 8192, tools: ['shell', 'browser_navigate', 'browser_screenshot', 'wait_for_input'] }, contents: [{ role: 'user', parts: [{ text: REQUEST }] }] },
+      response: { candidates: [{ content: { parts: [{ functionCall: { name: 'browser_navigate', args: { url: 'https://forecast.weather.gov/…' } } }] } }], usageMetadata: { promptTokenCount: 412, candidatesTokenCount: 36 } },
+      note: 'Today the model has to know a URL. A web search tool is planned (AB-201).' },
+    { from: 'Worker', to: 'Computer', edge: 'inner-computer', call: 'POST /navigate', source: 'core/internal/computer/computer.go',
+      request: { run_id: 'step-…', task_id: WEATHER, url: 'https://forecast.weather.gov/…' },
+      response: { url: 'https://forecast.weather.gov/…', title: 'Tucson AZ Forecast', text: 'Saturday: Sunny, with a high near 82…' } },
+    { from: 'Worker', to: 'Computer', edge: 'inner-computer', call: 'POST /exec', source: 'core/internal/computer/computer.go',
+      request: { run_id: 'step-…', task_id: WEATHER, command: 'date -u', timeout_seconds: 45 },
+      response: { stdout: 'Sat Oct 31 16:05:01 UTC 2026\n', stderr: '', exit_code: 0 },
+      note: 'The shell tool looks like this. A nonzero exit code comes back to the model as a normal result.' },
+    { from: 'Worker', to: 'Firestore', edge: 'inner-firestore', call: 'runs/{id}', source: 'core/internal/state/state.go',
+      saved: { id: WEATHER, status: 'running', revision: 1, incorporated: 1, spent_usd: 0.0003, budget_usd: 1, events: ['…'] },
+      note: 'This is a display copy. The workflow holds the real spend figure.' },
+  ],
+  [ // 7. The result comes back as a conversation event
+    { from: 'Worker', to: 'Firestore', edge: 'inner-firestore', call: 'conversation_inputs/event-{id}', source: 'core/internal/state/task_events.go',
+      saved: { id: `event-${WEATHER}-terminal`, position: 13, created_at: TIME, event: { id: `${WEATHER}-terminal`, run_id: WEATHER, kind: 'result', sequence: 1, instruction_revision: 1, text: 'Saturday in Tucson looks sunny, around 82°F.', created_at: TIME } },
+      note: 'Saved in the same transaction as the task\'s final state. Other kinds are needs_input, failure and stopped.' },
+    { from: 'Go service', to: 'OpenRouter', edge: 'service-models', call: 'POST /chat/completions', source: 'core/internal/conversation/model.go',
+      request: { model: 'anthropic/claude-opus-5.5', max_tokens: 4096, messages: ['…', { role: 'user', content: 'Task result: …' }] },
+      response: { choices: [{ message: { role: 'assistant', content: 'Saturday in Tucson looks sunny, around 82°F.' } }], usage: { prompt_tokens: 2240, completion_tokens: 21, cost: 0.0118 } },
+      note: 'Notification turns run without task tools, so this turn can only explain the result. The content format shown is simplified.' },
+    { from: 'Browser', to: 'Go service', edge: 'austin-service', call: 'POST /api/session', source: 'core/internal/wake/http.go',
+      request: {},
+      response: { status: 200, body: { messages: ['…', { role: 'assistant', run_id: WEATHER, text: 'Saturday in Tucson looks sunny, around 82°F.', created_at: TIME }], runs: [{ id: WEATHER, status: 'completed', result: '…', spent_usd: 0.0003, budget_usd: 1 }] } } },
+  ],
+];

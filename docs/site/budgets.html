@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Budgets and controls · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Budgets and controls</h1>
+<p class="lede">How Nori keeps spending visible, and the four different ways work can pause or stop.</p>
+<p>There are four separate controls here, and they're easy to mix up. On cost:</p><ul class="pts"><li>Model cost is calculated inside the workflow from reported usage and list price.</li><li>The $1 limit is checked between calls to decide whether to pause, so it isn't a hard cap on billing.</li></ul>
+  <div class="grid4">
+    <div class="card tight"><p class="keyline">Task budget · $1</p><p class="note">Applies to each top-level task. When it runs out, the task saves its progress and asks, and <code>continue</code> adds $1. Reporting the pause doesn't use a model call.</p></div>
+    <div class="card tight"><p class="keyline">Input / dependency wait</p><p class="note">The task parks with its identity, question and records intact. No timer ends it.</p></div>
+    <div class="card tight"><p class="keyline">Project pause</p><p class="note"><code>system/control.paused</code> blocks new execution. Workers exit and the computer stops, while chat keeps working and data is retained.</p></div>
+    <div class="card tight"><p class="keyline">Task Stop</p><p class="note">Ends one task, confirms the computer stopped, and reports any effects that already happened.</p></div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Where the money is counted</h3>
+    <div class="flow" style="flex-direction:row;align-items:center;gap:0;flex-wrap:wrap">
+      <div class="node" style="flex:1;min-width:150px"><b>Usage row written</b><small>Before provider I/O, with status pending, then received or unknown</small></div>
+      <div class="arrow" style="padding:0 6px">→</div>
+      <div class="node" style="flex:1;min-width:150px"><b>Provider reports tokens</b><small>The inner loop prices calls locally. The outer loop uses OpenRouter's cost when reported.</small></div>
+      <div class="arrow" style="padding:0 6px">→</div>
+      <div class="node inner" style="flex:1;min-width:150px"><b>Workflow adds to spent</b><small>Cached tokens count at full price, so tasks tend to pause early</small></div>
+      <div class="arrow" style="padding:0 6px">→</div>
+      <div class="node wait" style="flex:1;min-width:150px"><b>Pause at $1</b><small>An unknown cost stops the task and is never counted as $0</small></div>
+    </div>
+    <p class="note" style="margin:12px 0 0;font-weight:600">Operating rules</p><ul class="pts note"><li>Cloud Run and Agent Runtime run with a minimum of 0 and a maximum of 1 instance.</li><li>When live work finishes, worker pools scale to zero and the computer stops.</li><li>Credentials are in the gitignored root <code>.env</code> (mode 600) and are kept out of model context, logs and workflow history.</li></ul>
+  </div>
+<details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65">Inner loop</a> · <a href="https://chatgpt.com/space/page_74dc49e1d54c81918c1b01fd477cdb8b">Outer–inner contract</a> · <a href="https://chatgpt.com/space/page_5ba2343bf15081918fd76de48444f8b9">GCP infrastructure plan</a></p></details>
+</body>
+</html>
