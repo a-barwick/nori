@@ -13,7 +13,6 @@ A reader should get the idea from the picture, understand it from a few short li
 
 ## Writing rules
 
-- Never name the owner of this project. Write "the user" for the person using Nori.
 - Describe software as software: processes run, models return output, code saves records. Don't write that Nori does "real work", notices, knows, thinks, understands or decides what matters.
 - Don't use praise or emphasis words such as real, actual, honest, true, trust, natural, feel, useful or meaningful unless they state a checkable fact.
 - Use full, plain sentences with concrete nouns and verbs. "The runtime saves the message, then schedules a wake."
