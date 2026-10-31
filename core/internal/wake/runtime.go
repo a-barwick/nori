@@ -29,7 +29,7 @@ type Runtime struct {
 
 // Open uses the same durable outer loop in local and hosted entrypoints.
 func Open(ctx context.Context) (*Runtime, error) {
-	if err := spend.Validate(ctx); err != nil {
+	if err := spend.ValidateConfiguration(); err != nil {
 		return nil, err
 	}
 	key, jevKey := os.Getenv("OPENROUTER_API_KEY"), os.Getenv("JEV_API_KEY")

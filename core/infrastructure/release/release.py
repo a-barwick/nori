@@ -302,7 +302,7 @@ def route_only_update(change, build_id):
                 "expire_time", "generation", "last_modifier", "latest_created_revision", "latest_ready_revision", "observed_generation",
                 "reconciling", "terminal_condition", "terraform_labels", "traffic_statuses", "uid", "update_time", "uri", "urls"}
     before, after = copy.deepcopy(change["before"]), copy.deepcopy(change["after"])
-    routes = []
+    routes, scopes = [], []
     for value in (before, after):
         for key in computed:
             value.pop(key, None)
@@ -312,8 +312,13 @@ def route_only_update(change, build_id):
             container.pop("build_info", None)
             env = {item["name"]: item for item in container["env"]}
             routes.append(json.loads(env.pop("NORI_WORKER_SERVICES")["value"]))
+            scope = env.get("NORI_SPEND_SCOPE", {}).get("value")
+            if (poc.ENVIRONMENT == "sandbox" and env.get("NORI_SPEND_PROFILE", {}).get("value") == "ci"
+                    and scope and re.fullmatch(r"[a-f0-9]{64}", scope)):
+                scopes.append(env.pop("NORI_SPEND_SCOPE")["value"])
             container["env"] = sorted(env.values(), key=lambda item: item["name"])
-    return (len(routes) == 2 and routes[1] == {**routes[0], build_id: worker_url(build_id)} and before == after)
+    valid_scope = not scopes or (len(scopes) == 2 and scopes[1] == os.environ.get("NORI_SPEND_SCOPE"))
+    return (valid_scope and len(routes) == 2 and routes[1] == {**routes[0], build_id: worker_url(build_id)} and before == after)
 
 
 def validate_worker_plan(plan, build_id):
@@ -356,6 +361,11 @@ def worker_plan(candidate, directory):
               "poll_window_seconds": 240, "firestore_database": "nori-poc" if poc.ENVIRONMENT == "production" else "nori-sandbox"}
     if poc.ENVIRONMENT == "sandbox":
         target.update(spend_scope=os.environ["NORI_SPEND_SCOPE"])
+        # Retained CI workers share this run's capped lease during paused updates.
+        # Old images validate on startup and cannot restart with a closed lease.
+        for retained_target in targets.values():
+            if retained_target.get("spend_scope"):
+                retained_target["spend_scope"] = os.environ["NORI_SPEND_SCOPE"]
     existing = retained.get("request_worker_targets", {}).get(build_id, target)
     existing = {key: value for key, value in existing.items() if value is not None}
     require(build_id not in pools and retained.get("request_worker_images", {}).get(build_id, candidate["worker"]) == candidate["worker"] and

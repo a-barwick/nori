@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/observability"
+	"nori/internal/spend"
 	"nori/internal/state"
 )
 
@@ -109,6 +111,13 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if e != nil {
 		return e
 	}
+	ciStart, e := spend.CIContextStart(callCtx)
+	if e != nil {
+		return e
+	}
+	if !ciStart.IsZero() {
+		visible = slices.DeleteFunc(visible, func(m Message) bool { return m.CreatedAt.Before(ciStart) })
+	}
 	inputID := t.Inputs[0].ID
 	for _, input := range t.Inputs {
 		if input.IsUser() {
@@ -153,6 +162,10 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		return historyRead.err
 	}
 	history, truncated := historyRead.turns, historyRead.truncated
+	if !ciStart.IsZero() {
+		history = slices.DeleteFunc(history, func(turn state.ConversationTurn) bool { return turn.StartedAt.Before(ciStart) })
+		truncated = true
+	}
 	promptStarted := time.Now()
 	messages := buildMessages(t, visible, history, truncated, next)
 	promptMS = time.Since(promptStarted).Milliseconds()
@@ -162,6 +175,13 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		return taskRead.err
 	}
 	snapshot := taskRead.session
+	if !ciStart.IsZero() {
+		// Keep active work visible even if it predates CI. Preflight normally
+		// refuses it; never hide it merely to make a smoke request cheaper.
+		snapshot.Runs = slices.DeleteFunc(snapshot.Runs, func(run state.Run) bool {
+			return run.StartedAt.Before(ciStart) && (run.Status == "completed" || run.Status == "failed" || run.Status == "cancelled")
+		})
+	}
 	eventRunIDs := []string{}
 	for _, input := range t.Inputs {
 		if input.Event != nil {

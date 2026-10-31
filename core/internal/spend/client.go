@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -38,6 +39,7 @@ type scopeRecord struct {
 	Used      int64     `firestore:"used_nanos"`
 	Closed    bool      `firestore:"closed"`
 	ExpiresAt time.Time `firestore:"expires_at"`
+	CreatedAt time.Time `firestore:"created_at"`
 }
 type poolRecord struct {
 	Day        string `firestore:"day"`
@@ -154,6 +156,16 @@ func (c *Client) validate(ctx context.Context) error {
 	return validatePool(pool)
 }
 
+// ValidateConfiguration keeps health and cleanup endpoints available after a
+// lease closes. Prepare and Reserve still enforce live budgets before inference.
+func ValidateConfiguration() error {
+	c, err := FromEnv()
+	if c != nil {
+		c.Close()
+	}
+	return err
+}
+
 func Validate(ctx context.Context) error {
 	c, err := FromEnv()
 	if err != nil || c == nil {
@@ -164,6 +176,38 @@ func Validate(ctx context.Context) error {
 		return err
 	}
 	return c.validate(ctx)
+}
+
+// CIContextStart isolates a synthetic run's context without deleting retained
+// conversations. Retrying a scope keeps the same starting point and allowance.
+func CIContextStart(ctx context.Context) (time.Time, error) {
+	if os.Getenv("NORI_SPEND_PROFILE") != "ci" {
+		return time.Time{}, nil
+	}
+	c, err := FromEnv()
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer c.Close()
+	if err = c.open(ctx); err != nil {
+		return time.Time{}, err
+	}
+	snapshot, err := c.scopeRef().Get(ctx)
+	if err != nil {
+		return time.Time{}, blocked("CI context boundary is unavailable")
+	}
+	var scope scopeRecord
+	if snapshot.DataTo(&scope) != nil {
+		return time.Time{}, blocked("CI context boundary is invalid")
+	}
+	if err = c.validateScope(scope, time.Now()); err != nil {
+		return time.Time{}, err
+	}
+	if scope.CreatedAt.IsZero() {
+		// Scopes issued before created_at was recorded used a fixed 24h lease.
+		scope.CreatedAt = scope.ExpiresAt.Add(-24 * time.Hour)
+	}
+	return scope.CreatedAt, nil
 }
 
 func (c *Client) outputCap(provider string) int {
@@ -216,7 +260,8 @@ func (c *Client) Reserve(ctx context.Context, provider, model string, inputBytes
 	inRate, outRate := int64(0), int64(0)
 	switch {
 	case provider == "openrouter" && model == "anthropic/claude-opus-5.5":
-		inRate, outRate = 8000, 40000
+		// Matches provider.max_price in the request, including regional pricing.
+		inRate, outRate = 4400, 22000
 	case provider == "vertex" && model == "gemini-3.8-flash":
 		inRate, outRate = 1500, 7500
 	default:
@@ -254,7 +299,7 @@ func (c *Client) Reserve(ctx context.Context, provider, model string, inputBytes
 		roll(&pool, time.Now())
 		// Subtraction comparisons avoid overflowing counters supplied by bad records.
 		if scope.Used > scope.Allowance-amount || pool.Pending > dayLimit-amount || pool.DayKnown > dayLimit-pool.Pending-amount || pool.Pending > monthLimit-amount || pool.MonthKnown > monthLimit-pool.Pending-amount {
-			return blocked("development allowance or shared daily/monthly budget is exhausted")
+			return blocked(fmt.Sprintf("request reserve $%.6f (%d input bytes + %d framing, %d output tokens) exceeds remaining allowance $%.6f or shared budget", float64(amount)/1e9, inputBytes, FramingBytes, maxOutputTokens, float64(scope.Allowance-scope.Used)/1e9))
 		}
 		scope.Used += amount
 		pool.Pending += amount
