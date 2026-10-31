@@ -258,3 +258,11 @@ nav.rail .subs a.on{color:var(--outer);background:none;font-weight:650}
 body.only-design nav.rail .subs a.designed{outline:none;background:none}
 nav.rail a.group{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#a39a83;margin:16px 0 4px;padding:3px 10px}
 nav.rail a.group:hover{color:var(--ink);background:none}
+
+/* scenarios */
+.scn{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-s);margin-bottom:5px;padding:7px 12px}
+.scn>summary{cursor:pointer;font-size:14px;scroll-margin-top:18px}
+.scn>summary small{display:block;font-size:11.5px;color:var(--ink2);margin:1px 0 0 0}
+.scn-body{padding:4px 0 6px}
+.scn-body p{font-size:13.5px;margin-bottom:6px}
+.scn>summary:hover .copy-link{opacity:1}

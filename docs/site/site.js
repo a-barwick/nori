@@ -4,7 +4,7 @@ const NAV = [
   ['The loops', [['outer-loop', 'Outer loop'], ['inner-loop', 'Inner loop'], ['contract', 'How the loops talk'], ['tasks', 'Task lifecycle'], ['completion', 'Finishing a task']]],
   ['The system', [['system', 'System overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['budgets', 'Budgets and controls'], ['deploy', 'Deployment'], ['clients', 'Clients']]],
   ['Planned', [['tools', 'Tool discovery'], ['authority', 'Approvals and writes'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['schedules', 'Schedules and proactive'], ['roadmap', 'Roadmap']]],
-  ['Reference', [['code', 'Code map'], ['words', 'Words we use'], ['sources', 'Sources']]],
+  ['Reference', [['scenarios', 'Scenarios'], ['decisions', 'Decisions'], ['open-questions', 'Open questions'], ['code', 'Code map'], ['words', 'Words we use'], ['reading', 'Reading list'], ['sources', 'Sources']]],
 ];
 const PLANNED = NAV[3][1].map(([id]) => id).filter(id => id !== 'roadmap');
 
@@ -87,7 +87,7 @@ const copyText = async text => {
   area.remove();
 };
 const usedIds = new Set();
-const heads = [...main.querySelectorAll('h1, h2, h3, .step .t')].filter(h => !h.closest('details'));
+const heads = [...main.querySelectorAll('h1, h2, h3, .step .t, .scn > summary')].filter(h => h.matches('summary') || !h.closest('details'));
 heads.forEach(head => {
   const nodes = [...head.childNodes];
   const end = nodes.findIndex(n => n.matches?.('.tag, a, .mono'));
@@ -146,7 +146,14 @@ if (railHeads.length > 1 && currentLink) {
 }
 
 // IDs are added after load, so scroll to a linked section here
-if (location.hash) document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
+const openLinked = () => {
+  const target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+  if (!target) return;
+  target.closest('details')?.setAttribute('open', '');
+  target.scrollIntoView();
+};
+openLinked();
+addEventListener('hashchange', openLinked);
 
 // Data panels: simulated requests, responses and saved records behind a step or a table row
 const esc = text => String(text).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -194,23 +201,23 @@ main.querySelectorAll('tr[data-flow]').forEach(row => {
 
 // Request page: light up the systems the current step uses
 if (document.querySelector('.trace')) {
-  const NAMES = { austin: 'Austin', tasks: 'Cloud Tasks', outer: 'Outer loop', runtime: 'Runtime', firestore: 'Firestore',
+  const NAMES = { user: 'User', tasks: 'Cloud Tasks', outer: 'Outer loop', runtime: 'Runtime', firestore: 'Firestore',
     temporal: 'Temporal', models: 'Models', inner: 'Inner loop', computer: 'Computer' };
   const TRACE = [
-    { cap: 'The runtime saves the message, then schedules a wake.', nodes: ['austin', 'runtime', 'firestore', 'tasks'],
-      edges: ['austin>service', 'service>firestore', 'service>tasks'] },
+    { cap: 'The runtime saves the message, then schedules a wake.', nodes: ['user', 'runtime', 'firestore', 'tasks'],
+      edges: ['user>service', 'service>firestore', 'service>tasks'] },
     { cap: 'A wake starts an outer turn, which takes the lease and pending inputs.', nodes: ['tasks', 'runtime', 'outer', 'firestore'],
       edges: ['tasks>service', 'firestore>service'] },
     { cap: 'The outer loop calls Jev and then Opus. Usage is saved before each call.', nodes: ['outer', 'models', 'firestore'],
       edges: ['service>models', 'service>firestore'] },
-    { cap: 'Commands and the reply are saved. Austin sees the reply on the next poll.', nodes: ['outer', 'runtime', 'firestore', 'austin'],
-      edges: ['service>firestore', 'service>austin'] },
+    { cap: 'Commands and the reply are saved. The user sees the reply on the next poll.', nodes: ['outer', 'runtime', 'firestore', 'user'],
+      edges: ['service>firestore', 'service>user'] },
     { cap: 'The relay reads saved commands and starts one workflow per task.', nodes: ['runtime', 'firestore', 'temporal'],
       edges: ['firestore>service', 'service>temporal'] },
-    { cap: 'Two inner loops run on their own, calling Gemini and using the computer.', nodes: ['temporal', 'inner', 'models', 'computer', 'firestore'],
+    { cap: 'Two inner loops run independently, calling Gemini and using the computer.', nodes: ['temporal', 'inner', 'models', 'computer', 'firestore'],
       edges: ['temporal>inner', 'inner>models', 'inner>computer', 'inner>firestore'] },
-    { cap: 'The result reaches the inbox, and an outer turn explains it to Austin.', nodes: ['inner', 'firestore', 'runtime', 'outer', 'models', 'austin'],
-      edges: ['inner>firestore', 'firestore>service', 'service>models', 'service>austin'] },
+    { cap: 'The result reaches the inbox, and an outer turn explains it to the user.', nodes: ['inner', 'firestore', 'runtime', 'outer', 'models', 'user'],
+      edges: ['inner>firestore', 'firestore>service', 'service>models', 'service>user'] },
   ];
   const steps = [...document.querySelectorAll('.trace .step')];
   const cap = document.getElementById('traceCap');

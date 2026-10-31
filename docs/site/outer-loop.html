@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>Outer loop</h1>
-<p class="lede">The part of Nori you talk to. It runs one short turn at a time and hands real work to tasks.</p>
+<p class="lede">The part of Nori that handles the conversation. It runs one short turn at a time and dispatches work to tasks.</p>
 <p>Only one turn owns the conversation at a time. The engine in
   <span class="mono">conversation/runner.go</span> and <span class="mono">call.go</span> is built so a process can
   die at any line and the next owner can recover from checkpoints without sending a second reply or
@@ -63,7 +63,7 @@
           <tr><td><code>dispatch(request)</code></td><td>Creates an independent task. Returns once the task is accepted, before it has finished.</td></tr>
           <tr><td><code>steer(run_id, text)</code></td><td>Adds instructions to one task. Unrelated constraints stay in place.</td></tr>
           <tr><td><code>answer(run_id, question_id, text)</code></td><td>Resolves that specific open question. Stale IDs are rejected.</td></tr>
-          <tr><td><code>continue(run_id, question_id)</code></td><td>Grants another $1. Only valid for the current budget question, and only when Austin has asked for it.</td></tr>
+          <tr><td><code>continue(run_id, question_id)</code></td><td>Grants another $1. Only valid for the current budget question, and only when the user has asked for it.</td></tr>
           <tr><td><code>stop(run_id)</code></td><td>Requests cancellation of that task only.</td></tr>
           <tr class="designed"><td><code>hold(task_id, question)</code></td><td>Parks a chat question until that task's result arrives. <span class="tag design">designed</span></td></tr>
         </table>
@@ -93,6 +93,11 @@
 <div class="card tight"><p class="keyline">About 5 seconds</p><p class="note">A typical short reply.</p></div>
 <div class="card tight"><p class="keyline">10 seconds at p95</p><p class="note">The slow end for short replies. Cold starts are measured separately.</p></div>
 </div></section>
+<details class="more"><summary>Task categories</summary>
+<p>Lookup, research, create, modify, communicate and monitor are optional descriptions for discovery and display. They don't set permissions, behavior or a required dispatch field.</p></details>
+<details class="more"><summary>Early model trials</summary>
+<p>These were development tests on October 25, 2026, with samples too small for percentiles. They don't measure Opus 5.5.</p>
+<ul class="pts"><li>Muse wrote good replies but once claimed a dispatch without making the tool call.</li><li>GPT-5.4 mini and Qwen3.6 made tool calls with no reply text, and the runner rejected them.</li><li>Requiring reply text before the tool call gave three successful Sonnet 4.6 dispatches in a row.</li><li>Sonnet 4.6 replies took 1.12–2.01 seconds, and message acceptance took 9–95 ms.</li></ul></details>
 <details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_2c00c5ce6cac8191b153218029cf445e">Outer loop</a> · <a href="https://chatgpt.com/space/page_74dc49e1d54c81918c1b01fd477cdb8b">Outer–inner contract</a> · <a href="https://chatgpt.com/space/page_cdb993135ff08191b1cbb33bdf95200b">Milestone 2 plan</a></p></details>
 </body>
 </html>

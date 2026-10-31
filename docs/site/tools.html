@@ -20,8 +20,8 @@
       <div class="node designed-node"><b>4. Check and run</b><small>The runtime checks permission when the call runs. Finding or loading a tool never grants access. <a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a></small></div>
     </div>
     <ul class="pts" style="margin-top:12px">
-      <li>The outer loop keeps its small set of coordination tools and only knows roughly what the inner loop can do.</li>
-      <li>A disconnected or missing tool is reported as unavailable, so a task can't mistake it for a tool the model just didn't pick.</li>
+      <li>The outer loop keeps its small set of coordination tools and a short summary of what the inner loop can do.</li>
+      <li>A disconnected or missing tool is reported as unavailable, so it can't be confused with a tool the model didn't select.</li>
       <li>Still open: the catalog format, search and ranking, schema caching, and the first connector.</li>
     </ul>
   </div>
@@ -34,7 +34,7 @@
 <div class="arrow">↓</div>
 <div class="branch">
 <div class="node designed-node"><b>Connected</b><small>The call runs and the answer names the account.</small></div>
-<div class="node designed-node"><b>Not connected</b><small>The task says so and asks Austin to connect it. It doesn't guess.</small></div>
+<div class="node designed-node"><b>Not connected</b><small>The task says so and asks the user to connect it.</small></div>
 </div></div></div></section>
 <section><h2>Rules that don't change</h2>
 <ul class="pts">

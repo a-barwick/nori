@@ -12,26 +12,26 @@
 <p class="lede">Today a task ends when the model stops calling tools. The plan is for the model to propose finishing, and for checks to decide.</p>
 <div class="card designed"><div class="flow">
 <div class="node designed-node"><b>The model calls <code>complete(answer, evidence, unmet)</code></b><small>A plain text answer no longer finishes a task.</small></div><div class="arrow">↓</div>
-<div class="node designed-node"><b>The records are checked</b><small>No unread steers. Every tool call has a result. Evidence points at real results. Claimed effects are confirmed.</small></div><div class="arrow">↓</div>
+<div class="node designed-node"><b>The records are checked</b><small>No unread steers. Every tool call has a result. Evidence references resolve to saved tool results. Claimed effects are confirmed.</small></div><div class="arrow">↓</div>
 <div class="node designed-node"><b>Jev checks the answer against the instructions</b><small>“Does this answer satisfy every part of the original request and every later instruction? Yes, partly, or no.” A yes needs at least 0.8 confidence.</small></div><div class="arrow">↓</div>
 <div class="node decide designed-node">What's the most the task tried to do?</div>
-<div class="branch"><div class="node designed-node"><b>Only reads</b><small>Correct and retry, up to twice. Then tell Austin what's missing.</small></div><div class="node designed-node"><b>Wrote or sent something</b><small>Ask Austin. Never repeat the action automatically.</small></div></div>
+<div class="branch"><div class="node designed-node"><b>Only reads</b><small>Correct and retry, up to twice. Then tell the user what's missing.</small></div><div class="node designed-node"><b>Wrote or sent something</b><small>Ask the user. Never repeat the action automatically.</small></div></div>
 </div></div>
 <section><h2>The decision table</h2>
-<p>The row comes from what the task actually attempted, read from its records. “Check the weather and add a picnic” counts as a write once it tries the calendar.</p>
+<p>The row comes from what the task attempted, read from its records. “Check the weather and add a picnic” counts as a write once it tries the calendar.</p>
 <div class="card"><table class="tall"><tr><th>Most it tried</th><th>Confident yes</th><th>Unsure yes</th><th>Partly, no, or failed checks</th></tr>
 <tr><td>Read only</td><td>Publish</td><td>Correct and retry</td><td>Correct and retry</td></tr>
-<tr><td>Reversible write</td><td>Publish</td><td>Ask Austin</td><td>Ask Austin</td></tr>
-<tr><td>Sensitive send or purchase</td><td>Publish</td><td>Ask Austin</td><td>Ask Austin</td></tr>
+<tr><td>Reversible write</td><td>Publish</td><td>Ask the user</td><td>Ask the user</td></tr>
+<tr><td>Sensitive send or purchase</td><td>Publish</td><td>Ask the user</td><td>Ask the user</td></tr>
 </table></div></section>
 <section><h2>What this catches</h2>
 <div class="card"><p><span class="say me">What's the weather in Phoenix?</span> <span class="say me">Actually, Tucson.</span></p>
 <p class="note">An answer about Phoenix can't be published, because the instructions changed while it was being written.</p></div>
 <div class="card"><p><span class="say me">Did you send it?</span></p>
 <p class="note">Nori answers from the receipt, or checks with the provider. A status question never sends anything again.</p></div>
-<ul class="pts"><li>Every check is logged so the 0.8 threshold can be tuned from real use.</li><li>The check covers completeness. It doesn't prove every fact in the answer is true.</li></ul>
+<ul class="pts"><li>Every check is logged so the 0.8 threshold can be tuned from the logged results.</li><li>The check covers completeness. It doesn't prove every fact in the answer is true.</li></ul>
 </section>
-<section><h2>What's true today</h2>
+<section><h2>What runs today</h2>
 <ul class="pts"><li>A response with no tool calls ends the task.</li><li>That answer still has to pass a revision check before it's published.</li><li>The full version is in milestone 4: <a href="https://linear.app/a-barwick/issue/AB-214">AB-214</a> <a href="https://linear.app/a-barwick/issue/AB-219">AB-219</a>.</li></ul></section>
 <details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_d13c42ea3c28819195803f7f280e5f65">Inner loop</a> · <a href="https://chatgpt.com/space/page_74dc49e1d54c81918c1b01fd477cdb8b">Outer–inner contract</a> · <a href="https://linear.app/a-barwick/issue/AB-152">AB-152</a> · <a href="https://linear.app/a-barwick/issue/AB-214">AB-214</a> · <a href="https://linear.app/a-barwick/issue/AB-219">AB-219</a></p></details>
 </body>

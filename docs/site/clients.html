@@ -11,12 +11,12 @@
 <h1>Clients</h1>
 <p class="lede">If two clients could disagree about something, the service owns it. A client only owns how that looks on its own screen.</p>
 <div class="card"><div class="flow">
-<div class="node outer"><b>Agent service</b><small>One copy. What was said, what's running, what was approved, what Nori knows.</small></div><div class="arrow">↓</div>
+<div class="node outer"><b>Agent service</b><small>One copy. What was said, what's running, what was approved, what's in memory.</small></div><div class="arrow">↓</div>
 <div class="node designed-node designed"><b>Shared client kit</b><span class="tag design">designed</span><small>One copy, used by every client. Caching, sending, retrying and rendering rules.</small></div><div class="arrow">↓</div>
 <div class="node"><b>Platform shell</b><small>One per platform. Layout, navigation, input and notifications. Today this is the Next.js web app.</small></div>
 </div></div>
 <section><h2>What a client never does</h2>
-<ul class="pts"><li>Build prompts or send context. It only sends Austin's own words and references.</li><li>Parse model output.</li><li>Assume a command has finished because it was accepted.</li><li>Talk to a model provider directly.</li></ul></section>
+<ul class="pts"><li>Build prompts or send context. It only sends the user's own words and references.</li><li>Parse model output.</li><li>Assume a command has finished because it was accepted.</li><li>Talk to a model provider directly.</li></ul></section>
 <section><h2>The API today</h2>
 <p>The web app sends commands and polls for snapshots: every 2 seconds while work is running, and every 30 seconds during long waits.</p>
 <div class="card"><table class="tall"><tr><th>Endpoint</th><th>What it does</th></tr>
@@ -39,7 +39,7 @@
 </div></div>
 <details class="more"><summary>Commands and message parts</summary>
 <table class="tall"><tr><th>Command</th><th>Effect</th></tr>
-<tr><td><code>message.send</code></td><td>Saves Austin's message and puts it in the inbox.</td></tr>
+<tr><td><code>message.send</code></td><td>Saves the user's message and puts it in the inbox.</td></tr>
 <tr><td><code>message.edit</code></td><td>Saves a new message that replaces the old one, treated as a correction.</td></tr>
 <tr><td><code>task.stop</code></td><td>Requests Stop. Skips classification.</td></tr>
 <tr><td><code>approval.decide</code></td><td>Records approve or decline for one exact operation.</td></tr>
@@ -53,6 +53,20 @@
 <ul class="pts"><li>One log and one stream per owner, since tasks and badges span threads.</li><li>Server-sent events with a long-poll fallback. WebSockets were rejected for now because commands already use POST.</li><li>Clients don't read Firestore directly, so its schema doesn't become the contract.</li><li>Task results land in the thread that started the task.</li></ul>
 </details>
 </section>
+<details class="more"><summary>Who owns what</summary>
+<table class="tall"><tr><th>Concern</th><th>Service</th><th>Client kit</th><th>Platform shell</th></tr>
+<tr><td>Messages</td><td>Source of truth, order, IDs</td><td>Cache, optimistic sends</td><td>Layout</td></tr>
+<tr><td>Prompts and context</td><td>Builds them</td><td>Never sees them</td><td>Never sees them</td></tr>
+<tr><td>Model output</td><td>Turns it into typed parts</td><td>Renders parts, with fallback text</td><td>Styling</td></tr>
+<tr><td>Tasks and Stop</td><td>Lifecycle and Stop states</td><td>Sends commands, mirrors state</td><td>The button</td></tr>
+<tr><td>Approvals</td><td>Bound to one operation</td><td>Sends the decision</td><td>Card and buttons</td></tr>
+<tr><td>External effects</td><td>Prepared through confirmed, with receipts</td><td>Shows the state</td><td>Presentation</td></tr>
+<tr><td>Memory and settings</td><td>Stores and enforces them</td><td>Edits with conflict detection</td><td>Editor and settings screens</td></tr>
+<tr><td>Notifications</td><td>Decides whether to interrupt</td><td>None</td><td>Push, badge, tab title</td></tr>
+<tr><td>Offline</td><td>Idempotent commands, replayable log</td><td>Outbox and catch-up</td><td>Offline indicator</td></tr>
+<tr><td>Drafts and open panels</td><td>None</td><td>None</td><td>Per device</td></tr></table></details>
+<details class="more"><summary>Full protocol reference</summary>
+<p>Resource fields, event types, error codes, limits and rollout phases are in <a href="https://github.com/a-barwick/nori/blob/main/docs/client-contract.md">docs/client-contract.md</a>. The service, kit and shell split is in <a href="https://github.com/a-barwick/nori/blob/main/docs/separation-of-concerns.md">docs/separation-of-concerns.md</a>. Everything beyond today's API is a proposal.</p></details>
 <details class="sources"><summary>Sources</summary><p><a href="https://chatgpt.com/space/page_efd8068da4fc8191a54ae575d8a1c57d">Separation of concerns</a> · <a href="https://chatgpt.com/space/page_593a06e74e988191975cfbb5c20e378a">Client contract</a> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a> · <a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
 </body>
 </html>
