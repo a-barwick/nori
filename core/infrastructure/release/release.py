@@ -224,8 +224,9 @@ def deploy_image(component, value):
 def warm_worker(build_id, workers, config, request_id, record):
     """One tracked request registers the SDK and returns only after its drain."""
     def registered(info):
-        types = {q.get("type") for q in info.get("taskQueuesInfos", []) if q.get("name") == poc.TASK_QUEUE}
-        return {"TASK_QUEUE_TYPE_WORKFLOW", "TASK_QUEUE_TYPE_ACTIVITY"}.issubset(types)
+        types = {str(q.get("type", "")).lower().removeprefix("task_queue_type_")
+                 for q in info.get("taskQueuesInfos", []) if q.get("name") == poc.TASK_QUEUE}
+        return {"workflow", "activity"}.issubset(types)
     info = poc.version_info(build_id, missing_ok=True) or {}
     if registered(info):
         return
