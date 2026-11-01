@@ -1,4 +1,6 @@
-# Nori native POC
+# Nori app infrastructure
+
+This directory was `poc/` until November 2026. Only the directory and script names changed. Existing resources keep their names: the `nori-poc` database, bucket and Artifact Registry repository, the service accounts, the state file `.../bot-111549/poc/terraform.tfstate`, and the GCS state prefix `nori/poc`.
 
 The Next.js web app runs on Cloud Run with native IAP. A Go container runs the durable conversation on Vertex AI Agent Runtime using GPT-6.1 Sol with low reasoning through the OpenAI platform API at standard tier and Jev intent hints. It saves history in Firestore and dispatches tasks to Temporal workers using GPT-6.1 Terra through OpenRouter Responses; screenshots stay in a private GCS bucket. Its computer tools use an official `gcloud compute start-iap-tunnel` connection to the retained Firecracker computer. The host exposes only port 8090 through IAP; the guest holds the persistent browser profile and `/workspace/tasks/<run-id>`.
 
@@ -8,13 +10,13 @@ the web image from `../web` and the runtime image from `core/` with
 
 ## Provision once
 
-Terraform here owns the new POC resources. The existing `nori-computer` network/subnet and original 20 GiB `bot-computer-data` disk are read as **data sources**. Their old foundation state remains their owner. Never import that disk into this state, format it, or run the older disposable-host lifecycle against this retained VM.
+Terraform here owns the app resources. The existing `nori-computer` network/subnet and original 20 GiB `bot-computer-data` disk are read as **data sources**. Their old foundation state remains their owner. Never import that disk into this state, format it, or run the older disposable-host lifecycle against this retained VM.
 
-Use the existing operator state at `/Users/austinbarwick/.local/state/nori/bot-111549/poc/terraform.tfstate`. `poc.py` reads this same file. Keep the external state owner-only (mode 600). The registry, bucket, and required APIs have already been provisioned there. Review a full saved plan before applying the remaining resources.
+Use the existing operator state at `/Users/austinbarwick/.local/state/nori/bot-111549/poc/terraform.tfstate`. `ops.py` reads this same file. Keep the external state owner-only (mode 600). The registry, bucket, and required APIs have already been provisioned there. Review a full saved plan before applying the remaining resources.
 
 ```sh
-terraform -chdir=infrastructure/poc/terraform init -backend-config=path=/Users/austinbarwick/.local/state/nori/bot-111549/poc/terraform.tfstate
-python3 infrastructure/poc/poc.py bootstrap-identities
+terraform -chdir=infrastructure/app/terraform init -backend-config=path=/Users/austinbarwick/.local/state/nori/bot-111549/poc/terraform.tfstate
+python3 infrastructure/app/ops.py bootstrap-identities
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/nori-computer-agent ./cmd/computer-agent
 shasum -a 256 /tmp/nori-computer-agent
 ```
@@ -25,7 +27,7 @@ Before the full apply, upload the Linux binary to `gs://bot-111549-nori-poc/rele
 
 Terraform uses native `container_spec` for Agent Runtime and `iap_enabled` for Cloud Run. It leaves separately configured owner-only invocation grants unchanged and sets both services' minimum instances to zero. The runtime uses the named `nori-poc` Firestore database. The application uses explicit `NORI_PROJECT_ID=bot-111549`, independent of the
 platform project; model selection uses `MODEL_LOCATION=global`
-so the runtime region does not override the Vertex model endpoint. The web receives the native Agent Runtime invoke root ending in `/api`; its application routes append `/api/session`, `/api/run`, `/api/cancel`, and `/api/artifact`.
+so the runtime region does not override the Vertex model endpoint. The web receives the native Agent Runtime invoke root ending in `/api`; its application routes append `/api/<operation>` for each operation in `web/src/lib/runtime/methods.ts`.
 
 The native IAP gate uses a custom OAuth client for Austin's consumer Gmail account. Configure that through project-level native IAP settings at
 `https://iap.googleapis.com/v1/projects/8273801370:iapSettings`, using the monorepo-root `.env`; credentials must stay out of Terraform, VM metadata, and images. The sole owner is `austinbarwickdavis@gmail.com`. Initial access uses Cloud Run's `run.app` URL; `noribot.chat` mapping is optional later.
@@ -35,9 +37,9 @@ The native IAP gate uses a custom OAuth client for Austin's consumer Gmail accou
 Use `make deploy` for a full release ([Delivery](../README.md#delivery)). After the first full apply, these commands use native service APIs and preserve Terraform ownership of the infrastructure:
 
 ```sh
-python3 infrastructure/poc/poc.py publish-computer /tmp/nori-computer-agent
-python3 infrastructure/poc/poc.py deploy-runtime IMAGE_URI
-python3 infrastructure/poc/poc.py deploy-web IMAGE_URI
+python3 infrastructure/app/ops.py publish-computer /tmp/nori-computer-agent
+python3 infrastructure/app/ops.py deploy-runtime IMAGE_URI
+python3 infrastructure/app/ops.py deploy-web IMAGE_URI
 ```
 
 `deploy-runtime` updates the image and enables Temporal execution with the production namespace, deployment, task queue, address, and `TEMPORAL_API_KEY_SECRET_VERSION=projects/bot-111549/secrets/nori-temporal-api-key/versions/latest`. It injects only the Temporal state's `production_worker_services` and `worker_wake_queue` outputs; isolated candidate routes cannot enter the production runtime through this command. It requires a configured production request-worker release. It also sets the selected outer model (`gpt-6.1-sol`) and durable conversation queue/caller. It binds `OPENAI_API_KEY` to the selected environment's OpenAI secret; other runtime environment entries and native secret references are preserved. For a full Terraform plan, supply the same reviewed outputs as `worker_services` and `worker_wake_queue` together. Prepare workers independently through the [Temporal release procedure](../temporal/README.md).
@@ -47,7 +49,7 @@ For Milestone 2, supply the existing native invoke root as `runtime_invoke_root`
 The conversation service processes accepted messages through authenticated Cloud Tasks requests, so web cancellation or a scaled-down instance does not lose the inbox. The queue allows one concurrent dispatch and retries delivery; Firestore owns ordering, leases, deduplication, and publication. Web and Agent Runtime remain min zero / max one. Task workers use the selected `openai/gpt-6.1-terra` through OpenRouter Responses; model substitutions require Austin's explicit approval.
 
 The computer release installs on its next stopped-host start. The host uses Nori
-paths and services. Its POC helper keeps the existing `bot-guest-data` attachment,
+paths and services. Its helper keeps the existing `bot-guest-data` attachment,
 `BOT_GUEST_DATA` filesystem label, and original READY marker; these identify the
 retained image and are not renamed. Guest user `bot`, its browser profile,
 `bot-browser.service`, and the single `bot-computer-agent.service` remain in place. Startup checks the object SHA, mounts the existing guest offline with `nodev,nosuid,noexec`, checks every destination parent for symlinks, and installs the binary and a systemd service running as `bot`. It executes no guest programs as host root. Guest/browser data is preserved. No application source or cloud credentials enter the guest.
@@ -57,9 +59,9 @@ Terraform ignores independent image changes, computer release metadata, and nati
 ## Pause and idle stop
 
 ```sh
-python3 infrastructure/poc/poc.py status
-python3 infrastructure/poc/poc.py pause
-python3 infrastructure/poc/poc.py unpause
+python3 infrastructure/app/ops.py status
+python3 infrastructure/app/ops.py pause
+python3 infrastructure/app/ops.py unpause
 ```
 
 Tasks normally start without an operator resume ceremony or execution-session
@@ -101,7 +103,7 @@ the host for reconciliation. Idle stop is therefore not a hard spend cap during
 guest or flush failures; explicit operator pause/reconciliation is required.
 Inspect `journalctl -u nori-computer-proxy` before retrying those failures.
 
-For the one-time session-removal migration, run `poc.py clear-deadline` while
+For the one-time session-removal migration, run `ops.py clear-deadline` while
 paused to clear the old VM schedule in place. Google provider 8.8.1 would replace
 the retained VM if Terraform removed that field, so native scheduling owns this
 migration; unpause verifies the schedule is absent. Keep retained WCI compute
@@ -115,7 +117,7 @@ access. The computer service account only reads release objects.
 
 ## Spend and retained costs
 
-Native monthly service spend caps already exist on billing account `010FFA-6C77F1-18FF6D`: Cloud Run $10 (`ec91d69c-af6f-4582-8a57-fc5d74df3922`) and Agent Platform $20 (`c288b003-c839-4ef0-9327-7ae10d3e762b`). The existing $50 alert budget remains. Do not create duplicates. `python3 infrastructure/poc/poc.py spend-caps` reads the existing budgets through the native Billing Budgets REST API; this provider version does not model the spend-cap field.
+Native monthly service spend caps already exist on billing account `010FFA-6C77F1-18FF6D`: Cloud Run $10 (`ec91d69c-af6f-4582-8a57-fc5d74df3922`) and Agent Platform $20 (`c288b003-c839-4ef0-9327-7ae10d3e762b`). The existing $50 alert budget remains. Do not create duplicates. `python3 infrastructure/app/ops.py spend-caps` reads the existing budgets through the native Billing Budgets REST API; this provider version does not model the spend-cap field.
 
 Pause retains the VM boot disk, original guest disk, GCS objects, images, and Firestore data, so their storage charges continue. Check the project's paid-service inventory by day end. New request-worker services scale on authenticated Cloud Tasks requests; retained worker pools stay at zero without scalers. The computer starts only for a tool. No scheduled starts or automatic VM restart are provisioned.
 

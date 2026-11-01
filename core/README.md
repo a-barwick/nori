@@ -108,7 +108,7 @@ the queue/IAM Terraform changes, the existing Runtime invoke root supplied as
 an approved credential path. Native Runtime status/deadline forwarding and
 Cloud Tasks OAuth delivery still need cloud verification. Existing deployment,
 worker registration, pause/resume, and retained-data operations are covered by
-[POC operations](infrastructure/poc/README.md) and
+[app operations](infrastructure/app/README.md) and
 [Temporal operations](infrastructure/temporal/README.md).
 
 ## API protocol
@@ -197,7 +197,7 @@ the linked operations guides for the exact current lifecycle and its limits.
 ## Historical computer provisioning reference
 
 These notes describe the original disposable-host trial and retained-disk
-foundation. The current retained POC computer uses the [POC lifecycle](infrastructure/poc/README.md).
+foundation. The current retained computer uses the [app lifecycle](infrastructure/app/README.md).
 Do not apply the old disposable-host lifecycle against that VM.
 
 ### Boot smoke

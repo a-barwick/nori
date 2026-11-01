@@ -35,6 +35,7 @@ TF = ROOT / "terraform"
 STATE_ROOT = Path.home() / ".local/state/nori/bot-111549"
 if ENVIRONMENT == "sandbox":
     STATE_ROOT /= "sandbox"
+# The state path and the GCS prefix (nori/poc) keep their original names. Renaming them would orphan existing state.
 STATE = STATE_ROOT / "poc/terraform.tfstate"
 TEMPORAL_TF = ROOT.parent / "temporal/terraform"
 TEMPORAL_STATE = STATE.parent.parent / "temporal/terraform.tfstate"

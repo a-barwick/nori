@@ -98,7 +98,7 @@ keeps the owner-protected proxy and runtime IAM. `make core` starts the hosted
 entrypoint locally and additionally requires Cloud Tasks configuration; see
 [core setup](core/README.md). Hosted deployment uses the configured conversation
 queue and scoped caller IAM, with OpenRouter/Jev credentials supplied through
-native secret references. Follow [POC operations](core/infrastructure/poc/README.md)
+native secret references. Follow [app operations](core/infrastructure/app/README.md)
 for the operator deployment procedure.
 
 ## Durable tasks
@@ -109,7 +109,7 @@ computer operations remain individually bounded. Uncertain tool work is never
 automatically replayed. Each inner task starts with a $1 model budget; an exact
 `continue` reply while waiting at that budget grants another $1. Outer
 conversation and Jev usage are accounted separately. See [core](core/README.md)
-and [operator lifecycle](core/infrastructure/poc/README.md) for the protocol and
+and [operator lifecycle](core/infrastructure/app/README.md) for the protocol and
 capacity controls.
 
 Cloud lifecycle changes in source require separate deployment. Local validation

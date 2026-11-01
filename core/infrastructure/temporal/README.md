@@ -32,7 +32,7 @@ Temporal deployment/task-queue/wake-queue group. `NORI_WORKER_WAKE_QUEUE` is tha
 group's full native queue path. Services use the existing runtime identity and
 `NORI_WAKE_SERVICE_ACCOUNT`; only queue-scoped enqueue and service-scoped invoker
 grants are added. The caller's existing `actAs` permission remains owned by the
-POC state. Hosted Temporal TLS and Secret Manager authentication are unchanged.
+app state. Hosted Temporal TLS and Secret Manager authentication are unchanged.
 
 The predictable service URL uses Cloud Run's documented
 [`SERVICE_NAME-PROJECT_NUMBER.REGION.run.app` format](https://docs.cloud.google.com/run/docs/triggering/https-request#deterministic_url).
@@ -42,8 +42,8 @@ root URL is configured as an accepted audience, avoiding a Terraform cycle.
 From `core/`, use the explicit cost-control switch:
 
 ```sh
-python3 infrastructure/poc/poc.py pause
-python3 infrastructure/poc/poc.py unpause
+python3 infrastructure/app/ops.py pause
+python3 infrastructure/app/ops.py unpause
 ```
 
 Pause first fences dispatch on all retained worker wake queues, then closes
@@ -68,7 +68,7 @@ The next computer tool starts the retained VM on demand.
 The helper reads `TEMPORAL_API_KEY` from the existing root `.env` without logging
 it. `NORI_ENV_FILE` selects that existing file from a worktree. Credentials are
 never copied into the worktree or Terraform. The retained VM must have its old
-termination schedule cleared in place with `poc.py clear-deadline` while stopped;
+termination schedule cleared in place with `ops.py clear-deadline` while stopped;
 unpause verifies that migration remains complete.
 
 ## Immutable releases
@@ -121,7 +121,7 @@ the candidate database; native outer delivery is untested in this demonstration.
 `candidate_firestore_database` and `candidate_event_queue` outputs identify these
 resources for candidate-only cleanup. Fence candidate queues, close only the
 candidate database's control, verify request drain, and restore the retained
-computer's paused/stopped state. Do not use the global POC pause helper for an
+computer's paused/stopped state. Do not use the global app pause helper for an
 isolated candidate: it deliberately writes production control.
 
 Preparation requires an OCI-capable Docker Buildx builder; select an existing
