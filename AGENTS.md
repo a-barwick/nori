@@ -19,7 +19,9 @@ Ordinary edits do not require a monitor. Monitoring does not authorize additiona
 
 ## Documentation
 
-Nori's documentation lives in `docs/site/`. Check it first when you need to understand the system, and put new or updated documentation there. Read `docs/site/AGENTS.md` before changing a page, and run the site with `docs/serve.sh`. Use the `write-docs`, `review-docs` and `plain-writing` skills in `.agents/skills/`.
+Nori's documentation lives in `docs/site/`. Check it first when you need to understand the system, and put new or updated documentation there. Run the site with `docs/serve.sh`.
+
+Before any change under `docs/site/`, however small, load the `write-docs`, `review-docs` and `plain-writing` skills in `.agents/skills/` and follow them. Do this before the first edit, and don't merge or publish a docs change until the `review-docs` steps are done.
 
 ## Marketing film
 
