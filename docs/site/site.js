@@ -282,7 +282,7 @@ if (document.querySelector('.trace')) {
 const road = document.getElementById('roadGrid');
 if (road && window.ROAD) {
   road.innerHTML = window.ROAD.map(([n, t, d, tot, note]) =>
-    `<div class="mile${n === 3 ? ' now' : ''}">
+    `<div class="mile${n === 4 ? ' now' : ''}">
        <span class="mn">M${n}</span><span class="mt">${t}</span>
        <span class="mp">${note}</span>
        <div class="bar"><i style="width:${Math.round(d / tot * 100)}%"></i></div>
