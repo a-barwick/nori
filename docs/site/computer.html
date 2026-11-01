@@ -48,44 +48,28 @@
     <div class="card tight"><p class="keyline">Jobs belong to a task</p><p class="note">The guest runs each <a href="tools.html">long shell job</a> in its own process group and saves its state on disk. A job running during a restart is reported as lost.</p></div>
   </div>
 <section><h2>Reaching the computer</h2>
-<p>Callers ask a provider for a client. Only the provider's adapter knows what infrastructure runs the computer.</p>
+<p>Callers ask the computer provider for a client. Only its adapter knows what infrastructure runs the computer.</p>
 <div class="card"><div class="flow">
-<div class="node inner"><b>Task activities</b><small>Open runs a tool. Attach cancels work and closes a task's browser tab.</small></div><div class="arrow">↓<span class="lbl">Open or Attach with a run ID</span></div>
-<div class="branch3">
-<div class="node computer"><b>GCE adapter</b><small>Starts the host through the Compute API. Connects over an IAP tunnel.</small></div>
-<div class="node computer"><b>Local adapter</b><small>Uses a computer-agent on loopback when <code>NORI_LOCAL_COMPUTER_URL</code> is set.</small></div>
-<div class="node designed-node designed"><b>AWS adapter</b> <span class="tag design">designed</span><small>Not built.</small></div>
+<div class="node inner"><b>Task activities</b><small>Call Open or Attach with a run ID.</small></div><div class="arrow">↓</div>
+<div class="node decide inner">Is <code>NORI_LOCAL_COMPUTER_URL</code> set?</div>
+<div class="branch">
+<div class="node inner"><b>Set: local adapter</b><small>Connects to a computer-agent on a loopback address.</small></div>
+<div class="node inner"><b>Unset: GCE adapter</b><small>Starts the host through the Compute API. Connects over an IAP tunnel.</small></div>
 </div><div class="arrow">↓<span class="lbl">base URL, HTTP client, close hook</span></div>
-<div class="node computer"><b>computer.Client</b><small>The guest RPC, shared by every adapter.</small></div>
+<div class="node computer"><b>Guest RPC on the computer</b><small>The same calls whichever adapter connected.</small></div>
 </div></div>
-<div class="card"><table><tr><th>Call</th><th>Starts the computer</th><th>If the computer is stopped</th></tr>
-<tr><td>Open</td><td>Yes, after any stop in progress finishes</td><td>Starts it and waits for the guest health check, within 180 seconds in all</td></tr>
-<tr><td>Attach</td><td>Never</td><td>Returns <code>ErrStopped</code> once the host has fully stopped</td></tr></table></div>
+<div class="card"><table class="tall"><tr><th>Call</th><th>Used for</th><th>If the computer is stopped</th></tr>
+<tr><td>Open</td><td>Starting a job and one-shot tools such as shell and browser calls</td><td>Starts it after any stop in progress finishes, and waits for the guest health check, within 180 seconds in all</td></tr>
+<tr><td>Attach</td><td>Job status, wait and stop, cancelling work, and closing a task's browser tab</td><td>Never starts it. Returns <code>ErrStopped</code> once the host has fully stopped</td></tr></table></div>
 <p>Callers test for <code>ErrStopped</code> and <code>ErrDraining</code> on every adapter. An adapter is checked on its first connection, so a process that never uses the computer needs no computer settings.</p>
 </section>
-<details class="more"><summary>Adapter calls, GCP-specific files and an AWS adapter</summary>
-<div class="designed"><h3>An AWS adapter <span class="tag design">designed</span></h3>
-<p>No AWS adapter exists and no instance type has been tried. It would need to supply the following.</p>
-<div class="card"><table class="tall"><tr><th>Requirement</th><th>What the adapter supplies</th></tr>
-<tr><td>States</td><td>A mapping from EC2 instance states (pending, running, stopping, stopped, shutting-down, terminated) onto the four states below. The last two mean the instance is gone, so they return an error.</td></tr>
-<tr><td>Stop</td><td>A power-off from inside the host must leave the instance stopped, not deleted. The host proxy already requests that stop after 15 idle minutes.</td></tr>
-<tr><td>Reachability</td><td>A private path from the worker to port 8090 on the host. The guest RPC has no token, so this path is the only access control.</td></tr>
-<tr><td>KVM</td><td>A readable and writable <code>/dev/kvm</code> on the host. The host scripts load <code>kvm_intel</code> and install x86_64 builds, so the host must be Intel x86_64. Each instance type has to be checked for KVM before use.</td></tr>
-<tr><td>Disk</td><td>A workspace disk that outlives the instance and attaches to its replacement.</td></tr>
-<tr><td>Wiring</td><td>A config type and one more branch in <code>platform.Computer()</code>.</td></tr></table></div>
-</div>
-<h3>Adapter calls</h3>
-<p>An adapter with a power state implements three calls. A shared loop polls them once a second, reports Stopped only after the host has finished stopping, and never sends a start during Stopping.</p>
-<div class="card"><table class="tall"><tr><th>Call</th><th>The loop needs</th><th>GCE today</th></tr>
+<details class="more"><summary>Adapter calls</summary>
+<p>An adapter with a power state implements three calls. A shared loop polls State once a second, reports Stopped only after the host has finished stopping, and never sends a start during Stopping.</p>
+<div class="card"><table class="tall"><tr><th>Call</th><th>The loop needs</th><th>GCE adapter</th></tr>
 <tr><td>State</td><td>Stopped, Stopping, Starting or Running. Any other state is an error that ends the attempt.</td><td>Instance status: TERMINATED, STOPPING, STAGING or PROVISIONING, and RUNNING. Statuses such as SUSPENDED end the attempt.</td></tr>
 <tr><td>Start</td><td>Power on a stopped host. A start another caller already issued is not an error.</td><td>A POST to the instance start URL. HTTP 409 counts as already started.</td></tr>
 <tr><td>Dial</td><td>A base URL, an HTTP client and a close hook for the guest RPC, and optionally a channel that closes when the transport dies.</td><td><code>gcloud compute start-iap-tunnel</code> on a free loopback port. Closing the client kills the process.</td></tr></table></div>
-<div class="card"><table class="tall"><tr><th>Files</th><th>GCP dependency</th></tr>
-<tr><td><code>persistent-host.sh</code>, <code>repair-udev.sh</code></td><td>Read settings from the GCE metadata server, find the retained disk at <code>/dev/disk/by-id/google-nori-guest-data</code>, and allow SSH only from IAP's address range.</td></tr>
-<tr><td><code>vm-control.sh</code></td><td>Mounts the retained disk by the same GCE device path.</td></tr>
-<tr><td><code>computer.sh</code>, <code>run.sh</code></td><td>Run <code>gcloud compute</code> commands and reach the host over IAP. They hard-code the project, zone and data disk.</td></tr>
-<tr><td><code>terraform/</code></td><td>A <code>google_compute_instance</code> with nested virtualization, a minimum CPU platform and a shutdown script, plus the GCE disk, network and firewall.</td></tr></table></div>
-<p>The Firecracker install, the tap network and egress rules in <code>persistent-host.sh</code>, and <code>build-guest.sh</code> use no GCP service, but they have only run on GCE. The production host script, <code>core/infrastructure/app/computer-startup.sh</code>, also reads the metadata server and downloads the <code>computer-agent</code> release from Cloud Storage.</p></details>
+<p>The host setup scripts read Compute Engine's metadata server and disk paths, and the Terraform creates a Compute Engine instance.</p></details>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/computer/</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/infrastructure/microvm/</code> · <code>core/infrastructure/app/computer-startup.sh</code></p></details>
 </body>
 </html>

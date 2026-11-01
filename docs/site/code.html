@@ -13,8 +13,8 @@
 <p>Go code is under <span class="mono">core/</span> and the web client is under <span class="mono">web/src/</span>.
   Dependencies run in one direction: entrypoints build an <span class="mono">app</span>, whose <span class="mono">api</span> routes call
   <span class="mono">conversation</span>, which uses <span class="mono">state</span> and <span class="mono">dispatch</span>.</p>
-<p>Code reaches infrastructure through small contracts: <span class="mono">wake</span> sends wakes, <span class="mono">dispatch</span> talks to the
-  task engine, and <span class="mono">secret</span> reads credentials. Cloud Tasks, Temporal and Secret Manager are the adapters today.
+<p>Code reaches infrastructure through small contracts: <span class="mono">wake</span> sends wakes, <span class="mono">dispatch</span> delivers saved commands to
+  Temporal through an orchestration contract, and <span class="mono">secret</span> reads credentials. Cloud Tasks, Temporal and Secret Manager are the adapters today.
   Only <span class="mono">task</span> and the worker code import Temporal.</p>
   <div class="card">
     <table class="map">
@@ -22,8 +22,9 @@
           <tr><th colspan="2">Agent service <span class="mono">core/</span></th></tr>
           <tr><td>HTTP endpoints and input validation</td><td><span class="mono">core/internal/api/</span></td></tr>
           <tr><td>How a turn runs: leases, restarts, checkpoints</td><td><span class="mono">core/internal/conversation/runner.go, call.go</span></td></tr>
-          <tr><td>The outer model call and its tools</td><td><span class="mono">core/internal/conversation/model.go</span></td></tr>
-          <tr><td><a href="classification.html">Jev classification</a></td><td><span class="mono">core/internal/conversation/classifier.go</span></td></tr>
+          <tr><td>The outer model contract and its tools</td><td><span class="mono">core/internal/conversation/model.go</span></td></tr>
+          <tr><td>The OpenAI adapter for the outer model</td><td><span class="mono">core/internal/conversation/openai.go</span></td></tr>
+          <tr><td><a href="classification.html">Jev classification</a>: the contract, then the Jev adapter</td><td><span class="mono">core/internal/conversation/classifier.go, jev.go</span></td></tr>
           <tr><td>Outer command validation</td><td><span class="mono">core/internal/conversation/commands.go</span></td></tr>
           <tr><td>Task and conversation records, store contracts and write rules</td><td><span class="mono">core/internal/state/</span></td></tr>
           <tr><td>Firestore transactions for those records</td><td><span class="mono">core/internal/state/firestore/</span></td></tr>
@@ -31,7 +32,7 @@
           <tr><td><a href="budgets.html">Development spend</a> rules and ledger</td><td><span class="mono">core/internal/spend/, spend/firestore/</span></td></tr>
           <tr><td>Which storage a process opens</td><td><span class="mono">core/internal/platform/</span></td></tr>
           <tr><td>The task workflow and activities</td><td><span class="mono">core/internal/task/workflow.go, activities.go</span></td></tr>
-          <tr><td>Delivery from Firestore to the task engine: one reconciliation pass shared by the API, the worker and <code>nori-deliver</code></td><td><span class="mono">core/internal/dispatch/dispatcher.go</span></td></tr>
+          <tr><td>Delivery from Firestore to Temporal through the orchestration contract. The relay, called the dispatcher in code, runs one reconciliation pass shared by the API, the worker and <code>nori-deliver</code></td><td><span class="mono">core/internal/dispatch/dispatcher.go</span></td></tr>
           <tr><td>The Temporal side of that contract</td><td><span class="mono">core/internal/task/client.go, worker_wake.go, resume.go</span></td></tr>
           <tr><td>Recovery of closed tasks</td><td><span class="mono">core/internal/task/recovery.go</span></td></tr>
           <tr><td>The inner model step and task tools</td><td><span class="mono">core/internal/agent/steps.go, agent.go</span></td></tr>
@@ -40,12 +41,13 @@
           <tr><td>Search, calendar, screenshot reading and the catalog</td><td><span class="mono">core/internal/agent/search.go, calendar.go, inspect.go, catalog.go</span></td></tr>
           <tr><td>Waiting on and stopping long jobs</td><td><span class="mono">core/internal/task/jobs.go</span></td></tr>
           <tr><td>Connecting the calendar</td><td><span class="mono">core/cmd/nori-connect-calendar</span></td></tr>
-          <tr><td>Calling the computer</td><td><span class="mono">core/internal/computer/computer.go</span></td></tr>
+          <tr><td>Calling the computer: the guest client, the computer provider and its connection loop</td><td><span class="mono">core/internal/computer/computer.go, provider.go, managed.go</span></td></tr>
+          <tr><td>Computer provider adapters for Compute Engine and for a local computer</td><td><span class="mono">core/internal/computer/gce/, local/</span></td></tr>
           <tr><td>Code that runs on the computer</td><td><span class="mono">core/internal/computerd/</span></td></tr>
           <tr><td>Wakes for the API and workers, and their Cloud Tasks adapter</td><td><span class="mono">core/internal/wake/, wake/cloudtasks/</span></td></tr>
           <tr><td>Worker lifetime: request-bound slices, the Temporal worker and registration</td><td><span class="mono">core/internal/workerservice/, taskworker/, cmd/nori-worker/</span></td></tr>
           <tr><td>Traces and error reporting (<a href="observability.html">Observability</a>)</td><td><span class="mono">core/internal/observability/</span></td></tr>
-          <tr><td>Configuration, and how each process is assembled</td><td><span class="mono">core/internal/env/, platform/, app/</span></td></tr>
+          <tr><td>Configuration, how each process is assembled, and its HTTP server</td><td><span class="mono">core/internal/env/, platform/, app/, httpserver/</span></td></tr>
           <tr><td>Credentials kept in Secret Manager</td><td><span class="mono">core/internal/secret/</span></td></tr>
           <tr><td>Infrastructure and releases</td><td><span class="mono">core/infrastructure/</span></td></tr>
           <tr><td>Live end-to-end tests</td><td><span class="mono">core/e2e/</span></td></tr>
@@ -58,12 +60,13 @@
     </table>
   </div>
   <div class="card">
-    <h3 style="margin-top:0">The five binaries <span class="mono" style="font-size:11px;color:#8a8268">core/cmd/</span></h3>
+    <h3 style="margin-top:0">The six binaries <span class="mono" style="font-size:11px;color:#8a8268">core/cmd/</span></h3>
     <ul class="pts" style="margin-bottom:0">
       <li><code>nori</code> is the hosted API. It does its processing inside a request, and Cloud Tasks handles retries.</li>
       <li><code>nori-local</code> is the development API. It uses the same handler and adds a loop that runs every 2 seconds.</li>
       <li><code>nori-worker</code> is the Temporal worker that runs the inner loop.</li>
       <li><code>computer-agent</code> runs tools inside the Firecracker guest, or as a host proxy that forwards to the guest and stops the host when idle.</li>
+      <li><code>nori-connect-calendar</code> is a one-time command that connects the Google calendar and saves its token.</li>
       <li><code>nori-deliver</code> is a repair tool. It redelivers pending commands to Temporal and repairs the records of finished tasks.</li>
     </ul>
   </div>

@@ -20,6 +20,7 @@
 </div></div>
 <div class="card"><table class="tall"><tr><th>Operation</th><th>Client use</th></tr>
 <tr><td><code>session</code></td><td>Loads a snapshot, or an older page with <code>before</code>.</td></tr>
+<tr><td><code>status</code></td><td>Checks whether the snapshot changed.</td></tr>
 <tr><td><code>turn</code></td><td>Sends a message with a client-made UUID.</td></tr>
 <tr><td><code>command</code></td><td>Sends <code>steer</code>, <code>answer</code>, <code>continue</code> or <code>stop</code> for one task.</td></tr>
 <tr><td><code>artifact</code></td><td>Fetches a screenshot as PNG bytes.</td></tr>
@@ -46,14 +47,14 @@
 </section>
 <section><h2>Polling</h2>
 <div class="card"><table class="tall"><tr><th>Situation</th><th>Client behavior</th></tr>
-<tr><td>A turn, unpaused task, Stop or command is in progress</td><td>Calls <code>POST /api/status</code> after 1 second, then every 2. Fetches a snapshot when <code>version</code> changes or the call fails.</td></tr>
+<tr><td>A turn, unpaused task, Stop or command is in progress</td><td>Calls <code>POST /api/status</code> after 1 second, then every 2. Fetches a snapshot on the first call, when <code>version</code> changes, when a call fails, and once when <code>busy</code> turns false. If <code>status</code> is missing or fails 3 times in a row, it polls snapshots instead.</td></tr>
 <tr><td>Nothing is in progress</td><td>Doesn't poll.</td></tr>
 <tr><td>The tab is hidden</td><td>Stops polling, then fetches once when the tab is visible again.</td></tr>
 <tr><td>The browser comes back online</td><td>Fetches once.</td></tr>
 <tr><td>A network error or a 429, 502, 503 or 504</td><td>Retries up to 3 times, after 2, 4 and 8 seconds.</td></tr>
 <tr><td>Those retries fail, or another error returns</td><td>Stops polling and shows the error, with a link to refresh.</td></tr>
 </table></div>
-<p>While the client is idle with the tab open, a new message from Nori waits for a refresh. Refreshing or returning to the tab fetches a snapshot.</p>
+<p>While the client is idle, a new message from Nori waits until the next refresh.</p>
 </section>
 <details class="more"><summary>Merging, sign-in, telemetry, components and builds</summary>
 <h3>How snapshots merge</h3>
@@ -76,7 +77,6 @@
 <li>The layout writes public Sentry settings to <code>data-nori-observability</code> at request time, so one image can move between environments.</li>
 <li><code>useRuntime</code> records the time from submit to reply as <code>nori.submit_to_reply</code>, with a 15-minute timeout, and sends trace headers on <code>turn</code>.</li>
 <li>Filters in <code>lib/observability/privacy.ts</code> run before events, spans, logs and metrics are sent. The <code>sentry-tunnel</code> route checks the owner and strips request headers before forwarding.</li>
-<li><a href="observability.html">Observability</a> covers the full trace and where each signal goes.</li>
 </ul>
 <h3>Components</h3>
 <div class="card"><table class="tall"><tr><th>File in <code>web/src/</code></th><th>Job</th></tr>
@@ -91,7 +91,6 @@
 <tr><td><code>components/runtime/DocumentViewer.tsx</code></td><td>Reading view and Download.</td></tr>
 <tr><td><code>components/dev/DebugBlock.tsx</code></td><td>Saved outer attempts, usage, cost and task steps, shown by the debug toggle.</td></tr>
 <tr><td><code>components/mark/NoriMark.tsx</code></td><td>The mark, plus <code>Medallion</code>, which gives it a fixed box.</td></tr>
-<tr><td><code>components/ui/primitives.tsx</code></td><td><code>Button</code>, <code>IconButton</code>, <code>SectionHeader</code>.</td></tr>
 </table></div>
 <h3>Run and build</h3>
 <div class="card"><table class="tall"><tr><th>Command, from the repo root</th><th>What it does</th></tr>
