@@ -63,7 +63,11 @@ func recordReplies(ctx context.Context, t state.ConversationTurn, text string) {
 				if t.Attempt.Status == "error" || text != t.Attempt.Text {
 					status = "failed"
 				}
-				_, span := conversationTracer.Start(ctx, "conversation.hold.reply", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.hold.id", hold.ID), attribute.String("nori.task.id", hold.TaskID), attribute.String("nori.hold.status", status)))
+				_, span := conversationTracer.Start(ctx, "conversation.hold.reply", trace.WithAttributes(
+					attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),
+					attribute.String("nori.hold.id", hold.ID), attribute.String("nori.task.id", hold.TaskID),
+					attribute.String("nori.hold.status", status),
+				))
 				if status == "failed" {
 					span.SetStatus(codes.Error, "held reply failed")
 				}

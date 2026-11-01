@@ -556,7 +556,6 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
           NORI_WORKER_WAKE_QUEUE          = var.worker_wake_queue
           NORI_EXECUTION_MODE             = "temporal"
           NORI_AGENT_MODEL                = var.outer_model
-          NORI_AGENT_BASE_URL             = "https://api.openai.com/v1"
           NORI_WAKE_QUEUE                 = google_cloud_tasks_queue.conversation.id
           NORI_WAKE_SERVICE_ACCOUNT       = google_service_account.conversation_wake.email
           NORI_RUNTIME_URL                = var.runtime_invoke_root
