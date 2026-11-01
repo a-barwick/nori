@@ -41,8 +41,8 @@
       </div>
       <div class="arrow">↓</div>
       <div class="branch3">
-        <div class="node computer"><b>Tool activity · shell</b><small>Up to 45s in <code>/workspace</code>, capped by cgroups. Admission is recorded first (<code>operations/{id}</code>).</small></div>
-        <div class="node computer"><b>Tool activity · browser</b><small><code>browser_navigate</code> returns the title and visible text. <code>browser_screenshot</code> saves a PNG artifact and gives the model a reference to it. The model doesn't see the image.</small></div>
+        <div class="node computer"><b>Tool activity · computer</b><small><code>shell</code> runs for up to 45s, and <code>job_start</code> starts a background job. Admission is recorded first (<code>operations/{id}</code>). <code>browser_screenshot</code> saves a PNG artifact and returns a reference to it.</small></div>
+        <div class="node inner"><b>Tool activity · worker</b><small><code>web_search</code>, <code>calendar_read</code> and <code>screenshot_inspect</code> run on the worker with the same operation records. See <a href="tools.html">Tools</a>.</small></div>
         <div class="node"><b>Skipped calls</b><small>If the revision changes mid-batch, calls that ran keep their results and the rest get explicit <code>skipped</code> results. Every call always has a paired result.</small></div>
       </div>
       <div class="loopback">↺ results appended → back to Reconcile</div>
@@ -59,8 +59,10 @@
         <tr><td><code>Project</code></td><td>Progress + waiting question onto the run record · quick</td></tr>
         <tr><td><code>ModelRef</code></td><td>One inner model call using saved history · 240s, heartbeat, no retry</td></tr>
         <tr><td><code>Tool</code></td><td>Admit operation, run it, record step trace · 240s</td></tr>
+        <tr><td><code>JobWaitRef</code></td><td>Poll one job for up to 200s, with no model calls · 240s, heartbeat, no retry</td></tr>
         <tr><td><code>Spend</code></td><td>Project spent/budget to Firestore (max-only) · 3 retries</td></tr>
         <tr><td><code>Stop</code></td><td>Cancel guest ops, confirm TERMINATED · 200s</td></tr>
+        <tr><td><code>StopJobs</code></td><td>End the task's running jobs at terminal cleanup · 200s</td></tr>
         <tr><td><code>Publish</code></td><td>Terminal write + result message, revision-fenced · quick</td></tr>
       </table>
       <ul class="pts note"><li>The worker uses pinned deployment versions (<code>TEMPORAL_BUILD_ID</code> per release), and parked tasks resume on a compatible version.</li><li>It runs up to 4 activities at a time and exits cleanly when the project pauses.</li><li>In request-driven mode, each Cloud Tasks wake runs a worker for one bounded slice of up to 240s and hands remaining work to the next wake.</li></ul>

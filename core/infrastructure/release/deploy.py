@@ -32,6 +32,7 @@ REGISTRY = "us-central1-docker.pkg.dev/bot-111549/nori-poc"
 STATE_BUCKET = "bot-111549-nori-ci-state"
 LOCK = "nori/deploy.lock"
 TERMINAL = {"completed", "cancelled", "failed"}
+CAPABILITY_SECRETS = ("nori-brave-search-api-key", "nori-google-calendar-client-id", "nori-google-calendar-client-secret", "nori-google-calendar-refresh-token", "nori-google-calendar-account")
 # Steps a rollback undoes. Images and the new worker service stay for the retry.
 UNDONE_BY_ROLLBACK = {"computer", "runtime", "web", "register", "current", "verify"}
 
@@ -202,6 +203,19 @@ def current_worker():
     return build
 
 
+def capability_secrets_ready():
+    """A secret reference without a version would stop the worker from starting."""
+    for secret in CAPABILITY_SECRETS:
+        try:
+            enabled = run(["gcloud", "--project", PROJECT, "secrets", "versions", "list", secret, "--filter=state=enabled", "--limit=1", "--format=value(name)"])
+        except RuntimeError:
+            enabled = ""
+        if not enabled.strip():
+            log(f"{secret} has no enabled version; web search and calendar stay unavailable in this release")
+            return False
+    return True
+
+
 def worker_vars(c, build, image):
     """Terraform state is the worker inventory, so every retained worker is carried forward."""
     state = json.loads(run(["terraform", f"-chdir={poc.TEMPORAL_TF}", "show", "-json"]))
@@ -215,6 +229,7 @@ def worker_vars(c, build, image):
     plain = lambda value: {k: v for k, v in value.items() if k not in {"spend_scope", "spend_profile"}}
     target = plain(targets[current_worker()])
     target["jev_completion"] = True
+    target["capabilities"] = capability_secrets_ready()
     require(target["deployment_name"] == poc.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Current worker target is not production")
     require(services.get(build, image) == image and plain(targets.get(build, target)) == target, "This build already exists with a different image or target")
     services[build] = image

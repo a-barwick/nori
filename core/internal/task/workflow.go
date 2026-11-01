@@ -27,6 +27,9 @@ type Checkpoint struct {
 	Stopped                            bool
 	Request                            string
 	ReadOnly                           bool
+	// Jobs are started and not yet observed ended. They outlive a revision, so
+	// only terminal cleanup stops them, not a correction or a question.
+	Jobs []string
 }
 
 func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.Run, err error) {
@@ -45,6 +48,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 	spend := func(w workflow.Context) { c.projectSpend(w, id) }
 	wait := func() error { var command state.Command; signals.Receive(ctx, &command); return ctx.Err() }
 	stop := func(w workflow.Context) error { return c.stopComputer(w, id) }
+	finish := func(w workflow.Context) error { return c.stopTask(w, id) }
 	boundary := func(e error) bool {
 		if superseded(e) {
 			return true
@@ -63,7 +67,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 		cleanup, _ := workflow.NewDisconnectedContext(ctx)
 		cleanup = workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(stopCtx))
 		spend(workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(spending)))
-		if e := stop(cleanup); e != nil {
+		if e := finish(cleanup); e != nil {
 			err = fmt.Errorf("computer stop could not be confirmed: %w", e)
 		}
 		if c.Stopped && result.Status != "" && len(c.ComputerRevisions) > 0 {
@@ -185,6 +189,15 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 					c.QuestionPublished = false
 					break
 				}
+				if call.Name == "complete" && len(c.Jobs) > 0 {
+					var ref string
+					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name, Response: map[string]any{"accepted": false, "reason": "A background job is still running. Call job_wait or job_stop before proposing completion.", "running_jobs": c.Jobs}}).Get(ctx, &ref)
+					if err != nil {
+						return
+					}
+					c.Ref = ref
+					break
+				}
 				if call.Name == "complete" {
 					c.Checks++
 					var check CompletionOutcome
@@ -205,7 +218,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 					c.Ref = check.Ref
 					switch check.Action {
 					case "publish", "unverified", "partial":
-						if err = stop(stopCtx); err != nil {
+						if err = finish(stopCtx); err != nil {
 							return
 						}
 						status := state.RunCompleted
@@ -237,6 +250,23 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 						return
 					}
 					break
+				}
+				if call.Name == "job_wait" {
+					var ended bool
+					ended, err = c.awaitJob(ctx, wait, id, call)
+					if err != nil {
+						return
+					}
+					if !ended {
+						var ref string
+						err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name, Response: map[string]any{"waiting": false, "state": "running", "reason": "Austin's instructions changed while waiting. The job is still running; job_status, job_wait or job_stop can act on it."}}).Get(ctx, &ref)
+						if err != nil {
+							return
+						}
+						c.Ref = ref
+						revised = true
+						continue
+					}
 				}
 				c.Tools++
 				operation := fmt.Sprintf("%s-m%d-t%d", id, c.Models, c.Tools)
@@ -274,6 +304,12 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 					return
 				}
 				c.Ref = output.Ref
+				c.trackJobs(output)
+				if output.Cost > 0 || output.CostUnknown {
+					c.Spent += output.Cost
+					c.CostUnknown = c.CostUnknown || output.CostUnknown
+					spend(spending)
+				}
 				if output.Outcome == "needs_input" {
 					revised = true
 					c.Question = &state.Question{ID: fmt.Sprintf("%s-correction-q%d", id, c.Tools), Kind: "input", Text: "Completing this task appears to require another action beyond the permitted read-only correction. Please clarify or authorize what should happen next.", Revision: c.Revision}
@@ -385,7 +421,7 @@ func (c *Checkpoint) publishFailure(ctx, stopCtx workflow.Context, id string, fa
 	var a *Activities
 	cleanup, _ := workflow.NewDisconnectedContext(ctx)
 	cleanup = workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(stopCtx))
-	if e := c.stopComputer(cleanup, id); e != nil {
+	if e := c.stopTask(cleanup, id); e != nil {
 		failure = fmt.Errorf("computer stop could not be confirmed: %w", e)
 	}
 	status := state.RunFailed

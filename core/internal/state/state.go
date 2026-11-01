@@ -79,6 +79,7 @@ type Run struct {
 	Revision              int64             `json:"revision,omitempty" firestore:"revision,omitempty"`
 	Incorporated          int64             `json:"incorporated,omitempty" firestore:"incorporated,omitempty"`
 	Waiting               string            `json:"waiting,omitempty" firestore:"waiting,omitempty"`
+	Progress              string            `json:"progress,omitempty" firestore:"progress,omitempty"`
 	// Spent and Budget are model USD from reported token usage; Budget grows
 	// only by Austin's explicit continue.
 	Spent           float64    `json:"spent_usd,omitempty" firestore:"spent_usd,omitempty"`

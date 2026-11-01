@@ -26,6 +26,7 @@ type TaskContextRecord struct {
 	Status                  state.RunStatus      `json:"status"`
 	Question                *state.Question      `json:"question,omitempty"`
 	Waiting                 string               `json:"waiting,omitempty"`
+	Progress                string               `json:"progress,omitempty"`
 	Revision                int64                `json:"revision"`
 	Position                int64                `json:"position"`
 	Incorporated            int64                `json:"incorporated"`
@@ -69,7 +70,7 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			return err
 		}
 		run := snapshot.Run
-		record := &TaskContextRecord{ID: run.ID, Request: run.Request, Status: run.Status, Waiting: run.Waiting,
+		record := &TaskContextRecord{ID: run.ID, Request: run.Request, Status: run.Status, Waiting: run.Waiting, Progress: run.Progress,
 			Revision: run.Revision, Position: run.Position, Incorporated: run.Incorporated, CancelRequested: run.CancelRequested,
 			Holds: append([]state.TaskHold{}, run.Holds...), Spent: run.Spent, Budget: run.Budget, Error: run.Error, Result: run.Result, Commands: []TaskContextCommand{}}
 		if run.Question != nil {
@@ -130,6 +131,7 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 		for _, record := range records {
 			trimContextText(&record.Request, limit, &record.TextTruncated)
 			trimContextText(&record.Waiting, limit, &record.TextTruncated)
+			trimContextText(&record.Progress, limit, &record.TextTruncated)
 			trimContextText(&record.Error, limit, &record.TextTruncated)
 			trimContextText(&record.Result, limit, &record.TextTruncated)
 			if record.Question != nil {

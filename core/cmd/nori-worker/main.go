@@ -185,6 +185,18 @@ func (r *registrationActivity) ExecuteActivity(context.Context, *interceptor.Exe
 	return nil, fmt.Errorf("registration cannot execute activities")
 }
 
+// A missing capability credential leaves that tool reporting itself unavailable.
+func capabilities() (agent.Capabilities, error) {
+	location, err := time.LoadLocation(env.Get("NORI_TIMEZONE", "America/Los_Angeles"))
+	if err != nil {
+		return agent.Capabilities{}, fmt.Errorf("NORI_TIMEZONE must be an IANA time zone")
+	}
+	return agent.Capabilities{SearchKey: os.Getenv("BRAVE_SEARCH_API_KEY"), Location: location, Calendar: agent.CalendarConfig{
+		ClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
+		RefreshToken: os.Getenv("GOOGLE_CALENDAR_REFRESH_TOKEN"), Account: env.Get("GOOGLE_CALENDAR_ACCOUNT", "the connected Google account"),
+	}}, nil
+}
+
 func run(ctx context.Context, wakes *workerwake.Cloud, bounded bool, sliceID string, known []string) (result error) {
 	build := os.Getenv("TEMPORAL_BUILD_ID")
 	if build == "" {
@@ -251,6 +263,10 @@ func run(ctx context.Context, wakes *workerwake.Cloud, bounded bool, sliceID str
 		notify = notifier.Schedule
 	}
 	service := agent.New(store, key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra"), computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer})
+	service.Capabilities, e = capabilities()
+	if e != nil {
+		return e
+	}
 	stopTimeout := 25 * time.Second
 	if bounded {
 		stopTimeout = 5 * time.Minute

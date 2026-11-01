@@ -65,7 +65,13 @@ type RefToolInput struct {
 	Index            int
 	ReadOnly         bool
 }
-type RefToolOutcome struct{ Ref, Outcome, EffectClass string }
+type RefToolOutcome struct {
+	Ref, Outcome, EffectClass string
+	// Cost is spend the tool incurred outside a model decision.
+	Cost                 float64
+	CostUnknown          bool
+	StartedJob, EndedJob string
+}
 type RefInput struct {
 	Step
 	Ref   string
@@ -293,7 +299,7 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 		return out, classified(e)
 	}
 	var result map[string]any
-	if in.ReadOnly && call.Name != "browser_navigate" && call.Name != "browser_screenshot" {
+	if in.ReadOnly && toolEffect(call.Name) != "read" {
 		result = map[string]any{"outcome": "needs_input", "error": "Completion correction permits reads only. Ask Austin before further writes or shell execution.", "effect_class": "read", "operation_id": in.OperationID}
 	} else {
 		result, e = a.Tool(ctx, ToolInput{Step: in.Step, OperationID: in.OperationID, Call: call, Durable: true})
@@ -309,6 +315,9 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	}
 	out.Outcome, _ = result["outcome"].(string)
 	out.EffectClass, _ = result["effect_class"].(string)
+	out.Cost, _ = result["cost_usd"].(float64)
+	out.CostUnknown, _ = result["cost_unknown"].(bool)
+	out.StartedJob, out.EndedJob = jobTransition(call, result)
 	return out, nil
 }
 func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Question, err error) {

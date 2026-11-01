@@ -10,7 +10,7 @@
 <body>
 <h1>Budgets and controls</h1>
 <p class="lede">How Nori keeps spending visible, and the four different ways work can pause or stop.</p>
-<p>There are four separate controls here, and they're easy to mix up. On cost:</p><ul class="pts"><li>The task worker adds up OpenRouter-reported cost. The outer loop calculates OpenAI cost from reported tokens.</li><li>The $1 limit is checked between calls to decide whether to pause, so it isn't a hard cap on billing.</li></ul>
+<p>There are four separate controls here, and they're easy to mix up. On cost:</p><ul class="pts"><li>The task worker adds up OpenRouter-reported cost, plus $0.005 for each web search. The outer loop calculates OpenAI cost from reported tokens.</li><li>The $1 limit is checked between calls to decide whether to pause, so it isn't a hard cap on billing.</li></ul>
   <div class="grid4">
     <div class="card tight"><p class="keyline">Task budget · $1</p><p class="note">Applies to each top-level task. When it runs out, the task saves its progress and asks, and <code>continue</code> adds $1. Reporting the pause doesn't use a model call.</p></div>
     <div class="card tight"><p class="keyline">Input / dependency wait</p><p class="note">The task parks with its identity, question and records intact. No timer ends it.</p></div>

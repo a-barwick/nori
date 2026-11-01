@@ -10,7 +10,7 @@
 <body>
 <h1>Persistent computer</h1>
 <p class="lede">A small Linux machine that belongs to Nori. Tasks use its shell and browser, and it keeps its files between runs.</p>
-<p>The computer is a retained workspace for the inner loop.</p><ul class="pts"><li><b>Kept</b> across guest restarts and host replacement: files, installed tools and the browser profile.</li><li><b>Lost</b> on restart: running processes and open tabs. The inner loop is told that process state may have changed.</li></ul>
+<p>The computer is a retained workspace for the inner loop.</p><ul class="pts"><li><b>Kept</b> across guest restarts and host replacement: files, installed tools and the browser profile.</li><li><b>Lost</b> on restart: running processes, shell jobs and open tabs. The inner loop is told that process state may have changed.</li></ul>
   <div class="card">
   <svg viewBox="0 0 920 300" width="100%" role="img" aria-label="Computer diagram">
     <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -28,7 +28,7 @@
     <text x="380" y="172" text-anchor="middle" font-size="12.5" font-weight="650">Firecracker guest</text>
     <text x="380" y="190" text-anchor="middle" font-size="11" fill="#4a5163">computerd @ 172.30.0.2:8090</text>
     <text x="380" y="206" text-anchor="middle" font-size="11" fill="#4a5163">shell (cgroups) · Chromium via CDP :9222</text>
-    <text x="380" y="222" text-anchor="middle" font-size="11" fill="#4a5163">operation receipts v1 · per-task browser tabs</text>
+    <text x="380" y="222" text-anchor="middle" font-size="11" fill="#4a5163">operation receipts · per-task tabs · shell jobs</text>
     <rect x="600" y="80" width="300" height="80" rx="10" fill="#fff" stroke="#5b6474" stroke-width="1.8"/>
     <text x="750" y="110" text-anchor="middle" font-size="13.5" font-weight="700">Retained disk</text>
     <text x="750" y="128" text-anchor="middle" font-size="11" fill="#4a5163">workspace · tools · browser profile</text>
@@ -46,7 +46,7 @@
   <div class="grid3">
     <div class="card tight"><p class="keyline">Receipts make retries safe</p><p class="note">The guest records the request and response for each operation ID before acknowledging. If a shell command's outcome is uncertain, it's reconciled against the receipt and isn't simply run again.</p></div>
     <div class="card tight"><p class="keyline">The host says when it's draining</p><p class="note">When the host is stopping because it's idle, it rejects requests with a draining header before forwarding them. This is the one case where it's safe to reconnect and resend.</p></div>
-    <div class="card tight"><p class="keyline">The model can't see the browser yet</p><p class="note">It can navigate and read page text. Screenshots are saved for the user, but the model doesn't see them. Vision is planned for milestone 5 (<code>AB-203</code>).</p></div>
+    <div class="card tight"><p class="keyline">Jobs belong to a task</p><p class="note">The guest runs each <a href="tools.html">long shell job</a> in its own cgroup and saves its state and log on disk. A job that was running when the guest restarted is reported as lost.</p></div>
   </div>
 </body>
 </html>
