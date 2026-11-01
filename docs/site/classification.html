@@ -9,26 +9,26 @@
 </head>
 <body>
 <h1>Classifying a message</h1>
-<p class="lede">During a turn, Jev marks which intents are in the current user messages. The outer model receives the result as a hint.</p>
+<p class="lede">Jev, a classifier model, marks the intents in the current user messages. The outer model gets them as a hint.</p>
 <div class="card">
 <div class="flow">
-<div class="node"><b>Current batch</b><small>“Could you check when my domain renews?” Only user messages, in the order they were accepted.</small></div>
+<div class="node"><b>Current batch</b><small>“Could you check when my domain renews?”</small></div>
 <div class="arrow">↓ <span class="lbl">batch and earlier messages</span></div>
 <div class="node"><b>Jev</b><small>Answers present or absent for each of nine intents.</small></div>
 <div class="arrow">↓ <span class="lbl">nine answers</span></div>
 <div class="node decide">How many intents are present?</div>
 <div class="branch3">
 <div class="node"><b>One</b><small>Intent is that label. Confidence is that answer's confidence.</small></div>
-<div class="node"><b>Several</b><small>Intent is <code>mixed</code>. Every present label is listed. Confidence is the lowest of them.</small></div>
+<div class="node"><b>Several</b><small>Intent is <code>mixed</code>. Labels are listed, with the lowest confidence.</small></div>
 <div class="node"><b>None</b><small>The runtime sets <code>converse</code>. That fallback stores no confidence.</small></div>
 </div>
-<div class="arrow">↓ <span class="lbl">hint, saved on the attempt</span></div>
-<div class="node outer"><b>Outer model</b><small>Reads the hint with the task records, then writes the reply and any commands.</small></div>
+<div class="arrow">↓ <span class="lbl">hint, saved with the turn</span></div>
+<div class="node outer"><b>Outer model</b><small>Reads the hint and task records, then writes the reply and commands.</small></div>
 </div>
 <p class="note">If the batch has no user message, the call fails, or any answer is missing or neither present nor absent, the hint is unavailable and has no intent label. The turn still calls the outer model.</p>
 </div>
 <section><h2>The nine questions</h2>
-<p>Each question is asked on its own. <code>mixed</code> is not one of them. Present labels are saved in the order below.</p>
+<p>Jev answers each question on its own. Present labels are saved in the order below.</p>
 <div class="card"><table class="tall">
 <tr><th>Intent</th><th>Means</th><th>Example</th></tr>
 <tr><td><code>converse</code></td><td>Conversation, discussion or unclassifiable input</td><td>“Let's discuss the architecture.”</td></tr>
@@ -53,12 +53,12 @@
 <tr><td>Introduction, or a task notification</td><td>No. Neither is a user message, so a batch of only those does not call Jev.</td></tr>
 <tr><td>Saved model protocol</td><td>No. The outer model receives it with the turn.</td></tr>
 </table></div>
-<p>A panel answer, steer, continue, stop, or direct task update is saved as a command and is not classified. See <a href="api.html">Service API</a>.</p>
+<p>A task panel answer, steer, continue, stop, or direct task update is saved as a command and is not classified. See <a href="api.html">Service API</a>.</p>
 </section>
 <section><h2>What the outer model receives</h2>
-<p>The runtime saves the hint on the attempt before the outer model call. That attempt reuses it. A restart for a newer message starts a new attempt and classifies the new batch.</p>
-<p>The hint is advisory context beside the task records. Confidence does not allow or block a command. “Could you check when my domain renews?” can be <code>ask</code> alone, and the outer model can still dispatch a lookup.</p>
-<p>Before calling Jev, the runtime records provider <code>jev</code> and model <code>jev-latest</code> with an unknown cost. Jev returns no verified price. If that record fails, the request is not sent.</p>
+<p>The runtime saves the hint before the outer model call. A restart for a newer message classifies the new batch.</p>
+<p>The hint sits beside the task records as context. Confidence doesn't allow or block a command. “Could you check when my domain renews?” can be an ask alone, and the outer model can still dispatch a lookup.</p>
+<details class="more"><summary>How Jev calls are recorded</summary><p>Before calling Jev, the runtime records provider <code>jev</code> and model <code>jev-latest</code> with an unknown cost. Jev returns no verified price. If that record fails, the request is not sent.</p></details>
 </section>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/classifier.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/state/conversation.go</code> · <code>core/internal/wake/http.go</code> · <a href="https://linear.app/a-barwick/issue/AB-143">AB-143</a></p></details>
 </body>

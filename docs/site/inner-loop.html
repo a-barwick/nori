@@ -10,84 +10,60 @@
 <body>
 <h1>Inner loop</h1>
 <p class="lede">One loop per task: call the model, run the tools it asks for, save the results, repeat.</p>
-<p>Each new task gets one workflow (<code>nori-task-v3</code>). Retained v1 and v2 workflows keep their original behavior.</p><ul class="pts"><li>The workflow body in <span class="mono">task/workflow.go</span> contains only deterministic transitions.</li><li>Every model call, tool call and Firestore write is an activity with its own timeout.</li><li>Signals (<code>task-command</code>) only wake the workflow. It then reads commands from Firestore by position and incorporates each one exactly once.</li></ul>
-  <div class="card">
-    <div class="flow">
-      <div class="node inner"><b>ContextRef activity</b><small>Quick profile, 15s. Saves initial private history and returns its reference.</small></div>
-      <div class="arrow">↓</div>
-      <div class="node inner"><b>Drain signals → Reconcile activity</b><small>Reads the task snapshot, which is the run record and its ordered commands. Stop and pause take precedence here. Boundary errors, such as a superseded revision or a pause, loop back without side effects.</small></div>
-      <div class="arrow">↓</div>
-      <div class="node decide inner">Incorporate new commands by position</div>
-      <div class="branch">
-        <div class="node"><b>start / steer / answer</b><small>Appended as written, in acceptance order. The revision advances and older decisions are discarded.</small></div>
-        <div class="node"><b>continue</b><small>Only resolves an open budget question. Adds $1 to the budget and clears the question.</small></div>
-      </div>
-      <div class="arrow">↓</div>
-      <div class="node decide inner">Spent ≥ budget ($1)?</div>
-      <div class="branch">
-        <div class="node wait"><b>awaitBudget</b><small>The Project activity publishes a budget question built from recorded facts, with <b>no model call</b>, and the workflow parks on a signal. The wait has no expiry.</small></div>
-        <div class="node inner"><b>Proceed</b><small>An unknown-cost flag also stops the loop here, so unpriced work is never treated as free.</small></div>
-      </div>
-      <div class="arrow">↓</div>
-      <div class="node inner"><b>ModelRef activity</b> <span class="mono" style="font-size:11px">240s · heartbeat 10s · MaxAttempts 1</span><small>One GPT-6.1 Terra call through OpenRouter Responses, with retries off. Reported model cost is recorded and added to <code>spent</code> in workflow state. The Spend activity then projects it to Firestore, with 3 retries. The projection may lag, so the workflow's figure is the one that counts.</small></div>
-      <div class="arrow">↓</div>
-      <div class="node"><b>Reconcile again</b><small>A steer or Stop accepted during the model call invalidates the decision before anything acts on it.</small></div>
-      <div class="arrow">↓</div>
-      <div class="node decide inner">What did the model return?</div>
-      <div class="branch3">
-        <div class="node inner"><b><code>complete</code></b><small>Checks the saved records. Publishes completed or partial with a revision check.</small></div>
-        <div class="node inner"><b>Tool batch</b><small>Validated as a whole before anything takes effect (<code>agent.ValidateCalls</code>). An invalid batch sends per-call rejections back to the model, and nothing runs.</small></div>
-        <div class="node wait"><b><code>request_input</code></b><small>Must be the only call. Projects the question, parks on a signal, pairs the tool result, then incorporates the answer.</small></div>
-      </div>
-      <div class="arrow">↓</div>
-      <div class="branch3">
-        <div class="node computer"><b>Tool activity · computer</b><small><code>shell</code> runs for up to 45s, and <code>job_start</code> starts a background job. Admission is recorded first (<code>operations/{id}</code>). <code>browser_screenshot</code> saves a PNG artifact and returns a reference to it.</small></div>
-        <div class="node inner"><b>Tool activity · worker</b><small><code>web_search</code>, <code>calendar_read</code> and <code>screenshot_inspect</code> run on the worker with the same operation records. See <a href="tools.html">Tools</a>.</small></div>
-        <div class="node"><b>Skipped calls</b><small>If the revision changes mid-batch, calls that ran keep their results and the rest get explicit <code>skipped</code> results. Every call always has a paired result.</small></div>
-      </div>
-      <div class="loopback">↺ results appended → back to Reconcile</div>
-      <div class="node" style="border-width:2px"><b>Deferred <code>finish()</code> on every exit</b><small>Runs on a disconnected context. It projects final spend, confirms the computer stopped (Stop activity, 200s), and publishes failed or cancelled along with any effects so far. If the workflow can't confirm the computer stopped, it doesn't report success.</small></div>
-    </div>
-  </div>
-  <div class="grid2">
-    <div class="card">
-      <h3 style="margin-top:0">Activities at a glance <span class="mono" style="font-size:11px;color:#8a8268">task/activities.go</span></h3>
-      <table>
-        <tr><th>Activity</th><th>Job · profile</th></tr>
-        <tr><td><code>ContextRef</code></td><td>Initial request → private history reference · quick</td></tr>
-        <tr><td><code>Reconcile</code></td><td>Snapshot + guard (pause / revision / cancel) · quick</td></tr>
-        <tr><td><code>Project</code></td><td>Progress + waiting question onto the run record · quick</td></tr>
-        <tr><td><code>ModelRef</code></td><td>One inner model call using saved history · 240s, heartbeat, no retry</td></tr>
-        <tr><td><code>Tool</code></td><td>Admit operation, run it, record step trace · 240s</td></tr>
-        <tr><td><code>JobWaitRef</code></td><td>Poll one job for up to 200s, with no model calls · 240s, heartbeat, no retry</td></tr>
-        <tr><td><code>Spend</code></td><td>Project spent/budget to Firestore (max-only) · 3 retries</td></tr>
-        <tr><td><code>Stop</code></td><td>Cancel guest ops, confirm TERMINATED · 200s</td></tr>
-        <tr><td><code>StopJobs</code></td><td>End the task's running jobs at terminal cleanup · 200s</td></tr>
-        <tr><td><code>Publish</code></td><td>Terminal write + result message, revision-fenced · quick</td></tr>
-      </table>
-      <ul class="pts note"><li>The worker uses pinned deployment versions (<code>TEMPORAL_BUILD_ID</code> per release), and parked tasks resume on a compatible version.</li><li>It runs up to 4 activities at a time and exits cleanly when the project pauses.</li><li>In request-driven mode, each Cloud Tasks wake runs a worker for one bounded slice of up to 240s and hands remaining work to the next wake.</li></ul>
-    </div>
-    <div class="card">
-      <h3 id="completion-as-designed" style="margin-top:0">Completion in milestone 4 <a href="completion.html" style="font-size:12px;font-weight:600">full page</a></h3>
-      <p><code>complete(answer, evidence, unmet)</code> proposes an answer. <a href="completion.html">Record checks</a> determine whether it can finish, and the outer loop compares the answer with the cited results.</p>
-      <p>New tasks use <code>nori-task-v3</code>, <code>request_input</code> and saved history references. Explicit corrections can interrupt model calls and eligible reads; writes finish first.</p>
-      <p><code>request_work</code> remains planned for milestone 7.</p>
-    </div>
-  </div>
-<section><h2>Failure handling in milestone 4</h2>
-<div class="card"><table><tr><th>Outcome</th><th>Behavior</th></tr>
-<tr><td>A tool returns a failure</td><td>The task receives the saved result and can ask for direction. The saved question includes any accompanying explanation of the failure.</td></tr>
-<tr><td>The task fails</td><td>Report the failure and recorded operations. Wait for the user; do not re-issue it automatically.</td></tr>
-<tr><td>A write has an uncertain outcome</td><td>Preserve the operation record and ask for direction before another attempt.</td></tr>
+<div class="card"><div class="flow">
+<div class="node inner"><b>Read new commands</b><small>Instructions arrive in order, such as “Check Saturday's weather in Tucson.”</small></div>
+<div class="arrow">↓</div>
+<div class="node decide inner">Has the task spent its $1 budget?</div>
+<div class="branch">
+<div class="node wait"><b>Yes</b><small>The task saves a budget question and waits, with no model call.</small></div>
+<div class="node inner"><b>No</b><small>The loop continues to the next model call.</small></div>
+</div>
+<div class="arrow">↓</div>
+<div class="node inner"><b>Model call</b><small>One call to the inner model, with retries off. Its cost is added.</small></div>
+<div class="arrow">↓</div>
+<div class="node decide inner">What did the model return?</div>
+<div class="branch3">
+<div class="node inner"><b><code>complete</code></b><small>Record checks decide whether it finishes.</small></div>
+<div class="node computer"><b>Tool calls</b><small>The worker or computer runs each tool, and each result is saved.</small></div>
+<div class="node wait"><b><code>request_input</code></b><small>The task saves a question and waits for the answer.</small></div>
+</div>
+<div class="loopback">↺ results saved → back to Read new commands</div>
+<div class="node"><b>Finish</b><small>Confirms the computer stopped, then publishes the outcome.</small></div>
+</div></div>
+<p>See <a href="completion.html">Finishing a task</a> for the checks, and <a href="tasks.html">Task lifecycle</a> for the states.</p>
+<section><h2>When instructions change</h2>
+<ul class="pts">
+<li>A correction such as “No, Tucson” is saved as a command, and the loop reads it before the next model call.</li>
+<li>If the instructions change before a tool call runs, that call gets a skipped result.</li>
+<li>A call that already ran keeps its result, so every call has a paired result.</li>
+</ul></section>
+<section><h2>When something fails</h2>
+<div class="card"><table class="tall"><tr><th>Outcome</th><th>What the task does</th></tr>
+<tr><td>A shell command exits with an error</td><td>The model receives the result and continues.</td></tr>
+<tr><td>A write has an uncertain outcome</td><td>Keeps the operation record and asks the user. It doesn't repeat the write.</td></tr>
+<tr><td>A model call's cost is unknown</td><td>Fails, so unpriced work never counts as free.</td></tr>
+<tr><td>The task fails</td><td>Reports the failure, then waits for the user to start any new attempt.</td></tr>
 </table></div></section>
-<section><h2>When a tool fails</h2>
-<p>A nonzero shell exit reaches the model, while an operation failure preserves its outcome and asks for direction. The broader action policy remains planned beyond milestone 4.<span class="tag design">designed</span></p>
-<div class="card designed"><table class="tall">
-<tr><th>Tool type</th><th>Temporary failure</th><th>Outcome unknown</th></tr>
-<tr><td>Read</td><td>Runtime retries within limits.</td><td>Safe to retry.</td></tr>
+<details class="more"><summary>Workflow details</summary>
+<ul class="pts">
+<li>Each new task gets one <code>nori-task-v3</code> workflow. Older v1 and v2 workflows keep their original behavior.</li>
+<li>The workflow body contains only deterministic transitions. Every model call, tool call and Firestore write is an activity with its own timeout.</li>
+<li>Signals on <code>task-command</code> only wake the workflow. It then reads commands from Firestore by position.</li>
+<li>Model and tool activities have a 240-second timeout, and the model activity must heartbeat within 10 seconds. Stopping the computer has 200 seconds.</li>
+<li>A browser tool that hits a transient error is retried once. A shell command with an uncertain outcome isn't repeated.</li>
+<li>Shell commands run for up to 45 seconds in <code>/workspace</code>, capped by cgroups.</li>
+<li><code>browser_navigate</code> returns the title and visible text. <code>browser_screenshot</code> saves a PNG and gives the model a reference. The model doesn't see the image.</li>
+<li>An invalid tool batch sends per-call rejections back to the model, and nothing runs.</li>
+<li>After 32 loops the workflow continues as a new run with the same task.</li>
+<li>The workflow's spent figure is the one that counts. The copy in Firestore can lag.</li>
+<li>In request-driven mode, each Cloud Tasks wake runs a worker for up to 240 seconds and hands remaining work to the next wake. Parked tasks resume on a compatible pinned build.</li>
+</ul>
+<div class="designed"><p><span class="tag design">designed</span> The planned action policy adds these tool types.</p>
+<table class="tall"><tr><th>Tool type</th><th>Temporary failure</th><th>Outcome unknown</th></tr>
 <tr><td>Reversible write</td><td>Retry only with the same operation ID and duplicate protection.</td><td>Check the provider before any repeat.</td></tr>
 <tr><td>Sensitive send or purchase</td><td>Ask the user first.</td><td>Check safely, then ask the user.</td></tr>
-</table></div></section>
-
+</table></div>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/task/workflow.go</code> · <code>core/internal/task/activities.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/cmd/nori-worker/main.go</code></p></details>
 </body>
 </html>

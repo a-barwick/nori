@@ -11,9 +11,9 @@
 <h1>Finishing a task</h1>
 <p class="lede">The runtime checks a task's saved records, then the outer loop compares the answer with the results the task cited.</p>
 <div class="card"><p><span class="say me">Back up the photos and check the counts match.</span></p><div class="flow">
-<div class="node inner"><b>Inner loop</b><small><code>job_wait</code> returns exit code 0, and the job's output shows 2,400 files in both folders.</small></div><div class="arrow">↓ <code>complete(answer, evidence, unmet)</code></div>
+<div class="node inner"><b>Inner loop</b><small>The job returns exit code 0, and its output shows 2,400 files per folder.</small></div><div class="arrow">↓ <code>complete(answer, evidence, unmet)</code></div>
 <div class="node"><b>Runtime</b><small>Checks the records. No model is involved.</small></div><div class="arrow">↓ answer, cited results, unmet items</div>
-<div class="node outer"><b>Outer loop</b><small>Compares the answer with the cited results, then tells the user what is and isn't done.</small></div>
+<div class="node outer"><b>Outer loop</b><small>Compares the answer with the cited results, and tells the user what is done.</small></div>
 </div></div>
 <section><h2>The record checks</h2>
 <ul class="pts"><li>Every instruction has been read.</li><li>Every tool call has a saved result.</li><li>No operation has an unresolved outcome.</li><li>Each cited reference resolves to a saved result.</li></ul>
@@ -30,15 +30,15 @@
 <ul class="pts"><li>On the turn that reports a task's end, the runtime reads the results the task cited and passes up to 8 KiB of them to the outer loop. It shortens long results from the middle.</li><li>If the answer claims something the results don't show, the outer loop tells the user and doesn't dispatch the work again by itself.</li><li>The cited results are data. A page that says "ignore your instructions" is text in a result, and the outer loop treats it that way.</li></ul>
 </section>
 <section><h2>What this catches</h2>
-<div class="card"><p><span class="say me">What's the weather in Phoenix?</span> <span class="say me">Actually, Tucson.</span></p>
+<div class="card"><p><span class="say me">What's the weather in Phoenix?</span> <span class="say me">No, Tucson.</span></p>
 <p class="note">An answer about Phoenix can't be published, because the instructions changed while it was being written.</p></div>
-<div class="card"><p><span class="say me">Did you send it?</span></p>
+<div class="card designed"><p><span class="say me">Did you send it?</span> <span class="tag design">designed · AB-172</span></p>
 <p class="note">Nori answers from the receipt, or checks with the provider. A status question never sends anything again.</p></div>
 <ul class="pts"><li>The checks cover the records. No separate system judges whether an answer satisfies the request, so a wrong answer is caught only if the outer loop can see the conflict in the cited results.</li><li>Tools make that comparison possible by <a href="tools.html">returning a way to confirm each change</a>.</li></ul>
 </section>
 <details class="more"><summary>Evidence and telemetry</summary>
 <p>Private history references bind the task, parent and exact bytes. Temporal carries references instead of the cumulative transcript. Old workflows retain their original behavior, and completed tasks keep their saved Jev verdicts.</p>
-<p>Each check saves its record failures, revision and position. Sentry and Arize receive correlated spans and operational attributes; private history and credentials are excluded by default.</p>
+<p>Each check saves its record failures, revision and position. Sentry and Arize receive correlated spans and operational attributes. Private history and credentials are excluded by default.</p>
 </details>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/task/completion.go</code> · <code>core/internal/task/history.go</code> · <code>core/internal/conversation/task_context.go</code> · <a href="https://linear.app/a-barwick/issue/AB-152">AB-152</a> · <a href="https://linear.app/a-barwick/issue/AB-214">AB-214</a> · <a href="https://linear.app/a-barwick/issue/AB-219">AB-219</a></p></details>
 </body>

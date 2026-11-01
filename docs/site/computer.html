@@ -9,44 +9,44 @@
 </head>
 <body>
 <h1>Persistent computer</h1>
-<p class="lede">A small Linux machine that belongs to Nori. Tasks use its shell and browser, and it keeps its files between runs.</p>
-<p>The computer is a retained workspace for the inner loop.</p><ul class="pts"><li><b>Kept</b> across guest restarts and host replacement: files, installed tools and the browser profile.</li><li><b>Lost</b> on restart: running processes, shell jobs and open tabs. The inner loop is told that process state may have changed.</li></ul>
+<p class="lede">A small Linux machine that tasks use for shell and browser work. It keeps its files between runs.</p>
   <div class="card">
   <svg viewBox="0 0 920 300" width="100%" role="img" aria-label="Computer diagram">
     <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#a8551c"/></marker></defs>
     <rect x="10" y="105" width="150" height="80" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/>
     <text x="85" y="136" text-anchor="middle" font-size="13.5" font-weight="700" fill="#0c7a5f">Worker</text>
-    <text x="85" y="154" text-anchor="middle" font-size="11" fill="#4a5163">computer.Client</text>
-    <text x="85" y="169" text-anchor="middle" font-size="11" fill="#4a5163">starts VM if TERMINATED</text>
+    <text x="85" y="154" text-anchor="middle" font-size="11" fill="#4a5163">sends tool calls</text>
+    <text x="85" y="169" text-anchor="middle" font-size="11" fill="#4a5163">starts the host if stopped</text>
     <rect x="230" y="40" width="300" height="220" rx="12" fill="#faf0e4" stroke="#a8551c" stroke-width="2"/>
     <text x="380" y="66" text-anchor="middle" font-size="13.5" font-weight="700" fill="#a8551c">GCE host · nori-computer</text>
     <rect x="250" y="80" width="260" height="56" rx="8" fill="#fff" stroke="#a8551c" stroke-width="1.5"/>
     <text x="380" y="103" text-anchor="middle" font-size="12.5" font-weight="650">Host proxy (computer-agent --proxy)</text>
-    <text x="380" y="120" text-anchor="middle" font-size="11" fill="#4a5163">15 min idle → exit 75 → graceful guest stop</text>
+    <text x="380" y="120" text-anchor="middle" font-size="11" fill="#4a5163">15 idle minutes → graceful guest stop</text>
     <rect x="250" y="150" width="260" height="92" rx="8" fill="#fff" stroke="#a8551c" stroke-width="1.5" stroke-dasharray="5 4"/>
     <text x="380" y="172" text-anchor="middle" font-size="12.5" font-weight="650">Firecracker guest</text>
-    <text x="380" y="190" text-anchor="middle" font-size="11" fill="#4a5163">computerd @ 172.30.0.2:8090</text>
-    <text x="380" y="206" text-anchor="middle" font-size="11" fill="#4a5163">shell (cgroups) · Chromium via CDP :9222</text>
-    <text x="380" y="222" text-anchor="middle" font-size="11" fill="#4a5163">operation receipts · per-task tabs · shell jobs</text>
+    <text x="380" y="190" text-anchor="middle" font-size="11" fill="#4a5163">Runs shell and browser tools</text>
+    <text x="380" y="206" text-anchor="middle" font-size="11" fill="#4a5163">shell · Chromium</text>
+    <text x="380" y="222" text-anchor="middle" font-size="11" fill="#4a5163">operation receipts · one browser tab per task · shell jobs</text>
     <rect x="600" y="80" width="300" height="80" rx="10" fill="#fff" stroke="#5b6474" stroke-width="1.8"/>
     <text x="750" y="110" text-anchor="middle" font-size="13.5" font-weight="700">Retained disk</text>
     <text x="750" y="128" text-anchor="middle" font-size="11" fill="#4a5163">workspace · tools · browser profile</text>
     <text x="750" y="144" text-anchor="middle" font-size="11" fill="#4a5163">Kept when the computer stops. Not a backup.</text>
-    <rect x="600" y="186" width="300" height="74" rx="10" fill="#fff8e8" stroke="#9a6b00" stroke-width="1.5"/>
-    <text x="750" y="212" text-anchor="middle" font-size="13" font-weight="700" fill="#9a6b00">Trust boundary</text>
-    <text x="750" y="230" text-anchor="middle" font-size="11" fill="#4a5163">IAP tunnel + private guest IP. No RPC token.</text>
-    <text x="750" y="246" text-anchor="middle" font-size="11" fill="#4a5163">Tabs share cookies, so tasks aren't isolated.</text>
     <path class="flow-anim" d="M160 145 H226" stroke="#a8551c" stroke-width="2" fill="none" marker-end="url(#ah2)"/>
-    <text x="195" y="132" text-anchor="middle" font-size="10.5" fill="#4a5163">IAP :8090</text>
+    <text x="195" y="132" text-anchor="middle" font-size="10.5" fill="#4a5163">IAP tunnel</text>
+    <text x="520" y="146" font-size="10.5" fill="#4a5163" text-anchor="end">forwards calls</text>
+    <text x="600" y="184" font-size="10.5" fill="#4a5163">reads and writes files</text>
     <path d="M380 136 V146" stroke="#a8551c" stroke-width="2" fill="none" marker-end="url(#ah2)"/>
     <path d="M510 196 C 550 180 560 150 596 132" stroke="#5b6474" stroke-width="1.5" fill="none" marker-end="url(#ah2)"/>
   </svg>
   </div>
+  <p>“Check Saturday's weather in Tucson” reaches the computer as one browser call from the worker, and the page text comes back as its result.</p>
+  <ul class="pts"><li><b>Kept</b> across guest restarts and host replacement: files, installed tools and the browser profile.</li><li><b>Lost</b> on restart: running processes and open tabs.</li><li><b>Access</b> goes through an IAP tunnel to a private guest IP, with no separate token.</li><li><b>Browser tabs</b> share cookies, so tasks aren't isolated from each other.</li></ul>
   <div class="grid3">
-    <div class="card tight"><p class="keyline">Receipts make retries safe</p><p class="note">The guest records the request and response for each operation ID before acknowledging. If a shell command's outcome is uncertain, it's reconciled against the receipt and isn't simply run again.</p></div>
+    <div class="card tight"><p class="keyline">Receipts make retries safe</p><p class="note">The guest records the request and response for each operation ID before acknowledging. If a shell command's outcome is uncertain, the worker reads the receipt and doesn't run it again.</p></div>
     <div class="card tight"><p class="keyline">The host says when it's draining</p><p class="note">When the host is stopping because it's idle, it rejects requests with a draining header before forwarding them. This is the one case where it's safe to reconnect and resend.</p></div>
-    <div class="card tight"><p class="keyline">Jobs belong to a task</p><p class="note">The guest runs each <a href="tools.html">long shell job</a> in its own cgroup and saves its state and log on disk. A job that was running when the guest restarted is reported as lost.</p></div>
+    <div class="card tight"><p class="keyline">Jobs belong to a task</p><p class="note">The guest runs each <a href="tools.html">long shell job</a> in its own process group and saves its state on disk. A job running during a restart is reported as lost.</p></div>
   </div>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/computer/computer.go</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a></p></details>
 </body>
 </html>

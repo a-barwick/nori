@@ -9,20 +9,21 @@
 </head>
 <body>
 <h1>Clients</h1>
-<p class="lede">If two clients could disagree about something, the service owns it. A client only owns how that looks on its own screen.</p>
+<p class="lede">If two clients could disagree about something, the service owns it. A client only owns its own screen.</p>
 <div class="card"><div class="flow">
-<div class="node outer"><b>Agent service</b><small>One copy. What was said, what's running, what was approved, what's in memory.</small></div><div class="arrow">↓ <span class="lbl"><a href="api.html">Service API</a></span></div>
-<div class="node designed-node designed"><b>Shared client kit</b><span class="tag design">designed</span><small>One copy, used by every client. Caching, sending, retrying and rendering rules.</small></div><div class="arrow">↓</div>
-<div class="node"><b>Platform shell</b><small>One per platform. Layout, navigation, input and notifications. Today this is the Next.js web app.</small></div>
+<div class="node outer"><b>Agent service</b><small>One copy of what was said and what's running.</small></div><div class="arrow">↓ <span class="lbl"><a href="api.html">Service API</a></span></div>
+<div class="node designed-node designed"><b>Shared client kit</b><span class="tag design">designed</span><small>Used by every client for caching, sending, retrying and rendering.</small></div><div class="arrow designed">↓</div>
+<div class="node"><b>Platform shell</b><small>One per platform. Today this is the Next.js web app.</small></div>
 </div></div>
+<p>For “Check Saturday's weather in Tucson”, the web client sends the words and shows the saved reply. The agent service builds the prompt, saves the task and owns its status.</p>
 <section><h2>What a client never does</h2>
-<ul class="pts"><li>Build prompts or send context. It only sends the user's own words and references.</li><li>Parse model output.</li><li>Assume a command has finished because it was accepted.</li><li>Talk to a model provider directly.</li></ul></section>
+<ul class="pts"><li>Build prompts or send context. It only sends the user's own words and references.</li><li class="designed">Parse model output. The web client still does this for layout (<a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a>).</li><li>Assume a command has finished because it was accepted.</li><li>Talk to a model provider directly.</li></ul></section>
 <section><h2>Each client</h2>
 <div class="card"><table class="tall"><tr><th>Client</th><th>State</th><th>Pages</th></tr>
 <tr><td>Web, including phone widths</td><td>Built</td><td><a href="web-client.html">Web client</a>, <a href="frontend.html">Web client architecture</a>, <a href="theme.html">Theme</a></td></tr>
 <tr class="designed"><td>CLI or native app</td><td>Not built</td><td>One new page in this group, with the same sections as Web client</td></tr>
 </table></div>
-<p>Rules that apply to every client belong on this page and on <a href="api.html">Service API</a>. A client's own page links to them.</p>
+<p>Rules that apply to every client are on this page and on <a href="api.html">Service API</a>.</p>
 </section>
 <details class="more designed"><summary>Who owns what <span class="tag design">designed</span></summary>
 <table class="tall"><tr><th>Concern</th><th>Service</th><th>Client kit</th><th>Platform shell</th></tr>

@@ -276,3 +276,24 @@ nav.rail a.group:hover{color:var(--ink);background:none}
 .marks{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-end}
 .marks span{display:flex;flex-direction:column;align-items:center;gap:6px}
 .marks small{font-size:12px;color:var(--ink2)}
+
+.node.designed-node.wait{border-color:var(--wait);background:var(--wait-bg)}
+.states+.states{margin-top:10px}
+@media (max-width:820px){
+  table{font-size:12.5px}
+  th{font-size:10.5px}
+  th,td{padding:6px 5px;overflow-wrap:break-word;hyphens:auto}
+  td:first-child{white-space:normal}
+  code,.mono{hyphens:none}
+  th{letter-spacing:0}
+  td.nw,th.nw{white-space:normal}
+  .mono{overflow-wrap:anywhere}
+}
+.node.designed-node.outer{border-color:var(--outer);background:var(--outer-bg)}
+@media (max-width:480px){
+  table.stack,.stack tbody,.stack tr,.stack td{display:block;width:auto}
+  .stack tr:has(th){display:none}
+  .stack tr{border-bottom:1px solid var(--line);padding:6px 0}
+  .stack td{border:0;padding:2px 0}
+  .stack td[data-label]::before{content:attr(data-label) ": ";font-size:11px;font-weight:700;color:var(--ink2)}
+}

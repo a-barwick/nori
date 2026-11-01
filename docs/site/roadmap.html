@@ -10,30 +10,29 @@
 <body>
 <h1>Roadmap</h1>
 <p class="lede">Twelve milestones, in order. A milestone is done when it works on noribot.chat against its scenarios.</p>
-<ul class="pts"><li>There are twelve milestones in Linear (project P-AB-7).</li><li>We measure progress against 106 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show Linear issue completion. Milestone 3's code is finished ahead of its tickets. Milestone 4 has passed its local model journeys; deployed acceptance remains open.</li></ul>
   <div class="road" id="roadGrid" aria-label="Milestone timeline"></div>
-  <div class="grid2" style="margin-top:14px">
-    <div class="card tight"><p class="keyline">What changes at milestone 4</p>
-      <ul class="pts note"><li>Tasks finish with an explicit <code>complete</code> call and record checks.</li><li>Tool errors go back to the model.</li><li>Reads can be corrected within limits; failed tasks and uncertain writes wait for user direction.</li><li>History moves out of workflow payloads.</li></ul></div>
-    <div class="card tight"><p class="keyline">What changes at milestones 5–6</p>
-      <ul class="pts note"><li>Milestone 5 adds web search, longer shell jobs, screenshots the model can read, a capability catalog, and calendar read.</li><li>Milestone 6 adds approvals tied to one exact operation, starting with the first approved calendar write.</li><li>Writes only arrive once that approval step exists.</li></ul></div>
-  </div>
+<ul class="pts"><li>Linear holds the twelve milestones. Milestones 6 to 12 are planned.</li><li>We measure progress against 106 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show Linear issue completion. Milestones 3 and 4 are deployed. Milestone 5 is built and isn't deployed, and its lookup scenarios are still open.</li><li>Milestone 4 stopped a finished task when the Jev classifier returned low confidence (<a href="https://linear.app/a-barwick/issue/AB-235">AB-235</a>). Milestone 5 removes that check.</li></ul>
+  <div style="margin-top:14px">
+<div class="card tight"><p class="keyline">What milestone 4 changed</p>
+      <ul class="pts note"><li>Tasks finish with an explicit <code>complete</code> call and a completeness check from the Jev classifier, which milestone 5 removes.</li><li>Tool errors go back to the model.</li><li>Reads can be corrected within limits. Failed tasks and uncertain writes wait for user direction.</li><li>History moved out of workflow payloads.</li></ul></div>
+      </div>
 <section><h2>What each piece adds</h2>
 <div class="card"><table>
       <tr><th>Capability</th><th>What it adds</th><th>Linear</th><th>Milestone</th></tr>
-          <tr><td>Connectors and tools</td><td>Web search, shell jobs longer than 45 seconds, screenshots the model can see, and calendar read with a connected account.</td><td><a href="https://linear.app/a-barwick/issue/AB-201">AB-201</a> <a href="https://linear.app/a-barwick/issue/AB-202">AB-202</a> <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a> <a href="https://linear.app/a-barwick/issue/AB-204">AB-204</a></td><td>5</td></tr>
-          <tr><td>Action policies and approvals</td><td>Each tool declares whether it is a read, a reversible write or a sensitive send. That sets its retries and when the user is asked. Approvals bind to one exact operation.</td><td><a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a> <a href="https://linear.app/a-barwick/issue/AB-169">AB-169</a> <a href="https://linear.app/a-barwick/issue/AB-170">AB-170</a> <a href="https://linear.app/a-barwick/issue/AB-171">AB-171</a> <a href="https://linear.app/a-barwick/issue/AB-172">AB-172</a> <a href="https://linear.app/a-barwick/issue/AB-199">AB-199</a> <a href="https://linear.app/a-barwick/issue/AB-205">AB-205</a> <a href="https://linear.app/a-barwick/issue/AB-216">AB-216</a></td><td>4, 6</td></tr>
+          <tr class="designed"><td>Connectors and tools</td><td>Web search, shell jobs longer than 45 seconds, screenshots the model can see, and calendar read with a connected account.</td><td><a href="https://linear.app/a-barwick/issue/AB-201">AB-201</a> <a href="https://linear.app/a-barwick/issue/AB-202">AB-202</a> <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a> <a href="https://linear.app/a-barwick/issue/AB-204">AB-204</a></td><td>5</td></tr>
+          <tr><td>Action policies</td><td>Browser tools count as reads, and other tools have unknown effects. That sets their retries.</td><td><a href="https://linear.app/a-barwick/issue/AB-199">AB-199</a></td><td>4</td></tr>
+          <tr class="designed"><td>Approvals</td><td>Reversible writes and sensitive sends as separate types, and approvals that bind to one exact operation.</td><td><a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a> <a href="https://linear.app/a-barwick/issue/AB-169">AB-169</a> <a href="https://linear.app/a-barwick/issue/AB-170">AB-170</a> <a href="https://linear.app/a-barwick/issue/AB-171">AB-171</a> <a href="https://linear.app/a-barwick/issue/AB-172">AB-172</a> <a href="https://linear.app/a-barwick/issue/AB-205">AB-205</a> <a href="https://linear.app/a-barwick/issue/AB-216">AB-216</a></td><td>6</td></tr>
           <tr><td>Task supervision</td><td>The runtime reports crashes with completed and unresolved operations. Milestone 4 waits for user direction instead of re-issuing failed tasks automatically.</td><td><a href="https://linear.app/a-barwick/issue/AB-179">AB-179</a></td><td>4</td></tr>
-          <tr><td>Context</td><td>Each loop starts with a small context and retrieves more when it would change the next decision. Older context is compacted with links back to the originals.</td><td><a href="https://linear.app/a-barwick/issue/AB-153">AB-153</a> <a href="https://linear.app/a-barwick/issue/AB-154">AB-154</a> <a href="https://linear.app/a-barwick/issue/AB-155">AB-155</a></td><td>10</td></tr>
-          <tr><td>Memory</td><td>Separate stores for user knowledge, history, active work, procedures and authority. Memories have a source and scope, and the user can inspect, correct and forget them.</td><td><a href="https://linear.app/a-barwick/issue/AB-156">AB-156</a> <a href="https://linear.app/a-barwick/issue/AB-157">AB-157</a></td><td>10</td></tr>
-          <tr><td>Results and files</td><td>Saved outputs with stable IDs and revisions, typed message parts, uploads from the user, and an event log with a live stream.</td><td><a href="https://linear.app/a-barwick/issue/AB-173">AB-173</a> <a href="https://linear.app/a-barwick/issue/AB-174">AB-174</a> <a href="https://linear.app/a-barwick/issue/AB-175">AB-175</a> <a href="https://linear.app/a-barwick/issue/AB-176">AB-176</a> <a href="https://linear.app/a-barwick/issue/AB-177">AB-177</a> <a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a> <a href="https://linear.app/a-barwick/issue/AB-207">AB-207</a> <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></td><td>8</td></tr>
-          <tr><td>Schedules and monitors</td><td>One-time reminders, recurring schedules, conditional monitors, and notifications when the app is closed.</td><td><a href="https://linear.app/a-barwick/issue/AB-208">AB-208</a> <a href="https://linear.app/a-barwick/issue/AB-222">AB-222</a> <a href="https://linear.app/a-barwick/issue/AB-223">AB-223</a> <a href="https://linear.app/a-barwick/issue/AB-224">AB-224</a></td><td>9</td></tr>
-          <tr><td>Proactive assistance</td><td>Nori starts work from a trigger and states the reason. The first trigger isn't chosen yet.</td><td><a href="https://linear.app/a-barwick/issue/AB-225">AB-225</a></td><td>11</td></tr>
-          <tr><td>More clients</td><td>Identity, devices and push for native clients.</td><td><a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a></td><td>12</td></tr>
-          <tr><td>Computer backups</td><td>Backups for the guest disk and Terraform state. The retained disk isn't a backup today.</td><td><a href="https://linear.app/a-barwick/issue/AB-189">AB-189</a></td><td>None yet</td></tr>
+          <tr class="designed"><td>Context</td><td>Each loop starts with a small context and retrieves more when it would change the next decision. Older context is compacted with links back to the originals.</td><td><a href="https://linear.app/a-barwick/issue/AB-153">AB-153</a> <a href="https://linear.app/a-barwick/issue/AB-154">AB-154</a> <a href="https://linear.app/a-barwick/issue/AB-155">AB-155</a></td><td>10</td></tr>
+          <tr class="designed"><td>Memory</td><td>Separate stores for user knowledge, history, active work, procedures and authority. Memories have a source and scope, and the user can inspect, correct and forget them.</td><td><a href="https://linear.app/a-barwick/issue/AB-156">AB-156</a> <a href="https://linear.app/a-barwick/issue/AB-157">AB-157</a></td><td>10</td></tr>
+          <tr class="designed"><td>Results and files</td><td>Saved outputs with stable IDs and revisions, text, images and files in one message, uploads from the user, and an event log with a live stream.</td><td><a href="https://linear.app/a-barwick/issue/AB-173">AB-173</a> <a href="https://linear.app/a-barwick/issue/AB-174">AB-174</a> <a href="https://linear.app/a-barwick/issue/AB-175">AB-175</a> <a href="https://linear.app/a-barwick/issue/AB-176">AB-176</a> <a href="https://linear.app/a-barwick/issue/AB-177">AB-177</a> <a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a> <a href="https://linear.app/a-barwick/issue/AB-207">AB-207</a> <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></td><td>8</td></tr>
+          <tr class="designed"><td>Schedules and monitors</td><td>One-time reminders, recurring schedules, conditional monitors, and notifications when the app is closed.</td><td><a href="https://linear.app/a-barwick/issue/AB-208">AB-208</a> <a href="https://linear.app/a-barwick/issue/AB-222">AB-222</a> <a href="https://linear.app/a-barwick/issue/AB-223">AB-223</a> <a href="https://linear.app/a-barwick/issue/AB-224">AB-224</a></td><td>9</td></tr>
+          <tr class="designed"><td>Proactive assistance</td><td>Nori starts work from a trigger and states the reason. The first trigger isn't chosen yet.</td><td><a href="https://linear.app/a-barwick/issue/AB-225">AB-225</a></td><td>11</td></tr>
+          <tr class="designed"><td>More clients</td><td>Identity, devices and push for native clients.</td><td><a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a></td><td>12</td></tr>
+          <tr class="designed"><td>Terraform state backups</td><td>Backups for Terraform state.</td><td><a href="https://linear.app/a-barwick/issue/AB-189">AB-189</a></td><td>None yet</td></tr>
     </table></div>
-<div class="card tight">
-    <p class="keyline">In the overview, with no Linear issue of its own</p>
+<div class="card tight designed">
+    <p class="keyline">Planned, with no Linear issue of its own</p>
     <ul class="pts note" style="margin-bottom:0">
       <li>Email and document tools. The first planned connector is the calendar.</li>
       <li>Reusable procedures learned from feedback. <a href="https://linear.app/a-barwick/issue/AB-156">AB-156</a> treats these as a later extension.</li>
@@ -45,12 +44,12 @@
 const miles = [
     [1, 'Simpler and cheaper', 5, 6, 'AB-188 spend alert in review'],
     [2, 'Conversational home, deployed', 6, 8, 'AB-143, AB-147 in progress'],
-    [3, 'Many tasks at once', 0, 13, 'code finished, tickets behind'],
-    [4, 'Waits and finishing properly', 0, 16, 'local model journeys pass; deployment pending'],
-    [5, 'Real capabilities', 0, 8, 'code finished, not deployed'],
+    [3, 'Many tasks at once', 7, 13, 'deployed, area issues open'],
+    [4, 'Waits and finishing properly', 7, 17, 'deployed, AB-235 open'],
+    [5, 'Search, vision and tools', 0, 8, 'built, not deployed, lookup scenarios open'],
     [6, 'Approvals and writes', 0, 7, 'first approved write'],
-    [7, 'Subtasks', 0, 1, 'request_work'],
-    [8, 'Results and files', 0, 8, 'typed parts, uploads, event log'],
+    [7, 'Subtasks', 0, 1, 'a task asks for other work'],
+    [8, 'Results and files', 0, 8, 'message parts, uploads, event log'],
     [9, 'Schedules and monitors', 0, 4, 'reminders, recurrence'],
     [10, 'Memory and context', 0, 5, 'persistent memory'],
     [11, 'Proactive assistance', 0, 1, 'first trigger choice'],
@@ -59,7 +58,7 @@ const miles = [
 window.ROAD = miles;
 </script>
 <details class="more"><summary>Behavior the milestones have to show</summary>
-<ul class="pts"><li>Ordinary conversation creates no task, and a mixed message answers and dispatches.</li><li>A three-message burst produces one current reply.</li><li>A restart preserves messages and task IDs, and retrying an ID does nothing.</li><li>Two tasks progress separately, and a correction, question, budget pause or Stop in one leaves the other alone.</li><li>A question survives reload, pause and restart.</li><li>An uncertain write is reconciled without a duplicate.</li><li>Subtask outcomes resume their parent, costs roll up, and stopping a parent includes subtasks.</li><li>Saved results reopen after a disconnect, and status questions don't rerun actions.</li><li>Chat works while task execution is paused.</li></ul></details>
+<ul class="pts"><li>Ordinary conversation creates no task, and a mixed message answers and dispatches.</li><li>A three-message burst produces one current reply.</li><li>A restart preserves messages and task IDs, and retrying an ID does nothing.</li><li>Two tasks progress separately, and a correction, question, budget pause or Stop in one leaves the other alone.</li><li>A question survives reload, pause and restart.</li><li>An uncertain write is resolved without a duplicate.</li><li>Subtask outcomes resume their parent, costs roll up, and stopping a parent includes subtasks.</li><li>Saved results reopen after a disconnect, and status questions don't rerun actions.</li><li>Chat works while task execution is paused.</li></ul></details>
 <details class="sources"><summary>Sources</summary><p><a href="https://linear.app/a-barwick/project/nori-73a68f0b2a10">Linear project</a></p></details>
 </body>
 </html>
