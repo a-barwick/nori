@@ -10,7 +10,7 @@
 <body>
 <h1>Roadmap</h1>
 <p class="lede">Twelve milestones, in order. A milestone is done when it works on noribot.chat against its scenarios.</p>
-<ul class="pts"><li>There are twelve milestones in Linear (project P-AB-7).</li><li>We measure progress against 106 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show Linear issue completion. Milestones 3 and 4 are deployed, and milestone 5 isn't.</li><li>Milestone 4's acceptance remains open because the completion check rejected a finished task (<a href="https://linear.app/a-barwick/issue/AB-235">AB-235</a>).</li></ul>
+<ul class="pts"><li>There are twelve milestones in Linear (project P-AB-7).</li><li>We measure progress against 106 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show Linear issue completion. Milestones 3 and 4 are deployed, and milestone 5 isn't.</li><li>Milestone 4's acceptance remains open. The runtime marked a finished task incomplete after Jev returned low confidence (<a href="https://linear.app/a-barwick/issue/AB-235">AB-235</a>).</li></ul>
   <div class="road" id="roadGrid" aria-label="Milestone timeline"></div>
   <div class="grid2" style="margin-top:14px">
     <div class="card tight"><p class="keyline">What milestone 4 changed</p>
@@ -45,8 +45,8 @@
 const miles = [
     [1, 'Simpler and cheaper', 5, 6, 'AB-188 spend alert in review'],
     [2, 'Conversational home, deployed', 6, 8, 'AB-143, AB-147 in progress'],
-    [3, 'Many tasks at once', 7, 13, 'deployed; area tickets open'],
-    [4, 'Waits and finishing properly', 7, 17, 'deployed; AB-235 blocks acceptance'],
+    [3, 'Many tasks at once', 7, 13, 'deployed, area issues open'],
+    [4, 'Waits and finishing properly', 7, 17, 'deployed, AB-235 open'],
     [5, 'Real capabilities', 0, 8, 'search, vision, tool discovery, calendar read'],
     [6, 'Approvals and writes', 0, 7, 'first approved write'],
     [7, 'Subtasks', 0, 1, 'request_work'],
