@@ -46,7 +46,7 @@
 </section>
 <section><h2>Polling</h2>
 <div class="card"><table class="tall"><tr><th>Situation</th><th>Client behavior</th></tr>
-<tr><td>A turn, unpaused task, Stop or command is in progress</td><td>Polls after 1 second, then every 2 seconds.</td></tr>
+<tr><td>A turn, unpaused task, Stop or command is in progress</td><td>Calls <code>POST /api/status</code> after 1 second, then every 2 seconds. Fetches a snapshot when <code>version</code> changes or the call fails.</td></tr>
 <tr><td>Nothing is in progress</td><td>Doesn't poll.</td></tr>
 <tr><td>The tab is hidden</td><td>Stops polling, then fetches once when the tab is visible again.</td></tr>
 <tr><td>The browser comes back online</td><td>Fetches once.</td></tr>
