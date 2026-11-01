@@ -17,6 +17,10 @@ When Austin requests monitored verification, use the [verification-monitor](.age
 
 Ordinary edits do not require a monitor. Monitoring does not authorize additional scope, spending, deployments, or model changes.
 
+## Looking things up
+
+To look something up, run `python3 docs/agent_map.py find "words"` first. It prints matching doc sections as plain text with their code paths. `docs/agent-map.json` lists every page and section. Read the code it names when you need detail, and avoid reading the whole site. Before changing a file, or to find its docs, run `python3 docs/agent_map.py code PATH`. It lists the pages that describe that file. If its output says STALE, the code changed after the page was reviewed. Check the claim against the code it names, because the code decides what's true.
+
 ## Documentation
 
 Nori's documentation lives in `docs/site/`. Check it first when you need to understand the system, and put new or updated documentation there.
