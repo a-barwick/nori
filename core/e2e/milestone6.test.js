@@ -138,6 +138,7 @@ async function modelHandler(req, res) {
   const items = Array.isArray(request.input) ? request.input : [];
   const users = items.filter((item) => item.role === "user").map((item) => typeof item.content === "string" ? item.content : item.content?.map((part) => part.text).join("")).filter(Boolean);
   const outputs = items.filter((item) => item.type === "function_call_output").map((item) => JSON.parse(item.output));
+  inner.lastOutputs = outputs;
   const name = users.join("\n").match(/script:(\w+)/)?.[1];
   const call = scripts[name]?.(outputs, users) ?? { name: "complete", args: { answer: "No script.", evidence: [], unmet: [] } };
   reply(res, 200, {
@@ -557,6 +558,9 @@ journey("a move keeps the event's length, carries the version the user saw, and 
   expect(google.writes[0].ifMatch).toBe(`"v1"`);
   expect(google.writes[0].query).toContain("sendUpdates=none");
   expect(new Date(event.end.dateTime) - new Date(event.start.dateTime)).toBe(90 * 60_000);
+  const result = JSON.stringify(inner.lastOutputs);
+  expect(result).toContain('"visibility":"default"');
+  expect(result).toContain('"other_attendees":0');
 
   scripts.moveStale = (outputs) => outputs.length ? finish(`Outcome: ${outputs.at(-1).outcome}`, outputs) : { name: "calendar_move", args: { event_id: "dentist", start: future(120), end: "" } };
   const stale = await dispatch("moveStale");
