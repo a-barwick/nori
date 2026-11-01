@@ -86,11 +86,15 @@ View each page at 1440 px and 375 px wide. If you can't render it, the page isn'
 
 ## 8. Get it reviewed
 
-You can't approve your own page. Start a new thread or subagent that didn't write the change, and have it run `.agents/skills/review-docs/SKILL.md` on each changed page. Fix what it rejects, then have the whole page reviewed again until it returns PASS.
+You can't approve your own page. Start a new thread or subagent that didn't write the change, and have it run `.agents/skills/review-docs/SKILL.md` on each changed page. Give the reviewer only the page paths, and don't say what to accept or what counts as evidence. Don't edit a page while it's under review.
+
+Fix everything in a rejection, then ask for a recheck with the earlier report and the diff. A change gets one full review and at most two rechecks. If the last one rejects, stop and give Austin the reports. Only Austin can approve another review or waive this one.
+
+If a page changes after its PASS, it needs a recheck of that change.
 
 ## 9. Commit
 
-After the PASS, run `python3 docs/agent_map.py build` and `python3 docs/agent_map.py mark docs/site/your-page.html`. List every code file a page depends on in its Sources, because the staleness check only watches those files.
+After the PASS or waiver, run `python3 docs/agent_map.py build` and `python3 docs/agent_map.py mark docs/site/your-page.html`. List every code file a page depends on in its Sources, because the staleness check only watches those files.
 
 End the commit message with these lines, and only if both are true:
 
@@ -99,7 +103,13 @@ Docs-Skills: write-docs, plain-writing
 Docs-Review: PASS, review-docs in a separate thread
 ```
 
-The commit hook rejects a commit without them. Don't use `--no-verify`.
+If Austin waived the review, replace the `Docs-Review` line with this one, and quote Austin's words:
+
+```text
+Docs-Waived: Austin said "..."
+```
+
+The commit hook rejects a commit without one of them. A waiver doesn't skip `check.py`. Don't use `--no-verify`.
 
 ## 10. Report
 
