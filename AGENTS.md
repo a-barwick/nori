@@ -19,9 +19,24 @@ Ordinary edits do not require a monitor. Monitoring does not authorize additiona
 
 ## Documentation
 
-Nori's documentation lives in `docs/site/`. Check it first when you need to understand the system, and put new or updated documentation there. Run the site with `docs/serve.sh`.
+Nori's documentation lives in `docs/site/`. Check it first when you need to understand the system, and put new or updated documentation there.
 
-Before any change under `docs/site/`, however small, load the `write-docs`, `review-docs` and `plain-writing` skills in `.agents/skills/` and follow them. Do this before the first edit, and don't merge or publish a docs change until the `review-docs` steps are done.
+**Every change to a page in `docs/site/` must follow these steps. A small edit, a status update, a fact fix and a page Austin asked for quickly all count.**
+
+1. Before you edit a page, load and follow the `write-docs` skill in `.agents/skills/`, which also requires `plain-writing`. Do this first, not after the edit.
+2. Before you commit, a new thread or subagent that didn't write the change runs the `review-docs` skill on each changed page and returns PASS. Austin requires this review, so the rules above and below about requesting reviews and starting subagents don't apply to it.
+3. Add these lines to the commit message, and only if both are true:
+
+   ```text
+   Docs-Skills: write-docs, plain-writing
+   Docs-Review: PASS, review-docs in a separate thread
+   ```
+
+4. Run `docs/deploy.sh` to publish only after those steps.
+
+Each changed page must pass `check.py` completely, including findings that were there before your edit. The commit hook, `make check` and `docs/deploy.sh` enforce this. Don't bypass them with `--no-verify`, and don't change their rules or limits to get a page through. If you find you skipped a step, say so, then do it. Only Austin can waive a rule.
+
+Read `docs/site/AGENTS.md` for the rules, and run the site with `docs/serve.sh`.
 
 ## Marketing film
 

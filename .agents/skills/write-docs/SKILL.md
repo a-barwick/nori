@@ -5,7 +5,7 @@ description: Add or change a page on the Nori docs site in docs/site, in the sit
 
 # Write docs
 
-Follow these steps in order, and do each one even if the request sounds small. Paths are from the repo root.
+This skill is required for every change to a page, however small. Load it before your first edit, and follow these steps in order. Paths are from the repo root.
 
 ## 1. Read the rules
 
@@ -15,7 +15,7 @@ Read these files in full before writing:
 - `.agents/skills/plain-writing/SKILL.md`, the sentence rules
 - `docs/site/words.html`, the glossary
 - `docs/site/site.css`, for the available classes
-- Two model pages: `docs/site/tasks.html` for a flow and `docs/site/web-client.html` for tables
+- `docs/site/index.html`, the page every page has to match
 
 ## 2. Find the place
 
@@ -49,7 +49,7 @@ The visual comes before any section text. Pick the one that shows the idea:
 
 Where the topic allows, follow one concrete example through the visual. Each box names a system part and each arrow says what passes, as `docs/site/AGENTS.md` describes.
 
-Outline the page as `h1`, one sentence of lede, the visual, then two to four short sections that each answer a different question. Aim for 300 to 600 words. The 800-word limit is a ceiling, so a page near it usually has too much in it.
+Outline the page as `h1`, one sentence of lede, the visual, then two to four short sections that each answer a different question. Aim for about 300 visible words, as `index.html` has. The limit is 500.
 
 ## 5. Write the page
 
@@ -70,20 +70,35 @@ When you change an existing page, rework the affected sections so the page reads
 - `code.html` when the page adds a new area of code
 - Links from related pages
 
-Keep each of these edits small, and don't touch unrelated pages. Don't restructure existing content just to clear a warning that was already there. Mention it in your report.
+Keep each of these edits small, and don't touch unrelated pages. Every page you do change must pass completely, so rework any older content that fails.
 
 If a page you're changing makes a claim the code and sources don't support, remove it from that page. Add it to `open-questions.html` if it might still be true, and say so in your report.
 
 ## 7. Check it
 
-Run the review checks on each page you changed, and fix every failure:
+Run the checks on each page you changed, and fix every failure, including failures that were there before your edit:
 
 ```bash
 python3 .agents/skills/review-docs/scripts/check.py docs/site/your-page.html
 ```
 
-Then follow `.agents/skills/review-docs/SKILL.md` on your own page, including looking at it at desktop and phone widths. A check that passes doesn't replace looking at the page. If a server won't start, open the file directly, and if no browser runs at all, state that plainly. Fix what you find, and cut anything the checks warn about unless you have a reason to keep it.
+View each page at 1440 px and 375 px wide. If you can't render it, the page isn't finished, so say so.
 
-## 8. Report
+## 8. Get it reviewed
 
-State the pages changed by repo path, the code files you checked, what you couldn't verify, and whether you viewed the rendered page. If you couldn't render it, say so. Don't link to a temporary local server.
+You can't approve your own page. Start a new thread or subagent that didn't write the change, and have it run `.agents/skills/review-docs/SKILL.md` on each changed page. Fix what it rejects, then have the whole page reviewed again until it returns PASS.
+
+## 9. Commit
+
+End the commit message with these lines, and only if both are true:
+
+```text
+Docs-Skills: write-docs, plain-writing
+Docs-Review: PASS, review-docs in a separate thread
+```
+
+The commit hook rejects a commit without them. Don't use `--no-verify`.
+
+## 10. Report
+
+State the pages changed by repo path, the code files you checked, the review verdict and whether you viewed the rendered page. Don't link to a temporary local server.
