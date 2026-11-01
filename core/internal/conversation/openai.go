@@ -120,8 +120,7 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	return decodeOpenAIReply(res, reply, request.NoDispatch, span)
 }
 
-// requestBody builds the Chat Completions request. Retained attempts can contain another provider's opaque reasoning
-// and native tool messages, so openAIConversation sends only text and historical command facts.
+// requestBody builds the Chat Completions request from the saved messages.
 func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, controlled bool, span trace.Span) ([]byte, error) {
 	if controlled {
 		for _, message := range request.Messages {
