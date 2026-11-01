@@ -70,7 +70,7 @@ inference while health and cleanup remain available.
 | `OPENAI_API_KEY`, `JEV_API_KEY` | Required conversation provider credentials for both entrypoints |
 | `NORI_AGENT_MODEL`, `NORI_AGENT_BASE_URL` | Conversation model and HTTPS endpoint; defaults `gpt-6.1-sol`, `https://api.openai.com/v1`; low reasoning, standard tier |
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
-| `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Defaults `bot-111549`, `nori-poc`; Google APIs use Application Default Credentials |
+| `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |
 | `FIRESTORE_EMULATOR_HOST`, `TEMPORAL_LOCAL` | Explicit local Firestore endpoint and local Temporal mode; absent/false uses configured services |
 | `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and native Agent Runtime invoke root ending in `/api` |
 | `OPENROUTER_API_KEY` | Inner worker credential; development uses the spend wrapper's scoped key |

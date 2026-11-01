@@ -4,12 +4,10 @@ package main
 import (
 	"context"
 	"log"
-	"nori/internal/computer"
 	"nori/internal/env"
 	"nori/internal/observability"
-	"nori/internal/state"
+	"nori/internal/platform"
 	"nori/internal/task"
-	"os"
 	"time"
 )
 
@@ -25,7 +23,7 @@ func main() {
 	if e != nil {
 		observability.Fatal(e)
 	}
-	store, e := state.NewGoogle(ctx, env.Get("NORI_PROJECT_ID", "bot-111549"), env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
+	store, e := platform.OpenStore(ctx)
 	if e != nil {
 		observability.Fatal(e)
 	}
@@ -42,8 +40,7 @@ func main() {
 		observability.Fatal(e)
 	}
 	defer c.Close()
-	config := computer.Config{Project: env.Get("NORI_PROJECT_ID", "bot-111549"), Zone: os.Getenv("COMPUTER_ZONE"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer")}
-	if e = task.RepairClosed(ctx, store, c, config); e != nil {
+	if e = task.RepairClosed(ctx, store, c, platform.Computer()); e != nil {
 		observability.Fatal(e)
 	}
 	if e = task.Deliver(ctx, store, c, wakes); e != nil {

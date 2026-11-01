@@ -87,7 +87,11 @@ func FromEnv() (*Client, error) {
 	if err != nil || len(raw) != 32 || scope != strings.ToLower(scope) || (profile != "ci" && profile != "feature") {
 		return nil, blocked("NORI_SPEND_SCOPE must be a SHA-256 hex ID and NORI_SPEND_PROFILE must be ci or feature")
 	}
-	return &Client{project: env("NORI_PROJECT_ID", "bot-111549"), database: env("NORI_SPEND_DATABASE", "nori-sandbox"), scope: scope, profile: profile}, nil
+	project := os.Getenv("NORI_PROJECT_ID")
+	if project == "" {
+		return nil, blocked("NORI_PROJECT_ID must be configured")
+	}
+	return &Client{project: project, database: env("NORI_SPEND_DATABASE", "nori-sandbox"), scope: scope, profile: profile}, nil
 }
 
 func (c *Client) Close() {

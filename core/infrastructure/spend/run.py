@@ -47,6 +47,7 @@ def main():
         if name.startswith("NORI_SPEND_") or name in ("OPENROUTER_API_KEY", "OPENROUTER_MANAGEMENT_KEY",
                 "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "OPENROUTER_BASE_URL"):
             child.pop(name)
+    child.setdefault("NORI_PROJECT_ID", keys.PROJECT)
     child.update(NORI_SPEND_SCOPE=scope, NORI_SPEND_PROFILE="feature", NORI_SPEND_DATABASE=keys.DATABASE,
                  OPENROUTER_BASE_URL="https://openrouter.ai/api/v1", OPENROUTER_API_KEY=key)
     # Direct OpenAI calls use Nori's atomic reservations in the same scope.

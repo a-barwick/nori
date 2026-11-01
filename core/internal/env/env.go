@@ -16,6 +16,15 @@ func Get(name, fallback string) string {
 	return fallback
 }
 
+// Required returns a variable that has no safe default.
+func Required(name string) (string, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return "", fmt.Errorf("%s must be configured", name)
+	}
+	return value, nil
+}
+
 // Load reads NORI_ENV_FILE (default ../.env), then NORI_TASK_ENV_FILE when it
 // names a separate task configuration. Missing files are fine in deployed
 // environments; malformed files are not. Already-set variables win.

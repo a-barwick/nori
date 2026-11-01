@@ -12,12 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"nori/internal/computer"
 	"nori/internal/conversation"
 	"nori/internal/env"
 	"nori/internal/observability"
+	"nori/internal/platform"
 	"nori/internal/spend"
-	"nori/internal/state"
 	"nori/internal/task"
 )
 
@@ -48,8 +47,7 @@ func Open(ctx context.Context) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	project := env.Get("NORI_PROJECT_ID", "bot-111549")
-	store, err := state.NewGoogle(ctx, project, env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
+	store, err := platform.OpenStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +62,7 @@ func Open(ctx context.Context) (*Runtime, error) {
 		store.Close()
 		return nil, fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
 	}
-	tasks := &conversation.Tasks{Store: store, Wakes: wakes, Client: temporal, Computer: computer.Config{Project: project, Zone: env.Get("COMPUTER_ZONE", "us-central1-a"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer}}
+	tasks := &conversation.Tasks{Store: store, Wakes: wakes, Client: temporal, Computer: platform.Computer()}
 	model := env.Get("NORI_AGENT_MODEL", "gpt-6.1-sol")
 	return &Runtime{Runner: conversation.New(conversation.NewModel(base, key, model), conversation.NewClassifier(jevKey), tasks), Tasks: tasks, Model: model}, nil
 }

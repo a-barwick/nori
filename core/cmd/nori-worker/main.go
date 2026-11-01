@@ -17,11 +17,10 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 	"nori/internal/agent"
-	"nori/internal/computer"
 	"nori/internal/env"
 	"nori/internal/observability"
+	"nori/internal/platform"
 	"nori/internal/spend"
-	"nori/internal/state"
 	"nori/internal/task"
 	"nori/internal/wake"
 	"nori/internal/workerservice"
@@ -78,7 +77,7 @@ func register(ctx context.Context) (result error) {
 	if build == "" || deployment == "" {
 		return fmt.Errorf("registration requires an immutable build and deployment")
 	}
-	store, err := state.NewGoogle(ctx, env.Get("NORI_PROJECT_ID", "bot-111549"), env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
+	store, err := platform.OpenStore(ctx)
 	if err != nil {
 		return err
 	}
@@ -206,8 +205,7 @@ func run(ctx context.Context, wakes *workerwake.Cloud, bounded bool, sliceID str
 		defer cancel()
 		ctx = pollCtx
 	}
-	project := env.Get("NORI_PROJECT_ID", "bot-111549")
-	store, e := state.NewGoogle(ctx, project, env.Get("FIRESTORE_DATABASE_ID", "nori-poc"), os.Getenv("ARTIFACT_BUCKET"))
+	store, e := platform.OpenStore(ctx)
 	if e != nil {
 		return e
 	}
@@ -250,7 +248,7 @@ func run(ctx context.Context, wakes *workerwake.Cloud, bounded bool, sliceID str
 		}
 		notify = notifier.Schedule
 	}
-	service := agent.New(store, key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra"), computer.Config{Project: project, Zone: os.Getenv("COMPUTER_ZONE"), Instance: env.Get("COMPUTER_INSTANCE", "nori-computer"), LocalURL: localComputer})
+	service := agent.New(store, key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra"), platform.Computer())
 	stopTimeout := 25 * time.Second
 	if bounded {
 		stopTimeout = 5 * time.Minute

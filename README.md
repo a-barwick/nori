@@ -80,8 +80,9 @@ Firestore holds the transcript, processing state, dispatch records, and traces.
 Model context uses bounded recent history, with truncation shown in the attempt
 trace. Browsing older messages does not expand model context; memory and
 compaction remain separate features. The Go listener and web preview bind to
-loopback. Defaults still select the configured GCP database and Temporal service;
-use explicit Firestore and Temporal emulator settings for an isolated local run.
+loopback. `NORI_PROJECT_ID` and `FIRESTORE_DATABASE_ID` have no defaults, so every
+process names its database; use explicit Firestore and Temporal emulator settings
+for an isolated local run.
 
 Two live conversation E2E journeys cover the generated greeting, asynchronous
 acceptance, UUID replay/conflict handling, rapid follow-up ordering and
