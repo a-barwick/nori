@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"nori/internal/agent"
+	"nori/internal/agent/openrouter"
 	"nori/internal/dispatch"
 	"nori/internal/env"
 	"nori/internal/platform"
@@ -59,7 +60,7 @@ func run(ctx context.Context, waker wake.Waker, sliceID string, known []string, 
 	// retries that wake on its own tick. A local worker leaves both to the API.
 	steps := dispatch.Commands | dispatch.Publications
 	activities := &task.Activities{
-		Agent: agent.New(store, key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra"), platform.Computer()),
+		Agent: agent.New(store, openrouter.New(key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra")), platform.Computer()),
 		Store: store, JevKey: os.Getenv("JEV_API_KEY"),
 	}
 	if !local {

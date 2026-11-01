@@ -39,7 +39,10 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	defer done()
 	ctx, span := startActivity(ctx, "task.tool", "TOOL", run, in.Revision)
 	defer span.End()
-	span.SetAttributes(attribute.String("tool.name", safeToolName(in.Call.Name)), attribute.String("nori.operation.id", in.OperationID), attribute.String("nori.operation.effect_class", effect))
+	span.SetAttributes(
+		attribute.String("tool.name", safeToolName(in.Call.Name)), attribute.String("nori.operation.id", in.OperationID),
+		attribute.String("nori.operation.effect_class", effect),
+	)
 	records, err := evidence.Operations(ctx, in.RunID)
 	if err != nil {
 		return nil, classified(err)
@@ -73,7 +76,10 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	if recovering == nil {
 		for _, saved := range records {
 			if effect != "read" && saved.EffectClass != "read" && (saved.Outcome == "uncertain" || saved.Outcome == "pending" || saved.Outcome == "failed") {
-				return map[string]any{"operation_id": saved.ID, "outcome": "uncertain", "effect_class": saved.EffectClass, "error": "An earlier write has an unresolved outcome. Ask Austin; no further tool was admitted."}, nil
+				return map[string]any{
+					"operation_id": saved.ID, "outcome": "uncertain", "effect_class": saved.EffectClass,
+					"error": "An earlier write has an unresolved outcome. Ask Austin; no further tool was admitted.",
+				}, nil
 			}
 		}
 		if err = a.Store.Admit(ctx, in.RunID, in.Revision, in.OperationID); err != nil {
@@ -93,7 +99,10 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	} else if err = evidence.PutOperation(ctx, in.RunID, op); err != nil {
 		return nil, classified(err)
 	}
-	trace := state.TaskStep{ID: in.OperationID, Kind: "tool", Name: in.Call.Name, Status: "running", Revision: in.Revision, StartedAt: time.Now().UTC(), Arguments: traceJSON(in.Call.Args), CostStatus: "not_applicable"}
+	trace := state.TaskStep{
+		ID: in.OperationID, Kind: "tool", Name: in.Call.Name, Status: "running", Revision: in.Revision,
+		StartedAt: time.Now().UTC(), Arguments: traceJSON(in.Call.Args), CostStatus: "not_applicable",
+	}
 	a.recordStep(in.RunID, trace)
 	defer func() { trace.Result = traceJSON(result); finishStep(&trace, err); a.recordStep(in.RunID, trace) }()
 	// Persist even if the request context was interrupted after tool execution.
@@ -164,7 +173,10 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 				break
 			}
 		}
-		return map[string]any{"operation_id": op.ID, "outcome": "uncertain", "effect_class": op.EffectClass, "error": "The saved guest receipt does not establish this operation's result. Ask Austin; this operation was not repeated."}, nil
+		return map[string]any{
+			"operation_id": op.ID, "outcome": "uncertain", "effect_class": op.EffectClass,
+			"error": "The saved guest receipt does not establish this operation's result. Ask Austin; this operation was not repeated.",
+		}, nil
 	}
 	c, err := computer.Open(observability.SuppressErrorCapture(ctx), a.Agent.Computer, computerRun(in.Step))
 	if err != nil {
@@ -222,7 +234,8 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			if saveErr != nil {
 				return nil, saveErr
 			}
-			observability.Event(context.WithoutCancel(ctx), "task.operation.interrupted", attribute.String("nori.operation.id", op.ID), attribute.Bool("nori.operation.stop_confirmed", cancelErr == nil))
+			observability.Event(context.WithoutCancel(ctx), "task.operation.interrupted",
+				attribute.String("nori.operation.id", op.ID), attribute.Bool("nori.operation.stop_confirmed", cancelErr == nil))
 			if cancelErr != nil {
 				return output, nil
 			}
@@ -283,7 +296,10 @@ func (a *Activities) savedToolReceipt(ctx context.Context, in ToolInput, receipt
 		if err := a.Store.Artifact(ctx, in.RunID, state.Artifact{ID: id, Kind: "screenshot"}); err != nil {
 			return nil, "", false
 		}
-		return map[string]any{"run_id": in.RunID, "artifact_id": id, "description": "Private browser screenshot saved for Austin; image pixels are not available to the model."}, "confirmed", true
+		return map[string]any{
+			"run_id": in.RunID, "artifact_id": id,
+			"description": "Private browser screenshot saved for Austin; image pixels are not available to the model.",
+		}, "confirmed", true
 	}
 	var output map[string]any
 	if json.Unmarshal(receipt.Body, &output) != nil || output == nil {

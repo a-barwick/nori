@@ -16,11 +16,11 @@ import (
 	"sync"
 
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
 	"nori/internal/observability"
 	"nori/internal/state"
 	"nori/internal/task"
+	"nori/internal/transcript"
 )
 
 type telemetryPacket struct {
@@ -98,9 +98,13 @@ func completionBoundaries(ctx context.Context, store *state.Google, id, other st
 		return nil, err
 	}
 	report["history activity returns only a compact immutable reference"] = len(synced.Ref) == 64 && synced.Position == run.Position
-	makeProposal := func(runID, callID string, evidence, unmet []any, extra []*genai.Content) (string, error) {
-		contents := append([]*genai.Content{}, extra...)
-		contents = append(contents, &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: callID, Name: "complete", Args: map[string]any{"answer": "PRIVATE_HISTORY_SENTINEL: observed result", "evidence": evidence, "unmet": unmet}}}}})
+	makeProposal := func(runID, callID string, evidence, unmet []any, extra []any) (string, error) {
+		contents := append([]any{}, extra...)
+		args := map[string]any{"answer": "PRIVATE_HISTORY_SENTINEL: observed result", "evidence": evidence, "unmet": unmet}
+		contents = append(contents, transcript.Message{
+			Role:  transcript.RoleModel,
+			Parts: []transcript.Part{{ToolCall: &transcript.ToolCall{ID: callID, Name: "complete", Args: args}}},
+		})
 		data, e := json.Marshal(contents)
 		if e != nil {
 			return "", e
@@ -119,16 +123,25 @@ func completionBoundaries(ctx context.Context, store *state.Google, id, other st
 		return nil, err
 	}
 	report["missing Jev key produces unverified outcome rather than completion"] = unavailable.Action == "unverified" && strings.Contains(unavailable.Detail, "not completed")
-	procedure := []*genai.Content{
-		{Role: "model", Parts: []*genai.Part{{Text: "PRIVATE_REASONING_SENTINEL", Thought: true}, {FunctionCall: &genai.FunctionCall{ID: "ask-account", Name: "request_input", Args: map[string]any{"question": "Home or Studio?"}}}}},
-		{Role: "tool", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: "ask-account", Name: "request_input", Response: map[string]any{"answer": "Home", "question_id": "account-question"}}}}},
-		{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: operation.CallID, Name: operation.Name, Args: map[string]any{"url": "http://127.0.0.1/bills"}}}}},
-		{Role: "tool", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: operation.CallID, Name: operation.Name, Response: map[string]any{"text": "DUPLICATE_TOOL_RESULT_SENTINEL"}}}}},
+	// Hidden reasoning text exists only in saved Gemini-era blocks, so these fixtures are
+	// raw saved JSON. They also prove that such blocks still read.
+	toolCall := func(id, name string, args map[string]any) map[string]any {
+		return map[string]any{"functionCall": map[string]any{"id": id, "name": name, "args": args}}
 	}
-	questionHistory := []*genai.Content{{Role: "model", Parts: []*genai.Part{
-		{Text: "PRIVATE_REASONING_SENTINEL", Thought: true},
-		{Text: "The command exited with status 7; the check failed."},
-		{FunctionCall: &genai.FunctionCall{ID: "failed-question", Name: "request_input", Args: map[string]any{"question": "What should happen next?"}}},
+	toolResult := func(id, name string, response map[string]any) map[string]any {
+		return map[string]any{"functionResponse": map[string]any{"id": id, "name": name, "response": response}}
+	}
+	reasoning := map[string]any{"text": "PRIVATE_REASONING_SENTINEL", "thought": true}
+	procedure := []any{
+		map[string]any{"role": "model", "parts": []any{reasoning, toolCall("ask-account", "request_input", map[string]any{"question": "Home or Studio?"})}},
+		map[string]any{"role": "tool", "parts": []any{toolResult("ask-account", "request_input", map[string]any{"answer": "Home", "question_id": "account-question"})}},
+		map[string]any{"role": "model", "parts": []any{toolCall(operation.CallID, operation.Name, map[string]any{"url": "http://127.0.0.1/bills"})}},
+		map[string]any{"role": "tool", "parts": []any{toolResult(operation.CallID, operation.Name, map[string]any{"text": "DUPLICATE_TOOL_RESULT_SENTINEL"})}},
+	}
+	questionHistory := []any{map[string]any{"role": "model", "parts": []any{
+		reasoning,
+		map[string]any{"text": "The command exited with status 7; the check failed."},
+		toolCall("failed-question", "request_input", map[string]any{"question": "What should happen next?"}),
 	}}}
 	questionBytes, _ := json.Marshal(questionHistory)
 	questionRef, err := store.AppendHistory(ctx, id, "", questionBytes)
@@ -144,13 +157,13 @@ func completionBoundaries(ctx context.Context, store *state.Google, id, other st
 	if err != nil {
 		return nil, err
 	}
-	var received []*genai.Content
+	var received []transcript.Message
 	var serialized string
 	a.JevKey = "fixture-only"
 	a.JevClient = &http.Client{Transport: completionTransport(func(r *http.Request) (*http.Response, error) {
 		var body struct {
 			State struct {
-				History []*genai.Content `json:"saved_action_history"`
+				History []transcript.Message `json:"saved_action_history"`
 			} `json:"state"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -166,7 +179,7 @@ func completionBoundaries(ctx context.Context, store *state.Google, id, other st
 	if err != nil {
 		return nil, err
 	}
-	report["verifier receives ordered input question answer and action evidence"] = verified.Action == "publish" && len(received) == 3 && received[0].Parts[0].FunctionCall.Name == "request_input" && received[1].Parts[0].FunctionResponse.Response["answer"] == "Home" && received[2].Parts[0].FunctionCall.ID == operation.CallID
+	report["verifier receives ordered input question answer and action evidence"] = verified.Action == "publish" && len(received) == 3 && received[0].Parts[0].ToolCall.Name == "request_input" && received[1].Parts[0].ToolResult.Output["answer"] == "Home" && received[2].Parts[0].ToolCall.ID == operation.CallID
 	report["verification action context omits reasoning and duplicate tool result bodies"] = !strings.Contains(serialized, "PRIVATE_REASONING_SENTINEL") && !strings.Contains(serialized, "DUPLICATE_TOOL_RESULT_SENTINEL")
 	invalid, err := makeProposal(id, "complete-invalid", []any{"../../not-evidence"}, []any{}, nil)
 	if err != nil {
@@ -190,7 +203,7 @@ func completionBoundaries(ctx context.Context, store *state.Google, id, other st
 		return nil, err
 	}
 	report["valid hash from another task cannot ground completion"] = rejected.Action == "correct"
-	unpaired := []*genai.Content{{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "unpaired-read", Name: "browser_navigate", Args: map[string]any{"url": "https://example.org"}}}}}}
+	unpaired := []any{map[string]any{"role": "model", "parts": []any{toolCall("unpaired-read", "browser_navigate", map[string]any{"url": "https://example.org"})}}}
 	missing, err := makeProposal(id, "complete-unpaired", []any{operation.ID}, []any{}, unpaired)
 	if err != nil {
 		return nil, err

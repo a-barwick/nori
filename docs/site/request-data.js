@@ -63,7 +63,7 @@ window.REQUEST_FLOW = [
       note: 'Only in request-driven mode. It wakes one worker slice and carries no task content.' },
   ],
   [ // 6. Inner loops work, wait and finish
-    { from: 'Worker', to: 'OpenRouter', edge: 'inner-models', call: 'POST /api/v1/responses', source: 'core/internal/agent/responses.go',
+    { from: 'Worker', to: 'OpenRouter', edge: 'inner-models', call: 'POST /api/v1/responses', source: 'core/internal/agent/openrouter/responses.go',
       request: { model: 'openai/gpt-6.1-terra', instructions: '…', input: [{ role: 'user', content: REQUEST }], max_output_tokens: 8192, store: false, tools: ['shell', 'browser_navigate', 'browser_screenshot', 'complete', 'request_input'] },
       response: { status: 'completed', output: [{ type: 'function_call', call_id: 'call_3', name: 'browser_navigate', arguments: '{"url":"https://forecast.weather.gov/…"}' }], usage: { input_tokens: 412, output_tokens: 36, total_tokens: 448, cost: 0.0003 } },
       note: 'The tools field holds full schemas, shortened to their names here. A response with no reported cost stops the task. Today the model has to know a URL, and a web search tool is planned (AB-201).' },

@@ -21,10 +21,10 @@ import (
 	sdklog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
 	"nori/internal/state"
 	"nori/internal/task"
+	"nori/internal/transcript"
 )
 
 // Wake signals carry no commands or authority. A task parked on a real durable
@@ -46,8 +46,13 @@ func checkpointBoundary(ctx context.Context, store *state.Google, address string
 	if err = store.ProjectQuestion(ctx, id, accepted.Revision, question); err != nil {
 		return nil, err
 	}
-	contents := []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: strings.Repeat("PRIVATE_HISTORY_SENTINEL ", 4096)}}}, {Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: question.CallID, Name: "request_input", Args: map[string]any{"question": question.Text}}}}}}
-	data, err := json.Marshal(contents)
+	messages := []transcript.Message{
+		transcript.UserText(strings.Repeat("PRIVATE_HISTORY_SENTINEL ", 4096)),
+		{Role: transcript.RoleModel, Parts: []transcript.Part{{ToolCall: &transcript.ToolCall{
+			ID: question.CallID, Name: "request_input", Args: map[string]any{"question": question.Text},
+		}}}},
+	}
+	data, err := json.Marshal(messages)
 	if err != nil {
 		return nil, err
 	}
