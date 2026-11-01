@@ -27,6 +27,8 @@
 <div class="node"><b>Runtime publishes the reply</b><small>Newer user input can replace a reply that hasn't been published.</small></div>
 </div></div>
 <p>See <a href="classification.html">Classifying a message</a>, <a href="contract.html">How the loops talk</a> and <a href="outer-model-failure.html">When the outer model call fails</a>.</p>
+<section><h2>When a task ends</h2>
+<p>The turn that reports a task's end includes the answer, the unmet items and up to 8 KiB of the results the task cited. The outer model compares them and tells the user what is and isn't done. See <a href="completion.html">Finishing a task</a>.</p></section>
 <section><h2>Batching rules</h2>
 <div class="card"><table class="tall"><tr><th>Arrival</th><th>Behavior</th></tr>
 <tr><td>First message, idle</td><td>The turn starts immediately.</td></tr>

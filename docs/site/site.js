@@ -2,9 +2,9 @@
 const NAV = [
   ['Start', [['index', 'Overview'], ['product', 'What Nori should do'], ['request', 'Following a request']]],
   ['The loops', [['outer-loop', 'Outer loop'], ['classification', 'Classifying a message'], ['outer-model-failure', 'Outer model failure'], ['inner-loop', 'Inner loop'], ['contract', 'How the loops talk'], ['tasks', 'Task lifecycle'], ['completion', 'Finishing a task']]],
-  ['Agent service', [['system', 'Service overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['budgets', 'Budgets and controls'], ['observability', 'Observability'], ['deploy', 'Deployment']]],
+  ['Agent service', [['system', 'Service overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['tools', 'Tools'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['budgets', 'Budgets and controls'], ['observability', 'Observability'], ['deploy', 'Deployment']]],
   ['Clients', [['clients', 'Clients'], ['api', 'Service API'], ['web-client', 'Web client'], ['frontend', 'Web client architecture'], ['theme', 'Theme']]],
-  ['Planned', [['tools', 'Tool discovery'], ['authority', 'Approvals and writes'], ['schedules', 'Schedules and proactive'], ['roadmap', 'Roadmap']]],
+  ['Planned', [['authority', 'Approvals and writes'], ['schedules', 'Schedules and proactive'], ['roadmap', 'Roadmap']]],
   ['Reference', [['scenarios', 'Scenarios'], ['decisions', 'Decisions'], ['open-questions', 'Open questions'], ['code', 'Code map'], ['words', 'Words we use'], ['reading', 'Reading list'], ['sources', 'Sources']]],
 ];
 const PLANNED = NAV.find(([group]) => group === 'Planned')[1].map(([id]) => id).filter(id => id !== 'roadmap');

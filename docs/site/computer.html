@@ -27,7 +27,7 @@
     <text x="380" y="172" text-anchor="middle" font-size="12.5" font-weight="650">Firecracker guest</text>
     <text x="380" y="190" text-anchor="middle" font-size="11" fill="#4a5163">Runs shell and browser tools</text>
     <text x="380" y="206" text-anchor="middle" font-size="11" fill="#4a5163">shell · Chromium</text>
-    <text x="380" y="222" text-anchor="middle" font-size="11" fill="#4a5163">operation receipts · one browser tab per task</text>
+    <text x="380" y="222" text-anchor="middle" font-size="11" fill="#4a5163">operation receipts · one browser tab per task · shell jobs</text>
     <rect x="600" y="80" width="300" height="80" rx="10" fill="#fff" stroke="#5b6474" stroke-width="1.8"/>
     <text x="750" y="110" text-anchor="middle" font-size="13.5" font-weight="700">Retained disk</text>
     <text x="750" y="128" text-anchor="middle" font-size="11" fill="#4a5163">workspace · tools · browser profile</text>
@@ -45,7 +45,7 @@
   <div class="grid3">
     <div class="card tight"><p class="keyline">Receipts make retries safe</p><p class="note">The guest records the request and response for each operation ID before acknowledging. If a shell command's outcome is uncertain, the worker reads the receipt and doesn't run it again.</p></div>
     <div class="card tight"><p class="keyline">The host says when it's draining</p><p class="note">When the host is stopping because it's idle, it rejects requests with a draining header before forwarding them. This is the one case where it's safe to reconnect and resend.</p></div>
-    <div class="card tight"><p class="keyline">The model can't see the browser yet</p><p class="note">It can navigate and read page text. Screenshots are saved for the user, but the model doesn't see them. <span class="designed">Vision is planned for milestone 5 (<a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a>).</span></p></div>
+    <div class="card tight"><p class="keyline">Jobs belong to a task</p><p class="note">The guest runs each <a href="tools.html">long shell job</a> in its own process group and saves its state on disk. A job running during a restart is reported as lost.</p></div>
   </div>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/computer/computer.go</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a></p></details>
 </body>

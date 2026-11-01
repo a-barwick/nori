@@ -11,7 +11,7 @@
 <h1>Memory and context</h1>
 <p class="lede">Each loop starts with a small context, built from recent messages or its own instructions.</p>
 <div class="card"><table class="tall"><tr><th>Loop</th><th>Sees today</th><th>Doesn't get today</th></tr>
-<tr><td>Outer loop</td><td>Up to 24 recent turns, capped at 192 KiB. New messages, each task's status and open question, and the Jev classifier's hint.</td><td>Inner loop transcripts or the inner loop's tools.</td></tr>
+<tr><td>Outer loop</td><td>Up to 24 recent turns, capped at 192 KiB. New messages, each task's status and open question, and the Jev classifier's hint. When a task ends, the results it cited.</td><td>Inner loop transcripts or the inner loop's tools.</td></tr>
 <tr><td>Inner loop</td><td>The request, later instructions word for word and in order, and its own tool calls and results.</td><td>The conversation with the user.</td></tr>
 </table><p class="note">That's what runs today. <span class="designed">The rest of this page is the plan for milestone 10.</span></p></div>
 <section class="designed"><h2>Five kinds of memory</h2>

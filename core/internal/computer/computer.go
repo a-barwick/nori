@@ -35,6 +35,7 @@ type Client struct {
 	once      sync.Once
 	receipts  bool
 	taskTabs  bool
+	jobs      bool
 	operation string
 	taskID    string
 	run       string
@@ -163,12 +164,14 @@ func connect(ctx context.Context, c Config, run string, allowStart bool) (*Clien
 				var health struct {
 					Receipts bool `json:"operation_receipts_v1"`
 					TaskTabs bool `json:"browser_task_tabs_v1"`
+					Jobs     bool `json:"shell_jobs_v1"`
 				}
 				decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&health)
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK && decodeErr == nil {
 					client.receipts = health.Receipts
 					client.taskTabs = health.TaskTabs
+					client.jobs = health.Jobs
 					ready := client
 					client = nil
 					cancel()
@@ -217,13 +220,14 @@ func connectLocal(ctx context.Context, address, run string) (*Client, error) {
 		Ready    bool `json:"ready"`
 		Receipts bool `json:"operation_receipts_v1"`
 		TaskTabs bool `json:"browser_task_tabs_v1"`
+		Jobs     bool `json:"shell_jobs_v1"`
 	}
 	err = readJSON(resp, &health)
 	if err != nil || !health.Ready {
 		c.Close()
 		return nil, errors.New("local computer is not ready")
 	}
-	c.receipts, c.taskTabs = health.Receipts, health.TaskTabs
+	c.receipts, c.taskTabs, c.jobs = health.Receipts, health.TaskTabs, health.Jobs
 	return c, nil
 }
 
@@ -283,6 +287,14 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) (resp
 		operation = "cancel"
 	case "/browser/close":
 		operation = "browser_close"
+	case "/job/start":
+		operation = "job_start"
+	case "/job/status":
+		operation = "job_status"
+	case "/job/stop":
+		operation = "job_stop"
+	case "/job/stop-task":
+		operation = "job_stop_task"
 	}
 	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer."+operation, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.computer.operation", operation), attribute.String("nori.task.id", c.taskID), attribute.String("nori.operation.id", c.operation)))
 	defer func() {

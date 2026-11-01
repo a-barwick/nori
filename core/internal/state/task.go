@@ -94,6 +94,7 @@ type TaskSnapshot struct {
 
 type TaskStore interface {
 	GetPNG(ctx context.Context, run, id string) ([]byte, error)
+	SetProgress(ctx context.Context, id string, revision int64, text string) error
 	TaskSteps(ctx context.Context, runID string) ([]TaskStep, error)
 	Store
 	Accept(context.Context, Command) (Run, error)

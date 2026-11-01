@@ -23,8 +23,8 @@
 <div class="arrow">↓</div>
 <div class="node decide inner">What did the model return?</div>
 <div class="branch3">
-<div class="node inner"><b><code>complete</code></b><small>Record checks and the Jev classifier decide whether it finishes.</small></div>
-<div class="node computer"><b>Tool calls</b><small>The computer runs shell or browser tools, and each result is saved.</small></div>
+<div class="node inner"><b><code>complete</code></b><small>Record checks decide whether it finishes.</small></div>
+<div class="node computer"><b>Tool calls</b><small>The worker or computer runs each tool, and each result is saved.</small></div>
 <div class="node wait"><b><code>request_input</code></b><small>The task saves a question and waits for the answer.</small></div>
 </div>
 <div class="loopback">↺ results saved → back to Read new commands</div>
@@ -52,7 +52,7 @@
 <li>Model and tool activities have a 240-second timeout, and the model activity must heartbeat within 10 seconds. Stopping the computer has 200 seconds.</li>
 <li>A browser tool that hits a transient error is retried once. A shell command with an uncertain outcome isn't repeated.</li>
 <li>Shell commands run for up to 45 seconds in <code>/workspace</code>, capped by cgroups.</li>
-<li><code>browser_navigate</code> returns the title and visible text. <code>browser_screenshot</code> saves a PNG and gives the model a reference. The model doesn't see the image.</li>
+<li><code>browser_navigate</code> returns the title and visible text. <code>browser_screenshot</code> saves a PNG and gives the model a reference. The model reads it through a separate call.</li>
 <li>An invalid tool batch sends per-call rejections back to the model, and nothing runs.</li>
 <li>After 32 loops the workflow continues as a new run with the same task.</li>
 <li>The workflow's spent figure is the one that counts. The copy in Firestore can lag.</li>
