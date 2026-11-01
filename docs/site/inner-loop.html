@@ -10,7 +10,7 @@
 <body>
 <h1>Inner loop</h1>
 <p class="lede">One loop per task: call the model, run the tools it asks for, save the results, repeat.</p>
-<p>Each new task gets one workflow (<code>nori-task-v3</code>). Retained v1 and v2 workflows keep their original behavior.</p><ul class="pts"><li>The workflow body in <span class="mono">task/workflow.go</span> contains only deterministic transitions.</li><li>Every model call, tool call and Firestore write is an activity with its own timeout.</li><li>Signals (<code>task-command</code>) only wake the workflow. It then reads commands from Firestore by position and incorporates each one exactly once.</li></ul>
+<p>Each task gets one workflow (<code>nori-task-v3</code>).</p><ul class="pts"><li>The workflow body in <span class="mono">task/workflow.go</span> contains only deterministic transitions.</li><li>Every model call, tool call and Firestore write is an activity with its own timeout.</li><li>Signals (<code>task-command</code>) only wake the workflow. It then reads commands from Firestore by position and incorporates each one exactly once.</li></ul>
   <div class="card">
     <div class="flow">
       <div class="node inner"><b>ContextRef activity</b><small>Quick profile, 15s. Saves initial private history and returns its reference.</small></div>
@@ -68,7 +68,7 @@
     <div class="card">
       <h3 id="completion-as-designed" style="margin-top:0">Completion in milestone 4 <a href="completion.html" style="font-size:12px;font-weight:600">full page</a></h3>
       <p><code>complete(answer, evidence, unmet)</code> proposes an answer. <a href="completion.html">Record checks and Jev verification</a> determine whether it can finish.</p>
-      <p>New tasks use <code>nori-task-v3</code>, <code>request_input</code> and saved history references. Explicit corrections can interrupt model calls and eligible reads; writes finish first.</p>
+      <p>Tasks use <code>nori-task-v3</code>, <code>request_input</code> and saved history references. Explicit corrections can interrupt model calls and eligible reads; writes finish first.</p>
       <p><code>request_work</code> remains planned for milestone 7.</p>
     </div>
   </div>

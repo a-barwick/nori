@@ -52,7 +52,6 @@ type ModelOutcome struct {
 type ToolInput struct {
 	Step
 	OperationID string
-	Durable     bool
 	Call        *genai.FunctionCall
 }
 type Publication struct {
@@ -149,11 +148,7 @@ func (a *Activities) Reconcile(ctx context.Context, id string) (state.TaskSnapsh
 	}
 	// Reconciliation and publication do not start paid work. Their revision
 	// and cancellation checks remain valid even while admission is paused.
-	position := snap.Run.Position
-	if snap.Run.ProtocolVersion < state.TaskProtocolVersion {
-		position = snap.Run.Revision
-	}
-	e = a.Store.Incorporate(ctx, id, snap.Run.Revision, position)
+	e = a.Store.Incorporate(ctx, id, snap.Run.Revision, snap.Run.Position)
 	return snap, classified(e)
 }
 
@@ -247,86 +242,6 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	a.recordStep(in.RunID, trace)
 	return outcome, nil
 }
-func (a *Activities) Tool(ctx context.Context, in ToolInput) (result map[string]any, err error) {
-	if in.Durable {
-		return a.durableTool(ctx, in)
-	}
-	ctx, done, run, e := a.bounded(ctx, in.Step)
-	if e != nil {
-		return nil, e
-	}
-	defer done()
-	ctx, span := startActivity(ctx, "task.tool", "TOOL", run, in.Revision)
-	computerCtx := observability.SuppressErrorCapture(ctx)
-	span.SetAttributes(attribute.String("tool.name", safeToolName(in.Call.Name)), attribute.String("nori.operation.id", in.OperationID))
-	defer func() {
-		outcome := "completed"
-		if err != nil {
-			outcome = "failed"
-			if expectedBoundary(err) || errors.Is(ctx.Err(), context.Canceled) {
-				outcome = "interrupted"
-			}
-			recordActivityFailure(ctx, err, "task.tool")
-		} else if available, ok := result["page_available"].(bool); ok && !available {
-			outcome = "browser_restarted"
-		}
-		if code, ok := result["exit_code"].(float64); ok {
-			span.SetAttributes(attribute.Int64("nori.tool.exit_code", int64(code)))
-			if code != 0 {
-				outcome = "nonzero_exit"
-			}
-		}
-		span.SetAttributes(attribute.String("nori.tool.outcome", outcome))
-		if outcome == "failed" {
-			observability.Event(ctx, "task.tool.failed", attribute.String("tool.name", safeToolName(in.Call.Name)), attribute.String("nori.tool.outcome", outcome))
-		} else if outcome != "interrupted" {
-			observability.Event(ctx, "task.tool.completed", attribute.String("tool.name", safeToolName(in.Call.Name)), attribute.String("nori.tool.outcome", outcome))
-		}
-		span.End()
-	}()
-	if e = a.Store.Admit(ctx, in.RunID, in.Revision, in.OperationID); e != nil {
-		return nil, classified(e)
-	}
-	trace := state.TaskStep{ID: in.OperationID, Kind: "tool", Name: in.Call.Name, Status: "running", Revision: in.Revision, StartedAt: time.Now().UTC(), Arguments: traceJSON(in.Call.Args), CostStatus: "not_applicable"}
-	a.recordStep(in.RunID, trace)
-	defer func() {
-		trace.Result = traceJSON(result)
-		finishStep(&trace, err)
-		a.recordStep(in.RunID, trace)
-	}()
-	for attempt := 0; ; attempt++ {
-		c, e := computer.Open(computerCtx, a.Agent.Computer, computerRun(in.Step))
-		if e != nil {
-			return nil, a.ioError(in.Step, e)
-		}
-		defer c.Close()
-		if e = c.RequireReceipts(); e != nil {
-			return nil, classified(e)
-		}
-		c.SetOperation(in.OperationID)
-		c.SetTaskID(in.RunID)
-		// Starting the guest and connecting IAP can consume up to 180 seconds;
-		// the tool execution itself is limited to 45 seconds below.
-		if _, e = a.Store.Guard(ctx, in.RunID, in.Revision); e != nil {
-			return nil, classified(e)
-		}
-		toolCtx, cancel := context.WithTimeout(computerCtx, 45*time.Second)
-		result, e := a.Agent.Tool(toolCtx, in.RunID, c, in.Call)
-		cancel()
-		if attempt == 0 && errors.Is(e, computer.ErrDraining) {
-			// The host rejected this request before forwarding to the guest.
-			// Reconnect once, preserving its operation identity and admission.
-			span.SetAttributes(attribute.Int("nori.computer.reconnect_count", 1))
-			c.Close()
-			continue
-		}
-		if e != nil {
-			return nil, a.ioError(in.Step, fmt.Errorf("tool outcome failed or uncertain; operation %s is not retried: %w", in.OperationID, e))
-		}
-		return result, nil
-	}
-}
-
 func finishStep(step *state.TaskStep, err error) {
 	now := time.Now().UTC()
 	step.FinishedAt, step.DurationMS, step.Status = &now, now.Sub(step.StartedAt).Milliseconds(), "completed"

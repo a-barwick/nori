@@ -100,10 +100,7 @@ func (s *Service) respond(ctx context.Context, contents []*genai.Content, wait b
 	if err != nil {
 		return decision, err
 	}
-	config := modelConfig(wait)
-	if enabled, _ := ctx.Value(completionProtocolKey{}).(bool); enabled {
-		config = completionModelConfig(wait)
-	}
+	config := completionModelConfig(wait)
 	tools := []any{}
 	for _, fn := range config.Tools[0].FunctionDeclarations {
 		parameters := responseSchema(fn.Parameters)

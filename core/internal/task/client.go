@@ -5,9 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"log"
 	"os"
-	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -47,8 +45,6 @@ func Dial(ctx context.Context) (client.Client, error) {
 }
 func WorkflowID(id string) string { return "nori-task-" + id }
 
-var missingLegacyCommands sync.Map
-
 // Deliver is called after acceptance and on worker/API startup. A crash before
 // marking the durable intent delivered merely sends a duplicate on repair.
 func Deliver(ctx context.Context, store state.TaskStore, c client.Client, wakes *workerwake.Cloud) (resultErr error) {
@@ -78,7 +74,7 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client, wakes 
 			continue
 		}
 		if run.Status != state.RunRunning {
-			if run.CancelRequested && (cmd.Kind == state.CommandStop || cmd.Kind == state.CommandCancel) {
+			if run.CancelRequested && cmd.Kind == state.CommandStop {
 				// A paused Stop may already be persisted while its workflow waits.
 				// Retain delivery intent until it receives a wake or is absent.
 				e = c.SignalWorkflow(ctx, WorkflowID(cmd.RunID), "", Signal, cmd)
@@ -115,36 +111,16 @@ func Deliver(ctx context.Context, store state.TaskStore, c client.Client, wakes 
 			failures = append(failures, e)
 			continue
 		}
-		if run.ProtocolVersion < state.TaskProtocolVersion {
-			// Existing v1 executions keep their pinned release. A legacy intent
-			// without an execution cannot safely inherit the current v2 worker.
-			e = c.SignalWorkflow(ctx, WorkflowID(cmd.RunID), "", Signal, cmd)
-			var missing *serviceerror.NotFound
-			if errors.As(e, &missing) {
-				// Keep the run and its intent pending for operator restoration of
-				// the retained v1 execution, or a targeted Stop. Retrying the
-				// entire outer request cannot repair this compatibility gap.
-				if _, reported := missingLegacyCommands.LoadOrStore(cmd.ID, true); !reported {
-					log.Printf("legacy task %s command %s remains pending: restore its retained v1 execution or stop the task", cmd.RunID, cmd.ID)
-				}
-				continue
-			}
-		} else if e = control.Check(); e != nil {
+		if e = control.Check(); e != nil {
 			// Stop can signal an existing workflow after pause; it must not start one.
-			if cmd.Kind == state.CommandCancel || cmd.Kind == state.CommandStop {
+			if cmd.Kind == state.CommandStop {
 				e = c.SignalWorkflow(ctx, WorkflowID(cmd.RunID), "", Signal, cmd)
 			} else {
 				continue
 			}
 		} else {
 			options := client.StartWorkflowOptions{ID: WorkflowID(cmd.RunID), TaskQueue: Queue(), WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}
-			if run.WorkflowVersion < state.TaskWorkflowVersion {
-				// A retained v2 start intent keeps its original execution lane and
-				// argument shape, even when its first delivery follows an upgrade.
-				_, e = c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, options, PriorWorkflowName, cmd.RunID)
-			} else {
-				_, e = c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, options, WorkflowName, cmd.RunID, Checkpoint{})
-			}
+			_, e = c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, options, WorkflowName, cmd.RunID, Checkpoint{})
 		}
 		if e != nil {
 			failures = append(failures, fmt.Errorf("command %s delivery: %w", cmd.ID, e))
@@ -184,7 +160,7 @@ func Wake(ctx context.Context, store state.TaskStore, c client.Client, wakes *wo
 	var failures []error
 	seen := map[string]bool{}
 	for _, run := range runs {
-		if !run.Temporal || run.Status != state.RunRunning {
+		if run.Status != state.RunRunning {
 			continue
 		}
 		if err = c.SignalWorkflow(ctx, WorkflowID(run.ID), "", Signal, state.Command{RunID: run.ID, Kind: "resume"}); err != nil {

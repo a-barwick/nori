@@ -34,9 +34,6 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 	}
 	var failures []error
 	for _, run := range runs {
-		if !run.Temporal {
-			continue
-		}
 		if run.Status != state.RunRunning {
 			if e := repairCleanup(ctx, store, config, run); e != nil {
 				failures = append(failures, e)

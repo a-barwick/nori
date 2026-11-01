@@ -36,9 +36,7 @@ func Runnable(ctx context.Context, store state.TaskStore, c client.Client, build
 		cleanupIDs[WorkflowID(run.ID)] = true
 	}
 	for _, run := range append(runs, cleanup...) {
-		if run.Temporal {
-			ids[WorkflowID(run.ID)] = true
-		}
+		ids[WorkflowID(run.ID)] = true
 	}
 	for id := range ids {
 		d, err := c.DescribeWorkflowExecution(ctx, id, "")

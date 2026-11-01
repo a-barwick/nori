@@ -8,6 +8,7 @@ import (
 	"go.temporal.io/sdk/activity"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/genai"
@@ -146,6 +147,20 @@ func (a *Activities) history(ctx context.Context, id, ref string) ([]*genai.Cont
 	}
 	return contents, nil
 }
+func toolResponse(id, name string, response map[string]any) *genai.Content {
+	return &genai.Content{Role: "user", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: id, Name: name, Response: response}}}}
+}
+
+func clip(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + "…"
+}
 func lastCall(contents []*genai.Content, index int) (*genai.FunctionCall, error) {
 	for i := len(contents) - 1; i >= 0; i-- {
 		if contents[i] == nil || contents[i].Role != "model" {
@@ -236,7 +251,7 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	if e != nil {
 		return out, classified(e)
 	}
-	outcome, e := a.Model(agent.CompletionContext(ctx), ModelInput{Step: in.Step, Contents: contents, Interruptible: true})
+	outcome, e := a.Model(ctx, ModelInput{Step: in.Step, Contents: contents, Interruptible: true})
 	if e != nil {
 		return out, e
 	}
@@ -296,7 +311,7 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	if in.ReadOnly && call.Name != "browser_navigate" && call.Name != "browser_screenshot" {
 		result = map[string]any{"outcome": "needs_input", "error": "Completion correction permits reads only. Ask Austin before further writes or shell execution.", "effect_class": "read", "operation_id": in.OperationID}
 	} else {
-		result, e = a.Tool(ctx, ToolInput{Step: in.Step, OperationID: in.OperationID, Call: call, Durable: true})
+		result, e = a.durableTool(ctx, ToolInput{Step: in.Step, OperationID: in.OperationID, Call: call})
 		if e != nil {
 			return out, e
 		}

@@ -32,28 +32,6 @@ func completionModelConfig(wait bool) *genai.GenerateContentConfig {
 	return config
 }
 
-type completionProtocolKey struct{}
-
-func CompletionContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, completionProtocolKey{}, true)
-}
-func modelConfig(wait bool) *genai.GenerateContentConfig {
-	config := completionModelConfig(wait)
-	declarations := config.Tools[0].FunctionDeclarations[:0]
-	for _, fn := range config.Tools[0].FunctionDeclarations {
-		if fn.Name == "complete" {
-			continue
-		}
-		if fn.Name == "request_input" {
-			fn.Name = "wait_for_input"
-		}
-		declarations = append(declarations, fn)
-	}
-	config.Tools[0].FunctionDeclarations = declarations
-	config.SystemInstruction.Parts[0].Text = strings.Split(config.SystemInstruction.Parts[0].Text, "Use complete(answer,")[0] + "Finish with a useful plain text answer."
-	return config
-}
-
 type Decision struct {
 	Content *genai.Content
 	Calls   []*genai.FunctionCall
@@ -117,7 +95,7 @@ func ValidateCalls(calls []*genai.FunctionCall, wait bool) error {
 					}
 				}
 			}
-		case "request_input", "wait_for_input":
+		case "request_input":
 			if !wait {
 				return errors.New("request_input is not available")
 			}

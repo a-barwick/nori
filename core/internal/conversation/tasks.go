@@ -79,7 +79,7 @@ func safeCommandName(kind state.CommandKind) string {
 	switch kind {
 	case "start":
 		return "dispatch"
-	case "steer", "answer", "continue", "stop", "input", "cancel", "hold":
+	case "steer", "answer", "continue", "stop", "hold":
 		return string(kind)
 	default:
 		return "unknown"
@@ -100,16 +100,13 @@ func (t *Tasks) Update(ctx context.Context, id, runID, message string) (state.Ru
 	if err != nil {
 		return state.Run{}, err
 	}
-	command := state.Command{ID: id, RunID: runID, Kind: state.InputKind(message), Text: message}
-	if current.ProtocolVersion >= state.TaskProtocolVersion {
-		command.Kind = state.CommandSteer
-		if question := current.Question; question != nil && question.ResolvedBy == "" && question.Revision == current.Revision {
-			switch {
-			case question.Kind == "input":
-				command.Kind, command.QuestionID = "answer", question.ID
-			case question.Kind == "budget" && strings.EqualFold(strings.TrimSpace(message), "continue"):
-				command.Kind, command.QuestionID = "continue", question.ID
-			}
+	command := state.Command{ID: id, RunID: runID, Kind: state.CommandSteer, Text: message}
+	if question := current.Question; question != nil && question.ResolvedBy == "" && question.Revision == current.Revision {
+		switch {
+		case question.Kind == "input":
+			command.Kind, command.QuestionID = "answer", question.ID
+		case question.Kind == "budget" && strings.EqualFold(strings.TrimSpace(message), "continue"):
+			command.Kind, command.QuestionID = "continue", question.ID
 		}
 	}
 	run, err := t.Store.Accept(ctx, command)
@@ -134,7 +131,7 @@ func (t *Tasks) Cancel(ctx context.Context, id string) (state.Run, error) {
 func (t *Tasks) repairPausedStops(ctx context.Context, receipts []state.CommandReceipt) {
 	stops := map[string]bool{}
 	for _, receipt := range receipts {
-		if receipt.Command.Kind == state.CommandStop || receipt.Command.Kind == state.CommandCancel {
+		if receipt.Command.Kind == state.CommandStop {
 			stops[receipt.Command.RunID] = true
 		}
 	}

@@ -10,7 +10,7 @@
 <body>
 <h1>Finishing a task</h1>
 <p class="lede">Milestone 4 adds saved-evidence checks and a Jev verdict before a task can finish.</p>
-<p>New tasks use <code>nori-task-v3</code>. Retained older workflows keep their original completion behavior.</p>
+<p>Tasks run as <code>nori-task-v3</code> workflows.</p>
 <div class="card"><div class="flow">
 <div class="node inner"><b>The model calls <code>complete(answer, evidence, unmet)</code></b><small>A plain text answer no longer finishes a task.</small></div><div class="arrow">↓</div>
 <div class="node inner"><b>The records are checked</b><small>No unread steers. Every tool call has a result. Evidence references resolve to saved tool results. Claimed effects are confirmed.</small></div><div class="arrow">↓</div>

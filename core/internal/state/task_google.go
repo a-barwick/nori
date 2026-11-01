@@ -50,7 +50,7 @@ func (s *Google) AcceptCommandBatch(ctx context.Context, commands []Command, fen
 		if err != nil {
 			return err
 		}
-		return s.writeCommandBatch(tx, batch, prepared, now, traceContext, fence)
+		return s.writeCommandBatch(tx, batch, prepared, traceContext)
 	})
 	return receipts, err
 }
@@ -72,9 +72,7 @@ func (s *Google) OpenTasks(ctx context.Context) ([]Run, error) {
 		if err != nil {
 			return nil, err
 		}
-		if run.Temporal {
-			runs = append(runs, run)
-		}
+		runs = append(runs, run)
 	}
 	return runs, nil
 }
@@ -162,12 +160,9 @@ func (s *Google) Incorporate(ctx context.Context, id string, revision, position 
 
 // guardTask checks task ownership without execution admission. Publishing an
 // already-paid answer may proceed during pause; stale revisions may not.
-func taskPosition(r Run) int64 {
-	if r.ProtocolVersion < TaskProtocolVersion {
-		return r.Revision
-	}
-	return r.Position
-}
+// Saved tasks from the first command protocol counted accepted commands in
+// Revision and may have no Position.
+func taskPosition(r Run) int64 { return max(r.Position, r.Revision) }
 func guardTask(r Run, revision int64) error {
 	if r.CancelRequested {
 		return ErrCancelled
@@ -291,7 +286,7 @@ func (s *Google) Publish(ctx context.Context, id string, revision int64, runStat
 			return ErrSuperseded
 		}
 		bypass := runStatus == RunCancelled || costUnknown || bypassRouting
-		if run.ProtocolVersion >= TaskProtocolVersion && !bypass {
+		if !bypass {
 			pending, err := s.conversationRoutingPending(tx)
 			if err != nil {
 				return err
@@ -307,38 +302,30 @@ func (s *Google) Publish(ctx context.Context, id string, revision int64, runStat
 			runStatus, detail, text = "cancelled", "Stopped by Austin.", ""
 		}
 		now := time.Now().UTC()
-		if run.ProtocolVersion >= TaskProtocolVersion {
-			kind := "failure"
-			switch runStatus {
-			case "completed":
-				kind = "result"
-			case "cancelled":
-				kind = "stopped"
-			}
-			run.Holds = readyTaskHolds(run.Holds)
-			event := TaskEvent{Holds: pendingTaskHolds(run.Holds), ID: id + "-terminal", RunID: id, Kind: kind, Sequence: run.EventSequence + 1, Revision: revision, Text: text, Reason: detail, OperationRefs: run.OperationRefs, CreatedAt: now}
-			eventTraceContext := traceContext
-			if len(eventTraceContext) == 0 {
-				eventTraceContext = run.TraceContext
-			}
-			inserted, err := s.appendTaskEvent(tx, event, eventTraceContext)
-			if err != nil {
-				return err
-			}
-			if inserted {
-				run.EventSequence = event.Sequence
-			}
+		kind := "failure"
+		switch runStatus {
+		case "completed":
+			kind = "result"
+		case "cancelled":
+			kind = "stopped"
+		}
+		run.Holds = readyTaskHolds(run.Holds)
+		event := TaskEvent{Holds: pendingTaskHolds(run.Holds), ID: id + "-terminal", RunID: id, Kind: kind, Sequence: run.EventSequence + 1, Revision: revision, Text: text, Reason: detail, OperationRefs: run.OperationRefs, CreatedAt: now}
+		eventTraceContext := traceContext
+		if len(eventTraceContext) == 0 {
+			eventTraceContext = run.TraceContext
+		}
+		inserted, err := s.appendTaskEvent(tx, event, eventTraceContext)
+		if err != nil {
+			return err
+		}
+		if inserted {
+			run.EventSequence = event.Sequence
 		}
 		run.PublicationPending = false
 		run.CostUnknown = run.CostUnknown || costUnknown
 		run.Status, run.Error, run.Result, run.Waiting, run.Question, run.FinishedAt = runStatus, detail, text, "", nil, &now
-		if err = tx.Set(s.runs().Doc(id), run); err != nil {
-			return err
-		}
-		if run.ProtocolVersion < TaskProtocolVersion && text != "" {
-			return tx.Create(s.messages().Doc(id+"-assistant"), Message{ID: id + "-assistant", RunID: id, Role: "assistant", Text: text, CreatedAt: now})
-		}
-		return nil
+		return tx.Set(s.runs().Doc(id), run)
 	})
 	if err == nil && routingPending {
 		err = ErrRoutingPending

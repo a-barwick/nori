@@ -12,9 +12,6 @@ const MaxMessageBytes = 8192
 
 const Owner = "austinbarwickdavis@gmail.com"
 
-// CleanupGrace reserves time for stopping computer work and persisting its result.
-const CleanupGrace = 20 * time.Second
-
 var ErrBusy = errors.New("task is not open")
 var ErrDuplicate = errors.New("run ID already exists")
 var ErrPaused = errors.New("task execution is paused")
@@ -59,6 +56,9 @@ const (
 	RunCancelled RunStatus = "cancelled"
 )
 
+// Run keeps WorkflowVersion, ProtocolVersion, Temporal and Deadline so saved
+// tasks round-trip unchanged. New tasks record the first three; none sets
+// Deadline, and nothing reads any of them to choose behavior.
 type Run struct {
 	WorkflowVersion       int               `json:"workflow_version,omitempty" firestore:"workflow_version,omitempty"`
 	InterruptRevision     int64             `json:"interrupt_revision,omitempty" firestore:"interrupt_revision,omitempty"`

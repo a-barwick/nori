@@ -150,6 +150,37 @@ workflow histories, browser profile, disks and task files through rollout and
 rollback. Native verification must confirm queue fences, request drain, all old
 pools at zero/no scalers, and the retained computer stopped before finishing.
 
+### Retiring old builds
+
+Workers register only the `nori-task-v3` workflow. No workflow was running when
+`nori-task-v1` and `nori-task-v2` were removed, so nothing is pinned to a build
+from before that change. Those builds are still in the manifest and in
+Terraform state; retiring them is a separate operator step that `make deploy`
+cannot perform.
+
+`make deploy` builds its Terraform variables from state, not from this
+manifest, so editing `worker-releases.json` alone retires nothing. To retire
+builds:
+
+1. Read the Current build with `temporal worker deployment describe --name=nori-task`
+   (the query `current_worker` in `release/deploy.py` makes; it requires no
+   active ramp). That build is the only entry to keep in
+   `request_worker_images` and `request_worker_targets`. Empty `worker_images`
+   and `scalable_build_ids`.
+2. Confirm no running workflow is pinned to a build being dropped.
+3. Review the plan from the reduced manifest. It destroys retained pools and
+   services, which carry `prevent_destroy` and `deletion_protection`, and it
+   shrinks the `NORI_WORKER_SERVICES` route map of the surviving service.
+   `check_plan` and `route_only_update` refuse that by design; do not loosen
+   them. Apply it by hand, lifting the destroy protections only on the
+   resources being retired and restoring them afterwards.
+4. Keep the isolated candidate target unless retiring its data is a separate
+   decision. It owns the `nori-worker-candidate` database, event queue and IAM
+   binding, so removing it from the manifest also plans to destroy those.
+
+After that apply, `make deploy` runs unchanged: it reads the smaller state and
+its plan again adds only the new worker.
+
 ## Credentials and measurements
 
 The existing Secret Manager container `nori-temporal-api-key` supplies the worker

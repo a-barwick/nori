@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
 
 	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/storage"
@@ -169,36 +168,6 @@ func (s *Google) Artifact(ctx context.Context, id string, a Artifact) error {
 	_, e := s.runs().Doc(id).Update(ctx, []firestore.Update{{Path: "artifacts", Value: firestore.ArrayUnion(a)}})
 	return e
 }
-func (s *Google) Finish(ctx context.Context, id string, runStatus RunStatus, detail, text string) (Run, error) {
-	var r Run
-	e := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		d, e := tx.Get(s.runs().Doc(id))
-		r, e = decodeRun(d, e)
-		if e != nil {
-			return e
-		}
-		if r.Status != "running" {
-			return nil
-		}
-		now := time.Now().UTC()
-		if runStatus == RunCompleted && r.CancelRequested {
-			runStatus = RunCancelled
-			detail = "Cancelled by Austin."
-			text = ""
-		}
-		r.Status = runStatus
-		r.Error = detail
-		r.FinishedAt = &now
-		if e = tx.Set(s.runs().Doc(id), r); e != nil {
-			return e
-		}
-		if text != "" {
-			return tx.Create(s.messages().Doc(id+"-assistant"), Message{ID: id + "-assistant", RunID: id, Role: "assistant", Text: text, CreatedAt: now})
-		}
-		return nil
-	})
-	return r, e
-}
 func (s *Google) Session(ctx context.Context) (Session, error) {
 	return s.session(ctx, sessionWithMessages)
 }
@@ -258,12 +227,6 @@ func (s *Google) session(ctx context.Context, mode sessionMode) (Session, error)
 		r, e := decodeRun(d, nil)
 		if e != nil {
 			return session, e
-		}
-		if r.Status == "running" && !r.Temporal && !r.Deadline.Add(CleanupGrace).After(time.Now()) {
-			r, e = s.Finish(ctx, r.ID, "failed", "Interrupted: execution deadline expired; no automatic recovery.", "")
-			if e != nil {
-				return session, e
-			}
 		}
 		session.Runs = append(session.Runs, r)
 	}

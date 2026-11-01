@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -13,12 +12,13 @@ var ErrRoutingPending = errors.New("accepted user input is awaiting conversation
 var ErrCommandInvalid = errors.New("invalid task command")
 var ErrQuestionStale = errors.New("question is no longer current")
 
-// TaskProtocolVersion tracks accepted-command and outer-publication semantics.
-const TaskProtocolVersion = 2
-
-// TaskWorkflowVersion tracks worker capabilities independently of that protocol.
-// Missing versions belong to retained workers that cannot preserve M4 fields.
-const TaskWorkflowVersion = 3
+// Every new task records these versions. No current code branches on them, and
+// saved tasks with lower or missing values are read as stored. Earlier releases
+// do branch on them, so a release rolled back after unpause still needs them.
+const (
+	TaskProtocolVersion = 2
+	TaskWorkflowVersion = 3
+)
 
 type Question struct {
 	ResolvedBy string `json:"resolved_by,omitempty" firestore:"resolved_by,omitempty"`
@@ -58,8 +58,6 @@ const (
 	CommandAnswer   CommandKind = "answer"
 	CommandContinue CommandKind = "continue"
 	CommandStop     CommandKind = "stop"
-	CommandInput    CommandKind = "input"
-	CommandCancel   CommandKind = "cancel"
 	CommandHold     CommandKind = "hold"
 )
 
@@ -75,16 +73,6 @@ type Command struct {
 	Revision       int64       `json:"revision" firestore:"revision"`
 	Delivered      bool        `json:"delivered" firestore:"delivered"`
 	CreatedAt      time.Time   `json:"created_at" firestore:"created_at"`
-}
-
-// InputKind makes a bare "continue" reply an explicit continue command. The
-// task grants another budget only if it has asked its budget question;
-// otherwise the command is ordinary input text.
-func InputKind(message string) CommandKind {
-	if strings.EqualFold(strings.TrimSpace(message), "continue") {
-		return CommandContinue
-	}
-	return CommandInput
 }
 
 type TaskSnapshot struct {

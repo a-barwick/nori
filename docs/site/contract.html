@@ -41,7 +41,7 @@
 <section><h2>Inner loop control tools</h2>
 <p>These sit next to the task's work tools, and each must be the only call in its response.</p>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>What it does</th></tr>
-<tr data-flow="wait"><td><code>request_input(question)</code></td><td>Save a question and wait for its exact answer. Retained v1 and v2 workflows use <code>wait_for_input</code>.</td></tr>
+<tr data-flow="wait"><td><code>request_input(question)</code></td><td>Save a question and wait for its exact answer.</td></tr>
 <tr><td><code>complete(answer, evidence, unmet)</code></td><td>Propose that the task is done. <a href="completion.html">The checks decide</a>.</td></tr>
 <tr class="designed"><td><code>request_work(request, why)</code></td><td>Ask for work outside this task's own request.<span class="tag design">designed</span></td></tr>
 </table></div></section>

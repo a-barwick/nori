@@ -12,6 +12,14 @@ import (
 )
 
 const WorkflowName = "nori-task-v3"
+const Signal = "task-command"
+
+func superseded(err error) bool { return applicationKind(err, "superseded") }
+
+func applicationKind(err error, kind string) bool {
+	var application *temporal.ApplicationError
+	return errors.As(err, &application) && application.Type() == kind
+}
 
 // Checkpoint is deliberately bounded: exact model state lives in the immutable
 // history chain, while accounting and user-control state survive ContinueAsNew.
