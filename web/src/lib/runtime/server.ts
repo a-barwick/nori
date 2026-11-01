@@ -1,12 +1,10 @@
-import { GoogleAuth } from "google-auth-library";
 import { isOwner, sameOrigin } from "./auth";
+import { runtimeAuthorization } from "./credentials";
+import { isRuntimeMethod } from "./methods";
 import { reportUpstreamFailure, reportUpstreamRejection, rejectionHeaders, upstreamTraceHeaders } from "@/lib/observability/upstream";
 
-const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
-const METHODS = new Set(["session", "turn", "input", "cancel", "command", "artifact", "trace"]);
-
 export async function runtimeRequest(request: Request, method: string) {
-  if (!METHODS.has(method)) return Response.json({ error: "Not found." }, { status: 404 });
+  if (!isRuntimeMethod(method)) return Response.json({ error: "Not found." }, { status: 404 });
   if (!sameOrigin(request) || !(await isOwner(request.headers))) {
     return Response.json({ error: "Forbidden." }, { status: 403 });
   }
@@ -30,13 +28,12 @@ export async function runtimeRequest(request: Request, method: string) {
     return Response.json({ error: "Request body must be JSON." }, { status: 400 });
   }
   try {
-    const token = await auth.getAccessToken();
-    if (!token) throw new Error("No runtime credentials");
+    const authorization = await runtimeAuthorization();
     const traceHeaders = upstreamTraceHeaders(request);
     const upstream = await fetch(target, {
       method: "POST",
       // Fresh headers: browser credentials and IAP headers are never forwarded.
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...traceHeaders },
+      headers: { "Content-Type": "application/json", Authorization: authorization, ...traceHeaders },
       body,
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(145_000)]),
       redirect: "error",

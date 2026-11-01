@@ -28,6 +28,8 @@ async function post<T>(operation: string, payload: object, signal?: AbortSignal,
   return data as T;
 }
 
+/** `POST /api/status`: a cheap check for whether the session changed (`version`) and whether work is active (`busy`). */
+type RuntimeStatus = { version: string; busy: boolean };
 type Pending = { id: string; text: string; started: number; error?: string };
 type ReplyTiming = { started: number; span: Span; timer: ReturnType<typeof setTimeout> };
 const STORAGE_KEY = "nori-pending-turns-v1";
@@ -288,13 +290,35 @@ export function useRuntime(agentMode = false) {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     let failures = 0;
+    // `status` is a small call that lets an idle runtime stay idle. Its version is opaque: when it differs from the one
+    // seen before the last session fetch, something changed. Any doubt falls back to fetching the whole session.
+    let useStatus = true;
+    let statusFailures = 0;
+    let version: string | undefined;
+    const readStatus = async (): Promise<RuntimeStatus | undefined> => {
+      try {
+        const status = await post<RuntimeStatus>("status", {}, controller.signal, agentMode);
+        if (typeof status?.version === "string" && typeof status.busy === "boolean") { statusFailures = 0; return status; }
+        useStatus = false;
+      } catch (err) {
+        // A runtime without the endpoint will never answer it. After three failures in a row, stop asking for this run.
+        if ((err instanceof RequestError && [404, 405, 501].includes(err.status)) || ++statusFailures >= 3) useStatus = false;
+      }
+      return undefined;
+    };
     const poll = async () => {
       try {
-        const next = await refresh(controller.signal);
+        const status = useStatus ? await readStatus() : undefined;
         if (controller.signal.aborted) return;
+        // Idle means this view is out of date, so read the session once more and stop trusting status for this run.
+        if (status && !status.busy) useStatus = false;
+        const next = !status || !status.busy || status.version !== version ? await refresh(controller.signal) : undefined;
+        if (controller.signal.aborted) return;
+        // Remember the version only after the session read succeeded, so a failed read is retried.
+        if (status) version = status.version;
         failures = 0;
         setPollError("");
-        if (next.conversation?.pending || next.conversation?.processing || next.runs.some((run) => run.status === "running" && (!next.paused || run.cancel_requested)) || taskCommandsRef.current.some((item) => !item.rejected)) timer = setTimeout(poll, 2000);
+        if (!next || next.conversation?.pending || next.conversation?.processing || next.runs.some((run) => run.status === "running" && (!next.paused || run.cancel_requested)) || taskCommandsRef.current.some((item) => !item.rejected)) timer = setTimeout(poll, 2000);
       } catch (err) {
         if (controller.signal.aborted) return;
         setPollError(err instanceof Error ? err.message : "History refresh failed.");
@@ -304,7 +328,7 @@ export function useRuntime(agentMode = false) {
     };
     timer = setTimeout(poll, 1000);
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [taskPolling, conversationBusy, visible, refresh]);
+  }, [taskPolling, conversationBusy, visible, refresh, agentMode]);
 
   async function refreshHistory() {
     setError(""); setPollError(""); setLoading(true);

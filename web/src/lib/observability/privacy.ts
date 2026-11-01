@@ -1,5 +1,6 @@
 import { getClient } from "@sentry/nextjs";
 import type { Breadcrumb, ErrorEvent, EventHint, Log, Metric } from "@sentry/nextjs";
+import { isRuntimeMethod } from "@/lib/runtime/methods";
 
 type Options = Parameters<typeof import("@sentry/nextjs").init>[0];
 type Client = NonNullable<ReturnType<typeof import("@sentry/nextjs").init>>;
@@ -81,10 +82,9 @@ function allow(kind: string, maximum: number): boolean {
  return false;
 }
 
-const operations = new Set(["session", "turn", "input", "cancel", "command", "artifact", "trace"]);
 const safeAttributes = (attributes: Record<string, unknown> = {}) => {
   const safe: Record<string, string | number> = {};
-  if (typeof attributes.operation === "string" && operations.has(attributes.operation)) safe.operation = attributes.operation;
+  if (typeof attributes.operation === "string" && isRuntimeMethod(attributes.operation)) safe.operation = attributes.operation;
   if (typeof attributes.status === "number" && attributes.status >= 100 && attributes.status <= 599) safe.status = attributes.status;
   if (attributes.mode === "local" || attributes.mode === "hosted") safe.mode = attributes.mode;
   if (["reply", "error", "timeout", "unobserved"].includes(String(attributes.outcome))) safe.outcome = String(attributes.outcome);
@@ -101,7 +101,7 @@ export function sampler(rate: number) {
   return (context: SamplingContext) => {
     const candidates = [context.normalizedRequest?.url, context.name,
       context.attributes["http.target"], context.attributes["url.path"], context.attributes["url.full"]];
-    if (candidates.some((value) => typeof value === "string" && /\/api\/(?:agent\/)?(?:health|session|observability)(?:[/?#\s]|$)/.test(value))) return 0;
+    if (candidates.some((value) => typeof value === "string" && /\/api\/(?:agent\/)?(?:health|session|status|observability)(?:[/?#\s]|$)/.test(value))) return 0;
     return context.inheritOrSampleWith(rate);
   };
 }
