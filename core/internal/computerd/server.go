@@ -448,6 +448,7 @@ func (s *server) cancelRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) stopFailed(id string, err error) {
+	log.Printf("run %s stop failed: %v", id, err)
 	s.runsMu.Lock()
 	defer s.runsMu.Unlock()
 	if state := s.runs[id]; state != nil {

@@ -137,7 +137,11 @@ func stopLoading(owner browserAssociation) error {
 		return err
 	}
 	defer c.conn.CloseNow()
-	return c.call(ctx, "Page.stopLoading", map[string]any{}, nil)
+	// Chromium refuses this on a page whose navigation already failed, so nothing is loading.
+	if err = c.call(ctx, "Page.stopLoading", map[string]any{}, nil); err != nil && strings.Contains(err.Error(), "Not attached to an active page") {
+		return nil
+	}
+	return err
 }
 
 // Older workers send only a revision scope. Browser ownership must survive

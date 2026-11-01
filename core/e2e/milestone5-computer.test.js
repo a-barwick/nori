@@ -111,6 +111,12 @@ journey("a job is limited per task and refused after its run is cancelled", asyn
   await post("/job/start", { run_id: `${task}-r9`, task_id: task, job_id: id("limit-6"), command: "sleep 1" }, id("limit-6"), 409);
 });
 
+journey("a page that fails to load doesn't block the task's final stop", async () => {
+  const task = id("badpage"), run = `${task}-r1`;
+  await post("/navigate", { run_id: run, task_id: task, url: "http://127.0.0.1:1/" }, id("badpage-nav"), 502);
+  expect(await post("/cancel", { run_id: run, task_id: task })).toEqual({ stopped: true });
+});
+
 const restartJourney = configured && container ? test : test.skip;
 restartJourney("a guest restart reports a running job as lost, never finished", async () => {
   const task = id("restart"), job = id("restart-job");
