@@ -106,7 +106,8 @@ func (c *Checkpoint) stopTask(w workflow.Context, id string) error {
 	if err := c.stopComputer(w, id); err != nil {
 		return err
 	}
-	if len(c.Jobs) == 0 {
+	// JobsStarted covers a job the guest started whose result never reached the workflow.
+	if len(c.Jobs) == 0 && !c.JobsStarted {
 		return nil
 	}
 	if err := workflow.ExecuteActivity(w, a.StopJobs, id).Get(w, nil); err != nil {

@@ -113,6 +113,16 @@ journey("instructions inside a cited page reach the outer loop as data and start
   expect((await post("trace", { run_id: id })).steps.filter((step) => step.name === "shell" || step.name === "job_start")).toEqual([]);
 }, 300_000);
 
+journey("a task stops its own job and still finishes", async () => {
+  const id = await ask("Start `sleep 300` as a background job on the computer, confirm it's running, then stop that job with job_stop and tell me its final state. Don't wait for it to finish.");
+  const run = await finished(id);
+  const tools = await toolNames(id);
+  expect(tools).toContain("job_start");
+  expect(tools, "The model must stop the job through the tool.").toContain("job_stop");
+  expect(run.status, run.error).toBe("completed");
+  expect(run.result).toMatch(/stopped/i);
+}, 300_000);
+
 calendarJourney("a calendar question is answered from the connected account and names it", async () => {
   const id = await ask("What's on my calendar Thursday?");
   const run = await finished(id);

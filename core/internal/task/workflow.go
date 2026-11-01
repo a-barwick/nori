@@ -29,7 +29,8 @@ type Checkpoint struct {
 	ReadOnly                           bool
 	// Jobs are started and not yet observed ended. They outlive a revision, so
 	// only terminal cleanup stops them, not a correction or a question.
-	Jobs []string
+	Jobs        []string
+	JobsStarted bool
 }
 
 func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.Run, err error) {
@@ -289,6 +290,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 					c.ComputerRevisions = append(c.ComputerRevisions, c.Revision)
 				}
 				c.Stopped = false
+				c.JobsStarted = c.JobsStarted || call.Name == "job_start"
 				var output RefToolOutcome
 				err = workflow.ExecuteActivity(ctx, a.ToolRef, RefToolInput{Step: Step{id, c.Revision}, Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly}).Get(ctx, &output)
 				if boundary(err) {

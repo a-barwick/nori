@@ -107,7 +107,7 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 		ReadTaskOutcome(context.Context, string) (state.TaskOutcome, error)
 	}); ok {
 		for _, record := range result.EventTasks {
-			if record.Status == state.RunRunning {
+			if record.Status == state.RunRunning || record.Status == "cancelled" {
 				continue
 			}
 			outcome, err := store.ReadTaskOutcome(ctx, record.ID)
@@ -155,6 +155,9 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			trimContextText(&record.Error, limit, &record.TextTruncated)
 			trimContextText(&record.Result, limit, &record.TextTruncated)
 			if record.Outcome != nil {
+				for i := range record.Outcome.Unmet {
+					trimContextText(&record.Outcome.Unmet[i], limit, &record.Outcome.Shortened)
+				}
 				for i := range record.Outcome.Evidence {
 					trimContextText(&record.Outcome.Evidence[i].Result, limit, &record.Outcome.Shortened)
 				}

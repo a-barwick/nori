@@ -103,7 +103,7 @@ func validOperation(op OperationRecord) bool {
 		return false
 	}
 	switch op.EffectClass {
-	case "read", "reversible_write", "sensitive_send", "unknown":
+	case "read", "reversible_write", "sensitive_send", "unknown", "control":
 	default:
 		return false
 	}
@@ -393,7 +393,10 @@ type TaskOutcome struct {
 	Shortened bool          `json:"shortened,omitempty"`
 }
 
-const maxOutcomeEvidenceBytes = 8 << 10
+const (
+	maxOutcomeEvidenceBytes = 8 << 10
+	maxOutcomeUnmet         = 32
+)
 
 // ReadTaskOutcome reads the last proposal's unmet items and the results it cites.
 func (s *Google) ReadTaskOutcome(ctx context.Context, runID string) (TaskOutcome, error) {
@@ -416,10 +419,14 @@ func (s *Google) ReadTaskOutcome(ctx context.Context, runID string) (TaskOutcome
 			last, found = check, true
 		}
 	}
-	if !found {
+	// A rejected proposal didn't end the task, so its claims describe nothing.
+	if !found || len(last.RecordFailures) > 0 {
 		return TaskOutcome{}, nil
 	}
 	outcome := TaskOutcome{Unmet: last.Proposal.Unmet}
+	if len(outcome.Unmet) > maxOutcomeUnmet {
+		outcome.Unmet, outcome.Shortened = outcome.Unmet[:maxOutcomeUnmet], true
+	}
 	ops, err := s.Operations(ctx, runID)
 	if err != nil {
 		return TaskOutcome{}, err
