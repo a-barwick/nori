@@ -90,10 +90,10 @@ func conversationBoundary(ctx context.Context, store *state.Google, taskID strin
 	}))
 	defer provider.Close()
 	// The advisory classifier is unavailable locally; no outbound calls occur.
-	classifier := conversation.NewClassifier("")
+	classifier := conversation.NewJevClassifier("")
 	classifier.Client = &http.Client{Transport: unavailableClassifier{provider.URL}}
 	newRunner := func() *conversation.Runner {
-		model := conversation.NewModel("https://api.openai.com/v1", "fixture-only", "gpt-6.1-sol")
+		model := conversation.NewOpenAIModel("fixture-only", "gpt-6.1-sol")
 		model.Client = &http.Client{Transport: localModelTransport{provider.URL}}
 		return conversation.New(model, classifier, &conversation.Tasks{Store: store})
 	}

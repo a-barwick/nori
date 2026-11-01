@@ -27,11 +27,11 @@ No project API key is needed in the web image. Keep any local project configurat
 
 - The onigiri stays visible on desktop and mobile, responds to typing and task state, and opens Activity. The header also reports connection and execution status.
 - The composer and connection notices reserve their own space, including for multiline drafts. Saved structured replies use document cards with Copy, Open document, and Download.
-- The signed IAP assertion and exact owner email are verified before private routes are served. Unsigned identity headers are never trusted.
-- `/api/session`, `/api/turn`, `/api/input`, `/api/cancel`, `/api/artifact`, and `/api/trace` proxy the runtime API contract with server credentials. Browser credentials are not forwarded.
+- The signed IAP assertion and exact owner email are verified before private routes are served. Unsigned identity headers are never trusted. `src/lib/runtime/auth.ts` is the only file that knows about IAP, so another sign-in provider replaces one function there.
+- `/api/<operation>` proxies each operation in `src/lib/runtime/methods.ts` (`session`, `status`, `turn`, `input`, `cancel`, `command`, `artifact` and `trace`) to the runtime with server credentials. Browser credentials are not forwarded. `src/lib/runtime/credentials.ts` produces those credentials, so a runtime outside GCP replaces one function there.
 - The conversation uses the current message bubbles, avatar/presence, document layout and reading view. Long saved replies can be opened and downloaded, with Back to chat preserving the conversation position.
 - The activity panel shows real task events, shell/browser output, statuses, and protected screenshots. Stop requests cancellation and waits for runtime confirmation.
-- History refreshes only while a task is active, the tab is visible, and task execution is resumed. Errors suspend automatic refresh until manual reconnection.
+- History refreshes only while a task is active, the tab is visible, and task execution is resumed. The client calls `/api/status` every 2 seconds and fetches the session when its version changes, when the call fails, or when it reports idle. If `status` is missing or fails three times in a row, it fetches the session every 2 seconds. Errors suspend automatic refresh until manual reconnection.
 - Chat is the only page. The old Library/Goals/Ideas/Settings demo shell, seeded local store, scripted agent, attachments, voice, local edit/delete controls, and the retired `/api/nori` endpoint have been removed.
 - Durable tasks accept corrections and answers through the composer while running; these use the existing `/api/input` contract. Questions from the runtime appear in Activity and in the conversation status. The local outer-agent adapter has a separate task-update form.
 - The UI does not invent response streaming: the existing contract returns saved messages and task activity.

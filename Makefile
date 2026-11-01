@@ -39,4 +39,4 @@ smoke:
 	python3 core/infrastructure/release/deploy.py smoke
 
 pause unpause:
-	cd core && NORI_TF_BACKEND=gcs python3 infrastructure/poc/poc.py $@
+	cd core && NORI_TF_BACKEND=gcs python3 infrastructure/app/ops.py $@

@@ -35,6 +35,7 @@ TF = ROOT / "terraform"
 STATE_ROOT = Path.home() / ".local/state/nori/bot-111549"
 if ENVIRONMENT == "sandbox":
     STATE_ROOT /= "sandbox"
+# The state path and the GCS prefix (nori/poc) keep their original names. Renaming them would orphan existing state.
 STATE = STATE_ROOT / "poc/terraform.tfstate"
 TEMPORAL_TF = ROOT.parent / "temporal/terraform"
 TEMPORAL_STATE = STATE.parent.parent / "temporal/terraform.tfstate"
@@ -554,7 +555,6 @@ def main():
             "NORI_WORKER_SERVICES": json.dumps(services),
             "NORI_WORKER_WAKE_QUEUE": workers.get("worker_wake_queue", ""),
             "NORI_AGENT_MODEL": c["outer_model"],
-            "NORI_AGENT_BASE_URL": "https://api.openai.com/v1",
             "NORI_WAKE_QUEUE": c["conversation_queue"],
             "NORI_WAKE_SERVICE_ACCOUNT": c["conversation_wake_service_account"],
             "NORI_RUNTIME_URL": c["runtime_url"],

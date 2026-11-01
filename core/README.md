@@ -68,7 +68,7 @@ inference while health and cleanup remain available.
 | Configuration | Purpose |
 | --- | --- |
 | `OPENAI_API_KEY`, `JEV_API_KEY` | Required conversation provider credentials for both entrypoints |
-| `NORI_AGENT_MODEL`, `NORI_AGENT_BASE_URL` | Conversation model and HTTPS endpoint; defaults `gpt-6.1-sol`, `https://api.openai.com/v1`; low reasoning, standard tier |
+| `NORI_AGENT_MODEL` | Conversation model; default `gpt-6.1-sol`. It runs through OpenAI's platform API at a fixed endpoint, with low reasoning and the standard tier |
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
 | `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |
 | `FIRESTORE_EMULATOR_HOST`, `TEMPORAL_LOCAL` | Explicit local Firestore endpoint and local Temporal mode; absent/false uses configured services |
@@ -109,7 +109,7 @@ the queue/IAM Terraform changes, the existing Runtime invoke root supplied as
 an approved credential path. Native Runtime status/deadline forwarding and
 Cloud Tasks OAuth delivery still need cloud verification. Existing deployment,
 worker registration, pause/resume, and retained-data operations are covered by
-[POC operations](infrastructure/poc/README.md) and
+[app operations](infrastructure/app/README.md) and
 [Temporal operations](infrastructure/temporal/README.md).
 
 ## Code layout
@@ -216,7 +216,7 @@ the linked operations guides for the exact current lifecycle and its limits.
 ## Historical computer provisioning reference
 
 These notes describe the original disposable-host trial and retained-disk
-foundation. The current retained POC computer uses the [POC lifecycle](infrastructure/poc/README.md).
+foundation. The current retained computer uses the [app lifecycle](infrastructure/app/README.md).
 Do not apply the old disposable-host lifecycle against that VM.
 
 ### Boot smoke

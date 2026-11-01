@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -43,11 +42,6 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 	if strings.TrimSpace(key) == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY must be configured in the selected project environment")
 	}
-	base := env.Get("NORI_AGENT_BASE_URL", "https://api.openai.com/v1")
-	u, err := url.Parse(base)
-	if err != nil || u.Scheme != "https" || u.Host != "api.openai.com" || u.Path != "/v1" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, fmt.Errorf("NORI_AGENT_BASE_URL must be https://api.openai.com/v1")
-	}
 	store, err := platform.OpenStore(ctx)
 	if err != nil {
 		return nil, err
@@ -66,7 +60,7 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 	dispatcher := platform.Dispatcher(store, engine, waker)
 	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
 	model := env.Get("NORI_AGENT_MODEL", "gpt-6.1-sol")
-	runner := conversation.New(conversation.NewModel(base, key, model), conversation.NewClassifier(jevKey), tasks)
+	runner := conversation.New(conversation.NewOpenAIModel(key, model), conversation.NewJevClassifier(jevKey), tasks)
 	return &App{Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, engine: engine}, nil
 }
 

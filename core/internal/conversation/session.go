@@ -37,7 +37,13 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 		}
 	}
 	native.Messages = messages
-	result := Session{Session: native, NextCursor: next, Dispatches: []Dispatch{}, Traces: []Trace{}, Conversation: ConversationStatus{Introducing: c.Introducing, Pending: c.Received > c.Consumed, Processing: c.Active != "" && c.LeaseUntil.After(time.Now()), Revision: c.Received, Consumed: c.Consumed, InputIDs: []string{}, RoutingBlocked: c.UserReceived > c.UserRouted}}
+	result := Session{
+		Session: native, NextCursor: next, Dispatches: []Dispatch{}, Traces: []Trace{},
+		Conversation: ConversationStatus{
+			Introducing: c.Introducing, Pending: c.Received > c.Consumed, Processing: c.Active != "" && c.LeaseUntil.After(time.Now()),
+			Revision: c.Received, Consumed: c.Consumed, InputIDs: []string{}, RoutingBlocked: c.UserReceived > c.UserRouted,
+		},
+	}
 	if t != nil {
 		result.Conversation.TurnID = t.ID
 		result.Conversation.RestartCount = t.Restarts
@@ -47,7 +53,11 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 		}
 	}
 	for _, a := range attempts {
-		trace := Trace{ID: a.ID, TurnID: a.TurnID, Attempt: a.Number, InputIDs: a.InputIDs, Model: a.Model, Status: a.Status, StartedAt: a.StartedAt, FinishedAt: a.FinishedAt, DurationMS: a.DurationMS, Actions: a.Actions, Usage: a.Usage, Error: a.Error, ContextTruncated: a.ContextTruncated, ContextTurns: a.ContextTurns, ContextBytes: a.ContextBytes}
+		trace := Trace{
+			ID: a.ID, TurnID: a.TurnID, Attempt: a.Number, InputIDs: a.InputIDs, Model: a.Model, Status: a.Status,
+			StartedAt: a.StartedAt, FinishedAt: a.FinishedAt, DurationMS: a.DurationMS, Actions: a.Actions, Usage: a.Usage, Error: a.Error,
+			ContextTruncated: a.ContextTruncated, ContextTurns: a.ContextTurns, ContextBytes: a.ContextBytes,
+		}
 		if trace.Actions == nil {
 			trace.Actions = []state.ConversationAction{}
 		}

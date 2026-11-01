@@ -4,6 +4,8 @@
 
 See the architecture, outer loop and inner loop for the agent design behind the service. Spaces copy: Nori separation of concerns; this file is the source.
 
+**Status: a design and a proposal.** Implemented today: one web client, and one Go service that saves conversation, task and spend records in Firestore and runs tasks in Temporal. The web client keeps no domain records. It sends `POST /api/<operation>` calls through its Next.js server and polls for changes ([how](client-contract.md#implemented-today)). Not built: the gateway, the event log and live stream, typed message parts, approvals, notification policy, read cursors, and the desktop and mobile clients. Where this document says "will" or "proposal", that part is not built.
+
 # The rule
 
 **If two clients could disagree about it, the service owns it.** A client owns only how that state looks and feels on its own platform.
@@ -103,7 +105,7 @@ The web demo currently does the service's job inside the browser. Under this spl
 
 | Today, in the browser | Moves to |
 | - | - |
-| Domain state persisted in localStorage | Service records. The browser keeps a cache. |
+| Domain state persisted in localStorage (the earlier web demo, since removed) | Service records. The browser keeps a cache. |
 | Building the prompt and system context | Service |
 | Parsing chips, approvals and artifacts out of comment hints in model text | Service, which emits typed parts |
 | Creating approval cards from chat text | Task workflows, bound to an exact operation |
@@ -122,5 +124,5 @@ What stays in the web app: the bubble-or-page rule, paced reveal, optimistic sen
 | Where task outcomes land | The thread that started the task, plus an activity entry. |
 | Editing a sent message | A new message that supersedes the old one, treated as a correction. |
 | Ideas, Goals, Upcoming | Stay client seed data until the service owns them. |
-| Transport | Commands over HTTPS POST. Events over server-sent events, with a long-poll fallback. |
-| Client authentication | Google sign-in through Identity Platform, verified at the gateway. |
+| Transport | Commands over HTTPS POST. Events over server-sent events, with a long-poll fallback. Today the web client polls with a version check instead. |
+| Client authentication | Google sign-in through Identity Platform, verified at the gateway. Not decided and not built. Today the web app uses Google IAP and accepts one owner. |

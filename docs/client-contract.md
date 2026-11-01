@@ -2,12 +2,37 @@
 
 | | |
 | --- | --- |
-| Status | Draft, in review |
-| Last updated | 2026-10-24 |
+| Status | Proposal, in review. [Implemented today](#implemented-today) lists what runs. |
+| Last updated | 2026-11-01 |
 | Scope | The protocol between Nori's agent service and every client app (web, desktop, mobile) |
 | Related | [Separation of concerns](separation-of-concerns.md); architecture, outer loop and inner loop (ChatGPT Spaces); Linear AB-120, AB-122, AB-130, AB-131, AB-133 |
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as described in RFC 2119.
+
+## Implemented today
+
+Most of this document is a proposal. Sections 1 and 3 to 15 describe a `/v1` gateway, an event log and a live stream, and none of that is built. The running system is smaller.
+
+| | Implemented today | Proposed in this document |
+| --- | --- | --- |
+| Clients | One, the web app. | Web, desktop and mobile. |
+| Calls | The browser sends `POST /api/<operation>` to its own Next.js server, which forwards to the Go API. The operations are `session`, `status`, `turn`, `command`, `artifact` and `trace`. `input` and `cancel` exist, but the client doesn't call them. | `POST /v1/commands`, `GET /v1/snapshot` and an event stream (§7.5). |
+| Updates | Polling with a version check. See below. | Server-sent events with replay (§7.6). |
+| Sign-in | Google IAP in front of Cloud Run. The web server verifies IAP's signed assertion and accepts one owner. It calls the runtime with its own service account's access token. | Identity Platform with ID tokens verified at the gateway (§7.1, D7). |
+| Browser storage | `sessionStorage` holds unsent messages, unsent task commands and reply timings. The service holds every other record. | A projection cache (§13, phase 1). |
+| Not built | | Event log, typed message parts, approvals, device registry, read cursors, notification policy. |
+
+### Polling with a version check
+
+The client polls because the runtime scales to zero. An open event stream holds one request open for as long as a tab is open, which keeps an instance running. Polling asks only while work is active. The client doesn't poll when nothing is running or the tab is hidden.
+
+While work is active, the client calls `POST /api/status` every 2 seconds. The reply is `{"version": "<opaque string>", "busy": <bool>}`. The client fetches the whole session when:
+
+- it loads the page, or after one of its own actions,
+- `version` differs from the last one it saw,
+- the `status` call fails, or `busy` is false while the client still shows active work.
+
+If `status` is missing, or fails three times in a row, the client polls the session every 2 seconds, as it did before `status` existed. `version` is only compared for equality. The runtime has to change it whenever anything the session shows changes. If it didn't, the client would show stale progress until `busy` turned false.
 
 ## 1. Summary
 
@@ -17,8 +42,8 @@ Nori will have several clients on different platforms and one agent service. Thi
 
 ### 2.1 Current state
 
-- **Web demo (main branch).** The browser is the backend. Every domain record lives in the browser's localStorage. The browser builds the prompt and the system context on every turn. A Next.js route streams raw text from the model. The browser then parses chips, approvals, artifacts and reactions out of HTML-comment hints in that text and mints IDs for objects the agent created. A second device or a second browser can't share any of this state.
-- **Deployed POC (uncommitted, `codex/deployed-poc`).** Core exposes `POST /api/session`, `/api/run`, `/api/cancel` and `/api/artifact`. `run` holds the HTTP request open until the whole run finishes. Only one run can be active at a time, and the UI polls the session every 2 seconds. A Next.js server proxies every call with a service-account token, behind IAP.
+- **Earlier web demo (removed).** The browser was the backend. Every domain record lived in the browser's localStorage. The browser built the prompt and the system context on every turn, and a Next.js route streamed raw text from the model. The browser then parsed chips, approvals, artifacts and reactions out of HTML-comment hints in that text and minted IDs for objects the agent created. A second device or a second browser couldn't share any of this state. The current web app keeps no domain records, only unsent messages in `sessionStorage`.
+- **Deployed app (on `main`).** The Go API serves `POST /api/session`, `turn`, `command`, `status`, `artifact` and `trace`. The first request that held the HTTP connection open for a whole run (`/api/run`) is gone: `turn` is acknowledged once the message is saved, and tasks run as Temporal workflows. A Next.js server proxies every call with its service account's token, behind IAP, and the client polls as described in [Implemented today](#implemented-today).
 - **Agreed agent architecture (outer and inner loop docs).** The outer loop answers each input with a short turn that responds, dispatches, updates a dispatch or clarifies. Independent tasks run as one Temporal Cloud workflow each, and Firestore holds the application records. "The outer loop waits for durable command acceptance, not task completion." Routine tool activity may stream straight to the interface, while results and requests for input come back through the conversation.
 
 ### 2.2 Problem
@@ -115,7 +140,7 @@ flowchart LR
 ### 7.1 Identity, devices and authentication
 
 - A **device** is one installed client instance, identified by a client-generated, stable `device_id` (a UUID) that it registers with `device.register`.
-- Clients authenticate to the gateway with a bearer ID token for the owner's Google account. The proposal is Identity Platform with the Google provider, which works the same way in browsers, desktop apps and mobile apps (decision D7).
+- **Proposal, not built.** Clients authenticate to the gateway with a bearer ID token for the owner's Google account. The proposal is Identity Platform with the Google provider, which works the same way in browsers, desktop apps and mobile apps (decision D7). Today the web app uses Google IAP and one owner. See [Implemented today](#implemented-today).
 - The gateway MUST verify the token's signature, issuer, audience and expiry, and MUST check the subject against the owner allowlist. Every request MUST carry `Nori-Device-Id`.
 - The web app calls the gateway directly, with a CORS allowlist for its own origin. The Next.js server no longer proxies agent calls with a service-account token. IAP MAY still protect the hosting of the web shell itself.
 - Device revocation (sign-out everywhere, per-device removal) is out of scope for v1. The device registry makes it possible later.
@@ -415,7 +440,7 @@ The targets are proposals. Phase 1 measures them on the real Cloud Run deploymen
 
 ## 12. Alternatives considered
 
-1. **Keep the request/response run API (the POC).** Rejected. It ties up a connection for the whole task, allows one task at a time, can't sync devices, and contradicts "wait for durable acceptance, not completion".
+1. **Keep the request/response run API (the earlier POC).** Rejected. It ties up a connection for the whole task, allows one task at a time, can't sync devices, and contradicts "wait for durable acceptance, not completion".
 2. **Clients read Firestore directly (Firebase SDK listeners).** This would give realtime sync and offline support for free. Rejected for v1: the storage schema and security rules would become the contract, which couples every client to internal records, makes versioning hard, and has no channel for ephemeral reply text. It is worth revisiting for mobile offline support behind the same resource shapes.
 3. **WebSockets.** Rejected for v1. Commands already go over plain POST, so the stream only needs one direction. SSE gets standard resumption (`Last-Event-ID`), works through ordinary HTTP infrastructure, and has mature client libraries on every target platform. WebSockets can be reconsidered if voice or other bidirectional realtime returns.
 4. **One stream per thread.** Rejected. Tasks, approvals and badges span threads, and per-thread streams multiply connections on mobile.
@@ -456,6 +481,8 @@ Each phase is independently useful. Phase 1 replaces the demo's in-browser backe
 5. How long are the idempotency window and retention, given Firestore cost? Measure in phase 1.
 
 ## Appendix A. Mapping from current code
+
+This table maps the earlier web demo. The `web/src/lib/nori/*` files and `store.ts` it names were removed, and the rows describe where each job was meant to go.
 
 | Today | Under this contract |
 | --- | --- |
