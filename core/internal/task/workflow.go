@@ -132,36 +132,12 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				}
 				continue
 			}
-			err = workflow.ExecuteActivity(quick, a.Project, Projection{Step: Step{id, c.Revision}, Kind: "model", Text: "Thinking"}).Get(ctx, nil)
+			var model RefModelOutcome
+			model, err = c.callModel(ctx, quick, spending, id)
 			if boundary(err) {
 				continue
 			}
 			if err != nil {
-				return
-			}
-			var model RefModelOutcome
-			err = workflow.ExecuteActivity(ctx, a.ModelRef, RefModelInput{Step: Step{id, c.Revision}, Ref: c.Ref}).Get(ctx, &model)
-			if err != nil {
-				var application *temporal.ApplicationError
-				if !errors.As(err, &application) {
-					c.CostUnknown = true
-				}
-				if boundary(err) {
-					continue
-				}
-				return
-			}
-			c.Models++
-			c.Spent += model.Cost
-			c.CostUnknown = c.CostUnknown || !model.CostKnown
-			c.Ref = model.Ref
-			spend(spending)
-			if c.CostUnknown {
-				err = state.ErrCostUnknown
-				return
-			}
-			if model.Failure != "" {
-				err = errors.New(model.Failure)
 				return
 			}
 			if model.Invalid {
@@ -316,29 +292,8 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 		if continuing || err == nil {
 			return
 		}
-		failure := err
-		cleanup, _ := workflow.NewDisconnectedContext(ctx)
-		cleanup = workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(stopCtx))
-		if e := stop(cleanup); e != nil {
-			failure = fmt.Errorf("computer stop could not be confirmed: %w", e)
-		}
-		status := state.RunFailed
-		if c.Stopped && (temporal.IsCanceledError(failure) || applicationKind(failure, "cancelled")) {
-			status = "cancelled"
-		}
-		p := RefPublication{Publication: Publication{Step: Step{id, c.Revision}, Status: status, Detail: failure.Error(), StopConfirmed: c.Stopped, CostUnknown: c.CostUnknown, BypassRouting: c.CostUnknown || !c.Stopped || status == "cancelled"}}
-		var publishErr error
-		for {
-			publishErr = workflow.ExecuteActivity(cleanup, a.PublishRef, p).Get(cleanup, &result)
-			if !applicationKind(publishErr, "routing_pending") {
-				break
-			}
-			if e := wait(); e != nil {
-				p.Status = state.RunCancelled
-				p.Detail = e.Error()
-				p.BypassRouting = true
-			}
-		}
+		var failure, publishErr error
+		result, failure, publishErr = c.publishFailure(ctx, stopCtx, id, err, wait, result)
 		if superseded(publishErr) && !c.CostUnknown && ctx.Err() == nil {
 			err = nil
 			continue
@@ -392,4 +347,63 @@ func (c *Checkpoint) applySync(synced HistorySync) {
 	if synced.Grants > 0 {
 		c.Budget += float64(synced.Grants) * agent.BudgetUSD
 	}
+}
+
+// callModel retains and accounts for the response before any newer-input check.
+func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string) (RefModelOutcome, error) {
+	var a *Activities
+	var model RefModelOutcome
+	err := workflow.ExecuteActivity(quick, a.Project, Projection{Step: Step{id, c.Revision}, Kind: "model", Text: "Thinking"}).Get(ctx, nil)
+	if err != nil {
+		return model, err
+	}
+	err = workflow.ExecuteActivity(ctx, a.ModelRef, RefModelInput{Step: Step{id, c.Revision}, Ref: c.Ref}).Get(ctx, &model)
+	if err != nil {
+		var application *temporal.ApplicationError
+		if !errors.As(err, &application) {
+			c.CostUnknown = true
+		}
+		return model, err
+	}
+	c.Models++
+	c.Spent += model.Cost
+	c.CostUnknown = c.CostUnknown || !model.CostKnown
+	c.Ref = model.Ref
+	c.projectSpend(spending, id)
+	if c.CostUnknown {
+		err = state.ErrCostUnknown
+		return model, err
+	}
+	if model.Failure != "" {
+		err = errors.New(model.Failure)
+		return model, err
+	}
+	return model, nil
+}
+
+func (c *Checkpoint) publishFailure(ctx, stopCtx workflow.Context, id string, failure error, wait func() error, result state.Run) (state.Run, error, error) {
+	var a *Activities
+	cleanup, _ := workflow.NewDisconnectedContext(ctx)
+	cleanup = workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(stopCtx))
+	if e := c.stopComputer(cleanup, id); e != nil {
+		failure = fmt.Errorf("computer stop could not be confirmed: %w", e)
+	}
+	status := state.RunFailed
+	if c.Stopped && (temporal.IsCanceledError(failure) || applicationKind(failure, "cancelled")) {
+		status = "cancelled"
+	}
+	p := RefPublication{Publication: Publication{Step: Step{id, c.Revision}, Status: status, Detail: failure.Error(), StopConfirmed: c.Stopped, CostUnknown: c.CostUnknown, BypassRouting: c.CostUnknown || !c.Stopped || status == "cancelled"}}
+	var publishErr error
+	for {
+		publishErr = workflow.ExecuteActivity(cleanup, a.PublishRef, p).Get(cleanup, &result)
+		if !applicationKind(publishErr, "routing_pending") {
+			break
+		}
+		if e := wait(); e != nil {
+			p.Status = state.RunCancelled
+			p.Detail = e.Error()
+			p.BypassRouting = true
+		}
+	}
+	return result, failure, publishErr
 }

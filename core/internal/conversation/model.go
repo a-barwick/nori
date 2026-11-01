@@ -101,43 +101,11 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		span.SetAttributes(a)
 	}
 	defer func() {
-		denied := requestStarted.IsZero() && spend.IsAdmissionDenied(err)
-		if denied {
+		if requestStarted.IsZero() && spend.IsAdmissionDenied(err) {
 			zero := 0.0
 			reply.Usage.CostUSD, reply.Usage.CostStatus, reply.Usage.RequestStatus = &zero, "not_incurred", "denied"
-			span.SetAttributes(attribute.String("nori.reply.status", "budget_denied"))
-			observability.Event(ctx, "model.call.denied", attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", m.Name))
 		}
-		span.SetAttributes(attribute.Bool("nori.output.present", reply.Text != ""), attribute.Int("nori.tool.call_count", len(reply.Calls)), attribute.String("nori.cost.status", reply.Usage.CostStatus))
-		if reply.Usage.InputTokens != nil {
-			span.SetAttributes(attribute.Int64("gen_ai.usage.input_tokens", *reply.Usage.InputTokens), attribute.Int64("llm.token_count.prompt", *reply.Usage.InputTokens))
-			observability.Metric(ctx, "nori.model.input_tokens", float64(*reply.Usage.InputTokens))
-		}
-		if reply.Usage.OutputTokens != nil {
-			span.SetAttributes(attribute.Int64("gen_ai.usage.output_tokens", *reply.Usage.OutputTokens), attribute.Int64("llm.token_count.completion", *reply.Usage.OutputTokens))
-			observability.Metric(ctx, "nori.model.output_tokens", float64(*reply.Usage.OutputTokens))
-		}
-		if reply.Usage.TotalTokens != nil {
-			span.SetAttributes(attribute.Int64("llm.token_count.total", *reply.Usage.TotalTokens))
-		}
-		if reply.Usage.CostUSD != nil {
-			span.SetAttributes(attribute.Float64("nori.cost.usd", *reply.Usage.CostUSD), attribute.Float64("llm.cost.total", *reply.Usage.CostUSD))
-		}
-		if a, ok := observability.ContentAttribute("output.value", reply.Text); ok {
-			span.SetAttributes(a)
-		}
-		if err != nil && !denied && !errors.Is(ctx.Err(), context.Canceled) {
-			observability.RecordErrorCategory(ctx, "model.outer", err)
-			if !requestStarted.IsZero() {
-				observability.Event(ctx, "model.call.failed", attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", m.Name))
-			}
-		} else if err == nil && !requestStarted.IsZero() {
-			observability.Event(ctx, "model.call.completed", attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", m.Name))
-		}
-		if !requestStarted.IsZero() && !errors.Is(ctx.Err(), context.Canceled) {
-			observability.Metric(ctx, "nori.model.duration_ms", float64(time.Since(requestStarted).Milliseconds()))
-		}
-		span.End()
+		m.observeCall(ctx, span, provider, requestStarted, reply, err)
 	}()
 	reply.Usage = state.Usage{ID: uuid.NewString(), Provider: "outer", Model: m.Name, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: time.Now().UTC()}
 	control, outputLimit, err := spend.Prepare(ctx, provider, 4096)
@@ -145,58 +113,7 @@ func (m *Model) Call(ctx context.Context, messages []json.RawMessage) (reply Rep
 		return reply, err
 	}
 	defer control.Close()
-	if control != nil {
-		if provider != "openai" && provider != "openrouter" {
-			return reply, errors.New("spend-controlled conversation requests require the selected provider endpoint")
-		}
-		for _, message := range messages {
-			var fields map[string]any
-			if json.Unmarshal(message, &fields) != nil {
-				return reply, errors.New("invalid controlled conversation message")
-			}
-			if content := fields["content"]; content != nil {
-				if _, ok := content.(string); !ok {
-					return reply, errors.New("spend-controlled conversation requests require text content")
-				}
-			}
-			if hasUnboundedMessageFields(fields) {
-				return reply, errors.New("spend-controlled conversation requests cannot include media, plugins, or cache writes")
-			}
-		}
-	}
-	var format any
-	if !m.NoDispatch {
-		format = responseFormat(m.TaskIDs)
-	}
-	request := map[string]any{"model": m.Name, "messages": messages}
-	if format != nil {
-		request["response_format"] = format
-	}
-	if provider == "openai" {
-		if m.Name != "gpt-6.1-sol" {
-			return reply, errors.New("unsupported direct OpenAI conversation model")
-		}
-		// Strip provider-specific reasoning extensions from retained historical
-		// messages. Their exact originals remain in private attempt records.
-		input, normalizeErr := openAIConversation(messages)
-		if normalizeErr != nil {
-			return reply, normalizeErr
-		}
-		request["messages"] = input
-		request["max_completion_tokens"] = outputLimit
-		request["reasoning_effort"] = "low"
-		request["service_tier"] = "default"
-		request["store"] = false
-		request["prompt_cache_options"] = map[string]string{"mode": "explicit"}
-		span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", "low"), attribute.String("gen_ai.request.service_tier", "default"))
-	} else {
-		providerLimits := map[string]any{"require_parameters": !m.NoDispatch}
-		if control != nil {
-			providerLimits["max_price"] = map[string]float64{"prompt": 1.25, "completion": 4.25}
-		}
-		request["provider"], request["max_tokens"] = providerLimits, outputLimit
-	}
-	body, err := json.Marshal(request)
+	body, err := m.requestBody(messages, provider, outputLimit, control != nil, span)
 	if err != nil {
 		return reply, err
 	}
@@ -396,4 +313,97 @@ func modelMessage(value any) json.RawMessage {
 	// All callers provide JSON-safe strings, structs, or string maps.
 	data, _ := json.Marshal(value)
 	return data
+}
+
+func (m *Model) requestBody(messages []json.RawMessage, provider string, outputLimit int, controlled bool, span trace.Span) ([]byte, error) {
+	if controlled {
+		if provider != "openai" && provider != "openrouter" {
+			return nil, errors.New("spend-controlled conversation requests require the selected provider endpoint")
+		}
+		for _, message := range messages {
+			var fields map[string]any
+			if json.Unmarshal(message, &fields) != nil {
+				return nil, errors.New("invalid controlled conversation message")
+			}
+			if content := fields["content"]; content != nil {
+				if _, ok := content.(string); !ok {
+					return nil, errors.New("spend-controlled conversation requests require text content")
+				}
+			}
+			if hasUnboundedMessageFields(fields) {
+				return nil, errors.New("spend-controlled conversation requests cannot include media, plugins, or cache writes")
+			}
+		}
+	}
+	var format any
+	if !m.NoDispatch {
+		format = responseFormat(m.TaskIDs)
+	}
+	request := map[string]any{"model": m.Name, "messages": messages}
+	if format != nil {
+		request["response_format"] = format
+	}
+	if provider == "openai" {
+		if m.Name != "gpt-6.1-sol" {
+			return nil, errors.New("unsupported direct OpenAI conversation model")
+		}
+		// Strip provider-specific reasoning extensions from retained historical
+		// messages. Their exact originals remain in private attempt records.
+		input, normalizeErr := openAIConversation(messages)
+		if normalizeErr != nil {
+			return nil, normalizeErr
+		}
+		request["messages"] = input
+		request["max_completion_tokens"] = outputLimit
+		request["reasoning_effort"] = "low"
+		request["service_tier"] = "default"
+		request["store"] = false
+		request["prompt_cache_options"] = map[string]string{"mode": "explicit"}
+		span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", "low"), attribute.String("gen_ai.request.service_tier", "default"))
+	} else {
+		providerLimits := map[string]any{"require_parameters": !m.NoDispatch}
+		if controlled {
+			providerLimits["max_price"] = map[string]float64{"prompt": 1.25, "completion": 4.25}
+		}
+		request["provider"], request["max_tokens"] = providerLimits, outputLimit
+	}
+	return json.Marshal(request)
+}
+
+func (m *Model) observeCall(ctx context.Context, span trace.Span, provider string, requestStarted time.Time, reply Reply, err error) {
+	denied := requestStarted.IsZero() && spend.IsAdmissionDenied(err)
+	if denied {
+		span.SetAttributes(attribute.String("nori.reply.status", "budget_denied"))
+		observability.Event(ctx, "model.call.denied", attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", m.Name))
+	}
+	span.SetAttributes(attribute.Bool("nori.output.present", reply.Text != ""), attribute.Int("nori.tool.call_count", len(reply.Calls)), attribute.String("nori.cost.status", reply.Usage.CostStatus))
+	if reply.Usage.InputTokens != nil {
+		span.SetAttributes(attribute.Int64("gen_ai.usage.input_tokens", *reply.Usage.InputTokens), attribute.Int64("llm.token_count.prompt", *reply.Usage.InputTokens))
+		observability.Metric(ctx, "nori.model.input_tokens", float64(*reply.Usage.InputTokens))
+	}
+	if reply.Usage.OutputTokens != nil {
+		span.SetAttributes(attribute.Int64("gen_ai.usage.output_tokens", *reply.Usage.OutputTokens), attribute.Int64("llm.token_count.completion", *reply.Usage.OutputTokens))
+		observability.Metric(ctx, "nori.model.output_tokens", float64(*reply.Usage.OutputTokens))
+	}
+	if reply.Usage.TotalTokens != nil {
+		span.SetAttributes(attribute.Int64("llm.token_count.total", *reply.Usage.TotalTokens))
+	}
+	if reply.Usage.CostUSD != nil {
+		span.SetAttributes(attribute.Float64("nori.cost.usd", *reply.Usage.CostUSD), attribute.Float64("llm.cost.total", *reply.Usage.CostUSD))
+	}
+	if a, ok := observability.ContentAttribute("output.value", reply.Text); ok {
+		span.SetAttributes(a)
+	}
+	if err != nil && !denied && !errors.Is(ctx.Err(), context.Canceled) {
+		observability.RecordErrorCategory(ctx, "model.outer", err)
+		if !requestStarted.IsZero() {
+			observability.Event(ctx, "model.call.failed", attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", m.Name))
+		}
+	} else if err == nil && !requestStarted.IsZero() {
+		observability.Event(ctx, "model.call.completed", attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", m.Name))
+	}
+	if !requestStarted.IsZero() && !errors.Is(ctx.Err(), context.Canceled) {
+		observability.Metric(ctx, "nori.model.duration_ms", float64(time.Since(requestStarted).Milliseconds()))
+	}
+	span.End()
 }
