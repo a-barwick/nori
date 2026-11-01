@@ -303,7 +303,7 @@ func (a *Activities) Stop(ctx context.Context, ids []string) (err error) {
 	defer func() { recordActivityFailure(ctx, err, "task.stop_computer"); span.End() }()
 	return classified(StopComputer(observability.SuppressErrorCapture(ctx), a.Agent.Computer, ids))
 }
-func StopComputer(ctx context.Context, config computer.Config, ids []string) error {
+func StopComputer(ctx context.Context, config computer.Provider, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}

@@ -14,7 +14,7 @@ import (
 type Recovery struct {
 	Store    state.TaskStore
 	Engine   dispatch.Orchestrator
-	Computer computer.Config
+	Computer computer.Provider
 }
 
 var _ dispatch.Recovery = Recovery{}
@@ -30,7 +30,7 @@ func (r Recovery) StopPaused(ctx context.Context, runID string) (state.Run, erro
 // RepairClosed handles the projection crash window only after Temporal proves
 // execution is closed (or cancellation was requested before it started). It never
 // retries execution. Known computer scopes must report their real stop outcome.
-func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Orchestrator, config computer.Config) error {
+func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Orchestrator, config computer.Provider) error {
 	runs, e := store.OpenTasks(ctx)
 	if e != nil {
 		return e
@@ -102,7 +102,7 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 	return errors.Join(failures...)
 }
 
-func repairCleanup(ctx context.Context, store state.TaskStore, config computer.Config, run state.Run) error {
+func repairCleanup(ctx context.Context, store state.TaskStore, config computer.Provider, run state.Run) error {
 	revisions, err := store.OperationRevisions(ctx, run.ID)
 	if err != nil {
 		return err
@@ -116,7 +116,7 @@ func repairCleanup(ctx context.Context, store state.TaskStore, config computer.C
 	}
 	return closeTaskBrowser(ctx, store, config, run.ID, scopes)
 }
-func closeTaskBrowser(ctx context.Context, store state.TaskStore, config computer.Config, id string, scopes []string) error {
+func closeTaskBrowser(ctx context.Context, store state.TaskStore, config computer.Provider, id string, scopes []string) error {
 	if len(scopes) == 0 {
 		return store.FinishCleanup(ctx, id)
 	}
@@ -136,7 +136,7 @@ func closeTaskBrowser(ctx context.Context, store state.TaskStore, config compute
 
 // StopPaused completes an accepted Stop without waking paid workers or starting
 // the retained computer. CancelRequested fences new work even if pause changes.
-func StopPaused(ctx context.Context, store state.TaskStore, config computer.Config, id string) (state.Run, error) {
+func StopPaused(ctx context.Context, store state.TaskStore, config computer.Provider, id string) (state.Run, error) {
 	control, err := store.Control(ctx)
 	if err != nil {
 		return state.Run{}, err

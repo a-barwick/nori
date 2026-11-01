@@ -19,10 +19,10 @@ type Service struct {
 	Key       string
 	Client    *http.Client
 	ModelName string
-	Computer  computer.Config
+	Computer  computer.Provider
 }
 
-func New(store state.Store, key string, name string, c computer.Config) *Service {
+func New(store state.Store, key string, name string, c computer.Provider) *Service {
 	return &Service{Store: store, Key: key, Client: &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, ModelName: name, Computer: c}
 }
 
