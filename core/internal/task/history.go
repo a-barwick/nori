@@ -11,9 +11,9 @@ import (
 	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
-	"google.golang.org/genai"
 	"nori/internal/agent"
 	"nori/internal/state"
+	"nori/internal/transcript"
 )
 
 // Only immutable references and bounded control metadata cross Temporal history.
@@ -90,12 +90,12 @@ func (a *Activities) evidence() (state.TaskEvidenceStore, error) {
 	}
 	return store, nil
 }
-func (a *Activities) appendContents(ctx context.Context, id, parent string, contents []*genai.Content) (string, error) {
+func (a *Activities) appendMessages(ctx context.Context, id, parent string, messages []transcript.Message) (string, error) {
 	store, e := a.evidence()
 	if e != nil {
 		return "", e
 	}
-	data, e := json.Marshal(contents)
+	data, e := json.Marshal(messages)
 	if e != nil {
 		return "", e
 	}
@@ -123,7 +123,7 @@ func historyHeartbeat(ctx context.Context) func() {
 	}()
 	return func() { close(done) }
 }
-func (a *Activities) history(ctx context.Context, id, ref string) ([]*genai.Content, error) {
+func (a *Activities) history(ctx context.Context, id, ref string) ([]transcript.Message, error) {
 	stopHeartbeat := historyHeartbeat(ctx)
 	defer stopHeartbeat()
 	store, e := a.evidence()
@@ -137,18 +137,15 @@ func (a *Activities) history(ctx context.Context, id, ref string) ([]*genai.Cont
 	if e != nil {
 		return nil, e
 	}
-	var contents []*genai.Content
+	var messages []transcript.Message
 	for _, block := range blocks {
-		var chunk []*genai.Content
+		var chunk []transcript.Message
 		if e = json.Unmarshal(block, &chunk); e != nil {
 			return nil, errors.New("task transcript block is invalid")
 		}
-		contents = append(contents, chunk...)
+		messages = append(messages, chunk...)
 	}
-	return contents, nil
-}
-func toolResponse(id, name string, response map[string]any) *genai.Content {
-	return &genai.Content{Role: "user", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: id, Name: name, Response: response}}}}
+	return messages, nil
 }
 
 func clip(text string, limit int) string {
@@ -161,23 +158,18 @@ func clip(text string, limit int) string {
 	}
 	return text[:cut] + "…"
 }
-func lastCall(contents []*genai.Content, index int) (*genai.FunctionCall, error) {
-	for i := len(contents) - 1; i >= 0; i-- {
-		if contents[i] == nil || contents[i].Role != "model" {
+func lastCall(messages []transcript.Message, index int) (transcript.ToolCall, error) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != transcript.RoleModel {
 			continue
 		}
-		calls := []*genai.FunctionCall{}
-		for _, part := range contents[i].Parts {
-			if part != nil && part.FunctionCall != nil {
-				calls = append(calls, part.FunctionCall)
-			}
-		}
+		calls := messages[i].ToolCalls()
 		if index >= 0 && index < len(calls) {
 			return calls[index], nil
 		}
 		break
 	}
-	return nil, errors.New("saved model call reference does not resolve")
+	return transcript.ToolCall{}, errors.New("saved model call reference does not resolve")
 }
 func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out HistorySync, err error) {
 	ctx, span := startActivity(ctx, "task.history.sync", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
@@ -188,56 +180,59 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 	}
 	out = HistorySync{Ref: in.Ref, Revision: snap.Run.Revision, Position: in.Position, Request: clip(snap.Run.Request, 1500)}
 	if in.Ref == "" {
-		contents, e := a.Context(ctx, in.RunID)
+		background, e := a.Context(ctx, in.RunID)
 		if e != nil {
 			return out, e
 		}
-		if len(contents) > 0 {
-			out.Ref, e = a.appendContents(ctx, in.RunID, "", contents)
+		if len(background) > 0 {
+			out.Ref, e = a.appendMessages(ctx, in.RunID, "", background)
 			if e != nil {
 				return out, classified(e)
 			}
 		}
 	}
-	contents := []*genai.Content{}
+	messages := []transcript.Message{}
 	q := in.Question
 	for _, cmd := range snap.Commands {
 		if cmd.Position <= in.Position {
 			continue
 		}
 		switch cmd.Kind {
-		case "start", "steer", "input":
+		case state.CommandStart, state.CommandSteer:
 			if q != nil && q.CallID != "" {
-				contents = append(contents, toolResponse(q.CallID, "request_input", map[string]any{"superseded": true, "reason": "Austin changed the task instructions."}))
+				superseded := map[string]any{"superseded": true, "reason": "Austin changed the task instructions."}
+				messages = append(messages, transcript.ToolResultMessage(q.CallID, "request_input", superseded))
 			}
 			q = nil
 			out.QuestionResolved = true
-			contents = append(contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: cmd.Text}}})
+			messages = append(messages, transcript.UserText(cmd.Text))
 			if cmd.Kind == state.CommandStart {
 				out.Request = clip(cmd.Text, 1500)
 			}
-		case "answer":
+		case state.CommandAnswer:
 			if q != nil && q.ID == cmd.QuestionID {
 				if q.CallID != "" {
-					contents = append(contents, toolResponse(q.CallID, "request_input", map[string]any{"answer": cmd.Text, "question_id": cmd.QuestionID}))
+					answer := map[string]any{"answer": cmd.Text, "question_id": cmd.QuestionID}
+					messages = append(messages, transcript.ToolResultMessage(q.CallID, "request_input", answer))
 				} else {
-					contents = append(contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: cmd.Text}}})
+					messages = append(messages, transcript.UserText(cmd.Text))
 				}
 				q = nil
 				out.QuestionResolved = true
 			}
-		case "continue":
+		case state.CommandContinue:
 			if q != nil && q.ID == cmd.QuestionID && q.Kind == "budget" {
 				out.Grants++
 				q = nil
 				out.QuestionResolved = true
-				contents = append(contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: fmt.Sprintf("Austin approved another $%.2f of model spend. Continue the task.", agent.BudgetUSD)}}})
+				messages = append(messages, transcript.UserText(
+					fmt.Sprintf("Austin approved another $%.2f of model spend. Continue the task.", agent.BudgetUSD)))
 			}
 		}
 		out.Position = cmd.Position
 	}
-	if len(contents) > 0 {
-		out.Ref, e = a.appendContents(ctx, in.RunID, out.Ref, contents)
+	if len(messages) > 0 {
+		out.Ref, e = a.appendMessages(ctx, in.RunID, out.Ref, messages)
 		if e != nil {
 			return out, classified(e)
 		}
@@ -247,20 +242,20 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefModelOutcome, err error) {
 	ctx, span := startActivity(ctx, "task.history.model", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.model"); span.End() }()
-	contents, e := a.history(ctx, in.RunID, in.Ref)
+	messages, e := a.history(ctx, in.RunID, in.Ref)
 	if e != nil {
 		return out, classified(e)
 	}
-	outcome, e := a.Model(ctx, ModelInput{Step: in.Step, Contents: contents, Interruptible: true})
+	outcome, e := a.Model(ctx, ModelInput{Step: in.Step, Messages: messages, Interruptible: true})
 	if e != nil {
 		return out, e
 	}
-	decision := outcome.Decision
-	out = RefModelOutcome{Ref: in.Ref, Cost: decision.Cost, CostKnown: decision.CostKnown, Failure: outcome.Failure}
+	response := outcome.Response
+	out = RefModelOutcome{Ref: in.Ref, Cost: response.Cost, CostKnown: response.CostKnown, Failure: outcome.Failure}
 	// Accounting is returned even if persisting the response fails. Activity errors
 	// would discard this value, so persistence failure is an ordinary failure field.
-	if decision.Content != nil {
-		out.Ref, e = a.appendContents(ctx, in.RunID, in.Ref, []*genai.Content{decision.Content})
+	if response.Message != nil {
+		out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{*response.Message})
 		if e != nil {
 			out.Ref = in.Ref
 			out.Failure = "model output could not be retained; paid request will not be replayed"
@@ -270,27 +265,30 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	if out.Failure != "" {
 		return out, nil
 	}
-	if len(decision.Calls) == 0 {
+	if len(response.Calls) == 0 {
 		out.Invalid = true
-		out.Ref, e = a.appendContents(ctx, in.RunID, out.Ref, []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "Plain text does not finish this task. Call complete(answer,evidence,unmet), or request_input for a missing prerequisite."}}}})
+		correction := transcript.UserText("Plain text does not finish this task. " +
+			"Call complete(answer,evidence,unmet), or request_input for a missing prerequisite.")
+		out.Ref, e = a.appendMessages(ctx, in.RunID, out.Ref, []transcript.Message{correction})
 		if e != nil {
 			out.Failure = "completion protocol correction could not be retained"
 		}
 		return out, nil
 	}
-	if e = agent.ValidateCalls(decision.Calls, true); e != nil {
-		parts := []*genai.Part{}
-		for _, call := range decision.Calls {
-			parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: call.ID, Name: call.Name, Response: map[string]any{"rejected": true, "reason": e.Error(), "executed": false}}})
+	if e = agent.ValidateCalls(response.Calls, true); e != nil {
+		parts := []transcript.Part{}
+		for _, call := range response.Calls {
+			rejected := map[string]any{"rejected": true, "reason": e.Error(), "executed": false}
+			parts = append(parts, transcript.Part{ToolResult: &transcript.ToolResult{CallID: call.ID, Name: call.Name, Output: rejected}})
 		}
 		out.Invalid = true
-		out.Ref, e = a.appendContents(ctx, in.RunID, out.Ref, []*genai.Content{{Role: "user", Parts: parts}})
+		out.Ref, e = a.appendMessages(ctx, in.RunID, out.Ref, []transcript.Message{{Role: transcript.RoleUser, Parts: parts}})
 		if e != nil {
 			out.Failure = "rejected batch results could not be retained"
 		}
 		return out, nil
 	}
-	for i, call := range decision.Calls {
+	for i, call := range response.Calls {
 		out.Calls = append(out.Calls, CallRef{ID: call.ID, Name: call.Name, Index: i})
 	}
 	span.SetAttributes(attribute.Int("nori.tool.call_count", len(out.Calls)))
@@ -299,17 +297,22 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolOutcome, err error) {
 	ctx, span := startActivity(ctx, "task.history.tool", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.tool"); span.End() }()
-	contents, e := a.history(ctx, in.RunID, in.Ref)
+	messages, e := a.history(ctx, in.RunID, in.Ref)
 	if e != nil {
 		return out, classified(e)
 	}
-	call, e := lastCall(contents, in.Index)
+	call, e := lastCall(messages, in.Index)
 	if e != nil {
 		return out, classified(e)
 	}
 	var result map[string]any
 	if in.ReadOnly && call.Name != "browser_navigate" && call.Name != "browser_screenshot" {
-		result = map[string]any{"outcome": "needs_input", "error": "Completion correction permits reads only. Ask Austin before further writes or shell execution.", "effect_class": "read", "operation_id": in.OperationID}
+		result = map[string]any{
+			"outcome":      "needs_input",
+			"error":        "Completion correction permits reads only. Ask Austin before further writes or shell execution.",
+			"effect_class": "read",
+			"operation_id": in.OperationID,
+		}
 	} else {
 		result, e = a.durableTool(ctx, ToolInput{Step: in.Step, OperationID: in.OperationID, Call: call})
 		if e != nil {
@@ -318,7 +321,7 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	}
 	// The model receives the immutable result reference as well as the tool data.
 	result["evidence_ref"] = in.OperationID
-	out.Ref, e = a.appendContents(ctx, in.RunID, in.Ref, []*genai.Content{toolResponse(call.ID, call.Name, result)})
+	out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{transcript.ToolResultMessage(call.ID, call.Name, result)})
 	if e != nil {
 		return out, classified(errors.New("tool result transcript could not be retained; operation will not be reissued"))
 	}
@@ -329,25 +332,24 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Question, err error) {
 	ctx, span := startActivity(ctx, "task.history.question", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.question"); span.End() }()
-	contents, e := a.history(ctx, in.RunID, in.Ref)
+	messages, e := a.history(ctx, in.RunID, in.Ref)
 	if e != nil {
 		return out, classified(e)
 	}
-	call, e := lastCall(contents, in.Index)
+	call, e := lastCall(messages, in.Index)
 	if e != nil {
 		return out, classified(e)
 	}
 	text, _ := call.Args["question"].(string)
 	// A provider may explain a failure in output_text and put only the next
 	// question in request_input. Publish both so the user can make a decision.
-	for i := len(contents) - 1; i >= 0; i-- {
-		content := contents[i]
-		if content == nil || content.Role != "model" {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != transcript.RoleModel {
 			continue
 		}
 		var explanation []string
-		for _, part := range content.Parts {
-			if part != nil && !part.Thought && strings.TrimSpace(part.Text) != "" {
+		for _, part := range messages[i].Parts {
+			if strings.TrimSpace(part.Text) != "" {
 				explanation = append(explanation, part.Text)
 			}
 		}
@@ -364,21 +366,19 @@ func (a *Activities) AppendToolResult(ctx context.Context, in AppendResult) (ref
 	defer func() { recordActivityFailure(ctx, err, "task.history.append_result"); span.End() }()
 	// A rejected completion can already have its result saved before a
 	// publication loses a revision race. Keep exactly one output for each call.
-	contents, e := a.history(ctx, in.RunID, in.Ref)
+	messages, e := a.history(ctx, in.RunID, in.Ref)
 	if e != nil {
 		return "", classified(e)
 	}
-	for _, content := range contents {
-		if content == nil {
-			continue
-		}
-		for _, part := range content.Parts {
-			if part != nil && part.FunctionResponse != nil && part.FunctionResponse.ID == in.CallID {
+	for _, message := range messages {
+		for _, part := range message.Parts {
+			if part.ToolResult != nil && part.ToolResult.CallID == in.CallID {
 				return in.Ref, nil
 			}
 		}
 	}
-	ref, err = a.appendContents(ctx, in.RunID, in.Ref, []*genai.Content{toolResponse(in.CallID, in.Name, in.Response)})
+	result := transcript.ToolResultMessage(in.CallID, in.Name, in.Response)
+	ref, err = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{result})
 	return ref, classified(err)
 }
 func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run state.Run, err error) {
@@ -386,11 +386,11 @@ func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run sta
 	defer func() { recordActivityFailure(ctx, err, "task.history.publish"); span.End() }()
 	if in.Ref != "" {
 		in.ExpectedIncomplete = in.Status == "failed"
-		contents, e := a.history(ctx, in.RunID, in.Ref)
+		messages, e := a.history(ctx, in.RunID, in.Ref)
 		if e != nil {
 			return state.Run{}, classified(e)
 		}
-		call, e := lastCall(contents, 0)
+		call, e := lastCall(messages, 0)
 		if e != nil {
 			return state.Run{}, classified(e)
 		}

@@ -38,11 +38,20 @@ type Checkpoint struct {
 }
 
 func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.Run, err error) {
-	options := workflow.ActivityOptions{StartToCloseTimeout: 240 * time.Second, HeartbeatTimeout: 10 * time.Second, WaitForCancellation: true, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1}}
+	options := workflow.ActivityOptions{
+		StartToCloseTimeout: 240 * time.Second, HeartbeatTimeout: 10 * time.Second, WaitForCancellation: true,
+		RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
+	}
 	ctx = workflow.WithActivityOptions(ctx, options)
-	quick := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 20 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1}})
-	stopCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 200 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1}})
-	spending := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 5 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3}})
+	quick := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 20 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
+	})
+	stopCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 200 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
+	})
+	spending := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3},
+	})
 	c := resume
 	if c.Budget == 0 {
 		c.Budget = agent.BudgetUSD
@@ -75,7 +84,8 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 			err = fmt.Errorf("computer stop could not be confirmed: %w", e)
 		}
 		if c.Stopped && result.Status != "" && len(c.ComputerRevisions) > 0 {
-			if e := workflow.ExecuteActivity(cleanup, a.CloseBrowser, BrowserCleanup{RunID: id, Scope: computerRun(Step{id, c.ComputerRevisions[0]})}).Get(cleanup, nil); e != nil {
+			browser := BrowserCleanup{RunID: id, Scope: computerRun(Step{id, c.ComputerRevisions[0]})}
+			if e := workflow.ExecuteActivity(cleanup, a.CloseBrowser, browser).Get(cleanup, nil); e != nil {
 				workflow.GetLogger(ctx).Error("Task browser cleanup remains pending", "run_id", id)
 			}
 		}
@@ -102,7 +112,9 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 			for signals.ReceiveAsync(&signal) {
 			}
 			var synced HistorySync
-			err = workflow.ExecuteActivity(quick, a.SyncHistory, HistoryInput{Step: Step{id, c.Revision}, Ref: c.Ref, Position: c.Position, Question: c.Question}).Get(ctx, &synced)
+			err = workflow.ExecuteActivity(quick, a.SyncHistory, HistoryInput{
+				Step: Step{id, c.Revision}, Ref: c.Ref, Position: c.Position, Question: c.Question,
+			}).Get(ctx, &synced)
 			if boundary(err) {
 				continue
 			}
@@ -118,7 +130,14 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				return
 			}
 			if c.Question == nil && c.Spent >= c.Budget {
-				c.Question = &state.Question{ID: fmt.Sprintf("%s-budget-p%d", id, c.Position), Kind: "budget", Text: fmt.Sprintf("I reached this task’s $%.2f model allowance ($%.4f spent across %d model calls and %d tool attempts). The task is not finished. Request: %s\n\nReply continue to grant another $%.2f, or Stop to end the task.", c.Budget, c.Spent, c.Models, c.Tools, c.Request, agent.BudgetUSD), Revision: c.Revision}
+				c.Question = &state.Question{
+					ID:   fmt.Sprintf("%s-budget-p%d", id, c.Position),
+					Kind: "budget",
+					Text: fmt.Sprintf("I reached this task’s $%.2f model allowance ($%.4f spent across %d model calls and %d tool attempts). "+
+						"The task is not finished. Request: %s\n\nReply continue to grant another $%.2f, or Stop to end the task.",
+						c.Budget, c.Spent, c.Models, c.Tools, c.Request, agent.BudgetUSD),
+					Revision: c.Revision,
+				}
 				c.QuestionPublished = false
 			}
 			if c.Question != nil {
@@ -159,7 +178,10 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				if boundary(err) {
 					for _, call := range model.Calls {
 						var ref string
-						e := workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name, Response: map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."}}).Get(ctx, &ref)
+						e := workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
+							Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
+							Response: map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."},
+						}).Get(ctx, &ref)
 						if e != nil {
 							err = e
 							return
@@ -175,7 +197,10 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 			for _, call := range model.Calls {
 				if changed || revised {
 					var ref string
-					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name, Response: map[string]any{"skipped": true, "reason": "Accepted input changed before this call ran."}}).Get(ctx, &ref)
+					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
+						Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
+						Response: map[string]any{"skipped": true, "reason": "Accepted input changed before this call ran."},
+					}).Get(ctx, &ref)
 					if err != nil {
 						return
 					}
@@ -196,10 +221,19 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				if call.Name == "complete" {
 					c.Checks++
 					var check CompletionOutcome
-					err = workflow.ExecuteActivity(quick, a.CheckCompletion, CompletionInput{Step: Step{id, c.Revision}, Ref: c.Ref, ID: fmt.Sprintf("%s-check-%d", id, c.Checks), Position: c.Position, CorrectionAttempt: c.Corrections}).Get(ctx, &check)
+					err = workflow.ExecuteActivity(quick, a.CheckCompletion, CompletionInput{
+						Step: Step{id, c.Revision}, Ref: c.Ref, ID: fmt.Sprintf("%s-check-%d", id, c.Checks),
+						Position: c.Position, CorrectionAttempt: c.Corrections,
+					}).Get(ctx, &check)
 					if boundary(err) {
 						var ref string
-						err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name, Response: map[string]any{"accepted": false, "reason": "Execution admission changed during completion checking. Reconcile before proposing again."}}).Get(ctx, &ref)
+						err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
+							Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
+							Response: map[string]any{
+								"accepted": false,
+								"reason":   "Execution admission changed during completion checking. Reconcile before proposing again.",
+							},
+						}).Get(ctx, &ref)
 						if err != nil {
 							return
 						}
@@ -220,10 +254,19 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 						if check.Action != "publish" {
 							status = "failed"
 						}
-						err = publish(RefPublication{Publication: Publication{Step: Step{id, c.Revision}, Status: status, Detail: check.Detail, StopConfirmed: true}, Ref: c.Ref, Unverified: check.Action == "unverified"})
+						err = publish(RefPublication{
+							Publication: Publication{Step: Step{id, c.Revision}, Status: status, Detail: check.Detail, StopConfirmed: true},
+							Ref:         c.Ref, Unverified: check.Action == "unverified",
+						})
 						if boundary(err) {
 							var ref string
-							err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name, Response: map[string]any{"accepted": false, "reason": "Accepted instructions changed before publication. Reconcile them before proposing completion again."}}).Get(ctx, &ref)
+							err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
+								Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
+								Response: map[string]any{
+									"accepted": false,
+									"reason":   "Accepted instructions changed before publication. Reconcile them before proposing completion again.",
+								},
+							}).Get(ctx, &ref)
 							if err != nil {
 								return
 							}
@@ -233,7 +276,9 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 						}
 						return
 					case "ask":
-						c.Question = &state.Question{ID: fmt.Sprintf("%s-completion-q%d", id, c.Checks), Kind: "input", Text: check.Detail, Revision: c.Revision}
+						c.Question = &state.Question{
+							ID: fmt.Sprintf("%s-completion-q%d", id, c.Checks), Kind: "input", Text: check.Detail, Revision: c.Revision,
+						}
 						c.QuestionPublished = false
 					case "correct":
 						c.Corrections++
@@ -252,7 +297,10 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				if boundary(err) {
 					revised = true
 					var ref string
-					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name, Response: map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."}}).Get(ctx, &ref)
+					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
+						Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
+						Response: map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."},
+					}).Get(ctx, &ref)
 					if err != nil {
 						return
 					}
@@ -267,11 +315,16 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				}
 				c.Stopped = false
 				var output RefToolOutcome
-				err = workflow.ExecuteActivity(ctx, a.ToolRef, RefToolInput{Step: Step{id, c.Revision}, Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly}).Get(ctx, &output)
+				err = workflow.ExecuteActivity(ctx, a.ToolRef, RefToolInput{
+					Step: Step{id, c.Revision}, Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly,
+				}).Get(ctx, &output)
 				if boundary(err) {
 					revised = true
 					var ref string
-					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name, Response: map[string]any{"outcome": "uncertain", "operation_id": operation, "replayed": false}}).Get(ctx, &ref)
+					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
+						Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
+						Response: map[string]any{"outcome": "uncertain", "operation_id": operation, "replayed": false},
+					}).Get(ctx, &ref)
 					if err != nil {
 						return
 					}
@@ -284,12 +337,24 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				c.Ref = output.Ref
 				if output.Outcome == "needs_input" {
 					revised = true
-					c.Question = &state.Question{ID: fmt.Sprintf("%s-correction-q%d", id, c.Tools), Kind: "input", Text: "Completing this task appears to require another action beyond the permitted read-only correction. Please clarify or authorize what should happen next.", Revision: c.Revision}
+					c.Question = &state.Question{
+						ID:   fmt.Sprintf("%s-correction-q%d", id, c.Tools),
+						Kind: "input",
+						Text: "Completing this task appears to require another action beyond the permitted read-only correction. " +
+							"Please clarify or authorize what should happen next.",
+						Revision: c.Revision,
+					}
 					c.QuestionPublished = false
 				}
 				if output.Outcome == "uncertain" && output.EffectClass != "read" {
 					revised = true
-					c.Question = &state.Question{ID: fmt.Sprintf("%s-operation-q%d", id, c.Tools), Kind: "input", Text: "An attempted action has an uncertain outcome. Nori will not repeat it automatically. Please confirm what happened or clarify how to proceed.", Revision: c.Revision}
+					c.Question = &state.Question{
+						ID:   fmt.Sprintf("%s-operation-q%d", id, c.Tools),
+						Kind: "input",
+						Text: "An attempted action has an uncertain outcome. Nori will not repeat it automatically. " +
+							"Please confirm what happened or clarify how to proceed.",
+						Revision: c.Revision,
+					}
 					c.QuestionPublished = false
 				}
 			}
@@ -400,7 +465,10 @@ func (c *Checkpoint) publishFailure(ctx, stopCtx workflow.Context, id string, fa
 	if c.Stopped && (temporal.IsCanceledError(failure) || applicationKind(failure, "cancelled")) {
 		status = "cancelled"
 	}
-	p := RefPublication{Publication: Publication{Step: Step{id, c.Revision}, Status: status, Detail: failure.Error(), StopConfirmed: c.Stopped, CostUnknown: c.CostUnknown, BypassRouting: c.CostUnknown || !c.Stopped || status == "cancelled"}}
+	p := RefPublication{Publication: Publication{
+		Step: Step{id, c.Revision}, Status: status, Detail: failure.Error(), StopConfirmed: c.Stopped,
+		CostUnknown: c.CostUnknown, BypassRouting: c.CostUnknown || !c.Stopped || status == "cancelled",
+	}}
 	var publishErr error
 	for {
 		publishErr = workflow.ExecuteActivity(cleanup, a.PublishRef, p).Get(cleanup, &result)

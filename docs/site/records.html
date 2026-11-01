@@ -20,8 +20,9 @@ owners/{owner}/
 ├─ conversation_inputs/   ← durable inbox (ordered)
 ├─ conversation_turns/    ← captured batches
 ├─ conversation_attempts/ ← traces: model, hint, usage
-├─ messages/              ← the visible transcript
+├─ messages/              ← the visible messages
 ├─ runs/{taskId}          ← task projection
+│   ├─ history/           ← the task transcript, in blocks
 │   ├─ steps/             ← per-activity traces
 │   └─ operations/        ← admission receipts
 ├─ task_commands/         ← delivery intent → Temporal

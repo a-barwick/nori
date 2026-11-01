@@ -119,7 +119,7 @@ afterAll(async () => {
 
 journey("a durable question survives pause/restart and only explicit continue grants more budget", async () => {
   const id = crypto.randomUUID(); runs.push(id);
-  await post("run", { id, message: "Help me choose a title. First use wait_for_input to ask exactly: What is the title about? Wait for my reply. Do not use the computer or any other tool. After I answer return only the title." });
+  await post("run", { id, message: "Help me choose a title. First use request_input to ask exactly: What is the title about? Wait for my reply. Do not use the computer or any other tool. After I answer return only the title." });
   const waiting = await until(() => run(id), (value) => value?.waiting && /title/i.test(value.waiting), "real model question");
   expect(waiting.temporal).toBe(true);
   expect(waiting.spent_usd).toBeGreaterThan(1);

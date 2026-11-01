@@ -17,6 +17,7 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 	"nori/internal/agent"
+	"nori/internal/agent/openrouter"
 	"nori/internal/env"
 	"nori/internal/observability"
 	"nori/internal/platform"
@@ -247,7 +248,7 @@ func run(ctx context.Context, wakes *workerwake.Cloud, bounded bool, sliceID str
 		}
 		notify = notifier.Schedule
 	}
-	service := agent.New(store, key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra"), platform.Computer())
+	service := agent.New(store, openrouter.New(key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra")), platform.Computer())
 	stopTimeout := 25 * time.Second
 	if bounded {
 		stopTimeout = 5 * time.Minute
