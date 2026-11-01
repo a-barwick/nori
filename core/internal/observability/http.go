@@ -17,9 +17,17 @@ import (
 )
 
 // HTTPHandler records only known route names and status codes, not URLs,
-// headers, query strings, or bodies. Health and polling routes are excluded.
+// headers, query strings, or bodies. Successful health and polling routes are excluded.
 func HTTPHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w = httpsnoop.Wrap(w, httpsnoop.Hooks{WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
+			return func(code int) {
+				if code == http.StatusTooManyRequests {
+					w.Header().Set("X-Nori-Rejection-Source", "runtime")
+				}
+				next(code)
+			}
+		}})
 		route := safeRoute(r.URL.Path)
 		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 		if route == "" {
@@ -41,7 +49,7 @@ func HTTPHandler(next http.Handler) http.Handler {
 				}
 			}()
 			result := httpsnoop.CaptureMetrics(next, w, r.WithContext(ctx))
-			if result.Code >= 500 {
+			if reportHTTPFailure(ctx, result.Code, attrs) {
 				RecordErrorCategory(ctx, "http.request", httpFailure(result.Code), append(attrs, attribute.Int("http.response.status_code", result.Code))...)
 				pending.Store(true)
 			}
@@ -66,7 +74,7 @@ func HTTPHandler(next http.Handler) http.Handler {
 		}()
 		result := httpsnoop.CaptureMetrics(next, w, r.WithContext(ctx))
 		span.SetAttributes(attribute.Int("http.response.status_code", result.Code))
-		if result.Code >= 500 {
+		if reportHTTPFailure(ctx, result.Code, []attribute.KeyValue{attribute.String("http.route", route), attribute.String("http.request.method", safeMethod(r.Method))}) {
 			span.SetStatus(codes.Error, "request failed")
 			RecordErrorCategory(ctx, "http.request", httpFailure(result.Code), attribute.String("http.route", route), attribute.String("http.request.method", safeMethod(r.Method)), attribute.Int("http.response.status_code", result.Code))
 		}
@@ -75,6 +83,23 @@ func HTTPHandler(next http.Handler) http.Handler {
 		Metric(ctx, "nori.http.duration_ms", float64(result.Duration)/float64(time.Millisecond))
 
 	})
+}
+
+var lastHTTPRejection atomic.Int64
+
+func reportHTTPFailure(ctx context.Context, status int, attrs []attribute.KeyValue) bool {
+	if status != http.StatusTooManyRequests {
+		return status >= 500
+	}
+	// Bound repeated polling diagnostics to one per minute per process. The
+	// response marker is still present on every application-generated rejection.
+	now := time.Now().Unix()
+	last := lastHTTPRejection.Load()
+	if now-last < 60 || !lastHTTPRejection.CompareAndSwap(last, now) {
+		return false
+	}
+	Event(ctx, "nori request completed", append(attrs, attribute.Int("http.response.status_code", status))...)
+	return true
 }
 
 type requestFlushKey struct{}

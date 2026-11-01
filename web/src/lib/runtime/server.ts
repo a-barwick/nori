@@ -1,6 +1,6 @@
 import { GoogleAuth } from "google-auth-library";
 import { isOwner, sameOrigin } from "./auth";
-import { reportUpstreamFailure, upstreamTraceHeaders } from "@/lib/observability/upstream";
+import { reportUpstreamFailure, reportUpstreamRejection, rejectionHeaders, upstreamTraceHeaders } from "@/lib/observability/upstream";
 
 const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
 const METHODS = new Set(["session", "turn", "input", "cancel", "command", "artifact", "trace"]);
@@ -32,16 +32,27 @@ export async function runtimeRequest(request: Request, method: string) {
   try {
     const token = await auth.getAccessToken();
     if (!token) throw new Error("No runtime credentials");
+    const traceHeaders = upstreamTraceHeaders(request);
     const upstream = await fetch(target, {
       method: "POST",
       // Fresh headers: browser credentials and IAP headers are never forwarded.
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...upstreamTraceHeaders(request) },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...traceHeaders },
       body,
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(145_000)]),
       redirect: "error",
       cache: "no-store",
     });
     if (upstream.status >= 500) reportUpstreamFailure(method, "hosted", upstream.status);
+    if (upstream.status === 429) {
+      reportUpstreamRejection(method, request, traceHeaders, upstream.headers);
+      void upstream.body?.cancel().catch(() => undefined);
+      // Platform rejections may be HTML. Preserve the status without forwarding
+      // a private upstream body or turning a rate limit into an unrelated 502.
+      return Response.json({ error: "Nori is temporarily busy. Refresh history shortly." }, {
+        status: 429,
+        headers: { "Cache-Control": "no-store", ...rejectionHeaders(upstream.headers) },
+      });
+    }
     const contentType = upstream.headers.get("content-type") || "application/json";
     if (!contentType.includes("application/json") && !contentType.startsWith("image/png")) {
       return Response.json({ error: "The runtime returned an unsupported response." }, { status: 502 });
