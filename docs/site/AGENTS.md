@@ -40,7 +40,7 @@ Checked by the reviewer, who has to show the evidence in `review-docs`:
 | --- | --- | --- |
 | 11 | The picture teaches the idea | From the visual and lede alone, state how the system works in one sentence. |
 | 12 | The visual shows the mechanism | Each box is a system part, each unclear arrow says what passes, and a concept such as "Filters" isn't a box. |
-| 13 | A newcomer can follow it | A good engineer who has never seen Nori needs no other page to understand the visible text. |
+| 13 | A newcomer can follow it | A good engineer who has never seen Nori needs no other page to understand the visible text. Words defined in `words.html`, such as outer loop and turn, are shared vocabulary, so use them and don't reword them. |
 | 14 | One concrete example | A concept page follows a real-looking message or task, such as the Tucson weather task. |
 | 15 | Every fact earns its place | For each number, name and setting, say what a reader would do with it. Cut it if there's no answer. |
 | 16 | Every claim is true | Each number, name, order and status in visible text has a `file:line` in the code on `main`, or a Linear issue if it's planned. |

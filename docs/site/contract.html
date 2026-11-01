@@ -10,7 +10,7 @@
 </head>
 <body>
 <h1>How the loops talk</h1>
-<p class="lede">The outer loop sends commands in. Tasks send events back. Nothing else crosses between them. Open Data on a row to see what's sent.</p>
+<p class="lede">The outer loop sends commands in, and tasks send events back. Nothing else crosses between them.</p>
 <div class="card">
 <svg viewBox="0 0 820 250" width="100%" role="img" aria-label="Commands go from the outer loop to a task, and events come back">
 <defs><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6474"/></marker></defs>
@@ -20,28 +20,29 @@
 <path d="M620 116 H204" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)"/><text x="410" y="104" text-anchor="middle" font-size="13" font-weight="650">Events</text><text x="410" y="134" text-anchor="middle" font-size="12" fill="#4a5163">question · result · failure · stopped</text>
 <rect x="10" y="184" width="800" height="52" rx="9" fill="#eef0f3" stroke="#5b6474" stroke-width="1.5"/><text x="410" y="207" text-anchor="middle" font-size="13" font-weight="650">Runtime</text><text x="410" y="225" text-anchor="middle" font-size="12" fill="#4a5163">assigns IDs and revisions, validates calls, delivers everything, records it in Firestore</text>
 </svg></div>
+<div class="card"><p class="note">For “Check Saturday's weather in Tucson”, the outer loop calls <code>dispatch</code>, which saves a start command. “No, Phoenix” becomes a steer on that task. When the forecast is saved, the task sends a result event.</p></div>
 <section><h2>The rules</h2>
 <ul class="pts">
 <li><b>Only the outer loop starts tasks.</b> This stops tasks from spawning more tasks on their own.</li>
 <li><b>One task, one ID.</b> The start command's ID is the task ID, and every later command and event uses it.</li>
 <li><b>Finished tasks stay finished.</b> More work means a new task.</li>
 <li><b>Accepted comes before applied.</b> A command is saved first, and the task picks it up later.</li>
-<li><b>Buttons skip the models.</b> Stop and panel edits send the same commands directly.</li>
-<li><b>New work never gets more permission</b> than the request it serves.</li>
+<li><b>Buttons skip the models.</b> The Stop button and task panel edits send the same commands directly.</li>
+<li class="designed"><b>New work never gets more permission</b> than the request it serves (<a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a>).</li>
 </ul></section>
 <section><h2>Outer loop tools</h2>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>When it's used</th></tr>
 <tr data-flow="dispatch"><td><code>dispatch(request)</code></td><td>Start new work.</td></tr>
-<tr data-flow="tool-steer"><td><code>steer(task, text)</code></td><td>Change an unfinished task.</td></tr>
-<tr data-flow="tool-answer"><td><code>answer(task, question, text)</code></td><td>Answer that task's open question.</td></tr>
-<tr data-flow="tool-continue"><td><code>continue(task, question)</code></td><td>Add budget, only after the user says to keep going.</td></tr>
-<tr data-flow="tool-stop"><td><code>stop(task)</code></td><td>Stop one task.</td></tr>
-<tr><td><code>hold(task, question)</code></td><td>Answer one of the user's questions when that task's result arrives.</td></tr>
+<tr data-flow="tool-steer"><td><code>steer(run_id, text, interrupt)</code></td><td>Change an unfinished task.</td></tr>
+<tr data-flow="tool-answer"><td><code>answer(run_id, question_id, text)</code></td><td>Answer that task's open question.</td></tr>
+<tr data-flow="tool-continue"><td><code>continue(run_id, question_id)</code></td><td>Add budget, only after the user says to keep going.</td></tr>
+<tr data-flow="tool-stop"><td><code>stop(run_id)</code></td><td>Stop one task.</td></tr>
+<tr><td><code>hold(task_id, question)</code></td><td>Answer one of the user's questions when that task's result arrives.</td></tr>
 </table><p class="note">A plain reply or clarifying question is just text, with no tool call.</p></div></section>
 <section><h2>Inner loop control tools</h2>
 <p>These sit next to the task's work tools, and each must be the only call in its response.</p>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>What it does</th></tr>
-<tr data-flow="wait"><td><code>request_input(question)</code></td><td>Save a question and wait for its exact answer. Retained v1 and v2 workflows use <code>wait_for_input</code>.</td></tr>
+<tr data-flow="wait"><td><code>request_input(question)</code></td><td>Save a question and wait for its exact answer.</td></tr>
 <tr><td><code>complete(answer, evidence, unmet)</code></td><td>Propose that the task is done. <a href="completion.html">The checks decide</a>.</td></tr>
 <tr class="designed"><td><code>request_work(request, why)</code></td><td>Ask for work outside this task's own request.<span class="tag design">designed</span></td></tr>
 </table></div></section>
@@ -58,17 +59,17 @@
 <div class="card"><div class="flow">
 <div class="node inner"><b>Task A calls <code>request_work</code></b><small>A parks and the question goes to the outer loop.</small></div><div class="arrow">↓</div>
 <div class="node outer"><b>Outer loop decides</b><small>Dispatch a subtask, answer directly, or ask the user.</small></div><div class="arrow">↓</div>
-<div class="node inner"><b>Subtask B runs like any task</b><small>If B needs the user, it asks the user itself. A keeps waiting.</small></div><div class="arrow">↓</div>
-<div class="node"><b>B's result goes back to A</b><small>Saved in the same transaction as B's outcome. No model call is spent delivering it.</small></div>
+<div class="node inner"><b>Subtask B runs</b><small>If B needs the user, it asks directly. A keeps waiting.</small></div><div class="arrow">↓</div>
+<div class="node"><b>B's result goes back to A</b><small>Saved with B's outcome, with no model call.</small></div>
 </div></div>
 <ul class="pts"><li><b>Budget:</b> B's cost counts against A.</li><li><b>Stop:</b> stopping A stops B.</li><li><b>Permissions:</b> B never gets more than A has.</li></ul>
 <details class="more"><summary>Why it's built this way</summary>
 <p>It's the standard parent-waits-for-children pattern from job queues, built on the outbox Nori already uses for commands. Agent frameworks tend to wait inside a single run, which doesn't cover parking a parent for hours across restarts. <a href="decisions.html#subtasks">The rejected options are on Decisions</a>.</p></details>
 </section>
 <section><h2>Interrupting a task</h2>
-<p>Additive instructions wait for the current step. Explicit corrections interrupt eligible reads and model calls by default. The outer loop can ask to cut the step short, and the runtime decides whether that's safe.</p>
-<div class="branch"><div class="node inner"><b>Can be cut short</b><small>A running model call, or a read such as loading a page. Stopping only loses time.</small></div>
-<div class="node wait"><b>Runs to the end</b><small>A write such as sending an email, which may already have happened. Shell and browser actions count as writes unless declared read-only.</small></div></div>
+<p>Additive instructions wait for the current step. Explicit corrections interrupt reads and model calls by default. The outer loop can ask to cut the step short, and the runtime decides whether that's safe.</p>
+<div class="branch"><div class="node inner"><b>Can be cut short</b><small>A model call, or a browser read.</small></div>
+<div class="node wait"><b>Runs to the end</b><small>Any other tool, including shell.</small></div></div>
 </section>
 <details class="sources"><summary>Sources</summary><p><a href="https://linear.app/a-barwick/issue/AB-180">AB-180</a> · <a href="https://linear.app/a-barwick/issue/AB-211">AB-211</a> · <a href="https://linear.app/a-barwick/issue/AB-214">AB-214</a> · <a href="https://linear.app/a-barwick/issue/AB-215">AB-215</a> · <a href="https://linear.app/a-barwick/issue/AB-221">AB-221</a></p></details>
 </body>

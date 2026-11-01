@@ -9,19 +9,20 @@
 </head>
 <body>
 <h1>Schedules and proactive help</h1>
-<p class="lede">Work scheduled by request, and work started by a trigger. They follow different rules.</p>
+<p class="lede">A reminder runs at the time the user asked for. A proactive offer starts from a trigger, with no request.</p>
+<div class="card"><div class="flow">
+<div class="node designed-node"><b>Durable timer waits</b><small>“Remind me tomorrow at 9.” waits in the user's time zone.</small></div><div class="arrow">↓ <span class="lbl">starts a turn</span></div>
+<div class="node designed-node outer"><b>Outer loop writes the reminder</b><small>It's saved like any other message.</small></div><div class="arrow">↓</div>
+<div class="node designed-node"><b>Client delivers it</b><small>Delivery works with the app closed. Quiet hours can hold it back.</small></div>
+</div></div>
+<section><h2>Requested and proactive</h2>
 <div class="branch">
 <div class="card"><h3 style="margin-top:0">Requested</h3><p><span class="say me">Remind me tomorrow at 9.</span></p><p class="note">The user asked, so it's already authorized. Milestone 9.</p></div>
-<div class="card"><h3 style="margin-top:0">Proactive</h3><p><span class="say">Your appointment ends at 1:45, and the meeting is 30 minutes away. Want me to find another time?</span></p><p class="note">Nobody asked, so it offers instead of acting. Milestone 11.</p></div>
+<div class="card"><h3 style="margin-top:0">Proactive</h3><p><span class="say">Your appointment ends at 1:45, and the meeting is 30 minutes away. Want me to find another time?</span></p><p class="note">Nobody asked. The current proposal is to offer only. Milestone 11.</p></div>
 </div>
+</section>
 <section><h2>Task results aren't proactive messages</h2>
 <p>A result that arrives later belongs to a request the user made. It's always saved, and it doesn't count against any cap on proactive messages.</p></section>
-<section><h2>A one-time reminder</h2>
-<div class="card"><div class="flow">
-<div class="node designed-node"><b>Save the time and the delivery</b><small>In the user's time zone. A durable timer waits with no compute running.</small></div><div class="arrow">↓</div>
-<div class="node designed-node"><b>The timer starts an outer turn</b><small>It writes the reminder like any other message.</small></div><div class="arrow">↓</div>
-<div class="node designed-node"><b>Confirm delivery</b><small>A saved timer isn't proof. Delivery works with the app closed, and quiet hours can hold it back.</small></div>
-</div></div></section>
 <section><h2>What the rest need</h2>
 <div class="grid2">
 <div class="card tight"><p class="keyline">Recurring schedules <a href="https://linear.app/a-barwick/issue/AB-223">AB-223</a></p><ul class="pts note"><li>Local time across daylight saving, and business days</li><li>Skip and snooze</li><li>Exactly one catch-up after a missed run</li><li>List, change, pause and cancel</li><li>A report when nothing ran</li></ul></div>

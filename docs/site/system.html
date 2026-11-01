@@ -10,9 +10,6 @@
 <body>
 <h1>Service overview</h1>
 <p class="lede">Every box Nori runs on, and what each one is responsible for.</p>
-<p>Firestore is the source of truth for what Nori has <b>accepted</b>, and Temporal is the source
-  of truth for <b>how far execution has got</b>. The task view in Firestore is a projection of the
-  workflow, and budget decisions are made inside the workflow.</p>
   <div class="card">
   <svg viewBox="0 0 920 430" width="100%" role="img" aria-label="Agent service diagram">
     <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -21,7 +18,6 @@
     <rect x="10" y="150" width="130" height="86" rx="10" fill="#fff" stroke="#1e2430" stroke-width="2"/>
     <text x="75" y="182" text-anchor="middle" font-size="15" font-weight="700">Client</text>
     <text x="75" y="202" text-anchor="middle" font-size="11.5" fill="#4a5163">web today</text>
-    <text x="75" y="218" text-anchor="middle" font-size="11.5" fill="#4a5163">web/ · :3210</text>
     <!-- Go service -->
     <rect x="210" y="96" width="250" height="196" rx="12" fill="#eef0ff" stroke="#2f2fd0" stroke-width="2"/>
     <text x="335" y="122" text-anchor="middle" font-size="14.5" font-weight="700" fill="#2f2fd0">Go agent service · core/</text>
@@ -31,7 +27,6 @@
     <rect x="230" y="206" width="210" height="66" rx="8" fill="#fff" stroke="#5b6474" stroke-width="1.5"/>
     <text x="335" y="228" text-anchor="middle" font-size="13.5" font-weight="650">Runtime (in-process)</text>
     <text x="335" y="246" text-anchor="middle" font-size="11" fill="#4a5163">accept · order · lease · deliver</text>
-    <text x="335" y="261" text-anchor="middle" font-size="11" fill="#4a5163">wake/ + state/</text>
     <!-- Firestore -->
     <rect x="230" y="322" width="210" height="72" rx="10" fill="#eef0f3" stroke="#5b6474" stroke-width="2"/>
     <text x="335" y="350" text-anchor="middle" font-size="14" font-weight="700">Firestore</text>
@@ -50,7 +45,7 @@
     <rect x="530" y="214" width="170" height="88" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/>
     <text x="615" y="244" text-anchor="middle" font-size="14" font-weight="700" fill="#0c7a5f">Inner loop</text>
     <text x="615" y="263" text-anchor="middle" font-size="11" fill="#4a5163">runs in the Go task worker</text>
-    <text x="615" y="279" text-anchor="middle" font-size="11" fill="#4a5163">one per task · pinned builds</text>
+    <text x="615" y="279" text-anchor="middle" font-size="11" fill="#4a5163">one per task</text>
     <!-- Computer -->
     <rect x="530" y="332" width="170" height="72" rx="10" fill="#faf0e4" stroke="#a8551c" stroke-width="2"/>
     <text x="615" y="360" text-anchor="middle" font-size="14" font-weight="700" fill="#a8551c">Persistent computer</text>
@@ -88,6 +83,8 @@
     <text x="492" y="356" text-anchor="middle" font-size="10.5" fill="#4a5163">task state</text>
   </svg>
   </div>
+  <p>“Check Saturday's weather in Tucson” goes from the client to the agent service, then through Temporal to the inner loop, the computer and back.</p>
+  <p>Firestore records what Nori has <b>accepted</b>, and Temporal records <b>how far execution has got</b>. Firestore's task view is a copy of the workflow, and budget checks run inside the workflow.</p>
   <div class="grid3">
     <div class="card tight"><p class="keyline">Accepted, applied and completed are different states</p>
       <p class="note">A saved command only shows that it was accepted, and a tool attempt doesn't show that it had any effect. Nori's reply describes the furthest outcome the records support.</p></div>
@@ -96,15 +93,7 @@
     <div class="card tight"><p class="keyline">The service owns shared state</p>
       <p class="note">Clients display state and send what the user wants to do. Anything two clients could disagree about belongs to the service.</p></div>
   </div>
-<section><h2>Who answers what</h2>
-<div class="card"><table>
-<tr><th>Question</th><th>Where the answer lives</th></tr>
-<tr><td>What did the user ask for?</td><td>Firestore inbox and messages</td></tr>
-<tr><td>How far has a task got?</td><td>Temporal workflow</td></tr>
-<tr><td>What did a task cost?</td><td>Workflow state, with <code>model_usage</code> rows in Firestore</td></tr>
-<tr><td>Did a tool call run?</td><td>The operation record and the guest's receipt</td></tr>
-<tr><td>Where's that screenshot?</td><td>Cloud Storage, linked from the task</td></tr>
-</table></div></section>
+<p>See <a href="records.html">Records and delivery</a> for where each answer is saved.</p>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/call.go</code> · <code>core/internal/task/client.go</code></p></details>
 </body>
 </html>

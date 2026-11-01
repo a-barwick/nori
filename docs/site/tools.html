@@ -11,26 +11,25 @@
 <h1>Tool discovery</h1>
 <p class="lede">How the inner loop will find and load only the tools a task needs.</p>
 <div class="card">
-    <h3 style="margin-top:0">Dynamic tool discovery <span class="tag design">designed · milestone 5</span></h3>
-    <p>Today each loop has a fixed tool list: six for the outer loop, and up to five for the inner loop (<code>complete</code>, <code>shell</code>, <code>browser_navigate</code>, <code>browser_screenshot</code> and <code>request_input</code>). The plan is for the inner loop to start small and load only what a task needs, so adding connectors doesn't fill its context with tool schemas.</p>
-    <div class="branch4">
-      <div class="node designed-node"><b>1. Catalog</b><small>Short entries give each capability's purpose, account, scope, availability and failure behavior. <a href="https://linear.app/a-barwick/issue/AB-158">AB-158</a></small></div>
-      <div class="node designed-node"><b>2. Discover</b><small>The inner loop looks for capabilities using the task, its evidence and the connected services. <a href="https://linear.app/a-barwick/issue/AB-159">AB-159</a></small></div>
-      <div class="node designed-node"><b>3. Load</b><small>Only the selected schemas enter the model's context. They can be cached until an account or tool changes. <a href="https://linear.app/a-barwick/issue/AB-160">AB-160</a></small></div>
-      <div class="node designed-node"><b>4. Check and run</b><small>The runtime checks permission when the call runs. Finding or loading a tool never grants access. <a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a></small></div>
-    </div>
-    <ul class="pts" style="margin-top:12px">
-      <li>The outer loop keeps its small set of coordination tools and a short summary of what the inner loop can do.</li>
-      <li>A disconnected or missing tool is reported as unavailable, so it can't be confused with a tool the model didn't select.</li>
-      <li>Still open: the catalog format, search and ranking, schema caching, and the first connector.</li>
-    </ul>
-  </div>
+<p><span class="tag design">designed · milestones 5 and 6</span></p>
+<div class="branch4">
+<div class="node designed-node"><b>1. Catalog</b><small>Short entries give each capability's purpose, account and scope. <a href="https://linear.app/a-barwick/issue/AB-158">AB-158</a></small></div>
+<div class="node designed-node"><b>2. Discover</b><small>The inner loop searches capabilities using the task and connected services. <a href="https://linear.app/a-barwick/issue/AB-159">AB-159</a></small></div>
+<div class="node designed-node"><b>3. Load</b><small>Only the selected schemas enter the model's context. <a href="https://linear.app/a-barwick/issue/AB-160">AB-160</a></small></div>
+<div class="node designed-node"><b>4. Check and run</b><small>The runtime checks permission when the call runs. <a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a></small></div>
+</div></div>
+<ul class="pts">
+<li>Today the outer loop has six fixed tools, and the inner loop has up to five.</li>
+<li>Loading only what a task needs stops new connectors from filling the model's context with tool schemas.</li>
+<li>A disconnected or missing tool is reported as unavailable.</li>
+<li>Still open: the catalog format, search and ranking, schema caching, and the first connector.</li>
+</ul>
 <section><h2>An example</h2>
 <div class="card"><p><span class="say me">What's on my calendar Thursday?</span></p>
 <div class="flow">
-<div class="node designed-node"><b>Discover</b><small>The inner loop finds a calendar read capability and sees which account is connected.</small></div>
+<div class="node designed-node"><b>Discover</b><small>The inner loop finds calendar read and sees which account is connected.</small></div>
 <div class="arrow">↓</div>
-<div class="node designed-node"><b>Load</b><small>Only that tool's schema is added. Email and document tools stay out of the prompt.</small></div>
+<div class="node designed-node"><b>Load</b><small>Only that tool's schema is added. Email tools stay out of the prompt.</small></div>
 <div class="arrow">↓</div>
 <div class="branch">
 <div class="node designed-node"><b>Connected</b><small>The call runs and the answer names the account.</small></div>
