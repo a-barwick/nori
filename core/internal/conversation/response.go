@@ -53,7 +53,8 @@ func decodeResponse(content string) (string, []ToolCall, error) {
 		} `json:"actions"`
 		Text *string `json:"text"`
 	}
-	if decodeCommandArguments(content, &response) != nil || response.Actions == nil || response.Text == nil || len(*response.Actions) > 16 || len(*response.Text) > 16384 {
+	if decodeCommandArguments(content, &response) != nil || response.Actions == nil || response.Text == nil ||
+		len(*response.Actions) > 16 || len(*response.Text) > 16384 {
 		return "", nil, fmt.Errorf("model returned an invalid structured routing response")
 	}
 	calls := make([]ToolCall, 0, len(*response.Actions))

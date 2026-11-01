@@ -9,8 +9,12 @@ import (
 	"syscall"
 	"time"
 
+	"nori/internal/api"
+	"nori/internal/app"
 	"nori/internal/env"
+	"nori/internal/httpserver"
 	"nori/internal/observability"
+	"nori/internal/platform"
 	"nori/internal/wake"
 )
 
@@ -22,24 +26,22 @@ func main() {
 	defer stop()
 	stopTelemetry := observability.Init(ctx, "nori-local")
 	defer observability.Shutdown(stopTelemetry)
-	runtime, err := wake.Open(ctx)
+	// The conversation wakes its own loop; only worker wakes can leave the process.
+	workers, err := platform.Waker(ctx, false)
 	if err != nil {
 		observability.Fatal(err)
 	}
-	defer runtime.Close()
-	notifications := make(chan struct{}, 1)
-	schedule := func(ctx context.Context) error {
-		select {
-		case notifications <- struct{}{}:
-		default:
-		}
-		return nil
+	waker := wake.NewInProcess(workers)
+	nori, err := app.Open(ctx, waker)
+	if err != nil {
+		observability.Fatal(err)
 	}
+	defer nori.Close()
 	loopDone := make(chan struct{})
-	go func() { defer close(loopDone); runtime.LocalLoop(ctx, notifications) }()
-	server := wake.Server(ctx, net.JoinHostPort("127.0.0.1", env.Get("PORT", "8080")), runtime.Handler(schedule, true))
-	log.Printf("Nori durable conversation on http://%s model=%s; local processing recovers from Firestore", server.Addr, runtime.Model)
-	if err := wake.Listen(ctx, server, 5*time.Second); err != nil {
+	go func() { defer close(loopDone); nori.LocalLoop(ctx, waker.Notifications()) }()
+	server := httpserver.New(ctx, net.JoinHostPort("127.0.0.1", env.Get("PORT", "8080")), api.Handler(nori.API(), true))
+	log.Printf("Nori durable conversation on http://%s model=%s; local processing recovers from Firestore", server.Addr, nori.Model)
+	if err := httpserver.Listen(ctx, server, 5*time.Second); err != nil {
 		observability.RecordErrorCategory(ctx, "http.listen", err)
 		observability.Shutdown(stopTelemetry)
 		observability.Fatal(err)

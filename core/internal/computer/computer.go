@@ -1,4 +1,6 @@
-// Package computer connects to the existing Firecracker computer through IAP.
+// Package computer is the client for the computer's guest RPC and the contract
+// for reaching a computer. It knows nothing about the infrastructure the
+// computer runs on: adapters in the gce and local packages supply that.
 package computer
 
 import (
@@ -8,30 +10,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/oauth2/google"
 	"nori/internal/observability"
 )
 
-type Config struct {
-	Project, Zone, Instance string
-	// LocalURL connects directly to a development computer RPC on a loopback IP.
-	// It never starts a VM or creates an IAP tunnel.
-	LocalURL string
-}
+// Client speaks the guest RPC over a Connection that an adapter established.
 type Client struct {
-	base      string
-	http      *http.Client
-	process   *exec.Cmd
+	conn      Connection
 	once      sync.Once
 	receipts  bool
 	taskTabs  bool
@@ -39,7 +31,6 @@ type Client struct {
 	operation string
 	taskID    string
 	run       string
-	done      chan struct{}
 }
 
 var ErrStopped = errors.New("computer is stopped")
@@ -52,224 +43,79 @@ var ErrBrowserRestarted = errors.New("browser restarted; navigate again before t
 // the guest. Only this explicit rejection is safe to reconnect and send again.
 var ErrDraining = errors.New("computer is stopping after idle; request was not dispatched")
 
-func Open(ctx context.Context, c Config, run string) (*Client, error) {
-	return tracedConnect(ctx, c, run, true)
+// ErrUnhealthy means the guest answered its health check without saying it is serving.
+var ErrUnhealthy = errors.New("computer health check failed")
+
+// Connection is the path to a guest RPC that an adapter has established. It is
+// all a provider has to produce: everything after it is the same on every
+// infrastructure.
+type Connection struct {
+	// BaseURL is the origin of the guest RPC, such as http://127.0.0.1:8090.
+	BaseURL string
+	// HTTP carries the RPC. The adapter chooses its transport, proxy and redirect policy.
+	HTTP *http.Client
+	// Close releases the transport, for example by stopping a tunnel process.
+	// Optional. It runs once, before idle HTTP connections are closed.
+	Close func()
+	// Done, when set, closes if the transport dies on its own. The lifecycle
+	// loop in Managed dials again after that.
+	Done <-chan struct{}
 }
 
-// Attach establishes cleanup access without starting paid compute.
-func Attach(ctx context.Context, c Config, run string) (*Client, error) {
-	return tracedConnect(ctx, c, run, false)
-}
-func tracedConnect(ctx context.Context, config Config, run string, allowStart bool) (*Client, error) {
-	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer.connect", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.Bool("nori.computer.allow_start", allowStart)))
-	defer span.End()
-	client, err := connect(ctx, config, run, allowStart)
-	if err != nil && !errors.Is(err, ErrStopped) && !errors.Is(ctx.Err(), context.Canceled) {
-		observability.RecordErrorCategory(ctx, "computer.connect", err)
+// NewClient wraps an established connection. run selects the cancellation scope.
+func NewClient(conn Connection, run string) *Client {
+	if conn.HTTP == nil {
+		conn.HTTP = &http.Client{}
 	}
-	return client, err
-}
-func connect(ctx context.Context, c Config, run string, allowStart bool) (*Client, error) {
-	if c.LocalURL != "" {
-		return connectLocal(ctx, c.LocalURL, run)
-	}
-	// An idle stop may already be flushing the guest when a new task arrives.
-	// Allow that stop to complete before starting it; no tool has been sent yet.
-	ctx, readyCancel := context.WithTimeout(ctx, 180*time.Second)
-	defer readyCancel()
-	if c.Project == "" || c.Zone == "" || c.Instance == "" {
-		return nil, errors.New("computer project, zone and instance are required")
-	}
-	api, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/compute")
-	if err != nil {
-		return nil, err
-	}
-	target := "https://compute.googleapis.com/compute/v1/projects/" + url.PathEscape(c.Project) + "/zones/" + url.PathEscape(c.Zone) + "/instances/" + url.PathEscape(c.Instance)
-	var client *Client
-	defer func() {
-		if client != nil {
-			client.Close()
-		}
-	}()
-	startIssued := false
-	for {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := api.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		var vm struct {
-			Status string `json:"status"`
-		}
-		if err = readJSON(resp, &vm); err != nil {
-			return nil, err
-		}
-		if vm.Status != "RUNNING" && client != nil {
-			client.Close()
-			client = nil
-		}
-		switch vm.Status {
-		case "TERMINATED":
-			if !allowStart {
-				return nil, ErrStopped
-			}
-			if !startIssued {
-				req, err = http.NewRequestWithContext(ctx, http.MethodPost, target+"/start", nil)
-				if err != nil {
-					return nil, err
-				}
-				resp, err = api.Do(req)
-				if err != nil {
-					return nil, err
-				}
-				// A concurrent on-demand start is harmless; re-read its state.
-				if resp.StatusCode == http.StatusConflict {
-					resp.Body.Close()
-				} else if err = readJSON(resp, nil); err != nil {
-					return nil, err
-				}
-				startIssued = true
-			}
-		case "STOPPING":
-			// Cleanup may only claim stopped after GCE reports TERMINATED.
-			startIssued = false
-		case "STAGING", "PROVISIONING":
-		case "RUNNING":
-			startIssued = false
-			if client != nil {
-				select {
-				case <-client.done:
-					client.Close()
-					client = nil
-				default:
-				}
-			}
-			if client == nil {
-				client, err = tunnel(c, run)
-				if err != nil {
-					return nil, err
-				}
-			}
-			check, cancel := context.WithTimeout(ctx, 3*time.Second)
-			req, err = http.NewRequestWithContext(check, http.MethodGet, client.base+"/healthz", nil)
-			if err != nil {
-				cancel()
-				return nil, err
-			}
-			resp, err = client.http.Do(req)
-			if err == nil {
-				var health struct {
-					Receipts bool `json:"operation_receipts_v1"`
-					TaskTabs bool `json:"browser_task_tabs_v1"`
-					Jobs     bool `json:"shell_jobs_v1"`
-				}
-				decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&health)
-				resp.Body.Close()
-				if resp.StatusCode == http.StatusOK && decodeErr == nil {
-					client.receipts = health.Receipts
-					client.taskTabs = health.TaskTabs
-					client.jobs = health.Jobs
-					ready := client
-					client = nil
-					cancel()
-					return ready, nil
-				}
-			}
-			cancel()
-		default:
-			return nil, fmt.Errorf("computer unavailable (%s)", vm.Status)
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(time.Second):
-		}
-	}
+	return &Client{conn: conn, run: run}
 }
 
-func connectLocal(ctx context.Context, address, run string) (*Client, error) {
-	u, err := url.Parse(address)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return nil, errors.New("local computer URL must be an HTTP loopback origin")
-	}
-	ip := net.ParseIP(u.Hostname())
-	if ip == nil || !ip.IsLoopback() {
-		return nil, errors.New("local computer URL must use a literal loopback IP")
-	}
-	u.Path = ""
-	c := &Client{base: u.String(), run: run, http: &http.Client{
-		Transport:     &http.Transport{}, // Never send local RPC through an environment proxy.
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}}
+// Health is what the guest reports at /healthz.
+type Health struct {
+	Ready    bool `json:"ready"`
+	Receipts bool `json:"operation_receipts_v1"`
+	TaskTabs bool `json:"browser_task_tabs_v1"`
+	Jobs     bool `json:"shell_jobs_v1"`
+}
+
+// Probe asks the guest for its health, waiting at most three seconds. It records
+// the capabilities the guest reports, which RequireReceipts later enforces.
+// Transport failures are returned as they are; an answer that is not HTTP 200
+// with a health body wraps ErrUnhealthy.
+func (c *Client) Probe(ctx context.Context) (Health, error) {
 	check, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(check, http.MethodGet, c.base+"/healthz", nil)
+	req, err := http.NewRequestWithContext(check, http.MethodGet, c.conn.BaseURL+"/healthz", nil)
 	if err != nil {
-		c.Close()
-		return nil, err
+		return Health{}, err
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.conn.HTTP.Do(req)
 	if err != nil {
-		c.Close()
-		return nil, fmt.Errorf("local computer unavailable: %w", err)
+		return Health{}, err
 	}
-	var health struct {
-		Ready    bool `json:"ready"`
-		Receipts bool `json:"operation_receipts_v1"`
-		TaskTabs bool `json:"browser_task_tabs_v1"`
-		Jobs     bool `json:"shell_jobs_v1"`
+	var health Health
+	decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&health)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Health{}, fmt.Errorf("%w: HTTP %d", ErrUnhealthy, resp.StatusCode)
 	}
-	err = readJSON(resp, &health)
-	if err != nil || !health.Ready {
-		c.Close()
-		return nil, errors.New("local computer is not ready")
+	if decodeErr != nil {
+		return Health{}, fmt.Errorf("%w: %v", ErrUnhealthy, decodeErr)
 	}
 	c.receipts, c.taskTabs, c.jobs = health.Receipts, health.TaskTabs, health.Jobs
-	return c, nil
+	return health, nil
 }
 
-func tunnel(c Config, run string) (*Client, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, err
-	}
-	address := listener.Addr().String()
-	listener.Close()
-	// Keep the tunnel alive until /cancel has acknowledged guest process exit.
-	cmd := exec.Command("gcloud", "compute", "start-iap-tunnel", c.Instance, "8090", "--project="+c.Project, "--zone="+c.Zone, "--local-host-port="+address, "--quiet", "--verbosity=error", "--iap-tunnel-disable-connection-check")
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err = cmd.Start(); err != nil {
-		return nil, err
-	}
-	client := &Client{base: "http://" + address, http: &http.Client{}, process: cmd, run: run, done: make(chan struct{})}
-	go func() { _ = cmd.Wait(); close(client.done) }()
-	return client, nil
-}
-
-func readJSON(resp *http.Response, out any) error {
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("computer API returned HTTP %d", resp.StatusCode)
-	}
-	if out == nil {
-		_, e := io.Copy(io.Discard, io.LimitReader(resp.Body, 65536))
-		return e
-	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(out)
-}
+// Close releases the connection. It is safe to call more than once.
 func (c *Client) Close() {
 	c.once.Do(func() {
-		if c.process != nil && c.process.Process != nil {
-			_ = c.process.Process.Kill()
-			<-c.done
+		if c.conn.Close != nil {
+			c.conn.Close()
 		}
-		c.http.CloseIdleConnections()
+		c.conn.HTTP.CloseIdleConnections()
 	})
 }
+
 func (c *Client) post(ctx context.Context, path string, body any, max int) (response []byte, err error) {
 	operation := "other"
 	switch path {
@@ -296,7 +142,9 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) (resp
 	case "/job/stop-task":
 		operation = "job_stop_task"
 	}
-	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer."+operation, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.String("nori.computer.operation", operation), attribute.String("nori.task.id", c.taskID), attribute.String("nori.operation.id", c.operation)))
+	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer."+operation, trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),
+			attribute.String("nori.computer.operation", operation), attribute.String("nori.task.id", c.taskID), attribute.String("nori.operation.id", c.operation)))
 	defer func() {
 		if err != nil && !errors.Is(err, ErrDraining) && !errors.Is(err, ErrBrowserRestarted) && !errors.Is(ctx.Err(), context.Canceled) {
 			observability.RecordErrorCategory(ctx, "computer.rpc", err, attribute.String("nori.computer.operation", operation))
@@ -310,7 +158,7 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) (resp
 	if e != nil {
 		return nil, e
 	}
-	req, e := http.NewRequestWithContext(ctx, "POST", c.base+path, bytes.NewReader(data))
+	req, e := http.NewRequestWithContext(ctx, "POST", c.conn.BaseURL+path, bytes.NewReader(data))
 	if e != nil {
 		return nil, e
 	}
@@ -321,7 +169,7 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) (resp
 	for key, value := range observability.InjectTrace(ctx) {
 		req.Header.Set(key, value)
 	}
-	resp, e := c.http.Do(req)
+	resp, e := c.conn.HTTP.Do(req)
 	if e != nil {
 		return nil, e
 	}

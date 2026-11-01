@@ -80,8 +80,9 @@ Firestore holds the transcript, processing state, dispatch records, and traces.
 Model context uses bounded recent history, with truncation shown in the attempt
 trace. Browsing older messages does not expand model context; memory and
 compaction remain separate features. The Go listener and web preview bind to
-loopback. Defaults still select the configured GCP database and Temporal service;
-use explicit Firestore and Temporal emulator settings for an isolated local run.
+loopback. `NORI_PROJECT_ID` and `FIRESTORE_DATABASE_ID` have no defaults, so every
+process names its database; use explicit Firestore and Temporal emulator settings
+for an isolated local run.
 
 Two live conversation E2E journeys cover the generated greeting, asynchronous
 acceptance, UUID replay/conflict handling, rapid follow-up ordering and
@@ -97,7 +98,7 @@ keeps the owner-protected proxy and runtime IAM. `make core` starts the hosted
 entrypoint locally and additionally requires Cloud Tasks configuration; see
 [core setup](core/README.md). Hosted deployment uses the configured conversation
 queue and scoped caller IAM, with OpenRouter/Jev credentials supplied through
-native secret references. Follow [POC operations](core/infrastructure/poc/README.md)
+native secret references. Follow [app operations](core/infrastructure/app/README.md)
 for the operator deployment procedure.
 
 ## Durable tasks
@@ -108,7 +109,7 @@ computer operations remain individually bounded. Uncertain tool work is never
 automatically replayed. Each inner task starts with a $1 model budget; an exact
 `continue` reply while waiting at that budget grants another $1. Outer
 conversation and Jev usage are accounted separately. See [core](core/README.md)
-and [operator lifecycle](core/infrastructure/poc/README.md) for the protocol and
+and [operator lifecycle](core/infrastructure/app/README.md) for the protocol and
 capacity controls.
 
 Cloud lifecycle changes in source require separate deployment. Local validation

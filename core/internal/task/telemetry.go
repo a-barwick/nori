@@ -23,7 +23,12 @@ func startActivity(ctx context.Context, name, kind string, run state.Run, revisi
 	}
 	if activity.IsActivity(ctx) {
 		info := activity.GetInfo(ctx)
-		attrs = append(attrs, attribute.String("nori.workflow.id", info.WorkflowExecution.ID), attribute.String("nori.workflow.run_id", info.WorkflowExecution.RunID), attribute.String("nori.activity.id", info.ActivityID), attribute.Int64("nori.activity.attempt", int64(info.Attempt)))
+		attrs = append(attrs,
+			attribute.String("nori.workflow.id", info.WorkflowExecution.ID),
+			attribute.String("nori.workflow.run_id", info.WorkflowExecution.RunID),
+			attribute.String("nori.activity.id", info.ActivityID),
+			attribute.Int64("nori.activity.attempt", int64(info.Attempt)),
+		)
 	}
 	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...)}
 	origin := trace.SpanContextFromContext(observability.ExtractTrace(context.Background(), run.OriginTraceContext))
@@ -34,7 +39,9 @@ func startActivity(ctx context.Context, name, kind string, run state.Run, revisi
 }
 
 func expectedBoundary(err error) bool {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, state.ErrSuperseded) || errors.Is(err, state.ErrCancelled) || errors.Is(err, state.ErrPaused) || errors.Is(err, state.ErrRoutingPending) || errors.Is(err, state.ErrBusy) {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, state.ErrSuperseded) ||
+		errors.Is(err, state.ErrCancelled) || errors.Is(err, state.ErrPaused) ||
+		errors.Is(err, state.ErrRoutingPending) || errors.Is(err, state.ErrBusy) {
 		return true
 	}
 	var app *temporal.ApplicationError
@@ -58,7 +65,7 @@ func recordActivityFailure(ctx context.Context, err error, operation string) {
 
 func safeToolName(name string) string {
 	switch name {
-	case "shell", "browser_navigate", "browser_screenshot", "wait_for_input", "request_input", "complete", "job_start", "job_status", "job_wait", "job_stop", "web_search", "screenshot_inspect", "calendar_read":
+	case "shell", "browser_navigate", "browser_screenshot", "request_input", "complete", "job_start", "job_status", "job_wait", "job_stop", "web_search", "screenshot_inspect", "calendar_read":
 		return name
 	default:
 		return "unknown"

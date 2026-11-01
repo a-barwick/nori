@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { isRuntimeMethod } from "@/lib/runtime/methods";
 
 // Build a fresh trace context from the current server span. Do not forward
 // browser/IAP headers or arbitrary baggage to the runtime.
@@ -51,7 +52,7 @@ export function reportUpstreamRejection(operation: string, request: Request, sen
   // No URL, body, identity, or arbitrary request/response header is exported.
   try {
     console.warn(JSON.stringify({ severity: "WARNING", message: "nori.runtime.rate_limited",
-      operation: ["session", "turn", "input", "cancel", "command", "artifact", "trace"].includes(operation) ? operation : "unknown",
+      operation: isRuntimeMethod(operation) ? operation : "unknown",
       status: 429, source: safe["X-Nori-Rejection-Source"],
       ...(traceID ? { runtime_trace_id: traceID } : {}),
       ...(cloudTrace ? { web_trace_id: cloudTrace } : {}),
@@ -61,13 +62,13 @@ export function reportUpstreamRejection(operation: string, request: Request, sen
   } catch { /* Diagnostics must not change the rejection response. */ }
 }
 
-let lastSessionFailure = 0;
+let lastPollFailure = 0;
 
 export function reportUpstreamFailure(operation: string, mode: "local" | "hosted", status?: number) {
-  // A failed idle refresh may be the only evidence of a runtime outage.
-  if (operation === "session") {
-    if (Date.now() - lastSessionFailure < 60_000) return;
-    lastSessionFailure = Date.now();
+  // A failed idle refresh may be the only evidence of a runtime outage. Status polls repeat every two seconds.
+  if (operation === "session" || operation === "status") {
+    if (Date.now() - lastPollFailure < 60_000) return;
+    lastPollFailure = Date.now();
   }
   const attributes = { operation, mode, ...(status === undefined ? {} : { status }) };
   try {

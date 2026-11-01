@@ -16,11 +16,11 @@ import (
 	"sync"
 
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
 	"nori/internal/observability"
 	"nori/internal/state"
 	"nori/internal/task"
+	"nori/internal/transcript"
 )
 
 type telemetryPacket struct {
@@ -30,7 +30,7 @@ type telemetryPacket struct {
 
 // All collectors and credentials here are disposable local fixture values. The
 // real exporter/filter code runs, but no telemetry leaves the loopback servers.
-func completionBoundaries(ctx context.Context, store *state.Google, id, other string, run state.Run, operation state.OperationRecord) (map[string]bool, error) {
+func completionBoundaries(ctx context.Context, store state.ConversationStore, id, other string, run state.Run, operation state.OperationRecord) (map[string]bool, error) {
 	var mu sync.Mutex
 	packets := []telemetryPacket{}
 	handler := func(destination string) http.Handler {
@@ -94,9 +94,13 @@ func completionBoundaries(ctx context.Context, store *state.Google, id, other st
 		return nil, err
 	}
 	report["history activity returns only a compact immutable reference"] = len(synced.Ref) == 64 && synced.Position == run.Position
-	makeProposal := func(runID, callID string, evidence, unmet []any, extra []*genai.Content) (string, error) {
-		contents := append([]*genai.Content{}, extra...)
-		contents = append(contents, &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: callID, Name: "complete", Args: map[string]any{"answer": "PRIVATE_HISTORY_SENTINEL: observed result", "evidence": evidence, "unmet": unmet}}}}})
+	makeProposal := func(runID, callID string, evidence, unmet []any, extra []any) (string, error) {
+		contents := append([]any{}, extra...)
+		args := map[string]any{"answer": "PRIVATE_HISTORY_SENTINEL: observed result", "evidence": evidence, "unmet": unmet}
+		contents = append(contents, transcript.Message{
+			Role:  transcript.RoleModel,
+			Parts: []transcript.Part{{ToolCall: &transcript.ToolCall{ID: callID, Name: "complete", Args: args}}},
+		})
 		data, e := json.Marshal(contents)
 		if e != nil {
 			return "", e
@@ -115,10 +119,16 @@ func completionBoundaries(ctx context.Context, store *state.Google, id, other st
 		return nil, err
 	}
 	report["a proposal whose records pass publishes without a model verdict"] = published.Action == "publish"
-	questionHistory := []*genai.Content{{Role: "model", Parts: []*genai.Part{
-		{Text: "PRIVATE_REASONING_SENTINEL", Thought: true},
-		{Text: "The command exited with status 7; the check failed."},
-		{FunctionCall: &genai.FunctionCall{ID: "failed-question", Name: "request_input", Args: map[string]any{"question": "What should happen next?"}}},
+	// Hidden reasoning text exists only in saved Gemini-era blocks, so these fixtures are
+	// raw saved JSON. They also prove that such blocks still read.
+	toolCall := func(id, name string, args map[string]any) map[string]any {
+		return map[string]any{"functionCall": map[string]any{"id": id, "name": name, "args": args}}
+	}
+	reasoning := map[string]any{"text": "PRIVATE_REASONING_SENTINEL", "thought": true}
+	questionHistory := []any{map[string]any{"role": "model", "parts": []any{
+		reasoning,
+		map[string]any{"text": "The command exited with status 7; the check failed."},
+		toolCall("failed-question", "request_input", map[string]any{"question": "What should happen next?"}),
 	}}}
 	questionBytes, _ := json.Marshal(questionHistory)
 	questionRef, err := store.AppendHistory(ctx, id, "", questionBytes)
@@ -152,7 +162,7 @@ func completionBoundaries(ctx context.Context, store *state.Google, id, other st
 		return nil, err
 	}
 	report["valid hash from another task cannot ground completion"] = rejected.Action == "correct"
-	unpaired := []*genai.Content{{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "unpaired-read", Name: "browser_navigate", Args: map[string]any{"url": "https://example.org"}}}}}}
+	unpaired := []any{map[string]any{"role": "model", "parts": []any{toolCall("unpaired-read", "browser_navigate", map[string]any{"url": "https://example.org"})}}}
 	missing, err := makeProposal(id, "complete-unpaired", []any{operation.ID}, []any{}, unpaired)
 	if err != nil {
 		return nil, err

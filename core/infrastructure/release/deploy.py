@@ -40,10 +40,10 @@ os.environ["NORI_TF_BACKEND"] = "gcs"
 os.environ["NORI_ENVIRONMENT"] = "production"
 os.environ.setdefault("NORI_ENV_FILE", str(ROOT / ".env"))
 sys.dont_write_bytecode = True
-_spec = importlib.util.spec_from_file_location("nori_poc", CORE / "infrastructure/poc/poc.py")
-poc = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(poc)
-DIR = poc.STATE_ROOT / "deploy"
+_spec = importlib.util.spec_from_file_location("nori_ops", CORE / "infrastructure/app/ops.py")
+ops = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ops)
+DIR = ops.STATE_ROOT / "deploy"
 STATE = DIR / "state.json"
 
 
@@ -90,7 +90,7 @@ def acquire_lock(commit):
     body = {"commit": commit, "host": socket.gethostname(), "pid": os.getpid(), "owner": uuid.uuid4().hex,
             "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     try:
-        return poc.api("POST", lock_url(upload=True), body)["generation"]
+        return ops.api("POST", lock_url(upload=True), body)["generation"]
     except RuntimeError as error:
         if "HTTP 412" not in str(error):
             raise
@@ -99,27 +99,27 @@ def acquire_lock(commit):
 
 def release_lock(generation):
     # A recovered/replaced lock belongs to someone else, even for the same commit.
-    poc.api("DELETE", lock_url() + "?" + urlencode({"ifGenerationMatch": generation}), allow404=True)
+    ops.api("DELETE", lock_url() + "?" + urlencode({"ifGenerationMatch": generation}), allow404=True)
 
 
 def refuse_open_work(c):
     """Never interrupt running work; preserve failed, already-attempted input."""
-    root = poc.firestore(c, "owners/" + quote(OWNER, safe=""))
-    control = poc.api("GET", root + "/conversation/control", allow404=True)
+    root = ops.firestore(c, "owners/" + quote(OWNER, safe=""))
+    control = ops.api("GET", root + "/conversation/control", allow404=True)
     if control:
         f = control.get("fields", {})
         count = lambda key: int(f.get(key, {}).get("integerValue", "0"))
         # A failed turn consumes its attempt but leaves user_routed behind.
         # While paused, its saved input can survive a repair deployment. It is
         # retried only after a user follow-up; never mark it routed here.
-        paused = poc.api("GET", poc.firestore(c, "system/control"))["fields"]["paused"].get("booleanValue", False)
+        paused = ops.api("GET", ops.firestore(c, "system/control"))["fields"]["paused"].get("booleanValue", False)
         routed_or_waiting = count("user_received") == count("user_routed") or (paused and count("protocol_version") == 2)
         require(count("received") == count("consumed") and routed_or_waiting and not f.get("active", {}).get("stringValue"),
                 "Nori has unprocessed messages. Wait for them to settle, then deploy again.")
     cursor = ""
     while True:
         query = [("pageSize", "300"), ("mask.fieldPaths", "status"), ("mask.fieldPaths", "id")] + ([("pageToken", cursor)] if cursor else [])
-        page = poc.api("GET", root + "/runs?" + urlencode(query), allow404=True) or {}
+        page = ops.api("GET", root + "/runs?" + urlencode(query), allow404=True) or {}
         for doc in page.get("documents", []):
             status = doc.get("fields", {}).get("status", {}).get("stringValue")
             require(status in TERMINAL, f"Task {doc['fields'].get('id', {}).get('stringValue')} is still {status}. Wait for it or stop it, then deploy again.")
@@ -129,7 +129,8 @@ def refuse_open_work(c):
 
 
 def init_terraform():
-    for name, prefix in (("poc", "nori/poc"), ("temporal", "nori/temporal")):
+    # The app stack's directory is `app`, but its remote state prefix is still `nori/poc`. Changing the prefix would orphan the state.
+    for name, prefix in (("app", "nori/poc"), ("temporal", "nori/temporal")):
         directory = CORE / "infrastructure" / name / "terraform"
         (directory / "release_backend_override.tf").write_text('terraform {\n  backend "gcs" {}\n}\n')
         run(["terraform", f"-chdir={directory}", "init", "-input=false", "-reconfigure", f"-backend-config=bucket={STATE_BUCKET}", f"-backend-config=prefix={prefix}"])
@@ -185,18 +186,18 @@ def build_all(state):
 
 
 def read_previous(c):
-    control = poc.api("GET", poc.firestore(c, "system/control"))
-    vm = poc.api("GET", poc.vm_url())
+    control = ops.api("GET", ops.firestore(c, "system/control"))
+    vm = ops.api("GET", ops.vm_url())
     require(control.get("fields", {}).get("paused", {}).get("booleanValue") is True and vm["status"] == "TERMINATED", "Nori must be paused with its computer stopped")
-    web = poc.api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/services/{poc.WEB}")
-    runtime = poc.api("GET", "https://us-central1-aiplatform.googleapis.com/v1beta1/" + c["runtime_name"])
+    web = ops.api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/services/{ops.WEB}")
+    runtime = ops.api("GET", "https://us-central1-aiplatform.googleapis.com/v1beta1/" + c["runtime_name"])
     items = {item["key"]: item["value"] for item in vm["metadata"].get("items", [])}
     return {"web": web["template"]["containers"][0]["image"], "runtime": runtime["spec"]["containerSpec"]["imageUri"], "worker": current_worker(),
             "computer": {key: items[key] for key in ("computer-release-object", "computer-release-sha256")}}
 
 
 def current_worker():
-    routing = poc.temporal("describe", "--name=" + poc.DEPLOYMENT).get("routingConfig", {})
+    routing = ops.temporal("describe", "--name=" + ops.DEPLOYMENT).get("routingConfig", {})
     require(not routing.get("rampingVersionPercentage", 0), "A Temporal ramp is active; finish it before deploying")
     build = routing.get("currentVersionBuildID") or routing.get("currentDeploymentVersion", {}).get("buildId")
     require(build, "Cannot identify the Current Temporal worker")
@@ -218,7 +219,7 @@ def capability_secrets_ready():
 
 def worker_vars(c, build, image):
     """Terraform state is the worker inventory, so every retained worker is carried forward."""
-    state = json.loads(run(["terraform", f"-chdir={poc.TEMPORAL_TF}", "show", "-json"]))
+    state = json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json"]))
     resources = state["values"]["root_module"]["resources"]
     outputs = {key: value["value"] for key, value in state["values"]["outputs"].items()}
     images = lambda kind, name: {r["index"]: r["values"]["template"][0]["containers"][0]["image"] for r in resources if r["type"] == kind and r["name"] == name}
@@ -230,7 +231,7 @@ def worker_vars(c, build, image):
     target = plain(targets[current_worker()])
     target["jev_completion"] = False  # New workers finish tasks without Jev; retained builds keep their own target.
     target["capabilities"] = capability_secrets_ready()
-    require(target["deployment_name"] == poc.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Current worker target is not production")
+    require(target["deployment_name"] == ops.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Current worker target is not production")
     require(services.get(build, image) == image and plain(targets.get(build, target)) == target, "This build already exists with a different image or target")
     services[build] = image
     targets.setdefault(build, target)
@@ -277,42 +278,42 @@ def check_plan(plan, build):
 def plan_worker(c, build, image):
     variables, plan_file = DIR / "worker-vars.json", DIR / "worker.plan"
     variables.write_text(json.dumps(worker_vars(c, build, image), indent=2))
-    run(["terraform", f"-chdir={poc.TEMPORAL_TF}", "plan", "-input=false", "-lock-timeout=60s", f"-var-file={variables}", f"-out={plan_file}"])
+    run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "plan", "-input=false", "-lock-timeout=60s", f"-var-file={variables}", f"-out={plan_file}"])
     plan_file.chmod(0o600)
-    return check_plan(json.loads(run(["terraform", f"-chdir={poc.TEMPORAL_TF}", "show", "-json", str(plan_file)])), build), plan_file
+    return check_plan(json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json", str(plan_file)])), build), plan_file
 
 
-def poc_command(*args):
-    run([sys.executable, str(poc.ROOT / "poc.py"), *args], cwd=CORE)
+def ops_command(*args):
+    run([sys.executable, str(ops.ROOT / "ops.py"), *args], cwd=CORE)
 
 
 def register_worker(c, build):
     """Have the worker check in with Temporal. A paused system refuses to run any task on this request."""
     def registered():
-        info = poc.version_info(build, missing_ok=True) or {}
-        kinds = {str(q.get("type", "")).lower().removeprefix("task_queue_type_") for q in info.get("taskQueuesInfos", []) if q.get("name") == poc.TASK_QUEUE}
+        info = ops.version_info(build, missing_ok=True) or {}
+        kinds = {str(q.get("type", "")).lower().removeprefix("task_queue_type_") for q in info.get("taskQueuesInfos", []) if q.get("name") == ops.TASK_QUEUE}
         return {"workflow", "activity"} <= kinds
     if registered():
         return
-    workers = poc.temporal_config()
-    queue, root = workers["worker_wake_queue"], poc.production_workers(workers)[build]
-    require(poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + queue).get("state") == "PAUSED", "Worker registration requires a paused queue")
+    workers = ops.temporal_config()
+    queue, root = workers["worker_wake_queue"], ops.production_workers(workers)[build]
+    require(ops.api("GET", "https://cloudtasks.googleapis.com/v2/" + queue).get("state") == "PAUSED", "Worker registration requires a paused queue")
     name = f"{queue}/tasks/nori-deploy-{uuid.uuid4().hex}"
-    poc.api("POST", "https://cloudtasks.googleapis.com/v2/" + queue + "/tasks", {"task": {"name": name, "dispatchDeadline": "720s", "httpRequest": {
+    ops.api("POST", "https://cloudtasks.googleapis.com/v2/" + queue + "/tasks", {"task": {"name": name, "dispatchDeadline": "720s", "httpRequest": {
         "url": root + "/run", "httpMethod": "POST", "headers": {"Content-Type": "application/json"},
         "body": base64.b64encode(b'{"registration_only":true}').decode(),
         "oidcToken": {"serviceAccountEmail": c["conversation_wake_service_account"], "audience": root}}}})
-    poc.api("POST", "https://cloudtasks.googleapis.com/v2/" + name + ":run", {})
+    ops.api("POST", "https://cloudtasks.googleapis.com/v2/" + name + ":run", {})
     end, retry_after, delay = time.monotonic() + 300, time.monotonic() + 5, 5
     try:
         while time.monotonic() < end:
-            task = poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True)
+            task = ops.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True)
             attempt = (task or {}).get("lastAttempt", {})
             code = attempt.get("responseStatus", {}).get("code", 0)
             require(not attempt.get("responseTime") or code in (0, 7), f"Worker registration failed (delivery code {code})")
             # A new invoker permission can take a moment to apply; only that is retried.
             if attempt.get("responseTime") and code == 7 and time.monotonic() >= retry_after:
-                poc.api("POST", "https://cloudtasks.googleapis.com/v2/" + name + ":run", {})
+                ops.api("POST", "https://cloudtasks.googleapis.com/v2/" + name + ":run", {})
                 delay = min(30, delay * 2)
                 retry_after = time.monotonic() + delay
             if task is None and registered():
@@ -320,9 +321,9 @@ def register_worker(c, build):
             time.sleep(2)
         raise RuntimeError("Worker registration did not finish within 5 minutes")
     finally:
-        task = poc.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True)
+        task = ops.api("GET", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True)
         if task and task.get("lastAttempt", {}).get("responseTime"):
-            poc.api("DELETE", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True)
+            ops.api("DELETE", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True)
 
 
 def verify(c, state):
@@ -330,13 +331,13 @@ def verify(c, state):
     require(previous["web"] == state["web"] and previous["runtime"] == state["runtime"], "Live images do not match this deploy")
     require(previous["worker"] == state["build"], "Temporal Current is not the new worker")
     require(previous["computer"]["computer-release-sha256"] == state["computer_sha256"], "The computer points at a different release")
-    web = poc.api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/services/{poc.WEB}")
+    web = ops.api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/services/{ops.WEB}")
     require(web.get("terminalCondition", {}).get("state") == "CONDITION_SUCCEEDED", "The web service is not ready")
-    poc.compatible_builds(poc.temporal_config())  # The same check unpause makes.
+    ops.compatible_builds(ops.temporal_config())  # The same check unpause makes.
     end = time.monotonic() + 180
     while True:
         try:
-            poc.api("POST", c["runtime_url"].rstrip("/") + "/api/healthz", {})
+            ops.api("POST", c["runtime_url"].rstrip("/") + "/api/healthz", {})
             return
         except (RuntimeError, OSError) as error:
             if time.monotonic() > end:
@@ -351,14 +352,14 @@ def rollback(c, state):
     if "pause" in attempted:
         # Pause can fail after changing admission or queues. Reconcile it before
         # touching releases, and verify live state before reporting recovery.
-        poc.pause(c)
+        ops.pause(c)
         read_previous(c)
     if previous and UNDONE_BY_ROLLBACK & attempted:
         log("Restoring the previous release")
-        poc_command("deploy-runtime", previous["runtime"])
-        poc_command("deploy-web", previous["web"])
-        poc.metadata(previous["computer"])
-        poc.temporal("set-current-version", "--deployment-name=" + poc.DEPLOYMENT, "--build-id=" + previous["worker"], "--allow-no-pollers", "--yes")
+        ops_command("deploy-runtime", previous["runtime"])
+        ops_command("deploy-web", previous["web"])
+        ops.metadata(previous["computer"])
+        ops.temporal("set-current-version", "--deployment-name=" + ops.DEPLOYMENT, "--build-id=" + previous["worker"], "--allow-no-pollers", "--yes")
         require(read_previous(c) == previous, "The previous release could not be verified")
     # A retry pauses and reads the live release again, in case Nori was used in between.
     state["done"] = [step for step in state["done"] if step not in UNDONE_BY_ROLLBACK and step != "pause"]
@@ -412,10 +413,10 @@ def deploy_locked(commit):
         step("check", lambda: run(["make", "check"], cwd=ROOT))
         step("build", lambda: build_all(state))
         init_terraform()
-        c = poc.config()
+        c = ops.config()
         if "pause" not in state["done"]:
             refuse_open_work(c)
-        step("pause", lambda: poc.pause(c))
+        step("pause", lambda: ops.pause(c))
         if "previous" not in state:
             state["previous"] = read_previous(c)
             save_state(state)
@@ -423,14 +424,14 @@ def deploy_locked(commit):
         def apply_worker():
             created, plan_file = plan_worker(c, state["build"], state["worker"])
             log("Terraform will add: " + (", ".join(created) or "nothing new"))
-            run(["terraform", f"-chdir={poc.TEMPORAL_TF}", "apply", "-input=false", str(plan_file)])
+            run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "apply", "-input=false", str(plan_file)])
             plan_file.unlink()
         step("worker", apply_worker)
-        step("computer", lambda: poc_command("publish-computer", str(DIR / "computer-agent")))
-        step("runtime", lambda: poc_command("deploy-runtime", state["runtime"]))
-        step("web", lambda: poc_command("deploy-web", state["web"]))
-        step("register", lambda: (poc.temporal_unpause(), register_worker(c, state["build"])))
-        step("current", lambda: poc.temporal("set-current-version", "--deployment-name=" + poc.DEPLOYMENT, "--build-id=" + state["build"], "--allow-no-pollers", "--yes"))
+        step("computer", lambda: ops_command("publish-computer", str(DIR / "computer-agent")))
+        step("runtime", lambda: ops_command("deploy-runtime", state["runtime"]))
+        step("web", lambda: ops_command("deploy-web", state["web"]))
+        step("register", lambda: (ops.temporal_unpause(), register_worker(c, state["build"])))
+        step("current", lambda: ops.temporal("set-current-version", "--deployment-name=" + ops.DEPLOYMENT, "--build-id=" + state["build"], "--allow-no-pollers", "--yes"))
         step("verify", lambda: verify(c, state))
     except Exception as error:
         log(f"Deploy failed: {error}")
@@ -459,28 +460,28 @@ def check(_args):
     log("Terraform state")
     DIR.mkdir(parents=True, mode=0o700, exist_ok=True)
     init_terraform()
-    c = poc.config()
+    c = ops.config()
     log("Open work")
     refuse_open_work(c)
     log("Worker plan")
     current = current_worker()
-    state = json.loads(run(["terraform", f"-chdir={poc.TEMPORAL_TF}", "show", "-json"]))
+    state = json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json"]))
     image = next(r["values"]["template"][0]["containers"][0]["image"] for r in state["values"]["root_module"]["resources"]
                  if r["type"] == "google_cloud_run_v2_service" and r["name"] == "worker" and r["index"] == current)
     created, plan_file = plan_worker(c, "rel-" + commit[:12], image)
     plan_file.unlink()
     log("The plan only adds: " + ", ".join(created))
     log("Runtime health")
-    poc.api("POST", c["runtime_url"].rstrip("/") + "/api/healthz", {})
+    ops.api("POST", c["runtime_url"].rstrip("/") + "/api/healthz", {})
     log("Ready to deploy. Nothing was changed.")
 
 
 def status(_args):
     init_terraform()
-    c = poc.config()
-    control = poc.api("GET", poc.firestore(c, "system/control"))
+    c = ops.config()
+    control = ops.api("GET", ops.firestore(c, "system/control"))
     saved = load_state() or {}
-    print(json.dumps({"paused": control.get("fields", {}).get("paused", {}).get("booleanValue"), "computer": poc.api("GET", poc.vm_url())["status"],
+    print(json.dumps({"paused": control.get("fields", {}).get("paused", {}).get("booleanValue"), "computer": ops.api("GET", ops.vm_url())["status"],
                       "current_worker": current_worker(), "last_deploy": {key: saved.get(key) for key in ("commit", "build", "status", "done")}}, indent=2))
 
 
@@ -490,7 +491,7 @@ def manual_rollback(_args):
         state = load_state()
         require(state and state["status"] == "running", "No interrupted deploy to roll back")
         init_terraform()
-        c = poc.config()
+        c = ops.config()
         rollback(c, state)
         log("Recovery completed. Check make deploy-status before reopening.")
     finally:
@@ -498,12 +499,12 @@ def manual_rollback(_args):
 
 
 def unlock(args):
-    metadata = poc.api("GET", lock_url(), allow404=True)
+    metadata = ops.api("GET", lock_url(), allow404=True)
     if not metadata:
         log("No deploy lock exists")
         return
     generation = metadata["generation"]
-    holder = poc.api("GET", lock_url() + "?" + urlencode({"alt": "media", "generation": generation}))
+    holder = ops.api("GET", lock_url() + "?" + urlencode({"alt": "media", "generation": generation}))
     print(json.dumps({"generation": generation, "holder": holder}, indent=2))
     require(args.lock_generation == generation, "Confirm the owner has stopped, then run: python3 core/infrastructure/release/deploy.py unlock --lock-generation " + generation)
     if holder.get("host") == socket.gethostname() and holder.get("pid"):
@@ -520,13 +521,13 @@ def unlock(args):
 def smoke(_args):
     """Send one real browser task through production. It costs model money and appears in Austin's conversation."""
     init_terraform()
-    c = poc.config()
+    c = ops.config()
     refuse_open_work(c)
     base = c["runtime_url"].rstrip("/") + "/api/"
     def call(operation, body):
         for attempt in range(20):  # The runtime may be starting from zero.
             try:
-                return poc.api("POST", base + operation, body)
+                return ops.api("POST", base + operation, body)
             except RuntimeError as error:
                 if not re.search(r"HTTP (429|503)$", str(error)) or attempt == 19:
                     raise

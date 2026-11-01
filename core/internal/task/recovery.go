@@ -4,17 +4,33 @@ import (
 	"context"
 	"errors"
 
-	enumspb "go.temporal.io/api/enums/v1"
-	"go.temporal.io/api/serviceerror"
-	"go.temporal.io/sdk/client"
 	"nori/internal/computer"
+	"nori/internal/dispatch"
 	"nori/internal/state"
 )
+
+// Recovery is the dispatcher's repair of closed and paused tasks. It needs the
+// engine to prove an execution closed and the computer to stop and clean up.
+type Recovery struct {
+	Store    state.TaskStore
+	Engine   dispatch.Orchestrator
+	Computer computer.Provider
+}
+
+var _ dispatch.Recovery = Recovery{}
+
+func (r Recovery) RepairClosed(ctx context.Context) error {
+	return RepairClosed(ctx, r.Store, r.Engine, r.Computer)
+}
+
+func (r Recovery) StopPaused(ctx context.Context, runID string) (state.Run, error) {
+	return StopPaused(ctx, r.Store, r.Computer, runID)
+}
 
 // RepairClosed handles the projection crash window only after Temporal proves
 // execution is closed (or cancellation was requested before it started). It never
 // retries execution. Known computer scopes must report their real stop outcome.
-func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, config computer.Config) error {
+func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Orchestrator, config computer.Provider) error {
 	runs, e := store.OpenTasks(ctx)
 	if e != nil {
 		return e
@@ -34,25 +50,22 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 	}
 	var failures []error
 	for _, run := range runs {
-		if !run.Temporal {
-			continue
-		}
 		if run.Status != state.RunRunning {
 			if e := repairCleanup(ctx, store, config, run); e != nil {
 				failures = append(failures, e)
 			}
 			continue
 		}
-		execution, e := c.DescribeWorkflowExecution(ctx, WorkflowID(run.ID), "")
-		var missing *serviceerror.NotFound
-		neverStarted := errors.As(e, &missing) && run.CancelRequested
+		execution, e := engine.Inspect(ctx, run.ID)
+		missing := errors.Is(e, dispatch.ErrNoExecution)
+		neverStarted := missing && run.CancelRequested
 		if e != nil && !neverStarted {
-			if !errors.As(e, &missing) {
+			if !missing {
 				failures = append(failures, e)
 			}
 			continue
 		}
-		if !neverStarted && execution.WorkflowExecutionInfo.Status == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		if !neverStarted && !execution.Closed {
 			continue
 		}
 		revisions, e := store.OperationRevisions(ctx, run.ID)
@@ -78,7 +91,9 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 			detail = "Interrupted: computer stop could not be confirmed during terminal recovery."
 			failures = append(failures, stopErr)
 		}
-		if _, e = store.Publish(ctx, run.ID, run.Revision, status, detail, "", run.CostUnknown, true); e != nil {
+		if _, e = store.Publish(ctx, state.PublishRequest{
+			RunID: run.ID, Revision: run.Revision, Status: status, Detail: detail, CostUnknown: run.CostUnknown, BypassRouting: true,
+		}); e != nil {
 			failures = append(failures, e)
 		} else if stopErr == nil && run.CleanupPending {
 			if e = closeTaskBrowser(ctx, store, config, run.ID, scopes); e != nil {
@@ -89,7 +104,7 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 	return errors.Join(failures...)
 }
 
-func repairCleanup(ctx context.Context, store state.TaskStore, config computer.Config, run state.Run) error {
+func repairCleanup(ctx context.Context, store state.TaskStore, config computer.Provider, run state.Run) error {
 	revisions, err := store.OperationRevisions(ctx, run.ID)
 	if err != nil {
 		return err
@@ -107,14 +122,8 @@ func repairCleanup(ctx context.Context, store state.TaskStore, config computer.C
 // stopRecoveredJobs ends jobs a closed workflow left running. A guest /cancel doesn't
 // reach them, because a job belongs to its task. Tasks that never started a job skip
 // this, so recovering an older task doesn't depend on the guest's job routes.
-func stopRecoveredJobs(ctx context.Context, store state.TaskStore, config computer.Config, id string) error {
-	reader, ok := store.(interface {
-		Operations(context.Context, string) ([]state.OperationRecord, error)
-	})
-	if !ok {
-		return nil
-	}
-	ops, err := reader.Operations(ctx, id)
+func stopRecoveredJobs(ctx context.Context, store state.TaskStore, config computer.Provider, id string) error {
+	ops, err := store.Operations(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -125,7 +134,7 @@ func stopRecoveredJobs(ctx context.Context, store state.TaskStore, config comput
 	}
 	return nil
 }
-func closeTaskBrowser(ctx context.Context, store state.TaskStore, config computer.Config, id string, scopes []string) error {
+func closeTaskBrowser(ctx context.Context, store state.TaskStore, config computer.Provider, id string, scopes []string) error {
 	if len(scopes) == 0 {
 		return store.FinishCleanup(ctx, id)
 	}
@@ -145,7 +154,7 @@ func closeTaskBrowser(ctx context.Context, store state.TaskStore, config compute
 
 // StopPaused completes an accepted Stop without waking paid workers or starting
 // the retained computer. CancelRequested fences new work even if pause changes.
-func StopPaused(ctx context.Context, store state.TaskStore, config computer.Config, id string) (state.Run, error) {
+func StopPaused(ctx context.Context, store state.TaskStore, config computer.Provider, id string) (state.Run, error) {
 	control, err := store.Control(ctx)
 	if err != nil {
 		return state.Run{}, err
@@ -172,7 +181,9 @@ func StopPaused(ctx context.Context, store state.TaskStore, config computer.Conf
 	if err != nil {
 		return run, err
 	}
-	run, err = store.Publish(ctx, id, run.Revision, "cancelled", "Stopped by Austin.", "", run.CostUnknown, true)
+	run, err = store.Publish(ctx, state.PublishRequest{
+		RunID: id, Revision: run.Revision, Status: state.RunCancelled, Detail: "Stopped by Austin.", CostUnknown: run.CostUnknown, BypassRouting: true,
+	})
 	if err != nil {
 		return run, err
 	}

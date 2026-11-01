@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
-	"google.golang.org/genai"
 	"nori/internal/state"
+	"nori/internal/transcript"
 )
 
 type CompletionInput struct {
@@ -19,7 +19,7 @@ type CompletionInput struct {
 }
 type CompletionOutcome struct{ Ref, Action, Detail string }
 
-func proposal(call *genai.FunctionCall) state.CompletionProposal {
+func proposal(call transcript.ToolCall) state.CompletionProposal {
 	p := state.CompletionProposal{}
 	p.Answer, _ = call.Args["answer"].(string)
 	for _, field := range []string{"evidence", "unmet"} {
@@ -35,7 +35,10 @@ func proposal(call *genai.FunctionCall) state.CompletionProposal {
 	}
 	return p
 }
-func completionFailures(contents []*genai.Content, ops []state.OperationRecord, p state.CompletionProposal, revision, position int64, snap state.TaskSnapshot) ([]string, bool) {
+func completionFailures(
+	messages []transcript.Message, ops []state.OperationRecord, p state.CompletionProposal,
+	revision, position int64, snap state.TaskSnapshot,
+) ([]string, bool) {
 	failures := []string{}
 	writes := false
 	if snap.Run.Revision != revision || snap.Run.Position != position {
@@ -43,19 +46,13 @@ func completionFailures(contents []*genai.Content, ops []state.OperationRecord, 
 	}
 	responses := map[string]bool{}
 	calls := map[string]string{}
-	for _, content := range contents {
-		if content == nil {
-			continue
-		}
-		for _, part := range content.Parts {
-			if part == nil {
-				continue
+	for _, message := range messages {
+		for _, part := range message.Parts {
+			if part.ToolCall != nil {
+				calls[part.ToolCall.ID] = part.ToolCall.Name
 			}
-			if part.FunctionCall != nil {
-				calls[part.FunctionCall.ID] = part.FunctionCall.Name
-			}
-			if part.FunctionResponse != nil {
-				responses[part.FunctionResponse.ID] = true
+			if part.ToolResult != nil {
+				responses[part.ToolResult.CallID] = true
 			}
 		}
 	}
@@ -105,11 +102,11 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 	if e != nil {
 		return out, classified(e)
 	}
-	contents, e := a.history(ctx, in.RunID, in.Ref)
+	messages, e := a.history(ctx, in.RunID, in.Ref)
 	if e != nil {
 		return out, classified(e)
 	}
-	call, e := lastCall(contents, 0)
+	call, e := lastCall(messages, 0)
 	if e != nil || call.Name != "complete" {
 		return out, classified(errors.New("completion proposal is missing"))
 	}
@@ -126,7 +123,7 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 	}
 	check = state.CompletionCheck{ID: in.ID, Revision: in.Revision, Position: in.Position, Proposal: proposal(call), CorrectionAttempt: in.CorrectionAttempt}
 	var writes bool
-	check.RecordFailures, writes = completionFailures(contents, ops, check.Proposal, in.Revision, in.Position, snap)
+	check.RecordFailures, writes = completionFailures(messages, ops, check.Proposal, in.Revision, in.Position, snap)
 	// Check actual private blobs, not merely strings that look like references.
 	cited := map[string]bool{}
 	for _, ref := range check.Proposal.Evidence {
@@ -173,21 +170,30 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 	}
 	if snap.Run.Revision != in.Revision || snap.Run.Position != in.Position {
 		out.Action = "reconcile"
-		out.Ref, e = a.appendContents(ctx, in.RunID, in.Ref, []*genai.Content{toolResponse(call.ID, call.Name, map[string]any{"accepted": false, "reason": "Instructions changed. Reconcile all later instructions before proposing completion again."})})
+		changed := map[string]any{
+			"accepted": false,
+			"reason":   "Instructions changed. Reconcile all later instructions before proposing completion again.",
+		}
+		result := transcript.ToolResultMessage(call.ID, call.Name, changed)
+		out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{result})
 		return out, classified(e)
 	}
 	feedback := map[string]any{"accepted": false, "record_failures": check.RecordFailures}
 	if writes {
 		out.Action = "ask"
-		out.Detail = "The task's records could not be checked: " + strings.Join(check.RecordFailures, " ") + " This task attempted a write or an action with unknown effects. Please clarify what remains; Nori will not repeat that action automatically."
+		out.Detail = "The task's records could not be checked: " + strings.Join(check.RecordFailures, " ") + " " +
+			"This task attempted a write or an action with unknown effects. " +
+			"Please clarify what remains; Nori will not repeat that action automatically."
 		feedback["instruction"] = "Ask Austin before further action; never repeat an attempted write automatically."
 	} else if in.CorrectionAttempt >= 2 {
 		out.Action = "partial"
-		out.Detail = "Incomplete: the task's records still failed their checks after two read-only corrections. This proposed answer is partial and the task is not completed."
+		out.Detail = "Incomplete: the task's records still failed their checks after two read-only corrections. " +
+			"This proposed answer is partial and the task is not completed."
 	} else {
 		out.Action = "correct"
-		feedback["instruction"] = "Correct the answer using read-only tools only, then propose complete again. Do not run shell commands or writes. Use request_input if another action is required."
+		feedback["instruction"] = "Correct the answer using read-only tools only, then propose complete again. " +
+			"Do not run shell commands or writes. Use request_input if another action is required."
 	}
-	out.Ref, e = a.appendContents(ctx, in.RunID, in.Ref, []*genai.Content{toolResponse(call.ID, call.Name, feedback)})
+	out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{transcript.ToolResultMessage(call.ID, call.Name, feedback)})
 	return out, classified(e)
 }

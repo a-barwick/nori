@@ -10,12 +10,10 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/google/uuid"
 )
 
 type page struct {
@@ -144,19 +142,6 @@ func stopLoading(owner browserAssociation) error {
 	return err
 }
 
-// Older workers send only a revision scope. Browser ownership must survive
-// instruction changes, while cancellation continues to use the full scope.
-func legacyBrowserTaskID(scope string) string {
-	if i := strings.LastIndex(scope, "-r"); i > 0 {
-		id, err := uuid.Parse(scope[:i])
-		_, revisionErr := strconv.ParseUint(scope[i+2:], 10, 64)
-		if err == nil && id.String() == scope[:i] && revisionErr == nil {
-			return scope[:i]
-		}
-	}
-	return scope
-}
-
 func (s *server) navigate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RunID  string `json:"run_id"`
@@ -170,9 +155,6 @@ func (s *server) navigate(w http.ResponseWriter, r *http.Request) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 		http.Error(w, "HTTP or HTTPS URL required", 400)
 		return
-	}
-	if req.TaskID == "" {
-		req.TaskID = legacyBrowserTaskID(req.RunID)
 	}
 	if !runPattern.MatchString(req.TaskID) {
 		http.Error(w, "invalid task_id", 400)
@@ -278,9 +260,6 @@ func (s *server) screenshot(w http.ResponseWriter, r *http.Request) {
 	}
 	if !decode(w, r, &req) {
 		return
-	}
-	if req.TaskID == "" {
-		req.TaskID = legacyBrowserTaskID(req.RunID)
 	}
 	if !runPattern.MatchString(req.TaskID) {
 		http.Error(w, "invalid task_id", 400)

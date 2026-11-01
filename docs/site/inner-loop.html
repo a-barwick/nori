@@ -46,7 +46,7 @@
 </table></div></section>
 <details class="more"><summary>Workflow details</summary>
 <ul class="pts">
-<li>Each new task gets one <code>nori-task-v3</code> workflow. Older v1 and v2 workflows keep their original behavior.</li>
+<li>Each task runs as one <code>nori-task-v3</code> workflow.</li>
 <li>The workflow body contains only deterministic transitions. Every model call, tool call and Firestore write is an activity with its own timeout.</li>
 <li>Signals on <code>task-command</code> only wake the workflow. It then reads commands from Firestore by position.</li>
 <li>Model and tool activities have a 240-second timeout, and the model activity must heartbeat within 10 seconds. Stopping the computer has 200 seconds.</li>
@@ -64,6 +64,6 @@
 <tr><td>Sensitive send or purchase</td><td>Ask the user first.</td><td>Check safely, then ask the user.</td></tr>
 </table></div>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/task/workflow.go</code> · <code>core/internal/task/activities.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/cmd/nori-worker/main.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/task/workflow.go</code> · <code>core/internal/task/activities.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/cmd/nori-worker/</code> · <code>core/internal/taskworker/</code></p></details>
 </body>
 </html>

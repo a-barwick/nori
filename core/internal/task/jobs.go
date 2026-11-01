@@ -10,11 +10,11 @@ import (
 
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/workflow"
-	"google.golang.org/genai"
 	"nori/internal/agent"
 	"nori/internal/computer"
 	"nori/internal/observability"
 	"nori/internal/state"
+	"nori/internal/transcript"
 )
 
 const (
@@ -40,7 +40,7 @@ func existingJobTool(name string) bool {
 }
 
 // lostJob is the only supported answer about a job on a computer that isn't running.
-func lostJob(call *genai.FunctionCall) map[string]any {
+func lostJob(call transcript.ToolCall) map[string]any {
 	id, _ := call.Args["job_id"].(string)
 	return map[string]any{"job_id": id, "state": "lost", "reason": "The computer is stopped, so this job isn't running and its result wasn't observed."}
 }
@@ -71,7 +71,7 @@ func jobEnded(state any) bool {
 
 // jobTransition reports which job this result started or showed ended, so the
 // workflow knows what terminal cleanup must stop.
-func jobTransition(call *genai.FunctionCall, result map[string]any) (started, ended string) {
+func jobTransition(call transcript.ToolCall, result map[string]any) (started, ended string) {
 	switch call.Name {
 	case "job_start":
 		if id, _ := result["job_id"].(string); id != "" && result["outcome"] == "confirmed" && !jobEnded(result["state"]) {
@@ -146,11 +146,11 @@ func (c *Checkpoint) awaitJob(ctx workflow.Context, wait func() error, id string
 // JobWaitRef polls one job for at most one slice. It reports an end state the
 // workflow then records through the ordinary job_wait operation.
 func (a *Activities) JobWaitRef(parent context.Context, in JobWaitInput) (out JobWaitOutcome, err error) {
-	contents, err := a.history(parent, in.RunID, in.Ref)
+	messages, err := a.history(parent, in.RunID, in.Ref)
 	if err != nil {
 		return out, classified(err)
 	}
-	call, err := lastCall(contents, in.Index)
+	call, err := lastCall(messages, in.Index)
 	if err != nil {
 		return out, classified(err)
 	}
@@ -249,7 +249,7 @@ func (a *Activities) StopJobs(ctx context.Context, id string) (err error) {
 	return classified(stopTaskJobs(observability.SuppressErrorCapture(ctx), a.Agent.Computer, id))
 }
 
-func stopTaskJobs(ctx context.Context, config computer.Config, id string) error {
+func stopTaskJobs(ctx context.Context, config computer.Provider, id string) error {
 	for attempt := 0; ; attempt++ {
 		c, err := computer.Attach(ctx, config, id)
 		if errors.Is(err, computer.ErrStopped) {
@@ -280,7 +280,7 @@ func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.Op
 		return nil, classified(err)
 	}
 	op.Attempt = 1
-	if err := a.Store.(state.TaskEvidenceStore).PutOperation(ctx, in.RunID, *op); err != nil {
+	if err := a.Store.PutOperation(ctx, in.RunID, *op); err != nil {
 		return nil, classified(err)
 	}
 	output, err := a.Agent.CallRuntimeTool(observability.SuppressErrorCapture(ctx), in.RunID, in.Call.Name, in.Call.Args)

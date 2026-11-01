@@ -1,16 +1,10 @@
 package state
 
 import (
-	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
-
-	"cloud.google.com/go/firestore"
-	"google.golang.org/api/iterator"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"nori/internal/observability"
 )
 
 var ErrConversationBusy = errors.New("conversation lease is held by another processor")
@@ -28,6 +22,7 @@ type ConversationInput struct {
 	Event        *TaskEvent        `firestore:"event,omitempty"`
 	TraceContext map[string]string `json:"-" firestore:"trace_context,omitempty"`
 }
+
 type ConversationControl struct {
 	ProtocolVersion int       `firestore:"protocol_version,omitempty"`
 	UserReceived    int64     `firestore:"user_received,omitempty"`
@@ -41,6 +36,7 @@ type ConversationControl struct {
 	LeaseUntil      time.Time `firestore:"lease_until"`
 	LatestAt        time.Time `firestore:"latest_at"`
 }
+
 type ConversationAction struct {
 	ID        string    `json:"id" firestore:"id"`
 	Request   string    `json:"request" firestore:"request"`
@@ -50,6 +46,7 @@ type ConversationAction struct {
 	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
 	Command   Command   `json:"command" firestore:"command"`
 }
+
 type ConversationAttempt struct {
 	StructuredReply  bool                 `firestore:"structured_reply,omitempty"`
 	ID               string               `firestore:"id"`
@@ -73,6 +70,7 @@ type ConversationAttempt struct {
 	ContextTurns     int                  `firestore:"context_turns"`
 	ContextBytes     int                  `firestore:"context_bytes"`
 }
+
 type ConversationTurn struct {
 	ID          string              `firestore:"id"`
 	Inputs      []ConversationInput `firestore:"inputs"`
@@ -87,6 +85,8 @@ type ConversationTurn struct {
 	Context     []string            `firestore:"context"`
 	Attempt     ConversationAttempt `firestore:"attempt"`
 }
+
+// ConversationFence identifies one processor's claim on the active turn.
 type ConversationFence struct {
 	Owner       string
 	Fence       int64
@@ -96,41 +96,50 @@ type ConversationFence struct {
 	Frozen      bool
 }
 
-func (s *Google) conversation() *firestore.DocumentRef {
-	return s.root().Collection("conversation").Doc("control")
-}
-func (s *Google) conversationInputs() *firestore.CollectionRef {
-	return s.root().Collection("conversation_inputs")
-}
-func (s *Google) conversationTurns() *firestore.CollectionRef {
-	return s.root().Collection("conversation_turns")
-}
-func (s *Google) conversationAttempts() *firestore.CollectionRef {
-	return s.root().Collection("conversation_attempts")
-}
-func readConversation(tx *firestore.Transaction, ref *firestore.DocumentRef) (ConversationControl, error) {
-	var c ConversationControl
-	d, e := tx.Get(ref)
-	if status.Code(e) == codes.NotFound {
-		c.ProtocolVersion = 2
-		return c, nil
-	}
-	if e != nil {
-		return c, e
-	}
-	e = d.DataTo(&c)
-	normalizeConversation(&c)
-	return c, e
-}
+// Limits on what one conversation turn carries.
+const (
+	// TurnInputLimit and TurnInputBytes bound the new inputs one turn takes. The byte bound keeps the turn document
+	// comfortably below Firestore's 1 MiB document limit.
+	TurnInputLimit = 64
+	TurnInputBytes = 128 << 10
+	// RoutingContextBytes bounds the unresolved user inputs replayed to a new turn as context.
+	RoutingContextBytes = 256 << 10
+	// MaxTurnRestarts is the number of times new user input can restart a turn before its coverage freezes.
+	MaxTurnRestarts = 3
+	// RestartQuiet is how long the newest user input must sit before a restart takes in the waiting batch.
+	RestartQuiet = time.Second
+	// MessagePageSize is the number of messages one history page returns.
+	MessagePageSize = 80
+	// HistoryTurnsExamined, HistoryTurnLimit and HistoryProtocolBytes bound the completed turns replayed to the model.
+	HistoryTurnsExamined = 25
+	HistoryTurnLimit     = 24
+	HistoryProtocolBytes = 192 << 10
+	// TraceLimit bounds the attempts returned for debugging.
+	TraceLimit = 60
+)
 
-func normalizeConversation(c *ConversationControl) {
+func (in ConversationInput) IsUser() bool { return !in.Introduction && in.Event == nil }
+
+// NewConversationControl is the control record of a conversation that has no saved control document yet.
+func NewConversationControl() ConversationControl { return ConversationControl{ProtocolVersion: 2} }
+
+// Normalize upgrades a control record saved before user input was counted separately from task events.
+func (c *ConversationControl) Normalize() {
 	if c.ProtocolVersion < 2 {
 		c.UserReceived, c.UserRouted = c.Received, c.Consumed
 		c.ProtocolVersion = 2
 	}
 }
 
-func (in ConversationInput) IsUser() bool { return !in.Introduction && in.Event == nil }
+// Normalize fills in the user coverage of a turn saved before it was recorded.
+func (t *ConversationTurn) Normalize() {
+	if t.UserThrough == 0 {
+		t.UserThrough = userThrough(t.Inputs)
+	}
+}
+
+// RoutingPending reports whether accepted user input is still waiting for the outer loop to route it.
+func (c ConversationControl) RoutingPending() bool { return c.UserReceived > c.UserRouted }
 
 func userThrough(inputs []ConversationInput) int64 {
 	var through int64
@@ -141,475 +150,314 @@ func userThrough(inputs []ConversationInput) int64 {
 	}
 	return through
 }
-func (s *Google) ConversationStatus(ctx context.Context) (ConversationControl, *ConversationTurn, error) {
-	var c ConversationControl
-	d, e := s.conversation().Get(ctx)
-	if status.Code(e) == codes.NotFound {
-		return c, nil, nil
-	}
-	if e != nil {
-		return c, nil, e
-	}
-	if e = d.DataTo(&c); e != nil {
-		return c, nil, e
-	}
-	normalizeConversation(&c)
-	if c.Active == "" {
-		return c, nil, nil
-	}
-	d, e = s.conversationTurns().Doc(c.Active).Get(ctx)
-	if e != nil {
-		return c, nil, e
-	}
-	var t ConversationTurn
-	e = d.DataTo(&t)
-	if t.UserThrough == 0 {
-		t.UserThrough = userThrough(t.Inputs)
-	}
-	return c, &t, e
-}
-func (s *Google) AcceptConversationInput(ctx context.Context, id, text string) error {
-	traceContext := observability.InjectTrace(ctx)
-	return s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		d, e := tx.Get(s.conversationInputs().Doc(id))
-		if e == nil {
-			var old ConversationInput
-			if e = d.DataTo(&old); e != nil {
-				return e
-			}
-			if old.Text != text {
-				return ErrConversationConflict
-			}
-			return nil
-		}
-		if status.Code(e) != codes.NotFound {
-			return e
-		}
-		c, e := readConversation(tx, s.conversation())
-		if e != nil {
-			return e
-		}
-		now := time.Now().UTC()
-		c.Received++
-		c.UserReceived = c.Received
-		c.LatestAt = now
-		in := ConversationInput{ID: id, Text: text, Position: c.Received, CreatedAt: now, TraceContext: traceContext}
-		if e = tx.Set(s.conversation(), c); e != nil {
-			return e
-		}
-		if e = tx.Create(s.conversationInputs().Doc(id), in); e != nil {
-			return e
-		}
-		return tx.Create(s.messages().Doc(id+"-user"), Message{ID: id + "-user", Role: "user", Text: text, CreatedAt: now, TurnID: id})
-	})
-}
-func (s *Google) conversationBatch(tx *firestore.Transaction, after int64) ([]ConversationInput, error) {
-	it := tx.Documents(s.conversationInputs().Where("position", ">", after).OrderBy("position", firestore.Asc).Limit(64))
-	defer it.Stop()
-	out := []ConversationInput{}
-	// Keep the turn document comfortably below Firestore's 1 MiB document limit.
-	bytes := 0
-	for {
-		d, e := it.Next()
-		if e == iterator.Done {
-			break
-		}
-		if e != nil {
-			return nil, e
-		}
-		var in ConversationInput
-		if e = d.DataTo(&in); e != nil {
-			return nil, e
-		}
-		inputBytes := len(in.Text)
-		if in.Event != nil {
-			inputBytes += len(in.Event.Text)
-			for _, hold := range in.Event.Holds {
-				inputBytes += len(hold.Question)
-			}
-		}
-		if bytes+inputBytes > 128<<10 && len(out) > 0 {
-			break
-		}
-		bytes += inputBytes
-		out = append(out, in)
-	}
-	return out, nil
-}
-func (s *Google) AcquireConversation(ctx context.Context, owner, turnID string) (ConversationControl, *ConversationTurn, error) {
-	var c ConversationControl
-	var turn *ConversationTurn
-	e := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		var e error
-		c, e = readConversation(tx, s.conversation())
-		if e != nil {
-			return e
-		}
-		now := time.Now().UTC()
-		if c.Owner != "" && c.LeaseUntil.After(now) {
-			return ErrConversationBusy
-		}
-		if c.Active == "" && c.Received <= c.Consumed {
-			return nil
-		}
-		var t ConversationTurn
-		if c.Active != "" {
-			d, e := tx.Get(s.conversationTurns().Doc(c.Active))
-			if e != nil {
-				return e
-			}
-			if e = d.DataTo(&t); e != nil {
-				return e
-			}
-			if t.UserThrough == 0 {
-				t.UserThrough = userThrough(t.Inputs)
-			}
-		} else {
-			ins, e := s.conversationBatch(tx, c.Consumed)
-			if e != nil {
-				return e
-			}
-			if len(ins) == 0 {
-				return nil
-			}
-			t = ConversationTurn{ID: turnID, Inputs: ins, Through: ins[len(ins)-1].Position, StartedAt: now, Status: "running"}
-			// A failed routing attempt stays unresolved until the next user turn.
-			// Replay its inputs as context without creating another visible message.
-			if userThrough(ins) > 0 && c.UserRouted < c.Consumed {
-				unresolved, err := s.unroutedInputs(tx, c.UserRouted, c.Consumed)
-				if err != nil {
-					return err
-				}
-				t.Inputs = append(unresolved, ins...)
-			}
-			t.UserThrough = max(userThrough(t.Inputs), min(c.UserReceived, c.Consumed))
-			t.Frozen = t.Through < c.Received
-			c.Active = t.ID
-		}
-		c.Owner = owner
-		c.Fence++
-		c.LeaseUntil = now.Add(ConversationLease)
-		turn = &t
-		if e = tx.Set(s.conversation(), c); e != nil {
-			return e
-		}
-		for _, in := range t.Inputs {
-			if !in.IsUser() {
-				continue
-			}
-			if e = tx.Update(s.messages().Doc(in.ID+"-user"), []firestore.Update{{Path: "turn_id", Value: t.ID}}); e != nil {
-				return e
-			}
-		}
-		return tx.Set(s.conversationTurns().Doc(t.ID), t)
-	})
-	return c, turn, e
-}
-func conversationOwned(c ConversationControl, f ConversationFence) error {
-	if c.Owner != f.Owner || c.Fence != f.Fence || c.Active != f.TurnID || !c.LeaseUntil.After(time.Now()) {
+
+// CheckOwned verifies that the fence still holds the conversation's lease.
+func CheckOwned(c ConversationControl, f ConversationFence, now time.Time) error {
+	if c.Owner != f.Owner || c.Fence != f.Fence || c.Active != f.TurnID || !c.LeaseUntil.After(now) {
 		return ErrConversationBusy
 	}
 	return nil
 }
-func conversationFresh(c ConversationControl, f ConversationFence) error {
-	if e := conversationOwned(c, f); e != nil {
-		return e
+
+// CheckFresh additionally rejects a turn that newer user input has superseded. A frozen turn keeps its coverage.
+func CheckFresh(c ConversationControl, f ConversationFence, now time.Time) error {
+	if err := CheckOwned(c, f, now); err != nil {
+		return err
 	}
-	if !f.Frozen && c.UserReceived > f.UserThrough {
+	if StaleFor(c, f) {
 		return ErrConversationStale
 	}
 	return nil
 }
-func (s *Google) CheckConversation(ctx context.Context, f ConversationFence) (bool, error) {
-	d, e := s.conversation().Get(ctx)
-	if e != nil {
-		return false, e
-	}
-	var c ConversationControl
-	if e = d.DataTo(&c); e != nil {
-		return false, e
-	}
-	normalizeConversation(&c)
-	if e = conversationOwned(c, f); e != nil {
-		return false, e
-	}
-	return !f.Frozen && c.UserReceived > f.UserThrough, nil
-}
-func (s *Google) RenewConversation(ctx context.Context, f ConversationFence) (bool, error) {
-	stale := false
-	e := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		c, e := readConversation(tx, s.conversation())
-		if e != nil {
-			return e
-		}
-		if e = conversationOwned(c, f); e != nil {
-			return e
-		}
-		stale = !f.Frozen && c.UserReceived > f.UserThrough
-		c.LeaseUntil = time.Now().UTC().Add(ConversationLease)
-		return tx.Set(s.conversation(), c)
-	})
-	return stale, e
-}
-func (s *Google) ReleaseConversation(ctx context.Context, f ConversationFence) error {
-	return s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		c, e := readConversation(tx, s.conversation())
-		if e != nil {
-			return e
-		}
-		if e = conversationOwned(c, f); e != nil {
-			return e
-		}
-		c.Owner = ""
-		c.LeaseUntil = time.Time{}
-		return tx.Set(s.conversation(), c)
-	})
+
+// StaleFor reports whether user input arrived that the fence's turn does not cover.
+func StaleFor(c ConversationControl, f ConversationFence) bool {
+	return !f.Frozen && c.UserReceived > f.UserThrough
 }
 
-// SaveConversation fences every checkpoint, including model replies and failed attempts.
-func (s *Google) SaveConversation(ctx context.Context, f ConversationFence, t ConversationTurn) error {
-	return s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		c, e := readConversation(tx, s.conversation())
-		if e != nil {
-			return e
-		}
-		if e = conversationOwned(c, f); e != nil {
-			return e
-		}
-		if e = tx.Set(s.conversationTurns().Doc(t.ID), t); e != nil {
-			return e
-		}
-		if t.Attempt.ID != "" {
-			return tx.Set(s.conversationAttempts().Doc(t.Attempt.ID), t.Attempt)
-		}
-		return nil
-	})
+// ReplayUserInput checks a repeated submission of an accepted message ID. The same text is a harmless replay.
+func ReplayUserInput(saved ConversationInput, text string) error {
+	if saved.Text != text {
+		return ErrConversationConflict
+	}
+	return nil
 }
 
-// RestartConversation incorporates the full waiting batch only after one quiet second.
-// The fourth attempt freezes its coverage; later input remains queued for the next turn.
-func (s *Google) RestartConversation(ctx context.Context, f ConversationFence, t ConversationTurn) (ConversationTurn, time.Duration, error) {
-	var wait time.Duration
-	original := t
-	e := s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		t = original
-		c, e := readConversation(tx, s.conversation())
-		if e != nil {
-			return e
-		}
-		if e = conversationOwned(c, f); e != nil {
-			return e
-		}
-		if c.UserReceived <= t.UserThrough || t.Frozen {
-			return nil
-		}
-		wait = time.Until(c.LatestAt.Add(time.Second))
-		if wait > 0 {
-			return nil
-		}
-		ins, e := s.conversationBatch(tx, c.Consumed)
-		if e != nil {
-			return e
-		}
-		if c.UserRouted < c.Consumed {
-			unresolved, err := s.unroutedInputs(tx, c.UserRouted, c.Consumed)
-			if err != nil {
-				return err
-			}
-			ins = append(unresolved, ins...)
-		}
-		through := ins[len(ins)-1].Position
-		if through == t.Through {
-			// The waiting suffix cannot fit this batch. Keep its original coverage and
-			// attempt; later inputs will be handled by the next turn.
-			t.Frozen = true
-			return tx.Set(s.conversationTurns().Doc(t.ID), t)
-		}
-		if t.Attempt.ID != "" {
-			accepted := false
-			for _, a := range t.Attempt.Actions {
-				accepted = accepted || a.Status == "accepted"
-			}
-			if accepted && t.Attempt.Reply != "" {
-				t.Context = append(t.Context, t.Attempt.Reply)
-				t.Context = append(t.Context, t.Attempt.Results...)
-			}
-			now := time.Now().UTC()
-			t.Attempt.Status = "superseded"
-			t.Attempt.Error = ""
-			t.Attempt.FinishedAt = &now
-			t.Attempt.DurationMS = now.Sub(t.Attempt.StartedAt).Milliseconds()
-			if e = tx.Set(s.conversationAttempts().Doc(t.Attempt.ID), t.Attempt); e != nil {
-				return e
-			}
-		}
-		t.Inputs = ins
-		t.Through = through
-		t.UserThrough = max(userThrough(ins), min(c.UserReceived, c.Consumed))
-		t.Restarts++
-		t.Frozen = t.Restarts >= 3 || t.Through < c.Received
-		t.Attempt = ConversationAttempt{}
-		for _, in := range t.Inputs {
-			if !in.IsUser() {
-				continue
-			}
-			if e = tx.Update(s.messages().Doc(in.ID+"-user"), []firestore.Update{{Path: "turn_id", Value: t.ID}}); e != nil {
-				return e
-			}
-		}
-		return tx.Set(s.conversationTurns().Doc(t.ID), t)
-	})
-	return t, wait, e
-}
-func (s *Google) PublishConversation(ctx context.Context, f ConversationFence, t ConversationTurn, text string) error {
-	return s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		c, e := readConversation(tx, s.conversation())
-		if e != nil {
-			return e
-		}
-		if e = conversationFresh(c, f); e != nil {
-			return e
-		}
-		heldRuns, e := s.holdAcknowledgements(tx, t, text)
-		if e != nil {
-			return e
-		}
-		now := time.Now().UTC()
-		t.Status = "completed"
-		t.FinishedAt = &now
-		c.Consumed = t.Through
-		if t.Attempt.Status != "error" {
-			c.UserRouted = max(c.UserRouted, userThrough(t.Inputs))
-		}
-		c.Introducing = false
-		c.Active = ""
-		c.Owner = ""
-		c.LeaseUntil = time.Time{}
-		for id, run := range heldRuns {
-			if e = tx.Set(s.runs().Doc(id), run); e != nil {
-				return e
-			}
-		}
-		if e = tx.Set(s.conversation(), c); e != nil {
-			return e
-		}
-		if e = tx.Set(s.conversationTurns().Doc(t.ID), t); e != nil {
-			return e
-		}
-		if e = tx.Set(s.conversationAttempts().Doc(t.Attempt.ID), t.Attempt); e != nil {
-			return e
-		}
-		return tx.Set(s.messages().Doc(t.ID+"-assistant"), Message{ID: t.ID + "-assistant", Role: "assistant", Text: text, CreatedAt: now, TurnID: t.ID})
-	})
-}
-func (s *Google) ConversationHistory(ctx context.Context) ([]ConversationTurn, bool, error) {
-	it := s.conversationTurns().OrderBy("started_at", firestore.Desc).Limit(25).Documents(ctx)
-	defer it.Stop()
-	out := []ConversationTurn{}
-	size := 0
-	examined := 0
-	truncated := false
-	for {
-		d, e := it.Next()
-		if e == iterator.Done {
-			break
-		}
-		if e != nil {
-			return nil, false, e
-		}
-		examined++
-		if examined >= 25 {
-			truncated = true
-		}
-		var t ConversationTurn
-		if e = d.DataTo(&t); e != nil {
-			return nil, false, e
-		}
-		if t.Status != "completed" {
-			continue
-		}
-		n := 0
-		for _, p := range t.Protocol {
-			n += len(p)
-		}
-		if size+n > 192<<10 || len(out) >= 24 {
-			truncated = true
-			break
-		}
-		size += n
-		out = append(out, t)
-	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
-	return out, truncated, nil
-}
-func (s *Google) ConversationTraces(ctx context.Context) ([]ConversationAttempt, error) {
-	it := s.conversationAttempts().OrderBy("started_at", firestore.Desc).Limit(60).Documents(ctx)
-	defer it.Stop()
-	out := []ConversationAttempt{}
-	for {
-		d, e := it.Next()
-		if e == iterator.Done {
-			break
-		}
-		if e != nil {
-			return nil, e
-		}
-		var a ConversationAttempt
-		if e = d.DataTo(&a); e != nil {
-			return nil, e
-		}
-		out = append(out, a)
-	}
-	return out, nil
+// AdmitUserInput numbers a new user message and returns the updated control record, the inbox input and the visible
+// message to create in one transaction.
+func AdmitUserInput(
+	c ConversationControl, id, text string, now time.Time, traceContext map[string]string,
+) (ConversationControl, ConversationInput, Message) {
+	c.Received++
+	c.UserReceived = c.Received
+	c.LatestAt = now
+	input := ConversationInput{ID: id, Text: text, Position: c.Received, CreatedAt: now, TraceContext: traceContext}
+	message := Message{ID: UserMessageID(id), Role: "user", Text: text, CreatedAt: now, TurnID: id}
+	return c, input, message
 }
 
-// conversationAdmission is part of Accept's transaction: input acceptance and new
-// task admission serialize on the same conversation control document.
-func (s *Google) conversationAdmission(tx *firestore.Transaction, f *ConversationFence) error {
-	if f == nil {
+// UserMessageID and AssistantMessageID name the visible messages of an input and of a turn.
+func UserMessageID(inputID string) string     { return inputID + "-user" }
+func AssistantMessageID(turnID string) string { return turnID + "-assistant" }
+func TaskEventInputID(eventID string) string  { return "event-" + eventID }
+func IntroductionInputID() string             { return "nori-introduction" }
+
+// NeedsIntroduction reports whether a conversation with no messages should receive its introduction.
+func NeedsIntroduction(c ConversationControl) bool { return c.Received == 0 }
+
+// Introduce queues the introduction prompt as the first input. It shares admission ordering with real messages.
+func Introduce(c ConversationControl, prompt string, now time.Time) (ConversationControl, ConversationInput) {
+	c.Received = 1
+	c.Introducing = true
+	c.LatestAt = now
+	return c, ConversationInput{ID: IntroductionInputID(), Text: prompt, Position: 1, CreatedAt: now, Introduction: true}
+}
+
+// InputBatch collects the new inputs for a turn, oldest first, stopping before the turn would grow too large. The
+// first input is always taken.
+type InputBatch struct {
+	Inputs []ConversationInput
+	bytes  int
+}
+
+func NewInputBatch() *InputBatch { return &InputBatch{Inputs: []ConversationInput{}} }
+
+// Add takes the next input and reports whether the batch can keep growing.
+func (b *InputBatch) Add(in ConversationInput) bool {
+	size := len(in.Text)
+	if in.Event != nil {
+		size += len(in.Event.Text)
+		for _, hold := range in.Event.Holds {
+			size += len(hold.Question)
+		}
+	}
+	if b.bytes+size > TurnInputBytes && len(b.Inputs) > 0 {
+		return false
+	}
+	b.bytes += size
+	b.Inputs = append(b.Inputs, in)
+	return true
+}
+
+// RoutingContext collects the user inputs of earlier turns that were never routed.
+type RoutingContext struct {
+	Inputs []ConversationInput
+	bytes  int
+}
+
+// Add takes an input in position order. Events and introductions are not user input and are skipped.
+func (r *RoutingContext) Add(in ConversationInput) error {
+	if !in.IsUser() {
 		return nil
 	}
-	c, e := readConversation(tx, s.conversation())
-	if e != nil {
-		return e
+	r.bytes += len(in.Text)
+	if r.bytes > RoutingContextBytes {
+		return fmt.Errorf("unresolved conversation inputs exceed the routing context limit")
 	}
-	return conversationFresh(c, *f)
+	r.Inputs = append(r.Inputs, in)
+	return nil
 }
-func (s *Google) ConversationMessages(ctx context.Context, before string) ([]Message, string, error) {
-	q := s.messages().OrderBy("created_at", firestore.Desc).OrderBy(firestore.DocumentID, firestore.Desc)
-	if before != "" {
-		d, e := s.messages().Doc(before).Get(ctx)
-		if e != nil {
-			return nil, "", fmt.Errorf("invalid history cursor: %w", e)
-		}
-		q = q.StartAfter(d)
-	}
-	it := q.Limit(81).Documents(ctx)
-	defer it.Stop()
-	out := []Message{}
-	next := ""
-	for {
-		d, e := it.Next()
-		if e == iterator.Done {
-			break
-		}
-		if e != nil {
-			return nil, "", e
-		}
-		if len(out) == 80 {
-			next = out[len(out)-1].ID
-			break
-		}
-		var m Message
-		if e = d.DataTo(&m); e != nil {
-			return nil, "", e
-		}
-		out = append(out, m)
-	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
-	return out, next, nil
+
+// NeedsUnrouted reports whether a new turn must also replay earlier user inputs that were never routed. A failed
+// routing attempt stays unresolved until the next user turn, and its inputs are replayed as context without creating
+// another visible message.
+func NeedsUnrouted(c ConversationControl, inputs []ConversationInput) bool {
+	return userThrough(inputs) > 0 && c.UserRouted < c.Consumed
 }
+
+// CanAcquire reports ErrConversationBusy while another processor holds the lease.
+func CanAcquire(c ConversationControl, now time.Time) error {
+	if c.Owner != "" && c.LeaseUntil.After(now) {
+		return ErrConversationBusy
+	}
+	return nil
+}
+
+// Idle reports whether the conversation has no active turn and nothing waiting.
+func Idle(c ConversationControl) bool { return c.Active == "" && c.Received <= c.Consumed }
+
+// NewTurn starts a turn over the waiting inputs. unresolved are earlier user inputs replayed ahead of them.
+func NewTurn(id string, inputs, unresolved []ConversationInput, c ConversationControl, now time.Time) ConversationTurn {
+	t := ConversationTurn{ID: id, Inputs: inputs, Through: inputs[len(inputs)-1].Position, StartedAt: now, Status: "running"}
+	if len(unresolved) > 0 {
+		t.Inputs = append(unresolved, inputs...)
+	}
+	t.UserThrough = max(userThrough(t.Inputs), min(c.UserReceived, c.Consumed))
+	t.Frozen = t.Through < c.Received
+	return t
+}
+
+// Lease gives owner the conversation under a new fence.
+func Lease(c ConversationControl, owner string, now time.Time) ConversationControl {
+	c.Owner = owner
+	c.Fence++
+	c.LeaseUntil = now.Add(ConversationLease)
+	return c
+}
+
+// Renew extends the lease and reports whether newer user input has made the turn stale.
+func Renew(c ConversationControl, f ConversationFence, now time.Time) (ConversationControl, bool, error) {
+	if err := CheckOwned(c, f, now); err != nil {
+		return c, false, err
+	}
+	c.LeaseUntil = now.Add(ConversationLease)
+	return c, StaleFor(c, f), nil
+}
+
+// Release gives up the lease without finishing the turn.
+func Release(c ConversationControl, f ConversationFence, now time.Time) (ConversationControl, error) {
+	if err := CheckOwned(c, f, now); err != nil {
+		return c, err
+	}
+	c.Owner = ""
+	c.LeaseUntil = time.Time{}
+	return c, nil
+}
+
+// RestartWait reports whether a turn can take in newer user input, and how long to wait first. Input is taken in
+// only after one quiet second, and never into a frozen turn.
+func RestartWait(c ConversationControl, t ConversationTurn, now time.Time) (restart bool, wait time.Duration) {
+	if c.UserReceived <= t.UserThrough || t.Frozen {
+		return false, 0
+	}
+	wait = c.LatestAt.Add(RestartQuiet).Sub(now)
+	return wait <= 0, wait
+}
+
+// Restart is the outcome of folding the waiting inputs into a turn.
+type Restart struct {
+	Turn ConversationTurn
+	// Replaced is set when the turn took a new batch. When false the waiting suffix could not fit, and the turn only
+	// froze its original coverage.
+	Replaced bool
+	// Superseded is the finished record of the abandoned attempt, when there was one.
+	Superseded *ConversationAttempt
+}
+
+// RestartTurn incorporates the full waiting batch. The fourth attempt freezes its coverage, and later input stays
+// queued for the next turn.
+func RestartTurn(c ConversationControl, t ConversationTurn, inputs []ConversationInput, now time.Time) (Restart, error) {
+	if len(inputs) == 0 {
+		return Restart{}, errors.New("no waiting conversation inputs to incorporate")
+	}
+	through := inputs[len(inputs)-1].Position
+	if through == t.Through {
+		t.Frozen = true
+		return Restart{Turn: t}, nil
+	}
+	var superseded *ConversationAttempt
+	if t.Attempt.ID != "" {
+		accepted := false
+		for _, a := range t.Attempt.Actions {
+			accepted = accepted || a.Status == "accepted"
+		}
+		if accepted && t.Attempt.Reply != "" {
+			t.Context = append(t.Context, t.Attempt.Reply)
+			t.Context = append(t.Context, t.Attempt.Results...)
+		}
+		attempt := t.Attempt
+		attempt.Status = "superseded"
+		attempt.Error = ""
+		attempt.FinishedAt = &now
+		attempt.DurationMS = now.Sub(attempt.StartedAt).Milliseconds()
+		superseded = &attempt
+	}
+	t.Inputs = inputs
+	t.Through = through
+	t.UserThrough = max(userThrough(inputs), min(c.UserReceived, c.Consumed))
+	t.Restarts++
+	t.Frozen = t.Restarts >= MaxTurnRestarts || t.Through < c.Received
+	t.Attempt = ConversationAttempt{}
+	return Restart{Turn: t, Replaced: true, Superseded: superseded}, nil
+}
+
+// CompleteTurn finishes the turn with its published reply. It returns the updated control record, the completed turn
+// and the assistant message. User input is marked routed unless the attempt failed.
+func CompleteTurn(c ConversationControl, t ConversationTurn, text string, now time.Time) (ConversationControl, ConversationTurn, Message) {
+	t.Status = "completed"
+	t.FinishedAt = &now
+	c.Consumed = t.Through
+	if t.Attempt.Status != "error" {
+		c.UserRouted = max(c.UserRouted, userThrough(t.Inputs))
+	}
+	c.Introducing = false
+	c.Active = ""
+	c.Owner = ""
+	c.LeaseUntil = time.Time{}
+	message := Message{ID: AssistantMessageID(t.ID), Role: "assistant", Text: text, CreatedAt: now, TurnID: t.ID}
+	return c, t, message
+}
+
+// EnqueueTaskEvent adds one task event to the conversation inbox. It returns the updated control record and the inbox
+// input to create. A zero CreatedAt takes now.
+func EnqueueTaskEvent(
+	c ConversationControl, event TaskEvent, now time.Time, traceContext map[string]string,
+) (ConversationControl, ConversationInput) {
+	c.Received++
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = now
+	}
+	return c, ConversationInput{
+		ID: TaskEventInputID(event.ID), Position: c.Received, CreatedAt: event.CreatedAt, Event: &event, TraceContext: traceContext,
+	}
+}
+
+// ClassifyEventReplay decides what finding a saved inbox input under a task event's ID means. A nil result means the
+// same event is already in the inbox and nothing needs to be written. Any other saved input, or an event whose
+// content differs, is a conflict.
+func ClassifyEventReplay(prior ConversationInput, event TaskEvent) error {
+	if prior.Event == nil {
+		return ErrDuplicate
+	}
+	old := *prior.Event
+	old.CreatedAt, event.CreatedAt = time.Time{}, time.Time{}
+	if !reflect.DeepEqual(old, event) {
+		return ErrDuplicate
+	}
+	return nil
+}
+
+// MessagePage returns one page of messages in time order from a newest-first read of up to MessagePageSize+1
+// messages, and the cursor for the next older page. The cursor is empty on the last page.
+func MessagePage(newestFirst []Message) (page []Message, next string) {
+	if len(newestFirst) > MessagePageSize {
+		newestFirst = newestFirst[:MessagePageSize]
+		next = newestFirst[len(newestFirst)-1].ID
+	}
+	return Chronological(append([]Message{}, newestFirst...)), next
+}
+
+// HistoryWindow collects completed turns from a newest-first read, within the replay bounds.
+type HistoryWindow struct {
+	Turns     []ConversationTurn
+	Truncated bool
+	examined  int
+	size      int
+}
+
+func NewHistoryWindow() *HistoryWindow { return &HistoryWindow{Turns: []ConversationTurn{}} }
+
+// Add takes the next newest turn and reports whether to keep reading.
+func (w *HistoryWindow) Add(t ConversationTurn) bool {
+	w.examined++
+	if w.examined >= HistoryTurnsExamined {
+		w.Truncated = true
+	}
+	if t.Status != "completed" {
+		return true
+	}
+	n := 0
+	for _, p := range t.Protocol {
+		n += len(p)
+	}
+	if w.size+n > HistoryProtocolBytes || len(w.Turns) >= HistoryTurnLimit {
+		w.Truncated = true
+		return false
+	}
+	w.size += n
+	w.Turns = append(w.Turns, t)
+	return true
+}
+
+// Chronological returns the collected turns oldest first.
+func (w *HistoryWindow) Chronological() []ConversationTurn { return Chronological(w.Turns) }

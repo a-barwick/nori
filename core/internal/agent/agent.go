@@ -1,4 +1,4 @@
-// Package agent holds the inner task model and tool steps. Durable
+// Package agent holds the inner task model contract and tool steps. Durable
 // sequencing lives in the Temporal workflow that calls them.
 package agent
 
@@ -9,41 +9,41 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/genai"
 	"nori/internal/computer"
 	"nori/internal/state"
+	"nori/internal/transcript"
 )
 
 type Service struct {
-	Store     ScreenshotStore
-	Key       string
-	Client    *http.Client
-	ModelName string
-	Computer  computer.Config
+	Store    state.Store
+	Model    Model
+	Computer computer.Provider
 	// Capabilities is set once by the worker before it starts polling.
 	Capabilities Capabilities
+	// HTTP carries the worker's own web requests, such as a search. It follows no redirects.
+	HTTP *http.Client
 }
 
-// ScreenshotStore adds reading a task's saved screenshots to the task's records.
-type ScreenshotStore interface {
-	state.Store
-	GetPNG(ctx context.Context, run, id string) ([]byte, error)
-}
-
-func New(store ScreenshotStore, key string, name string, c computer.Config) *Service {
-	return &Service{Store: store, Key: key, Client: &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, ModelName: name, Computer: c}
-}
-
-func params(names ...string) *genai.Schema {
-	properties := map[string]*genai.Schema{}
-	for _, name := range names {
-		properties[name] = &genai.Schema{Type: genai.TypeString}
+func New(store state.Store, model Model, c computer.Provider) *Service {
+	return &Service{
+		Store: store, Model: model, Computer: c,
+		HTTP: &http.Client{
+			Timeout:       2 * time.Minute,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 	}
-	return &genai.Schema{Type: genai.TypeObject, Properties: properties, Required: names}
+}
+
+func params(names ...string) *transcript.Schema {
+	properties := map[string]*transcript.Schema{}
+	for _, name := range names {
+		properties[name] = &transcript.Schema{Type: transcript.TypeString}
+	}
+	return &transcript.Schema{Type: transcript.TypeObject, Properties: properties, Required: names}
 }
 
 // Tool executes a call after ValidateCalls has accepted its whole batch.
-func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call *genai.FunctionCall) (map[string]any, error) {
+func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call transcript.ToolCall) (map[string]any, error) {
 	switch call.Name {
 	case "shell":
 		command, _ := call.Args["command"].(string)
@@ -63,7 +63,10 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 	case "browser_screenshot":
 		data, e := c.Screenshot(ctx)
 		if errors.Is(e, computer.ErrBrowserRestarted) {
-			return map[string]any{"page_available": false, "reason": "Browser restarted; navigate to the task's URL again before taking a screenshot."}, nil
+			return map[string]any{
+				"page_available": false,
+				"reason":         "Browser restarted; navigate to the task's URL again before taking a screenshot.",
+			}, nil
 		}
 		if e != nil {
 			return nil, e
@@ -78,7 +81,11 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 		if e = s.Store.Artifact(ctx, run, state.Artifact{ID: id, Kind: "screenshot"}); e != nil {
 			return nil, e
 		}
-		return map[string]any{"run_id": run, "artifact_id": id, "description": "Private browser screenshot saved for Austin. Call screenshot_inspect with this artifact_id to read it."}, nil
+		return map[string]any{
+			"run_id":      run,
+			"artifact_id": id,
+			"description": "Private browser screenshot saved for Austin. Call screenshot_inspect with this artifact_id to read it.",
+		}, nil
 	default:
 		return nil, errors.New("unknown tool")
 	}

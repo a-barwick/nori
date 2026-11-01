@@ -6,7 +6,8 @@
    "summary": "Clients send messages and task commands to the agent service over HTTP, and read back snapshots.",
    "status": "built",
    "code": [
-    "core/internal/wake/http.go"
+    "core/internal/api/http.go",
+    "core/internal/api/status.go"
    ],
    "sections": [
     {
@@ -16,10 +17,10 @@
      "words": 18
     },
     {
-     "id": "endpoints-today",
-     "title": "Endpoints today",
+     "id": "endpoints",
+     "title": "Endpoints",
      "status": "built",
-     "words": 137
+     "words": 295
     },
     {
      "id": "the-protocol-for-many-clients",
@@ -83,6 +84,8 @@
     "core/internal/agent/steps.go",
     "core/internal/computerd/server.go",
     "core/internal/spend/client.go",
+    "core/internal/spend/firestore/ledger.go",
+    "core/internal/spend/ledger.go",
     "core/internal/task/workflow.go"
    ],
    "sections": [
@@ -118,11 +121,12 @@
    "summary": "Jev, a classifier model, marks the intents in the current user messages. The outer model gets them as a hint.",
    "status": "built",
    "code": [
+    "core/internal/api/http.go",
     "core/internal/conversation/call.go",
     "core/internal/conversation/classifier.go",
+    "core/internal/conversation/jev.go",
     "core/internal/conversation/model.go",
-    "core/internal/state/conversation.go",
-    "core/internal/wake/http.go"
+    "core/internal/state/conversation.go"
    ],
    "sections": [
     {
@@ -157,7 +161,7 @@
    "summary": "If two clients could disagree about something, the service owns it. A client only owns its own screen.",
    "status": "built",
    "code": [
-    "core/internal/wake/http.go",
+    "core/internal/api/http.go",
     "web/src/lib/hybrid.ts",
     "web/src/lib/runtime/server.ts"
    ],
@@ -193,7 +197,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 347
+     "words": 588
     }
    ]
   },
@@ -236,7 +240,7 @@
      "id": "what-this-catches",
      "title": "What this catches",
      "status": "built",
-     "words": 154
+     "words": 147
     }
    ]
   },
@@ -247,8 +251,11 @@
    "status": "built",
    "code": [
     "core/cmd/computer-agent/main.go",
-    "core/internal/computer/computer.go",
-    "core/internal/computerd/"
+    "core/infrastructure/app/computer-startup.sh",
+    "core/infrastructure/microvm/",
+    "core/internal/computer/",
+    "core/internal/computerd/",
+    "core/internal/platform/platform.go"
    ],
    "sections": [
     {
@@ -256,6 +263,12 @@
      "title": "Overview",
      "status": "built",
      "words": 262
+    },
+    {
+     "id": "reaching-the-computer",
+     "title": "Reaching the computer",
+     "status": "built",
+     "words": 341
     }
    ]
   },
@@ -349,25 +362,31 @@
      "id": "finishing-and-budgets",
      "title": "Finishing and budgets",
      "status": "built",
-     "words": 219
+     "words": 212
     },
     {
      "id": "runtime-and-infrastructure",
      "title": "Runtime and infrastructure",
      "status": "built",
-     "words": 447
+     "words": 547
+    },
+    {
+     "id": "code-structure",
+     "title": "Code structure",
+     "status": "built",
+     "words": 402
     },
     {
      "id": "models",
      "title": "Models",
      "status": "built",
-     "words": 54
+     "words": 122
     },
     {
      "id": "clients",
      "title": "Clients",
      "status": "built",
-     "words": 119
+     "words": 191
     },
     {
      "id": "planning",
@@ -379,7 +398,7 @@
      "id": "older-statements-that-no-longer-apply",
      "title": "Older statements that no longer apply",
      "status": "built",
-     "words": 121
+     "words": 164
     }
    ]
   },
@@ -390,7 +409,9 @@
    "status": "built",
    "code": [
     "core/infrastructure/README.md",
-    "core/infrastructure/poc/terraform/backups.tf"
+    "core/infrastructure/app/ops.py",
+    "core/infrastructure/app/terraform/backups.tf",
+    "core/infrastructure/release/deploy.py"
    ],
    "sections": [
     {
@@ -447,19 +468,19 @@
      "id": "request-path",
      "title": "Request path",
      "status": "built",
-     "words": 119
+     "words": 127
     },
     {
      "id": "sending-a-message",
      "title": "Sending a message",
      "status": "built",
-     "words": 136
+     "words": 133
     },
     {
      "id": "polling",
      "title": "Polling",
      "status": "built",
-     "words": 595
+     "words": 600
     }
    ]
   },
@@ -504,10 +525,11 @@
    "summary": "One loop per task: call the model, run the tools it asks for, save the results, repeat.",
    "status": "built",
    "code": [
-    "core/cmd/nori-worker/main.go",
+    "core/cmd/nori-worker/",
     "core/internal/agent/steps.go",
     "core/internal/task/activities.go",
-    "core/internal/task/workflow.go"
+    "core/internal/task/workflow.go",
+    "core/internal/taskworker/"
    ],
    "sections": [
     {
@@ -526,7 +548,7 @@
      "id": "when-something-fails",
      "title": "When something fails",
      "status": "built",
-     "words": 337
+     "words": 328
     }
    ]
   },
@@ -584,11 +606,12 @@
    "status": "built",
    "code": [
     "core/cmd/computer-agent/main.go",
-    "core/infrastructure/poc/terraform/observability.tf",
+    "core/infrastructure/app/terraform/observability.tf",
     "core/internal/computer/computer.go",
+    "core/internal/computer/trace.go",
     "core/internal/conversation/telemetry.go",
     "core/internal/observability",
-    "core/internal/state/task_google.go",
+    "core/internal/state/firestore/tasks.go",
     "core/internal/task/telemetry.go",
     "web/src/app/sentry-tunnel/route.ts",
     "web/src/components/dev/DebugBlock.tsx",
@@ -624,7 +647,7 @@
      "id": "sampling-and-failures",
      "title": "Sampling and failures",
      "status": "built",
-     "words": 253
+     "words": 256
     }
    ]
   },
@@ -675,7 +698,7 @@
      "id": "clients-and-operations",
      "title": "Clients and operations",
      "status": "built",
-     "words": 91
+     "words": 124
     }
    ]
   },
@@ -686,6 +709,7 @@
    "status": "built",
    "code": [
     "core/internal/conversation/model.go",
+    "core/internal/conversation/openai.go",
     "core/internal/conversation/response.go",
     "core/internal/conversation/runner.go"
    ],
@@ -724,6 +748,7 @@
    "code": [
     "core/internal/conversation/call.go",
     "core/internal/conversation/model.go",
+    "core/internal/conversation/openai.go",
     "core/internal/conversation/runner.go",
     "core/internal/state/conversation.go"
    ],
@@ -815,7 +840,13 @@
    "status": "built",
    "code": [
     "core/internal/conversation/runner.go",
+    "core/internal/dispatch/dispatcher.go",
+    "core/internal/platform/platform.go",
+    "core/internal/spend/",
     "core/internal/state/",
+    "core/internal/state/firestore/",
+    "core/internal/state/gcs/",
+    "core/internal/state/localfs/",
     "core/internal/task/client.go"
    ],
    "sections": [
@@ -823,13 +854,19 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 245
+     "words": 254
     },
     {
      "id": "what-happens-when-something-dies",
      "title": "What happens when something dies",
      "status": "built",
-     "words": 256
+     "words": 140
+    },
+    {
+     "id": "storage-layers",
+     "title": "Storage layers",
+     "status": "built",
+     "words": 291
     }
    ]
   },
@@ -839,12 +876,15 @@
    "summary": "One message, “Check Saturday's weather in Tucson. Also find a time for dinner.”, followed from send to result.",
    "status": "built",
    "code": [
+    "core/internal/api/http.go",
     "core/internal/conversation/call.go",
     "core/internal/conversation/classifier.go",
+    "core/internal/conversation/jev.go",
     "core/internal/conversation/model.go",
+    "core/internal/conversation/openai.go",
+    "core/internal/dispatch/dispatcher.go",
     "core/internal/state/conversation.go",
-    "core/internal/task/client.go",
-    "core/internal/wake/http.go"
+    "core/internal/task/client.go"
    ],
    "sections": [
     {
@@ -868,7 +908,8 @@
    "status": "built",
    "code": [
     "core/internal/agent/steps.go",
-    "core/internal/state/google.go"
+    "core/internal/state/artifacts.go",
+    "core/internal/state/gcs/gcs.go"
    ],
    "sections": [
     {
@@ -1121,7 +1162,7 @@
      "id": "other-files-in-the-repo",
      "title": "Other files in the repo",
      "status": "built",
-     "words": 41
+     "words": 48
     },
     {
      "id": "known-mismatches",
@@ -1259,6 +1300,32 @@
    ]
   },
   {
+   "page": "docs/site/transcript.html",
+   "title": "Task transcript",
+   "summary": "Each task saves its messages, tool calls and tool results, and one adapter turns them into a model request.",
+   "status": "built",
+   "code": [
+    "core/internal/agent/model.go",
+    "core/internal/agent/openrouter/",
+    "core/internal/task/history.go",
+    "core/internal/transcript/"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 95
+    },
+    {
+     "id": "an-example",
+     "title": "An example",
+     "status": "built",
+     "words": 240
+    }
+   ]
+  },
+  {
    "page": "docs/site/web-client.html",
    "title": "Web client",
    "summary": "A Next.js app that shows one conversation with Nori and the activity of its tasks.",
@@ -1306,7 +1373,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 575
+     "words": 639
     }
    ]
   }

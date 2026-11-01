@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task transcript · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Task transcript</h1>
+<p class="lede">Each task saves its messages, tool calls and tool results, and one adapter turns them into a model request.</p>
+<div class="card"><div class="flow">
+  <div class="node"><b>Firestore</b><small>Holds the transcript as private history blocks. Temporal carries references.</small></div>
+  <div class="arrow">↓ <span class="lbl">transcript</span></div>
+  <div class="node inner"><b>Task activities</b><small>Load the transcript and call the model. They import no provider package.</small></div>
+  <div class="arrow">↓ <span class="lbl">instructions, transcript, tool list and output limit</span></div>
+  <div class="node inner"><b>OpenRouter adapter</b><small>Builds the Responses request, reserves spend and reads the cost.</small></div>
+  <div class="arrow">↓ <span class="lbl">Responses request</span></div>
+  <div class="node"><b>OpenRouter</b><small>Returns the turn, its tool calls, usage and cost.</small></div>
+  <div class="loopback">↺ activities append the turn and each tool result to the transcript in Firestore</div>
+</div></div>
+<section><h2>An example</h2>
+<p>For the request "What is the title of example.org?", the transcript holds the saved turns below. The model asks for a page, receives it, and proposes an answer. Provider state is what the model provider returned for a turn, such as reasoning and call IDs, kept exactly so it can be replayed.</p>
+<div class="card"><table class="tall"><tr><th>Role</th><th>Parts</th></tr>
+<tr><td>user</td><td>Text: the request.</td></tr>
+<tr><td>model</td><td>Provider state, then a <code>browser_navigate</code> call.</td></tr>
+<tr><td>user</td><td>The result of that call, with the page title and an evidence reference.</td></tr>
+<tr><td>model</td><td>Provider state, then a <code>complete</code> call with the answer.</td></tr>
+</table></div></section>
+<details class="more"><summary>Saved form</summary>
+<table class="tall"><tr><th>Transcript type</th><th>Saved JSON</th></tr>
+<tr><td>Message</td><td><code>{"parts": [...], "role": "user" | "model"}</code></td></tr>
+<tr><td>Text</td><td><code>{"text": "..."}</code></td></tr>
+<tr><td>Tool call</td><td><code>{"functionCall": {"id": "...", "args": {...}, "name": "..."}}</code></td></tr>
+<tr><td>Tool result</td><td><code>{"functionResponse": {"id": "...", "name": "...", "response": {...}}}</code></td></tr>
+<tr><td>Provider state</td><td><code>{"thought": true, "thoughtSignature": "..."}</code>, where the signature is base64 of <code>nori.responses:</code> followed by the output items OpenRouter returned.</td></tr>
+</table>
+<p>The field names come from the Gemini SDK, which the transcript used before it had its own types. Blocks saved earlier still read. Older workers can read new blocks.</p>
+<p>Blocks from the Gemini period also hold thought text and binary signatures. They read without error, and the model is never sent those parts.</p>
+<p>The OpenRouter adapter replays a turn exactly when it carries provider state the adapter wrote. It rebuilds every other turn from its text, tool calls and tool results.</p>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/transcript/</code> · <code>core/internal/agent/model.go</code> · <code>core/internal/agent/openrouter/</code> · <code>core/internal/task/history.go</code></p></details>
+</body>
+</html>

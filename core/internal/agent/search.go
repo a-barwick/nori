@@ -42,7 +42,7 @@ func (s *Service) webSearch(ctx context.Context, query string) (map[string]any, 
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Subscription-Token", s.Capabilities.SearchKey)
-	res, err := s.Client.Do(req)
+	res, err := s.HTTP.Do(req)
 	if err != nil {
 		// A dropped response may already have been billed.
 		return map[string]any{"cost_usd": SearchCostUSD}, errors.New("web search request failed before a response arrived")

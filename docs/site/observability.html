@@ -66,8 +66,8 @@
 <tr><td>Agent service</td><td><code>HTTP /api/turn</code>, <code>conversation.accept</code></td></tr>
 <tr><td>Outer loop</td><td><code>conversation.turn</code>, <code>conversation.acceptance_to_reply</code></td></tr>
 <tr><td>Inner loop</td><td><code>task.model</code>, <code>task.tool</code>, <code>task.acceptance_to_terminal</code></td></tr>
-<tr><td>Computer</td><td><code>computer.navigate</code>, <code>HTTP /navigate</code></td></tr></table>
-<ul class="pts"><li>If a turn claims several messages, the first sampled message's trace becomes the parent. The others and the queue wake become links.</li><li>A sampled steer moves later activities to the steer's trace, with a link back to the trace that started the task.</li><li>A child span follows its parent's decision, so a trace is kept or dropped as a whole.</li><li>Successful health checks and session polling create no request spans. A 5xx response on those routes is still captured as an error.</li><li>With no destination configured, processes sample nothing and still write logs to stderr.</li></ul>
+<tr><td>Computer</td><td><code>computer.connect</code>, <code>computer.navigate</code>, <code>HTTP /navigate</code></td></tr></table>
+<ul class="pts"><li>If a turn claims several messages, the first sampled message's trace becomes the parent. The others and the queue wake become links.</li><li>A sampled steer moves later activities to the steer's trace, with a link back to the trace that started the task.</li><li>A child span follows its parent's decision, so a trace is kept or dropped as a whole.</li><li>Successful health checks, session polling and status polling create no request spans. A 5xx response on those routes is still captured as an error.</li><li>With no destination configured, processes sample nothing and still write logs to stderr.</li></ul>
 <div class="card"><table class="tall"><tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
 <tr><td><code>SENTRY_DSN</code></td><td>Empty</td><td>Turns on Sentry for Go processes.</td></tr>
 <tr><td><code>NEXT_PUBLIC_SENTRY_DSN</code>, <code>SENTRY_WEB_DSN</code></td><td>Empty</td><td>Turn on Sentry for the web client. The second overrides the first on its server.</td></tr>
@@ -78,6 +78,6 @@
 </table>
 </div>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/observability</code> · <code>core/internal/conversation/telemetry.go</code> · <code>core/internal/task/telemetry.go</code> · <code>core/internal/state/task_google.go</code> · <code>core/internal/computer/computer.go</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/infrastructure/poc/terraform/observability.tf</code> · <code>web/src/lib/observability</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/app/sentry-tunnel/route.ts</code> · <code>web/src/components/dev/DebugBlock.tsx</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/observability</code> · <code>core/internal/conversation/telemetry.go</code> · <code>core/internal/task/telemetry.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/computer/computer.go</code> · <code>core/internal/computer/trace.go</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/infrastructure/app/terraform/observability.tf</code> · <code>web/src/lib/observability</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/app/sentry-tunnel/route.ts</code> · <code>web/src/components/dev/DebugBlock.tsx</code></p></details>
 </body>
 </html>

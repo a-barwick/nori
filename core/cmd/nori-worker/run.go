@@ -1,0 +1,86 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"time"
+
+	"nori/internal/agent"
+	"nori/internal/agent/openrouter"
+	"nori/internal/dispatch"
+	"nori/internal/env"
+	"nori/internal/platform"
+	"nori/internal/task"
+	"nori/internal/taskworker"
+	"nori/internal/wake"
+	"nori/internal/workerservice"
+)
+
+// run is one worker lifetime. A bounded run belongs to one wake request and ends
+// when its build has no work left; an unbounded run polls until ctx ends.
+func run(ctx context.Context, waker wake.Waker, sliceID string, known []string, bounded bool) (result error) {
+	cfg, err := loadConfig(bounded, waker)
+	if err != nil {
+		return err
+	}
+	slice := &workerservice.Slice{
+		ID: sliceID, Build: cfg.build, Known: known, Bounded: bounded,
+		PollWindow: cfg.pollWindow, IdleWindow: cfg.idleWindow, Waker: waker,
+	}
+	ctx, cancel := slice.Poll(ctx)
+	defer cancel()
+	store, err := platform.OpenStore(ctx)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	control, err := store.Control(ctx)
+	if err != nil {
+		return err
+	}
+	if err = control.Check(); err != nil {
+		return slice.Paused(ctx)
+	}
+	c, err := task.Dial(ctx, platform.Secrets())
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	key := os.Getenv("OPENROUTER_API_KEY")
+	if key == "" {
+		return fmt.Errorf("OPENROUTER_API_KEY must be configured for the task worker")
+	}
+	local := os.Getenv("TEMPORAL_LOCAL") == "true"
+	if os.Getenv("NORI_LOCAL_COMPUTER_URL") != "" && !local {
+		return fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
+	}
+	// A hosted worker wakes the conversation after saving a task event, and
+	// retries that wake on its own tick. A local worker leaves both to the API.
+	steps := dispatch.Commands | dispatch.Publications
+	service := agent.New(store, openrouter.New(key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra")), platform.Computer())
+	service.Capabilities = cfg.capabilities
+	activities := &task.Activities{Agent: service, Store: store}
+	if !local {
+		activities.Notify = waker.WakeConversation
+		steps |= dispatch.ConversationWake
+	}
+	stopTimeout := 25 * time.Second
+	if bounded {
+		stopTimeout = 5 * time.Minute
+	}
+	dispatcher := platform.Dispatcher(store, task.NewEngine(c), waker)
+	worker, err := taskworker.Start(c, taskworker.Options{Deployment: cfg.deployment, Build: cfg.build, StopTimeout: stopTimeout}, activities, known...)
+	if err != nil {
+		return err
+	}
+	defer func() { result = slice.Finish(worker, dispatcher, result) }()
+	if err = dispatcher.Reconcile(ctx, dispatch.RepairClosed); err != nil {
+		if bounded {
+			return err
+		}
+		log.Printf("worker reconciliation: %v", err)
+	}
+	return slice.Loop(ctx, worker, dispatcher, steps)
+}

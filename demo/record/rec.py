@@ -8,7 +8,7 @@ import sys
 import time
 from urllib.request import Request, urlopen
 
-from lib import HERE, ROOT, call, poc
+from lib import HERE, ROOT, call, ops
 
 (HERE / "snaps").mkdir(exist_ok=True)
 (HERE / "art").mkdir(exist_ok=True)
@@ -32,8 +32,8 @@ while time.time() < end:
             if path.exists():
                 continue
             try:
-                req = Request(f"{ROOT}/api/artifact", data=json.dumps({"run_id": r["id"], "artifact_id": a["id"]}).encode(), method="POST", headers={"Authorization": "Bearer " + poc.gcloud("auth", "print-access-token"), "Content-Type": "application/json", "x-goog-user-project": "bot-111549"})
-                with urlopen(req, timeout=40, context=poc.SSL_CONTEXT) as res:
+                req = Request(f"{ROOT}/api/artifact", data=json.dumps({"run_id": r["id"], "artifact_id": a["id"]}).encode(), method="POST", headers={"Authorization": "Bearer " + ops.gcloud("auth", "print-access-token"), "Content-Type": "application/json", "x-goog-user-project": "bot-111549"})
+                with urlopen(req, timeout=40, context=ops.SSL_CONTEXT) as res:
                     path.write_bytes(res.read())
                 print("artifact", a["id"], flush=True)
             except Exception as e:

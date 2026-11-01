@@ -21,16 +21,16 @@ import (
 	sdklog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
 	"nori/internal/state"
 	"nori/internal/task"
+	"nori/internal/transcript"
 )
 
 // Wake signals carry no commands or authority. A task parked on a real durable
 // input question can therefore cross the actual ContinueAsNew boundary without
 // invoking a provider, tool, or production execution queue.
-func checkpointBoundary(ctx context.Context, store *state.Google, address string) (map[string]bool, error) {
+func checkpointBoundary(ctx context.Context, store state.ConversationStore, address string) (map[string]bool, error) {
 	if !regexp.MustCompile(`^127\.0\.0\.1:\d+$`).MatchString(address) {
 		return nil, errors.New("checkpoint fixture requires loopback Temporal")
 	}
@@ -39,15 +39,20 @@ func checkpointBoundary(ctx context.Context, store *state.Google, address string
 	if err != nil {
 		return nil, err
 	}
-	if err = store.Incorporate(ctx, id, accepted.Revision, accepted.Position); err != nil {
+	if err = store.Incorporate(ctx, state.IncorporateRequest{RunID: id, Revision: accepted.Revision, Position: accepted.Position}); err != nil {
 		return nil, err
 	}
 	question := state.Question{ID: id + "-checkpoint-question", Kind: "input", Text: "What is the release answer?", CallID: "checkpoint-request-input", Revision: accepted.Revision}
 	if err = store.ProjectQuestion(ctx, id, accepted.Revision, question); err != nil {
 		return nil, err
 	}
-	contents := []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: strings.Repeat("PRIVATE_HISTORY_SENTINEL ", 4096)}}}, {Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: question.CallID, Name: "request_input", Args: map[string]any{"question": question.Text}}}}}}
-	data, err := json.Marshal(contents)
+	messages := []transcript.Message{
+		transcript.UserText(strings.Repeat("PRIVATE_HISTORY_SENTINEL ", 4096)),
+		{Role: transcript.RoleModel, Parts: []transcript.Part{{ToolCall: &transcript.ToolCall{
+			ID: question.CallID, Name: "request_input", Args: map[string]any{"question": question.Text},
+		}}}},
+	}
+	data, err := json.Marshal(messages)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +61,7 @@ func checkpointBoundary(ctx context.Context, store *state.Google, address string
 		return nil, err
 	}
 	seed := task.Checkpoint{Ref: ref, Revision: accepted.Revision, Position: accepted.Position, Spent: .375, Budget: 1.5, Models: 7, Tools: 3, Checks: 2, Corrections: 1, Question: &question, QuestionPublished: true, Stopped: true, Request: accepted.Request, ReadOnly: true, ComputerRevisions: []int64{1, 2}}
-	if err = store.Spend(ctx, id, seed.Spent, seed.Budget, false); err != nil {
+	if err = store.Spend(ctx, state.SpendUpdate{RunID: id, Spent: seed.Spent, Budget: seed.Budget}); err != nil {
 		return nil, err
 	}
 	before, err := store.Reconcile(ctx, id)

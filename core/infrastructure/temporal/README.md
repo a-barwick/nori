@@ -32,7 +32,7 @@ Temporal deployment/task-queue/wake-queue group. `NORI_WORKER_WAKE_QUEUE` is tha
 group's full native queue path. Services use the existing runtime identity and
 `NORI_WAKE_SERVICE_ACCOUNT`; only queue-scoped enqueue and service-scoped invoker
 grants are added. The caller's existing `actAs` permission remains owned by the
-POC state. Hosted Temporal TLS and Secret Manager authentication are unchanged.
+app state. Hosted Temporal TLS and Secret Manager authentication are unchanged.
 
 The predictable service URL uses Cloud Run's documented
 [`SERVICE_NAME-PROJECT_NUMBER.REGION.run.app` format](https://docs.cloud.google.com/run/docs/triggering/https-request#deterministic_url).
@@ -42,8 +42,8 @@ root URL is configured as an accepted audience, avoiding a Terraform cycle.
 From `core/`, use the explicit cost-control switch:
 
 ```sh
-python3 infrastructure/poc/poc.py pause
-python3 infrastructure/poc/poc.py unpause
+python3 infrastructure/app/ops.py pause
+python3 infrastructure/app/ops.py unpause
 ```
 
 Pause first fences dispatch on all retained worker wake queues, then closes
@@ -68,7 +68,7 @@ The next computer tool starts the retained VM on demand.
 The helper reads `TEMPORAL_API_KEY` from the existing root `.env` without logging
 it. `NORI_ENV_FILE` selects that existing file from a worktree. Credentials are
 never copied into the worktree or Terraform. The retained VM must have its old
-termination schedule cleared in place with `poc.py clear-deadline` while stopped;
+termination schedule cleared in place with `ops.py clear-deadline` while stopped;
 unpause verifies that migration remains complete.
 
 ## Immutable releases
@@ -121,7 +121,7 @@ the candidate database; native outer delivery is untested in this demonstration.
 `candidate_firestore_database` and `candidate_event_queue` outputs identify these
 resources for candidate-only cleanup. Fence candidate queues, close only the
 candidate database's control, verify request drain, and restore the retained
-computer's paused/stopped state. Do not use the global POC pause helper for an
+computer's paused/stopped state. Do not use the global app pause helper for an
 isolated candidate: it deliberately writes production control.
 
 Preparation requires an OCI-capable Docker Buildx builder; select an existing
@@ -149,6 +149,37 @@ Temporal deployment and queue. Keep old pools, service targets, immutable images
 workflow histories, browser profile, disks and task files through rollout and
 rollback. Native verification must confirm queue fences, request drain, all old
 pools at zero/no scalers, and the retained computer stopped before finishing.
+
+### Retiring old builds
+
+Workers register only the `nori-task-v3` workflow. No workflow was running when
+`nori-task-v1` and `nori-task-v2` were removed, so nothing is pinned to a build
+from before that change. Those builds are still in the manifest and in
+Terraform state; retiring them is a separate operator step that `make deploy`
+cannot perform.
+
+`make deploy` builds its Terraform variables from state, not from this
+manifest, so editing `worker-releases.json` alone retires nothing. To retire
+builds:
+
+1. Read the Current build with `temporal worker deployment describe --name=nori-task`
+   (the query `current_worker` in `release/deploy.py` makes; it requires no
+   active ramp). That build is the only entry to keep in
+   `request_worker_images` and `request_worker_targets`. Empty `worker_images`
+   and `scalable_build_ids`.
+2. Confirm no running workflow is pinned to a build being dropped.
+3. Review the plan from the reduced manifest. It destroys retained pools and
+   services, which carry `prevent_destroy` and `deletion_protection`, and it
+   shrinks the `NORI_WORKER_SERVICES` route map of the surviving service.
+   `check_plan` and `route_only_update` refuse that by design; do not loosen
+   them. Apply it by hand, lifting the destroy protections only on the
+   resources being retired and restoring them afterwards.
+4. Keep the isolated candidate target unless retiring its data is a separate
+   decision. It owns the `nori-worker-candidate` database, event queue and IAM
+   binding, so removing it from the manifest also plans to destroy those.
+
+After that apply, `make deploy` runs unchanged: it reads the smaller state and
+its plan again adds only the new worker.
 
 ## Credentials and measurements
 

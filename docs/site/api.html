@@ -10,9 +10,10 @@
 <body>
 <h1>Service API</h1>
 <p class="lede">Clients send messages and task commands to the agent service over HTTP, and read back snapshots.</p>
-<section><h2>Endpoints today</h2>
+<section><h2>Endpoints</h2>
 <div class="card"><table class="tall"><tr><th>Endpoint</th><th>What it does</th></tr>
 <tr><td><code>POST /api/session</code></td><td>Returns the conversation and tasks.</td></tr>
+<tr><td><code>POST /api/status</code></td><td>Returns <code>version</code> and <code>busy</code>, a cheap check for whether the session changed.</td></tr>
 <tr><td><code>POST /api/turn</code></td><td>Sends a message. Returns 202 once it's saved.</td></tr>
 <tr><td><code>POST /api/command</code></td><td>Sends a task command, such as an answer or a continue.</td></tr>
 <tr><td><code>POST /api/input</code></td><td>Sends an explicit update to one task.</td></tr>
@@ -22,7 +23,13 @@
 <tr><td><code>POST /api/process</code></td><td>Cloud Tasks calls this to process saved messages. Clients don't call it.</td></tr>
 <tr><td><code>POST /api/resume</code></td><td>Redelivers saved commands and wakes tasks. Clients don't call it.</td></tr>
 </table></div>
-<p>The web client is the only caller today. It reaches these endpoints through its Next.js server, and polls for snapshots every 2 seconds while work is running. See <a href="frontend.html#polling">Polling</a>.</p>
+<p>The web client is the only caller. It reaches these endpoints through its Next.js server. While work is running, it polls <code>/api/status</code>, as <a href="frontend.html#polling">Polling</a> describes.</p>
+<div class="card"><table class="tall"><tr><th>Status field</th><th>Behavior</th></tr>
+<tr><td>Reads</td><td>The paused flag, the conversation counters, the active turn and the open tasks. A snapshot also reads messages, finished tasks, attempts and usage.</td></tr>
+<tr><td><code>busy</code></td><td>Set while chat input is waiting or processing, or an open task can still progress. The web client keeps polling while it is set.</td></tr>
+<tr><td><code>version</code></td><td>Changes with anything those reads cover, including every lease renewal during a turn. It doesn't change for a finished task's late spend, or for usage records written outside a turn.</td></tr>
+<tr><td>Session fetch</td><td>The client fetches the session on its first status call, when <code>version</code> changes, when a status call fails, and once when <code>busy</code> turns false.</td></tr>
+<tr><td>Missing or failing</td><td>If the endpoint is missing, or a status call fails three times in a row, the web client polls the session every 2 seconds instead.</td></tr></table></div>
 </section>
 <section class="designed"><h2>The protocol for many clients</h2>
 <p><span class="tag design">designed · milestones 8 and 12</span></p>
@@ -46,6 +53,6 @@
 <ul class="pts"><li>One log and one stream per owner, since tasks and badges span threads.</li><li>Server-sent events with a long-poll fallback. WebSockets were rejected for now because commands already use POST.</li><li>Clients don't read Firestore directly, so its schema doesn't become the contract.</li><li>Task results land in the thread that started the task.</li></ul>
 <p>Everything beyond today's API is a proposal.</p></details>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/wake/http.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/status.go</code></p></details>
 </body>
 </html>

@@ -122,7 +122,7 @@ afterAll(async () => {
 
 journey("admitted model work drains; a late command and exact answer resume the same pinned workflow", async () => {
   const logStart = (await Bun.file(`${root}/worker.log`).text()).length;
-  const run = await start("Start exactly one task now. Design a small desk organizer using only reasoning, then use wait_for_input to ask what color I want. Do not browse or run shell commands. Do not finish until I answer; after my answer give the final concise description and finish.");
+  const run = await start("Start exactly one task now. Design a small desk organizer using only reasoning, then use request_input to ask what color I want. Do not browse or run shell commands. Do not finish until I answer; after my answer give the final concise description and finish.");
   await until(async () => (await Bun.file(`${root}/worker.log`).text()).slice(logStart), (s) => /phase=draining active=1/.test(s), "a real admitted activity to outlive polling");
   await command(run.id, "steer", { text: "Use exactly three compartments. Continue by asking the color question before finishing." });
   const question = await until(() => find(run.id), waiting, "color question after the late command");
@@ -161,7 +161,7 @@ journey("admitted model work drains; a late command and exact answer resume the 
 journey("cold commands survive delivery wait; paused Stop and terminal wake identities survive resume", async () => {
   await post(`${tasks}/hold`);
   const dispatchedBefore = (await queue()).deliveries.length;
-  const run = await start("Start exactly one task now. Name a compact desk organizer, then use wait_for_input to ask what color I want. Do not browse or run shell commands. Wait until I answer.");
+  const run = await start("Start exactly one task now. Name a compact desk organizer, then use request_input to ask what color I want. Do not browse or run shell commands. Wait until I answer.");
   await command(run.id, "steer", { text: "The organizer name must include Pebble. Ask the color question and wait." });
   expect((await queue()).deliveries.length).toBe(dispatchedBefore);
   await post(`${tasks}/release`);

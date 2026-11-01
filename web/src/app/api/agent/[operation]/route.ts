@@ -1,10 +1,11 @@
 import { localDevelopment, sameOrigin } from "@/lib/runtime/auth";
+import { isRuntimeMethod } from "@/lib/runtime/methods";
 import { reportUpstreamFailure, upstreamTraceHeaders } from "@/lib/observability/upstream";
 
 export async function POST(request: Request, context: { params: Promise<{ operation: string }> }) {
   const { operation } = await context.params;
   const configured = process.env.NORI_LOCAL_AGENT_URL;
-  if (!configured || !localDevelopment(request.headers) || !["session", "turn", "input", "cancel", "command", "artifact", "trace"].includes(operation)) {
+  if (!configured || !localDevelopment(request.headers) || !isRuntimeMethod(operation)) {
     return Response.json({ error: "Not found." }, { status: 404 });
   }
   if (!sameOrigin(request)) return Response.json({ error: "Forbidden." }, { status: 403 });
