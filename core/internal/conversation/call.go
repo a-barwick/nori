@@ -155,30 +155,9 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if taskRead.err != nil {
 		return taskRead.err
 	}
-	snapshot := taskRead.session
-	if !ciStart.IsZero() {
-		// Keep active work visible even if it predates CI. Preflight normally
-		// refuses it; never hide it merely to make a smoke request cheaper.
-		snapshot.Runs = slices.DeleteFunc(snapshot.Runs, func(run state.Run) bool {
-			return run.StartedAt.Before(ciStart) && (run.Status == state.RunCompleted || run.Status == state.RunFailed || run.Status == state.RunCancelled)
-		})
-	}
-	eventRunIDs := []string{}
-	for _, input := range t.Inputs {
-		if input.Event != nil {
-			eventRunIDs = append(eventRunIDs, input.Event.RunID)
-		}
-	}
-	taskContext, err := r.tasks.ContextRecords(callCtx, snapshot.Runs, eventRunIDs)
+	taskContext, err := r.prepareAttemptTasks(callCtx, t, &model, taskRead.session, ciStart)
 	if err != nil {
 		return err
-	}
-	t.Attempt.ContextTruncated = t.Attempt.ContextTruncated || taskContext.Truncated
-	model.TaskIDs = nil
-	for _, records := range [][]*TaskContextRecord{taskContext.ActiveTasks, taskContext.EventTasks, taskContext.RecentTasks} {
-		for _, record := range records {
-			model.TaskIDs = append(model.TaskIDs, record.ID)
-		}
 	}
 
 	classified := <-hintReady
@@ -516,4 +495,33 @@ func (r *Runner) readAttemptTasks(ctx context.Context) taskResult {
 	started := time.Now()
 	snapshot, err := r.tasks.Store.ConversationProjection(ctx)
 	return taskResult{snapshot, err, time.Since(started).Milliseconds()}
+}
+
+func (r *Runner) prepareAttemptTasks(callCtx context.Context, t *state.ConversationTurn, model *Model, snapshot state.Session, ciStart time.Time) (TaskContext, error) {
+	if !ciStart.IsZero() {
+		// Keep active work visible even if it predates CI. Preflight normally
+		// refuses it; never hide it merely to make a smoke request cheaper.
+		snapshot.Runs = slices.DeleteFunc(snapshot.Runs, func(run state.Run) bool {
+			return run.StartedAt.Before(ciStart) && (run.Status == state.RunCompleted || run.Status == state.RunFailed || run.Status == state.RunCancelled)
+		})
+	}
+	eventRunIDs := []string{}
+	for _, input := range t.Inputs {
+		if input.Event != nil {
+			eventRunIDs = append(eventRunIDs, input.Event.RunID)
+		}
+	}
+	taskContext, err := r.tasks.ContextRecords(callCtx, snapshot.Runs, eventRunIDs)
+	if err != nil {
+		return TaskContext{}, err
+	}
+	t.Attempt.ContextTruncated = t.Attempt.ContextTruncated || taskContext.Truncated
+	model.TaskIDs = nil
+	for _, records := range [][]*TaskContextRecord{taskContext.ActiveTasks, taskContext.EventTasks, taskContext.RecentTasks} {
+		for _, record := range records {
+			model.TaskIDs = append(model.TaskIDs, record.ID)
+		}
+	}
+
+	return taskContext, nil
 }
