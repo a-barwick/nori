@@ -231,7 +231,18 @@ func (s *Google) Project(ctx context.Context, id string, revision int64, kind, t
 		if kind == "waiting" {
 			waiting = text
 		}
-		return tx.Update(s.runs().Doc(id), []firestore.Update{{Path: "waiting", Value: waiting}, {Path: "events", Value: firestore.ArrayUnion(Event{Kind: kind, Text: text, CreatedAt: time.Now().UTC()})}})
+		return tx.Update(s.runs().Doc(id), []firestore.Update{{Path: "waiting", Value: waiting}, {Path: "progress", Value: ""}, {Path: "events", Value: firestore.ArrayUnion(Event{Kind: kind, Text: text, CreatedAt: time.Now().UTC()})}})
+	})
+}
+
+// SetProgress replaces the task's latest progress line. Unlike Project it adds no
+// event, so polling a long job can't grow the task's saved record.
+func (s *Google) SetProgress(ctx context.Context, id string, revision int64, text string) error {
+	return s.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		if _, e := s.guardTx(tx, id, revision); e != nil {
+			return e
+		}
+		return tx.Update(s.runs().Doc(id), []firestore.Update{{Path: "progress", Value: text}})
 	})
 }
 

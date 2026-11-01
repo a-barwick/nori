@@ -15,7 +15,7 @@
 <div class="node inner"><b>Workflow adds to spent</b><small>The task's spent figure grows between calls.</small></div><div class="arrow">↓ <span class="lbl">spent reaches $1</span></div>
 <div class="node wait"><b>Task waits at $1</b><small>It saves a budget question, and continue adds $1.</small></div>
 </div></div>
-<ul class="pts"><li>The $1 limit is checked between calls, so it isn't a hard cap on billing.</li><li>An unknown cost fails the task.</li><li>Outer-loop and Jev classifier calls write a usage row before the provider call.</li></ul>
+<ul class="pts"><li>The $1 limit is checked between calls, so it isn't a hard cap on billing.</li><li>Each web search adds $0.005 to the task's spent figure.</li><li>An unknown cost fails the task.</li><li>Outer-loop and Jev classifier calls write a usage row before the provider call.</li></ul>
 <section><h2>Four controls</h2>
 <div class="grid4">
   <div class="card tight"><p class="keyline">Task budget · $1</p><p class="note">Applies to each task. When it runs out, the task saves its progress and asks, and <code>continue</code> adds $1.</p></div>

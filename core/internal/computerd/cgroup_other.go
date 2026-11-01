@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-type operationGroup struct{}
+type operationGroup struct{ path string }
 
 func newOperationGroup() (*operationGroup, error) {
 	return nil, errors.New("shell execution requires Linux cgroup v2 delegation")

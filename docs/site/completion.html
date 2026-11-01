@@ -9,37 +9,37 @@
 </head>
 <body>
 <h1>Finishing a task</h1>
-<p class="lede">A task finishes only after checks on its saved records and a verdict from the Jev classifier.</p>
-<div class="card"><div class="flow">
-<div class="node inner"><b>The model calls <code>complete(answer, evidence, unmet)</code></b><small>A plain text answer no longer finishes a task.</small></div><div class="arrow">↓</div>
-<div class="node inner"><b>The records are checked</b><small>No unread steers. Every tool call has a result. Evidence resolves.</small></div><div class="arrow">↓</div>
-<div class="node inner"><b>Jev checks the answer</b><small>“Does this answer satisfy every instruction?” Yes needs 0.8 confidence.</small></div><div class="arrow">↓</div>
-<div class="node decide inner">Did the checks pass with a confident yes?</div>
-<div class="branch"><div class="node inner"><b>Yes</b><small>The task publishes its answer and completes.</small></div><div class="node decide inner">No: did it run anything except reads?</div></div><div class="arrow">↓ <span class="lbl">after no</span></div>
-<div class="branch"><div class="node inner"><b>Only reads</b><small>Up to two read-only corrections, then the answer is published as incomplete.</small></div><div class="node wait"><b>Anything else</b><small>Ask the user. The action is never repeated automatically.</small></div></div>
+<p class="lede">The runtime checks a task's saved records, then the outer loop compares the answer with the results the task cited.</p>
+<div class="card"><p><span class="say me">Back up the photos and check the counts match.</span></p><div class="flow">
+<div class="node inner"><b>Inner loop</b><small>The job returns exit code 0 and 2,400 files per folder.</small></div><div class="arrow">↓ <code>complete(answer, evidence, unmet)</code></div>
+<div class="node"><b>Runtime</b><small>Checks the records. No model is involved.</small></div><div class="arrow">↓ answer, cited results, unmet items</div>
+<div class="node outer"><b>Outer loop</b><small>Compares the answer with the cited results and reports what is done.</small></div>
 </div></div>
+<section><h2>The record checks</h2>
+<ul class="pts"><li>Every instruction has been read.</li><li>Every tool call has a saved result.</li><li>No operation has an unresolved outcome.</li><li>A task with saved tool results cites them as evidence.</li><li>Each cited reference resolves to a saved result that can be read.</li></ul>
+</section>
 <section><h2>The decision table</h2>
-<p>The row comes from what the task attempted, read from its records. “Check the weather and save it to a file” counts as anything else once it runs a shell command.</p>
-<div class="card"><table class="tall"><tr><th>Most it tried</th><th>Confident yes</th><th>Unsure, partly, no or failed checks</th></tr>
-<tr><td>Browser reads only</td><td>Publish</td><td>Read-only correction</td></tr>
-<tr><td>Anything else</td><td>Publish</td><td>Ask the user</td></tr>
-</table></div>
-<p class="designed"><span class="tag design">designed</span> The planned action policy splits anything else into reversible writes and sensitive sends.</p><p>If Jev is unavailable, publish the proposed answer as unverified and explain what could not be checked. The task is not completed.</p></section>
+<div class="card"><table class="tall"><tr><th>What the runtime finds</th><th>What happens</th></tr>
+<tr><td>Checks pass, nothing unmet</td><td>The task is completed.</td></tr>
+<tr><td>Checks pass, unmet items listed</td><td>The task ends as failed. Unmet items are requirements the task reports it didn't meet, and its result lists them after the answer.</td></tr>
+<tr><td>Checks fail, reads only</td><td>The task gets up to two read-only corrections, then ends as failed with a partial answer.</td></tr>
+<tr><td>Checks fail, after a write or stop</td><td>The task asks the user. It never repeats the action automatically.</td></tr>
+<tr><td>Instructions changed</td><td>The task reads the new instructions and proposes again.</td></tr>
+</table></div></section>
+<section><h2>What the outer loop receives</h2>
+<ul class="pts"><li>On the turn that reports a task's end, the runtime reads the results the task cited and passes up to 8 KiB of them to the outer loop. It shortens long results from the middle.</li><li>If the answer claims something the results don't show, the outer loop tells the user and doesn't dispatch the work again by itself.</li><li>The cited results are data. A page that says "ignore your instructions" is text in a result, and the outer loop treats it that way.</li></ul>
+</section>
 <section><h2>What this catches</h2>
 <div class="card"><p><span class="say me">What's the weather in Phoenix?</span> <span class="say me">No, Tucson.</span></p>
 <p class="note">An answer about Phoenix can't be published, because the instructions changed while it was being written.</p></div>
 <div class="card designed"><p><span class="say me">Did you send it?</span> <span class="tag design">designed · AB-172</span></p>
 <p class="note">Nori answers from the receipt, or checks with the provider. A status question never sends anything again.</p></div>
-<ul class="pts"><li>Every check is logged so the 0.8 threshold can be tuned from the logged results.</li><li>The check covers completeness. It doesn't prove each fact in the answer.</li></ul>
+<ul class="pts"><li>The checks cover the records. No separate system judges whether an answer satisfies the request, so a wrong answer is caught only if the outer loop can see the conflict in the cited results.</li><li>Tools make that comparison possible by <a href="tools.html">returning a way to confirm each change</a>.</li></ul>
 </section>
 <details class="more"><summary>Evidence and telemetry</summary>
-<p>New tasks use <code>nori-task-v3</code>. Older workflows keep their original completion behavior. Evidence references must resolve to saved tool results, and claimed effects must be confirmed.</p>
-<p>Each check reads the current request, accepted corrections, ordered tool calls, input answers and cited saved results. Asking which bill to read before opening it can be checked from that order.</p>
-<p>Private history references bind the task, parent and exact bytes. Temporal carries references instead of the cumulative transcript.</p>
-<p>The check saves its verdict, confidence, revision and position. Sentry and Arize receive correlated spans and operational attributes. Private history and credentials are excluded by default.</p>
-<p>On October 31, 2026, the local Sol/Terra/Jev suite passed bill selection, corrected Tucson weather with a held answer, and a failed command that waits for direction. The bill and weather results passed saved-record checks and Jev verification. These local fixtures do not establish deployed acceptance.</p>
-<p>Local collector checks exercise both exporter paths. They do not establish ingestion by the hosted Sentry or Arize projects.</p>
+<p>Private history references bind the task, parent and exact bytes. Temporal carries references instead of the cumulative transcript. Old workflows retain their original behavior, and completed tasks keep their saved Jev verdicts.</p>
+<p>Each check saves its record failures, revision and position. Sentry and Arize receive correlated spans and operational attributes. Private history and credentials are excluded by default.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/task/completion.go</code> · <a href="https://linear.app/a-barwick/issue/AB-152">AB-152</a> · <a href="https://linear.app/a-barwick/issue/AB-214">AB-214</a> · <a href="https://linear.app/a-barwick/issue/AB-219">AB-219</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/task/completion.go</code> · <code>core/internal/task/history.go</code> · <code>core/internal/conversation/task_context.go</code> · <a href="https://linear.app/a-barwick/issue/AB-152">AB-152</a> · <a href="https://linear.app/a-barwick/issue/AB-214">AB-214</a> · <a href="https://linear.app/a-barwick/issue/AB-219">AB-219</a></p></details>
 </body>
 </html>

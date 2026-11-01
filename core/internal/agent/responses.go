@@ -101,8 +101,10 @@ func (s *Service) respond(ctx context.Context, contents []*genai.Content, wait b
 		return decision, err
 	}
 	config := modelConfig(wait)
+	instructions := config.SystemInstruction.Parts[0].Text
 	if enabled, _ := ctx.Value(completionProtocolKey{}).(bool); enabled {
 		config = completionModelConfig(wait)
+		instructions = config.SystemInstruction.Parts[0].Text + s.catalogInstruction()
 	}
 	tools := []any{}
 	for _, fn := range config.Tools[0].FunctionDeclarations {
@@ -118,7 +120,7 @@ func (s *Service) respond(ctx context.Context, contents []*genai.Content, wait b
 	}
 	defer control.Close()
 	body, err := json.Marshal(map[string]any{
-		"model": s.ModelName, "input": input, "instructions": config.SystemInstruction.Parts[0].Text,
+		"model": s.ModelName, "input": input, "instructions": instructions,
 		"tools": tools, "max_output_tokens": limit, "store": false,
 		"include":  []string{"reasoning.encrypted_content"},
 		"provider": map[string]any{"max_price": map[string]float64{"prompt": 1, "completion": 5}, "require_parameters": true},
