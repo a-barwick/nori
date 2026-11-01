@@ -91,6 +91,7 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 			detail = "Interrupted: computer stop could not be confirmed during terminal recovery."
 			failures = append(failures, stopErr)
 		}
+		detail += attemptedWrites(ctx, store, run.ID)
 		if _, e = store.Publish(ctx, state.PublishRequest{
 			RunID: run.ID, Revision: run.Revision, Status: status, Detail: detail, CostUnknown: run.CostUnknown, BypassRouting: true,
 		}); e != nil {
@@ -102,6 +103,21 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// attemptedWrites says which writes may have happened when a task ends without checking them.
+func attemptedWrites(ctx context.Context, store state.TaskStore, id string) string {
+	ops, err := store.Operations(ctx, id)
+	if err != nil {
+		return " The task's writes couldn't be read, so one may have happened."
+	}
+	text := ""
+	for _, op := range ops {
+		if op.Outcome == "attempted" {
+			text += " A write may have happened and wasn't checked: " + op.Name + "."
+		}
+	}
+	return text
 }
 
 func repairCleanup(ctx context.Context, store state.TaskStore, config computer.Provider, run state.Run) error {
@@ -182,7 +198,7 @@ func StopPaused(ctx context.Context, store state.TaskStore, config computer.Prov
 		return run, err
 	}
 	run, err = store.Publish(ctx, state.PublishRequest{
-		RunID: id, Revision: run.Revision, Status: state.RunCancelled, Detail: "Stopped by Austin.", CostUnknown: run.CostUnknown, BypassRouting: true,
+		RunID: id, Revision: run.Revision, Status: state.RunCancelled, Detail: "Stopped by Austin." + attemptedWrites(ctx, store, id), CostUnknown: run.CostUnknown, BypassRouting: true,
 	})
 	if err != nil {
 		return run, err

@@ -24,6 +24,7 @@ type HistoryInput struct {
 	Ref      string
 	Position int64
 	Question *state.Question
+	Action   *PendingAction
 }
 type HistorySync struct {
 	Ref                string
@@ -31,6 +32,12 @@ type HistorySync struct {
 	Grants             int
 	QuestionResolved   bool
 	Request            string
+	// Decision is the approve or decline command for the pending write. A later
+	// instruction overrides an approval. ActionClosed is the outcome when an
+	// instruction ended the write here, so its call already has a result.
+	Decision     state.CommandKind
+	DecisionID   string
+	ActionClosed string
 }
 type CurrentPosition struct{ Revision, Position int64 }
 
@@ -195,12 +202,22 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 	}
 	messages := []transcript.Message{}
 	q := in.Question
+	action := in.Action
 	for _, cmd := range snap.Commands {
 		if cmd.Position <= in.Position {
 			continue
 		}
 		switch cmd.Kind {
 		case state.CommandStart, state.CommandSteer:
+			if action != nil {
+				closed := map[string]any{"voided": true, "operation_id": action.Operation, "reason": "Austin changed the task instructions, so nothing was sent. Propose again if the write is still needed."}
+				out.ActionClosed = "voided"
+				if out.Decision == state.CommandDecline {
+					closed, out.ActionClosed = map[string]any{"declined": true, "operation_id": action.Operation, "reason": declinedReason}, "declined"
+				}
+				messages = append(messages, transcript.ToolResultMessage(action.CallID, action.Name, closed))
+				action, out.Decision, out.DecisionID = nil, "", ""
+			}
 			if q != nil && q.CallID != "" {
 				superseded := map[string]any{"superseded": true, "reason": "Austin changed the task instructions."}
 				messages = append(messages, transcript.ToolResultMessage(q.CallID, "request_input", superseded))
@@ -221,6 +238,12 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 				}
 				q = nil
 				out.QuestionResolved = true
+			}
+		case state.CommandApprove, state.CommandDecline:
+			if q != nil && q.ID == cmd.QuestionID && q.Kind == "approval" {
+				q = nil
+				out.QuestionResolved = true
+				out.Decision, out.DecisionID = cmd.Kind, cmd.ID
 			}
 		case state.CommandContinue:
 			if q != nil && q.ID == cmd.QuestionID && q.Kind == "budget" {

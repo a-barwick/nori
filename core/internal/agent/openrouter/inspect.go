@@ -57,7 +57,7 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 			err = errors.Join(err, reservation.Settle(ctx, cost, "", nil))
 		}()
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(body))
 	if err != nil {
 		return out, err
 	}

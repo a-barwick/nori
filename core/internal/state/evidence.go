@@ -29,6 +29,33 @@ type OperationRecord struct {
 	Revision    int64    `json:"revision" firestore:"revision"`
 	Attempt     int      `json:"attempt" firestore:"attempt"`
 	ArtifactIDs []string `json:"artifact_ids" firestore:"artifact_ids"`
+	// Action is set for a write that needs approval. The runtime sends what it holds, so model output after the
+	// approval can't change what runs.
+	Action *Action `json:"action,omitempty" firestore:"action,omitempty"`
+}
+
+// Action is the exact write the user was shown. Digest covers the tool, account and Spec.
+type Action struct {
+	Digest     string            `json:"digest" firestore:"digest"`
+	Text       string            `json:"text" firestore:"text"`
+	QuestionID string            `json:"question_id,omitempty" firestore:"question_id,omitempty"`
+	ApprovedBy string            `json:"approved_by,omitempty" firestore:"approved_by,omitempty"`
+	Spec       map[string]string `json:"spec" firestore:"spec"`
+}
+
+// UseApproval moves a prepared write to attempted, once, for the approve command that names its question. The
+// caller checks the task's revision in the same transaction.
+func UseApproval(op OperationRecord, cmd Command) (OperationRecord, error) {
+	if op.Outcome != "prepared" || op.Action == nil {
+		return op, ErrApprovalUsed
+	}
+	if cmd.Kind != CommandApprove || cmd.QuestionID == "" || cmd.QuestionID != op.Action.QuestionID {
+		return op, ErrQuestionStale
+	}
+	action := *op.Action
+	action.ApprovedBy = cmd.ID
+	op.Action, op.Outcome, op.Attempt = &action, "attempted", 1
+	return op, nil
 }
 
 type CompletionProposal struct {
@@ -99,7 +126,7 @@ func validOperation(op OperationRecord) bool {
 		return false
 	}
 	switch op.Outcome {
-	case "pending", "confirmed", "failed", "uncertain", "skipped":
+	case "pending", "confirmed", "failed", "uncertain", "skipped", "prepared", "attempted", "submitted", "declined", "voided":
 		return true
 	default:
 		return false
@@ -179,13 +206,34 @@ func PlanOperation(saved *SavedOperation, op OperationRecord) (OperationWrite, e
 		return OperationWrite{Noop: true}, nil
 	}
 	if old.CallID != op.CallID || old.Name != op.Name || old.EffectClass != op.EffectClass || op.Attempt < old.Attempt ||
-		(old.Outcome != "pending" && old.Attempt != op.Attempt) {
+		(old.Outcome != "pending" && old.Outcome != "prepared" && old.Attempt != op.Attempt) {
 		return OperationWrite{}, errors.New("operation evidence identity conflict")
 	}
-	if old.Outcome != "pending" && !(old.Outcome == "uncertain" && (op.Outcome == "confirmed" || op.Outcome == "failed")) {
+	if old.Action != nil && (op.Action == nil || old.Action.Digest != op.Action.Digest) {
+		return OperationWrite{}, errors.New("operation evidence identity conflict")
+	}
+	if !outcomeMayFollow(old.Outcome, op.Outcome) {
 		return OperationWrite{}, errors.New("recorded operation outcome is immutable")
 	}
 	return OperationWrite{}, nil
+}
+
+// outcomeMayFollow lists the only changes to a saved outcome. A write leaves attempted only for what the provider
+// shows, and nothing leaves a terminal outcome.
+func outcomeMayFollow(old, next string) bool {
+	switch old {
+	case "pending":
+		return true
+	case "prepared":
+		return next == "attempted" || next == "declined" || next == "voided" || next == "failed"
+	case "attempted":
+		return next == "submitted" || next == "confirmed" || next == "failed" || next == "uncertain"
+	case "submitted":
+		return next == "confirmed"
+	case "uncertain":
+		return next == "confirmed" || next == "failed"
+	}
+	return false
 }
 
 // ReadOperation validates a stored operation for reading. A record that only proves admission shows an attempt, never

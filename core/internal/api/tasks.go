@@ -63,7 +63,7 @@ func (s *server) command(w http.ResponseWriter, r *http.Request) {
 		valid = valid && body.Text != "" && body.QuestionID == ""
 	case "answer":
 		valid = valid && body.Text != "" && strings.TrimSpace(body.QuestionID) != ""
-	case "continue":
+	case "continue", "approve", "decline":
 		valid = valid && body.Text == "" && strings.TrimSpace(body.QuestionID) != ""
 	case "stop":
 		valid = valid && body.Text == "" && body.QuestionID == ""

@@ -245,6 +245,9 @@ func (r *Runner) modelFailureText(ctx context.Context, inputs []state.Conversati
 					if question.Kind == "budget" {
 						heading = "Task " + id + " is waiting for budget permission. Use its Continue control if you want to grant another budget."
 					}
+					if question.Kind == "approval" {
+						heading = "Task " + id + " is waiting for your approval. Nothing has run yet."
+					}
 					output = question.Text
 				}
 			}
@@ -414,8 +417,12 @@ func (r *Runner) finishCall(
 		if noDispatch && len(reply.Calls) != 0 {
 			err = fmt.Errorf("a turn without user input cannot authorize task commands")
 		}
+		failure := "The model returned invalid tool calls. No task commands were accepted."
+		if err == nil && !approvalAllowed(commands, t.Inputs) {
+			err = fmt.Errorf("an approval needs the user's own words")
+			failure = "Nothing was approved, because your message didn't read as a yes. Reply with a clear yes, or use the task's Approve button."
+		}
 		if err != nil {
-			failure := "The model returned invalid tool calls. No task commands were accepted."
 			attemptEnd(&t.Attempt, "error", failure)
 			t.Attempt.ProtocolInvalid = true
 			t.Attempt.Text = failure

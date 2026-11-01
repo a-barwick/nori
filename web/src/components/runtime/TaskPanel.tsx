@@ -16,8 +16,8 @@ function statusLabel(run: Run) {
   if (unverified(run)) return "Answer unverified";
   if (incomplete(run)) return "Incomplete";
   if (run.status === "running" && run.cancel_requested) return "Stopping…";
-  if (run.status === "running" && run.question?.resolved_by) return run.question.kind === "budget" ? "Budget accepted" : "Answer accepted";
-  if (run.status === "running" && (run.question || run.waiting)) return run.question?.kind === "budget" ? "Waiting for budget approval" : "Waiting for your answer";
+  if (run.status === "running" && run.question?.resolved_by) return run.question.kind === "budget" ? "Budget accepted" : run.question.kind === "approval" ? "Decision saved" : "Answer accepted";
+  if (run.status === "running" && (run.question || run.waiting)) return run.question?.kind === "budget" ? "Waiting for budget approval" : run.question?.kind === "approval" ? "Waiting for your approval" : "Waiting for your answer";
   if (run.status === "running" && run.events?.at(-1)?.kind === "checking") return "Checking the answer";
   if (run.status === "running" && run.progress) return "Running a long job";
   return { running: "Working on your task", completed: "Completed", failed: "Failed", cancelled: "Stopped" }[run.status];
@@ -235,11 +235,15 @@ export function TaskPanel({
                   </span>
                   <ChevronDown size={14} aria-hidden className={cn("shrink-0 text-ink-3", (selected?.id !== run.id || !expanded) && "-rotate-90")} />
                 </button>
-                {run.question?.resolved_by && run.status === "running" && <p className="mt-2 text-caption text-ink-3">{run.question.kind === "budget" ? "Budget accepted." : "Answer accepted."} Waiting for the task to continue.</p>}
+                {run.question?.resolved_by && run.status === "running" && <p className="mt-2 text-caption text-ink-3">{run.question.kind === "budget" ? "Budget accepted." : run.question.kind === "approval" ? "Decision saved." : "Answer accepted."} Waiting for the task to continue.</p>}
                 {(run.status === "running" || taskCommands.length > 0) && <div className="mt-2 space-y-2">
                   {run.status === "running" && <div className="flex flex-wrap gap-2">
                     {run.question?.kind === "input" && !run.question.resolved_by && !run.cancel_requested && <Button size="sm" disabled={unavailable || taskCommands.length > 0} onClick={() => answerQuestion(run.id)}>Answer question</Button>}
                     {run.question?.kind === "budget" && !run.question.resolved_by && <Button size="sm" disabled={unavailable || taskCommands.length > 0 || run.cancel_requested} onClick={() => void onCommand(run.id, "continue", undefined, run.question!.id)}>Continue task (+$1)</Button>}
+                    {run.question?.kind === "approval" && !run.question.resolved_by && !run.cancel_requested && <>
+                      <Button size="sm" disabled={unavailable || taskCommands.length > 0} onClick={() => void onCommand(run.id, "approve", undefined, run.question!.id)}>Approve</Button>
+                      <Button size="sm" variant="quiet" disabled={unavailable || taskCommands.length > 0} onClick={() => void onCommand(run.id, "decline", undefined, run.question!.id)}>Decline</Button>
+                    </>}
                     <Button size="sm" variant="quiet" disabled={stopping || run.cancel_requested} onClick={() => void onCommand(run.id, "stop")}>
                       {run.cancel_requested || stopping ? "Stopping…" : "Stop task"}
                     </Button>

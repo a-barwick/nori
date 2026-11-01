@@ -35,6 +35,16 @@ func proposal(call transcript.ToolCall) state.CompletionProposal {
 	}
 	return p
 }
+
+// citable lists the outcomes a saved result can show. Voided and prepared writes sent nothing and have no result.
+func citable(outcome string) bool {
+	switch outcome {
+	case "confirmed", "submitted", "failed", "skipped", "declined":
+		return true
+	}
+	return false
+}
+
 func completionFailures(
 	messages []transcript.Message, ops []state.OperationRecord, p state.CompletionProposal,
 	revision, position int64, snap state.TaskSnapshot,
@@ -67,10 +77,11 @@ func completionFailures(
 		if op.EffectClass != "read" {
 			writes = true
 		}
-		if op.Outcome == "pending" || op.Outcome == "uncertain" || op.Outcome == "" {
+		// Listing an uncertain write as unmet is the way out: the task ends incomplete and the record stays uncertain.
+		if op.Outcome == "pending" || op.Outcome == "attempted" || op.Outcome == "" || (op.Outcome == "uncertain" && len(p.Unmet) == 0) {
 			failures = append(failures, "An attempted operation has an unresolved outcome.")
 		}
-		if (op.Outcome == "confirmed" || op.Outcome == "failed" || op.Outcome == "skipped") && op.ResultRef != "" {
+		if citable(op.Outcome) && op.ResultRef != "" {
 			resolved = true
 			refs[op.ID] = true
 			refs[op.ResultRef] = true
@@ -130,7 +141,7 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 		cited[ref] = true
 	}
 	for _, op := range ops {
-		if op.Outcome == "confirmed" || op.Outcome == "failed" || op.Outcome == "skipped" {
+		if citable(op.Outcome) {
 			if op.ResultRef == "" {
 				check.RecordFailures = append(check.RecordFailures, "A resolved operation has no saved result.")
 			} else {

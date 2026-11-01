@@ -11,25 +11,61 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
 const (
-	CalendarScope       = "https://www.googleapis.com/auth/calendar.readonly"
-	calendarAPI         = "https://www.googleapis.com/calendar/v3"
-	calendarTimeout     = 20 * time.Second
-	maxCalendars        = 10
-	maxCalendarEvents   = 100
+	calendarAPI       = "https://www.googleapis.com/calendar/v3"
+	calendarTimeout   = 20 * time.Second
+	maxCalendars      = 10
+	maxCalendarEvents = 100
+	maxEventText      = 300
+	// A longer result would risk the saved history's block limit, so the latest events are dropped first.
+	maxCalendarResult   = 32 << 10
 	maxCalendarSpan     = 31 * 24 * time.Hour
 	calendarConnectHint = "Austin needs to run nori-connect-calendar."
 )
 
+// GoogleScopes are what the connected account grants: reading and changing calendar
+// events, sending mail, and reading a sent message's headers to confirm it.
+var GoogleScopes = []string{
+	"https://www.googleapis.com/auth/calendar.readonly",
+	"https://www.googleapis.com/auth/calendar.events",
+	"https://www.googleapis.com/auth/gmail.send",
+	"https://www.googleapis.com/auth/gmail.metadata",
+}
+
 // CalendarConfig is the one account Austin connected. The refresh token stays in
 // this process: it never reaches the computer, the model or a saved result.
+// WriteCalendar is the one calendar writes go to. APIBase and TokenURL point a local
+// test stack at a loopback provider, and are empty everywhere else.
 type CalendarConfig struct {
-	ClientID, ClientSecret, RefreshToken, Account string
+	ClientID, ClientSecret, RefreshToken, Account, WriteCalendar, APIBase, TokenURL string
+}
+
+func (c CalendarConfig) target() string {
+	if c.WriteCalendar != "" {
+		return c.WriteCalendar
+	}
+	return "primary"
+}
+
+func (c CalendarConfig) calendarURL() string {
+	if c.APIBase != "" {
+		return c.APIBase + "/calendar/v3"
+	}
+	return calendarAPI
+}
+
+func (c CalendarConfig) client(ctx context.Context) *http.Client {
+	config := CalendarOAuth(c.ClientID, c.ClientSecret, "")
+	if c.TokenURL != "" {
+		config.Endpoint.TokenURL = c.TokenURL
+	}
+	return config.Client(ctx, &oauth2.Token{RefreshToken: c.RefreshToken})
 }
 
 func (c CalendarConfig) connected() bool {
@@ -38,7 +74,7 @@ func (c CalendarConfig) connected() bool {
 
 // CalendarOAuth is shared with the connect command so both ask for the same scope.
 func CalendarOAuth(clientID, clientSecret, redirect string) *oauth2.Config {
-	return &oauth2.Config{ClientID: clientID, ClientSecret: clientSecret, RedirectURL: redirect, Endpoint: google.Endpoint, Scopes: []string{CalendarScope}}
+	return &oauth2.Config{ClientID: clientID, ClientSecret: clientSecret, RedirectURL: redirect, Endpoint: google.Endpoint, Scopes: GoogleScopes}
 }
 
 type calendarEntry struct {
@@ -90,8 +126,7 @@ func (s *Service) calendarRead(ctx context.Context, start, end string) (map[stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
 	defer cancel()
-	client := CalendarOAuth(config.ClientID, config.ClientSecret, "").Client(ctx, &oauth2.Token{RefreshToken: config.RefreshToken})
-	result, err := readCalendars(ctx, client, from, to, s.now())
+	result, err := readCalendars(ctx, config, config.client(ctx), from, to, s.now())
 	if errors.Is(err, errCalendarDisconnected) {
 		// An app in Google's testing state loses its refresh token after 7 days.
 		return map[string]any{"available": false, "reason": "The Google Calendar connection has expired. " + calendarConnectHint}, nil
@@ -114,11 +149,11 @@ func calendarRange(start, end string) (time.Time, time.Time, error) {
 	return from, to, nil
 }
 
-func readCalendars(ctx context.Context, client *http.Client, from, to, now time.Time) (map[string]any, error) {
+func readCalendars(ctx context.Context, config CalendarConfig, client *http.Client, from, to, now time.Time) (map[string]any, error) {
 	var list struct {
 		Items []calendarEntry `json:"items"`
 	}
-	if err := calendarGet(ctx, client, calendarAPI+"/users/me/calendarList?minAccessRole=reader&maxResults=50", &list); err != nil {
+	if err := calendarGet(ctx, client, config.calendarURL()+"/users/me/calendarList?minAccessRole=reader&maxResults=50", &list); err != nil {
 		return nil, err
 	}
 	account, zone := "", ""
@@ -137,6 +172,8 @@ func readCalendars(ctx context.Context, client *http.Client, from, to, now time.
 	}
 	type event struct {
 		Calendar string `json:"calendar"`
+		EventID  string `json:"event_id"`
+		Writable bool   `json:"writable,omitempty"`
 		Title    string `json:"title"`
 		Start    string `json:"start"`
 		End      string `json:"end"`
@@ -147,18 +184,18 @@ func readCalendars(ctx context.Context, client *http.Client, from, to, now time.
 	names := []string{}
 	for _, entry := range selected {
 		names = append(names, entry.Summary)
-		query := url.Values{"timeMin": {from.Format(time.RFC3339)}, "timeMax": {to.Format(time.RFC3339)}, "singleEvents": {"true"}, "orderBy": {"startTime"}, "maxResults": {fmt.Sprint(maxCalendarEvents)}, "fields": {"nextPageToken,items(summary,start,end,location,status)"}}
+		query := url.Values{"timeMin": {from.Format(time.RFC3339)}, "timeMax": {to.Format(time.RFC3339)}, "singleEvents": {"true"}, "orderBy": {"startTime"}, "maxResults": {fmt.Sprint(maxCalendarEvents)}, "fields": {"nextPageToken,items(id,summary,start,end,location,status)"}}
 		var page struct {
 			NextPageToken string `json:"nextPageToken"`
 			Items         []struct {
-				Summary, Location, Status string
-				Start, End                struct {
+				ID, Summary, Location, Status string
+				Start, End                    struct {
 					DateTime string `json:"dateTime"`
 					Date     string `json:"date"`
 				}
 			} `json:"items"`
 		}
-		if err := calendarGet(ctx, client, calendarAPI+"/calendars/"+url.PathEscape(entry.ID)+"/events?"+query.Encode(), &page); err != nil {
+		if err := calendarGet(ctx, client, config.calendarURL()+"/calendars/"+url.PathEscape(entry.ID)+"/events?"+query.Encode(), &page); err != nil {
 			return nil, err
 		}
 		truncated = truncated || page.NextPageToken != ""
@@ -166,7 +203,8 @@ func readCalendars(ctx context.Context, client *http.Client, from, to, now time.
 			if item.Status == "cancelled" {
 				continue
 			}
-			found := event{Calendar: entry.Summary, Title: item.Summary, Start: item.Start.DateTime, End: item.End.DateTime, Location: item.Location}
+			writable := entry.ID == config.target() || (entry.Primary && config.target() == "primary")
+			found := event{Calendar: entry.Summary, EventID: item.ID, Writable: writable, Title: clipText(item.Summary, maxEventText), Start: item.Start.DateTime, End: item.End.DateTime, Location: clipText(item.Location, maxEventText)}
 			if found.Start == "" {
 				found.Start, found.End, found.AllDay = item.Start.Date, item.End.Date, true
 			}
@@ -174,7 +212,25 @@ func readCalendars(ctx context.Context, client *http.Client, from, to, now time.
 		}
 	}
 	sort.SliceStable(events, func(i, j int) bool { return eventInstant(events[i].Start).Before(eventInstant(events[j].Start)) })
+	for len(events) > 0 {
+		data, err := json.Marshal(events)
+		if err != nil || len(data) <= maxCalendarResult {
+			break
+		}
+		events, truncated = events[:len(events)*3/4], true
+	}
 	return map[string]any{"account": account, "time_zone": zone, "calendars": strings.Join(names, ", "), "start": from.Format(time.RFC3339), "end": to.Format(time.RFC3339), "retrieved_at": now.Format(time.RFC3339), "events": events, "truncated": truncated}, nil
+}
+
+// clipText shortens provider text without splitting a character.
+func clipText(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	for limit > 0 && !utf8.RuneStart(text[limit]) {
+		limit--
+	}
+	return text[:limit] + "…"
 }
 
 func eventInstant(value string) time.Time {

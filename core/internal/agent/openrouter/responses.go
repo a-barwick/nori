@@ -37,12 +37,15 @@ type Client struct {
 	Key       string
 	ModelName string
 	HTTP      *http.Client
+	// Endpoint is the provider URL. A local test stack sets a loopback one.
+	Endpoint string
 }
 
 func New(key, model string) *Client {
 	return &Client{
 		Key:       key,
 		ModelName: model,
+		Endpoint:  endpoint,
 		HTTP: &http.Client{
 			Timeout:       2 * time.Minute,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -103,7 +106,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			err = errors.Join(err, reservation.Settle(ctx, cost, "", nil))
 		}()
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(body))
 	if err != nil {
 		return out, err
 	}

@@ -60,7 +60,16 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 	dispatcher := platform.Dispatcher(store, engine, waker)
 	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
 	model := env.Get("NORI_AGENT_MODEL", "gpt-6.1-sol")
-	runner := conversation.New(conversation.NewOpenAIModel(key, model), conversation.NewJevClassifier(jevKey), tasks)
+	outer := conversation.NewOpenAIModel(key, model)
+	if address := os.Getenv("NORI_E2E_OPENAI_URL"); address != "" {
+		if os.Getenv("TEMPORAL_LOCAL") != "true" || !strings.HasPrefix(address, "http://127.0.0.1:") {
+			engine.Close()
+			store.Close()
+			return nil, fmt.Errorf("NORI_E2E_OPENAI_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
+		}
+		outer.URL = address
+	}
+	runner := conversation.New(outer, conversation.NewJevClassifier(jevKey), tasks)
 	return &App{Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, engine: engine}, nil
 }
 

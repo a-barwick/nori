@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"nori/internal/agent"
@@ -25,12 +26,30 @@ func capabilities() (agent.Capabilities, error) {
 	if err != nil {
 		return agent.Capabilities{}, fmt.Errorf("NORI_TIMEZONE must be an IANA time zone")
 	}
+	// A local test stack points the worker at a loopback provider. Nothing else may.
+	base, tokenURL := "", ""
+	if address := os.Getenv("NORI_E2E_GOOGLE_URL"); address != "" {
+		if os.Getenv("TEMPORAL_LOCAL") != "true" || !strings.HasPrefix(address, "http://127.0.0.1:") {
+			return agent.Capabilities{}, fmt.Errorf("NORI_E2E_GOOGLE_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
+		}
+		base, tokenURL = address, address+"/token"
+	}
+	var offset time.Duration
+	if value := os.Getenv("NORI_E2E_NOW"); value != "" {
+		at, err := time.Parse(time.RFC3339, value)
+		if err != nil || os.Getenv("TEMPORAL_LOCAL") != "true" {
+			return agent.Capabilities{}, fmt.Errorf("NORI_E2E_NOW requires TEMPORAL_LOCAL=true and an RFC 3339 time")
+		}
+		offset = time.Until(at)
+	}
 	return agent.Capabilities{
-		SearchKey: os.Getenv("BRAVE_SEARCH_API_KEY"), Location: location,
+		ClockOffset: offset,
+		SearchKey:   os.Getenv("BRAVE_SEARCH_API_KEY"), Location: location,
 		Calendar: agent.CalendarConfig{
 			ClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
-			RefreshToken: os.Getenv("GOOGLE_CALENDAR_REFRESH_TOKEN"),
-			Account:      env.Get("GOOGLE_CALENDAR_ACCOUNT", "the connected Google account"),
+			RefreshToken:  os.Getenv("GOOGLE_CALENDAR_REFRESH_TOKEN"),
+			Account:       env.Get("GOOGLE_CALENDAR_ACCOUNT", "the connected Google account"),
+			WriteCalendar: os.Getenv("GOOGLE_CALENDAR_WRITE_ID"), APIBase: base, TokenURL: tokenURL,
 		},
 	}, nil
 }

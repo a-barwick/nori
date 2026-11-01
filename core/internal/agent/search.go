@@ -23,6 +23,8 @@ const (
 	searchResults   = 8
 	searchTimeout   = 15 * time.Second
 	searchBodyBytes = 2 << 20
+	// Results stay within the saved history's block limit at any provider response size.
+	maxSearchField = 2 << 10
 )
 
 var snippetTags = regexp.MustCompile(`<[^>]*>`)
@@ -67,7 +69,7 @@ func (s *Service) webSearch(ctx context.Context, query string) (map[string]any, 
 	}
 	results := []map[string]any{}
 	for _, item := range body.Web.Results {
-		result := map[string]any{"title": cleanSnippet(item.Title), "url": item.URL, "snippet": cleanSnippet(item.Description)}
+		result := map[string]any{"title": clipText(cleanSnippet(item.Title), maxSearchField), "url": clipText(item.URL, maxSearchField), "snippet": clipText(cleanSnippet(item.Description), maxSearchField)}
 		if item.PageAge != "" {
 			result["published"] = item.PageAge
 		} else if item.Age != "" {

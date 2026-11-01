@@ -1,6 +1,7 @@
-// Command nori-connect-calendar connects Austin's Google Calendar for reading. It
-// opens one Google consent screen, then saves the refresh token and account name
-// in the existing .env. It never prints the token.
+// Command nori-connect-calendar connects Austin's Google account for calendar and
+// email tools. It opens one Google consent screen, then saves the refresh token and
+// account name in the existing .env and in Secret Manager, so the deployed worker gets
+// the same connection. It never prints the token.
 package main
 
 import (
@@ -15,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -71,7 +73,7 @@ func run() error {
 	})}
 	go func() { _ = server.Serve(listener) }()
 	defer server.Close()
-	fmt.Println("Open this URL and approve read-only calendar access:")
+	fmt.Println("Open this URL and approve calendar and email access:")
 	fmt.Println(config.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce, oauth2.S256ChallengeOption(verifier)))
 	var code string
 	select {
@@ -96,6 +98,22 @@ func run() error {
 		return err
 	}
 	fmt.Printf("Connected %s. Saved in %s.\n", account, file)
+	return saveSecrets(ctx, map[string]string{"nori-google-calendar-refresh-token": token.RefreshToken, "nori-google-calendar-account": account})
+}
+
+// saveSecrets adds new versions with the caller's gcloud login. The value goes over
+// stdin, so it never appears in a process listing. A running worker keeps the old
+// version until its next start.
+func saveSecrets(ctx context.Context, values map[string]string) error {
+	project := env.Get("NORI_PROJECT_ID", "bot-111549")
+	for name, value := range values {
+		command := exec.CommandContext(ctx, "gcloud", "secrets", "versions", "add", name, "--project", project, "--data-file=-")
+		command.Stdin = strings.NewReader(value)
+		if err := command.Run(); err != nil {
+			return fmt.Errorf("%s was not updated in Secret Manager, so production still has the old connection: %w", name, err)
+		}
+		fmt.Printf("Added a new version of %s.\n", name)
+	}
 	return nil
 }
 
