@@ -86,18 +86,19 @@ def lock_url(upload=False):
 
 
 def acquire_lock(commit):
-    body = {"commit": commit, "host": socket.gethostname(), "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    body = {"commit": commit, "host": socket.gethostname(), "pid": os.getpid(), "owner": uuid.uuid4().hex,
+            "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     try:
-        poc.api("POST", lock_url(upload=True), body)
+        return poc.api("POST", lock_url(upload=True), body)["generation"]
     except RuntimeError as error:
         if "HTTP 412" not in str(error):
             raise
-        holder = poc.api("GET", lock_url() + "?alt=media")
-        require(holder.get("commit") == commit, f"Another deploy holds the lock: {holder}. If it is dead, run make deploy-unlock.")
+        raise RuntimeError("Another deploy holds the lock, including for this commit. Run make deploy-unlock to inspect it; recover only after its owner has stopped.") from None
 
 
-def release_lock():
-    poc.api("DELETE", lock_url(), allow404=True)
+def release_lock(generation):
+    # A recovered/replaced lock belongs to someone else, even for the same commit.
+    poc.api("DELETE", lock_url() + "?" + urlencode({"ifGenerationMatch": generation}), allow404=True)
 
 
 def refuse_open_work(c):
@@ -151,19 +152,15 @@ def build_image(name, file, context, commit, extra=()):
 
 
 def web_image(commit):
-    """Source maps upload only when SENTRY_ORG and SENTRY_PROJECT are in the root .env."""
-    env = poc.temporal_env()
-    extra = ()
+    """Every production web image uploads maps with the existing CI credential."""
     token = None
     try:
-        if env.get("SENTRY_ORG") and env.get("SENTRY_PROJECT"):
-            value = run(["gcloud", "--project", PROJECT, "secrets", "versions", "access", "latest", "--secret=nori-sentry-auth-token"])
-            fd, token = tempfile.mkstemp(dir=DIR)
-            os.write(fd, value.encode())
-            os.close(fd)
-            extra = ("--build-arg", "SENTRY_ORG=" + env["SENTRY_ORG"], "--build-arg", "SENTRY_PROJECT=" + env["SENTRY_PROJECT"], "--secret", f"id=sentry_auth_token,src={token}")
-        else:
-            log("Sentry source maps off: SENTRY_ORG and SENTRY_PROJECT are not in .env")
+        value = run(["gcloud", "--project", PROJECT, "secrets", "versions", "access", "latest", "--secret=nori-sentry-auth-token"])
+        require(value, "The source-map upload credential is empty")
+        fd, token = tempfile.mkstemp(dir=DIR)
+        with os.fdopen(fd, "w") as stream:
+            stream.write(value)
+        extra = ("--build-arg", "SENTRY_ORG=austin-barwick", "--build-arg", "SENTRY_PROJECT=nori-web", "--secret", f"id=sentry_auth_token,src={token}")
         return build_image("web", ROOT / "web/Dockerfile", ROOT / "web", commit, extra)
     finally:
         if token:
@@ -335,7 +332,13 @@ def verify(c, state):
 def rollback(c, state):
     """Nothing has run on the new code while paused, so restoring all of it is safe."""
     previous = state.get("previous")
-    if previous and UNDONE_BY_ROLLBACK & set(state["done"]):
+    attempted = set(state["done"]) | set(state.get("started", []))
+    if "pause" in attempted:
+        # Pause can fail after changing admission or queues. Reconcile it before
+        # touching releases, and verify live state before reporting recovery.
+        poc.pause(c)
+        read_previous(c)
+    if previous and UNDONE_BY_ROLLBACK & attempted:
         log("Restoring the previous release")
         poc_command("deploy-runtime", previous["runtime"])
         poc_command("deploy-web", previous["web"])
@@ -345,6 +348,7 @@ def rollback(c, state):
     # A retry pauses and reads the live release again, in case Nori was used in between.
     state["done"] = [step for step in state["done"] if step not in UNDONE_BY_ROLLBACK and step != "pause"]
     state.pop("previous", None)
+    state.pop("started", None)
     state["status"] = "rolled_back"
     save_state(state)
 
@@ -357,6 +361,15 @@ def deploy(_args):
     commit = run(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
     run(["git", "-C", str(ROOT), "fetch", "-q", "origin", "main"])
     require(commit == run(["git", "-C", str(ROOT), "rev-parse", "origin/main"]), "Deploys run from the latest main; pull or merge first")
+    generation = acquire_lock(commit)
+    try:
+        deploy_locked(commit)
+    finally:
+        release_lock(generation)
+
+
+def deploy_locked(commit):
+    # Read shared progress only after acquiring the production lock.
     state = load_state()
     if state and state["status"] == "running":
         require(state["commit"] == commit, f"A deploy of {state['commit'][:10]} was interrupted. Check out that commit to resume it, or run make deploy-rollback.")
@@ -365,7 +378,6 @@ def deploy(_args):
         state = {"commit": commit, "build": "rel-" + commit[:12], "done": []}
     state["status"] = "running"
     DIR.mkdir(parents=True, mode=0o700, exist_ok=True)
-    acquire_lock(commit)
     save_state(state)
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
@@ -373,6 +385,9 @@ def deploy(_args):
     def step(name, action):
         if name not in state["done"]:
             log(name.capitalize())
+            if name in UNDONE_BY_ROLLBACK or name in {"pause", "worker"}:
+                state.setdefault("started", []).append(name)
+                save_state(state)
             action()
             state["done"].append(name)
             save_state(state)
@@ -406,14 +421,18 @@ def deploy(_args):
         log(f"Deploy failed: {error}")
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        touched = "pause" in state["done"]
-        rollback(c, state)
-        release_lock()
-        outcome = "Restored the previous release and left Nori paused." if touched else "Production was not changed."
+        attempted = set(state["done"]) | set(state.get("started", []))
+        touched = "pause" in attempted
+        restored = bool(state.get("previous") and UNDONE_BY_ROLLBACK & attempted)
+        try:
+            rollback(c, state)
+        except Exception as recovery_error:
+            raise RuntimeError(f"Production may be partially changed; recovery failed: {recovery_error}. Keep Nori closed. Run make pause, inspect make deploy-status, then make deploy-rollback before reopening.") from None
+        outcome = ("Verified the previous release and left Nori paused." if restored else
+                   "Pause was attempted; Nori is now verified paused. No release switch was attempted.") if touched else "Production was not changed."
         raise RuntimeError(outcome + " Fix the cause and run make deploy again; finished steps are reused.") from None
     state["status"] = "finished"
     save_state(state)
-    release_lock()
     log(f"Deployed {commit[:10]}: worker {state['build']}. Nori is paused; run make unpause to use it.")
 
 
@@ -451,19 +470,36 @@ def status(_args):
 
 
 def manual_rollback(_args):
-    state = load_state()
-    require(state and state["status"] == "running", "No interrupted deploy to roll back")
-    init_terraform()
-    c = poc.config()
-    poc.pause(c)
-    rollback(c, state)
-    release_lock()
-    log("Rolled back to the previous release. Nori is paused.")
+    generation = acquire_lock("rollback")
+    try:
+        state = load_state()
+        require(state and state["status"] == "running", "No interrupted deploy to roll back")
+        init_terraform()
+        c = poc.config()
+        rollback(c, state)
+        log("Recovery completed. Check make deploy-status before reopening.")
+    finally:
+        release_lock(generation)
 
 
-def unlock(_args):
-    release_lock()
-    log("Deploy lock removed")
+def unlock(args):
+    metadata = poc.api("GET", lock_url(), allow404=True)
+    if not metadata:
+        log("No deploy lock exists")
+        return
+    generation = metadata["generation"]
+    holder = poc.api("GET", lock_url() + "?" + urlencode({"alt": "media", "generation": generation}))
+    print(json.dumps({"generation": generation, "holder": holder}, indent=2))
+    require(args.lock_generation == generation, "Confirm the owner has stopped, then run: python3 core/infrastructure/release/deploy.py unlock --lock-generation " + generation)
+    if holder.get("host") == socket.gethostname() and holder.get("pid"):
+        try:
+            os.kill(int(holder["pid"]), 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise RuntimeError("The local lock owner is still running; refusing to unlock")
+    release_lock(generation)
+    log("Abandoned lock removed. Resume make deploy or run make deploy-rollback.")
 
 
 def smoke(_args):
@@ -508,6 +544,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = {"deploy": deploy, "check": check, "status": status, "rollback": manual_rollback, "unlock": unlock, "smoke": smoke}
     parser.add_argument("command", choices=commands)
+    parser.add_argument("--lock-generation", help="Observed generation of an abandoned lock, for unlock only")
     args = parser.parse_args()
     os.umask(0o077)
     try:

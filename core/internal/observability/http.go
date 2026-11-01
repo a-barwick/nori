@@ -21,14 +21,16 @@ import (
 func HTTPHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route := safeRoute(r.URL.Path)
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 		if route == "" {
-			ctx := context.WithValue(r.Context(), excludedRequestKey{}, true)
+			ctx = context.WithValue(ctx, excludedRequestKey{}, true)
+			attrs := []attribute.KeyValue{attribute.String("http.route", failedPollRoute(r.URL.Path)), attribute.String("http.request.method", safeMethod(r.Method))}
 			pending := &atomic.Bool{}
 			ctx = context.WithValue(ctx, requestFlushKey{}, pending)
 			defer func() {
 				panicValue := recover()
 				if panicValue != nil && panicValue != http.ErrAbortHandler {
-					RecordErrorCategory(ctx, "http.panic", errors.New("HTTP handler panicked"))
+					RecordErrorCategory(ctx, "http.panic", errors.New("HTTP handler panicked"), attrs...)
 					pending.Store(true)
 				}
 				if pending.Load() {
@@ -40,13 +42,12 @@ func HTTPHandler(next http.Handler) http.Handler {
 			}()
 			result := httpsnoop.CaptureMetrics(next, w, r.WithContext(ctx))
 			if result.Code >= 500 {
-				RecordErrorCategory(ctx, "http.request", errors.New("HTTP request failed"), attribute.Int("http.response.status_code", result.Code))
+				RecordErrorCategory(ctx, "http.request", httpFailure(result.Code), append(attrs, attribute.Int("http.response.status_code", result.Code))...)
 				pending.Store(true)
 			}
 			return
 		}
 		started := time.Now()
-		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 		ctx, span := otel.Tracer("nori/http").Start(ctx, "HTTP "+route, trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(attribute.String("http.route", route), attribute.String("http.request.method", safeMethod(r.Method))))
 		defer func() {
 			panicValue := recover()
@@ -67,7 +68,7 @@ func HTTPHandler(next http.Handler) http.Handler {
 		span.SetAttributes(attribute.Int("http.response.status_code", result.Code))
 		if result.Code >= 500 {
 			span.SetStatus(codes.Error, "request failed")
-			RecordErrorCategory(ctx, "http.request", errors.New("HTTP request failed"), attribute.String("http.route", route), attribute.Int("http.response.status_code", result.Code))
+			RecordErrorCategory(ctx, "http.request", httpFailure(result.Code), attribute.String("http.route", route), attribute.String("http.request.method", safeMethod(r.Method)), attribute.Int("http.response.status_code", result.Code))
 		}
 		Event(ctx, "nori request completed", attribute.String("http.route", route), attribute.Int("http.response.status_code", result.Code))
 		Metric(ctx, "nori.http.requests", 1)
@@ -77,6 +78,21 @@ func HTTPHandler(next http.Handler) http.Handler {
 }
 
 type requestFlushKey struct{}
+
+type httpFailure int
+
+func (httpFailure) Error() string         { return "HTTP request failed" }
+func (e httpFailure) HTTPStatusCode() int { return int(e) }
+
+// These routes stay untraced on success. Unknown paths never leave the process.
+func failedPollRoute(path string) string {
+	switch path {
+	case "/healthz", "/api/healthz", "/api/session", "/api/trace", "/api/artifact", "/operation", "/operation/cancel", "/activity":
+		return path
+	default:
+		return "unknown"
+	}
+}
 
 // RequireRequestFlush marks real work inside an otherwise excluded request.
 // Idle polls stay quiet; the HTTP handler flushes marked requests on return.
@@ -106,7 +122,7 @@ func safeRoute(path string) string {
 }
 
 func safeMethod(method string) string {
-	if method == http.MethodPost {
+	if method == http.MethodPost || method == http.MethodGet {
 		return method
 	}
 	return "OTHER"

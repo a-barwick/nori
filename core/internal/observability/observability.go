@@ -320,6 +320,9 @@ func RecordErrorCategory(ctx context.Context, category string, err error, attrs 
 	event.Exception = []sentry.Exception{{Type: "Nori/" + category, Value: category + " failed", Stacktrace: sentry.NewStacktrace()}}
 	event.Fingerprint = []string{"{{ default }}", category, reason}
 	event.Tags = map[string]string{"nori.error.category": category, "error.type": typeName}
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		event.Contexts["trace"] = sentry.Context{"trace_id": sc.TraceID().String(), "span_id": sc.SpanID().String()}
+	}
 	for _, attr := range attrs {
 		if safe, ok := allowedAttribute(attr, false); ok {
 			if safe.Key == "nori.error.category" || safe.Key == "error.type" {
