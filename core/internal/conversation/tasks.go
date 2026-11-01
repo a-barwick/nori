@@ -24,7 +24,7 @@ type Tasks struct {
 	Store    state.ConversationStore
 	Wakes    *workerwake.Cloud
 	Client   client.Client
-	Computer computer.Config
+	Computer computer.Provider
 }
 
 func (t *Tasks) deliver(ctx context.Context) {
