@@ -30,7 +30,7 @@ import (
 //   - the conversation counters (received, consumed, user routing), the active
 //     turn and its lease deadline, whether the turn is still processing, and the
 //     active turn's attempt (status, actions, usage, errors, timing)
-//   - every field of every open task, as it appears in the session
+//   - every field of every open task, as it appears in the session, including a running job's progress line
 //   - every task with cleanup pending
 //
 // That covers new and finished messages, task starts and stops, questions,

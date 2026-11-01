@@ -35,6 +35,18 @@ func capabilities() (agent.Capabilities, error) {
 	}, nil
 }
 
+// checkSlice validates once, before the server listens, the settings every request needs. Without it a revision
+// missing one passes the platform's health check and then fails every request. Registration already needs the build
+// and the store, so this adds only the model key and, in main, the computer.
+func checkSlice() error {
+	for _, name := range []string{"NORI_PROJECT_ID", "FIRESTORE_DATABASE_ID", "TEMPORAL_BUILD_ID", "OPENROUTER_API_KEY"} {
+		if _, err := env.Required(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func loadConfig(bounded bool, waker wake.Waker) (config, error) {
 	build := os.Getenv("TEMPORAL_BUILD_ID")
 	if build == "" {

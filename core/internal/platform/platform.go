@@ -113,3 +113,18 @@ func Computer() computer.Provider {
 		Instance: os.Getenv("COMPUTER_INSTANCE"),
 	}))
 }
+
+// CheckComputer fails when the computer settings that Computer reads are incomplete: a local URL, or a project,
+// zone and instance. A process that runs tools calls it at startup, so a bad configuration stops the process
+// instead of failing every task. Computer stays lazy, so other processes need no computer settings.
+func CheckComputer() error {
+	if os.Getenv("NORI_LOCAL_COMPUTER_URL") != "" {
+		return nil
+	}
+	for _, name := range []string{"NORI_PROJECT_ID", "COMPUTER_ZONE", "COMPUTER_INSTANCE"} {
+		if _, err := env.Required(name); err != nil {
+			return fmt.Errorf("computer is not configured: %w", err)
+		}
+	}
+	return nil
+}

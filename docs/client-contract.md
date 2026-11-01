@@ -32,7 +32,7 @@ While work is active, the client calls `POST /api/status` every 2 seconds. The r
 - `version` differs from the last one it saw,
 - the `status` call fails, or `busy` is false while the client still shows active work.
 
-If `status` is missing, or fails three times in a row, the client polls the session every 2 seconds, as it did before `status` existed. `version` is only compared for equality. The runtime has to change it whenever anything the session shows changes. If it didn't, the client would show stale progress until `busy` turned false.
+If `status` is missing, or fails three times in a row, the client polls the session every 2 seconds, as it did before `status` existed. `version` is only compared for equality. The runtime changes it whenever the paused flag, the conversation, the active turn or an open task changes. A finished task's late spend projection does not change `version`. It appears at the next change, or at the final fetch the client makes when `busy` turns false. Model usage records written outside a turn behave the same way.
 
 ## 1. Summary
 

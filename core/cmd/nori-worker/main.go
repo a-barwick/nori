@@ -31,6 +31,10 @@ func main() {
 	if err := spend.ValidateConfiguration(); err != nil {
 		observability.Fatal(err)
 	}
+	// Both modes run tools, so an incomplete computer setting stops the process here.
+	if err := platform.CheckComputer(); err != nil {
+		observability.Fatal(err)
+	}
 	// Hosted workers also wake the conversation when a task event is saved.
 	waker, err := platform.Waker(ctx, os.Getenv("TEMPORAL_LOCAL") != "true")
 	if err != nil {
@@ -53,6 +57,9 @@ func main() {
 // serveSlices serves wake requests: each /run request is one bounded slice, and a
 // registration request only registers a fresh worker deployment version.
 func serveSlices(ctx context.Context, port string, waker wake.Waker) error {
+	if err := checkSlice(); err != nil {
+		return err
+	}
 	addr := ":" + port
 	if os.Getenv("TEMPORAL_LOCAL") == "true" {
 		addr = "127.0.0.1:" + port
