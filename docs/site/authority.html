@@ -9,28 +9,44 @@
 </head>
 <body>
 <h1>Approvals and writes</h1>
-<p class="lede">Nori can read freely. Before it changes anything outside its own computer, the user approves the exact action.</p>
-<div class="card"><div class="flow">
-<div class="node designed-node"><b>A task prepares an action</b><small>“Add dinner with Sam, Thursday 7pm, to the personal calendar.”</small></div><div class="arrow">↓</div>
-<div class="node designed-node wait"><b>The task parks</b><small>The user sees the target, content and account. No model calls run.</small></div><div class="arrow">↓</div>
-<div class="branch"><div class="node designed-node"><b>Approve</b><small>The runtime checks nothing has changed, then runs it once.</small></div><div class="node designed-node"><b>Decline</b><small>The task records the decline and doesn't ask again.</small></div></div><div class="arrow">↓</div>
-<div class="node designed-node"><b>A receipt records what happened</b><small>“Did you add it?” is answered from the receipt.</small></div>
+<p class="lede">Nori can read freely. Before it changes a calendar or sends an email, the user approves the exact action.</p>
+<div class="card"><p><span class="say me">Move my dentist appointment to Friday at 2pm.</span></p><div class="flow">
+<div class="node inner"><b>Inner loop</b><small>Calls the move tool with the event's ID and the new time.</small></div><div class="arrow">↓ proposed move</div>
+<div class="node"><b>Runtime</b><small>Reads the event, saves the exact action and makes the task wait.</small></div><div class="arrow">↓ the action to approve</div>
+<div class="node wait"><b>User</b><small>Sees the account, calendar, event, old time and new time.</small></div><div class="arrow">↓ approve or decline</div>
+<div class="branch"><div class="node"><b>Runtime, if approved</b><small>Uses the approval once and sends the saved action to Google.</small></div><div class="node"><b>Runtime, if declined</b><small>Records the decline and refuses the same action again.</small></div></div><div class="arrow">↓ the write's result, or the decline</div>
+<div class="node outer"><b>Outer loop</b><small>Compares the answer with those results and reports what is done.</small></div>
 </div></div>
-<section><h2>Every tool declares what it does</h2>
-<div class="card"><table class="tall"><tr><th>Type</th><th>Examples</th><th>Retries</th></tr>
-<tr><td>Read</td><td><code>browser_navigate</code>, search, calendar read</td><td>The runtime retries within limits.</td></tr>
-<tr><td>Reversible write</td><td>A calendar event</td><td>Only with duplicate protection. Otherwise check first.</td></tr>
-<tr><td>Sensitive send</td><td>An email, a purchase</td><td>Ask the user before any repeat.</td></tr>
-</table><p class="note">The model can't give itself permission to retry.</p></div></section>
+<section><h2>The write tools</h2>
+<div class="card"><table class="tall"><tr><th>Tool</th><th>Stops a duplicate</th><th>Confirms the change</th></tr>
+<tr><td><code>calendar_create</code></td><td>The event ID comes from the exact action, and the runtime looks it up first.</td><td>Reads the event back.</td></tr>
+<tr><td><code>calendar_move</code></td><td>A repeat finds the approval used and only reads the event. An event already at the new time needs no write.</td><td>Reads the new time back.</td></tr>
+<tr><td><code>email_send</code></td><td>The message carries an ID from the exact action in its own header, and the runtime checks recent sent mail first.</td><td>Reads the sent message back.</td></tr>
+</table></div>
+</section>
 <section><h2>What an approval covers</h2>
-<ul class="pts"><li>One operation, once. Changing the recipient, content, date or account makes it invalid.</li><li>A correction after approving a draft still counts.</li><li>It survives waits and restarts as long as the action is unchanged.</li><li>A restart or a repeated delivery can't use it twice.</li></ul></section>
+<ul class="pts"><li>An approval covers one saved action and can be used once. The runtime sends the saved action and ignores any later model output.</li><li>A correction voids the approval, including a correction sent after the user approved. The task then proposes again.</li><li>It survives waits and restarts while no correction has arrived, and it has no timer.</li><li>A restart or a repeated delivery can't use it twice.</li></ul></section>
 <section><h2>What can't grant permission</h2>
-<ul class="pts"><li>A <a href="classification.html">label from the Jev classifier</a> or a task category.</li><li>A tool being available.</li><li>Text in a web page, email, document or tool result.</li><li>A task's own summary of its next step.</li></ul></section>
+<ul class="pts"><li>A <a href="classification.html">label from the Jev classifier</a> or a task category.</li><li>A tool being available.</li><li>Text in a web page, email, document or tool result.</li><li>A task's own summary of its next step.</li><li>A turn started by a task event.</li></ul></section>
 <section><h2>Recording what happened</h2>
-<div class="states"><span class="state">Prepared</span><span class="state-arrow">→</span><span class="state">Attempted</span><span class="state-arrow">→</span><span class="state">Submitted</span><span class="state-arrow">→</span><span class="state run">Confirmed</span></div>
-<ul class="pts" style="margin-top:12px"><li>An action can also end as <b>failed</b> or <b>uncertain</b>, and uncertain is never shown as success.</li><li>If the response was lost, the runtime checks with the provider before any repeat.</li><li>Stopping a task doesn't undo what it already did. Nori reports those effects.</li></ul></section>
-<section><h2>Still open</h2>
-<ul class="pts"><li>How standing permissions work, and how the user takes them back.</li><li>When an approval expires.</li><li>Which changes count as material.</li></ul></section>
-<details class="sources"><summary>Sources</summary><p><a href="decisions.html">Decisions</a> · <a href="open-questions.html">Open questions</a></p></details>
+<div class="states"><span class="state">Prepared</span><span class="state-arrow">→</span><span class="state">Attempted</span><span class="state-arrow">→</span><span class="state run">Confirmed</span></div>
+<ul class="pts" style="margin-top:12px"><li>A write can also end as submitted, declined, voided, failed or uncertain, and uncertain is never shown as success.</li><li>“Did you add it?” is answered from this record.</li><li>A write that has started finishes first, even after Stop, and Nori reports it.</li></ul></section>
+<section><h2>When a response is lost</h2>
+<div class="card"><p><span class="say me">Add lunch with Jamie tomorrow at noon.</span></p>
+<p class="note">Google saved the event, but its response never arrived. The runtime then reads the event by its ID and finds it. Nori replies that the lunch is on the calendar and creates no second event.</p></div>
+<ul class="pts"><li>After a worker dies during a write, the next worker checks with the provider and doesn't send again.</li><li>If the provider can't be read, the task asks the user.</li></ul></section>
+<section><h2>What this doesn't cover</h2>
+<ul class="pts"><li>Shell commands and the computer's browser have no approval step, because the runtime can't tell what a command changes. The Google token stays off the computer.</li><li>Standing permissions aren't built, so every write asks.</li></ul></section>
+<details class="more"><summary>Limits and outcomes</summary><ul class="pts"><li>The calendar tools can't add attendees, and they send no notifications.</li><li>A move is refused on an event with other attendees, because the change would move their copies too.</li><li>Writes go to one configured calendar.</li><li>A move is refused if the event changed after the user saw it, and a write is refused if its start time has passed.</li><li>One transaction checks for new corrections and marks the approval used.</li><li>A chat approval needs a turn started by the user's message, with a word of assent such as "yes" or "send" in it.</li><li>An email missing from the latest 10 sent messages stays uncertain, unless the account has fewer than 10 sent messages.</li><li>A send is refused if the connected account or write calendar changed after the approval.</li></ul><table class="tall"><tr><th>Outcome</th><th>What it means</th></tr>
+<tr><td>Prepared</td><td>The action is saved and waits for the user.</td></tr>
+<tr><td>Attempted</td><td>The approval is used, and the provider hasn't answered yet.</td></tr>
+<tr><td>Submitted</td><td>The provider accepted it, and a follow-up read didn't complete.</td></tr>
+<tr><td>Confirmed</td><td>A follow-up read shows the change.</td></tr>
+<tr><td>Declined</td><td>The user refused. Nothing was sent.</td></tr>
+<tr><td>Voided</td><td>A correction arrived first. Nothing was sent.</td></tr>
+<tr><td>Failed</td><td>The provider refused the write, a later read shows it didn't happen, or a pause or Stop interrupted it before asking.</td></tr>
+<tr><td>Uncertain</td><td>The runtime couldn't read the provider. It's never shown as success.</td></tr>
+</table></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/writes.go</code> · <code>core/internal/agent/calendar_write.go</code> · <code>core/internal/agent/gmail.go</code> · <code>core/internal/task/actions.go</code> · <code>core/internal/task/history.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/task/completion.go</code> · <code>core/internal/task/recovery.go</code> · <code>core/internal/state/evidence.go</code> · <code>core/internal/state/commands.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/conversation/commands.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/task_context.go</code> · <code>web/src/components/runtime/TaskPanel.tsx</code></p><p><a href="decisions.html">Decisions</a> · <a href="open-questions.html">Open questions</a> · <a href="tools.html">Tools</a></p></details>
 </body>
 </html>
