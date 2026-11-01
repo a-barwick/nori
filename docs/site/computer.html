@@ -19,7 +19,7 @@
     <text x="85" y="154" text-anchor="middle" font-size="11" fill="#4a5163">sends tool calls</text>
     <text x="85" y="169" text-anchor="middle" font-size="11" fill="#4a5163">starts the host if stopped</text>
     <rect x="230" y="40" width="300" height="220" rx="12" fill="#faf0e4" stroke="#a8551c" stroke-width="2"/>
-    <text x="380" y="66" text-anchor="middle" font-size="13.5" font-weight="700" fill="#a8551c">GCE host · nori-computer</text>
+    <text x="380" y="66" text-anchor="middle" font-size="13.5" font-weight="700" fill="#a8551c">GCE host</text>
     <rect x="250" y="80" width="260" height="56" rx="8" fill="#fff" stroke="#a8551c" stroke-width="1.5"/>
     <text x="380" y="103" text-anchor="middle" font-size="12.5" font-weight="650">Host proxy (computer-agent --proxy)</text>
     <text x="380" y="120" text-anchor="middle" font-size="11" fill="#4a5163">15 idle minutes → graceful guest stop</text>
@@ -86,6 +86,6 @@
 <tr><td><code>computer.sh</code>, <code>run.sh</code></td><td>Run <code>gcloud compute</code> commands and reach the host over IAP. They hard-code the project, zone and data disk.</td></tr>
 <tr><td><code>terraform/</code></td><td>A <code>google_compute_instance</code> with nested virtualization, a minimum CPU platform and a shutdown script, plus the GCE disk, network and firewall.</td></tr></table></div>
 <p>The Firecracker install, the tap network and egress rules in <code>persistent-host.sh</code>, and <code>build-guest.sh</code> use no GCP service, but they have only run on GCE. The production host script, <code>core/infrastructure/app/computer-startup.sh</code>, also reads the metadata server and downloads the <code>computer-agent</code> release from Cloud Storage.</p></details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/computer/</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/infrastructure/microvm/</code> · <code>core/infrastructure/app/computer-startup.sh</code> · <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/computer/</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/infrastructure/microvm/</code> · <code>core/infrastructure/app/computer-startup.sh</code></p></details>
 </body>
 </html>

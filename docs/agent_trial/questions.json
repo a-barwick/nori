@@ -20,10 +20,10 @@
  {
   "id": "complete",
   "feature": "map",
-  "q": "What confidence does the completion check need for a yes, and how many read-only corrections are allowed?",
+  "q": "Does the completion check use model confidence? What does the runtime check before a task can finish?",
   "all": [
-   "0\\.8",
-   "\\b2\\b|two"
+   "\\b(no|not|none|without|doesn't)\\b",
+   "record"
   ]
  },
  {

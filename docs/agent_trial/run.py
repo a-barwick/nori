@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measures whether docs/agent_map.py helps agents. Each run gets a clean shallow clone with one feature set.
 
-Usage: python3 docs/agent_trial/run.py OUTPUT_DIR [--reps 3] [--workers 5] [--only ID,ID] [--configs base,map]
+Usage: python3 docs/agent_trial/run.py OUTPUT_DIR [--reps 3] [--workers 5] [--only ID,ID] [--configs base,map] [--web LABEL]
 """
 import argparse
 import json
@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+WEB_URL = "https://docs.noribot.chat/"
 MODEL, EFFORT = "claude-sonnet-5-5", "medium"
 FEATURE_SETS = {"base": set(), "map": {"find"}, "lookup": {"find", "code"}, "all": {"find", "code", "stale"}}
 ROUTES = {
@@ -74,9 +75,13 @@ def prepare(out, config, seeded):
 def ask(job):
     out, clone, config, question, rep = job
     prompt = question["q"] + "\n\nAnswer from this repository in under 80 words. Don't change any files."
+    tools = "Bash,Read,Grep,Glob"
+    if config.startswith("web"):
+        prompt = question["q"] + f"\n\nAnswer from the documentation at {WEB_URL} in under 80 words."
+        tools = "WebFetch"
     cmd = ["claude", "-p", prompt, "--model", MODEL, "--effort", EFFORT, "--output-format", "stream-json", "--verbose",
            "--setting-sources", "project", "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
-           "--tools", "Bash,Read,Grep,Glob", "--permission-mode", "bypassPermissions"]
+           "--tools", tools, "--permission-mode", "bypassPermissions"]
     row = {"config": config, "question": question["id"], "feature": question["feature"], "rep": rep}
     try:
         done = subprocess.run(cmd, cwd=clone, capture_output=True, text=True, timeout=420)
@@ -90,7 +95,7 @@ def ask(job):
             for block in event["message"].get("content", []):
                 if block.get("type") == "tool_use":
                     tools += 1
-                    used_map = used_map or "agent_map" in json.dumps(block.get("input")) or "agent-map" in json.dumps(block.get("input"))
+                    used_map = used_map or bool(re.search(r"agent.map|llms\.txt|\.md\b", json.dumps(block.get("input"))))
         if event.get("type") == "result":
             result = event
     usage = result.get("usage", {})
@@ -108,7 +113,7 @@ def summarize(out):
     rows = [json.loads(line) for line in (out / "results.jsonl").read_text().splitlines()]
     lines = ["| Feature | Config | Runs | Correct | Median tokens | Median tools | Median seconds | Median cost | Used map |", "|---|---|---:|---:|---:|---:|---:|---:|---:|"]
     for feature in CONFIGS_FOR:
-        for config in FEATURE_SETS:
+        for config in sorted({r["config"] for r in rows}):
             group = [r for r in rows if r["feature"] == feature and r["config"] == config]
             if group:
                 med = lambda key: statistics.median(r.get(key) or 0 for r in group)
@@ -125,10 +130,16 @@ def main():
     parser.add_argument("--workers", type=int, default=5)
     parser.add_argument("--only")
     parser.add_argument("--configs")
+    parser.add_argument("--web", help="label for a run against the published site, with only web fetch")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     questions = json.loads((ROOT / "docs/agent_trial/questions.json").read_text())
     jobs, clones = [], {}
+    if args.web:
+        empty = args.out / "empty"
+        empty.mkdir(exist_ok=True)
+        jobs = [(args.out, empty, "web-" + args.web, q, rep) for q in questions if not q.get("seeded") and (not args.only or q["id"] in args.only.split(",")) for rep in range(args.reps)]
+        questions = []
     for question in questions:
         if args.only and question["id"] not in args.only.split(","):
             continue

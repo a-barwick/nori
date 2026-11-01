@@ -43,7 +43,7 @@ Checked by the reviewer, who has to show the evidence in `review-docs`:
 | 13 | A newcomer can follow it | A good engineer who has never seen Nori needs no other page to understand the visible text. Words defined in `words.html`, such as outer loop and turn, are shared vocabulary, so use them and don't reword them. |
 | 14 | One concrete example | A concept page follows a real-looking message or task, such as the Tucson weather task. |
 | 15 | Every fact earns its place | For each number, name and setting, say what a reader would do with it. Cut it if there's no answer. |
-| 16 | Every claim is true | Each number, name, order and status in visible text has a `file:line` in the code on `main`, or a Linear issue if it's planned. |
+| 16 | Every claim is true | Each number, name, order and status in visible text has a `file:line` in the code on `main`, or a Linear issue the reviewer can read if it's planned. |
 | 17 | Built and planned are clear | Planned work is marked `designed`, and the page reads properly with it hidden. |
 | 18 | It looks like the first page | At 1440 px the title, lede and top of the visual are on the first screen. At 375 px nothing scrolls sideways or clips. |
 
@@ -80,7 +80,7 @@ Use the same words everywhere: outer loop, inner loop, runtime, task, dispatch, 
 <section><h2>A short heading</h2>
 <!-- Short lists, tables and cards. -->
 </section>
-<details class="sources"><summary>Sources</summary><p>Linear issue links and repo file paths.</p></details>
+<details class="sources"><summary>Sources</summary><p>Repo file paths and links to other pages.</p></details>
 </body>
 </html>
 ```
@@ -129,7 +129,7 @@ When sources disagree, the code on `main` decides what's built. Linear and `deci
 - Never include secrets, API keys, personal email addresses, or real user messages and task IDs. The site is public.
 - The repo is private. Cite repo files as plain paths in `<code>`, and don't link GitHub or mention branches, commits or pull requests.
 - Don't use the name Nova, the internal product around the web client. Say "the theme" or "the shell".
-- Link Linear issues as `AB-123`, and list the sources at the bottom of the page.
+- The site is public and the repo and Linear are private. Never name or link Linear or its issue IDs, a person, an account or a cloud project. List repo file paths under Sources, and `docs/agent_map.py publish` removes them, `sources.html` and `code.html` from the published site.
 - Record each new design decision in `decisions.html`, with its date and what was rejected. Add unresolved questions to `open-questions.html`, and remove them once settled.
 
 ## Data buttons

@@ -178,7 +178,7 @@ const dataPanel = exchanges => {
       ${x.note ? `<p class="note">${esc(x.note)}</p>` : ''}
       ${block('Request', x.request)}${block('Response', x.response)}${block('Saved', x.saved)}
       ${x.other ? `<div class="ex-label">Other outcomes</div><ul class="pts note">${x.other.map(o => `<li>${esc(o)}</li>`).join('')}</ul>` : ''}
-      <p class="ex-src">${esc(x.source)}</p></details>`).join('');
+      ${x.source ? `<p class="ex-src">${esc(x.source)}</p>` : ''}</details>`).join('');
   return panel;
 };
 const dataButton = onToggle => {
@@ -293,6 +293,6 @@ if (road && window.ROAD) {
        <span class="mn">M${n}</span><span class="mt">${t}</span>
        <span class="mp">${note}</span>
        <div class="bar"><i style="width:${Math.round(d / tot * 100)}%"></i></div>
-       <span class="mp">${d}/${tot} in Linear</span>
+       <span class="mp">${d}/${tot} done</span>
      </div>`).join('');
 }
