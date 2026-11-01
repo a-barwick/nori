@@ -12,7 +12,7 @@
 <p class="lede">How the inner loop will find and load only the tools a task needs.</p>
 <div class="card">
     <h3 style="margin-top:0">Dynamic tool discovery <span class="tag design">designed · milestone 5</span></h3>
-    <p>Today each loop has a fixed tool list: five for the outer loop, and up to four for the inner loop (<code>shell</code>, <code>browser_navigate</code>, <code>browser_screenshot</code> and <code>wait_for_input</code>). The plan is for the inner loop to start small and load only what a task needs, so adding connectors doesn't fill its context with tool schemas.</p>
+    <p>Today each loop has a fixed tool list: six for the outer loop, and up to five for the inner loop (<code>complete</code>, <code>shell</code>, <code>browser_navigate</code>, <code>browser_screenshot</code> and <code>request_input</code>). The plan is for the inner loop to start small and load only what a task needs, so adding connectors doesn't fill its context with tool schemas.</p>
     <div class="branch4">
       <div class="node designed-node"><b>1. Catalog</b><small>Short entries give each capability's purpose, account, scope, availability and failure behavior. <a href="https://linear.app/a-barwick/issue/AB-158">AB-158</a></small></div>
       <div class="node designed-node"><b>2. Discover</b><small>The inner loop looks for capabilities using the task, its evidence and the connected services. <a href="https://linear.app/a-barwick/issue/AB-159">AB-159</a></small></div>

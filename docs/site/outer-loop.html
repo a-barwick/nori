@@ -70,7 +70,7 @@
 <p><a href="https://github.com/a-barwick/nori/pull/30">PR #30</a> requests schema-constrained output for user turns. Intro and task-notification turns still return plain text and cannot issue commands.</p>
 
 <details class="more"><summary>Provider behavior and recovery</summary>
-<p>Austin selected Sol low after Muse omitted commands and rejected structured responses in local checks. The schema uses the existing command definitions; no second model call forces dispatch.</p>
+<p>Sol low replaced Muse after Muse omitted commands and rejected structured responses in local checks. The schema uses the existing command definitions; no second model call forces dispatch.</p>
 <p>Rejected responses stay in private attempt records and are excluded from later model history. Recovery reuses accepted command receipts; it does not repeat the model call.</p>
 <p><code>hold(task_id, question)</code> saves a question without changing the task's instructions. A terminal event supplies the outcome for its answer.</p>
 </details></section>
