@@ -57,7 +57,7 @@ it takes.
 | `make pause` | Closes admission and stops paid compute |
 | `make deploy-status` | Shows paused state, Current worker, and the last deploy |
 | `make deploy-rollback` | Restores the previous release after an interrupted deploy |
-| `make deploy-unlock` | Removes a dead deploy's lock |
+| `make deploy-unlock` | Shows the lock owner and the generation needed to recover an abandoned lock |
 
 `make deploy` refuses to start while a task is running or a message has not been
 attempted. While paused, a failed turn's saved input can survive a repair deploy;
@@ -65,15 +65,27 @@ it still needs a user follow-up before another attempt.
 It also refuses any Terraform plan that does more than add the new worker and give
 retained workers its route. A new worker keeps the Current worker's model.
 
-Any failure restores the previous release and leaves Nori paused, which is safe
-because nothing has run on the new code. Run `make deploy` again after fixing the
+After a mutating step starts, failure recovery reconciles pause and verifies the
+previous release if a release switch was attempted. If recovery fails, production
+may be partially changed: keep admission closed, run `make pause`, inspect
+`make deploy-status`, and run `make deploy-rollback` before reopening.
+Run `make deploy` again after fixing the
 cause; finished steps are reused, and images are reused by commit. If the process
 is killed, `make deploy` resumes it instead. Progress lives in
 `~/.local/state/nori/bot-111549/deploy/`.
 
+Every deploy and rollback takes an exclusive lock, even for the same commit.
+After a killed process, run `make deploy-unlock` to inspect the owner. Confirm it
+has stopped, including on another host, then use the displayed generation with
+`python3 core/infrastructure/release/deploy.py unlock --lock-generation GENERATION`.
+A running local owner is refused, and recovery cannot delete a replacement lock.
+
 The web health page sits behind IAP, so the deploy checks the service's readiness
-and image instead of loading the page. Source maps upload only if `SENTRY_ORG` and
-`SENTRY_PROJECT` are in the root `.env`. Sandbox deploys are not covered.
+and image instead of loading the page. Production web builds require source-map
+uploads to Sentry's `austin-barwick/nori-web` project using the existing
+`nori-sentry-auth-token` Secret Manager credential. Upload failure stops the build.
+The read-only operator OAuth credential is not used or changed. Sandbox deploys
+are not covered.
 
 Application Terraform state remains in the existing GCS bucket
 `bot-111549-nori-ci-state`, with production prefixes `nori/poc` and
