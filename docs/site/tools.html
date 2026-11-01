@@ -53,7 +53,7 @@
 <li>If the computer restarts or stops, the job is killed and reported as lost, never as finished.</li>
 </ul></section>
 <section class="designed"><h2>Loading tools on demand</h2>
-<p>Every task gets the same tool list today. Milestone 10 plans for the inner loop to load only the tool definitions a task needs. <a href="https://linear.app/a-barwick/issue/AB-159">AB-159</a> <a href="https://linear.app/a-barwick/issue/AB-160">AB-160</a></p>
+<p>Every task gets the same tool list today. Milestone 10 plans for the inner loop to load only the tool definitions a task needs.</p>
 </section>
 <details class="more"><summary>Screenshots, calendar and the catalog</summary>
 <p><code>screenshot_inspect</code> sends one saved image and one question to the task model in a separate call with no tools. Only the text answer joins the task's history, so text inside an image can't call a tool. The cost counts against the task's budget.</p>
@@ -62,6 +62,6 @@
 <p>The worker adds a short catalog to the inner loop's instructions, with today's date in the configured time zone. Each entry gives the capability's tools, account and availability, what to do on failure, and how to confirm a result. A missing credential leaves the tool in place, and the tool reports itself unavailable.</p>
 <p>Each search charges the task's budget $0.005, Brave's listed price on Oct 31, 2026.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code>, <code>catalog.go</code>, <code>search.go</code>, <code>calendar.go</code>, <code>inspect.go</code>, <code>core/internal/computerd/jobs.go</code>, <code>core/internal/task/jobs.go</code>, <code>core/cmd/nori-connect-calendar/main.go</code>. <a href="https://linear.app/a-barwick/issue/AB-158">AB-158</a> <a href="https://linear.app/a-barwick/issue/AB-201">AB-201</a> <a href="https://linear.app/a-barwick/issue/AB-202">AB-202</a> <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a> <a href="https://linear.app/a-barwick/issue/AB-204">AB-204</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code>, <code>catalog.go</code>, <code>search.go</code>, <code>calendar.go</code>, <code>inspect.go</code>, <code>core/internal/computerd/jobs.go</code>, <code>core/internal/task/jobs.go</code>, <code>core/cmd/nori-connect-calendar/main.go</code>.</p></details>
 </body>
 </html>

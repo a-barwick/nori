@@ -17,7 +17,7 @@
 </div></div>
 <p>For “Check Saturday's weather in Tucson”, the web client sends the words and shows the saved reply. The agent service builds the prompt, saves the task and owns its status.</p>
 <section><h2>What a client never does</h2>
-<ul class="pts"><li>Build prompts or send context. It only sends the user's own words and references.</li><li class="designed">Parse model output. The web client still does this for layout (<a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a>).</li><li>Assume a command has finished because it was accepted.</li><li>Talk to a model provider directly.</li></ul></section>
+<ul class="pts"><li>Build prompts or send context. It only sends the user's own words and references.</li><li class="designed">Parse model output. The web client still does this for layout.</li><li>Assume a command has finished because it was accepted.</li><li>Talk to a model provider directly.</li></ul></section>
 <section><h2>Each client</h2>
 <div class="card"><table class="tall"><tr><th>Client</th><th>State</th><th>Pages</th></tr>
 <tr><td>Web, including phone widths</td><td>Built</td><td><a href="web-client.html">Web client</a>, <a href="frontend.html">Web client architecture</a>, <a href="theme.html">Theme</a></td></tr>
@@ -37,7 +37,7 @@
 <tr><td>Notifications</td><td>Decides whether to interrupt</td><td>None</td><td>Push, badge, tab title</td></tr>
 <tr><td>Offline</td><td>Idempotent commands, replayable log</td><td>Outbox and catch-up</td><td>Offline indicator</td></tr>
 <tr><td>Drafts and open panels</td><td>None</td><td>None</td><td>Per device</td></tr></table>
-<p>The service, kit and shell split is in <code>docs/separation-of-concerns.md</code>.</p></details>
-<details class="sources"><summary>Sources</summary><p><a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>web/src/lib/runtime/server.ts</code> · <code>web/src/lib/hybrid.ts</code> · <code>core/internal/wake/http.go</code></p></details>
 </body>
 </html>

@@ -19,7 +19,7 @@
     <text x="85" y="154" text-anchor="middle" font-size="11" fill="#4a5163">sends tool calls</text>
     <text x="85" y="169" text-anchor="middle" font-size="11" fill="#4a5163">starts the host if stopped</text>
     <rect x="230" y="40" width="300" height="220" rx="12" fill="#faf0e4" stroke="#a8551c" stroke-width="2"/>
-    <text x="380" y="66" text-anchor="middle" font-size="13.5" font-weight="700" fill="#a8551c">GCE host · nori-computer</text>
+    <text x="380" y="66" text-anchor="middle" font-size="13.5" font-weight="700" fill="#a8551c">GCE host</text>
     <rect x="250" y="80" width="260" height="56" rx="8" fill="#fff" stroke="#a8551c" stroke-width="1.5"/>
     <text x="380" y="103" text-anchor="middle" font-size="12.5" font-weight="650">Host proxy (computer-agent --proxy)</text>
     <text x="380" y="120" text-anchor="middle" font-size="11" fill="#4a5163">15 idle minutes → graceful guest stop</text>
@@ -47,6 +47,6 @@
     <div class="card tight"><p class="keyline">The host says when it's draining</p><p class="note">When the host is stopping because it's idle, it rejects requests with a draining header before forwarding them. This is the one case where it's safe to reconnect and resend.</p></div>
     <div class="card tight"><p class="keyline">Jobs belong to a task</p><p class="note">The guest runs each <a href="tools.html">long shell job</a> in its own process group and saves its state on disk. A job running during a restart is reported as lost.</p></div>
   </div>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/computer/computer.go</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/computer/computer.go</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code></p></details>
 </body>
 </html>

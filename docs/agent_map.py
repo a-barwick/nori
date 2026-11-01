@@ -5,11 +5,14 @@ Usage: python3 docs/agent_map.py find "budget continue"   sections that match, a
        python3 docs/agent_map.py code core/internal/task/workflow.go   pages that describe a file
        python3 docs/agent_map.py stale                    pages whose code changed since their review
        python3 docs/agent_map.py mark PAGE [PAGE ...]     record a review PASS at the current commit
+       python3 docs/agent_map.py publish DIR              write the public site with agent files, without private references
        python3 docs/agent_map.py build                    regenerate docs/agent-map.json
        python3 docs/agent_map.py check                    fail if the map is out of date, warn on stale pages
 """
 import json
+import html
 import re
+import shutil
 import subprocess
 import sys
 from html.parser import HTMLParser
@@ -23,6 +26,9 @@ FEATURES = {"find", "code", "stale"}
 SKIP = {"script", "style", "head", "defs"}
 VOID = {"br", "hr", "img", "input", "link", "meta", "path", "circle", "rect", "line", "polygon", "use", "ellipse"}
 BLOCK = {"p", "li", "tr", "h1", "h2", "h3", "div", "section", "details", "summary", "text", "pre", "ul", "table"}
+REPO_ONLY = {"sources", "code"}
+PUBLIC_URL = "https://docs.noribot.chat/"
+INDEXED = False
 FIND_CHARS = 1800
 FIND_LIMIT = 3
 STALE_LINES = 8
@@ -135,6 +141,57 @@ def build_map():
     return json.dumps({"pages": pages}, indent=1, ensure_ascii=False) + "\n"
 
 
+def public_pages():
+    return [page for page in read_site() if Path(page["page"]).stem not in REPO_ONLY]
+
+
+def public_html(path):
+    """Removes private references and adds what agents need, leaving what readers see unchanged."""
+    page, text = read_page(path), path.read_text(encoding="utf-8")
+    text = re.sub(r'<details class="sources">.*?</details>\n?', "", text, flags=re.S)
+    for name in REPO_ONLY:
+        text = re.sub(rf'<a [^>]*href="{name}\.html[^"]*"[^>]*>(.*?)</a>', r"\1", text, flags=re.S)
+    used = set()
+
+    def heading(match):
+        title = re.sub(r"<[^>]+>", "", match.group(3))
+        anchor = re.sub(r"[^a-z0-9]+", "-", html.unescape(title).lower().replace("&", " and ")).strip("-")
+        if anchor in used or match.group(2):
+            return match.group(0)
+        used.add(anchor)
+        return f'<{match.group(1)} id="{anchor}"{match.group(2)}>{match.group(3)}</{match.group(1)}>'
+
+    text = re.sub(r"<(h[23])((?: [^>]*)?)>(.*?)</\1>", heading, text, flags=re.S)
+    robots = "" if INDEXED else '<meta name="robots" content="noindex">\n'
+    head = f'<meta name="description" content="{html.escape(page["summary"], quote=True)}">\n{robots}<link rel="alternate" type="text/markdown" href="{path.stem}.md">\n'
+    text = text.replace("</head>", head + "</head>", 1)
+    links = "".join(f'<li><a tabindex="-1" href="{Path(p["page"]).name}">{html.escape(p["title"])}</a>: {html.escape(p["summary"])} <a tabindex="-1" href="{Path(p["page"]).stem}.md">Plain text</a></li>' for p in public_pages())
+    nav = f'<nav aria-hidden="true" style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)"><p>Pages on this site. <a tabindex="-1" href="llms.txt">Plain text index</a></p><ul>{links}</ul></nav>\n'
+    return text.replace("<body>\n", "<body>\n" + nav, 1)
+
+
+def publish(out):
+    shutil.copytree(SITE, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns("AGENTS.md", "*.html"))
+    pages = public_pages()
+    for page in pages:
+        path = ROOT / page["page"]
+        (out / path.name).write_text(public_html(path), encoding="utf-8")
+        body = "\n\n".join((f"## {s['title']}\n\n" if s["title"] != "Overview" else "") + s["text"] for s in page["sections"])
+        (out / f"{path.stem}.md").write_text(body + "\n", encoding="utf-8")
+    lines = ["# Nori", "", "> How the Nori personal assistant works. Each page below has a plain text copy.", ""]
+    lines += [f"- [{p['title']}]({PUBLIC_URL}{Path(p['page']).stem}.md): {p['summary']}" for p in pages]
+    (out / "llms.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (out / "robots.txt").write_text("User-agent: *\nAllow: /\n", encoding="utf-8")
+    for name in ("request-data.js", "task-data.js"):
+        data = out / name
+        data.write_text(re.sub(r"'(?:core|web|docs)/[^']*'", "''", re.sub(r"\bsource: '[^']*'", "source: ''", data.read_text(encoding="utf-8"))), encoding="utf-8")
+    script = out / "site.js"
+    source = script.read_text(encoding="utf-8")
+    for name in REPO_ONLY:
+        source = re.sub(rf",?\s*\['{name}', '[^']*'\]", "", source, count=1)
+    script.write_text(source, encoding="utf-8")
+
+
 def git(*args):
     return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
 
@@ -240,6 +297,9 @@ def main(argv):
             else:
                 reviewed[page] = git("rev-parse", "HEAD")
         REVIEWED.write_text(json.dumps(dict(sorted(reviewed.items())), indent=1) + "\n", encoding="utf-8")
+        return 0
+    if command == "publish" and len(argv) == 2:
+        publish(Path(argv[1]))
         return 0
     if command == "build":
         MAP.write_text(build_map(), encoding="utf-8")

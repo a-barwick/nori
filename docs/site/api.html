@@ -44,8 +44,8 @@
 </table>
 <p>Replies arrive as typed parts: <code>text</code>, <code>chips</code>, <code>image</code>, <code>artifact</code>, <code>approval</code> and <code>attachment</code>. Each non-text part has fallback text, so an older client can still show something.</p>
 <ul class="pts"><li>One log and one stream per owner, since tasks and badges span threads.</li><li>Server-sent events with a long-poll fallback. WebSockets were rejected for now because commands already use POST.</li><li>Clients don't read Firestore directly, so its schema doesn't become the contract.</li><li>Task results land in the thread that started the task.</li></ul>
-<p>Resource fields, event types, error codes, limits and rollout phases are in <code>docs/client-contract.md</code>. Everything beyond today's API is a proposal.</p></details>
+<p>Everything beyond today's API is a proposal.</p></details>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/wake/http.go</code> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a> · <a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/wake/http.go</code></p></details>
 </body>
 </html>

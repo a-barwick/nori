@@ -153,6 +153,8 @@ def check(path):
         fails.append("missing p.lede")
     if "github.com" in source:
         fails.append("links GitHub, but the repo is private: use a plain path")
+    if re.search(r"linear\.app|\bLinear\b|\bAB-\d+|a-barwick", source):
+        fails.append("names or links a private source")
     if re.search(r"(?<![a-z])nova", source, re.I):
         fails.append("uses the name Nova")
     if "sources" not in page.classes and name not in LONG_PAGES and name != "index":
@@ -247,13 +249,17 @@ def changed_pages():
 
 
 def undeployed_pages():
+    sys.path.insert(0, str(SITE.parent))
+    import agent_map
     pages = []
     for path in sorted(SITE.glob("*.html")):
+        if path.stem in agent_map.REPO_ONLY:
+            continue
         result = subprocess.run(["curl", "-sS", "--max-time", "15", "-w", "%{http_code}", LIVE_URL + path.name], capture_output=True)
         body, status = result.stdout[:-3], result.stdout[-3:]
         if result.returncode or status not in (b"200", b"404"):
             sys.exit(f"Can't compare {path.name} with the published site: {result.stderr.decode().strip() or status.decode()}")
-        if status == b"404" or body != path.read_bytes():
+        if status == b"404" or body != agent_map.public_html(path).encode():
             pages.append(path)
     return pages
 
