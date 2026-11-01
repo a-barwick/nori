@@ -3,7 +3,7 @@ const NAV = [
   ['Start', [['index', 'Overview'], ['product', 'What Nori should do'], ['request', 'Following a request']]],
   ['The loops', [['outer-loop', 'Outer loop'], ['classification', 'Classifying a message'], ['outer-model-failure', 'Outer model failure'], ['inner-loop', 'Inner loop'], ['contract', 'How the loops talk'], ['tasks', 'Task lifecycle'], ['completion', 'Finishing a task']]],
   ['Agent service', [['system', 'Service overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['budgets', 'Budgets and controls'], ['observability', 'Observability'], ['deploy', 'Deployment']]],
-  ['Clients', [['clients', 'Clients'], ['api', 'Service API'], ['web-client', 'Web client'], ['frontend', 'Web client architecture'], ['theme', 'Nova theme']]],
+  ['Clients', [['clients', 'Clients'], ['api', 'Service API'], ['web-client', 'Web client'], ['frontend', 'Web client architecture'], ['theme', 'Theme']]],
   ['Planned', [['tools', 'Tool discovery'], ['authority', 'Approvals and writes'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['schedules', 'Schedules and proactive'], ['roadmap', 'Roadmap']]],
   ['Reference', [['scenarios', 'Scenarios'], ['decisions', 'Decisions'], ['open-questions', 'Open questions'], ['code', 'Code map'], ['words', 'Words we use'], ['reading', 'Reading list'], ['sources', 'Sources']]],
 ];
@@ -63,8 +63,8 @@ if (filtered.length && !PLANNED.includes(current)) {
     buttons.forEach(b => b.classList.toggle('on', b.dataset.view === view));
     document.body.classList.toggle('only-impl', view === 'impl');
     document.body.classList.toggle('only-design', view === 'design');
-    status.textContent = view === 'impl' ? `Hiding ${filtered.length} ${noun} on this page that aren't on main yet.`
-      : view === 'design' ? `Highlighting ${filtered.length} ${noun} on this page that aren't on main yet.` : '';
+    status.textContent = view === 'impl' ? `Hiding ${filtered.length} ${noun} on this page that aren't built yet.`
+      : view === 'design' ? `Highlighting ${filtered.length} ${noun} on this page that aren't built yet.` : '';
     try { localStorage.setItem('nori-view', view); } catch {}
   };
   buttons.forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
@@ -165,7 +165,7 @@ const block = (label, value) => value === undefined ? '' :
 const dataPanel = exchanges => {
   const panel = document.createElement('div');
   panel.className = 'step-data';
-  panel.innerHTML = `<p class="note">Simulated example. The endpoints and field names follow the code on main, and “…” marks what's been shortened.</p>` +
+  panel.innerHTML = `<p class="note">Simulated example. The endpoints and field names follow the code, and “…” marks what's been shortened.</p>` +
     exchanges.map((x, i) => `<details class="ex"${x.edge ? ` data-edge="${x.edge}"` : ''}${i === 0 ? ' open' : ''}>
       <summary><span class="ex-route">${esc(x.from)} → ${esc(x.to)}</span><code>${esc(x.call)}</code></summary>
       ${x.note ? `<p class="note">${esc(x.note)}</p>` : ''}

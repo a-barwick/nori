@@ -11,27 +11,27 @@
 <h1>Web client</h1>
 <p class="lede">A Next.js app that shows one conversation with Nori and the activity of its tasks.</p>
 <div class="card">
-<img class="shot" src="img/web-desktop.png" width="1440" height="900" alt="The web client at desktop width. A white window on a lavender background holds the Nova and Nori header, a conversation with purple user bubbles and a saved document, a composer, and an Activity panel with a task waiting for an answer.">
+<img class="shot" src="img/web-desktop.png" width="1440" height="900" alt="The web client at desktop width. A white window on a lavender background holds the Nori header, a conversation with purple user bubbles and a saved document, a composer, and an Activity panel with a task waiting for an answer.">
 <p class="note">Screenshots come from the running client, with made-up data.</p>
 </div>
-<div class="grid2"><a class="card tight go" href="theme.html"><b>Nova theme</b><span>Colors, type, tokens and the mark.</span></a><a class="card tight go" href="frontend.html"><b>Web client architecture</b><span>Components, requests, polling and builds.</span></a></div>
+<div class="grid2"><a class="card tight go" href="theme.html"><b>Theme</b><span>Colors, type, tokens and the mark.</span></a><a class="card tight go" href="frontend.html"><b>Web client architecture</b><span>Components, requests, polling and builds.</span></a></div>
 <section><h2>The screen</h2>
 <div class="card"><table class="tall"><tr><th>Part</th><th>What it shows</th><th>Component</th></tr>
-<tr><td>Header</td><td>Nova brand, Nori's mark and status, debug toggle, Refresh, Activity.</td><td><code>NovaShell</code></td></tr>
+<tr><td>Header</td><td>Nori's mark and status, debug toggle, Refresh, Activity.</td><td>Shell</td></tr>
 <tr><td>Thread</td><td>Saved messages, documents, time separators, older-message loading and one status line.</td><td><code>Thread</code></td></tr>
 <tr><td>Composer</td><td>A text box that grows to 196 px, Send and a count of new messages. Enter sends and Shift+Enter adds a line.</td><td><code>RuntimeComposer</code></td></tr>
 <tr><td>Activity panel</td><td>Running tasks, recent tasks, questions, events, results and screenshots. <code>⌘.</code> or <code>Ctrl+.</code> toggles it.</td><td><code>TaskPanel</code></td></tr>
 <tr><td>Reading view</td><td>A full-screen copy of a saved reply, with Download as Markdown and Back to chat.</td><td><code>DocumentViewer</code></td></tr>
 </table></div>
 <div class="shots">
-<img class="shot" src="img/web-phone.png" width="780" height="1688" alt="The conversation at phone width. The Nova brand is hidden and the window fills the screen.">
+<img class="shot" src="img/web-phone.png" width="780" height="1688" alt="The conversation at phone width. The window fills the screen.">
 <img class="shot" src="img/web-phone-activity.png" width="780" height="1688" alt="The Activity panel at phone width, open as a sheet over the conversation.">
 </div>
 <div class="card"><table class="tall"><tr><th>Width</th><th>Layout</th></tr>
 <tr><td>1280 px and up</td><td>Activity docks beside the thread at 360 px.</td></tr>
 <tr><td>Below 1280 px</td><td>Activity opens as a sheet from the right, over a scrim.</td></tr>
 <tr><td>900 px and below</td><td>The lavender margin shrinks from 28 px to 16 px.</td></tr>
-<tr><td>600 px and below</td><td>The window fills the screen, the Nova brand is hidden and the Activity button shows only its icon.</td></tr>
+<tr><td>600 px and below</td><td>The window fills the screen and the Activity button shows only its icon.</td></tr>
 </table></div>
 <p>Chat is the only page. <code>/goals</code>, <code>/ideas</code>, <code>/library</code> and <code>/settings</code> redirect to <code>/</code>.</p>
 </section>
@@ -70,6 +70,6 @@
 </ul>
 <p class="note">Rules are in <code>lib/hybrid.ts</code> and <code>lib/units.ts</code>.</p>
 </section>
-<details class="sources"><summary>Sources</summary><p><a href="https://github.com/a-barwick/nori/tree/main/web/src/components">web/src/components</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/lib/hybrid.ts">hybrid.ts</a> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-213">AB-213</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/src/components</code> · <code>web/src/lib/hybrid.ts</code> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-213">AB-213</a></p></details>
 </body>
 </html>

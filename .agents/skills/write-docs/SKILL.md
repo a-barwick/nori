@@ -58,7 +58,7 @@ Copy the skeleton in `docs/site/AGENTS.md`. Use its existing classes, and don't 
 - Lead each section with a table, list or diagram, and use prose only for what those can't show.
 - Use a concrete example the reader can follow, such as the Tucson weather and dinner tasks.
 - Put long lists of tokens, limits and fields in one `details.more` section, and only if a reader would look them up.
-- End with `details.sources`, linking repo files and Linear issues.
+- End with `details.sources`, listing repo file paths and linking Linear issues.
 
 When you change an existing page, rework the affected sections so the page reads as one piece. Don't stack new text on top of old text, and remove anything the change makes untrue. Keep existing headings where possible, because link IDs come from them.
 

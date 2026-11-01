@@ -29,7 +29,7 @@
 <div class="branch"><div class="node"><b>What pause does</b><small>Blocks new execution, scales workers to zero and stops the computer.</small></div><div class="node"><b>What keeps working</b><small>The website, chat, saved history and any waiting tasks. Nothing is cancelled.</small></div></div>
 </section>
 <section><h2>Releases</h2>
-<ul class="pts"><li>CI/CD is off. When requested, <code>make deploy</code> releases the latest <code>main</code> from the owner's Mac and leaves Nori paused until <code>make unpause</code>.</li><li>Worker builds are immutable and pinned, so running tasks stay on code that's compatible with them.</li><li><code>core/infrastructure/release/</code> holds the release and smoke test scripts.</li></ul></section>
+<ul class="pts"><li>CI/CD is off. When requested, <code>make deploy</code> releases the latest code from the owner's Mac and leaves Nori paused until <code>make unpause</code>.</li><li>Worker builds are immutable and pinned, so running tasks stay on code that's compatible with them.</li><li><code>core/infrastructure/release/</code> holds the release and smoke test scripts.</li></ul></section>
 <section><h2>Backups</h2>
 <ul class="pts"><li>Production's Firestore records and the computer's data disk get a daily copy, kept for seven days.</li><li>Restores go into a new database or a new disk, never over the live ones.</li><li>A restore of each was checked on October 31, 2026. Files inside the restored disk weren't checked.</li></ul></section>
 <section><h2>Seeing what happened</h2>
@@ -45,7 +45,7 @@
 <ul class="pts"><li>A file, an installed package, a browser cookie and local storage all survived a guest restart and a move to a new host.</li><li>This covers graceful restarts. RAM, live tabs and sudden crashes aren't covered.</li></ul></details>
 <details class="more"><summary>Network and credential checks</summary>
 <p>These are checks from the October 2026 trials. They don't establish production hardening.</p>
-<ul class="pts"><li>The computer has public IPv4 egress through host NAT, and guest IPv6 is off.</li><li>Guest attempts to reach cloud metadata and host SSH were rejected.</li><li>Chromium's debugging port binds to guest loopback, and host SSH accepts only IAP's source range.</li><li>The GCE host has no service account.</li><li>Credentials stay in a gitignored mode-600 <code>.env</code>, or in Secret Manager for hosted services. They're kept out of images, logs, model context and workflow history.</li></ul></details>
+<ul class="pts"><li>The computer has public IPv4 egress through host NAT, and guest IPv6 is off.</li><li>Guest attempts to reach cloud metadata and host SSH were rejected.</li><li>Chromium's debugging port binds to guest loopback, and host SSH accepts only IAP's source range.</li><li>The GCE host has no service account.</li><li>Credentials stay in a mode-600 <code>.env</code>, or in Secret Manager for hosted services. They're kept out of images, logs, model context and workflow history.</li></ul></details>
 <details class="more"><summary>Options considered for the computer</summary>
 <table class="tall"><tr><th>Option</th><th>Assessment</th></tr>
 <tr><td>Firecracker on a GCE host</td><td>Chosen. Smallest footprint and direct lifecycle control, but the guest image and startup are ours to own.</td></tr>

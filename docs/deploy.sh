@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds docs/site into an image and deploys it to the nori-docs Cloud Run service.
-# The service sits behind IAP, so only accounts granted access can read it.
+# The service is public: anyone can read the site without signing in.
 set -eu
 
 project=bot-111549
@@ -21,4 +21,4 @@ gcloud run deploy "$service" \
   --project "$project" --region "$region" --image "$image" \
   --service-account "$account" --port 8080 \
   --cpu 1 --memory 256Mi --min-instances 0 --max-instances 1 \
-  --no-allow-unauthenticated --iap --quiet
+  --allow-unauthenticated --no-iap --quiet

@@ -105,6 +105,10 @@ def check(path):
         fails.append("page needs exactly one h1")
     if "lede" not in page.classes:
         fails.append("missing p.lede")
+    if "github.com" in source:
+        fails.append("links GitHub, but the repo is private: use a plain path")
+    if re.search(r"(?<![a-z])nova", source, re.I):
+        fails.append("uses the name Nova")
     if "sources" not in page.classes and name not in LONG_PAGES and name != "index":
         fails.append("missing details.sources")
     if f"['{name}'," not in (SITE / "site.js").read_text(encoding="utf-8"):

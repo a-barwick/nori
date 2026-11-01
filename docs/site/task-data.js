@@ -1,4 +1,4 @@
-// Simulated data for the contract and task lifecycle pages. Endpoints and field names follow the code on main.
+// Simulated data for the contract and task lifecycle pages. Endpoints and field names follow the code.
 // Values are invented, and "…" marks a shortened value or fields left out to keep the example readable.
 (() => {
   const TASK = 'a41d7c02-5e3b-4f68-b2c9-0d8e6f13a975';
