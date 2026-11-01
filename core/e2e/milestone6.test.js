@@ -98,7 +98,7 @@ async function googleHandler(req, res) {
     google.writes.push({ kind: "send", to: header("To"), subject: header("Subject") });
     return write(res, () => {
       const id = `m${google.mail.length + 1}`;
-      google.mail.unshift({ id, labelIds: ["SENT"], payload: { headers: ["Message-Id", "To", "Subject"].map((name) => ({ name, value: header(name) })) } });
+      google.mail.unshift({ id, labelIds: ["SENT"], payload: { headers: ["X-Nori-Action", "To", "Subject"].map((name) => ({ name, value: header(name) })) } });
       return [200, { id }];
     });
   }
@@ -506,7 +506,7 @@ journey("an unrelated message can't carry a chat approval, whatever the model re
 
 journey("a sent email beyond the checked window is uncertain, never reported as not sent", async () => {
   google.fault.dropBeforeCommit = true;
-  for (let i = 0; i < 10; i++) google.mail.push({ id: `old${i}`, labelIds: ["SENT"], payload: { headers: [{ name: "Message-Id", value: `<old${i}@example.test>` }] } });
+  for (let i = 0; i < 10; i++) google.mail.push({ id: `old${i}`, labelIds: ["SENT"], payload: { headers: [{ name: "X-Nori-Action", value: `old${i}` }] } });
   scripts.window = (outputs) => outputs.length ? finish(`Outcome: ${outputs.at(-1).outcome}`, outputs, outputs.at(-1).outcome === "uncertain" ? ["Unknown."] : []) : { name: "email_send", args: { to: "sam@example.test", subject: "Window", body: "Hello" } };
   const id = await dispatch("window");
   await command("approve", id, (await awaiting(id)).question);

@@ -21,6 +21,8 @@ const (
 	maxEmailBody    = 8 << 10
 	// The metadata scope can't search, so a lost send is looked for in the latest sent mail.
 	sentMailChecked = 10
+	// Gmail replaces a supplied Message-Id, so a sent message carries its action in its own header.
+	actionHeader = "X-Nori-Action"
 )
 
 func (c CalendarConfig) gmailURL() string {
@@ -57,9 +59,9 @@ func (s *Service) prepareEmail(ctx context.Context, to, subject, body string) (P
 	}
 	config := s.Capabilities.Calendar
 	sum := sha256.Sum256([]byte(strings.Join([]string{config.Account, address.Address, subject, body}, "\n")))
-	spec := map[string]string{"account": config.Account, "to": address.Address, "subject": subject, "body": body, "message_id": "<" + hex.EncodeToString(sum[:16]) + "@noribot.chat>"}
+	spec := map[string]string{"account": config.Account, "to": address.Address, "subject": subject, "body": body, "action_id": hex.EncodeToString(sum[:16])}
 	// The same message can't go out twice. The user asks for a repeat by changing the text.
-	found, _, status, err := s.findSent(ctx, spec["message_id"])
+	found, _, status, err := s.findSent(ctx, spec["action_id"])
 	if err != nil {
 		return PreparedWrite{}, err
 	}
@@ -77,7 +79,7 @@ func (s *Service) prepareEmail(ctx context.Context, to, subject, body string) (P
 
 // findSent reads headers only, and returns nil when the message isn't in the latest sent
 // mail. complete says that was all of the sent mail, so a miss means it was never sent.
-func (s *Service) findSent(ctx context.Context, messageID string) (found *sentMessage, complete bool, status int, err error) {
+func (s *Service) findSent(ctx context.Context, actionID string) (found *sentMessage, complete bool, status int, err error) {
 	config := s.Capabilities.Calendar
 	client := config.client(ctx)
 	var list struct {
@@ -95,7 +97,7 @@ func (s *Service) findSent(ctx context.Context, messageID string) (found *sentMe
 		if err != nil || read != http.StatusOK {
 			return nil, false, read, err
 		}
-		if message.header("Message-Id") == messageID {
+		if message.header(actionHeader) == actionID {
 			return &message, false, http.StatusOK, nil
 		}
 	}
@@ -105,7 +107,7 @@ func (s *Service) findSent(ctx context.Context, messageID string) (found *sentMe
 func (s *Service) readSent(ctx context.Context, client *http.Client, id string) (sentMessage, int, error) {
 	config := s.Capabilities.Calendar
 	var message sentMessage
-	query := url.Values{"format": {"metadata"}, "metadataHeaders": {"Message-Id", "To", "Subject"}}
+	query := url.Values{"format": {"metadata"}, "metadataHeaders": {actionHeader, "To", "Subject"}}
 	status, err := googleCall(ctx, client, http.MethodGet, config.gmailURL()+"/users/me/messages/"+url.PathEscape(id)+"?"+query.Encode(), nil, nil, &message)
 	return message, status, err
 }
@@ -113,7 +115,7 @@ func (s *Service) readSent(ctx context.Context, client *http.Client, id string) 
 func rawEmail(account string, spec map[string]string) string {
 	headers := []string{
 		"From: " + account, "To: " + spec["to"], "Subject: " + mime.QEncoding.Encode("utf-8", spec["subject"]),
-		"Message-Id: " + spec["message_id"], "Date: " + time.Now().Format(time.RFC1123Z), "MIME-Version: 1.0",
+		actionHeader + ": " + spec["action_id"], "Date: " + time.Now().Format(time.RFC1123Z), "MIME-Version: 1.0",
 		"Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: base64",
 	}
 	body := base64.StdEncoding.EncodeToString([]byte(spec["body"]))
@@ -135,7 +137,7 @@ func (s *Service) sendEmail(ctx context.Context, spec map[string]string) (string
 	}
 	output := map[string]any{"provider_status": fmt.Sprint(status), "message_id": sent.ID, "to": spec["to"], "subject": spec["subject"], "account": config.Account, "read_back": false}
 	if message, read, err := s.readSent(ctx, client, sent.ID); err == nil && read == http.StatusOK {
-		if message.header("Message-Id") != spec["message_id"] {
+		if message.header(actionHeader) != spec["action_id"] {
 			output["reason"] = "The provider's sent message doesn't match the approved one."
 			return WriteUncertain, output
 		}
@@ -147,7 +149,7 @@ func (s *Service) sendEmail(ctx context.Context, spec map[string]string) (string
 
 // checkEmail never sends. A miss proves nothing unless it covered all of the sent mail.
 func (s *Service) checkEmail(ctx context.Context, spec map[string]string) (string, map[string]any) {
-	found, complete, status, err := s.findSent(ctx, spec["message_id"])
+	found, complete, status, err := s.findSent(ctx, spec["action_id"])
 	if err != nil || status != http.StatusOK {
 		return WriteUncertain, map[string]any{"to": spec["to"], "reason": "The sent mail couldn't be read, so this email may or may not have gone out."}
 	}
