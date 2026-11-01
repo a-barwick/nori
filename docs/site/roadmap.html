@@ -11,7 +11,7 @@
 <h1>Roadmap</h1>
 <p class="lede">Twelve milestones, in order. A milestone is done when it works on noribot.chat against its scenarios.</p>
   <div class="road" id="roadGrid" aria-label="Milestone timeline"></div>
-<ul class="pts"><li>Linear holds the twelve milestones. Milestones 6 to 12 are planned.</li><li>We measure progress against 106 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show Linear issue completion. Milestones 3 and 4 are deployed. Milestone 5 is built and isn't deployed, and its lookup scenarios are still open.</li><li>Milestone 4 stopped a finished task when the Jev classifier returned low confidence (<a href="https://linear.app/a-barwick/issue/AB-235">AB-235</a>). Milestone 5 removes that check.</li></ul>
+<ul class="pts"><li>Linear holds the twelve milestones. Milestones 6 to 12 are planned.</li><li>We measure progress against 106 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show Linear issue completion. Milestones 3 to 5 are deployed. Milestone 5 hasn't run a production task, and <a href="https://linear.app/a-barwick/issue/AB-162">AB-162</a> is still open.</li><li>Milestone 4 stopped a finished task when the Jev classifier returned low confidence (<a href="https://linear.app/a-barwick/issue/AB-235">AB-235</a>). Milestone 5 removes that check.</li></ul>
   <div style="margin-top:14px">
 <div class="card tight"><p class="keyline">What milestone 4 changed</p>
       <ul class="pts note"><li>Tasks finish with an explicit <code>complete</code> call and a completeness check from the Jev classifier, which milestone 5 removes.</li><li>Tool errors go back to the model.</li><li>Reads can be corrected within limits. Failed tasks and uncertain writes wait for user direction.</li><li>History moved out of workflow payloads.</li></ul></div>
@@ -46,7 +46,7 @@ const miles = [
     [2, 'Conversational home, deployed', 6, 8, 'AB-143, AB-147 in progress'],
     [3, 'Many tasks at once', 7, 13, 'deployed, area issues open'],
     [4, 'Waits and finishing properly', 8, 17, 'deployed'],
-    [5, 'Search, vision and tools', 5, 6, 'built, not deployed, lookup scenarios open'],
+    [5, 'Search, vision and tools', 5, 6, 'deployed, AB-162 open'],
     [6, 'Approvals and writes', 0, 7, 'first approved write'],
     [7, 'Subtasks', 0, 1, 'a task asks for other work'],
     [8, 'Results and files', 0, 8, 'message parts, uploads, event log'],
