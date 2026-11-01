@@ -23,16 +23,17 @@
 <div class="node inner"><b>Completion check</b><small>Reads the saved results, and the answer names the source and its date.</small></div>
 </div></div>
 <section><h2>The tools</h2>
-<div class="card"><table class="tall"><tr><th>Tool</th><th>Runs on</th><th>Type</th><th>Returns</th></tr>
-<tr><td><code>web_search</code></td><td>Worker</td><td>Read</td><td>Up to 8 results with URLs and publication dates when known.</td></tr>
-<tr><td><code>calendar_read</code></td><td>Worker</td><td>Read</td><td>Events in a range of up to 31 days, and the account it read.</td></tr>
-<tr><td><code>screenshot_inspect</code></td><td>Worker</td><td>Read</td><td>The text answer to one question about a saved screenshot.</td></tr>
-<tr><td><code>browser_navigate</code></td><td>Computer</td><td>Read</td><td>The page title and visible text.</td></tr>
-<tr><td><code>browser_screenshot</code></td><td>Computer</td><td>Read</td><td>A reference to a saved PNG.</td></tr>
-<tr><td><code>shell</code></td><td>Computer</td><td>Write</td><td>Output and exit code, within 45 seconds.</td></tr>
-<tr><td><code>job_start</code></td><td>Computer</td><td>Write</td><td>A job ID. The command runs in the background.</td></tr>
-<tr><td><code>job_status</code>, <code>job_wait</code></td><td>Computer</td><td>Read</td><td>The job's state, elapsed time and latest output.</td></tr>
-<tr><td><code>job_stop</code></td><td>Computer</td><td>Stop</td><td>The job's final state, once its processes have exited.</td></tr>
+<div class="card"><table><tr><th>Tool</th><th>Runs on</th><th>Type</th><th>Returns</th></tr>
+<tr><td>web_search</td><td>Worker</td><td>Read</td><td>Up to 8 results with URLs and publication dates when known.</td></tr>
+<tr><td>calendar_read</td><td>Worker</td><td>Read</td><td>Events in a range of up to 31 days, and the account it read.</td></tr>
+<tr><td>screenshot_inspect</td><td>Worker</td><td>Read</td><td>The text answer to one question about a saved screenshot.</td></tr>
+<tr><td>browser_navigate</td><td>Computer</td><td>Read</td><td>The page title and visible text.</td></tr>
+<tr><td>browser_screenshot</td><td>Computer</td><td>Read</td><td>A reference to a saved PNG.</td></tr>
+<tr><td>shell</td><td>Computer</td><td>Write</td><td>Output and exit code, within 45 seconds.</td></tr>
+<tr><td>job_start</td><td>Computer</td><td>Write</td><td>A job ID. The command runs in the background.</td></tr>
+<tr><td>job_status</td><td>Computer</td><td>Read</td><td>The job's state, elapsed time and latest output.</td></tr>
+<tr><td>job_wait</td><td>Computer</td><td>Read</td><td>The same, once the job has ended.</td></tr>
+<tr><td>job_stop</td><td>Computer</td><td>Stop</td><td>The job's final state, once its processes have exited.</td></tr>
 </table><p class="note"><code>complete</code> and <code>request_input</code> are <a href="contract.html">control tools</a>. During a completion correction, a task can only call the tools marked Read.</p></div></section>
 <section><h2>Long shell jobs</h2>
 <div class="states"><span class="state">running</span><span class="state-arrow">→</span><span class="state">finished</span><span class="state-arrow">or</span><span class="state">stopped</span><span class="state-arrow">or</span><span class="state">timed_out</span><span class="state-arrow">or</span><span class="state">lost</span></div>
