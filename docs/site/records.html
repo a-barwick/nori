@@ -64,6 +64,16 @@ owners/{owner}/
 <tr><td>The result is saved, then the client disconnects</td><td>Reopen the saved result, and don't repeat the work.</td></tr>
 <tr><td>A task crashes before it can report</td><td>The runtime emits a failure event with completed and unresolved operations.</td></tr>
 </table></div></section>
+<section><h2>Storage layers</h2>
+<p>These packages are under <code>core/internal/</code>.</p>
+<div class="card"><table class="tall"><tr><th>Layer</th><th>Code</th><th>Job</th></tr>
+<tr><td>Records and rules</td><td><code>state/</code></td><td>The record types, errors and store contracts, and the rules that decide whether a write is allowed, such as command admission, revision and lease checks, and publication.</td></tr>
+<tr><td>Document backend</td><td><code>state/firestore/</code></td><td>Reads and writes documents inside Firestore transactions and applies those rules. Document paths and field names are the saved layout.</td></tr>
+<tr><td>Artifact bytes</td><td><code>state/gcs/</code> and <code>state/localfs/</code></td><td>Stores screenshot bytes in Cloud Storage, or in a private folder for local runs.</td></tr>
+<tr><td>Development spend</td><td><code>spend/</code> and <code>spend/firestore/</code></td><td>The budget rules, and a ledger that reserves and settles model spend atomically.</td></tr>
+<tr><td>Wiring</td><td><code>platform/</code></td><td>Opens the backends a process is configured for. It is the only code that names one.</td></tr>
+</table></div>
+<p>A different database or object store needs its own adapter for these contracts. The rules stay in <code>state</code> and <code>spend</code>.</p></section>
 <details class="more"><summary>What each record has to hold</summary>
 <table class="tall"><tr><th>Record</th><th>Holds</th></tr>
 <tr><td>Conversation input</td><td>Stable ID, original content or event, accepted order, origin and processing state.</td></tr>
@@ -74,5 +84,6 @@ owners/{owner}/
 <tr class="designed"><td>Artifact</td><td>Stable ID, task link, location, version and preview metadata.</td></tr>
 <tr class="designed"><td>Approval</td><td>Exact operation and argument revision, effect, scope, decision and validity.</td></tr>
 </table></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state</code> · <code>core/internal/state/firestore</code> · <code>core/internal/state/gcs</code> · <code>core/internal/state/localfs</code> · <code>core/internal/spend</code> · <code>core/internal/platform/platform.go</code></p></details>
 </body>
 </html>

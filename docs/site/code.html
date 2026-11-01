@@ -25,7 +25,11 @@
           <tr><td>The outer model call and its tools</td><td><span class="mono">core/internal/conversation/model.go</span></td></tr>
           <tr><td><a href="classification.html">Jev classification</a></td><td><span class="mono">core/internal/conversation/classifier.go</span></td></tr>
           <tr><td>Outer command validation</td><td><span class="mono">core/internal/conversation/commands.go</span></td></tr>
-          <tr><td>Firestore records and transactions</td><td><span class="mono">core/internal/state/</span></td></tr>
+          <tr><td>Task and conversation records, store contracts and write rules</td><td><span class="mono">core/internal/state/</span></td></tr>
+          <tr><td>Firestore transactions for those records</td><td><span class="mono">core/internal/state/firestore/</span></td></tr>
+          <tr><td>Screenshot bytes in Cloud Storage or a local folder</td><td><span class="mono">core/internal/state/gcs/, localfs/</span></td></tr>
+          <tr><td><a href="budgets.html">Development spend</a> rules and ledger</td><td><span class="mono">core/internal/spend/, spend/firestore/</span></td></tr>
+          <tr><td>Which storage a process opens</td><td><span class="mono">core/internal/platform/</span></td></tr>
           <tr><td>The task workflow and activities</td><td><span class="mono">core/internal/task/workflow.go, activities.go</span></td></tr>
           <tr><td>Delivery from Firestore to the task engine: one reconciliation pass shared by the API, the worker and <code>nori-deliver</code></td><td><span class="mono">core/internal/dispatch/dispatcher.go</span></td></tr>
           <tr><td>The Temporal side of that contract</td><td><span class="mono">core/internal/task/client.go, worker_wake.go, resume.go</span></td></tr>

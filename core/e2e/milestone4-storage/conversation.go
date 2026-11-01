@@ -16,7 +16,7 @@ import (
 // Exercise the HTTP response -> command transaction -> visible reply boundary
 // with a deterministic structured action-only response. Real-model journeys cover dispatch;
 // this fixture does not depend on a model choosing to omit its content.
-func conversationBoundary(ctx context.Context, store *state.Google, taskID string) (map[string]bool, error) {
+func conversationBoundary(ctx context.Context, store state.ConversationStore, taskID string) (map[string]bool, error) {
 	var calls atomic.Int32
 	var mode atomic.Int32
 	var required atomic.Bool

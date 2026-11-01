@@ -1,8 +1,15 @@
-// Package state owns the durable single-owner conversation and private artifacts.
+// Package state defines Nori's durable records, the contracts a storage backend implements, and the rules that decide
+// what those records may become.
+//
+// The package is backend-neutral and imports no database or cloud SDK. A backend (for example internal/state/firestore)
+// provides atomic reads and writes plus queries, and calls the pure rules in this package inside its transactions.
+// Compose joins a document backend with an ArtifactStore into the ConversationStore that the rest of Nori uses.
+//
+// The firestore struct tags on the record types are part of the saved document layout. They name stored fields and
+// import nothing, so they stay here with the types they describe.
 package state
 
 import (
-	"context"
 	"errors"
 	"time"
 )
@@ -16,7 +23,8 @@ var ErrBusy = errors.New("task is not open")
 var ErrDuplicate = errors.New("run ID already exists")
 var ErrPaused = errors.New("task execution is paused")
 var ErrNotFound = errors.New("not found")
-var ErrCostUnknown = errors.New("Model cost is unknown for a provider request; task stopped before further model calls. Recorded spend includes only known costs.")
+var ErrCostUnknown = errors.New("Model cost is unknown for a provider request; task stopped before further model calls. " +
+	"Recorded spend includes only known costs.")
 
 type Control struct {
 	Paused bool `json:"paused" firestore:"paused"`
@@ -38,61 +46,17 @@ type Message struct {
 	Text      string    `json:"text" firestore:"text"`
 	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
 }
+
 type Event struct {
 	Kind      string    `json:"kind" firestore:"kind"`
 	Text      string    `json:"text" firestore:"text"`
 	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
 }
+
+// Artifact is the record of a private artifact on a run. Its bytes live in an ArtifactStore.
 type Artifact struct {
 	ID   string `json:"id" firestore:"id"`
 	Kind string `json:"kind" firestore:"kind"`
-}
-type RunStatus string
-
-const (
-	RunRunning   RunStatus = "running"
-	RunCompleted RunStatus = "completed"
-	RunFailed    RunStatus = "failed"
-	RunCancelled RunStatus = "cancelled"
-)
-
-// Run keeps WorkflowVersion, ProtocolVersion, Temporal and Deadline so saved
-// tasks round-trip unchanged. New tasks record the first three; none sets
-// Deadline, and nothing reads any of them to choose behavior.
-type Run struct {
-	WorkflowVersion       int               `json:"workflow_version,omitempty" firestore:"workflow_version,omitempty"`
-	InterruptRevision     int64             `json:"interrupt_revision,omitempty" firestore:"interrupt_revision,omitempty"`
-	Holds                 []TaskHold        `json:"holds,omitempty" firestore:"holds,omitempty"`
-	TraceContext          map[string]string `json:"-" firestore:"trace_context,omitempty"`
-	OriginTraceContext    map[string]string `json:"-" firestore:"origin_trace_context,omitempty"`
-	PublicationPending    bool              `json:"publication_pending,omitempty" firestore:"publication_pending,omitempty"`
-	PublicationGeneration int64             `json:"publication_generation,omitempty" firestore:"publication_generation,omitempty"`
-	CleanupPending        bool              `json:"cleanup_pending,omitempty" firestore:"cleanup_pending,omitempty"`
-	ProtocolVersion       int               `json:"protocol_version,omitempty" firestore:"protocol_version,omitempty"`
-	Request               string            `json:"request,omitempty" firestore:"request,omitempty"`
-	Position              int64             `json:"position,omitempty" firestore:"position,omitempty"`
-	Question              *Question         `json:"question,omitempty" firestore:"question,omitempty"`
-	EventSequence         int64             `json:"event_sequence,omitempty" firestore:"event_sequence,omitempty"`
-	Result                string            `json:"result,omitempty" firestore:"result,omitempty"`
-	OperationRefs         []string          `json:"operation_refs,omitempty" firestore:"operation_refs,omitempty"`
-	Temporal              bool              `json:"temporal,omitempty" firestore:"temporal,omitempty"`
-	Revision              int64             `json:"revision,omitempty" firestore:"revision,omitempty"`
-	Incorporated          int64             `json:"incorporated,omitempty" firestore:"incorporated,omitempty"`
-	Waiting               string            `json:"waiting,omitempty" firestore:"waiting,omitempty"`
-	// Spent and Budget are model USD from reported token usage; Budget grows
-	// only by Austin's explicit continue.
-	Spent           float64    `json:"spent_usd,omitempty" firestore:"spent_usd,omitempty"`
-	CostUnknown     bool       `json:"cost_unknown,omitempty" firestore:"cost_unknown,omitempty"`
-	Budget          float64    `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
-	ID              string     `json:"id" firestore:"id"`
-	Status          RunStatus  `json:"status" firestore:"status"`
-	CancelRequested bool       `json:"cancel_requested" firestore:"cancel_requested"`
-	StartedAt       time.Time  `json:"started_at" firestore:"started_at"`
-	Deadline        time.Time  `json:"deadline" firestore:"deadline"`
-	FinishedAt      *time.Time `json:"finished_at,omitempty" firestore:"finished_at,omitempty"`
-	Error           string     `json:"error,omitempty" firestore:"error,omitempty"`
-	Events          []Event    `json:"events" firestore:"events"`
-	Artifacts       []Artifact `json:"artifacts" firestore:"artifacts"`
 }
 
 // Usage records one provider request independently from the inner task budget.
@@ -111,6 +75,7 @@ type Usage struct {
 	CreatedAt     time.Time `json:"created_at" firestore:"created_at"`
 }
 
+// Session is the bounded projection that clients and the outer loop read.
 type Session struct {
 	Messages []Message `json:"messages"`
 	Runs     []Run     `json:"runs"`
@@ -118,13 +83,49 @@ type Session struct {
 	Usage    []Usage   `json:"usage,omitempty"`
 }
 
-// Store is the run-state surface the agent steps and task activities use.
-// Conversation and task-command operations live on *Google directly.
-type Store interface {
-	Control(context.Context) (Control, error)
-	Session(context.Context) (Session, error)
-	GetRun(context.Context, string) (Run, error)
-	Spend(context.Context, string, float64, float64, bool) error
-	Artifact(context.Context, string, Artifact) error
-	PutPNG(context.Context, string, string, []byte) error
+// Page sizes for the bounded session projection. Every backend returns the same window.
+const (
+	SessionMessageLimit = 100
+	SessionRunLimit     = 30
+	SessionUsageLimit   = 100
+)
+
+// MergeOpenRuns adds every open run to the recent runs, so a waiting task stays visible after thirty newer tasks
+// have started, and orders the result newest first.
+func MergeOpenRuns(recent, open []Run) []Run {
+	merged := append([]Run{}, recent...)
+	seen := map[string]bool{}
+	for _, run := range merged {
+		seen[run.ID] = true
+	}
+	for _, run := range open {
+		if !seen[run.ID] {
+			merged = append(merged, run)
+		}
+	}
+	sortRunsNewestFirst(merged)
+	return merged
+}
+
+// Chronological reverses a newest-first query result in place and returns it.
+func Chronological[T any](newestFirst []T) []T {
+	for i, j := 0, len(newestFirst)-1; i < j; i, j = i+1, j-1 {
+		newestFirst[i], newestFirst[j] = newestFirst[j], newestFirst[i]
+	}
+	return newestFirst
+}
+
+// SpendUpdate is a cumulative cost projection for one run. Retries and late arrivals are harmless because
+// MergeSpend only moves the stored values up.
+type SpendUpdate struct {
+	RunID       string
+	Spent       float64
+	Budget      float64
+	CostUnknown bool
+}
+
+// MergeSpend returns the run's cost fields after applying update. Spend is a fact about money already used, so it is
+// recorded even after a correction or a terminal state.
+func MergeSpend(run Run, update SpendUpdate) (spent, budget float64, costUnknown bool) {
+	return max(run.Spent, update.Spent), max(run.Budget, update.Budget), run.CostUnknown || update.CostUnknown
 }

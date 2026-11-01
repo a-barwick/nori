@@ -34,7 +34,7 @@ func (f completionTransport) RoundTrip(r *http.Request) (*http.Response, error) 
 
 // All collectors and credentials here are disposable local fixture values. The
 // real exporter/filter code runs, but no telemetry leaves the loopback servers.
-func completionBoundaries(ctx context.Context, store *state.Google, id, other string, run state.Run, operation state.OperationRecord) (map[string]bool, error) {
+func completionBoundaries(ctx context.Context, store state.ConversationStore, id, other string, run state.Run, operation state.OperationRecord) (map[string]bool, error) {
 	var mu sync.Mutex
 	packets := []telemetryPacket{}
 	handler := func(destination string) http.Handler {

@@ -8,6 +8,13 @@ live in a private GCS bucket. The browser uses a same-origin Next.js proxy and
 owner authentication; hosted runtime IAM admits the web and queue caller
 service accounts.
 
+Storage sits behind contracts. `internal/state` holds the records, the
+`ConversationStore` interface and the write rules; `internal/state/firestore`
+implements its documents, and `internal/state/gcs` or `internal/state/localfs`
+stores screenshot bytes. `internal/spend` holds the budget rules and a ledger
+contract with its own Firestore adapter. Only `internal/platform` names a
+backend: `platform.OpenStore` returns a `state.ConversationStore`.
+
 ## Local development
 
 Requires Go 1.26, the web dependencies, and the configured provider credentials.
@@ -77,6 +84,8 @@ inference while health and cleanup remain available.
 | `OPENROUTER_API_KEY` | Inner worker credential; development uses the spend wrapper's scoped key |
 | `MODEL_NAME` | Inner worker model; default `openai/gpt-6.1-terra` through OpenRouter Responses |
 | `ARTIFACT_BUCKET` | Private screenshot bucket |
+| `NORI_STATE_EMULATOR_HOST` | App-data Firestore emulator on a loopback address; refused when `FIRESTORE_EMULATOR_HOST` is also set. The shared spend ledger stays on its real database |
+| `NORI_LOCAL_ARTIFACT_DIR` | Absolute private folder for screenshots instead of the bucket. Needs a loopback Firestore emulator and `TEMPORAL_LOCAL=true` |
 | `COMPUTER_ZONE`, `COMPUTER_INSTANCE` | Existing retained computer |
 | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | Shared API/worker connection and task queue |
 | `TEMPORAL_API_KEY` | TLS connection key loaded from the selected env file |

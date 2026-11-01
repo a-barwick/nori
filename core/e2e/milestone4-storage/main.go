@@ -14,6 +14,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"github.com/google/uuid"
+	"nori/internal/platform"
 	"nori/internal/state"
 )
 
@@ -31,7 +32,7 @@ func run() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	store, err := state.NewGoogle(ctx, project, database, "unused-storage-fixture")
+	store, err := platform.OpenStoreWith(ctx, platform.StoreConfig{Project: project, Database: database, ArtifactBucket: "unused-storage-fixture"})
 	if err != nil {
 		return err
 	}
@@ -43,7 +44,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		if err = store.Incorporate(ctx, runID, r.Revision, r.Position); err != nil {
+		if err = store.Incorporate(ctx, state.IncorporateRequest{RunID: runID, Revision: r.Revision, Position: r.Position}); err != nil {
 			return err
 		}
 		if runID == id {
@@ -152,7 +153,7 @@ func run() error {
 	if err = os.Setenv("NORI_STATE_EMULATOR_HOST", host); err != nil {
 		return err
 	}
-	reopened, err := state.NewGoogle(ctx, project, database, "unused-storage-fixture")
+	reopened, err := platform.OpenStoreWith(ctx, platform.StoreConfig{Project: project, Database: database, ArtifactBucket: "unused-storage-fixture"})
 	_ = os.Unsetenv("NORI_STATE_EMULATOR_HOST")
 	_ = os.Setenv("FIRESTORE_EMULATOR_HOST", host)
 	if err != nil {
