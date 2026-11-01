@@ -1,6 +1,8 @@
 # Writing Nori docs pages
 
-This folder is the Nori docs site. Don't change a page until you have loaded the `write-docs` skill. Read this file before adding or changing a page. Only the repo owner can waive a rule.
+This folder is the Nori docs site. Read this file before adding or changing a page. Only the repo owner can waive a rule.
+
+Every change in this folder, however small, must use the `write-docs`, `review-docs` and `plain-writing` skills in `.agents/skills/`. Load them before the first edit, and finish the `review-docs` steps before merging or publishing.
 
 ## What a page should feel like
 
