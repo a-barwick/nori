@@ -14,6 +14,8 @@ type Capabilities struct {
 	SearchKey string
 	Calendar  CalendarConfig
 	Location  *time.Location
+	// ClockOffset moves the date a task is told. Only a local scenario run sets it.
+	ClockOffset time.Duration
 }
 
 // Capability is one catalog entry. Listing a capability grants nothing: the runtime
@@ -49,7 +51,7 @@ func (s *Service) location() *time.Location {
 	return time.UTC
 }
 
-func (s *Service) now() time.Time { return time.Now().In(s.location()) }
+func (s *Service) now() time.Time { return time.Now().Add(s.Capabilities.ClockOffset).In(s.location()) }
 
 // catalogInstruction changes at most daily unless an account changes, so it doesn't
 // disturb the provider's prompt cache between model calls.
