@@ -9,18 +9,18 @@
 </head>
 <body>
 <h1>Tools</h1>
-<p class="lede">What the inner loop can call, where each call runs, and what is recorded about it.</p>
+<p class="lede">What the inner loop can call, where each call runs, and how a result shows it worked.</p>
 <div class="card"><p><span class="say me">What's the weather in Tucson on Saturday?</span></p>
 <div class="flow">
 <div class="node outer"><b>Outer loop</b><small>Dispatches a task, because the answer needs a current source.</small></div>
-<div class="arrow">↓ start command</div>
-<div class="node inner"><b>Inner loop</b><small>The model calls <code>web_search</code> with a query.</small></div>
-<div class="arrow">↓ operation recorded first</div>
-<div class="node inner"><b>Worker</b><small>Calls Brave Search and saves the titles, URLs, snippets and dates as the operation's result.</small></div>
-<div class="arrow">↓ result reference</div>
-<div class="node computer"><b>Computer</b><small><code>browser_navigate</code> opens a result when its snippet doesn't have the forecast.</small></div>
-<div class="arrow">↓ both operations cited as evidence</div>
-<div class="node inner"><b>Finishing the task</b><small>The runtime confirms both results are saved. The outer loop receives them with the answer, which names the source and its date.</small></div>
+<div class="arrow">↓ <span class="lbl">start command</span></div>
+<div class="node inner"><b>Inner loop on the worker</b><small>Runs the search and saves the titles, URLs and dates.</small></div>
+<div class="arrow">↓ <span class="lbl">URL to open</span></div>
+<div class="node computer"><b>Computer</b><small>Opens a result when its snippet doesn't have the forecast.</small></div>
+<div class="arrow">↓ <span class="lbl">page text, saved as a result</span></div>
+<div class="node inner"><b>Inner loop on the worker</b><small>Proposes the answer and cites both saved results as evidence.</small></div>
+<div class="arrow">↓ <span class="lbl">answer and evidence</span></div>
+<div class="node"><b>Runtime</b><small>Confirms both results are saved, then passes them on.</small></div>
 </div></div>
 <section><h2>The tools</h2>
 <div class="card"><table><tr><th>Tool</th><th>Runs on</th><th>Type</th><th>Returns</th></tr>
@@ -32,47 +32,36 @@
 <tr><td>shell</td><td>Computer</td><td>Write</td><td>Output and exit code, within 45 seconds.</td></tr>
 <tr><td>job_start</td><td>Computer</td><td>Write</td><td>A job ID. The command runs in the background.</td></tr>
 <tr><td>job_status</td><td>Computer</td><td>Read</td><td>The job's state, elapsed time and latest output.</td></tr>
-<tr><td>job_wait</td><td>Computer</td><td>Read</td><td>The same, once the job has ended.</td></tr>
+<tr><td>job_wait</td><td>Computer</td><td>Read</td><td>The same, once the job ends or new instructions arrive.</td></tr>
 <tr><td>job_stop</td><td>Computer</td><td>Stop</td><td>The job's final state, once its processes have exited.</td></tr>
-</table><p class="note"><code>complete</code> and <code>request_input</code> are <a href="contract.html">control tools</a>. During a completion correction, a task can only call the tools marked Read.</p></div></section>
+</table></div></section>
 <section><h2>Confirming a change</h2>
-<p>A tool that changes something must come with a way to confirm the change. The inner loop runs the confirmation and cites it in <code>complete</code>, and lists anything it couldn't confirm as unmet.</p>
+<p>A tool that changes something must come with a way to confirm the change. The inner loop runs the confirmation and cites it, and lists anything it couldn't confirm as unmet.</p>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>How the change is confirmed</th></tr>
-<tr><td>job_start</td><td><code>job_wait</code> returns the end state, exit code and output.</td></tr>
-<tr><td>job_stop</td><td>Its result is the final state, once the processes have exited.</td></tr>
+<tr><td>job_start</td><td>The wait returns the end state, exit code and output.</td></tr>
+<tr><td>job_stop</td><td>Its result is the final state.</td></tr>
 <tr><td>shell</td><td>The exit code shows the command ran. A follow-up read, such as a file count, shows its effect.</td></tr>
-<tr class="designed"><td>Future connectors</td><td>A write returns the provider's status and the ID it changed, and names a read that confirms it. An upload returns a 200 and a file ID, and a GET on that ID confirms it. <span class="tag design">designed</span></td></tr>
+<tr class="designed"><td>Future connectors</td><td>A write returns the provider's status and the ID it changed. An upload returns a 200 and a file ID, and a GET on that ID confirms it.</td></tr>
 </table></div></section>
 <section><h2>Long shell jobs</h2>
 <div class="states"><span class="state">running</span><span class="state-arrow">→</span><span class="state">finished</span><span class="state-arrow">or</span><span class="state">stopped</span><span class="state-arrow">or</span><span class="state">timed_out</span><span class="state-arrow">or</span><span class="state">lost</span></div>
+<p class="note">A job that can't start ends as failed_to_start. A stop the guest can't confirm ends as stop_unconfirmed.</p>
 <ul class="pts">
-<li>A job can run for up to 60 minutes, with up to 4 running per task. It belongs to the task, so a correction or a question leaves it running.</li>
-<li><code>job_wait</code> makes no model calls. An activity reads the job's state every 15 seconds and saves the latest output line as the task's progress, which the web client and the outer loop read.</li>
-<li>One worker stays running while a task waits on a job, because a pending activity is what wakes a request worker.</li>
-<li>The task can't propose completion while a job it started is running, and terminal cleanup stops any job still running.</li>
-<li>A running job holds off the computer's idle stop. If the guest restarts or the computer stops, the job's state is <code>lost</code>, and the runtime never reports it as finished.</li>
+<li>A job can run for up to 60 minutes, and a task can have 4 running at once.</li>
+<li>Waiting on a job makes no model calls. The task's progress shows the latest output line.</li>
+<li>A task can't finish while its job is running, and task cleanup stops any job left running.</li>
+<li>If the computer restarts or stops, the job is killed and reported as lost, never as finished.</li>
 </ul></section>
-<section><h2>Reading a screenshot</h2>
-<ul class="pts">
-<li><code>screenshot_inspect</code> sends one saved image and one question to the task model in a separate call with no tools.</li>
-<li>Only the text answer joins the task's history. The image isn't resent on later turns, and text inside it can't call a tool.</li>
-<li>The cost counts against the task's budget.</li>
-<li>The outer loop receives that text answer when the task cites it, because it doesn't receive images.</li>
-</ul></section>
-<section><h2>The calendar connection</h2>
-<ul class="pts">
-<li><code>nori-connect-calendar</code> opens one Google consent screen for read-only access, then saves the refresh token and the account name in <code>.env</code>. Production reads them from Secret Manager.</li>
-<li>The refresh token stays on the worker.</li>
-<li><code>calendar_read</code> covers the primary calendar and up to 9 others selected in Google Calendar.</li>
-<li>If the account isn't connected or Google refuses the token, the tool returns <code>available: false</code> and the task says so. An OAuth app in Google's testing state loses its refresh token after 7 days.</li>
-</ul></section>
-<section><h2>The capability catalog</h2>
-<p>The worker adds a short catalog to the inner loop's instructions, with today's date in the configured time zone. Each entry gives the capability's tools, account and availability, what to do on failure, and how to confirm a result.</p>
-<ul class="pts"><li>A missing credential leaves the tool in place, and the tool reports itself unavailable.</li><li>Each search charges the task's budget $0.005, Brave's listed price on Oct 31, 2026.</li></ul>
+<section class="designed"><h2>Loading tools on demand</h2>
+<p>Every task gets the same tool list today. Milestone 10 plans for the inner loop to load only the tool definitions a task needs. <a href="https://linear.app/a-barwick/issue/AB-159">AB-159</a> <a href="https://linear.app/a-barwick/issue/AB-160">AB-160</a></p>
 </section>
-<section class="designed"><h2>Loading tools on demand <span class="tag design">designed · milestone 10</span></h2>
-<p>Every task currently gets the same tool list. The plan is for the inner loop to search the catalog and load only the schemas a task needs, so adding connectors doesn't fill its context. <a href="https://linear.app/a-barwick/issue/AB-159">AB-159</a> <a href="https://linear.app/a-barwick/issue/AB-160">AB-160</a></p>
-</section>
+<details class="more"><summary>Screenshots, calendar and the catalog</summary>
+<p><code>screenshot_inspect</code> sends one saved image and one question to the task model in a separate call with no tools. Only the text answer joins the task's history, so text inside an image can't call a tool. The cost counts against the task's budget.</p>
+<p><code>nori-connect-calendar</code> opens one Google consent screen for read-only access, then saves the refresh token and account name in <code>.env</code>. Production reads them from Secret Manager, and the token stays on the worker. The tool covers the primary calendar and up to 9 others selected in Google Calendar.</p>
+<p>If the account isn't connected or Google refuses the token, the tool returns <code>available: false</code> and the task says so. An OAuth app in Google's testing state loses its refresh token after 7 days.</p>
+<p>The worker adds a short catalog to the inner loop's instructions, with today's date in the configured time zone. Each entry gives the capability's tools, account and availability, what to do on failure, and how to confirm a result. A missing credential leaves the tool in place, and the tool reports itself unavailable.</p>
+<p>Each search charges the task's budget $0.005, Brave's listed price on Oct 31, 2026.</p>
+</details>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code>, <code>catalog.go</code>, <code>search.go</code>, <code>calendar.go</code>, <code>inspect.go</code>, <code>core/internal/computerd/jobs.go</code>, <code>core/internal/task/jobs.go</code>, <code>core/cmd/nori-connect-calendar/main.go</code>. <a href="https://linear.app/a-barwick/issue/AB-158">AB-158</a> <a href="https://linear.app/a-barwick/issue/AB-201">AB-201</a> <a href="https://linear.app/a-barwick/issue/AB-202">AB-202</a> <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a> <a href="https://linear.app/a-barwick/issue/AB-204">AB-204</a></p></details>
 </body>
 </html>

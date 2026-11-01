@@ -19,8 +19,8 @@
 <section><h2>What each piece adds</h2>
 <div class="card"><table>
       <tr><th>Capability</th><th>What it adds</th><th>Linear</th><th>Milestone</th></tr>
-          <tr class="designed"><td>Connectors and tools</td><td>Web search, shell jobs longer than 45 seconds, screenshots the model can see, and calendar read with a connected account.</td><td><a href="https://linear.app/a-barwick/issue/AB-201">AB-201</a> <a href="https://linear.app/a-barwick/issue/AB-202">AB-202</a> <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a> <a href="https://linear.app/a-barwick/issue/AB-204">AB-204</a></td><td>5</td></tr>
-          <tr><td>Action policies</td><td>Browser tools count as reads, and other tools have unknown effects. That sets their retries.</td><td><a href="https://linear.app/a-barwick/issue/AB-199">AB-199</a></td><td>4</td></tr>
+          <tr><td>Connectors and tools</td><td>Web search, shell jobs longer than 45 seconds, screenshots the model can see, and calendar read with a connected account.</td><td><a href="https://linear.app/a-barwick/issue/AB-201">AB-201</a> <a href="https://linear.app/a-barwick/issue/AB-202">AB-202</a> <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a> <a href="https://linear.app/a-barwick/issue/AB-204">AB-204</a></td><td>5</td></tr>
+          <tr><td>Action policies</td><td>Browser, search, calendar and job status tools count as reads. Stopping a job is a control, and shell and job start have unknown effects. That sets their retries.</td><td><a href="https://linear.app/a-barwick/issue/AB-199">AB-199</a></td><td>4</td></tr>
           <tr class="designed"><td>Approvals</td><td>Reversible writes and sensitive sends as separate types, and approvals that bind to one exact operation.</td><td><a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a> <a href="https://linear.app/a-barwick/issue/AB-169">AB-169</a> <a href="https://linear.app/a-barwick/issue/AB-170">AB-170</a> <a href="https://linear.app/a-barwick/issue/AB-171">AB-171</a> <a href="https://linear.app/a-barwick/issue/AB-172">AB-172</a> <a href="https://linear.app/a-barwick/issue/AB-205">AB-205</a> <a href="https://linear.app/a-barwick/issue/AB-216">AB-216</a></td><td>6</td></tr>
           <tr><td>Task supervision</td><td>The runtime reports crashes with completed and unresolved operations. Milestone 4 waits for user direction instead of re-issuing failed tasks automatically.</td><td><a href="https://linear.app/a-barwick/issue/AB-179">AB-179</a></td><td>4</td></tr>
           <tr class="designed"><td>Context</td><td>Each loop starts with a small context and retrieves more when it would change the next decision. Older context is compacted with links back to the originals.</td><td><a href="https://linear.app/a-barwick/issue/AB-153">AB-153</a> <a href="https://linear.app/a-barwick/issue/AB-154">AB-154</a> <a href="https://linear.app/a-barwick/issue/AB-155">AB-155</a></td><td>10</td></tr>
@@ -34,7 +34,7 @@
 <div class="card tight designed">
     <p class="keyline">Planned, with no Linear issue of its own</p>
     <ul class="pts note" style="margin-bottom:0">
-      <li>Email and document tools. The first planned connector is the calendar.</li>
+      <li>Email and document tools. The first planned write connector is the calendar.</li>
       <li>Reusable procedures learned from feedback. <a href="https://linear.app/a-barwick/issue/AB-156">AB-156</a> treats these as a later extension.</li>
       <li>Taking over the computer by hand, and concurrent browser access. <a href="https://linear.app/a-barwick/issue/AB-139">AB-139</a> treats both as later work.</li>
     </ul>
@@ -45,13 +45,13 @@ const miles = [
     [1, 'Simpler and cheaper', 5, 6, 'AB-188 spend alert in review'],
     [2, 'Conversational home, deployed', 6, 8, 'AB-143, AB-147 in progress'],
     [3, 'Many tasks at once', 7, 13, 'deployed, area issues open'],
-    [4, 'Waits and finishing properly', 7, 17, 'deployed, AB-235 open'],
-    [5, 'Search, vision and tools', 0, 8, 'built, not deployed, lookup scenarios open'],
+    [4, 'Waits and finishing properly', 8, 17, 'deployed'],
+    [5, 'Search, vision and tools', 5, 6, 'built, not deployed, lookup scenarios open'],
     [6, 'Approvals and writes', 0, 7, 'first approved write'],
     [7, 'Subtasks', 0, 1, 'a task asks for other work'],
     [8, 'Results and files', 0, 8, 'message parts, uploads, event log'],
     [9, 'Schedules and monitors', 0, 4, 'reminders, recurrence'],
-    [10, 'Memory and context', 0, 5, 'persistent memory'],
+    [10, 'Memory and context', 0, 7, 'persistent memory'],
     [11, 'Proactive assistance', 0, 1, 'first trigger choice'],
     [12, 'More clients', 0, 1, 'identity, devices, push'],
   ];

@@ -11,19 +11,19 @@
 <h1>Finishing a task</h1>
 <p class="lede">The runtime checks a task's saved records, then the outer loop compares the answer with the results the task cited.</p>
 <div class="card"><p><span class="say me">Back up the photos and check the counts match.</span></p><div class="flow">
-<div class="node inner"><b>Inner loop</b><small>The job returns exit code 0, and its output shows 2,400 files per folder.</small></div><div class="arrow">↓ <code>complete(answer, evidence, unmet)</code></div>
+<div class="node inner"><b>Inner loop</b><small>The job returns exit code 0 and 2,400 files per folder.</small></div><div class="arrow">↓ <code>complete(answer, evidence, unmet)</code></div>
 <div class="node"><b>Runtime</b><small>Checks the records. No model is involved.</small></div><div class="arrow">↓ answer, cited results, unmet items</div>
-<div class="node outer"><b>Outer loop</b><small>Compares the answer with the cited results, and tells the user what is done.</small></div>
+<div class="node outer"><b>Outer loop</b><small>Compares the answer with the cited results and reports what is done.</small></div>
 </div></div>
 <section><h2>The record checks</h2>
-<ul class="pts"><li>Every instruction has been read.</li><li>Every tool call has a saved result.</li><li>No operation has an unresolved outcome.</li><li>Each cited reference resolves to a saved result.</li></ul>
+<ul class="pts"><li>Every instruction has been read.</li><li>Every tool call has a saved result.</li><li>No operation has an unresolved outcome.</li><li>A task with saved tool results cites them as evidence.</li><li>Each cited reference resolves to a saved result that can be read.</li></ul>
 </section>
 <section><h2>The decision table</h2>
 <div class="card"><table class="tall"><tr><th>What the runtime finds</th><th>What happens</th></tr>
 <tr><td>Checks pass, nothing unmet</td><td>The task is completed.</td></tr>
-<tr><td>Checks pass, unmet items listed</td><td>The task ends as failed. Its result keeps the answer and lists the unmet items.</td></tr>
+<tr><td>Checks pass, unmet items listed</td><td>The task ends as failed. Unmet items are requirements the task reports it didn't meet, and its result lists them after the answer.</td></tr>
 <tr><td>Checks fail, reads only</td><td>The task gets up to two read-only corrections, then ends as failed with a partial answer.</td></tr>
-<tr><td>Checks fail, after a write</td><td>The task asks the user. It never repeats the action automatically.</td></tr>
+<tr><td>Checks fail, after a write or stop</td><td>The task asks the user. It never repeats the action automatically.</td></tr>
 <tr><td>Instructions changed</td><td>The task reads the new instructions and proposes again.</td></tr>
 </table></div></section>
 <section><h2>What the outer loop receives</h2>
