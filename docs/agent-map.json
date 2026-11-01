@@ -90,7 +90,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 96
+     "words": 106
     },
     {
      "id": "four-controls",
@@ -189,36 +189,50 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 319
+     "words": 347
     }
    ]
   },
   {
    "page": "docs/site/completion.html",
    "title": "Finishing a task",
-   "summary": "A task finishes only after checks on its saved records and a verdict from the Jev classifier.",
+   "summary": "The runtime checks a task's saved records, then the outer loop compares the answer with the results the task cited.",
    "status": "built",
    "code": [
-    "core/internal/task/completion.go"
+    "core/internal/conversation/task_context.go",
+    "core/internal/task/completion.go",
+    "core/internal/task/history.go"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 118
+     "words": 77
+    },
+    {
+     "id": "the-record-checks",
+     "title": "The record checks",
+     "status": "built",
+     "words": 40
     },
     {
      "id": "the-decision-table",
      "title": "The decision table",
      "status": "built",
-     "words": 95
+     "words": 100
+    },
+    {
+     "id": "what-the-outer-loop-receives",
+     "title": "What the outer loop receives",
+     "status": "built",
+     "words": 83
     },
     {
      "id": "what-this-catches",
      "title": "What this catches",
      "status": "built",
-     "words": 242
+     "words": 156
     }
    ]
   },
@@ -237,7 +251,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 262
+     "words": 264
     }
    ]
   },
@@ -315,7 +329,7 @@
      "id": "milestone-4-choices",
      "title": "Milestone 4 choices",
      "status": "built",
-     "words": 172
+     "words": 142
     },
     {
      "id": "subtasks",
@@ -327,13 +341,13 @@
      "id": "finishing-and-budgets",
      "title": "Finishing and budgets",
      "status": "built",
-     "words": 125
+     "words": 219
     },
     {
      "id": "runtime-and-infrastructure",
      "title": "Runtime and infrastructure",
      "status": "built",
-     "words": 245
+     "words": 447
     },
     {
      "id": "models",
@@ -466,7 +480,7 @@
      "id": "where-it-stands",
      "title": "Where it stands",
      "status": "built",
-     "words": 82
+     "words": 77
     },
     {
      "id": "where-to-go-next",
@@ -492,7 +506,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 152
+     "words": 148
     },
     {
      "id": "when-instructions-change",
@@ -504,7 +518,7 @@
      "id": "when-something-fails",
      "title": "When something fails",
      "status": "built",
-     "words": 335
+     "words": 337
     }
    ]
   },
@@ -519,7 +533,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 100
+     "words": 108
     },
     {
      "id": "five-kinds-of-memory",
@@ -621,7 +635,7 @@
      "id": "tasks",
      "title": "Tasks",
      "status": "built",
-     "words": 115
+     "words": 124
     },
     {
      "id": "conversation",
@@ -633,7 +647,7 @@
      "id": "tools-and-approvals",
      "title": "Tools and approvals",
      "status": "built",
-     "words": 126
+     "words": 131
     },
     {
      "id": "memory-and-results",
@@ -671,6 +685,12 @@
      "title": "Overview",
      "status": "built",
      "words": 141
+    },
+    {
+     "id": "when-a-task-ends",
+     "title": "When a task ends",
+     "status": "built",
+     "words": 42
     },
     {
      "id": "batching-rules",
@@ -729,7 +749,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 290
+     "words": 289
     },
     {
      "id": "how-we-measure-progress",
@@ -821,7 +841,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 419
+     "words": 415
     },
     {
      "id": "follow-ups-and-controls",
@@ -887,13 +907,13 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 127
+     "words": 140
     },
     {
      "id": "what-each-piece-adds",
      "title": "What each piece adds",
      "status": "built",
-     "words": 467
+     "words": 480
     }
    ]
   },
@@ -1179,28 +1199,49 @@
   },
   {
    "page": "docs/site/tools.html",
-   "title": "Tool discovery",
-   "summary": "How the inner loop will find and load only the tools a task needs.",
-   "status": "planned",
-   "code": [],
+   "title": "Tools",
+   "summary": "What the inner loop can call, where each call runs, and how a result shows it worked.",
+   "status": "built",
+   "code": [
+    "calendar.go",
+    "catalog.go",
+    "core/cmd/nori-connect-calendar/main.go",
+    "core/internal/agent/steps.go",
+    "core/internal/computerd/jobs.go",
+    "core/internal/task/jobs.go",
+    "inspect.go",
+    "search.go"
+   ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 132
+     "words": 106
     },
     {
-     "id": "an-example",
-     "title": "An example",
+     "id": "the-tools",
+     "title": "The tools",
      "status": "built",
-     "words": 61
+     "words": 162
     },
     {
-     "id": "rules-that-don-t-change",
-     "title": "Rules that don't change",
+     "id": "confirming-a-change",
+     "title": "Confirming a change",
      "status": "built",
-     "words": 47
+     "words": 112
+    },
+    {
+     "id": "long-shell-jobs",
+     "title": "Long shell jobs",
+     "status": "built",
+     "words": 86
+    },
+    {
+     "id": "loading-tools-on-demand",
+     "title": "Loading tools on demand",
+     "status": "designed",
+     "words": 222
     }
    ]
   },
@@ -1252,7 +1293,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 535
+     "words": 575
     }
    ]
   }
