@@ -14,6 +14,9 @@ var ErrRoutingPending = errors.New("accepted user input is awaiting conversation
 var ErrCommandInvalid = errors.New("invalid task command")
 var ErrQuestionStale = errors.New("question is no longer current")
 
+// ErrApprovalUsed means this write already left prepared, so an earlier attempt may have sent it.
+var ErrApprovalUsed = errors.New("approval was already used")
+
 // Every new task records these versions. No current code branches on them, and saved tasks with lower or missing
 // values are read as stored. Earlier releases do branch on them, so a release rolled back after unpause still needs
 // them.
@@ -187,7 +190,7 @@ func ProjectionEvent(kind, text string, now time.Time) (waiting string, event Ev
 // task already holds this question.
 func QuestionEvent(run Run, revision int64, question Question, now time.Time) (event TaskEvent, replay bool, err error) {
 	if question.ID == "" || question.Text == "" || question.Revision != revision ||
-		(question.Kind != "input" && question.Kind != "budget") {
+		(question.Kind != "input" && question.Kind != "budget" && question.Kind != "approval") {
 		return TaskEvent{}, false, fmt.Errorf("invalid task question")
 	}
 	if run.Question != nil && run.Question.ID == question.ID {

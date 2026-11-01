@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"nori/internal/agent"
@@ -59,7 +60,14 @@ func run(ctx context.Context, waker wake.Waker, sliceID string, known []string, 
 	// A hosted worker wakes the conversation after saving a task event, and
 	// retries that wake on its own tick. A local worker leaves both to the API.
 	steps := dispatch.Commands | dispatch.Publications
-	service := agent.New(store, openrouter.New(key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra")), platform.Computer())
+	model := openrouter.New(key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra"))
+	if address := os.Getenv("NORI_E2E_MODEL_URL"); address != "" {
+		if !local || !strings.HasPrefix(address, "http://127.0.0.1:") {
+			return fmt.Errorf("NORI_E2E_MODEL_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
+		}
+		model.Endpoint = address
+	}
+	service := agent.New(store, model, platform.Computer())
 	service.Capabilities = cfg.capabilities
 	activities := &task.Activities{Agent: service, Store: store}
 	if !local {

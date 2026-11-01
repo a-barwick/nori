@@ -32,7 +32,11 @@ const taskInstructions = "You are Nori, Austin's personal assistant. Act only on
 	"artifact_id and a specific question, and state only what that returns. Use job_start for a shell command that " +
 	"may run longer than 45 seconds, then job_wait. A running job isn't finished: report only the state job_wait or " +
 	"job_status returned, and call job_wait or job_stop before proposing completion. Use calendar_read for Austin's " +
-	"calendar, passing an RFC 3339 range with a time zone offset, and name the account in the answer. Use " +
+	"calendar, passing an RFC 3339 range with a time zone offset, and name the account in the answer. To change the " +
+	"calendar or send email, use calendar_create, calendar_move or email_send. The runtime shows Austin the exact " +
+	"action and runs it only if he approves, so don't ask first with request_input unless a detail is missing or " +
+	"more than one event matches. Moving a calendar entry doesn't rebook anything with the other party, so never " +
+	"say it did. If a write is declined, don't propose it again. Use " +
 	"complete(answer, evidence, unmet) to propose finishing. Plain text never finishes a task. Evidence must name " +
 	"operation_id or artifact_id references returned by tools; list unmet requirements honestly. After changing " +
 	"something, confirm it with the way the capability names, such as a job's end state or a read of what changed, " +
@@ -102,6 +106,24 @@ func taskTools(wait bool) []transcript.Tool {
 			Name:        "screenshot_inspect",
 			Description: "Ask one question about a screenshot this task saved. Returns what a separate read of the image observed.",
 			Parameters:  params("artifact_id", "question"),
+		},
+		{
+			Name: "calendar_create",
+			Description: "Propose a new event on Austin's write calendar. Runs only after he approves the exact event. It can't invite anyone. " +
+				"start and end are RFC 3339 with an offset, converted once from any time zone the user named. Put that original time in description. " +
+				"private is \"true\" or \"false\". description may be empty. Must be the only call in its batch.",
+			Parameters: params("title", "start", "end", "description", "private"),
+		},
+		{
+			Name: "calendar_move",
+			Description: "Propose a new time for one event, using the event_id calendar_read returned for an event marked writable. Runs only after Austin " +
+				"approves the exact move. Leave end empty to keep the event's length. Must be the only call in its batch.",
+			Parameters: params("event_id", "start", "end"),
+		},
+		{
+			Name:        "email_send",
+			Description: "Propose one plain-text email from Austin's account to one recipient. Runs only after he approves the exact message. Must be the only call in its batch.",
+			Parameters:  params("to", "subject", "body"),
 		},
 		{
 			Name: "calendar_read",
@@ -181,6 +203,11 @@ func ValidateCalls(calls []transcript.ToolCall, wait bool) error {
 			end, _ := call.Args["end"].(string)
 			if _, _, err := calendarRange(start, end); err != nil {
 				return err
+			}
+		case "calendar_create", "calendar_move", "email_send":
+			// Prepare validates the content. A write parks the task, so it runs alone.
+			if len(calls) != 1 {
+				return fmt.Errorf("%s must be the only tool call", call.Name)
 			}
 		case "complete":
 			if len(calls) != 1 {

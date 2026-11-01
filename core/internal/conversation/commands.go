@@ -63,6 +63,15 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				return nil, err
 			}
 			command.Kind, command.RunID, command.QuestionID = "continue", args.RunID, args.QuestionID
+		case "approve", "decline":
+			var args struct {
+				RunID      string `json:"run_id"`
+				QuestionID string `json:"question_id"`
+			}
+			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
+				return nil, err
+			}
+			command.Kind, command.RunID, command.QuestionID = state.CommandKind(call.Function.Name), args.RunID, args.QuestionID
 		case "hold":
 			var args struct {
 				TaskID   string `json:"task_id"`
@@ -94,7 +103,7 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				return nil, fmt.Errorf("task command text must contain 1 to 8192 UTF-8 bytes")
 			}
 		}
-		if command.Kind == state.CommandAnswer || command.Kind == state.CommandContinue {
+		if command.Kind == state.CommandAnswer || command.Kind == state.CommandContinue || command.Kind == state.CommandApprove || command.Kind == state.CommandDecline {
 			if command.QuestionID == "" || strings.TrimSpace(command.QuestionID) != command.QuestionID || len(command.QuestionID) > 256 {
 				return nil, fmt.Errorf("task command requires a question ID within 256 bytes")
 			}
@@ -135,6 +144,8 @@ func acceptedCommandText(actions []state.ConversationAction) string {
 		{"steer", "I've saved your task updates."},
 		{"answer", "I've saved your answer."},
 		{"continue", "I've accepted your request to continue."},
+		{"approve", "I've saved your approval. I'll confirm once the action has run."},
+		{"decline", "I've saved your decision, and the action won't run."},
 		{"hold", "I've saved your question to answer when the task has an outcome."},
 		{"stop", "I've requested that the task work stop. I'll confirm when it has stopped."},
 	} {

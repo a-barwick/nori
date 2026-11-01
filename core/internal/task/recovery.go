@@ -91,6 +91,13 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 			detail = "Interrupted: computer stop could not be confirmed during terminal recovery."
 			failures = append(failures, stopErr)
 		}
+		if ops, e := store.Operations(ctx, run.ID); e == nil {
+			for _, op := range ops {
+				if op.Outcome == "attempted" {
+					detail += " A write may have happened and wasn't checked: " + op.Name + "."
+				}
+			}
+		}
 		if _, e = store.Publish(ctx, state.PublishRequest{
 			RunID: run.ID, Revision: run.Revision, Status: status, Detail: detail, CostUnknown: run.CostUnknown, BypassRouting: true,
 		}); e != nil {

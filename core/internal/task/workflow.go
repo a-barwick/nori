@@ -39,6 +39,8 @@ type Checkpoint struct {
 	// only terminal cleanup stops them, not a correction or a question.
 	Jobs        []string
 	JobsStarted bool
+	// Action is the write waiting for a decision or, once approved, to run.
+	Action *PendingAction
 }
 
 func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.Run, err error) {
@@ -118,7 +120,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 			}
 			var synced HistorySync
 			err = workflow.ExecuteActivity(quick, a.SyncHistory, HistoryInput{
-				Step: Step{id, c.Revision}, Ref: c.Ref, Position: c.Position, Question: c.Question,
+				Step: Step{id, c.Revision}, Ref: c.Ref, Position: c.Position, Question: c.Question, Action: c.Action,
 			}).Get(ctx, &synced)
 			if boundary(err) {
 				continue
@@ -132,6 +134,14 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 			}
 			if c.CostUnknown {
 				err = state.ErrCostUnknown
+				return
+			}
+			// A decided write runs before the budget check, because it spends nothing.
+			err = c.settleAction(ctx, quick, id, synced)
+			if boundary(err) {
+				continue
+			}
+			if err != nil {
 				return
 			}
 			if c.Question == nil && c.Spent >= c.Budget {
@@ -342,6 +352,37 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				if err != nil {
 					return
 				}
+				if agent.WriteEffect(call.Name) != "" {
+					var prepared ActionPrepared
+					err = workflow.ExecuteActivity(ctx, a.PrepareAction, RefToolInput{
+						Step: Step{id, c.Revision}, Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly,
+					}).Get(ctx, &prepared)
+					if boundary(err) {
+						revised = true
+						var ref string
+						err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
+							Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
+							Response: map[string]any{"skipped": true, "reason": "Execution admission changed before this write was prepared. Nothing was sent."},
+						}).Get(ctx, &ref)
+						if err != nil {
+							return
+						}
+						c.Ref = ref
+						continue
+					}
+					if err != nil {
+						return
+					}
+					c.Ref = prepared.Ref
+					if prepared.Question != nil {
+						c.Question, c.QuestionPublished = prepared.Question, false
+						c.Action = &PendingAction{Operation: operation, CallID: call.ID, Name: call.Name}
+					} else {
+						c.afterTool(prepared.RefToolOutcome, id)
+					}
+					revised = true
+					break
+				}
 				if len(c.ComputerRevisions) == 0 || c.ComputerRevisions[len(c.ComputerRevisions)-1] != c.Revision {
 					c.ComputerRevisions = append(c.ComputerRevisions, c.Revision)
 				}
@@ -365,6 +406,16 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 					continue
 				}
 				if err != nil {
+					// A worker that died mid-call leaves a paid tool's cost open. Attempts are capped at 1.
+					var application *temporal.ApplicationError
+					if !errors.As(err, &application) {
+						switch call.Name {
+						case "screenshot_inspect":
+							c.CostUnknown = true
+						case "web_search":
+							c.Spent += agent.SearchCostUSD
+						}
+					}
 					return
 				}
 				c.Ref = output.Ref
@@ -374,27 +425,8 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 					c.CostUnknown = c.CostUnknown || output.CostUnknown
 					spend(spending)
 				}
-				if output.Outcome == "needs_input" {
+				if c.afterTool(output, id) {
 					revised = true
-					c.Question = &state.Question{
-						ID:   fmt.Sprintf("%s-correction-q%d", id, c.Tools),
-						Kind: "input",
-						Text: "Completing this task appears to require another action beyond the permitted read-only correction. " +
-							"Please clarify or authorize what should happen next.",
-						Revision: c.Revision,
-					}
-					c.QuestionPublished = false
-				}
-				if output.Outcome == "uncertain" && output.EffectClass != "read" {
-					revised = true
-					c.Question = &state.Question{
-						ID:   fmt.Sprintf("%s-operation-q%d", id, c.Tools),
-						Kind: "input",
-						Text: "An attempted action has an uncertain outcome. Nori will not repeat it automatically. " +
-							"Please confirm what happened or clarify how to proceed.",
-						Revision: c.Revision,
-					}
-					c.QuestionPublished = false
 				}
 			}
 		}
@@ -442,6 +474,32 @@ func (c *Checkpoint) stopComputer(w workflow.Context, id string) error {
 	}
 	c.Stopped = true
 	return nil
+}
+
+// afterTool asks the user when a tool's result needs a decision, and reports whether it did.
+func (c *Checkpoint) afterTool(output RefToolOutcome, id string) bool {
+	switch {
+	case output.Outcome == "needs_input":
+		c.Question = &state.Question{
+			ID:   fmt.Sprintf("%s-correction-q%d", id, c.Tools),
+			Kind: "input",
+			Text: "Completing this task appears to require another action beyond the permitted read-only correction. " +
+				"Please clarify or authorize what should happen next.",
+			Revision: c.Revision,
+		}
+	case output.Outcome == "uncertain" && output.EffectClass != "read":
+		c.Question = &state.Question{
+			ID:   fmt.Sprintf("%s-operation-q%d", id, c.Tools),
+			Kind: "input",
+			Text: "An attempted action has an uncertain outcome. Nori will not repeat it automatically. " +
+				"Please confirm what happened or clarify how to proceed.",
+			Revision: c.Revision,
+		}
+	default:
+		return false
+	}
+	c.QuestionPublished = false
+	return true
 }
 
 // applySync updates only checkpoint state; the workflow retains activity order.

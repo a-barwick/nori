@@ -28,6 +28,8 @@ const (
 	CommandContinue CommandKind = "continue"
 	CommandStop     CommandKind = "stop"
 	CommandHold     CommandKind = "hold"
+	CommandApprove  CommandKind = "approve"
+	CommandDecline  CommandKind = "decline"
 )
 
 type Command struct {
@@ -212,10 +214,13 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 				run.InterruptRevision = run.Revision
 			}
 			run.Question, run.Waiting, run.PublicationPending = nil, "", false
-		case CommandAnswer, CommandContinue:
+		case CommandAnswer, CommandContinue, CommandApprove, CommandDecline:
 			kind := "input"
-			if cmd.Kind == CommandContinue {
+			switch cmd.Kind {
+			case CommandContinue:
 				kind = "budget"
+			case CommandApprove, CommandDecline:
+				kind = "approval"
 			}
 			if run.Question == nil || run.Question.ResolvedBy != "" || cmd.QuestionID == "" || run.Question.ID != cmd.QuestionID ||
 				run.Question.Revision != run.Revision || run.Question.Kind != kind {

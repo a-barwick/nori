@@ -23,9 +23,11 @@ func toolEffect(name string) string {
 	case "job_stop":
 		// Stopping repeats safely, so an unresolved write never blocks it.
 		return "control"
-	default:
-		return "unknown"
 	}
+	if effect := agent.WriteEffect(name); effect != "" {
+		return effect
+	}
+	return "unknown"
 }
 
 // durableTool records authority and outcomes independently of best-effort debug
@@ -78,7 +80,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	}
 	if recovering == nil {
 		for _, saved := range records {
-			unresolved := saved.Outcome == "uncertain" || saved.Outcome == "pending" || saved.Outcome == "failed"
+			// A provider's refusal of a write is a definite answer, so it doesn't hold up later tools.
+			unresolved := saved.Outcome == "uncertain" || saved.Outcome == "pending" || saved.Outcome == "attempted" ||
+				(saved.Outcome == "failed" && agent.WriteEffect(saved.Name) == "")
 			if effect != "read" && effect != "control" && saved.EffectClass != "read" && saved.EffectClass != "control" && unresolved {
 				return map[string]any{
 					"operation_id": saved.ID, "outcome": "uncertain", "effect_class": saved.EffectClass,

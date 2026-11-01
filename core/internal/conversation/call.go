@@ -245,6 +245,9 @@ func (r *Runner) modelFailureText(ctx context.Context, inputs []state.Conversati
 					if question.Kind == "budget" {
 						heading = "Task " + id + " is waiting for budget permission. Use its Continue control if you want to grant another budget."
 					}
+					if question.Kind == "approval" {
+						heading = "Task " + id + " is waiting for your approval. Nothing has run yet."
+					}
 					output = question.Text
 				}
 			}

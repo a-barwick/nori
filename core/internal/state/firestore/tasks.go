@@ -116,6 +116,40 @@ func (d *Database) Admit(ctx context.Context, runID string, revision int64, oper
 	})
 }
 
+func (d *Database) UseApproval(ctx context.Context, runID string, revision int64, operation, commandID string) (state.OperationRecord, error) {
+	var used state.OperationRecord
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		if _, err := d.guard(tx, runID, revision); err != nil {
+			return err
+		}
+		ref := d.runs().Doc(runID).Collection("operations").Doc(operation)
+		doc, err := tx.Get(ref)
+		if err != nil {
+			return err
+		}
+		var op state.OperationRecord
+		if err = doc.DataTo(&op); err != nil {
+			return err
+		}
+		command, err := tx.Get(d.commands().Doc(commandID))
+		if err != nil {
+			return err
+		}
+		var cmd state.Command
+		if err = command.DataTo(&cmd); err != nil {
+			return err
+		}
+		if cmd.RunID != runID {
+			return state.ErrQuestionStale
+		}
+		if used, err = state.UseApproval(op, cmd); err != nil {
+			return err
+		}
+		return tx.Set(ref, map[string]any{"outcome": used.Outcome, "attempt": used.Attempt, "action": used.Action}, firestore.MergeAll)
+	})
+	return used, err
+}
+
 func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		if _, err := d.guard(tx, req.RunID, req.Revision); err != nil {

@@ -37,6 +37,8 @@ func (s *Service) Catalog() []Capability {
 		{Name: "Browser", Tools: "browser_navigate, browser_screenshot, screenshot_inspect", Account: "the computer's browser", Availability: "available", OnFailure: "report the page or image as unread", Verify: "the page text or screenshot_inspect answer is the evidence"},
 		{Name: "Shell", Tools: "shell, job_start, job_status, job_wait, job_stop", Account: "the computer", Availability: "available", OnFailure: "report the observed exit code or job state; never repeat a write automatically", Verify: "use the job's end state and exit code, and read back what the command changed"},
 		{Name: "Google Calendar read", Tools: "calendar_read", Account: account, Availability: calendar, OnFailure: "tell Austin it needs connecting; never guess events", Verify: "the result names the account and range it read"},
+		{Name: "Google Calendar write", Tools: "calendar_create, calendar_move", Account: account, Availability: calendar, OnFailure: "report the outcome; never repeat a write automatically", Verify: "the result carries the provider's status, the event ID and a read of the event"},
+		{Name: "Email send", Tools: "email_send", Account: account, Availability: calendar, OnFailure: "report the outcome; never repeat a send automatically", Verify: "the result carries the provider's status, the message ID and a read of the sent message"},
 	}
 }
 
