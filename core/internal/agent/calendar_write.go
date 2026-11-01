@@ -60,6 +60,23 @@ func parseEventTimes(start, end string) (time.Time, time.Time, error) {
 	return from, to, nil
 }
 
+func visibilityName(saved string) string {
+	if saved == "" {
+		return "default"
+	}
+	return saved
+}
+
+func otherAttendees(event savedEvent) int {
+	count := 0
+	for _, attendee := range event.Attendees {
+		if !attendee.Self {
+			count++
+		}
+	}
+	return count
+}
+
 // Google omits the default visibility from an event.
 func sameVisibility(saved, want string) bool {
 	return saved == want || (saved == "" && want == "default")
@@ -85,7 +102,8 @@ func (s *Service) calendarName(ctx context.Context) string {
 }
 
 func eventOutput(event savedEvent, account, calendar string) map[string]any {
-	return map[string]any{"event_id": event.ID, "title": event.Summary, "start": event.Start.DateTime, "end": event.End.DateTime, "account": account, "calendar": calendar, "read_back": true}
+	return map[string]any{"event_id": event.ID, "title": event.Summary, "start": event.Start.DateTime, "end": event.End.DateTime, "account": account, "calendar": calendar, "read_back": true,
+		"visibility": visibilityName(event.Visibility), "other_attendees": otherAttendees(event)}
 }
 
 func (s *Service) prepareEvent(ctx context.Context, title, start, end, description string, private bool) (PreparedWrite, error) {
