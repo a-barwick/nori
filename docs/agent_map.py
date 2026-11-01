@@ -25,6 +25,7 @@ VOID = {"br", "hr", "img", "input", "link", "meta", "path", "circle", "rect", "l
 BLOCK = {"p", "li", "tr", "h1", "h2", "h3", "div", "section", "details", "summary", "text", "pre", "ul", "table"}
 FIND_CHARS = 1800
 FIND_LIMIT = 3
+STALE_LINES = 8
 STOP = {"a", "an", "and", "are", "does", "how", "in", "is", "it", "of", "on", "the", "to", "what", "when", "which", "with"}
 
 
@@ -162,7 +163,13 @@ def stale_pages(pages=None):
 def stale_note(page, stale):
     if "stale" not in FEATURES or page["page"] not in stale:
         return ""
-    return f"STALE: code changed since this page was reviewed ({', '.join(stale[page['page']])}). Check its claims against that code.\n"
+    note = f"STALE: code changed since this page was reviewed ({', '.join(stale[page['page']])}). The code decides what's true, so these lines override the text below:\n"
+    commit = reviews().get(page["page"])
+    if commit:
+        diff = git("diff", "-U0", commit, "--", *[p for p in page["code"] if (ROOT / p).exists()]).splitlines()
+        changed = [line for line in diff if re.match(r"[-+](?![-+])", line)]
+        note += "".join(line[:160] + "\n" for line in changed[:STALE_LINES])
+    return note
 
 
 def describes(page, path):
