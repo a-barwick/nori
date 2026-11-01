@@ -49,6 +49,7 @@ type TaskEvidenceStore interface {
 // TaskDatabase is the document half of the task surface. Every operation that changes a task is one atomic
 // transaction in the backend, and its decisions come from the rules in this package.
 type TaskDatabase interface {
+	RecordUsage(ctx context.Context, usage Usage) error
 	RunStore
 	TaskEvidenceStore
 
@@ -110,7 +111,6 @@ type ConversationDatabase interface {
 	ConversationTraces(ctx context.Context) ([]ConversationAttempt, error)
 	EnsureConversationIntroduction(ctx context.Context, prompt string) error
 	PublishConversation(ctx context.Context, f ConversationFence, t ConversationTurn, text string) error
-	RecordUsage(ctx context.Context, usage Usage) error
 	ReleaseConversation(ctx context.Context, f ConversationFence) error
 	RenewConversation(ctx context.Context, f ConversationFence) (stale bool, err error)
 	RestartConversation(ctx context.Context, f ConversationFence, t ConversationTurn) (ConversationTurn, time.Duration, error)

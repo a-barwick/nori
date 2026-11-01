@@ -84,11 +84,7 @@ type RefPublication struct {
 }
 
 func (a *Activities) evidence() (state.TaskEvidenceStore, error) {
-	store, ok := a.Store.(state.TaskEvidenceStore)
-	if !ok {
-		return nil, errors.New("task evidence storage unavailable")
-	}
-	return store, nil
+	return a.Store, nil
 }
 func (a *Activities) appendMessages(ctx context.Context, id, parent string, messages []transcript.Message) (string, error) {
 	store, e := a.evidence()

@@ -27,10 +27,7 @@ func toolEffect(name string) string {
 // durableTool records authority and outcomes independently of best-effort debug
 // traces. Retrying an activity is never a substitute for an operation receipt.
 func (a *Activities) durableTool(parent context.Context, in ToolInput) (result map[string]any, err error) {
-	evidence, ok := a.Store.(state.TaskEvidenceStore)
-	if !ok {
-		return nil, classified(errors.New("task evidence storage unavailable"))
-	}
+	evidence := a.Store
 	effect := toolEffect(in.Call.Name)
 	ctx, done, run, err := a.bounded(parent, in.Step, effect == "read")
 	if err != nil {

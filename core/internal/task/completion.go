@@ -207,21 +207,10 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 			}
 		}
 	}
-	sources := []state.ConversationInput{}
-	if sourceStore, ok := a.Store.(interface {
-		ReadTaskSourceInputs(context.Context, string) ([]state.ConversationInput, error)
-	}); ok {
-		sources, e = sourceStore.ReadTaskSourceInputs(ctx, in.RunID)
-		if e != nil {
-			check.RecordFailures = append(check.RecordFailures, "Original source inputs are unavailable.")
-		}
-	} else {
-		for _, cmd := range snap.Commands {
-			if len(cmd.SourceInputIDs) > 0 {
-				check.RecordFailures = append(check.RecordFailures, "Original source inputs cannot be resolved.")
-				break
-			}
-		}
+	var sources []state.ConversationInput
+	sources, e = a.Store.ReadTaskSourceInputs(ctx, in.RunID)
+	if e != nil {
+		check.RecordFailures = append(check.RecordFailures, "Original source inputs are unavailable.")
 	}
 	// Persist the attempted check before any provider request, including failed
 	// deterministic checks. No provider call is needed for an invalid record.
@@ -365,13 +354,7 @@ func (a *Activities) completionJev(
 		ID: in.ID + "-jev", Provider: "jev", Model: "jev-latest", CostStatus: "unknown", RequestStatus: "pending",
 		CreatedAt: time.Now().UTC(),
 	}
-	usageStore, ok := a.Store.(interface {
-		RecordUsage(context.Context, state.Usage) error
-	})
-	if !ok {
-		return "", 0, errors.New("completion verifier usage storage unavailable")
-	}
-	if e = usageStore.RecordUsage(ctx, usage); e != nil {
+	if e = a.Store.RecordUsage(ctx, usage); e != nil {
 		return "", 0, errors.New("completion verifier usage could not be recorded")
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -395,7 +378,7 @@ func (a *Activities) completionJev(
 		usage.RequestStatus = "received"
 	}
 	recordCtx, cancelRecord := context.WithTimeout(context.Background(), 5*time.Second)
-	recordErr := usageStore.RecordUsage(recordCtx, usage)
+	recordErr := a.Store.RecordUsage(recordCtx, usage)
 	cancelRecord()
 	if recordErr != nil {
 		return "", 0, errors.New("completion verifier usage outcome could not be retained")
