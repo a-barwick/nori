@@ -81,7 +81,8 @@ journey("stop kills child processes, stays scoped to its task, and repeats safel
   expect(await post("/job/stop-task", { task_id: task })).toEqual({ stopped: true });
   expect(performance.now() - stoppedAt, "Stop must confirm within the job stop deadline.").toBeLessThan(10_000);
   expect((await status(task, job)).state).toBe("stopped");
-  expect((await shell(task, `kill -0 ${pid} 2>/dev/null && echo alive || echo gone`)).stdout).toContain("gone");
+  // A killed orphan stays a zombie where the guest runs as PID 1 with no init to reap it.
+  expect((await shell(task, `state=$(sed 's/.*) //' /proc/${pid}/stat 2>/dev/null | cut -d' ' -f1); case "$state" in ""|Z) echo gone;; *) echo alive;; esac`)).stdout).toContain("gone");
   expect(await post("/job/stop-task", { task_id: task })).toEqual({ stopped: true });
   expect((await status(other, sibling)).state, "Stopping one task leaves its sibling running.").toBe("running");
   expect((await post("/job/stop", { task_id: other, job_id: sibling })).state).toBe("stopped");
