@@ -25,7 +25,7 @@
      "id": "the-protocol-for-many-clients",
      "title": "The protocol for many clients",
      "status": "designed",
-     "words": 237
+     "words": 224
     }
    ]
   },
@@ -64,7 +64,7 @@
      "id": "recording-what-happened",
      "title": "Recording what happened",
      "status": "built",
-     "words": 45
+     "words": 44
     },
     {
      "id": "still-open",
@@ -108,7 +108,7 @@
      "id": "development-inference",
      "title": "Development inference",
      "status": "built",
-     "words": 149
+     "words": 147
     }
    ]
   },
@@ -156,7 +156,11 @@
    "title": "Clients",
    "summary": "If two clients could disagree about something, the service owns it. A client only owns its own screen.",
    "status": "built",
-   "code": [],
+   "code": [
+    "core/internal/wake/http.go",
+    "web/src/lib/hybrid.ts",
+    "web/src/lib/runtime/server.ts"
+   ],
    "sections": [
     {
      "id": "overview",
@@ -168,13 +172,13 @@
      "id": "what-a-client-never-does",
      "title": "What a client never does",
      "status": "built",
-     "words": 42
+     "words": 41
     },
     {
      "id": "each-client",
      "title": "Each client",
      "status": "built",
-     "words": 221
+     "words": 212
     }
    ]
   },
@@ -232,7 +236,7 @@
      "id": "what-this-catches",
      "title": "What this catches",
      "status": "built",
-     "words": 156
+     "words": 154
     }
    ]
   },
@@ -251,7 +255,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 264
+     "words": 262
     }
    ]
   },
@@ -260,7 +264,11 @@
    "title": "How the loops talk",
    "summary": "The outer loop sends commands in, and tasks send events back. Nothing else crosses between them.",
    "status": "built",
-   "code": [],
+   "code": [
+    "core/internal/conversation/model.go",
+    "core/internal/task/tool_durable.go",
+    "core/internal/task/workflow.go"
+   ],
    "sections": [
     {
      "id": "overview",
@@ -272,7 +280,7 @@
      "id": "the-rules",
      "title": "The rules",
      "status": "built",
-     "words": 91
+     "words": 90
     },
     {
      "id": "outer-loop-tools",
@@ -365,7 +373,7 @@
      "id": "planning",
      "title": "Planning",
      "status": "built",
-     "words": 37
+     "words": 33
     },
     {
      "id": "older-statements-that-no-longer-apply",
@@ -389,7 +397,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 177
+     "words": 175
     },
     {
      "id": "pausing",
@@ -401,7 +409,7 @@
      "id": "releases",
      "title": "Releases",
      "status": "built",
-     "words": 46
+     "words": 38
     },
     {
      "id": "backups",
@@ -527,7 +535,9 @@
    "title": "Memory and context",
    "summary": "Each loop starts with a small context, built from recent messages or its own instructions.",
    "status": "built",
-   "code": [],
+   "code": [
+    "core/internal/state/conversation.go"
+   ],
    "sections": [
     {
      "id": "overview",
@@ -614,7 +624,7 @@
      "id": "sampling-and-failures",
      "title": "Sampling and failures",
      "status": "built",
-     "words": 269
+     "words": 253
     }
    ]
   },
@@ -635,37 +645,37 @@
      "id": "tasks",
      "title": "Tasks",
      "status": "built",
-     "words": 124
+     "words": 113
     },
     {
      "id": "conversation",
      "title": "Conversation",
      "status": "built",
-     "words": 67
+     "words": 60
     },
     {
      "id": "tools-and-approvals",
      "title": "Tools and approvals",
      "status": "built",
-     "words": 131
+     "words": 120
     },
     {
      "id": "memory-and-results",
      "title": "Memory and results",
      "status": "built",
-     "words": 69
+     "words": 60
     },
     {
      "id": "schedules-and-proactive-messages",
      "title": "Schedules and proactive messages",
      "status": "built",
-     "words": 82
+     "words": 73
     },
     {
      "id": "clients-and-operations",
      "title": "Clients and operations",
      "status": "built",
-     "words": 99
+     "words": 91
     }
    ]
   },
@@ -813,7 +823,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 247
+     "words": 245
     },
     {
      "id": "what-happens-when-something-dies",
@@ -856,7 +866,10 @@
    "title": "Results and files",
    "summary": "A saved result should reopen later, and its records should show whether it reached the user.",
    "status": "built",
-   "code": [],
+   "code": [
+    "core/internal/agent/steps.go",
+    "core/internal/state/google.go"
+   ],
    "sections": [
     {
      "id": "overview",
@@ -886,7 +899,7 @@
      "id": "also-in-this-milestone",
      "title": "Also in this milestone",
      "status": "designed",
-     "words": 32
+     "words": 29
     },
     {
      "id": "still-open",
@@ -907,13 +920,13 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 140
+     "words": 138
     },
     {
      "id": "what-each-piece-adds",
      "title": "What each piece adds",
      "status": "built",
-     "words": 480
+     "words": 420
     }
    ]
   },
@@ -1081,20 +1094,20 @@
      "id": "what-the-rest-need",
      "title": "What the rest need",
      "status": "built",
-     "words": 51
+     "words": 49
     },
     {
      "id": "proactive-help-is-still-being-designed",
      "title": "Proactive help is still being designed",
      "status": "built",
-     "words": 50
+     "words": 49
     }
    ]
   },
   {
    "page": "docs/site/sources.html",
    "title": "Sources",
-   "summary": "The design is on this site. Linear tracks the work. When they disagree, the code decides what's running today.",
+   "summary": "The design is on this site. When it disagrees with the code, the code decides what's running today.",
    "status": "built",
    "code": [],
    "sections": [
@@ -1102,7 +1115,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 27
+     "words": 19
     },
     {
      "id": "other-files-in-the-repo",
@@ -1114,7 +1127,7 @@
      "id": "known-mismatches",
      "title": "Known mismatches",
      "status": "built",
-     "words": 35
+     "words": 20
     }
    ]
   },
@@ -1132,7 +1145,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 283
+     "words": 281
     }
    ]
   },
@@ -1241,7 +1254,7 @@
      "id": "loading-tools-on-demand",
      "title": "Loading tools on demand",
      "status": "designed",
-     "words": 222
+     "words": 220
     }
    ]
   },
