@@ -3,46 +3,65 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tool discovery · Nori</title>
+<title>Tools · Nori</title>
 <link rel="stylesheet" href="site.css">
 <script src="site.js" defer></script>
 </head>
 <body>
-<h1>Tool discovery</h1>
-<p class="lede">How the inner loop will find and load only the tools a task needs.</p>
-<div class="card">
-    <h3 style="margin-top:0">Dynamic tool discovery <span class="tag design">designed · milestone 5</span></h3>
-    <p>Today each loop has a fixed tool list: six for the outer loop, and up to five for the inner loop (<code>complete</code>, <code>shell</code>, <code>browser_navigate</code>, <code>browser_screenshot</code> and <code>request_input</code>). The plan is for the inner loop to start small and load only what a task needs, so adding connectors doesn't fill its context with tool schemas.</p>
-    <div class="branch4">
-      <div class="node designed-node"><b>1. Catalog</b><small>Short entries give each capability's purpose, account, scope, availability and failure behavior. <a href="https://linear.app/a-barwick/issue/AB-158">AB-158</a></small></div>
-      <div class="node designed-node"><b>2. Discover</b><small>The inner loop looks for capabilities using the task, its evidence and the connected services. <a href="https://linear.app/a-barwick/issue/AB-159">AB-159</a></small></div>
-      <div class="node designed-node"><b>3. Load</b><small>Only the selected schemas enter the model's context. They can be cached until an account or tool changes. <a href="https://linear.app/a-barwick/issue/AB-160">AB-160</a></small></div>
-      <div class="node designed-node"><b>4. Check and run</b><small>The runtime checks permission when the call runs. Finding or loading a tool never grants access. <a href="https://linear.app/a-barwick/issue/AB-168">AB-168</a></small></div>
-    </div>
-    <ul class="pts" style="margin-top:12px">
-      <li>The outer loop keeps its small set of coordination tools and a short summary of what the inner loop can do.</li>
-      <li>A disconnected or missing tool is reported as unavailable, so it can't be confused with a tool the model didn't select.</li>
-      <li>Still open: the catalog format, search and ranking, schema caching, and the first connector.</li>
-    </ul>
-  </div>
-<section><h2>An example</h2>
-<div class="card"><p><span class="say me">What's on my calendar Thursday?</span></p>
+<h1>Tools</h1>
+<p class="lede">What the inner loop can call, where each call runs, and how a result shows it worked.</p>
+<div class="card"><p><span class="say me">What's the weather in Tucson on Saturday?</span></p>
 <div class="flow">
-<div class="node designed-node"><b>Discover</b><small>The inner loop finds a calendar read capability and sees which account is connected.</small></div>
-<div class="arrow">↓</div>
-<div class="node designed-node"><b>Load</b><small>Only that tool's schema is added. Email and document tools stay out of the prompt.</small></div>
-<div class="arrow">↓</div>
-<div class="branch">
-<div class="node designed-node"><b>Connected</b><small>The call runs and the answer names the account.</small></div>
-<div class="node designed-node"><b>Not connected</b><small>The task says so and asks the user to connect it.</small></div>
-</div></div></div></section>
-<section><h2>Rules that don't change</h2>
+<div class="node outer"><b>Outer loop</b><small>Dispatches a task, because the answer needs a current source.</small></div>
+<div class="arrow">↓ <span class="lbl">start command</span></div>
+<div class="node inner"><b>Inner loop on the worker</b><small>Runs the search and saves the titles, URLs and dates.</small></div>
+<div class="arrow">↓ <span class="lbl">URL to open</span></div>
+<div class="node computer"><b>Computer</b><small>Opens a result when its snippet doesn't have the forecast.</small></div>
+<div class="arrow">↓ <span class="lbl">page text, saved as a result</span></div>
+<div class="node inner"><b>Inner loop on the worker</b><small>Proposes the answer and cites both saved results as evidence.</small></div>
+<div class="arrow">↓ <span class="lbl">answer and evidence</span></div>
+<div class="node"><b>Runtime</b><small>Confirms both results are saved, then passes them on.</small></div>
+</div></div>
+<section><h2>The tools</h2>
+<div class="card"><table><tr><th>Tool</th><th>Runs on</th><th>Type</th><th>Returns</th></tr>
+<tr><td>web_search</td><td>Worker</td><td>Read</td><td>Up to 8 results with URLs and publication dates when known.</td></tr>
+<tr><td>calendar_read</td><td>Worker</td><td>Read</td><td>Events in a range of up to 31 days, and the account it read.</td></tr>
+<tr><td>screenshot_inspect</td><td>Worker</td><td>Read</td><td>The text answer to one question about a saved screenshot.</td></tr>
+<tr><td>browser_navigate</td><td>Computer</td><td>Read</td><td>The page title and visible text.</td></tr>
+<tr><td>browser_screenshot</td><td>Computer</td><td>Read</td><td>A reference to a saved PNG.</td></tr>
+<tr><td>shell</td><td>Computer</td><td>Write</td><td>Output and exit code, within 45 seconds.</td></tr>
+<tr><td>job_start</td><td>Computer</td><td>Write</td><td>A job ID. The command runs in the background.</td></tr>
+<tr><td>job_status</td><td>Computer</td><td>Read</td><td>The job's state, elapsed time and latest output.</td></tr>
+<tr><td>job_wait</td><td>Computer</td><td>Read</td><td>The same, once the job ends or new instructions arrive.</td></tr>
+<tr><td>job_stop</td><td>Computer</td><td>Stop</td><td>The job's final state, once its processes have exited.</td></tr>
+</table></div></section>
+<section><h2>Confirming a change</h2>
+<p>A tool that changes something must come with a way to confirm the change. The inner loop runs the confirmation and cites it, and lists anything it couldn't confirm as unmet.</p>
+<div class="card"><table class="tall"><tr><th>Tool</th><th>How the change is confirmed</th></tr>
+<tr><td>job_start</td><td>The wait returns the end state, exit code and output.</td></tr>
+<tr><td>job_stop</td><td>Its result is the final state.</td></tr>
+<tr><td>shell</td><td>The exit code shows the command ran. A follow-up read, such as a file count, shows its effect.</td></tr>
+<tr class="designed"><td>Future connectors</td><td>A write returns the provider's status and the ID it changed. An upload returns a 200 and a file ID, and a GET on that ID confirms it.</td></tr>
+</table></div></section>
+<section><h2>Long shell jobs</h2>
+<div class="states"><span class="state">running</span><span class="state-arrow">→</span><span class="state">finished</span><span class="state-arrow">or</span><span class="state">stopped</span><span class="state-arrow">or</span><span class="state">timed_out</span><span class="state-arrow">or</span><span class="state">lost</span></div>
+<p class="note">A job that can't start ends as failed_to_start. A stop the guest can't confirm ends as stop_unconfirmed.</p>
 <ul class="pts">
-<li>Picking a tool never grants permission.</li>
-<li>Tool descriptions and tool output are data. Text inside them can't change the task or its permissions.</li>
-<li>Discovery counts against the task's budget and stops when the task stops.</li>
-<li>Small tasks shouldn't have to rediscover the same tool on every step.</li>
+<li>A job can run for up to 60 minutes, and a task can have 4 running at once.</li>
+<li>Waiting on a job makes no model calls. The task's progress shows the latest output line.</li>
+<li>A task can't finish while its job is running, and task cleanup stops any job left running.</li>
+<li>If the computer restarts or stops, the job is killed and reported as lost, never as finished.</li>
 </ul></section>
-<details class="sources"><summary>Sources</summary><p><a href="https://linear.app/a-barwick/issue/AB-139">AB-139</a></p></details>
+<section class="designed"><h2>Loading tools on demand</h2>
+<p>Every task gets the same tool list today. Milestone 10 plans for the inner loop to load only the tool definitions a task needs. <a href="https://linear.app/a-barwick/issue/AB-159">AB-159</a> <a href="https://linear.app/a-barwick/issue/AB-160">AB-160</a></p>
+</section>
+<details class="more"><summary>Screenshots, calendar and the catalog</summary>
+<p><code>screenshot_inspect</code> sends one saved image and one question to the task model in a separate call with no tools. Only the text answer joins the task's history, so text inside an image can't call a tool. The cost counts against the task's budget.</p>
+<p><code>nori-connect-calendar</code> opens one Google consent screen for read-only access, then saves the refresh token and account name in <code>.env</code>. Production reads them from Secret Manager, and the token stays on the worker. The tool covers the primary calendar and up to 9 others selected in Google Calendar.</p>
+<p>If the account isn't connected or Google refuses the token, the tool returns <code>available: false</code> and the task says so. An OAuth app in Google's testing state loses its refresh token after 7 days.</p>
+<p>The worker adds a short catalog to the inner loop's instructions, with today's date in the configured time zone. Each entry gives the capability's tools, account and availability, what to do on failure, and how to confirm a result. A missing credential leaves the tool in place, and the tool reports itself unavailable.</p>
+<p>Each search charges the task's budget $0.005, Brave's listed price on Oct 31, 2026.</p>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code>, <code>catalog.go</code>, <code>search.go</code>, <code>calendar.go</code>, <code>inspect.go</code>, <code>core/internal/computerd/jobs.go</code>, <code>core/internal/task/jobs.go</code>, <code>core/cmd/nori-connect-calendar/main.go</code>. <a href="https://linear.app/a-barwick/issue/AB-158">AB-158</a> <a href="https://linear.app/a-barwick/issue/AB-201">AB-201</a> <a href="https://linear.app/a-barwick/issue/AB-202">AB-202</a> <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a> <a href="https://linear.app/a-barwick/issue/AB-204">AB-204</a></p></details>
 </body>
 </html>

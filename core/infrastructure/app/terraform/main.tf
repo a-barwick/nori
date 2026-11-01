@@ -462,7 +462,7 @@ resource "google_compute_instance" "computer" {
     prevent_destroy = true
     # Google 8.8.1 replaces the instance when termination_time is removed.
     # The native clear-deadline migration owns these two legacy fields instead;
-    # poc.py refuses unpause while any termination schedule remains.
+    # ops.py refuses unpause while any termination schedule remains.
     ignore_changes = [desired_status, scheduling[0].termination_time, scheduling[0].instance_termination_action, metadata["computer-paused"], metadata["computer-release-object"], metadata["computer-release-sha256"]]
     precondition {
 

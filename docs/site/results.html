@@ -9,12 +9,12 @@
 </head>
 <body>
 <h1>Results and files</h1>
-<p class="lede">What Nori makes should be something you can open and find again later, and it should be clear whether it reached you.</p>
-<div class="card"><div class="states"><span class="state">Created</span><span class="state-arrow">→</span><span class="state">Checked</span><span class="state-arrow">→</span><span class="state run">Delivered</span></div>
+<p class="lede">A saved result should reopen later, and its records should show whether it reached the user.</p>
+<div class="card designed"><div class="states"><span class="state">Created</span><span class="state-arrow">→</span><span class="state">Checked</span><span class="state-arrow">→</span><span class="state run">Delivered</span></div>
 <p class="note" style="margin-top:12px">These are separate facts. A saved result might not have reached the user yet, and a saved reminder timer doesn't show the reminder arrived.</p></div>
-<section><h2>What a result records</h2>
+<section class="designed"><h2>What a result records</h2>
 <ul class="pts"><li>A stable ID and a place to find it.</li><li>The task that made it, and which instructions it answers.</li><li>The evidence behind it, and what's still uncertain.</li><li>Its revisions, so old versions stay as history.</li></ul></section>
-<section><h2>Finding it later</h2>
+<section class="designed"><h2>Finding it later</h2>
 <div class="card">
 <p><span class="say me">Show me that research.</span> <span class="note">Finds the same saved result, even after a reconnect.</span></p>
 <p><span class="say me">Revise it for Thursday.</span> <span class="note">A new revision linked to the original.</span></p>
@@ -22,11 +22,11 @@
 </div></section>
 <section><h2>Where things live</h2>
 <div class="card"><table class="tall"><tr><th>Thing</th><th>Where</th></tr>
-<tr><td>Metadata and links</td><td>Firestore</td></tr><tr><td>Large files</td><td>Cloud Storage</td></tr><tr><td>Workflow history</td><td>References only</td></tr><tr><td>Working files</td><td>The computer's disk, which isn't a backup</td></tr></table>
-<p class="note">Today this covers screenshots saved under <code>artifacts/</code>. Everything else here is milestone 8.</p></div></section>
-<section><h2>Also in this milestone</h2>
+<tr><td>Metadata and links</td><td>Firestore</td></tr><tr><td>Large files</td><td>Cloud Storage</td></tr><tr><td>Task run history in Temporal</td><td>References only</td></tr><tr><td>Working files</td><td>The disk of Nori's Linux computer</td></tr></table>
+<p class="note">This table runs today. Screenshots under <code>artifacts/</code> are the only files in Cloud Storage. <span class="designed">The rest of this page is milestone 8.</span></p></div></section>
+<section class="designed"><h2>Also in this milestone</h2>
 <ul class="pts"><li><b>Typed message parts</b>, so clients stop reading model text: <a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a>.</li><li><b>Uploads from the user</b>, stored separately and read as data: <a href="https://linear.app/a-barwick/issue/AB-207">AB-207</a>.</li><li><b>An event log and live stream</b> in place of polling: <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a>.</li></ul></section>
-<section><h2>Still open</h2>
+<section class="designed"><h2>Still open</h2>
 <ul class="pts"><li>Which previews to support.</li><li>Editing in place versus new revisions.</li><li>How long to keep things.</li></ul></section>
 <details class="sources"><summary>Sources</summary><p><a href="https://linear.app/a-barwick/issue/AB-142">AB-142</a> · <a href="https://linear.app/a-barwick/issue/AB-173">AB-173</a> · <a href="https://linear.app/a-barwick/issue/AB-174">AB-174</a> · <a href="https://linear.app/a-barwick/issue/AB-175">AB-175</a> · <a href="https://linear.app/a-barwick/issue/AB-176">AB-176</a> · <a href="https://linear.app/a-barwick/issue/AB-177">AB-177</a></p></details>
 </body>

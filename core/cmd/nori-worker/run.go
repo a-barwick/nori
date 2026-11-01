@@ -59,10 +59,9 @@ func run(ctx context.Context, waker wake.Waker, sliceID string, known []string, 
 	// A hosted worker wakes the conversation after saving a task event, and
 	// retries that wake on its own tick. A local worker leaves both to the API.
 	steps := dispatch.Commands | dispatch.Publications
-	activities := &task.Activities{
-		Agent: agent.New(store, openrouter.New(key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra")), platform.Computer()),
-		Store: store, JevKey: os.Getenv("JEV_API_KEY"),
-	}
+	service := agent.New(store, openrouter.New(key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra")), platform.Computer())
+	service.Capabilities = cfg.capabilities
+	activities := &task.Activities{Agent: service, Store: store}
 	if !local {
 		activities.Notify = waker.WakeConversation
 		steps |= dispatch.ConversationWake

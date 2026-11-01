@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+	"nori/internal/agent"
 	"nori/internal/computer"
 	"nori/internal/observability"
 	"nori/internal/state"
@@ -17,8 +18,11 @@ import (
 
 func toolEffect(name string) string {
 	switch name {
-	case "browser_navigate", "browser_screenshot":
+	case "browser_navigate", "browser_screenshot", "web_search", "calendar_read", "screenshot_inspect", "job_status", "job_wait":
 		return "read"
+	case "job_stop":
+		// Stopping repeats safely, so an unresolved write never blocks it.
+		return "control"
 	default:
 		return "unknown"
 	}
@@ -29,7 +33,9 @@ func toolEffect(name string) string {
 func (a *Activities) durableTool(parent context.Context, in ToolInput) (result map[string]any, err error) {
 	evidence := a.Store
 	effect := toolEffect(in.Call.Name)
-	ctx, done, run, err := a.bounded(parent, in.Step, effect == "read")
+	// A screenshot read is a paid model call whose interrupted cost can't be
+	// established, so a correction waits for it. Stop still cancels it.
+	ctx, done, run, err := a.bounded(parent, in.Step, effect == "read" && in.Call.Name != "screenshot_inspect")
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +78,8 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	}
 	if recovering == nil {
 		for _, saved := range records {
-			if effect != "read" && saved.EffectClass != "read" && (saved.Outcome == "uncertain" || saved.Outcome == "pending" || saved.Outcome == "failed") {
+			unresolved := saved.Outcome == "uncertain" || saved.Outcome == "pending" || saved.Outcome == "failed"
+			if effect != "read" && effect != "control" && saved.EffectClass != "read" && saved.EffectClass != "control" && unresolved {
 				return map[string]any{
 					"operation_id": saved.ID, "outcome": "uncertain", "effect_class": saved.EffectClass,
 					"error": "An earlier write has an unresolved outcome. Ask Austin; no further tool was admitted.",
@@ -136,6 +143,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		return output, nil
 	}
 
+	if agent.RuntimeTool(in.Call.Name) {
+		return a.runtimeTool(ctx, in, &op, recovering != nil, persist)
+	}
 	if recovering != nil {
 		inspect, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer stop()
@@ -175,13 +185,28 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			"error": "The saved guest receipt does not establish this operation's result. Ask Austin; this operation was not repeated.",
 		}, nil
 	}
-	c, err := computer.Open(observability.SuppressErrorCapture(ctx), a.Agent.Computer, computerRun(in.Step))
+	// Only starting a job or a one-shot tool may start the computer. A job can't be
+	// running on a stopped computer, so asking about one doesn't start it.
+	connect := computer.Open
+	if existingJobTool(in.Call.Name) {
+		connect = computer.Attach
+	}
+	c, err := connect(observability.SuppressErrorCapture(ctx), a.Agent.Computer, computerRun(in.Step))
+	if errors.Is(err, computer.ErrStopped) && existingJobTool(in.Call.Name) {
+		return persist("failed", lostJob(in.Call), nil)
+	}
 	if err != nil {
 		return persist("failed", nil, err)
 	}
 	defer c.Close()
 	c.SetTaskID(in.RunID)
 	if err = c.RequireReceipts(); err != nil {
+		return persist("failed", nil, err)
+	}
+	if in.Call.Name == "job_start" {
+		err = c.RequireJobs()
+	}
+	if err != nil {
 		return persist("failed", nil, err)
 	}
 	for attempt := 1; attempt <= 2; attempt++ {
@@ -207,14 +232,7 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		output, callErr := a.Agent.Tool(observability.SuppressErrorCapture(callCtx), in.RunID, c, in.Call)
 		cancel()
 		if callErr == nil {
-			outcome := "confirmed"
-			if code, ok := output["exit_code"].(float64); ok && code != 0 {
-				outcome = "failed"
-			}
-			if available, ok := output["page_available"].(bool); ok && !available {
-				outcome = "failed"
-			}
-			return persist(outcome, output, nil)
+			return persist(toolOutcome(output), output, nil)
 		}
 		// Inspect a retained receipt without resubmitting an operation after a lost
 		// response. A shell receipt proves the process result, not a remote effect.
@@ -295,19 +313,12 @@ func (a *Activities) savedToolReceipt(ctx context.Context, in ToolInput, receipt
 		}
 		return map[string]any{
 			"run_id": in.RunID, "artifact_id": id,
-			"description": "Private browser screenshot saved for Austin; image pixels are not available to the model.",
+			"description": "Private browser screenshot saved for Austin. Call screenshot_inspect with this artifact_id to read it.",
 		}, "confirmed", true
 	}
 	var output map[string]any
 	if json.Unmarshal(receipt.Body, &output) != nil || output == nil {
 		return nil, "", false
 	}
-	outcome := "confirmed"
-	if code, ok := output["exit_code"].(float64); ok && code != 0 {
-		outcome = "failed"
-	}
-	if available, ok := output["page_available"].(bool); ok && !available {
-		outcome = "failed"
-	}
-	return output, outcome, true
+	return output, toolOutcome(output), true
 }

@@ -19,6 +19,7 @@ function statusLabel(run: Run) {
   if (run.status === "running" && run.question?.resolved_by) return run.question.kind === "budget" ? "Budget accepted" : "Answer accepted";
   if (run.status === "running" && (run.question || run.waiting)) return run.question?.kind === "budget" ? "Waiting for budget approval" : "Waiting for your answer";
   if (run.status === "running" && run.events?.at(-1)?.kind === "checking") return "Checking the answer";
+  if (run.status === "running" && run.progress) return "Running a long job";
   return { running: "Working on your task", completed: "Completed", failed: "Failed", cancelled: "Stopped" }[run.status];
 }
 
@@ -157,6 +158,7 @@ export function TaskPanel({
   const selectedDetails = selected && <section key={selected.id} id={`task-details-${selected.id}`} aria-label="Selected task details" className="mt-3 border-t border-hairline pt-3">
     <h4 className="mb-3 text-meta font-medium">Task details</h4>
     {selected.status === "running" && (question?.text || selected.waiting) && <p className="mb-3 whitespace-pre-wrap break-words text-meta text-ink-2 [overflow-wrap:anywhere]">{question?.text || selected.waiting}</p>}
+    {selected.status === "running" && !question?.text && !selected.waiting && selected.progress && <p className="mb-3 whitespace-pre-wrap break-words text-meta text-ink-2 [overflow-wrap:anywhere]">{selected.progress}</p>}
     {selected.error && <p role="status" className={cn("mb-3 rounded-tile p-3 text-meta", selected.status === "failed" ? "bg-danger-bg text-danger" : "bg-fill-1 text-ink-2")}>{selected.error}</p>}
     {selected.status === "running" && !selected.cancel_requested && <form className="mb-4 space-y-2 px-2" onSubmit={(event) => {
       event.preventDefault();
@@ -188,7 +190,7 @@ export function TaskPanel({
     {!!selected.events?.length && <details className="mb-3" open>
       <summary className="cursor-pointer px-2 py-2 text-meta font-medium">Task activity</summary>
       <ol className="space-y-2" aria-label="Task events">{selected.events.map((event, index) => {
-        const Icon = /browser|web/.test(event.kind) ? Globe : /shell|command/.test(event.kind) ? Terminal : Check;
+        const Icon = /browser|web/.test(event.kind) || /^(browser|web|screenshot)/.test(event.text) ? Globe : /shell|command/.test(event.kind) || /^(shell|job)/.test(event.text) ? Terminal : Check;
         return <li key={event.id || `${selected.id}-${index}`} className="flex items-start gap-3 rounded-tile px-2 py-2">
           <span className="grid size-10 shrink-0 place-items-center rounded-tile bg-fill-1 text-ink"><Icon size={20} strokeWidth={1.5} /></span>
           <div className="min-w-0 flex-1">

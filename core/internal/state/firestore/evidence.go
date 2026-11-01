@@ -1,6 +1,7 @@
 package firestore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -207,6 +208,38 @@ func (d *Database) ReadTaskSourceInputs(ctx context.Context, runID string) ([]st
 		}
 	}
 	return sources.Inputs(), nil
+}
+
+// ReadTaskOutcome reads the last proposal's unmet items and the results it cites.
+func (d *Database) ReadTaskOutcome(ctx context.Context, runID string) (state.TaskOutcome, error) {
+	if !state.ValidEvidenceID(runID) {
+		return state.TaskOutcome{}, errors.New("invalid task outcome task")
+	}
+	checks, err := documents[state.CompletionCheck](
+		d.runs().Doc(runID).Collection("completion_checks").Limit(state.MaxCompletionChecks + 1).Documents(ctx))
+	if err != nil {
+		return state.TaskOutcome{}, err
+	}
+	proposal, ok := state.LastProposal(checks)
+	if !ok {
+		return state.TaskOutcome{}, nil
+	}
+	outcome := state.NewTaskOutcome(proposal)
+	ops, err := d.Operations(ctx, runID)
+	if err != nil {
+		return state.TaskOutcome{}, err
+	}
+	for _, op := range state.CitedOperations(proposal, ops) {
+		blocks, err := d.ReadHistory(ctx, runID, op.ResultRef)
+		if err != nil {
+			return state.TaskOutcome{}, err
+		}
+		outcome.Evidence = append(outcome.Evidence, state.CitedResult{
+			Operation: op.ID, Tool: op.Name, Result: string(bytes.Join(blocks, []byte("\n"))),
+		})
+	}
+	outcome.FitEvidence()
+	return outcome, nil
 }
 
 func (d *Database) readHistoryBlock(ctx context.Context, runID, ref string) (state.HistoryBlock, error) {

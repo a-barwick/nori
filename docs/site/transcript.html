@@ -11,11 +11,11 @@
 <h1>Task transcript</h1>
 <p class="lede">Each task saves its messages, tool calls and tool results, and one adapter turns them into a model request.</p>
 <div class="card"><div class="flow">
-  <div class="node inner"><b>Task activities</b><small>Append messages, tool calls and tool results to the transcript. They import no provider package.</small></div>
+  <div class="node inner"><b>Task activities</b><small>Append messages, tool calls and results. They import no provider package.</small></div>
   <div class="arrow">↓ <span class="lbl">transcript, tool list and output limit</span></div>
-  <div class="node"><b>Model contract</b><small><code>Respond</code> makes one request and returns the turn to save, its tool calls, token usage and cost.</small></div>
+  <div class="node"><b>Model contract</b><small><code>Respond</code> makes one request. <code>Inspect</code> asks one question about an image.</small></div>
   <div class="arrow">↓ <span class="lbl">Responses request</span></div>
-  <div class="node"><b>OpenRouter adapter</b><small>Sets the price ceiling, reserves development spend, sends the request and reads the cost from the response.</small></div>
+  <div class="node"><b>OpenRouter adapter</b><small>Sets the price ceiling, reserves spend and reads the cost.</small></div>
 </div></div>
 <section><h2>An example</h2>
 <p>For the request "What is the title of example.org?", the transcript holds the saved turns below. The model asks for a page, receives it, and proposes an answer.</p>
@@ -28,7 +28,7 @@
 <section><h2>Where the code is</h2>
 <div class="card"><table class="tall"><tr><th>Part</th><th>Path</th></tr>
 <tr><td>Message, text, tool call, tool result, provider state and tool schema types</td><td><code>core/internal/transcript/</code></td></tr>
-<tr><td>Model contract, task prompt, tool list and call validation</td><td><code>core/internal/agent/</code></td></tr>
+<tr><td>Model contract (<code>Respond</code> returns the turn to save, its tool calls, usage and cost), task prompt, tool list and call validation</td><td><code>core/internal/agent/</code></td></tr>
 <tr><td>OpenRouter adapter</td><td><code>core/internal/agent/openrouter/</code></td></tr>
 <tr><td>Reading and writing saved history</td><td><code>core/internal/task/history.go</code></td></tr>
 </table></div></section>

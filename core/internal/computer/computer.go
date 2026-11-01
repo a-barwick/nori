@@ -27,6 +27,7 @@ type Client struct {
 	once      sync.Once
 	receipts  bool
 	taskTabs  bool
+	jobs      bool
 	operation string
 	taskID    string
 	run       string
@@ -74,6 +75,7 @@ type Health struct {
 	Ready    bool `json:"ready"`
 	Receipts bool `json:"operation_receipts_v1"`
 	TaskTabs bool `json:"browser_task_tabs_v1"`
+	Jobs     bool `json:"shell_jobs_v1"`
 }
 
 // Probe asks the guest for its health, waiting at most three seconds. It records
@@ -100,7 +102,7 @@ func (c *Client) Probe(ctx context.Context) (Health, error) {
 	if decodeErr != nil {
 		return Health{}, fmt.Errorf("%w: %v", ErrUnhealthy, decodeErr)
 	}
-	c.receipts, c.taskTabs = health.Receipts, health.TaskTabs
+	c.receipts, c.taskTabs, c.jobs = health.Receipts, health.TaskTabs, health.Jobs
 	return health, nil
 }
 
@@ -131,6 +133,14 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) (resp
 		operation = "cancel"
 	case "/browser/close":
 		operation = "browser_close"
+	case "/job/start":
+		operation = "job_start"
+	case "/job/status":
+		operation = "job_status"
+	case "/job/stop":
+		operation = "job_stop"
+	case "/job/stop-task":
+		operation = "job_stop_task"
 	}
 	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer."+operation, trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),

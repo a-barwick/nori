@@ -50,6 +50,8 @@ export type Run = {
   revision?: number;
   incorporated?: number;
   waiting?: string;
+  /** Latest saved state of a running long job. */
+  progress?: string;
   /** Model USD from reported token usage, and the budget Austin has approved. */
   spent_usd?: number;
   /** Recorded spend is partial when at least one provider cost is unknown. */

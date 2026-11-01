@@ -26,6 +26,7 @@ type TaskContextRecord struct {
 	Status                  state.RunStatus      `json:"status"`
 	Question                *state.Question      `json:"question,omitempty"`
 	Waiting                 string               `json:"waiting,omitempty"`
+	Progress                string               `json:"progress,omitempty"`
 	Revision                int64                `json:"revision"`
 	Position                int64                `json:"position"`
 	Incorporated            int64                `json:"incorporated"`
@@ -37,6 +38,8 @@ type TaskContextRecord struct {
 	Commands                []TaskContextCommand `json:"commands"`
 	CommandHistoryTruncated bool                 `json:"command_history_truncated,omitempty"`
 	TextTruncated           bool                 `json:"text_truncated,omitempty"`
+	Outcome                 *state.TaskOutcome   `json:"outcome,omitempty"`
+	OutcomeUnavailable      bool                 `json:"outcome_unavailable,omitempty"`
 }
 
 type TaskContextCommand struct {
@@ -73,7 +76,7 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			return err
 		}
 		run := snapshot.Run
-		record := &TaskContextRecord{ID: run.ID, Request: run.Request, Status: run.Status, Waiting: run.Waiting,
+		record := &TaskContextRecord{ID: run.ID, Request: run.Request, Status: run.Status, Waiting: run.Waiting, Progress: run.Progress,
 			Revision: run.Revision, Position: run.Position, Incorporated: run.Incorporated, CancelRequested: run.CancelRequested,
 			Holds: append([]state.TaskHold{}, run.Holds...), Spent: run.Spent, Budget: run.Budget, Error: run.Error, Result: run.Result,
 			Commands: []TaskContextCommand{}}
@@ -102,6 +105,20 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 	for _, id := range eventRunIDs {
 		if err := add(id, &result.EventTasks); err != nil {
 			return result, err
+		}
+	}
+	// Only the turn reporting a task's end compares its answer with the cited results.
+	for _, record := range result.EventTasks {
+		if record.Status == state.RunRunning || record.Status == "cancelled" {
+			continue
+		}
+		outcome, err := t.Store.ReadTaskOutcome(ctx, record.ID)
+		if err != nil {
+			record.OutcomeUnavailable = true
+			continue
+		}
+		if len(outcome.Unmet) > 0 || len(outcome.Evidence) > 0 {
+			record.Outcome = &outcome
 		}
 	}
 	for _, run := range runs {
@@ -135,8 +152,17 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 		for _, record := range records {
 			trimContextText(&record.Request, limit, &record.TextTruncated)
 			trimContextText(&record.Waiting, limit, &record.TextTruncated)
+			trimContextText(&record.Progress, limit, &record.TextTruncated)
 			trimContextText(&record.Error, limit, &record.TextTruncated)
 			trimContextText(&record.Result, limit, &record.TextTruncated)
+			if record.Outcome != nil {
+				for i := range record.Outcome.Unmet {
+					trimContextText(&record.Outcome.Unmet[i], limit, &record.Outcome.Shortened)
+				}
+				for i := range record.Outcome.Evidence {
+					trimContextText(&record.Outcome.Evidence[i].Result, limit, &record.Outcome.Shortened)
+				}
+			}
 			if record.Question != nil {
 				trimContextText(&record.Question.Text, limit, &record.TextTruncated)
 			}

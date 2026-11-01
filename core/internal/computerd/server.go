@@ -36,6 +36,8 @@ type server struct {
 	receiptMu      sync.Mutex
 	activeReceipts map[string]bool
 	readOperations map[string]*readOperation
+	jobsMu         sync.Mutex
+	jobs           map[string]*activeJob
 }
 type runState struct {
 	ctx     context.Context
@@ -49,7 +51,8 @@ func New(tasks string) (http.Handler, error) {
 	if err := os.MkdirAll(tasks, 0700); err != nil {
 		return nil, err
 	}
-	s := &server{tasks: tasks, browsers: make(map[string]*taskBrowser), screenshotGate: make(chan struct{}, 1), runs: make(map[string]*runState), activeReceipts: make(map[string]bool), readOperations: make(map[string]*readOperation)}
+	s := &server{tasks: tasks, browsers: make(map[string]*taskBrowser), screenshotGate: make(chan struct{}, 1), runs: make(map[string]*runState), activeReceipts: make(map[string]bool), readOperations: make(map[string]*readOperation), jobs: make(map[string]*activeJob)}
+	s.recoverJobs()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -61,13 +64,17 @@ func New(tasks string) (http.Handler, error) {
 		}
 		// Readiness validates the browser CDP connection without creating a task tab.
 		_ = c.conn.CloseNow()
-		respond(w, map[string]bool{"ready": true, "operation_receipts_v1": true, "browser_task_tabs_v1": true})
+		respond(w, map[string]bool{"ready": true, "operation_receipts_v1": true, "browser_task_tabs_v1": true, "shell_jobs_v1": true})
 	})
 	mux.HandleFunc("POST /cancel", s.cancelRun)
 	mux.HandleFunc("POST /browser/close", s.closeTaskBrowser)
 	mux.HandleFunc("POST /exec", s.receipted(s.exec))
 	mux.HandleFunc("POST /navigate", s.receipted(s.navigate))
 	mux.HandleFunc("POST /screenshot", s.receipted(s.screenshot))
+	mux.HandleFunc("POST /job/start", s.receipted(s.startJob))
+	mux.HandleFunc("POST /job/status", s.jobStatus)
+	mux.HandleFunc("POST /job/stop", s.jobStop)
+	mux.HandleFunc("POST /job/stop-task", s.stopTaskJobs)
 	mux.HandleFunc("POST /operation", s.operationStatus)
 	mux.HandleFunc("POST /operation/cancel", s.cancelRead)
 	activity := &activityState{last: time.Now()}
@@ -75,7 +82,8 @@ func New(tasks string) (http.Handler, error) {
 	mux.HandleFunc("GET /activity", func(w http.ResponseWriter, r *http.Request) {
 		activity.mu.Lock()
 		defer activity.mu.Unlock()
-		respond(w, map[string]any{"active": activity.active, "idle_seconds": time.Since(activity.last).Seconds()})
+		// A running job keeps the computer on even when no worker is polling it.
+		respond(w, map[string]any{"active": activity.active + s.runningJobs(), "idle_seconds": time.Since(activity.last).Seconds()})
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -179,7 +187,7 @@ func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle fu
 		}
 	}()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/browser/close" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation" || r.URL.Path == "/operation/cancel"))) {
+		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/browser/close" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation" || r.URL.Path == "/operation/cancel" || r.URL.Path == "/job/start" || r.URL.Path == "/job/status" || r.URL.Path == "/job/stop" || r.URL.Path == "/job/stop-task"))) {
 			http.NotFound(w, r)
 			return
 		}
@@ -281,27 +289,12 @@ func (s *server) exec(w http.ResponseWriter, r *http.Request) {
 	defer finish()
 	ctx, cancel := context.WithTimeout(operation, time.Duration(req.Timeout)*time.Second)
 	defer cancel()
-	root, err := os.OpenRoot(s.tasks)
+	dir, closeDir, err := s.openTaskDir(req.TaskID)
 	if err != nil {
 		http.Error(w, "task directory unavailable", 500)
 		return
 	}
-	defer root.Close()
-	if err = root.Mkdir(req.TaskID, 0700); err != nil && !errors.Is(err, os.ErrExist) {
-		http.Error(w, "task directory unavailable", 500)
-		return
-	}
-	dir, err := root.Open(req.TaskID)
-	if err != nil {
-		http.Error(w, "task directory unavailable", 400)
-		return
-	}
-	defer dir.Close()
-	info, err := dir.Stat()
-	if err != nil || !info.IsDir() {
-		http.Error(w, "invalid task directory", 400)
-		return
-	}
+	defer closeDir()
 	group, err := newOperationGroup()
 	if err != nil {
 		http.Error(w, "shell execution requires delegated cgroup v2", 503)
@@ -343,6 +336,29 @@ func (s *server) exec(w http.ResponseWriter, r *http.Request) {
 		result["error"] = err.Error()
 	}
 	respond(w, result)
+}
+
+// openTaskDir keeps the directory open so a command starts inside this exact task's
+// folder even if the path is replaced while it starts.
+func (s *server) openTaskDir(taskID string) (*os.File, func(), error) {
+	root, err := os.OpenRoot(s.tasks)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer root.Close()
+	if err = root.Mkdir(taskID, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		return nil, nil, err
+	}
+	dir, err := root.Open(taskID)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := dir.Stat()
+	if err != nil || !info.IsDir() {
+		_ = dir.Close()
+		return nil, nil, errors.New("invalid task directory")
+	}
+	return dir, func() { _ = dir.Close() }, nil
 }
 
 // begin registers work before it can start. A canceled run cannot issue later tools.
@@ -432,6 +448,7 @@ func (s *server) cancelRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) stopFailed(id string, err error) {
+	log.Printf("run %s stop failed: %v", id, err)
 	s.runsMu.Lock()
 	defer s.runsMu.Unlock()
 	if state := s.runs[id]; state != nil {

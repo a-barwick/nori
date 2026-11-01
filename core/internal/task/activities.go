@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -26,10 +25,8 @@ import (
 )
 
 type Activities struct {
-	JevKey    string
-	JevClient *http.Client
-	Agent     *agent.Service
-	Store     state.TaskStore
+	Agent *agent.Service
+	Store state.TaskStore
 	// Notify schedules existing outer processing after a durable task event.
 	Notify func(context.Context) error
 }

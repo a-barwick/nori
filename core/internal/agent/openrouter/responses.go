@@ -50,6 +50,11 @@ func New(key, model string) *Client {
 	}
 }
 
+// routing caps the price per million tokens that OpenRouter may route a request at.
+func routing() map[string]any {
+	return map[string]any{"max_price": map[string]float64{"prompt": 1, "completion": 5}, "require_parameters": true}
+}
+
 func (c *Client) Provider() string { return provider }
 func (c *Client) Name() string     { return c.ModelName }
 
@@ -80,7 +85,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		"model": c.ModelName, "input": input, "instructions": req.Instructions,
 		"tools": tools, "max_output_tokens": limit, "store": false,
 		"include":  []string{"reasoning.encrypted_content"},
-		"provider": map[string]any{"max_price": map[string]float64{"prompt": 1, "completion": 5}, "require_parameters": true},
+		"provider": routing(),
 	})
 	if err != nil {
 		return out, errors.New("task request could not be encoded")

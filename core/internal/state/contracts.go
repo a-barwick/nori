@@ -30,7 +30,7 @@ type Artifacts interface {
 // Store is the run-state surface the agent steps use.
 type Store interface {
 	RunStore
-	PutPNG(ctx context.Context, run, id string, data []byte) error
+	Artifacts
 }
 
 // TaskEvidenceStore is separate from display tracing: successful writes here
@@ -44,6 +44,9 @@ type TaskEvidenceStore interface {
 	// ReadTaskSourceInputs resolves the exact retained user inputs a task's commands cite, instead of relying on the
 	// bounded recent-conversation view.
 	ReadTaskSourceInputs(ctx context.Context, runID string) ([]ConversationInput, error)
+	// ReadTaskOutcome reads what a finished task's last completion proposal left unmet and the saved results it
+	// cites, so the outer loop can compare the answer with them.
+	ReadTaskOutcome(ctx context.Context, runID string) (TaskOutcome, error)
 }
 
 // TaskDatabase is the document half of the task surface. Every operation that changes a task is one atomic
@@ -68,6 +71,9 @@ type TaskDatabase interface {
 	Guard(ctx context.Context, runID string, revision int64) (Run, error)
 	Admit(ctx context.Context, runID string, revision int64, operation string) error
 	Project(ctx context.Context, req ProjectRequest) error
+	// SetProgress replaces the task's latest progress line. Unlike Project it adds no event, so polling a long job
+	// can't grow the task's saved record.
+	SetProgress(ctx context.Context, runID string, revision int64, text string) error
 	ProjectQuestion(ctx context.Context, runID string, revision int64, question Question) error
 	Publish(ctx context.Context, req PublishRequest) (Run, error)
 

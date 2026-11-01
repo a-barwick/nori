@@ -9,62 +9,62 @@
 </head>
 <body>
 <h1>Persistent computer</h1>
-<p class="lede">A small Linux machine that belongs to Nori. Tasks use its shell and browser, and it keeps its files between runs.</p>
-<p>The computer is a retained workspace for the inner loop.</p><ul class="pts"><li><b>Kept</b> across guest restarts and host replacement: files, installed tools and the browser profile.</li><li><b>Lost</b> on restart: running processes and open tabs. The inner loop is told that process state may have changed.</li></ul>
+<p class="lede">A small Linux machine that tasks use for shell and browser work. It keeps its files between runs.</p>
   <div class="card">
   <svg viewBox="0 0 920 300" width="100%" role="img" aria-label="Computer diagram">
     <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#a8551c"/></marker></defs>
     <rect x="10" y="105" width="150" height="80" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/>
     <text x="85" y="136" text-anchor="middle" font-size="13.5" font-weight="700" fill="#0c7a5f">Worker</text>
-    <text x="85" y="154" text-anchor="middle" font-size="11" fill="#4a5163">computer.Client</text>
-    <text x="85" y="169" text-anchor="middle" font-size="11" fill="#4a5163">starts host if stopped</text>
+    <text x="85" y="154" text-anchor="middle" font-size="11" fill="#4a5163">sends tool calls</text>
+    <text x="85" y="169" text-anchor="middle" font-size="11" fill="#4a5163">starts the host if stopped</text>
     <rect x="230" y="40" width="300" height="220" rx="12" fill="#faf0e4" stroke="#a8551c" stroke-width="2"/>
     <text x="380" y="66" text-anchor="middle" font-size="13.5" font-weight="700" fill="#a8551c">GCE host · nori-computer</text>
     <rect x="250" y="80" width="260" height="56" rx="8" fill="#fff" stroke="#a8551c" stroke-width="1.5"/>
     <text x="380" y="103" text-anchor="middle" font-size="12.5" font-weight="650">Host proxy (computer-agent --proxy)</text>
-    <text x="380" y="120" text-anchor="middle" font-size="11" fill="#4a5163">15 min idle → exit 75 → graceful guest stop</text>
+    <text x="380" y="120" text-anchor="middle" font-size="11" fill="#4a5163">15 idle minutes → graceful guest stop</text>
     <rect x="250" y="150" width="260" height="92" rx="8" fill="#fff" stroke="#a8551c" stroke-width="1.5" stroke-dasharray="5 4"/>
     <text x="380" y="172" text-anchor="middle" font-size="12.5" font-weight="650">Firecracker guest</text>
-    <text x="380" y="190" text-anchor="middle" font-size="11" fill="#4a5163">computerd @ 172.30.0.2:8090</text>
-    <text x="380" y="206" text-anchor="middle" font-size="11" fill="#4a5163">shell (cgroups) · Chromium via CDP :9222</text>
-    <text x="380" y="222" text-anchor="middle" font-size="11" fill="#4a5163">operation receipts v1 · per-task browser tabs</text>
+    <text x="380" y="190" text-anchor="middle" font-size="11" fill="#4a5163">Runs shell and browser tools</text>
+    <text x="380" y="206" text-anchor="middle" font-size="11" fill="#4a5163">shell · Chromium</text>
+    <text x="380" y="222" text-anchor="middle" font-size="11" fill="#4a5163">operation receipts · one browser tab per task · shell jobs</text>
     <rect x="600" y="80" width="300" height="80" rx="10" fill="#fff" stroke="#5b6474" stroke-width="1.8"/>
     <text x="750" y="110" text-anchor="middle" font-size="13.5" font-weight="700">Retained disk</text>
     <text x="750" y="128" text-anchor="middle" font-size="11" fill="#4a5163">workspace · tools · browser profile</text>
     <text x="750" y="144" text-anchor="middle" font-size="11" fill="#4a5163">Kept when the computer stops. Not a backup.</text>
-    <rect x="600" y="186" width="300" height="74" rx="10" fill="#fff8e8" stroke="#9a6b00" stroke-width="1.5"/>
-    <text x="750" y="212" text-anchor="middle" font-size="13" font-weight="700" fill="#9a6b00">Trust boundary</text>
-    <text x="750" y="230" text-anchor="middle" font-size="11" fill="#4a5163">IAP tunnel + private guest IP. No RPC token.</text>
-    <text x="750" y="246" text-anchor="middle" font-size="11" fill="#4a5163">Tabs share cookies, so tasks aren't isolated.</text>
     <path class="flow-anim" d="M160 145 H226" stroke="#a8551c" stroke-width="2" fill="none" marker-end="url(#ah2)"/>
-    <text x="195" y="132" text-anchor="middle" font-size="10.5" fill="#4a5163">IAP :8090</text>
+    <text x="195" y="132" text-anchor="middle" font-size="10.5" fill="#4a5163">IAP tunnel</text>
+    <text x="520" y="146" font-size="10.5" fill="#4a5163" text-anchor="end">forwards calls</text>
+    <text x="600" y="184" font-size="10.5" fill="#4a5163">reads and writes files</text>
     <path d="M380 136 V146" stroke="#a8551c" stroke-width="2" fill="none" marker-end="url(#ah2)"/>
     <path d="M510 196 C 550 180 560 150 596 132" stroke="#5b6474" stroke-width="1.5" fill="none" marker-end="url(#ah2)"/>
   </svg>
   </div>
+  <p>“Check Saturday's weather in Tucson” reaches the computer as one browser call from the worker, and the page text comes back as its result.</p>
+  <ul class="pts"><li><b>Kept</b> across guest restarts and host replacement: files, installed tools and the browser profile.</li><li><b>Lost</b> on restart: running processes and open tabs.</li><li><b>Access</b> goes through an IAP tunnel to a private guest IP, with no separate token.</li><li><b>Browser tabs</b> share cookies, so tasks aren't isolated from each other.</li></ul>
   <div class="grid3">
-    <div class="card tight"><p class="keyline">Receipts make retries safe</p><p class="note">The guest records the request and response for each operation ID before acknowledging. If a shell command's outcome is uncertain, it's reconciled against the receipt and isn't simply run again.</p></div>
+    <div class="card tight"><p class="keyline">Receipts make retries safe</p><p class="note">The guest records the request and response for each operation ID before acknowledging. If a shell command's outcome is uncertain, the worker reads the receipt and doesn't run it again.</p></div>
     <div class="card tight"><p class="keyline">The host says when it's draining</p><p class="note">When the host is stopping because it's idle, it rejects requests with a draining header before forwarding them. This is the one case where it's safe to reconnect and resend.</p></div>
-    <div class="card tight"><p class="keyline">The model can't see the browser yet</p><p class="note">It can navigate and read page text. Screenshots are saved for the user, but the model doesn't see them. Vision is planned for milestone 5 (<code>AB-203</code>).</p></div>
+    <div class="card tight"><p class="keyline">Jobs belong to a task</p><p class="note">The guest runs each <a href="tools.html">long shell job</a> in its own process group and saves its state on disk. A job running during a restart is reported as lost.</p></div>
   </div>
 <section><h2>Reaching the computer</h2>
 <p>Callers ask a provider for a client. Only the provider's adapter knows what infrastructure runs the computer.</p>
 <div class="card"><div class="flow">
-<div class="node inner"><b>Task activities and cleanup</b><small>Call <code>computer.Open</code> to run a tool. Call <code>computer.Attach</code> to cancel work and close a task's browser tab.</small></div><div class="arrow">↓<span class="lbl">Open or Attach with a run ID</span></div>
+<div class="node inner"><b>Task activities</b><small>Open runs a tool. Attach cancels work and closes a task's browser tab.</small></div><div class="arrow">↓<span class="lbl">Open or Attach with a run ID</span></div>
 <div class="branch3">
-<div class="node computer"><b>GCE adapter</b><small>The Compute API gives state and starts the host. An IAP tunnel reaches port 8090. Used when no local URL is set.</small></div>
-<div class="node computer"><b>Local adapter</b><small>A <code>computer-agent</code> already listening on a loopback IP. Used when <code>NORI_LOCAL_COMPUTER_URL</code> is set, which needs <code>TEMPORAL_LOCAL=true</code>.</small></div>
-<div class="node designed-node designed"><b>AWS adapter</b> <span class="tag design">designed</span><small>Not built. The requirements are below.</small></div>
+<div class="node computer"><b>GCE adapter</b><small>Starts the host through the Compute API. Connects over an IAP tunnel.</small></div>
+<div class="node computer"><b>Local adapter</b><small>Uses a computer-agent on loopback when <code>NORI_LOCAL_COMPUTER_URL</code> is set.</small></div>
+<div class="node designed-node designed"><b>AWS adapter</b> <span class="tag design">designed</span><small>Not built.</small></div>
 </div><div class="arrow">↓<span class="lbl">base URL, HTTP client, close hook</span></div>
-<div class="node computer"><b>computer.Client</b><small>The guest RPC: exec, navigate, screenshot, cancel and receipts. Every adapter shares it.</small></div>
+<div class="node computer"><b>computer.Client</b><small>The guest RPC, shared by every adapter.</small></div>
 </div></div>
 <div class="card"><table><tr><th>Call</th><th>Starts the computer</th><th>If the computer is stopped</th></tr>
 <tr><td>Open</td><td>Yes, after any stop in progress finishes</td><td>Starts it and waits for the guest health check, within 180 seconds in all</td></tr>
 <tr><td>Attach</td><td>Never</td><td>Returns <code>ErrStopped</code> once the host has fully stopped</td></tr></table></div>
-<p>Callers test <code>errors.Is(err, ErrStopped)</code> and <code>errors.Is(err, ErrDraining)</code> on every adapter. An adapter is checked on its first connection, so a process that never uses the computer needs no computer settings.</p>
+<p>Callers test for <code>ErrStopped</code> and <code>ErrDraining</code> on every adapter. An adapter is checked on its first connection, so a process that never uses the computer needs no computer settings.</p>
 </section>
-<section class="designed"><h2>An AWS adapter <span class="tag design">designed</span></h2>
+<details class="more"><summary>Adapter calls, GCP-specific files and an AWS adapter</summary>
+<div class="designed"><h3>An AWS adapter <span class="tag design">designed</span></h3>
 <p>No AWS adapter exists and no instance type has been tried. It would need to supply the following.</p>
 <div class="card"><table class="tall"><tr><th>Requirement</th><th>What the adapter supplies</th></tr>
 <tr><td>States</td><td>A mapping from EC2 instance states (pending, running, stopping, stopped, shutting-down, terminated) onto the four states below. The last two mean the instance is gone, so they return an error.</td></tr>
@@ -73,8 +73,8 @@
 <tr><td>KVM</td><td>A readable and writable <code>/dev/kvm</code> on the host. The host scripts load <code>kvm_intel</code> and install x86_64 builds, so the host must be Intel x86_64. Each instance type has to be checked for KVM before use.</td></tr>
 <tr><td>Disk</td><td>A workspace disk that outlives the instance and attaches to its replacement.</td></tr>
 <tr><td>Wiring</td><td>A config type and one more branch in <code>platform.Computer()</code>.</td></tr></table></div>
-</section>
-<details class="more"><summary>Adapter calls, and what in core/infrastructure/microvm is tied to GCP</summary>
+</div>
+<h3>Adapter calls</h3>
 <p>An adapter with a power state implements three calls. A shared loop polls them once a second, reports Stopped only after the host has finished stopping, and never sends a start during Stopping.</p>
 <div class="card"><table class="tall"><tr><th>Call</th><th>The loop needs</th><th>GCE today</th></tr>
 <tr><td>State</td><td>Stopped, Stopping, Starting or Running. Any other state is an error that ends the attempt.</td><td>Instance status: TERMINATED, STOPPING, STAGING or PROVISIONING, and RUNNING. Statuses such as SUSPENDED end the attempt.</td></tr>
@@ -85,7 +85,7 @@
 <tr><td><code>vm-control.sh</code></td><td>Mounts the retained disk by the same GCE device path.</td></tr>
 <tr><td><code>computer.sh</code>, <code>run.sh</code></td><td>Run <code>gcloud compute</code> commands and reach the host over IAP. They hard-code the project, zone and data disk.</td></tr>
 <tr><td><code>terraform/</code></td><td>A <code>google_compute_instance</code> with nested virtualization, a minimum CPU platform and a shutdown script, plus the GCE disk, network and firewall.</td></tr></table></div>
-<p>The Firecracker install, the tap network and egress rules in <code>persistent-host.sh</code>, and <code>build-guest.sh</code> use no GCP service, but they have only run on GCE. The production host script, <code>core/infrastructure/poc/computer-startup.sh</code>, also reads the metadata server and downloads the <code>computer-agent</code> release from Cloud Storage.</p></details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/computer/</code>, <code>core/internal/platform/platform.go</code>, <code>core/infrastructure/microvm/</code>, <code>core/infrastructure/poc/computer-startup.sh</code>.</p></details>
+<p>The Firecracker install, the tap network and egress rules in <code>persistent-host.sh</code>, and <code>build-guest.sh</code> use no GCP service, but they have only run on GCE. The production host script, <code>core/infrastructure/app/computer-startup.sh</code>, also reads the metadata server and downloads the <code>computer-agent</code> release from Cloud Storage.</p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/computer/</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/infrastructure/microvm/</code> · <code>core/infrastructure/app/computer-startup.sh</code> · <a href="https://linear.app/a-barwick/issue/AB-203">AB-203</a></p></details>
 </body>
 </html>

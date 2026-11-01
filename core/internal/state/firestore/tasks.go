@@ -122,9 +122,21 @@ func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error 
 			return err
 		}
 		waiting, event := state.ProjectionEvent(req.Kind, req.Text, time.Now().UTC())
+		// A new projection supersedes the last job progress line.
 		return tx.Update(d.runs().Doc(req.RunID), []firestore.Update{
-			{Path: "waiting", Value: waiting}, {Path: "events", Value: firestore.ArrayUnion(event)},
+			{Path: "waiting", Value: waiting}, {Path: "progress", Value: ""}, {Path: "events", Value: firestore.ArrayUnion(event)},
 		})
+	})
+}
+
+// SetProgress replaces the task's latest progress line. Unlike Project it adds no event, so polling a long job can't
+// grow the task's saved record.
+func (d *Database) SetProgress(ctx context.Context, runID string, revision int64, text string) error {
+	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		if _, err := d.guard(tx, runID, revision); err != nil {
+			return err
+		}
+		return tx.Update(d.runs().Doc(runID), []firestore.Update{{Path: "progress", Value: text}})
 	})
 }
 

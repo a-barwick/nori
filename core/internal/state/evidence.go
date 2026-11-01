@@ -94,7 +94,7 @@ func validOperation(op OperationRecord) bool {
 		return false
 	}
 	switch op.EffectClass {
-	case "read", "reversible_write", "sensitive_send", "unknown":
+	case "read", "reversible_write", "sensitive_send", "unknown", "control":
 	default:
 		return false
 	}
@@ -309,4 +309,85 @@ func (s *SourceInputs) Inputs() []ConversationInput {
 		return inputs[i].Position < inputs[j].Position
 	})
 	return inputs
+}
+
+// CitedResult is a bounded copy of a saved tool result that a task's answer cites.
+type CitedResult struct {
+	Operation string `json:"operation"`
+	Tool      string `json:"tool"`
+	Result    string `json:"result"`
+}
+
+// TaskOutcome is what a task's last completion proposal claims and cites.
+type TaskOutcome struct {
+	Unmet     []string      `json:"unmet,omitempty"`
+	Evidence  []CitedResult `json:"evidence,omitempty"`
+	Shortened bool          `json:"shortened,omitempty"`
+}
+
+const (
+	maxOutcomeEvidenceBytes = 8 << 10
+	maxOutcomeUnmet         = 32
+)
+
+// LastProposal returns the completion check that describes how the task ended: the latest by revision, position and
+// then ID. A rejected proposal didn't end the task, so its claims describe nothing and ok is false.
+func LastProposal(checks []CompletionCheck) (last CompletionCheck, ok bool) {
+	found := false
+	for _, check := range checks {
+		// Check IDs end in an increasing number, so a longer ID is a later check.
+		if !found || check.Revision > last.Revision || check.Revision == last.Revision &&
+			(check.Position > last.Position || check.Position == last.Position &&
+				(len(check.ID) > len(last.ID) || len(check.ID) == len(last.ID) && check.ID > last.ID)) {
+			last, found = check, true
+		}
+	}
+	if !found || len(last.RecordFailures) > 0 {
+		return CompletionCheck{}, false
+	}
+	return last, true
+}
+
+// NewTaskOutcome starts the outcome for a proposal with its unmet items, bounded.
+func NewTaskOutcome(proposal CompletionCheck) TaskOutcome {
+	outcome := TaskOutcome{Unmet: proposal.Proposal.Unmet}
+	if len(outcome.Unmet) > maxOutcomeUnmet {
+		outcome.Unmet, outcome.Shortened = outcome.Unmet[:maxOutcomeUnmet], true
+	}
+	return outcome
+}
+
+// CitedOperations lists, in the order given, the operations with a saved result that the proposal cites by operation,
+// result or artifact ID.
+func CitedOperations(proposal CompletionCheck, ops []OperationRecord) []OperationRecord {
+	cited := map[string]bool{}
+	for _, ref := range proposal.Proposal.Evidence {
+		cited[ref] = true
+	}
+	var found []OperationRecord
+	for _, op := range ops {
+		relevant := cited[op.ID] || cited[op.ResultRef]
+		for _, id := range op.ArtifactIDs {
+			relevant = relevant || cited[id]
+		}
+		if relevant && op.ResultRef != "" {
+			found = append(found, op)
+		}
+	}
+	return found
+}
+
+// FitEvidence shares the evidence byte bound equally among the cited results.
+func (o *TaskOutcome) FitEvidence() {
+	if len(o.Evidence) == 0 {
+		return
+	}
+	share := maxOutcomeEvidenceBytes / len(o.Evidence)
+	for i := range o.Evidence {
+		if text := o.Evidence[i].Result; len(text) > share {
+			// Page text matters at its start and job output at its end, so keep both.
+			o.Evidence[i].Result = strings.ToValidUTF8(text[:share/2], "") + "…" + strings.ToValidUTF8(text[len(text)-share/2:], "")
+			o.Shortened = true
+		}
+	}
 }

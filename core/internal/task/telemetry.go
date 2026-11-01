@@ -65,7 +65,7 @@ func recordActivityFailure(ctx context.Context, err error, operation string) {
 
 func safeToolName(name string) string {
 	switch name {
-	case "shell", "browser_navigate", "browser_screenshot", "request_input", "complete":
+	case "shell", "browser_navigate", "browser_screenshot", "request_input", "complete", "job_start", "job_status", "job_wait", "job_stop", "web_search", "screenshot_inspect", "calendar_read":
 		return name
 	default:
 		return "unknown"

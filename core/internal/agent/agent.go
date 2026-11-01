@@ -5,6 +5,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"nori/internal/computer"
@@ -16,18 +18,28 @@ type Service struct {
 	Store    state.Store
 	Model    Model
 	Computer computer.Provider
+	// Capabilities is set once by the worker before it starts polling.
+	Capabilities Capabilities
+	// HTTP carries the worker's own web requests, such as a search. It follows no redirects.
+	HTTP *http.Client
 }
 
 func New(store state.Store, model Model, c computer.Provider) *Service {
-	return &Service{Store: store, Model: model, Computer: c}
+	return &Service{
+		Store: store, Model: model, Computer: c,
+		HTTP: &http.Client{
+			Timeout:       2 * time.Minute,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+	}
 }
 
-func params(name string) *transcript.Schema {
-	return &transcript.Schema{
-		Type:       transcript.TypeObject,
-		Properties: map[string]*transcript.Schema{name: {Type: transcript.TypeString}},
-		Required:   []string{name},
+func params(names ...string) *transcript.Schema {
+	properties := map[string]*transcript.Schema{}
+	for _, name := range names {
+		properties[name] = &transcript.Schema{Type: transcript.TypeString}
 	}
+	return &transcript.Schema{Type: transcript.TypeObject, Properties: properties, Required: names}
 }
 
 // Tool executes a call after ValidateCalls has accepted its whole batch.
@@ -39,6 +51,15 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 	case "browser_navigate":
 		address, _ := call.Args["url"].(string)
 		return c.Navigate(ctx, address)
+	case "job_start":
+		command, _ := call.Args["command"].(string)
+		return c.JobStart(ctx, command)
+	case "job_status", "job_wait":
+		id, _ := call.Args["job_id"].(string)
+		return c.JobStatus(ctx, id)
+	case "job_stop":
+		id, _ := call.Args["job_id"].(string)
+		return c.JobStop(ctx, id)
 	case "browser_screenshot":
 		data, e := c.Screenshot(ctx)
 		if errors.Is(e, computer.ErrBrowserRestarted) {
@@ -63,7 +84,7 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 		return map[string]any{
 			"run_id":      run,
 			"artifact_id": id,
-			"description": "Private browser screenshot saved for Austin; image pixels are not available to the model.",
+			"description": "Private browser screenshot saved for Austin. Call screenshot_inspect with this artifact_id to read it.",
 		}, nil
 	default:
 		return nil, errors.New("unknown tool")

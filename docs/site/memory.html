@@ -9,13 +9,12 @@
 </head>
 <body>
 <h1>Memory and context</h1>
-<p class="lede">Each loop gets a small starting context and looks up more only when it would change the next decision.</p>
-<div class="grid2">
-<div class="card"><h3 style="margin-top:0;color:var(--outer)">Outer loop sees</h3><ul class="pts" style="margin-bottom:0"><li>Up to 24 recent turns, capped at 192KiB</li><li>New messages</li><li>Each task's status and open question</li><li>Jev's hint</li></ul><p class="note">It never gets worker transcripts or the inner loop's tools.</p></div>
-<div class="card"><h3 style="margin-top:0;color:var(--inner)">Inner loop sees</h3><ul class="pts" style="margin-bottom:0"><li>The request</li><li>Later instructions, word for word and in order</li><li>Its own tool calls and results</li></ul><p class="note">The plan adds source references and lookups on demand.</p></div>
-</div>
-<p class="note">That's what runs today. The rest of this page is the plan for milestone 10.</p>
-<section><h2>Five kinds of memory</h2>
+<p class="lede">Each loop starts with a small context, built from recent messages or its own instructions.</p>
+<div class="card"><table class="tall"><tr><th>Loop</th><th>Sees today</th><th>Doesn't get today</th></tr>
+<tr><td>Outer loop</td><td>Up to 24 recent turns, capped at 192 KiB. New messages, each task's status and open question, and the Jev classifier's hint. When a task ends, the results it cited.</td><td>Inner loop transcripts or the inner loop's tools.</td></tr>
+<tr><td>Inner loop</td><td>The request, later instructions word for word and in order, and its own tool calls and results.</td><td>The conversation with the user.</td></tr>
+</table><p class="note">That's what runs today. <span class="designed">The rest of this page is the plan for milestone 10.</span></p></div>
+<section class="designed"><h2>Five kinds of memory</h2>
 <div class="card"><table class="tall"><tr><th>Kind</th><th>Holds</th><th>Example</th></tr>
 <tr><td>User knowledge</td><td>Preferences, people, recurring constraints</td><td>“Remember I prefer evenings.”</td></tr>
 <tr><td>Conversation history</td><td>What was said and decided</td><td>“What did we decide about Tom?”</td></tr>
@@ -23,19 +22,19 @@
 <tr><td>Procedures</td><td>Ways of doing recurring work</td><td>“Do it this way next time.”</td></tr>
 <tr><td>Authority</td><td>Permissions and approvals</td><td>Kept apart, so a remembered preference never acts as permission.</td></tr>
 </table></div></section>
-<section><h2>How far does a correction reach?</h2>
+<section class="designed"><h2>How far does a correction reach?</h2>
 <div class="card">
 <p><span class="say me">Thursday this time.</span> <span class="note">Applies to this task only.</span></p>
 <p><span class="say me">Remember I prefer evenings.</span> <span class="note">A saved preference.</span></p>
 <p><span class="say me">Do it this way next time.</span> <span class="note">Could mean several things, so Nori shows what it would save first.</span></p>
 </div></section>
-<section><h2>What every memory carries</h2>
+<section class="designed"><h2>What every memory carries</h2>
 <ul class="pts"><li>Where it came from, and whether the user said it or Nori inferred it.</li><li>How widely it applies.</li><li>A way to inspect, correct and forget it.</li></ul>
 <p>A forget request reports exactly what was deleted. Removing a preference doesn't erase old messages.</p></section>
-<section><h2>Keeping context small</h2>
-<ul class="pts"><li>Large tool output lives outside the prompt, with a short summary and a reference.</li><li>Compaction keeps constraints, corrections, open questions and links back to the originals.</li><li>Saved history is never deleted to save context.</li><li><a href="tools.html">Tool discovery</a> uses the same budget.</li></ul></section>
-<section><h2>Still open</h2>
-<ul class="pts"><li>Exact context sizes and when compaction starts.</li><li>How lookups are ranked.</li><li>How to handle conflicting memories.</li></ul></section>
+<section class="designed"><h2>Keeping context small</h2>
+<ul class="pts"><li>The inner loop looks up more when it needs to.</li><li>Large tool output lives outside the prompt, with a short summary and a reference.</li><li>Summarizing old context keeps constraints, corrections, open questions and links back to the originals.</li><li>Saved history is never deleted to save context.</li><li><a href="tools.html">Tool discovery</a> counts against the same context budget.</li></ul></section>
+<section class="designed"><h2>Still open</h2>
+<ul class="pts"><li>Exact context sizes and when summarizing starts.</li><li>How lookups are ranked.</li><li>How to handle conflicting memories.</li></ul></section>
 <details class="sources"><summary>Sources</summary><p><a href="https://linear.app/a-barwick/issue/AB-138">AB-138</a> · <a href="https://linear.app/a-barwick/issue/AB-153">AB-153</a> · <a href="https://linear.app/a-barwick/issue/AB-154">AB-154</a> · <a href="https://linear.app/a-barwick/issue/AB-155">AB-155</a> · <a href="https://linear.app/a-barwick/issue/AB-156">AB-156</a> · <a href="https://linear.app/a-barwick/issue/AB-157">AB-157</a></p></details>
 </body>
 </html>

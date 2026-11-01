@@ -77,7 +77,7 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 		for _, revision := range revisions {
 			scopes = append(scopes, computerRun(Step{run.ID, revision}))
 		}
-		stopErr := StopComputer(ctx, config, scopes)
+		stopErr := errors.Join(StopComputer(ctx, config, scopes), stopRecoveredJobs(ctx, store, config, run.ID))
 		status, detail := state.RunFailed, "Interrupted: Temporal execution ended before its terminal result was persisted; work was not retried."
 		if neverStarted {
 			detail = "Cancelled before Temporal execution started."
@@ -113,10 +113,26 @@ func repairCleanup(ctx context.Context, store state.TaskStore, config computer.P
 	for _, revision := range revisions {
 		scopes = append(scopes, computerRun(Step{run.ID, revision}))
 	}
-	if err = StopComputer(ctx, config, scopes); err != nil {
+	if err = errors.Join(StopComputer(ctx, config, scopes), stopRecoveredJobs(ctx, store, config, run.ID)); err != nil {
 		return err
 	}
 	return closeTaskBrowser(ctx, store, config, run.ID, scopes)
+}
+
+// stopRecoveredJobs ends jobs a closed workflow left running. A guest /cancel doesn't
+// reach them, because a job belongs to its task. Tasks that never started a job skip
+// this, so recovering an older task doesn't depend on the guest's job routes.
+func stopRecoveredJobs(ctx context.Context, store state.TaskStore, config computer.Provider, id string) error {
+	ops, err := store.Operations(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, op := range ops {
+		if op.Name == "job_start" {
+			return stopTaskJobs(ctx, config, id)
+		}
+	}
+	return nil
 }
 func closeTaskBrowser(ctx context.Context, store state.TaskStore, config computer.Provider, id string, scopes []string) error {
 	if len(scopes) == 0 {

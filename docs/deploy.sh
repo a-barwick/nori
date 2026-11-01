@@ -10,6 +10,8 @@ account="$service@$project.iam.gserviceaccount.com"
 image="$region-docker.pkg.dev/$project/nori-poc/docs:$(date -u +%Y%m%d-%H%M%S)"
 
 cd "$(dirname "$0")"
+# A page that differs from the published site must pass every check.
+python3 ../.agents/skills/review-docs/scripts/check.py --live
 docker build --platform linux/amd64 -f Dockerfile -t "$image" site
 docker push "$image"
 

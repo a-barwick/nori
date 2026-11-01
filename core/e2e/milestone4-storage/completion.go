@@ -28,10 +28,6 @@ type telemetryPacket struct {
 	body              []byte
 }
 
-type completionTransport func(*http.Request) (*http.Response, error)
-
-func (f completionTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 // All collectors and credentials here are disposable local fixture values. The
 // real exporter/filter code runs, but no telemetry leaves the loopback servers.
 func completionBoundaries(ctx context.Context, store state.ConversationStore, id, other string, run state.Run, operation state.OperationRecord) (map[string]bool, error) {
@@ -91,7 +87,7 @@ func completionBoundaries(ctx context.Context, store state.ConversationStore, id
 			observability.Shutdown(shutdown)
 		}
 	}()
-	a := &task.Activities{Store: store} // Missing Jev key is the real unavailable path.
+	a := &task.Activities{Store: store}
 	report := map[string]bool{}
 	synced, err := a.SyncHistory(ctx, task.HistoryInput{Step: task.Step{RunID: id, Revision: run.Revision}})
 	if err != nil {
@@ -118,26 +114,17 @@ func completionBoundaries(ctx context.Context, store state.ConversationStore, id
 	if err != nil {
 		return nil, err
 	}
-	unavailable, err := check("unavailable", valid, 0)
+	published, err := check("valid", valid, 0)
 	if err != nil {
 		return nil, err
 	}
-	report["missing Jev key produces unverified outcome rather than completion"] = unavailable.Action == "unverified" && strings.Contains(unavailable.Detail, "not completed")
+	report["a proposal whose records pass publishes without a model verdict"] = published.Action == "publish"
 	// Hidden reasoning text exists only in saved Gemini-era blocks, so these fixtures are
 	// raw saved JSON. They also prove that such blocks still read.
 	toolCall := func(id, name string, args map[string]any) map[string]any {
 		return map[string]any{"functionCall": map[string]any{"id": id, "name": name, "args": args}}
 	}
-	toolResult := func(id, name string, response map[string]any) map[string]any {
-		return map[string]any{"functionResponse": map[string]any{"id": id, "name": name, "response": response}}
-	}
 	reasoning := map[string]any{"text": "PRIVATE_REASONING_SENTINEL", "thought": true}
-	procedure := []any{
-		map[string]any{"role": "model", "parts": []any{reasoning, toolCall("ask-account", "request_input", map[string]any{"question": "Home or Studio?"})}},
-		map[string]any{"role": "tool", "parts": []any{toolResult("ask-account", "request_input", map[string]any{"answer": "Home", "question_id": "account-question"})}},
-		map[string]any{"role": "model", "parts": []any{toolCall(operation.CallID, operation.Name, map[string]any{"url": "http://127.0.0.1/bills"})}},
-		map[string]any{"role": "tool", "parts": []any{toolResult(operation.CallID, operation.Name, map[string]any{"text": "DUPLICATE_TOOL_RESULT_SENTINEL"})}},
-	}
 	questionHistory := []any{map[string]any{"role": "model", "parts": []any{
 		reasoning,
 		map[string]any{"text": "The command exited with status 7; the check failed."},
@@ -153,34 +140,6 @@ func completionBoundaries(ctx context.Context, store state.ConversationStore, id
 		return nil, err
 	}
 	report["saved input question preserves visible failure explanation without reasoning"] = question.Text == "The command exited with status 7; the check failed.\n\nWhat should happen next?" && question.CallID == "failed-question"
-	procedural, err := makeProposal(id, "complete-procedure", []any{operation.ID}, []any{}, procedure)
-	if err != nil {
-		return nil, err
-	}
-	var received []transcript.Message
-	var serialized string
-	a.JevKey = "fixture-only"
-	a.JevClient = &http.Client{Transport: completionTransport(func(r *http.Request) (*http.Response, error) {
-		var body struct {
-			State struct {
-				History []transcript.Message `json:"saved_action_history"`
-			} `json:"state"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			return nil, err
-		}
-		received = body.State.History
-		data, _ := json.Marshal(received)
-		serialized = string(data)
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"answers":{"completion":{"choice":"yes","confidence":0.95}}}`))}, nil
-	})}
-	verified, err := check("procedure", procedural, 0)
-	a.JevKey, a.JevClient = "", nil
-	if err != nil {
-		return nil, err
-	}
-	report["verifier receives ordered input question answer and action evidence"] = verified.Action == "publish" && len(received) == 3 && received[0].Parts[0].ToolCall.Name == "request_input" && received[1].Parts[0].ToolResult.Output["answer"] == "Home" && received[2].Parts[0].ToolCall.ID == operation.CallID
-	report["verification action context omits reasoning and duplicate tool result bodies"] = !strings.Contains(serialized, "PRIVATE_REASONING_SENTINEL") && !strings.Contains(serialized, "DUPLICATE_TOOL_RESULT_SENTINEL")
 	invalid, err := makeProposal(id, "complete-invalid", []any{"../../not-evidence"}, []any{}, nil)
 	if err != nil {
 		return nil, err
@@ -189,7 +148,7 @@ func completionBoundaries(ctx context.Context, store state.ConversationStore, id
 	if err != nil {
 		return nil, err
 	}
-	report["invalid evidence is recorded and rejected before verifier I/O"] = rejected.Action == "correct"
+	report["invalid evidence is recorded and rejected"] = rejected.Action == "correct"
 	foreign, err := store.AppendHistory(ctx, other, "", []byte(`{"foreign":true}`))
 	if err != nil {
 		return nil, err
@@ -221,7 +180,7 @@ func completionBoundaries(ctx context.Context, store state.ConversationStore, id
 	if err != nil {
 		return nil, err
 	}
-	report["two read-only correction attempts end with truthful partial outcome"] = exhausted.Action == "partial" && strings.Contains(exhausted.Detail, "not completed")
+	report["listed unmet items end the task as partial and name them"] = exhausted.Action == "partial" && strings.Contains(exhausted.Detail, "The requested verification is missing.")
 	write := state.OperationRecord{ID: id + "-uncertain-write", CallID: "unresolved-write", Name: "shell", Revision: run.Revision, EffectClass: "unknown", Outcome: "uncertain", Attempt: 1}
 	if err = store.PutOperation(ctx, id, write); err != nil {
 		return nil, err

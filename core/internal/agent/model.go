@@ -18,6 +18,10 @@ type Model interface {
 	// The Response carries billed usage and cost even when err is not nil, so an
 	// unusable generation is still accounted for.
 	Respond(ctx context.Context, req Request) (Response, error)
+	// Inspect asks one question about one image in a request of its own that offers no tools, so
+	// only the answer's text joins a task and text inside the image cannot call a tool. Like
+	// Respond, it reports cost even when err is not nil.
+	Inspect(ctx context.Context, req InspectRequest) (Inspection, error)
 }
 
 // Request is everything one model turn needs. Messages are the whole transcript so far.
@@ -50,4 +54,22 @@ type Usage struct {
 	ReasoningTokens int32
 	CachedTokens    int32
 	TotalTokens     int32
+}
+
+// InspectRequest asks a question about one PNG image.
+type InspectRequest struct {
+	Instructions    string
+	Question        string
+	PNG             []byte
+	MaxOutputTokens int
+}
+
+// Inspection is the answer to an InspectRequest.
+type Inspection struct {
+	Observation string
+	// Sent is set once a request has left the process, so a missing cost means the request may
+	// have been billed. Cost is the provider-reported USD cost, valid only when CostKnown is true.
+	Sent      bool
+	Cost      float64
+	CostKnown bool
 }

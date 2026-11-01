@@ -37,6 +37,9 @@
           <tr><td>The inner model step and task tools</td><td><span class="mono">core/internal/agent/steps.go, agent.go</span></td></tr>
           <tr><td>The model contract and the OpenRouter adapter (<a href="transcript.html">Task transcript</a>)</td><td><span class="mono">core/internal/agent/model.go, agent/openrouter/</span></td></tr>
           <tr><td>Transcript types and their saved form</td><td><span class="mono">core/internal/transcript/</span></td></tr>
+          <tr><td>Search, calendar, screenshot reading and the catalog</td><td><span class="mono">core/internal/agent/search.go, calendar.go, inspect.go, catalog.go</span></td></tr>
+          <tr><td>Waiting on and stopping long jobs</td><td><span class="mono">core/internal/task/jobs.go</span></td></tr>
+          <tr><td>Connecting the calendar</td><td><span class="mono">core/cmd/nori-connect-calendar</span></td></tr>
           <tr><td>Calling the computer</td><td><span class="mono">core/internal/computer/computer.go</span></td></tr>
           <tr><td>Code that runs on the computer</td><td><span class="mono">core/internal/computerd/</span></td></tr>
           <tr><td>Wakes for the API and workers, and their Cloud Tasks adapter</td><td><span class="mono">core/internal/wake/, wake/cloudtasks/</span></td></tr>
@@ -47,7 +50,7 @@
           <tr><td>Infrastructure and releases</td><td><span class="mono">core/infrastructure/</span></td></tr>
           <tr><td>Live end-to-end tests</td><td><span class="mono">core/e2e/</span></td></tr>
           <tr><th colspan="2">Clients <span class="mono">web/src/</span></th></tr>
-          <tr><td>The chat UI and task panel (<a href="web-client.html">Web client</a>, <a href="frontend.html#components">components</a>)</td><td><span class="mono">web/src/components/runtime/</span></td></tr>
+          <tr><td>The chat UI and task panel (<a href="web-client.html">Web client</a>, <a href="frontend.html">components</a>)</td><td><span class="mono">web/src/components/runtime/, web/src/components/chat/</span></td></tr>
           <tr><td>How the browser sends messages and polls</td><td><span class="mono">web/src/lib/runtime/useRuntime.ts</span></td></tr>
           <tr><td>Routes between the browser and the service</td><td><span class="mono">web/src/app/api/</span></td></tr>
           <tr><td>Browser and server telemetry filters</td><td><span class="mono">web/src/lib/observability/</span></td></tr>
