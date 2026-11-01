@@ -11,27 +11,33 @@
 <h1>Code map</h1>
 <p class="lede">Where to look when you want to read or change something.</p>
 <p>Go code is under <span class="mono">core/</span> and the web client is under <span class="mono">web/src/</span>.
-  Dependencies run in one direction: entrypoints call <span class="mono">wake</span>, which calls
-  <span class="mono">conversation</span>, which uses <span class="mono">state</span> and <span class="mono">task</span>.</p>
+  Dependencies run in one direction: entrypoints build an <span class="mono">app</span>, whose <span class="mono">api</span> routes call
+  <span class="mono">conversation</span>, which uses <span class="mono">state</span> and <span class="mono">dispatch</span>.</p>
+<p>Code reaches infrastructure through small contracts: <span class="mono">wake</span> sends wakes, <span class="mono">dispatch</span> talks to the
+  task engine, and <span class="mono">secret</span> reads credentials. Cloud Tasks, Temporal and Secret Manager are the adapters today.
+  Only <span class="mono">task</span> and the worker code import Temporal.</p>
   <div class="card">
     <table class="map">
       <tr><th>If you're looking for</th><th>Look in</th></tr>
           <tr><th colspan="2">Agent service <span class="mono">core/</span></th></tr>
-          <tr><td>HTTP endpoints and input validation</td><td><span class="mono">core/internal/wake/http.go</span></td></tr>
+          <tr><td>HTTP endpoints and input validation</td><td><span class="mono">core/internal/api/</span></td></tr>
           <tr><td>How a turn runs: leases, restarts, checkpoints</td><td><span class="mono">core/internal/conversation/runner.go, call.go</span></td></tr>
           <tr><td>The outer model call and its tools</td><td><span class="mono">core/internal/conversation/model.go</span></td></tr>
           <tr><td><a href="classification.html">Jev classification</a></td><td><span class="mono">core/internal/conversation/classifier.go</span></td></tr>
           <tr><td>Outer command validation</td><td><span class="mono">core/internal/conversation/commands.go</span></td></tr>
           <tr><td>Firestore records and transactions</td><td><span class="mono">core/internal/state/</span></td></tr>
           <tr><td>The task workflow and activities</td><td><span class="mono">core/internal/task/workflow.go, activities.go</span></td></tr>
-          <tr><td>Delivery from Firestore to Temporal</td><td><span class="mono">core/internal/task/client.go</span></td></tr>
+          <tr><td>Delivery from Firestore to the task engine: one reconciliation pass shared by the API, the worker and <code>nori-deliver</code></td><td><span class="mono">core/internal/dispatch/dispatcher.go</span></td></tr>
+          <tr><td>The Temporal side of that contract</td><td><span class="mono">core/internal/task/client.go, worker_wake.go, resume.go</span></td></tr>
           <tr><td>Recovery of closed tasks</td><td><span class="mono">core/internal/task/recovery.go</span></td></tr>
           <tr><td>The inner model step and task tools</td><td><span class="mono">core/internal/agent/steps.go, agent.go</span></td></tr>
           <tr><td>Calling the computer</td><td><span class="mono">core/internal/computer/computer.go</span></td></tr>
           <tr><td>Code that runs on the computer</td><td><span class="mono">core/internal/computerd/</span></td></tr>
-          <tr><td>Request-driven worker wakes and lifetime</td><td><span class="mono">core/internal/workerwake/, workerservice/</span></td></tr>
+          <tr><td>Wakes for the API and workers, and their Cloud Tasks adapter</td><td><span class="mono">core/internal/wake/, wake/cloudtasks/</span></td></tr>
+          <tr><td>Worker lifetime: request-bound slices, the Temporal worker and registration</td><td><span class="mono">core/internal/workerservice/, taskworker/, cmd/nori-worker/</span></td></tr>
           <tr><td>Traces and error reporting (<a href="observability.html">Observability</a>)</td><td><span class="mono">core/internal/observability/</span></td></tr>
-          <tr><td>Configuration</td><td><span class="mono">core/internal/env/</span></td></tr>
+          <tr><td>Configuration, and how each process is assembled</td><td><span class="mono">core/internal/env/, platform/, app/</span></td></tr>
+          <tr><td>Credentials kept in Secret Manager</td><td><span class="mono">core/internal/secret/</span></td></tr>
           <tr><td>Infrastructure and releases</td><td><span class="mono">core/infrastructure/</span></td></tr>
           <tr><td>Live end-to-end tests</td><td><span class="mono">core/e2e/</span></td></tr>
           <tr><th colspan="2">Clients <span class="mono">web/src/</span></th></tr>

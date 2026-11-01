@@ -8,12 +8,12 @@ import (
 
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
-	"nori/internal/workerwake"
 )
 
 // WorkerBuild resolves the execution's actual pinned version. Only a workflow
 // that has not completed its first workflow task can use the deployment route.
-func WorkerBuild(ctx context.Context, c client.Client, id string) (string, error) {
+func (e *Engine) WorkerBuild(ctx context.Context, id string) (string, error) {
+	c := e.c
 	execution, err := c.DescribeWorkflowExecution(ctx, WorkflowID(id), "")
 	if err != nil {
 		return "", err
@@ -85,15 +85,4 @@ func deploymentName() string {
 		return name
 	}
 	return "nori-task"
-}
-
-func wakeWorker(ctx context.Context, c client.Client, wakes *workerwake.Cloud, id string) error {
-	if !wakes.Enabled() {
-		return nil
-	}
-	build, err := WorkerBuild(ctx, c, id)
-	if err != nil {
-		return err
-	}
-	return wakes.Schedule(ctx, build, WorkflowID(id))
 }

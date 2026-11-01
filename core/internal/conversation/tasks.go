@@ -10,39 +10,45 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"go.temporal.io/sdk/client"
-	"nori/internal/computer"
+	"nori/internal/dispatch"
 	"nori/internal/observability"
 	"nori/internal/state"
-	"nori/internal/task"
-	"nori/internal/workerwake"
 )
 
 // Tasks delegates admission, command ordering, delivery and execution to the
 // existing task implementation. A dispatch ends at durable acceptance.
 type Tasks struct {
-	Store    state.ConversationStore
-	Wakes    *workerwake.Cloud
-	Client   client.Client
-	Computer computer.Config
+	Store state.ConversationStore
+	// Dispatcher delivers accepted commands to their tasks. Harnesses that only
+	// exercise routing leave it nil, and delivery then waits for a real process.
+	Dispatcher *dispatch.Dispatcher
 }
 
+// deliver is the fast best-effort path after acceptance. The saved delivery
+// intent survives a failure here, so the worker or wake handler repairs it.
 func (t *Tasks) deliver(ctx context.Context) {
+	if t.Dispatcher == nil {
+		return
+	}
 	delivery, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := task.Deliver(delivery, t.Store, t.Client, t.Wakes); err != nil {
-		log.Printf("command accepted; Temporal delivery remains pending: %v", err)
+	if err := t.Dispatcher.Reconcile(delivery, dispatch.Commands); err != nil {
+		log.Printf("command accepted; task delivery remains pending: %v", err)
 	}
 }
 
 func (t *Tasks) AcceptBatch(ctx context.Context, commands []state.Command, fence *state.ConversationFence) ([]state.CommandReceipt, error) {
-	ctx, span := conversationTracer.Start(ctx, "conversation.command_batch", trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()), attribute.Int("nori.command.count", len(commands))))
+	ctx, span := conversationTracer.Start(ctx, "conversation.command_batch", trace.WithAttributes(
+		attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),
+		attribute.Int("nori.command.count", len(commands))))
 	defer span.End()
 	started := time.Now()
 	receipts, err := t.Store.AcceptCommandBatch(ctx, commands, fence)
 	for _, cmd := range commands {
 		name := safeCommandName(cmd.Kind)
-		_, commandSpan := conversationTracer.Start(ctx, "conversation."+name, trace.WithTimestamp(started), trace.WithAttributes(attribute.String("openinference.span.kind", "TOOL"), attribute.String("session.id", observability.SessionID()), attribute.String("tool.name", name), attribute.String("nori.task.id", cmd.RunID), attribute.String("nori.command.id", cmd.ID)))
+		_, commandSpan := conversationTracer.Start(ctx, "conversation."+name, trace.WithTimestamp(started), trace.WithAttributes(
+			attribute.String("openinference.span.kind", "TOOL"), attribute.String("session.id", observability.SessionID()),
+			attribute.String("tool.name", name), attribute.String("nori.task.id", cmd.RunID), attribute.String("nori.command.id", cmd.ID)))
 		outcome := "accepted"
 		if err != nil {
 			outcome = "rejected"
@@ -55,7 +61,8 @@ func (t *Tasks) AcceptBatch(ctx context.Context, commands []state.Command, fence
 			observability.Event(ctx, "conversation.hold.accepted", attribute.String("nori.hold.id", cmd.ID), attribute.String("nori.task.id", cmd.RunID))
 		}
 		if err == nil && cmd.Kind == state.CommandSteer {
-			observability.Event(ctx, "conversation.correction.accepted", attribute.String("nori.task.id", cmd.RunID), attribute.String("nori.command.id", cmd.ID), attribute.Bool("nori.command.interrupt", cmd.Interrupt))
+			observability.Event(ctx, "conversation.correction.accepted", attribute.String("nori.task.id", cmd.RunID),
+				attribute.String("nori.command.id", cmd.ID), attribute.Bool("nori.command.interrupt", cmd.Interrupt))
 		}
 		commandSpan.End()
 	}
@@ -129,6 +136,9 @@ func (t *Tasks) Cancel(ctx context.Context, id string) (state.Run, error) {
 // Stop can finish a never-started task while its worker remains paused. This
 // only repairs terminal state and attaches for cleanup; it never starts compute.
 func (t *Tasks) repairPausedStops(ctx context.Context, receipts []state.CommandReceipt) {
+	if t.Dispatcher == nil {
+		return
+	}
 	stops := map[string]bool{}
 	for _, receipt := range receipts {
 		if receipt.Command.Kind == state.CommandStop {
@@ -145,7 +155,7 @@ func (t *Tasks) repairPausedStops(ctx context.Context, receipts []state.CommandR
 		return
 	}
 	for id := range stops {
-		if _, err = task.StopPaused(repair, t.Store, t.Computer, id); err != nil {
+		if _, err = t.Dispatcher.StopPaused(repair, id); err != nil {
 			log.Printf("Stop recovery pending for task %s: %v", id, err)
 		}
 	}

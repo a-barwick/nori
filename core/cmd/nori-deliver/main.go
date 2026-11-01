@@ -4,11 +4,12 @@ package main
 import (
 	"context"
 	"log"
+	"time"
+
+	"nori/internal/dispatch"
 	"nori/internal/env"
 	"nori/internal/observability"
 	"nori/internal/platform"
-	"nori/internal/task"
-	"time"
 )
 
 func main() {
@@ -19,7 +20,7 @@ func main() {
 	defer cancel()
 	stopTelemetry := observability.Init(ctx, "nori-deliver")
 	defer observability.Shutdown(stopTelemetry)
-	wakes, e := env.WorkerWake(ctx)
+	waker, e := platform.Waker(ctx, false)
 	if e != nil {
 		observability.Fatal(e)
 	}
@@ -35,15 +36,17 @@ func main() {
 	if e = control.Check(); e != nil {
 		observability.Fatal(e)
 	}
-	c, e := task.Dial(ctx)
+	engine, e := platform.Engine(ctx)
 	if e != nil {
 		observability.Fatal(e)
 	}
-	defer c.Close()
-	if e = task.RepairClosed(ctx, store, c, platform.Computer()); e != nil {
+	defer engine.Close()
+	dispatcher := platform.Dispatcher(store, engine, waker)
+	// Repair first, and deliver nothing if it fails.
+	if e = dispatcher.Reconcile(ctx, dispatch.RepairClosed); e != nil {
 		observability.Fatal(e)
 	}
-	if e = task.Deliver(ctx, store, c, wakes); e != nil {
+	if e = dispatcher.Reconcile(ctx, dispatch.Commands); e != nil {
 		observability.Fatal(e)
 	}
 	log.Print("pending command delivery acknowledged")

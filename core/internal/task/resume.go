@@ -7,30 +7,30 @@ import (
 
 	"go.temporal.io/api/serviceerror"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
-	"go.temporal.io/sdk/client"
-	"nori/internal/state"
-	"nori/internal/workerwake"
+	"nori/internal/dispatch"
 )
 
-// Explicit resume reconstructs disposable queue notifications from Temporal's
-// durable running executions. This also finds terminal Firestore projections
-// whose deferred activities outlived a long pause and Cloud Tasks retention.
-// It is never a periodic controller and never changes an Activity retry policy.
-func recoverExecutionWakes(ctx context.Context, c client.Client, wakes *workerwake.Cloud, seen map[string]bool) error {
+// PendingWork lists the tasks whose running executions have a workflow step,
+// activity or operation waiting for a worker. Explicit resume uses it to rebuild
+// disposable queue notifications from Temporal's durable state. It is never a
+// periodic controller and never changes an Activity retry policy.
+func (e *Engine) PendingWork(ctx context.Context) ([]string, error) {
 	query := "ExecutionStatus = 'Running' AND TaskQueue = '" + strings.ReplaceAll(Queue(), "'", "''") + "'"
 	request := &workflowservice.ListWorkflowExecutionsRequest{Query: query, PageSize: 100}
+	var ids []string
 	var failures []error
 	for {
-		page, err := c.ListWorkflow(ctx, request)
+		page, err := e.c.ListWorkflow(ctx, request)
 		if err != nil {
-			return errors.Join(append(failures, err)...)
+			return ids, errors.Join(append(failures, err)...)
 		}
 		for _, item := range page.GetExecutions() {
 			id := item.GetExecution().GetWorkflowId()
-			if seen[id] || !strings.HasPrefix(id, "nori-task-") || item.GetType().GetName() != WorkflowName {
+			runID, ok := dispatch.RunID(id)
+			if !ok || item.GetType().GetName() != WorkflowName {
 				continue
 			}
-			d, err := c.DescribeWorkflowExecution(ctx, id, item.GetExecution().GetRunId())
+			d, err := e.c.DescribeWorkflowExecution(ctx, id, item.GetExecution().GetRunId())
 			var missing *serviceerror.NotFound
 			if errors.As(err, &missing) {
 				continue
@@ -56,22 +56,12 @@ func recoverExecutionWakes(ctx context.Context, c client.Client, wakes *workerwa
 			if d.GetPendingWorkflowTask() == nil && len(d.GetPendingActivities()) == 0 && len(d.GetPendingNexusOperations()) == 0 {
 				continue
 			}
-			runID := strings.TrimPrefix(id, "nori-task-")
-			if err = c.SignalWorkflow(ctx, id, item.GetExecution().GetRunId(), Signal, state.Command{RunID: runID, Kind: "resume"}); err != nil {
-				if !errors.As(err, &missing) {
-					failures = append(failures, err)
-				}
-				continue
-			}
-			if err = wakeWorker(ctx, c, wakes, runID); err != nil {
-				failures = append(failures, err)
-			}
-			seen[id] = true
+			ids = append(ids, runID)
 		}
 		if len(page.GetNextPageToken()) == 0 {
 			break
 		}
 		request.NextPageToken = page.GetNextPageToken()
 	}
-	return errors.Join(failures...)
+	return ids, errors.Join(failures...)
 }

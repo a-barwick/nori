@@ -1,4 +1,6 @@
-// Package workerservice binds one Temporal worker lifetime to an HTTP request.
+// Package workerservice binds one worker lifetime, a slice, to an HTTP request.
+// Nothing here knows the engine behind the worker: handler.go is the request
+// surface, and slice.go is the lifecycle a request-bound worker follows.
 package workerservice
 
 import (
@@ -6,67 +8,19 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
-	"go.temporal.io/sdk/activity"
-	"go.temporal.io/sdk/interceptor"
+	"nori/internal/dispatch"
 	"nori/internal/observability"
 )
 
-// Tracker remembers every execution seen by this slice, including executions
-// whose terminal projection was published before their cleanup activities end.
-type Tracker struct {
-	interceptor.WorkerInterceptorBase
-	mu     sync.Mutex
-	ids    map[string]bool
-	active int
-	last   time.Time
-}
-
-func NewTracker(ids ...string) *Tracker {
-	t := &Tracker{ids: map[string]bool{}, last: time.Now()}
-	for _, id := range ids {
-		t.ids[id] = true
-	}
-	return t
-}
-
-func (t *Tracker) InterceptActivity(_ context.Context, next interceptor.ActivityInboundInterceptor) interceptor.ActivityInboundInterceptor {
-	return &trackedActivity{ActivityInboundInterceptorBase: interceptor.ActivityInboundInterceptorBase{Next: next}, tracker: t}
-}
-
-type trackedActivity struct {
-	interceptor.ActivityInboundInterceptorBase
-	tracker *Tracker
-}
-
-func (a *trackedActivity) ExecuteActivity(ctx context.Context, in *interceptor.ExecuteActivityInput) (any, error) {
-	t := a.tracker
-	t.mu.Lock()
-	t.ids[activity.GetInfo(ctx).WorkflowExecution.ID] = true
-	t.active++
-	t.last = time.Now()
-	t.mu.Unlock()
-	defer func() { t.mu.Lock(); t.active--; t.last = time.Now(); t.mu.Unlock() }()
-	return a.Next.ExecuteActivity(ctx, in)
-}
-
-func (t *Tracker) Snapshot() ([]string, int, time.Duration) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	ids := make([]string, 0, len(t.ids))
-	for id := range t.ids {
-		ids = append(ids, id)
-	}
-	return ids, t.active, time.Since(t.last)
-}
+// RunFunc runs one worker slice to completion. registration asks for a
+// registration-only run that executes no task.
+type RunFunc func(ctx context.Context, sliceID string, workflowIDs []string, registration bool) error
 
 // Handler never starts polling until a /run request owns this process. Cloud Run
-// IAM authenticates production calls; the mutex also bounds local concurrency.
-func Handler(process context.Context, run func(context.Context, string, []string, bool) error) http.Handler {
+// IAM authenticates production calls; the gate also bounds local concurrency.
+func Handler(process context.Context, run RunFunc) http.Handler {
 	gate := make(chan struct{}, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -82,7 +36,7 @@ func Handler(process context.Context, run func(context.Context, string, []string
 			return
 		}
 		for _, id := range body.WorkflowIDs {
-			if !strings.HasPrefix(id, "nori-task-") || len(id) > 256 {
+			if _, ok := dispatch.RunID(id); !ok || len(id) > 256 {
 				http.Error(w, "invalid task identity", http.StatusBadRequest)
 				return
 			}

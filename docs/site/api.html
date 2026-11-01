@@ -13,6 +13,7 @@
 <section><h2>Endpoints today</h2>
 <div class="card"><table class="tall"><tr><th>Endpoint</th><th>What it does</th></tr>
 <tr><td><code>POST /api/session</code></td><td>Returns the conversation and tasks.</td></tr>
+<tr class="in-review"><td><code>POST /api/status</code></td><td>Returns <code>version</code> and <code>busy</code>, a cheap check for whether the session changed.</td></tr>
 <tr><td><code>POST /api/turn</code></td><td>Sends a message. Returns 202 once it's saved.</td></tr>
 <tr><td><code>POST /api/command</code></td><td>Sends a task command, such as an answer or a continue.</td></tr>
 <tr><td><code>POST /api/input</code></td><td>Sends an explicit update to one task.</td></tr>
@@ -23,6 +24,8 @@
 <tr><td><code>POST /api/resume</code></td><td>Redelivers saved commands and wakes tasks. Clients don't call it.</td></tr>
 </table></div>
 <p>The web client is the only caller today. It reaches these endpoints through its Next.js server, and polls for snapshots every 2 seconds while work is running. See <a href="frontend.html#polling">Polling</a>.</p>
+<div class="in-review"><p><code>/api/status</code> reads only the conversation counters, the active turn and the open tasks. A client polls it and fetches the session when <code>version</code> changes.</p>
+<ul class="pts"><li><code>busy</code> is true while chat input is waiting or processing, or an open task can still progress. The web client keeps polling in those cases.</li><li>The version changes on every lease renewal during a turn.</li><li>It doesn't change for a finished task's late spend, or for usage records written outside a turn.</li></ul></div>
 </section>
 <section class="designed"><h2>The protocol for many clients <span class="tag design">designed · milestones 8 and 12</span></h2>
 <p>Once there's more than one client, polling gives way to an ordered event log.</p>
@@ -49,6 +52,6 @@
 <details class="more"><summary>Full protocol reference</summary>
 <p>Resource fields, event types, error codes, limits and rollout phases are in <code>docs/client-contract.md</code>. Everything beyond today's API is a proposal.</p></details>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/wake/http.go</code> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a> · <a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/status.go</code> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-206">AB-206</a> · <a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
 </body>
 </html>

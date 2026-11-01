@@ -11,7 +11,7 @@
 
   const command = (kind, fields) => ({ id: CMD, run_id: TASK, kind, text: '', position: 2, revision: 1, delivered: false, created_at: TIME, ...fields });
   const run = fields => ({ id: TASK, status: 'running', '…': '…', ...fields });
-  const CODE = { http: 'core/internal/wake/http.go', state: 'core/internal/state/task_google.go', commands: 'core/internal/conversation/commands.go',
+  const CODE = { http: 'core/internal/api/http.go', state: 'core/internal/state/task_google.go', commands: 'core/internal/conversation/commands.go',
     call: 'core/internal/conversation/call.go', workflow: 'core/internal/task/workflow.go', steps: 'core/internal/agent/steps.go', events: 'core/internal/state/task_events.go' };
 
   // What the outer model sends, and what it gets back

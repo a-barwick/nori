@@ -9,9 +9,12 @@ import (
 	"syscall"
 	"time"
 
+	"nori/internal/api"
+	"nori/internal/app"
 	"nori/internal/env"
+	"nori/internal/httpserver"
 	"nori/internal/observability"
-	"nori/internal/wake"
+	"nori/internal/platform"
 )
 
 func main() {
@@ -22,20 +25,20 @@ func main() {
 	defer stop()
 	stopTelemetry := observability.Init(ctx, "nori-api")
 	defer observability.Shutdown(stopTelemetry)
-	runtime, err := wake.Open(ctx)
+	waker, err := platform.Waker(ctx, true)
 	if err != nil {
 		observability.Fatal(err)
 	}
-	defer runtime.Close()
-	queue, err := wake.NewCloud(ctx, os.Getenv("NORI_WAKE_QUEUE"), os.Getenv("NORI_RUNTIME_URL"), os.Getenv("NORI_WAKE_SERVICE_ACCOUNT"))
+	nori, err := app.Open(ctx, waker)
 	if err != nil {
 		observability.Fatal(err)
 	}
+	defer nori.Close()
 	// Only request-bound /api/process performs outer work in hosted mode. Cloud
 	// Tasks owns retry delivery across scale-to-zero and process termination.
-	server := wake.Server(ctx, net.JoinHostPort(env.Get("BIND_HOST", "127.0.0.1"), env.Get("PORT", "8080")), runtime.Handler(queue.Schedule, false))
-	log.Printf("Nori durable conversation listening on %s model=%s", server.Addr, runtime.Model)
-	if err := wake.Listen(ctx, server, 25*time.Second); err != nil {
+	server := httpserver.New(ctx, net.JoinHostPort(env.Get("BIND_HOST", "127.0.0.1"), env.Get("PORT", "8080")), api.Handler(nori.API(), false))
+	log.Printf("Nori durable conversation listening on %s model=%s", server.Addr, nori.Model)
+	if err := httpserver.Listen(ctx, server, 25*time.Second); err != nil {
 		observability.RecordErrorCategory(ctx, "http.listen", err)
 		observability.Shutdown(stopTelemetry)
 		observability.Fatal(err)

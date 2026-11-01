@@ -72,7 +72,8 @@ inference while health and cleanup remain available.
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
 | `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |
 | `FIRESTORE_EMULATOR_HOST`, `TEMPORAL_LOCAL` | Explicit local Firestore endpoint and local Temporal mode; absent/false uses configured services |
-| `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and native Agent Runtime invoke root ending in `/api` |
+| `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and the API base URL that wakes POST to at `/api/process`. Production passes the native Agent Runtime invoke root, which ends in `/api`. Any `https` host is accepted, or loopback `http` when `TEMPORAL_LOCAL=true` |
+| `NORI_WORKER_SERVICES`, `NORI_WORKER_WAKE_QUEUE`, `CLOUD_TASKS_EMULATOR_HOST` | Optional request-driven workers: JSON map of immutable build to service root URL, the Cloud Tasks queue that wakes them (OIDC, same caller), and a loopback Cloud Tasks emulator for local runs. Without `NORI_WORKER_SERVICES`, workers poll on their own |
 | `OPENROUTER_API_KEY` | Inner worker credential; development uses the spend wrapper's scoped key |
 | `MODEL_NAME` | Inner worker model; default `openai/gpt-6.1-terra` through OpenRouter Responses |
 | `ARTIFACT_BUCKET` | Private screenshot bucket |
@@ -111,6 +112,23 @@ worker registration, pause/resume, and retained-data operations are covered by
 [POC operations](infrastructure/poc/README.md) and
 [Temporal operations](infrastructure/temporal/README.md).
 
+## Code layout
+
+Processes are assembled in `internal/platform` and `internal/app`. Everything
+that touches infrastructure sits behind a small contract with one adapter, so a
+different queue, workflow engine or secret store means writing one adapter.
+
+| Package | Role |
+| --- | --- |
+| `internal/api` | HTTP routes; no infrastructure imports |
+| `internal/wake` | `Waker` contract for waking the API and workers; `wake/cloudtasks` is the Cloud Tasks adapter |
+| `internal/dispatch` | `Orchestrator` contract for the task engine, and the `Dispatcher` that runs the one reconciliation pass shared by the API, worker and `nori-deliver` |
+| `internal/task` | Temporal workflow and activities, plus the Temporal adapter of `Orchestrator` |
+| `internal/secret` | Credential lookup contract; `secret/secretmanager` is the Secret Manager adapter |
+| `internal/workerservice`, `internal/taskworker` | Request-bound worker slice lifecycle, and the Temporal worker it runs |
+
+`conversation`, `api` and `dispatch` do not import Temporal.
+
 ## API protocol
 
 | Route | Behavior |
@@ -118,6 +136,7 @@ worker registration, pause/resume, and retained-data operations are covered by
 | `GET /healthz` | Process health only |
 | `POST /api/healthz` or `/healthz` | Safe configuration health; no database reads |
 | `POST /api/session` | `{before?: message-ID}`; saved conversation/task snapshot and older-message cursor; the initial latest-page load queues one real introduction if history is empty |
+| `POST /api/status` | `{}`; returns `{version, busy}`. `version` is an opaque digest of the conversation counters, active turn, pause flag and open tasks, so it changes whenever the session would; `busy` is true while chat input is waiting or processing, or an open task can progress. Poll it and fetch the session when `version` changes. It also repairs a missed conversation wake, like the session route |
 | `POST /api/turn` | `{id: UUID,message}`; saves input and confirms wake scheduling before HTTP 202, without waiting for a model answer |
 | `POST /api/process` | Internal queue handler; drains conversation and repairs task delivery, returning retryable HTTP 503 while work cannot finish |
 | `POST /api/trace` | `{run_id: task-UUID}`; recorded task steps loaded on demand |

@@ -4,17 +4,33 @@ import (
 	"context"
 	"errors"
 
-	enumspb "go.temporal.io/api/enums/v1"
-	"go.temporal.io/api/serviceerror"
-	"go.temporal.io/sdk/client"
 	"nori/internal/computer"
+	"nori/internal/dispatch"
 	"nori/internal/state"
 )
+
+// Recovery is the dispatcher's repair of closed and paused tasks. It needs the
+// engine to prove an execution closed and the computer to stop and clean up.
+type Recovery struct {
+	Store    state.TaskStore
+	Engine   dispatch.Orchestrator
+	Computer computer.Config
+}
+
+var _ dispatch.Recovery = Recovery{}
+
+func (r Recovery) RepairClosed(ctx context.Context) error {
+	return RepairClosed(ctx, r.Store, r.Engine, r.Computer)
+}
+
+func (r Recovery) StopPaused(ctx context.Context, runID string) (state.Run, error) {
+	return StopPaused(ctx, r.Store, r.Computer, runID)
+}
 
 // RepairClosed handles the projection crash window only after Temporal proves
 // execution is closed (or cancellation was requested before it started). It never
 // retries execution. Known computer scopes must report their real stop outcome.
-func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, config computer.Config) error {
+func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Orchestrator, config computer.Config) error {
 	runs, e := store.OpenTasks(ctx)
 	if e != nil {
 		return e
@@ -40,16 +56,16 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 			}
 			continue
 		}
-		execution, e := c.DescribeWorkflowExecution(ctx, WorkflowID(run.ID), "")
-		var missing *serviceerror.NotFound
-		neverStarted := errors.As(e, &missing) && run.CancelRequested
+		execution, e := engine.Inspect(ctx, run.ID)
+		missing := errors.Is(e, dispatch.ErrNoExecution)
+		neverStarted := missing && run.CancelRequested
 		if e != nil && !neverStarted {
-			if !errors.As(e, &missing) {
+			if !missing {
 				failures = append(failures, e)
 			}
 			continue
 		}
-		if !neverStarted && execution.WorkflowExecutionInfo.Status == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		if !neverStarted && !execution.Closed {
 			continue
 		}
 		revisions, e := store.OperationRevisions(ctx, run.ID)
