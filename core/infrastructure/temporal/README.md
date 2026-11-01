@@ -158,9 +158,9 @@ plans or logs. The root `.env` remains the local source. Selected models:
 intent `jev-latest`, outer `gpt-6.1-sol` with low reasoning through the
 OpenAI platform API, and task worker `openai/gpt-6.1-terra` through OpenRouter Responses.
 
-New release targets enable `jev_completion`, which passes `JEV_API_KEY` from
-the existing `nori-jev-api-key` secret to the worker. Retained targets default
-to disabled so adding a release does not change their credential configuration.
+New release targets leave `jev_completion` disabled, because workers no longer
+call Jev to finish a task. Retained targets that enabled it keep `JEV_API_KEY`
+until their tasks drain, so adding a release doesn't change their credentials.
 
 New release targets also enable `capabilities` once `nori-brave-search-api-key`
 and the four `nori-google-calendar-*` secrets each have a version. Without them

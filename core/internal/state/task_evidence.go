@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"strings"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
@@ -376,3 +378,79 @@ func (s *Google) ReadTaskSourceInputs(ctx context.Context, runID string) ([]Conv
 }
 
 var _ TaskEvidenceStore = (*Google)(nil)
+
+// CitedResult is a bounded copy of a saved tool result that a task's answer cites.
+type CitedResult struct {
+	Operation string `json:"operation"`
+	Tool      string `json:"tool"`
+	Result    string `json:"result"`
+}
+
+// TaskOutcome is what a task's last completion proposal claims and cites.
+type TaskOutcome struct {
+	Unmet     []string      `json:"unmet,omitempty"`
+	Evidence  []CitedResult `json:"evidence,omitempty"`
+	Shortened bool          `json:"shortened,omitempty"`
+}
+
+const maxOutcomeEvidenceBytes = 8 << 10
+
+// ReadTaskOutcome reads the last proposal's unmet items and the results it cites.
+func (s *Google) ReadTaskOutcome(ctx context.Context, runID string) (TaskOutcome, error) {
+	if !validEvidenceID(runID) {
+		return TaskOutcome{}, errors.New("invalid task outcome task")
+	}
+	docs, err := s.runs().Doc(runID).Collection("completion_checks").Limit(MaxCompletionChecks + 1).Documents(ctx).GetAll()
+	if err != nil {
+		return TaskOutcome{}, err
+	}
+	var last CompletionCheck
+	found := false
+	for _, doc := range docs {
+		var check CompletionCheck
+		if err = doc.DataTo(&check); err != nil {
+			return TaskOutcome{}, err
+		}
+		// Check IDs end in an increasing number, so a longer ID is a later check.
+		if !found || check.Revision > last.Revision || check.Revision == last.Revision && (check.Position > last.Position || check.Position == last.Position && (len(check.ID) > len(last.ID) || len(check.ID) == len(last.ID) && check.ID > last.ID)) {
+			last, found = check, true
+		}
+	}
+	if !found {
+		return TaskOutcome{}, nil
+	}
+	outcome := TaskOutcome{Unmet: last.Proposal.Unmet}
+	ops, err := s.Operations(ctx, runID)
+	if err != nil {
+		return TaskOutcome{}, err
+	}
+	cited := map[string]bool{}
+	for _, ref := range last.Proposal.Evidence {
+		cited[ref] = true
+	}
+	for _, op := range ops {
+		relevant := cited[op.ID] || cited[op.ResultRef]
+		for _, id := range op.ArtifactIDs {
+			relevant = relevant || cited[id]
+		}
+		if !relevant || op.ResultRef == "" {
+			continue
+		}
+		blocks, err := s.ReadHistory(ctx, runID, op.ResultRef)
+		if err != nil {
+			return TaskOutcome{}, err
+		}
+		outcome.Evidence = append(outcome.Evidence, CitedResult{Operation: op.ID, Tool: op.Name, Result: string(bytes.Join(blocks, []byte("\n")))})
+	}
+	if len(outcome.Evidence) > 0 {
+		share := maxOutcomeEvidenceBytes / len(outcome.Evidence)
+		for i := range outcome.Evidence {
+			if text := outcome.Evidence[i].Result; len(text) > share {
+				// Page text matters at its start and job output at its end, so keep both.
+				outcome.Evidence[i].Result = strings.ToValidUTF8(text[:share/2], "") + "…" + strings.ToValidUTF8(text[len(text)-share/2:], "")
+				outcome.Shortened = true
+			}
+		}
+	}
+	return outcome, nil
+}

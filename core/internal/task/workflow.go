@@ -217,6 +217,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 					}
 					c.Ref = check.Ref
 					switch check.Action {
+					// New checks never return unverified; retained histories still replay it.
 					case "publish", "unverified", "partial":
 						if err = finish(stopCtx); err != nil {
 							return

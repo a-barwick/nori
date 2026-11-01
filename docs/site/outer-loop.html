@@ -74,6 +74,8 @@
 <p>Rejected responses stay in private attempt records and are excluded from later model history. Recovery reuses accepted command receipts; it does not repeat the model call.</p>
 <p><code>hold(task_id, question)</code> saves a question without changing the task's instructions. A terminal event supplies the outcome for its answer.</p>
 </details></section>
+<section><h2>When a task ends</h2>
+<p>The turn that reports a task's end includes the answer, the unmet items and up to 8 KiB of the results the task cited. The outer model compares them and tells the user what is and isn't done. <a href="completion.html">Finishing a task</a> has the rules.</p></section>
 <section><h2>What Jev is looking for</h2>
 <p>Jev marks which of nine intents are in each batch of user messages. The outer model reads that hint with the original messages. <a href="classification.html">Classifying a message</a> has the intents and the rules.</p></section>
 <section><h2>One message, several jobs</h2>

@@ -38,6 +38,8 @@ type TaskContextRecord struct {
 	Commands                []TaskContextCommand `json:"commands"`
 	CommandHistoryTruncated bool                 `json:"command_history_truncated,omitempty"`
 	TextTruncated           bool                 `json:"text_truncated,omitempty"`
+	Outcome                 *state.TaskOutcome   `json:"outcome,omitempty"`
+	OutcomeUnavailable      bool                 `json:"outcome_unavailable,omitempty"`
 }
 
 type TaskContextCommand struct {
@@ -100,6 +102,24 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			return result, err
 		}
 	}
+	// Only the turn reporting a task's end compares its answer with the cited results.
+	if store, ok := t.Store.(interface {
+		ReadTaskOutcome(context.Context, string) (state.TaskOutcome, error)
+	}); ok {
+		for _, record := range result.EventTasks {
+			if record.Status == state.RunRunning {
+				continue
+			}
+			outcome, err := store.ReadTaskOutcome(ctx, record.ID)
+			if err != nil {
+				record.OutcomeUnavailable = true
+				continue
+			}
+			if len(outcome.Unmet) > 0 || len(outcome.Evidence) > 0 {
+				record.Outcome = &outcome
+			}
+		}
+	}
 	for _, run := range runs {
 		if seen[run.ID] {
 			continue
@@ -134,6 +154,11 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			trimContextText(&record.Progress, limit, &record.TextTruncated)
 			trimContextText(&record.Error, limit, &record.TextTruncated)
 			trimContextText(&record.Result, limit, &record.TextTruncated)
+			if record.Outcome != nil {
+				for i := range record.Outcome.Evidence {
+					trimContextText(&record.Outcome.Evidence[i].Result, limit, &record.Outcome.Shortened)
+				}
+			}
 			if record.Question != nil {
 				trimContextText(&record.Question.Text, limit, &record.TextTruncated)
 			}

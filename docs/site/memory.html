@@ -11,7 +11,7 @@
 <h1>Memory and context</h1>
 <p class="lede">Each loop gets a small starting context and looks up more only when it would change the next decision.</p>
 <div class="grid2">
-<div class="card"><h3 style="margin-top:0;color:var(--outer)">Outer loop sees</h3><ul class="pts" style="margin-bottom:0"><li>Up to 24 recent turns, capped at 192KiB</li><li>New messages</li><li>Each task's status and open question</li><li>Jev's hint</li></ul><p class="note">It never gets worker transcripts or the inner loop's tools.</p></div>
+<div class="card"><h3 style="margin-top:0;color:var(--outer)">Outer loop sees</h3><ul class="pts" style="margin-bottom:0"><li>Up to 24 recent turns, capped at 192KiB</li><li>New messages</li><li>Each task's status and open question</li><li>Jev's hint</li></ul><p class="note">When a task ends, it also gets the results the task cited. It never gets worker transcripts or the inner loop's tools.</p></div>
 <div class="card"><h3 style="margin-top:0;color:var(--inner)">Inner loop sees</h3><ul class="pts" style="margin-bottom:0"><li>The request</li><li>Later instructions, word for word and in order</li><li>Its own tool calls and results</li></ul><p class="note">The plan adds source references and lookups on demand.</p></div>
 </div>
 <p class="note">That's what runs today. The rest of this page is the plan for milestone 10.</p>

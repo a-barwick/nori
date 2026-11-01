@@ -20,7 +20,7 @@
 <div class="arrow">↓ result reference</div>
 <div class="node computer"><b>Computer</b><small><code>browser_navigate</code> opens a result when its snippet doesn't have the forecast.</small></div>
 <div class="arrow">↓ both operations cited as evidence</div>
-<div class="node inner"><b>Completion check</b><small>Reads the saved results, and the answer names the source and its date.</small></div>
+<div class="node inner"><b>Finishing the task</b><small>The runtime confirms both results are saved. The outer loop receives them with the answer, which names the source and its date.</small></div>
 </div></div>
 <section><h2>The tools</h2>
 <div class="card"><table><tr><th>Tool</th><th>Runs on</th><th>Type</th><th>Returns</th></tr>
@@ -35,12 +35,20 @@
 <tr><td>job_wait</td><td>Computer</td><td>Read</td><td>The same, once the job has ended.</td></tr>
 <tr><td>job_stop</td><td>Computer</td><td>Stop</td><td>The job's final state, once its processes have exited.</td></tr>
 </table><p class="note"><code>complete</code> and <code>request_input</code> are <a href="contract.html">control tools</a>. During a completion correction, a task can only call the tools marked Read.</p></div></section>
+<section><h2>Confirming a change</h2>
+<p>A tool that changes something must come with a way to confirm the change. The inner loop runs the confirmation and cites it in <code>complete</code>, and lists anything it couldn't confirm as unmet.</p>
+<div class="card"><table class="tall"><tr><th>Tool</th><th>How the change is confirmed</th></tr>
+<tr><td>job_start</td><td><code>job_wait</code> returns the end state, exit code and output.</td></tr>
+<tr><td>job_stop</td><td>Its result is the final state, once the processes have exited.</td></tr>
+<tr><td>shell</td><td>The exit code shows the command ran. A follow-up read, such as a file count, shows its effect.</td></tr>
+<tr class="designed"><td>Future connectors</td><td>A write returns the provider's status and the ID it changed, and names a read that confirms it. An upload returns a 200 and a file ID, and a GET on that ID confirms it. <span class="tag design">designed</span></td></tr>
+</table></div></section>
 <section><h2>Long shell jobs</h2>
 <div class="states"><span class="state">running</span><span class="state-arrow">→</span><span class="state">finished</span><span class="state-arrow">or</span><span class="state">stopped</span><span class="state-arrow">or</span><span class="state">timed_out</span><span class="state-arrow">or</span><span class="state">lost</span></div>
 <ul class="pts">
 <li>A job can run for up to 60 minutes, with up to 4 running per task. It belongs to the task, so a correction or a question leaves it running.</li>
 <li><code>job_wait</code> makes no model calls. An activity reads the job's state every 15 seconds and saves the latest output line as the task's progress, which the web client and the outer loop read.</li>
-<li>A wait is a chain of activities of up to 200 seconds each, because a pending activity is what wakes a request worker. One worker stays running while a task waits on a job.</li>
+<li>One worker stays running while a task waits on a job, because a pending activity is what wakes a request worker.</li>
 <li>The task can't propose completion while a job it started is running, and terminal cleanup stops any job still running.</li>
 <li>A running job holds off the computer's idle stop. If the guest restarts or the computer stops, the job's state is <code>lost</code>, and the runtime never reports it as finished.</li>
 </ul></section>
@@ -48,25 +56,19 @@
 <ul class="pts">
 <li><code>screenshot_inspect</code> sends one saved image and one question to the task model in a separate call with no tools.</li>
 <li>Only the text answer joins the task's history. The image isn't resent on later turns, and text inside it can't call a tool.</li>
-<li>The cost counts against the task's budget. A call that was sent without a reported cost stops the task as cost unknown.</li>
-<li>The completion check reads that text answer, because Jev doesn't receive images.</li>
+<li>The cost counts against the task's budget.</li>
+<li>The outer loop receives that text answer when the task cites it, because it doesn't receive images.</li>
 </ul></section>
 <section><h2>The calendar connection</h2>
 <ul class="pts">
 <li><code>nori-connect-calendar</code> opens one Google consent screen for read-only access, then saves the refresh token and the account name in <code>.env</code>. Production reads them from Secret Manager.</li>
-<li>The refresh token stays on the worker. It doesn't reach the computer, the model or a saved result.</li>
-<li><code>calendar_read</code> covers the primary calendar and up to 9 others selected in Google Calendar. It leaves out attendees and descriptions.</li>
+<li>The refresh token stays on the worker.</li>
+<li><code>calendar_read</code> covers the primary calendar and up to 9 others selected in Google Calendar.</li>
 <li>If the account isn't connected or Google refuses the token, the tool returns <code>available: false</code> and the task says so. An OAuth app in Google's testing state loses its refresh token after 7 days.</li>
 </ul></section>
 <section><h2>The capability catalog</h2>
-<p>The worker adds a short catalog to the inner loop's instructions, along with today's date in the configured time zone.</p>
-<div class="card"><table class="tall"><tr><th>Field</th><th>Example</th></tr>
-<tr><td>Name and tools</td><td>Google Calendar read (<code>calendar_read</code>)</td></tr>
-<tr><td>Account</td><td>The connected account, or none connected</td></tr>
-<tr><td>Availability</td><td>Available, or unavailable: not connected</td></tr>
-<tr><td>On failure</td><td>Tell the user it needs connecting. Never guess events.</td></tr>
-</table></div>
-<ul class="pts"><li>A missing credential leaves the tool in place, and the tool reports itself unavailable. The model can tell a missing capability from one it didn't pick.</li><li>The catalog grants nothing. Tool descriptions and tool output are data, and the runtime checks each call when it runs.</li><li>Each search charges the task's budget $0.005, Brave's listed price on Oct 31, 2026. A failed search isn't retried automatically.</li></ul>
+<p>The worker adds a short catalog to the inner loop's instructions, with today's date in the configured time zone. Each entry gives the capability's tools, account and availability, what to do on failure, and how to confirm a result.</p>
+<ul class="pts"><li>A missing credential leaves the tool in place, and the tool reports itself unavailable.</li><li>Each search charges the task's budget $0.005, Brave's listed price on Oct 31, 2026.</li></ul>
 </section>
 <section class="designed"><h2>Loading tools on demand <span class="tag design">designed · milestone 10</span></h2>
 <p>Every task currently gets the same tool list. The plan is for the inner loop to search the catalog and load only the schemas a task needs, so adding connectors doesn't fill its context. <a href="https://linear.app/a-barwick/issue/AB-159">AB-159</a> <a href="https://linear.app/a-barwick/issue/AB-160">AB-160</a></p>

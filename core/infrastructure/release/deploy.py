@@ -228,7 +228,7 @@ def worker_vars(c, build, image):
     # A new worker keeps the Current worker's model. Only Austin changes models.
     plain = lambda value: {k: v for k, v in value.items() if k not in {"spend_scope", "spend_profile"}}
     target = plain(targets[current_worker()])
-    target["jev_completion"] = True
+    target["jev_completion"] = False  # New workers finish tasks without Jev; retained builds keep their own target.
     target["capabilities"] = capability_secrets_ready()
     require(target["deployment_name"] == poc.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Current worker target is not production")
     require(services.get(build, image) == image and plain(targets.get(build, target)) == target, "This build already exists with a different image or target")
