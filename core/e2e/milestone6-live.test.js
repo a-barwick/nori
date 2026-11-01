@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
@@ -170,6 +170,8 @@ afterAll(async () => {
   await clearCalendar().catch(() => {});
   if (directory) rmSync(directory, { recursive: true, force: true });
 });
+
+beforeEach(async () => { if (live) await clearCalendar(); });
 
 journey("019: moves one appointment and doesn't claim the dentist agreed", async () => {
   await seed("Dentist appointment", "2026-11-09T09:30:00-08:00", "2026-11-09T10:30:00-08:00");

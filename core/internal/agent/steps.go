@@ -111,7 +111,7 @@ func taskTools(wait bool) []transcript.Tool {
 			Name: "calendar_create",
 			Description: "Propose a new event on Austin's write calendar. Runs only after he approves the exact event. It can't invite anyone. " +
 				"start and end are RFC 3339 with an offset, converted once from any time zone the user named. Put that original time in description. " +
-				"private is \"true\" or \"false\". description may be empty. Must be the only call in its batch.",
+				"private is \"true\" for a hold or anything meant only for Austin, otherwise \"false\". description may be empty. Must be the only call in its batch.",
 			Parameters: params("title", "start", "end", "description", "private"),
 		},
 		{

@@ -383,10 +383,13 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 					revised = true
 					break
 				}
-				if len(c.ComputerRevisions) == 0 || c.ComputerRevisions[len(c.ComputerRevisions)-1] != c.Revision {
-					c.ComputerRevisions = append(c.ComputerRevisions, c.Revision)
+				// A tool the worker runs itself never touches the computer, so it leaves nothing to stop.
+				if !agent.RuntimeTool(call.Name) {
+					if len(c.ComputerRevisions) == 0 || c.ComputerRevisions[len(c.ComputerRevisions)-1] != c.Revision {
+						c.ComputerRevisions = append(c.ComputerRevisions, c.Revision)
+					}
+					c.Stopped = false
 				}
-				c.Stopped = false
 				c.JobsStarted = c.JobsStarted || call.Name == "job_start"
 				var output RefToolOutcome
 				err = workflow.ExecuteActivity(ctx, a.ToolRef, RefToolInput{
