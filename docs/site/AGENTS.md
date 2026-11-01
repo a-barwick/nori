@@ -112,7 +112,7 @@ docs/serve.sh
 docs/serve.sh 3221
 ```
 
-`docs/deploy.sh` publishes the site to docs.noribot.chat. Merging to `main` doesn't publish it.
+Merging to `main` doesn't publish the site. See Publishing.
 
 - Look at the page at desktop and phone widths. It shouldn't scroll sideways.
 - Try the filter and any Data buttons, and check the console for errors.
@@ -120,4 +120,6 @@ docs/serve.sh 3221
 
 ## Publishing
 
-The site runs locally with `docs/serve.sh` and isn't hosted right now. `.github/workflows/docs.yml` can publish this folder, without this file, but it stays off unless the repo variable `NORI_DOCS_PAGES` is `true`. Don't commit unfinished pages to `main`.
+The site runs on the `nori-docs` Cloud Run service at docs.noribot.chat. `docs/deploy.sh` builds this folder, without this file, and deploys it. Don't deploy unfinished pages.
+
+`.github/workflows/docs.yml` can also publish this folder to GitHub Pages, but it stays off unless the repo variable `NORI_DOCS_PAGES` is `true`.

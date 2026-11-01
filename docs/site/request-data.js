@@ -53,7 +53,7 @@ window.REQUEST_FLOW = [
   ],
   [ // 5. The relay starts one Temporal workflow per task
     { from: 'Go service', to: 'Temporal', edge: 'service-temporal', call: 'SignalWithStartWorkflow', source: 'core/internal/task/client.go',
-      request: { workflow_id: `nori-task-${WEATHER}`, workflow_type: 'nori-task-v2', args: [WEATHER], signal: 'task-command',
+      request: { workflow_id: `nori-task-${WEATHER}`, workflow_type: 'nori-task-v3', args: [WEATHER], signal: 'task-command',
         signal_payload: { id: WEATHER, run_id: WEATHER, kind: 'start', text: REQUEST, position: 1, revision: 1 } },
       note: 'A retry reaches the same workflow ID, so redelivery can\'t start a second workflow.' },
     { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'task_commands/{id}', source: 'core/internal/state/task.go',

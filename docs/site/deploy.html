@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>Deployment</h1>
-<p class="lede">Everything runs on GCP and Temporal Cloud, scales to zero when idle, and only the owner's account can reach it.</p>
+<p class="lede">Everything runs on GCP and Temporal Cloud, and scales to zero when idle. Only the owner's account can reach the web client and agent service.</p>
 <div class="card"><table class="tall"><tr><th>Piece</th><th>Runs on</th><th>When idle</th></tr>
 <tr><td>Web client</td><td>Cloud Run, at noribot.chat</td><td>Scales to zero</td></tr>
 <tr><td>Docs site</td><td>Cloud Run, at docs.noribot.chat</td><td>Scales to zero</td></tr>
@@ -42,7 +42,7 @@
 <tr><td>Retained 20 GiB computer disk</td><td>$0.80</td></tr></table>
 <p class="note">Model calls and running compute are extra. GCP budget alerts don't cap Temporal, so a separate daily check alerts on Temporal spend.</p></div></section>
 <details class="more"><summary>Trial evidence for the computer</summary>
-<ul class="pts"><li>A file, an installed package, a browser cookie and local storage all survived a guest restart and a move to a new host.</li><li>This covers graceful restarts. RAM, live tabs and sudden crashes aren't covered.</li><li>The disk has no backup yet: <a href="https://linear.app/a-barwick/issue/AB-189">AB-189</a>.</li></ul></details>
+<ul class="pts"><li>A file, an installed package, a browser cookie and local storage all survived a guest restart and a move to a new host.</li><li>This covers graceful restarts. RAM, live tabs and sudden crashes aren't covered.</li></ul></details>
 <details class="more"><summary>Network and credential checks</summary>
 <p>These are checks from the October 2026 trials. They don't establish production hardening.</p>
 <ul class="pts"><li>The computer has public IPv4 egress through host NAT, and guest IPv6 is off.</li><li>Guest attempts to reach cloud metadata and host SSH were rejected.</li><li>Chromium's debugging port binds to guest loopback, and host SSH accepts only IAP's source range.</li><li>The GCE host has no service account.</li><li>Credentials stay in a gitignored mode-600 <code>.env</code>, or in Secret Manager for hosted services. They're kept out of images, logs, model context and workflow history.</li></ul></details>
