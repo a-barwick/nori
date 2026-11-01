@@ -112,6 +112,8 @@ docs/serve.sh
 docs/serve.sh 3221
 ```
 
+`docs/deploy.sh` publishes the site to docs.noribot.chat. Merging to `main` doesn't publish it.
+
 - Look at the page at desktop and phone widths. It shouldn't scroll sideways.
 - Try the filter and any Data buttons, and check the console for errors.
 - Read the text once more against the writing rules above.
