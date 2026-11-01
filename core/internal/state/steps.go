@@ -1,12 +1,9 @@
 package state
 
-import (
-	"context"
-	"time"
+import "time"
 
-	"cloud.google.com/go/firestore"
-	"google.golang.org/api/iterator"
-)
+// TaskStepLimit bounds the steps returned for one task's detailed trace.
+const TaskStepLimit = 100
 
 // TaskStep records observed provider/tool activity. A missing cost or token
 // count is unknown; no model reasoning is collected.
@@ -35,37 +32,4 @@ type TaskStep struct {
 type TraceCall struct {
 	Name      string `json:"name" firestore:"name"`
 	Arguments string `json:"arguments" firestore:"arguments"`
-}
-
-func (s *Google) RecordTaskStep(ctx context.Context, runID string, step TaskStep) error {
-	_, err := s.runs().Doc(runID).Collection("steps").Doc(step.ID).Set(ctx, step)
-	return err
-}
-
-// Detailed traces are fetched only when opened, not with every session poll.
-func (s *Google) TaskSteps(ctx context.Context, runID string) ([]TaskStep, error) {
-	if _, err := s.GetRun(ctx, runID); err != nil {
-		return nil, err
-	}
-	iter := s.runs().Doc(runID).Collection("steps").OrderBy("started_at", firestore.Desc).Limit(100).Documents(ctx)
-	defer iter.Stop()
-	steps := []TaskStep{}
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		var step TaskStep
-		if err := doc.DataTo(&step); err != nil {
-			return nil, err
-		}
-		steps = append(steps, step)
-	}
-	for i, j := 0, len(steps)-1; i < j; i, j = i+1, j-1 {
-		steps[i], steps[j] = steps[j], steps[i]
-	}
-	return steps, nil
 }

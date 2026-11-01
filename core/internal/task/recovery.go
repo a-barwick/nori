@@ -75,7 +75,9 @@ func RepairClosed(ctx context.Context, store state.TaskStore, c client.Client, c
 			detail = "Interrupted: computer stop could not be confirmed during terminal recovery."
 			failures = append(failures, stopErr)
 		}
-		if _, e = store.Publish(ctx, run.ID, run.Revision, status, detail, "", run.CostUnknown, true); e != nil {
+		if _, e = store.Publish(ctx, state.PublishRequest{
+			RunID: run.ID, Revision: run.Revision, Status: status, Detail: detail, CostUnknown: run.CostUnknown, BypassRouting: true,
+		}); e != nil {
 			failures = append(failures, e)
 		} else if stopErr == nil && run.CleanupPending {
 			if e = closeTaskBrowser(ctx, store, config, run.ID, scopes); e != nil {
@@ -147,7 +149,9 @@ func StopPaused(ctx context.Context, store state.TaskStore, config computer.Conf
 	if err != nil {
 		return run, err
 	}
-	run, err = store.Publish(ctx, id, run.Revision, "cancelled", "Stopped by Austin.", "", run.CostUnknown, true)
+	run, err = store.Publish(ctx, state.PublishRequest{
+		RunID: id, Revision: run.Revision, Status: state.RunCancelled, Detail: "Stopped by Austin.", CostUnknown: run.CostUnknown, BypassRouting: true,
+	})
 	if err != nil {
 		return run, err
 	}

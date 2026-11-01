@@ -148,7 +148,7 @@ func (a *Activities) Reconcile(ctx context.Context, id string) (state.TaskSnapsh
 	}
 	// Reconciliation and publication do not start paid work. Their revision
 	// and cancellation checks remain valid even while admission is paused.
-	e = a.Store.Incorporate(ctx, id, snap.Run.Revision, snap.Run.Position)
+	e = a.Store.Incorporate(ctx, state.IncorporateRequest{RunID: id, Revision: snap.Run.Revision, Position: snap.Run.Position})
 	return snap, classified(e)
 }
 
@@ -385,7 +385,10 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 			p.Revision = current.Revision
 		}
 	}
-	r, err := a.Store.Publish(ctx, p.RunID, p.Revision, p.Status, p.Detail, p.Text, p.CostUnknown, p.BypassRouting)
+	r, err := a.Store.Publish(ctx, state.PublishRequest{
+		RunID: p.RunID, Revision: p.Revision, Status: p.Status, Detail: p.Detail, Text: p.Text,
+		CostUnknown: p.CostUnknown, BypassRouting: p.BypassRouting,
+	})
 	if err == nil {
 		if (run.Status == state.RunRunning || run.Status == "") && r.FinishedAt != nil && !r.StartedAt.IsZero() && !r.FinishedAt.Before(r.StartedAt) {
 			durationCtx := observability.ExtractTrace(ctx, r.OriginTraceContext)
@@ -406,7 +409,7 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 	return r, classified(err)
 }
 func (a *Activities) Project(ctx context.Context, p Projection) error {
-	return classified(a.Store.Project(ctx, p.RunID, p.Revision, p.Kind, p.Text))
+	return classified(a.Store.Project(ctx, state.ProjectRequest{RunID: p.RunID, Revision: p.Revision, Kind: p.Kind, Text: p.Text}))
 }
 func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) (err error) {
 	run := a.activityRun(ctx, in.RunID)
@@ -430,5 +433,5 @@ func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) (err e
 // Spend is unguarded: cost already incurred is recorded even if a correction
 // superseded the revision that spent it.
 func (a *Activities) Spend(ctx context.Context, s Spending) error {
-	return a.Store.Spend(ctx, s.RunID, s.Spent, s.Budget, s.CostUnknown)
+	return a.Store.Spend(ctx, state.SpendUpdate{RunID: s.RunID, Spent: s.Spent, Budget: s.Budget, CostUnknown: s.CostUnknown})
 }
