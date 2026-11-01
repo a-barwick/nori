@@ -40,6 +40,8 @@ Nori's documentation lives in `docs/site/`. Check it first when you need to unde
 
 Each changed page must pass `check.py` completely, including findings that were there before your edit. The commit hook, `make check` and `docs/deploy.sh` enforce this. Don't bypass them with `--no-verify`, and don't change their rules or limits to get a page through. If you find you skipped a step, say so, then do it. Only Austin can waive a rule.
 
+A change gets one full review and at most two rechecks, and the author gives the reviewer only the page paths, plus the earlier report and diff for a recheck. If the last recheck rejects, stop and give Austin the reports. A waiver from Austin goes in the commit as `Docs-Waived: Austin said "..."` in place of the `Docs-Review` line.
+
 Read `docs/site/AGENTS.md` for the rules, and run the site with `docs/serve.sh`.
 
 ## Marketing film

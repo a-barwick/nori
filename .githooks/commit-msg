@@ -11,13 +11,12 @@ if [ -n "$html" ]; then
   # shellcheck disable=SC2086
   python3 .agents/skills/review-docs/scripts/check.py $html || fail=1
 fi
-for line in '^Docs-Skills: write-docs, plain-writing$' '^Docs-Review: PASS, review-docs in a separate thread$'; do
-  grep -q "$line" "$1" || { echo "Missing commit message line: $line" | tr -d '^$'; fail=1; }
-done
+grep -q '^Docs-Skills: write-docs, plain-writing$' "$1" || { echo "Missing commit message line: Docs-Skills: write-docs, plain-writing"; fail=1; }
+grep -q -e '^Docs-Review: PASS, review-docs in a separate thread$' -e '^Docs-Waived: Austin said ".*"$' "$1" || { echo "Missing commit message line: Docs-Review: PASS, review-docs in a separate thread"; fail=1; }
 
 if [ "$fail" -ne 0 ]; then
   echo
-  echo "Docs commit rejected. Load the write-docs skill, fix the page and get a PASS from review-docs in a separate thread."
+  echo "Docs commit rejected. Load the write-docs skill, fix the page and get a PASS from review-docs in a separate thread, or a waiver from Austin."
   echo "Add the lines above only if you did those steps. Don't use --no-verify. See Documentation in AGENTS.md."
   exit 1
 fi
