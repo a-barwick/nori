@@ -33,45 +33,67 @@
   {
    "page": "docs/site/authority.html",
    "title": "Approvals and writes",
-   "summary": "Nori can read freely. Before it changes anything outside its own computer, the user approves the exact action.",
-   "status": "planned",
-   "code": [],
+   "summary": "Nori can read freely. Before it changes a calendar or sends an email, the user approves the exact action.",
+   "status": "built",
+   "code": [
+    "core/internal/agent/calendar_write.go",
+    "core/internal/agent/gmail.go",
+    "core/internal/agent/writes.go",
+    "core/internal/conversation/call.go",
+    "core/internal/conversation/commands.go",
+    "core/internal/conversation/task_context.go",
+    "core/internal/state/commands.go",
+    "core/internal/state/evidence.go",
+    "core/internal/state/firestore/tasks.go",
+    "core/internal/task/actions.go",
+    "core/internal/task/completion.go",
+    "core/internal/task/history.go",
+    "core/internal/task/recovery.go",
+    "core/internal/task/workflow.go",
+    "web/src/components/runtime/TaskPanel.tsx"
+   ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 94
+     "words": 126
     },
     {
-     "id": "every-tool-declares-what-it-does",
-     "title": "Every tool declares what it does",
+     "id": "the-write-tools",
+     "title": "The write tools",
      "status": "built",
-     "words": 52
+     "words": 88
     },
     {
      "id": "what-an-approval-covers",
      "title": "What an approval covers",
      "status": "built",
-     "words": 43
+     "words": 66
     },
     {
      "id": "what-can-t-grant-permission",
      "title": "What can't grant permission",
      "status": "built",
-     "words": 32
+     "words": 39
     },
     {
      "id": "recording-what-happened",
      "title": "Recording what happened",
      "status": "built",
-     "words": 44
+     "words": 43
     },
     {
-     "id": "still-open",
-     "title": "Still open",
+     "id": "when-a-response-is-lost",
+     "title": "When a response is lost",
      "status": "built",
-     "words": 20
+     "words": 71
+    },
+    {
+     "id": "what-this-doesn-t-cover",
+     "title": "What this doesn't cover",
+     "status": "built",
+     "words": 272
     }
    ]
   },
@@ -359,6 +381,12 @@
      "words": 95
     },
     {
+     "id": "approvals-and-writes",
+     "title": "Approvals and writes",
+     "status": "built",
+     "words": 962
+    },
+    {
      "id": "finishing-and-budgets",
      "title": "Finishing and budgets",
      "status": "built",
@@ -368,7 +396,7 @@
      "id": "runtime-and-infrastructure",
      "title": "Runtime and infrastructure",
      "status": "built",
-     "words": 547
+     "words": 552
     },
     {
      "id": "code-structure",
@@ -680,7 +708,7 @@
      "id": "tools-and-approvals",
      "title": "Tools and approvals",
      "status": "built",
-     "words": 120
+     "words": 92
     },
     {
      "id": "memory-and-results",
@@ -994,7 +1022,7 @@
      "id": "shared-setup",
      "title": "Shared setup",
      "status": "built",
-     "words": 64
+     "words": 82
     },
     {
      "id": "running-a-conversation",
@@ -1030,7 +1058,7 @@
      "id": "email-and-messages",
      "title": "Email and messages",
      "status": "built",
-     "words": 648
+     "words": 657
     },
     {
      "id": "writing-and-creative-work",
