@@ -96,6 +96,30 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 	})
 }
 
+// WriteOperations runs on every outer turn, so it reads only the task's writes.
+func (d *Database) WriteOperations(ctx context.Context, runID string) ([]state.OperationRecord, error) {
+	if !state.ValidEvidenceID(runID) {
+		return nil, errors.New("invalid task operation task")
+	}
+	docs, err := d.runs().Doc(runID).Collection("operations").Where("effect_class", "in", []string{"reversible_write", "sensitive_send"}).Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err
+	}
+	operations := make([]state.OperationRecord, 0, len(docs))
+	for _, doc := range docs {
+		var op state.OperationRecord
+		if err = doc.DataTo(&op); err != nil {
+			return nil, err
+		}
+		recorded, _ := doc.Data()["evidence_recorded"].(bool)
+		if op, err = state.ReadOperation(op, recorded, doc.Ref.ID); err != nil {
+			return nil, err
+		}
+		operations = append(operations, op)
+	}
+	return operations, nil
+}
+
 func (d *Database) Operations(ctx context.Context, runID string) ([]state.OperationRecord, error) {
 	if !state.ValidEvidenceID(runID) {
 		return nil, errors.New("invalid task operation task")

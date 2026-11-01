@@ -182,6 +182,7 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			}
 			for i := range record.Actions {
 				trimContextText(&record.Actions[i].Result, limit, &record.TextTruncated)
+				trimContextText(&record.Actions[i].Text, limit, &record.TextTruncated)
 			}
 			if record.Question != nil {
 				trimContextText(&record.Question.Text, limit, &record.TextTruncated)
@@ -211,15 +212,12 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 }
 
 func (t *Tasks) actionRecords(ctx context.Context, id string) ([]ActionRecord, error) {
-	operations, err := t.Store.Operations(ctx, id)
+	operations, err := t.Store.WriteOperations(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	var actions []ActionRecord
 	for _, op := range operations {
-		if op.EffectClass != "reversible_write" && op.EffectClass != "sensitive_send" {
-			continue
-		}
 		action := ActionRecord{OperationID: op.ID, Tool: op.Name, Outcome: op.Outcome}
 		if op.Action != nil {
 			action.Text = op.Action.Text

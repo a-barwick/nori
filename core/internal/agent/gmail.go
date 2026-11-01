@@ -57,9 +57,9 @@ func (s *Service) prepareEmail(ctx context.Context, to, subject, body string) (P
 	}
 	config := s.Capabilities.Calendar
 	sum := sha256.Sum256([]byte(strings.Join([]string{config.Account, address.Address, subject, body}, "\n")))
-	spec := map[string]string{"to": address.Address, "subject": subject, "body": body, "message_id": "<" + hex.EncodeToString(sum[:16]) + "@noribot.chat>"}
+	spec := map[string]string{"account": config.Account, "to": address.Address, "subject": subject, "body": body, "message_id": "<" + hex.EncodeToString(sum[:16]) + "@noribot.chat>"}
 	// The same message can't go out twice. The user asks for a repeat by changing the text.
-	found, status, err := s.findSent(ctx, spec["message_id"])
+	found, _, status, err := s.findSent(ctx, spec["message_id"])
 	if err != nil {
 		return PreparedWrite{}, err
 	}
@@ -75,8 +75,9 @@ func (s *Service) prepareEmail(ctx context.Context, to, subject, body string) (P
 	}, nil
 }
 
-// findSent reads headers only, and returns nil when the message isn't in the latest sent mail.
-func (s *Service) findSent(ctx context.Context, messageID string) (*sentMessage, int, error) {
+// findSent reads headers only, and returns nil when the message isn't in the latest sent
+// mail. complete says that was all of the sent mail, so a miss means it was never sent.
+func (s *Service) findSent(ctx context.Context, messageID string) (found *sentMessage, complete bool, status int, err error) {
 	config := s.Capabilities.Calendar
 	client := config.client(ctx)
 	var list struct {
@@ -85,20 +86,20 @@ func (s *Service) findSent(ctx context.Context, messageID string) (*sentMessage,
 		} `json:"messages"`
 	}
 	query := url.Values{"labelIds": {"SENT"}, "maxResults": {fmt.Sprint(sentMailChecked)}}
-	status, err := googleCall(ctx, client, http.MethodGet, config.gmailURL()+"/users/me/messages?"+query.Encode(), nil, nil, &list)
+	status, err = googleCall(ctx, client, http.MethodGet, config.gmailURL()+"/users/me/messages?"+query.Encode(), nil, nil, &list)
 	if err != nil || status != http.StatusOK {
-		return nil, status, err
+		return nil, false, status, err
 	}
 	for _, item := range list.Messages {
-		message, status, err := s.readSent(ctx, client, item.ID)
-		if err != nil || status != http.StatusOK {
-			return nil, status, err
+		message, read, err := s.readSent(ctx, client, item.ID)
+		if err != nil || read != http.StatusOK {
+			return nil, false, read, err
 		}
 		if message.header("Message-Id") == messageID {
-			return &message, http.StatusOK, nil
+			return &message, false, http.StatusOK, nil
 		}
 	}
-	return nil, http.StatusOK, nil
+	return nil, len(list.Messages) < sentMailChecked, http.StatusOK, nil
 }
 
 func (s *Service) readSent(ctx context.Context, client *http.Client, id string) (sentMessage, int, error) {
@@ -144,14 +145,17 @@ func (s *Service) sendEmail(ctx context.Context, spec map[string]string) (string
 	return WriteSubmitted, output
 }
 
-// checkEmail never sends. A message missing from the latest sent mail is reported as not sent.
+// checkEmail never sends. A miss proves nothing unless it covered all of the sent mail.
 func (s *Service) checkEmail(ctx context.Context, spec map[string]string) (string, map[string]any) {
-	found, status, err := s.findSent(ctx, spec["message_id"])
+	found, complete, status, err := s.findSent(ctx, spec["message_id"])
 	if err != nil || status != http.StatusOK {
 		return WriteUncertain, map[string]any{"to": spec["to"], "reason": "The sent mail couldn't be read, so this email may or may not have gone out."}
 	}
+	if found == nil && complete {
+		return WriteFailed, map[string]any{"applied": false, "to": spec["to"], "reason": "The email isn't in the sent mail, so it wasn't sent."}
+	}
 	if found == nil {
-		return WriteFailed, map[string]any{"applied": false, "to": spec["to"], "reason": "The email isn't in the latest sent mail, so it wasn't sent."}
+		return WriteUncertain, map[string]any{"to": spec["to"], "reason": "The email isn't in the latest sent mail, but older mail wasn't checked, so it may have gone out."}
 	}
 	return WriteConfirmed, map[string]any{"message_id": found.ID, "to": spec["to"], "subject": spec["subject"], "account": s.Capabilities.Calendar.Account, "read_back": true}
 }

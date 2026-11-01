@@ -19,6 +19,7 @@ const (
 	// A write's attempts cover workers that die. Each later attempt only reads the provider.
 	maxActionAttempts = 3
 	saveTimeout       = 10 * time.Second
+	declinedReason    = "Austin declined this action, so nothing was sent. Don't propose it again."
 )
 
 // PendingAction is a write's place in the workflow. Command is the approve command once
@@ -47,9 +48,9 @@ func (c *Checkpoint) settleAction(ctx, quick workflow.Context, id string, synced
 	var a *Activities
 	step := Step{id, c.Revision}
 	switch {
-	case synced.ActionVoided:
+	case synced.ActionClosed != "":
 		// The sync already gave the call its result, so only the record changes.
-		err := workflow.ExecuteActivity(quick, a.CloseAction, ActionInput{Step: step, Action: *c.Action, Outcome: "voided"}).Get(ctx, nil)
+		err := workflow.ExecuteActivity(quick, a.CloseAction, ActionInput{Step: step, Action: *c.Action, Outcome: synced.ActionClosed}).Get(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -195,7 +196,10 @@ func (a *Activities) PrepareAction(parent context.Context, in RefToolInput) (out
 	prepared, callErr := a.Agent.PrepareWrite(observability.SuppressErrorCapture(ctx), call.Name, call.Args)
 	if callErr != nil {
 		if ctx.Err() != nil {
-			// A pause or Stop cut the read short. Nothing was sent, so the saved task says what to do.
+			// A pause or Stop cut the read short. Nothing was sent, so close the record, and the saved task says what to do.
+			if _, saveErr := a.saveWrite(ctx, in.RunID, op, agent.WriteFailed, map[string]any{"applied": false, "reason": "Interrupted before asking. Nothing was sent."}); saveErr != nil {
+				return out, saveErr
+			}
 			check, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveTimeout)
 			defer cancel()
 			if _, guardErr := a.Store.Guard(check, in.RunID, in.Revision); guardErr != nil {
@@ -228,7 +232,9 @@ func (a *Activities) PrepareAction(parent context.Context, in RefToolInput) (out
 	}
 	question := state.Question{ID: fmt.Sprintf("%s-%s", in.OperationID, prepared.Digest[:12]), Kind: "approval", Text: prepared.Text, Revision: in.Revision}
 	op.Outcome, op.Action = "prepared", &state.Action{Digest: prepared.Digest, Text: prepared.Text, QuestionID: question.ID, Spec: prepared.Spec}
-	if err = a.Store.PutOperation(ctx, in.RunID, op); err != nil {
+	save, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveTimeout)
+	defer cancel()
+	if err = a.Store.PutOperation(save, in.RunID, op); err != nil {
 		return out, classified(err)
 	}
 	out.Ref, out.Question = in.Ref, &question
@@ -315,8 +321,8 @@ func (a *Activities) CloseAction(ctx context.Context, in ActionInput) (ref strin
 		op.Outcome = "voided"
 		return "", classified(a.Store.PutOperation(ctx, in.RunID, op))
 	}
-	output, err := a.saveWrite(ctx, in.RunID, op, in.Outcome, map[string]any{"applied": false, "reason": "Austin declined this action, so nothing was sent. Don't propose it again."})
-	if err != nil {
+	output, err := a.saveWrite(ctx, in.RunID, op, in.Outcome, map[string]any{"applied": false, "reason": declinedReason})
+	if err != nil || in.Ref == "" {
 		return "", err
 	}
 	out, err := a.writeResult(ctx, in.Step, in.Ref, transcript.ToolCall{ID: in.Action.CallID, Name: in.Action.Name}, output)

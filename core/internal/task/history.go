@@ -33,10 +33,11 @@ type HistorySync struct {
 	QuestionResolved   bool
 	Request            string
 	// Decision is the approve or decline command for the pending write. A later
-	// instruction overrides it: ActionVoided means the write's call now has a result.
+	// instruction overrides an approval. ActionClosed is the outcome when an
+	// instruction ended the write here, so its call already has a result.
 	Decision     state.CommandKind
 	DecisionID   string
-	ActionVoided bool
+	ActionClosed string
 }
 type CurrentPosition struct{ Revision, Position int64 }
 
@@ -209,9 +210,13 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 		switch cmd.Kind {
 		case state.CommandStart, state.CommandSteer:
 			if action != nil {
-				voided := map[string]any{"voided": true, "operation_id": action.Operation, "reason": "Austin changed the task instructions, so nothing was sent. Propose again if the write is still needed."}
-				messages = append(messages, transcript.ToolResultMessage(action.CallID, action.Name, voided))
-				action, out.ActionVoided, out.Decision, out.DecisionID = nil, true, "", ""
+				closed := map[string]any{"voided": true, "operation_id": action.Operation, "reason": "Austin changed the task instructions, so nothing was sent. Propose again if the write is still needed."}
+				out.ActionClosed = "voided"
+				if out.Decision == state.CommandDecline {
+					closed, out.ActionClosed = map[string]any{"declined": true, "operation_id": action.Operation, "reason": declinedReason}, "declined"
+				}
+				messages = append(messages, transcript.ToolResultMessage(action.CallID, action.Name, closed))
+				action, out.Decision, out.DecisionID = nil, "", ""
 			}
 			if q != nil && q.CallID != "" {
 				superseded := map[string]any{"superseded": true, "reason": "Austin changed the task instructions."}

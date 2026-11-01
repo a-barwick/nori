@@ -64,6 +64,7 @@ async function googleHandler(req, res) {
   }
   if (calendarMatch && req.method === "GET") {
     google.reads++;
+    if (google.fault.holdRead) { const { fault } = google; await held(); if (fault !== google.fault) return res.destroy(); }
     if (google.fault.readError && google.writes.length) return reply(res, 500);
     const event = google.events.get(decodeURIComponent(calendarMatch[2]));
     return event ? reply(res, 200, event) : reply(res, 404, { error: "notFound" });
@@ -156,7 +157,8 @@ async function outerHandler(req, res) {
   if (request.response_format) {
     const actions = [];
     const decide = String(last).match(/\b(approve|decline) (\S+) (\S+)/);
-    if (String(last).includes("task:")) actions.push({ name: "dispatch", arguments: { request: String(last) } });
+    if (outer.forceApprove) actions.push({ name: "approve", arguments: outer.forceApprove });
+    else if (String(last).includes("task:")) actions.push({ name: "dispatch", arguments: { request: String(last) } });
     else if (decide) actions.push({ name: decide[1], arguments: { run_id: decide[2], question_id: decide[3] } });
     content = JSON.stringify({ actions, text: actions.length ? "" : "Noted." });
   } else {
@@ -467,6 +469,67 @@ journey("an approval accepted before a pause runs once after the pause ends", as
   const done = await finished(id);
   expect(done.status, done.error).toBe("completed");
   expect(google.writes).toHaveLength(1);
+}, 150_000);
+
+journey("a pause during preparation leaves no open record, and the task can still finish", async () => {
+  google.fault.holdRead = true;
+  scripts.pausedPrepare = (outputs) => outputs.length ? finish("Stopped before asking.", outputs) : { name: "calendar_create", args: lunch };
+  const id = await dispatch("pausedPrepare");
+  await until(() => google.reads, (count) => count > 0, "prepare's read");
+  const pause = (paused) => fetch(`${documents}/system/control`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: { paused: { booleanValue: paused } } }) });
+  await pause(true);
+  await until(async () => writes(await operations(id))[0]?.outcome, (outcome) => outcome === "failed", "closed record");
+  await stop(worker);
+  await pause(false);
+  google.fault = {};
+  await startWorker();
+  await post("resume");
+  const done = await finished(id);
+  expect(done.status, done.error).toBe("completed");
+  expect(google.writes).toHaveLength(0);
+}, 150_000);
+
+journey("an unrelated message can't carry a chat approval, whatever the model returns", async () => {
+  scripts.gate = createThenFinish();
+  const id = await dispatch("gate");
+  const run = await awaiting(id);
+  outer.forceApprove = { run_id: id, question_id: run.question.id };
+  await post("turn", { id: crypto.randomUUID(), message: "what's the weather like" }, 202);
+  await until(session, (now) => !now.conversation.pending && !now.conversation.processing, "turn to settle");
+  outer.forceApprove = null;
+  const current = await task(id);
+  expect(current.question?.resolved_by).toBeUndefined();
+  expect(google.writes).toHaveLength(0);
+  await command("stop", id);
+  await finished(id);
+}, 120_000);
+
+journey("a sent email beyond the checked window is uncertain, never reported as not sent", async () => {
+  google.fault.dropBeforeCommit = true;
+  for (let i = 0; i < 10; i++) google.mail.push({ id: `old${i}`, labelIds: ["SENT"], payload: { headers: [{ name: "Message-Id", value: `<old${i}@example.test>` }] } });
+  scripts.window = (outputs) => outputs.length ? finish(`Outcome: ${outputs.at(-1).outcome}`, outputs, outputs.at(-1).outcome === "uncertain" ? ["Unknown."] : []) : { name: "email_send", args: { to: "sam@example.test", subject: "Window", body: "Hello" } };
+  const id = await dispatch("window");
+  await command("approve", id, (await awaiting(id)).question);
+  const asked = await awaiting(id, "input");
+  expect(writes(await operations(id))[0].outcome).toBe("uncertain");
+  await command("answer", id, asked.question, "Leave it.");
+  const done = await finished(id);
+  expect(done.status).toBe("failed");
+}, 150_000);
+
+journey("a decline and a correction in one sync stay declined", async () => {
+  let proposals = 0;
+  scripts.declineSteer = (outputs) => proposals++ < 2 ? { name: "calendar_create", args: lunch } : finish("Done.", outputs);
+  const id = await dispatch("declineSteer");
+  const run = await awaiting(id);
+  await stop(worker);
+  await command("decline", id, run.question);
+  await command("steer", id, undefined, "never mind the rest");
+  await startWorker();
+  const done = await finished(id);
+  expect(done.status, done.error).toBe("completed");
+  expect(google.writes).toHaveLength(0);
+  expect(writes(await operations(id)).map((op) => op.outcome)).toEqual(["declined", "failed"]);
 }, 150_000);
 
 journey("a chat approval comes through a user's turn and decides that exact question", async () => {

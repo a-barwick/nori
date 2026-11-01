@@ -25,6 +25,8 @@ To look something up, run `python3 docs/agent_map.py find "words"` first. It pri
 
 Nori's documentation lives in `docs/site/`. Check it first when you need to understand the system, and put new or updated documentation there.
 
+Write and review a feature's docs after its code is merged, as one change describing what's on `main`. Don't write `designed` pages first and mark them built later.
+
 **Every change to a page in `docs/site/` must follow these steps. A small edit, a status update, a fact fix and a page Austin asked for quickly all count.**
 
 1. Before you edit a page, load and follow the `write-docs` skill in `.agents/skills/`, which also requires `plain-writing`. Do this first, not after the edit.

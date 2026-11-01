@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -111,6 +112,27 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 		commands = append(commands, command)
 	}
 	return commands, nil
+}
+
+// approvalWords is a floor under the model's reading of a chat approval. Text in a task's
+// question or results reaches the model too, so an approval also needs a word of assent in
+// what the user actually sent.
+var approvalWords = regexp.MustCompile(`(?i)\b(yes|yep|yeah|yup|ok|okay|sure|approve|approved|go ahead|do it|send|add|move|confirm|proceed|looks good|sounds good)\b`)
+
+func approvalAllowed(commands []state.Command, inputs []state.ConversationInput) bool {
+	for _, command := range commands {
+		if command.Kind != state.CommandApprove {
+			continue
+		}
+		assent := false
+		for _, input := range inputs {
+			assent = assent || (input.IsUser() && approvalWords.MatchString(input.Text))
+		}
+		if !assent {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeCommandArguments(arguments string, target any) error {

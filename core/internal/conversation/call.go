@@ -417,8 +417,12 @@ func (r *Runner) finishCall(
 		if noDispatch && len(reply.Calls) != 0 {
 			err = fmt.Errorf("a turn without user input cannot authorize task commands")
 		}
+		failure := "The model returned invalid tool calls. No task commands were accepted."
+		if err == nil && !approvalAllowed(commands, t.Inputs) {
+			err = fmt.Errorf("an approval needs the user's own words")
+			failure = "Nothing was approved, because your message didn't read as a yes. Reply with a clear yes, or use the task's Approve button."
+		}
 		if err != nil {
-			failure := "The model returned invalid tool calls. No task commands were accepted."
 			attemptEnd(&t.Attempt, "error", failure)
 			t.Attempt.ProtocolInvalid = true
 			t.Attempt.Text = failure

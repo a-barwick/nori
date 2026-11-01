@@ -362,7 +362,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 						var ref string
 						err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
 							Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
-							Response: map[string]any{"skipped": true, "reason": "Execution admission changed before this write was prepared. Nothing was sent."},
+							Response: map[string]any{"skipped": true, "outcome": "failed", "operation_id": operation, "evidence_ref": operation, "reason": "Execution admission changed before this write was prepared. Nothing was sent."},
 						}).Get(ctx, &ref)
 						if err != nil {
 							return

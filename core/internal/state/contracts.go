@@ -40,6 +40,8 @@ type TaskEvidenceStore interface {
 	ReadHistory(ctx context.Context, runID, ref string) ([][]byte, error)
 	PutOperation(ctx context.Context, runID string, op OperationRecord) error
 	Operations(ctx context.Context, runID string) ([]OperationRecord, error)
+	// WriteOperations lists only the writes that needed approval, without reading the task's other operations.
+	WriteOperations(ctx context.Context, runID string) ([]OperationRecord, error)
 	PutCompletionCheck(ctx context.Context, runID string, check CompletionCheck) error
 	// ReadTaskSourceInputs resolves the exact retained user inputs a task's commands cite, instead of relying on the
 	// bounded recent-conversation view.

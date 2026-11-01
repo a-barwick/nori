@@ -86,6 +86,9 @@ func (s *Service) PrepareWrite(ctx context.Context, name string, args map[string
 // SendWrite runs a saved action. ctx must outlive a Stop: a write that started finishes
 // and reports what happened.
 func (s *Service) SendWrite(ctx context.Context, name string, spec map[string]string) (string, map[string]any) {
+	if s.targetChanged(spec) {
+		return WriteFailed, map[string]any{"applied": false, "reason": "The connected account or write calendar changed after the approval, so this was not sent."}
+	}
 	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
 	defer cancel()
 	switch name {
@@ -101,6 +104,9 @@ func (s *Service) SendWrite(ctx context.Context, name string, spec map[string]st
 
 // CheckWrite reads the provider and sends nothing.
 func (s *Service) CheckWrite(ctx context.Context, name string, spec map[string]string) (string, map[string]any) {
+	if s.targetChanged(spec) {
+		return WriteUncertain, map[string]any{"reason": "The connected account or write calendar changed, so the provider can't be read for this write."}
+	}
 	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
 	defer cancel()
 	switch name {
@@ -112,6 +118,16 @@ func (s *Service) CheckWrite(ctx context.Context, name string, spec map[string]s
 		return s.checkEmail(ctx, spec)
 	}
 	return WriteFailed, map[string]any{"error": "unknown write tool"}
+}
+
+// targetChanged compares the saved action with this worker's account and write calendar.
+func (s *Service) targetChanged(spec map[string]string) bool {
+	config := s.Capabilities.Calendar
+	if spec["account"] != config.Account {
+		return true
+	}
+	calendar, onCalendar := spec["calendar_id"]
+	return onCalendar && calendar != config.target()
 }
 
 // googleCall makes one provider request. Status 0 means no response arrived, so the

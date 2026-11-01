@@ -23,8 +23,8 @@ const (
 var eventIDs = base32.HexEncoding.WithPadding(base32.NoPadding)
 
 type savedEvent struct {
-	ID, ETag, Summary, Status string
-	Start, End                struct {
+	ID, ETag, Summary, Status, Description, Visibility string
+	Start, End                                         struct {
 		DateTime string `json:"dateTime"`
 		Date     string `json:"date"`
 	}
@@ -58,6 +58,11 @@ func parseEventTimes(start, end string) (time.Time, time.Time, error) {
 		return from, to, errors.New("end must be after start, at most 31 days later")
 	}
 	return from, to, nil
+}
+
+// Google omits the default visibility from an event.
+func sameVisibility(saved, want string) bool {
+	return saved == want || (saved == "" && want == "default")
 }
 
 func sameInstant(a, b string) bool {
@@ -98,7 +103,14 @@ func (s *Service) prepareEvent(ctx context.Context, title, start, end, descripti
 	client := config.client(ctx)
 	calendar := s.calendarName(ctx)
 	// The ID comes from the action, so a repeat, even from another task, finds the first event.
-	seed := strings.Join([]string{config.Account, config.target(), title, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339)}, "\n")
+	visibility, note := "default", ""
+	if private {
+		visibility, note = "private", "\nVisibility: private"
+	}
+	if description != "" {
+		note += "\nNote: " + description
+	}
+	seed := strings.Join([]string{config.Account, config.target(), title, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), description, visibility}, "\n")
 	for try := 0; try < maxEventIDTries; try++ {
 		sum := sha256.Sum256([]byte(fmt.Sprintf("%s\n%d", seed, try)))
 		id := strings.ToLower(eventIDs.EncodeToString(sum[:]))
@@ -117,18 +129,10 @@ func (s *Service) prepareEvent(ctx context.Context, title, start, end, descripti
 		case status != http.StatusNotFound:
 			return PreparedWrite{}, fmt.Errorf("the calendar returned HTTP %d", status)
 		}
-		visibility := "default"
-		note := ""
-		if private {
-			visibility, note = "private", "\nVisibility: private"
-		}
-		if description != "" {
-			note += "\nNote: " + description
-		}
 		return PreparedWrite{
 			Text: "Add this event?\nAccount: " + config.Account + "\nCalendar: " + calendar + "\nTitle: " + title +
 				"\nStart: " + s.when(from) + "\nEnd: " + s.when(to) + note + "\nNo one is invited or notified.",
-			Spec: map[string]string{"event_id": id, "calendar": calendar, "title": title, "start": from.Format(time.RFC3339), "end": to.Format(time.RFC3339), "description": description, "visibility": visibility},
+			Spec: map[string]string{"account": config.Account, "calendar_id": config.target(), "event_id": id, "calendar": calendar, "title": title, "start": from.Format(time.RFC3339), "end": to.Format(time.RFC3339), "description": description, "visibility": visibility},
 		}, nil
 	}
 	return PreparedWrite{}, errors.New("this event was added and deleted too many times")
@@ -168,7 +172,8 @@ func (s *Service) checkEvent(ctx context.Context, spec map[string]string, sent s
 		if sent != "" {
 			output["provider_status"] = sent
 		}
-		if event.Summary == spec["title"] && sameInstant(event.Start.DateTime, spec["start"]) && sameInstant(event.End.DateTime, spec["end"]) {
+		if event.Summary == spec["title"] && sameInstant(event.Start.DateTime, spec["start"]) && sameInstant(event.End.DateTime, spec["end"]) &&
+			event.Description == spec["description"] && sameVisibility(event.Visibility, spec["visibility"]) {
 			return WriteConfirmed, output
 		}
 		output["reason"] = "An event with this ID exists, but it doesn't match the approved action."
@@ -234,7 +239,7 @@ func (s *Service) prepareMove(ctx context.Context, id, start, end string) (Prepa
 		Text: "Move this event?\nAccount: " + config.Account + "\nCalendar: " + calendar + "\nTitle: " + event.Summary +
 			"\nFrom: " + s.when(oldStart) + " to " + s.when(oldEnd) + "\nTo: " + s.when(from) + " to " + s.when(to) +
 			"\nThis changes the calendar only. No one is notified.",
-		Spec: map[string]string{"event_id": id, "calendar": calendar, "title": event.Summary, "etag": event.ETag,
+		Spec: map[string]string{"account": config.Account, "calendar_id": config.target(), "event_id": id, "calendar": calendar, "title": event.Summary, "etag": event.ETag,
 			"old_start": oldStart.Format(time.RFC3339), "old_end": oldEnd.Format(time.RFC3339), "start": from.Format(time.RFC3339), "end": to.Format(time.RFC3339)},
 	}, nil
 }
@@ -273,6 +278,9 @@ func (s *Service) checkMove(ctx context.Context, spec map[string]string, sent st
 		output["provider_status"] = sent
 	}
 	switch {
+	case event.Status == "cancelled":
+		output["reason"] = "The event was deleted, so this move can't be confirmed."
+		return WriteUncertain, output
 	case sameInstant(event.Start.DateTime, spec["start"]) && sameInstant(event.End.DateTime, spec["end"]):
 		return WriteConfirmed, output
 	case sent == "" && sameInstant(event.Start.DateTime, spec["old_start"]) && sameInstant(event.End.DateTime, spec["old_end"]):
