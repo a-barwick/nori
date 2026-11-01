@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measures whether docs/agent_map.py helps agents. Each run gets a clean shallow clone with one feature set.
 
-Usage: python3 docs/agent_trial/run.py OUTPUT_DIR [--reps 3] [--workers 5] [--only QUESTION_ID] [--configs base,map]
+Usage: python3 docs/agent_trial/run.py OUTPUT_DIR [--reps 3] [--workers 5] [--only ID,ID] [--configs base,map]
 """
 import argparse
 import json
@@ -130,7 +130,7 @@ def main():
     questions = json.loads((ROOT / "docs/agent_trial/questions.json").read_text())
     jobs, clones = [], {}
     for question in questions:
-        if args.only and question["id"] != args.only:
+        if args.only and question["id"] not in args.only.split(","):
             continue
         for config in CONFIGS_FOR[question["feature"]]:
             if args.configs and config not in args.configs.split(","):

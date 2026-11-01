@@ -24,11 +24,11 @@
   <div class="card tight"><p class="keyline">Task Stop</p><p class="note">Ends one task and confirms the computer stopped.</p></div>
 </div></section>
 <section><h2>Operating rules</h2>
-<ul class="pts"><li>Cloud Run and Agent Runtime run with a minimum of 0 and a maximum of 1 instance.</li><li>When live work finishes, worker pools scale to zero and the computer stops.</li><li>Credentials are kept out of model context, logs and workflow history.</li></ul></section>
+<ul class="pts"><li>Cloud Run and Agent Runtime run with a minimum of 0 and a maximum of 1 instance.</li><li>When live work finishes, worker pools scale to zero and the computer stops.</li><li>The computer's guest receives no cloud credentials.</li></ul></section>
 <section><h2>Development inference</h2>
 <div class="card"><table><tr><th>Scope</th><th>Limit</th></tr><tr><td>One logical development chat</td><td>$0.25 initially, with $0.25 increases up to $1. An explicit approval can raise a chat to $2.</td></tr><tr><td>Shared model use</td><td>$2 per UTC day and $20 per UTC month. The Jev classifier is excluded.</td></tr></table></div>
 <p>OpenAI and OpenRouter calls reserve maximum request cost atomically before dispatch. Unknown usage keeps the reservation.</p>
 <details class="more"><summary>Provider pricing and enforcement</summary><p>Pricing checked October 31, 2026: Sol standard tier costs $2 per million input tokens, $0.10 per million cached input tokens and $10 per million output tokens. Nori disables implicit cache writes and refuses requests above the 272K input pricing threshold. Terra's ceilings remain $1 input and $5 output per million tokens.</p><p>Nori's adapters enforce the shared ledger, and calls outside them are not intercepted. The direct OpenAI project key has no native per-chat cap, and OpenRouter has a scoped native key limit.</p><p><a href="https://developers.openai.com/api/docs/models/gpt-6.1-sol">Sol pricing</a> · <code>core/internal/spend/client.go</code></p></details></section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/spend/client.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/spend/client.go</code> · <code>core/internal/computerd/server.go</code></p></details>
 </body>
 </html>

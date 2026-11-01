@@ -80,7 +80,10 @@
    "summary": "How Nori counts model spending, and the four controls that pause or stop work.",
    "status": "built",
    "code": [
-    "core/internal/spend/client.go"
+    "core/internal/agent/steps.go",
+    "core/internal/computerd/server.go",
+    "core/internal/spend/client.go",
+    "core/internal/task/workflow.go"
    ],
    "sections": [
     {
@@ -99,7 +102,7 @@
      "id": "operating-rules",
      "title": "Operating rules",
      "status": "built",
-     "words": 41
+     "words": 37
     },
     {
      "id": "development-inference",

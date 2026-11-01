@@ -90,6 +90,8 @@ You can't approve your own page. Start a new thread or subagent that didn't writ
 
 ## 9. Commit
 
+After the PASS, run `python3 docs/agent_map.py build` and `python3 docs/agent_map.py mark docs/site/your-page.html`. List every code file a page depends on in its Sources, because the staleness check only watches those files.
+
 End the commit message with these lines, and only if both are true:
 
 ```text
