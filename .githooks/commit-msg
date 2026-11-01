@@ -1,0 +1,23 @@
+#!/bin/sh
+# Rejects commits that change docs site pages without following the docs skills. See AGENTS.md.
+git rev-parse -q --verify MERGE_HEAD >/dev/null && exit 0
+
+pages=$(git diff --cached --name-only --diff-filter=ACMR -- 'docs/site/*.html' 'docs/site/*.js' 'docs/site/*.css')
+[ -n "$pages" ] || exit 0
+
+fail=0
+html=$(printf '%s\n' "$pages" | grep '\.html$')
+if [ -n "$html" ]; then
+  # shellcheck disable=SC2086
+  python3 .agents/skills/review-docs/scripts/check.py $html || fail=1
+fi
+for line in '^Docs-Skills: write-docs, plain-writing$' '^Docs-Review: PASS, review-docs in a separate thread$'; do
+  grep -q "$line" "$1" || { echo "Missing commit message line: $line" | tr -d '^$'; fail=1; }
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo
+  echo "Docs commit rejected. Load the write-docs skill, fix the page and get a PASS from review-docs in a separate thread."
+  echo "Add the lines above only if you did those steps. Don't use --no-verify. See Documentation in AGENTS.md."
+  exit 1
+fi

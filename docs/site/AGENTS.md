@@ -1,6 +1,6 @@
 # Writing Nori docs pages
 
-This folder is the Nori docs site. Read this file before adding or changing a page. Follow these rules unless the repo owner says otherwise.
+This folder is the Nori docs site. Don't change a page until you have loaded the `write-docs` skill. Read this file before adding or changing a page. Only the repo owner can waive a rule.
 
 ## What a page should feel like
 
@@ -10,6 +10,40 @@ A reader should get the idea from the picture, understand it from a few short li
 2. **Easy to scan.** Use short lists and tables. Keep paragraphs to one or two sentences.
 3. **Details stay hidden until asked for.** Put depth in a Data button or a `details.more` section.
 4. **Minimal UI.** Add a control or label only if the page needs it.
+
+## The standard
+
+`index.html` is the standard, and every page has to meet it. A page that breaks any rule below is rejected, including a page you only touched for a small fix.
+
+Checked by `.agents/skills/review-docs/scripts/check.py`:
+
+| # | Rule | Limit |
+| --- | --- | --- |
+| 1 | The lede says what this is, with no code | 20 words |
+| 2 | The visual comes straight after the lede | 30 words before it |
+| 3 | Visible text, outside `details` | 500 words |
+| 4 | All text on the page. Over this, split by topic | 800 words |
+| 5 | A sentence, and a paragraph or list item | 30 words, 3 sentences |
+| 6 | Code names in visible paragraphs and lists. The rest go in tables, Data buttons or `details.more` | 3 per page |
+| 7 | A heading, in plain words with no code | 6 words |
+| 8 | A diagram box | 15 words |
+| 9 | Implementation terms such as reconcile, bounded, heartbeat, fenced and admit, outside `details` | 0 |
+| 10 | Emphasis, stock phrases, em dashes, semicolons and "X, not Y", outside quoted user messages | 0 |
+
+`code.html`, `decisions.html`, `open-questions.html`, `reading.html`, `scenarios.html`, `sources.html` and `words.html` are reference pages, exempt from rules 2, 3, 4, 6 and 9. Only `scenarios.html` is exempt from rules 5 and 10, because its text is test data.
+
+Checked by the reviewer, who has to show the evidence in `review-docs`:
+
+| # | Rule | How to test it |
+| --- | --- | --- |
+| 11 | The picture teaches the idea | From the visual and lede alone, state how the system works in one sentence. |
+| 12 | The visual shows the mechanism | Each box is a system part, each unclear arrow says what passes, and a concept such as "Filters" isn't a box. |
+| 13 | A newcomer can follow it | A good engineer who has never seen Nori needs no other page to understand the visible text. |
+| 14 | One concrete example | A concept page follows a real-looking message or task, such as the Tucson weather task. |
+| 15 | Every fact earns its place | For each number, name and setting, say what a reader would do with it. Cut it if there's no answer. |
+| 16 | Every claim is true | Each number, name, order and status in visible text has a `file:line` in the code on `main`, or a Linear issue if it's planned. |
+| 17 | Built and planned are clear | Planned work is marked `designed`, and the page reads properly with it hidden. |
+| 18 | It looks like the first page | At 1440 px the title, lede and top of the visual are on the first screen. At 375 px nothing scrolls sideways or clips. |
 
 ## Writing rules
 
@@ -122,6 +156,6 @@ Merging to `main` doesn't publish the site. See Publishing.
 
 ## Publishing
 
-The site runs on the `nori-docs` Cloud Run service at docs.noribot.chat. `docs/deploy.sh` builds this folder, without this file, and deploys it. Don't deploy unfinished pages.
+The site runs on the `nori-docs` Cloud Run service at docs.noribot.chat. `docs/deploy.sh` builds this folder, without this file, and deploys it. It refuses to publish a changed page that fails `check.py`.
 
 `.github/workflows/docs.yml` can also publish this folder to GitHub Pages, but it stays off unless the repo variable `NORI_DOCS_PAGES` is `true`.
