@@ -1,4 +1,4 @@
-// Simulated data for each step on the request page. Endpoints and field names follow the code on main.
+// Simulated data for each step on the request page. Endpoints and field names follow the code.
 // Values are invented, and "…" marks a shortened value or fields left out to keep the example readable.
 const INPUT = '3f6c1e94-8a27-4d0b-9c35-71be20d4a6f1';
 const WEATHER = 'a41d7c02-5e3b-4f68-b2c9-0d8e6f13a975';

@@ -19,7 +19,7 @@
 <ul class="pts"><li>Build prompts or send context. It only sends the user's own words and references.</li><li>Parse model output.</li><li>Assume a command has finished because it was accepted.</li><li>Talk to a model provider directly.</li></ul></section>
 <section><h2>Each client</h2>
 <div class="card"><table class="tall"><tr><th>Client</th><th>State</th><th>Pages</th></tr>
-<tr><td>Web, including phone widths</td><td>Built</td><td><a href="web-client.html">Web client</a>, <a href="frontend.html">Web client architecture</a>, <a href="theme.html">Nova theme</a></td></tr>
+<tr><td>Web, including phone widths</td><td>Built</td><td><a href="web-client.html">Web client</a>, <a href="frontend.html">Web client architecture</a>, <a href="theme.html">Theme</a></td></tr>
 <tr class="designed"><td>CLI or native app</td><td>Not built</td><td>One new page in this group, with the same sections as Web client</td></tr>
 </table></div>
 <p>Rules that apply to every client belong on this page and on <a href="api.html">Service API</a>. A client's own page links to them.</p>
@@ -36,7 +36,7 @@
 <tr><td>Notifications</td><td>Decides whether to interrupt</td><td>None</td><td>Push, badge, tab title</td></tr>
 <tr><td>Offline</td><td>Idempotent commands, replayable log</td><td>Outbox and catch-up</td><td>Offline indicator</td></tr>
 <tr><td>Drafts and open panels</td><td>None</td><td>None</td><td>Per device</td></tr></table>
-<p>The service, kit and shell split is in <a href="https://github.com/a-barwick/nori/blob/main/docs/separation-of-concerns.md">docs/separation-of-concerns.md</a>.</p></details>
+<p>The service, kit and shell split is in <code>docs/separation-of-concerns.md</code>.</p></details>
 <details class="sources"><summary>Sources</summary><p><a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-209">AB-209</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
 </body>
 </html>

@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nova theme · Nori</title>
+<title>Theme · Nori</title>
 <link rel="stylesheet" href="site.css">
 <script src="site.js" defer></script>
 </head>
 <body>
-<h1>Nova theme</h1>
-<p class="lede">Nova is a white window on a lavender background, with one purple accent. It is light only, and only the web client uses it today.</p>
+<h1>Theme</h1>
+<p class="lede">The web client is a white window on a lavender background, with one purple accent. The theme is light only.</p>
 <div class="card"><div class="swatches">
 <div class="color"><i style="background:#eee5fc"></i><span>Backdrop<code>#eee5fc</code></span></div>
 <div class="color"><i style="background:#ffffff"></i><span>Canvas, surface<code>#ffffff</code></span></div>
@@ -42,7 +42,7 @@
 <ul class="pts">
 <li><code>globals.css</code> sets the values as CSS variables on <code>:root</code>. A Tailwind <code>@theme</code> block maps them to utilities such as <code>bg-accent</code>, <code>text-ink-2</code> and <code>rounded-tile</code>.</li>
 <li>The theme clears Tailwind's default colors, fonts, text sizes, radii, shadows and easings, so only these tokens produce utilities. A new token needs both entries.</li>
-<li>Plain <code>.nova-*</code> rules at the end of <code>globals.css</code> set the shell and win over utilities. For example, the composer has <code>rounded-[28px]</code> in its markup and renders at 16 px, and the thread is 920 px wide instead of 768 px.</li>
+<li>Plain shell rules at the end of <code>globals.css</code> set the shell and win over utilities. For example, the composer has <code>rounded-[28px]</code> in its markup and renders at 16 px, and the thread is 920 px wide instead of 768 px.</li>
 <li>With reduced motion on, arrivals and sheets only fade, and the mark doesn't move.</li>
 </ul>
 <details class="more"><summary>Defined but not used</summary>
@@ -71,6 +71,6 @@
 <tr><td><code>thinking</code></td><td>The client is busy, or a status line is showing.</td><td>The eyes loop every 2 seconds.</td></tr>
 </table></div>
 </section>
-<details class="sources"><summary>Sources</summary><p><a href="https://github.com/a-barwick/nori/blob/main/web/src/app/globals.css">globals.css</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/components/mark/NoriMark.tsx">NoriMark.tsx</a> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/src/app/globals.css</code> · <code>web/src/components/mark/NoriMark.tsx</code> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a></p></details>
 </body>
 </html>

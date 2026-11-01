@@ -82,7 +82,7 @@
 <div class="card"><table class="tall"><tr><th>File in <code>web/src/</code></th><th>Job</th></tr>
 <tr><td><code>app/page.tsx</code></td><td>Server entry. Chooses local agent mode, then renders <code>NoriApp</code>.</td></tr>
 <tr><td><code>components/runtime/NoriApp.tsx</code></td><td>Composes the screen. Converts the session into thread items, sets status text and owns panel, debug and document state.</td></tr>
-<tr><td><code>components/nova/NovaShell.tsx</code></td><td>Window frame and header.</td></tr>
+<tr><td>Shell component</td><td>Window frame and header.</td></tr>
 <tr><td><code>components/chat/Thread.tsx</code></td><td>Scrolling, follow-to-bottom, unread counts, older-message anchoring, documents and the status line.</td></tr>
 <tr><td><code>components/chat/Message.tsx</code></td><td>One bubble.</td></tr>
 <tr><td><code>components/chat/Markdown.tsx</code></td><td>Renders Markdown in a <code>bubble</code> or <code>page</code> variant, with copy buttons on page code blocks.</td></tr>
@@ -104,6 +104,6 @@
 </table></div>
 <p>The stack is Next.js 16, React 19, Tailwind 4 and Bun. Production runs the Docker image on Cloud Run with <code>NORI_RUNTIME_URL</code>, <code>IAP_AUDIENCE</code> and <code>NORI_APP_ORIGIN</code>. See <a href="deploy.html">Deployment</a>.</p>
 </section>
-<details class="sources"><summary>Sources</summary><p><a href="https://github.com/a-barwick/nori/tree/main/web/src">web/src</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/lib/runtime/useRuntime.ts">useRuntime.ts</a> · <a href="https://github.com/a-barwick/nori/blob/main/web/src/lib/runtime/server.ts">server.ts</a> · <a href="https://github.com/a-barwick/nori/blob/main/Makefile">Makefile</a> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/src</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/server.ts</code> · <code>Makefile</code> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
 </body>
 </html>

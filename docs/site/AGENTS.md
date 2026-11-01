@@ -44,7 +44,7 @@ Use the same words everywhere: outer loop, inner loop, runtime, task, dispatch, 
 <section><h2>A short heading</h2>
 <!-- Short lists, tables and cards. -->
 </section>
-<details class="sources"><summary>Sources</summary><p>Links to Linear issues and repo files.</p></details>
+<details class="sources"><summary>Sources</summary><p>Linear issue links and repo file paths.</p></details>
 </body>
 </html>
 ```
@@ -90,7 +90,9 @@ When sources disagree, the code on `main` decides what's built. Linear and `deci
 - Refer to models by role, such as the outer model, unless the page is about model choice. Selected models change.
 - If a source is out of date, follow the code and add the conflict to `sources.html`.
 - Date any cost or measurement, and say that it's a planning figure if it is.
-- Never include secrets, API keys, personal email addresses, or real user messages and task IDs. The site may be public.
+- Never include secrets, API keys, personal email addresses, or real user messages and task IDs. The site is public.
+- The repo is private. Cite repo files as plain paths in `<code>`, and don't link GitHub or mention branches, commits or pull requests.
+- Don't use the name Nova, the internal product around the web client. Say "the theme" or "the shell".
 - Link Linear issues as `AB-123`, and list the sources at the bottom of the page.
 - Record each new design decision in `decisions.html`, with its date and what was rejected. Add unresolved questions to `open-questions.html`, and remove them once settled.
 
