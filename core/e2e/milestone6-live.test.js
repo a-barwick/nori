@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -81,7 +81,9 @@ async function clearCalendar() {
 }
 
 function start(name, extra) {
-  const child = spawn(resolve(directory, name), [], { cwd: core, env: { ...process.env, ...extra }, stdio: process.env.NORI_M6_LOGS ? "inherit" : "ignore" });
+  const env = { ...process.env, ...extra };
+  if (!env.PORT) delete env.PORT;
+  const child = spawn(resolve(directory, name), [], { cwd: core, env, stdio: process.env.NORI_M6_LOGS ? "inherit" : "ignore" });
   child.exited = new Promise((done) => child.once("exit", done));
   return child;
 }
@@ -128,6 +130,11 @@ const known = async () => new Set((await session()).runs.map((run) => run.id));
 
 beforeAll(async () => {
   if (!live) return;
+  // Only this suite's own token refresh reads these. The binaries load the same file themselves.
+  for (const line of readFileSync(process.env.NORI_ENV_FILE, "utf8").split("\n")) {
+    const found = line.match(/^(?:export )?(GOOGLE_CALENDAR_\w+)=(.*)$/);
+    if (found) process.env[found[1]] = found[2].replace(/^["']|["']$/g, "");
+  }
   await refreshToken();
   directory = mkdtempSync(resolve(tmpdir(), "nori-m6-live-"));
   for (const name of ["nori-local", "nori-worker"]) {
