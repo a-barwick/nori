@@ -2,6 +2,8 @@
 
 This folder is the Nori docs site. Read this file before adding or changing a page. Follow these rules unless the repo owner says otherwise.
 
+Every change in this folder, however small, must use the `write-docs`, `review-docs` and `plain-writing` skills in `.agents/skills/`. Load them before the first edit, and finish the `review-docs` steps before merging or publishing.
+
 ## What a page should feel like
 
 A reader should get the idea from the picture, understand it from a few short lines, and only open details if they want them. Write the way you'd explain it to a friend who is a good engineer.
