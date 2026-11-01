@@ -10,27 +10,24 @@
 </head>
 <body>
 <h1>Following a request</h1>
-<p class="lede">Scroll through one message from send to result. The map shows which systems each step uses, and Data shows what they send.</p>
-<p>Take this message: “Check Saturday's weather in Tucson. Also find a time for dinner.” That's two
-  independent tasks in one conversation. At each handoff below, Nori saves a durable record first and
-  sends the notification afterwards.</p>
+<p class="lede">One message, “Check Saturday's weather in Tucson. Also find a time for dinner.”, followed from send to result.</p>
   <div class="trace">
   <div class="card">
     <div class="seq">
       <div class="step outer"><div class="n">1</div><div><b class="t">The user sends a message with a stable UUID</b><span class="boundary">accepted</span>
-        <ul class="pts"><li><code>POST /api/turn</code> writes the input to the Firestore inbox in the same transaction as the user message.</li><li>The API returns 202 only once the save and the wake scheduling are both confirmed.</li><li>Retrying with the same UUID does nothing. Sending the same UUID with different text returns a 409.</li><li>From this point the browser can close.</li></ul></div></div>
+        <ul class="pts"><li>The agent service saves the input to the Firestore inbox and schedules a wake, then returns 202.</li><li>Retrying with the same UUID does nothing.</li></ul></div></div>
       <div class="step outer"><div class="n">2</div><div><b class="t">An outer turn claims the batch</b>
-        <ul class="pts"><li>The local loop (every 2 seconds) or a Cloud Tasks wake starts <code>Process</code>.</li><li><code>Process</code> acquires the conversation lease with a fence token and takes everything pending, in the order it was accepted.</li><li>Follow-up messages that arrive during the turn are saved and wait their turn, and the sender never gets a busy error.</li></ul></div></div>
-      <div class="step outer"><div class="n">3</div><div><b class="t">Jev classifies and the model decides</b>
-        <ul class="pts"><li>Jev marks which intents are present. This is only a hint and doesn't grant permission for anything. <a href="classification.html">Classifying a message</a>.</li><li>The outer model receives the history, the task records and the hint. It then replies in chat, dispatches the two tasks in one response, or does both. See <a href="outer-model-failure.html">Outer model failure</a>.</li><li>Its usage row is written before the provider call, so a crash can't lose track of a request we were billed for.</li></ul></div></div>
+        <ul class="pts"><li>A Cloud Tasks wake starts the turn, or the local loop in development.</li><li>The turn claims the conversation, so only it can write, and takes the next pending inputs in order.</li><li>A follow-up during the turn restarts it with all the inputs, up to 3 times.</li></ul></div></div>
+      <div class="step outer"><div class="n">3</div><div><b class="t">Jev adds a hint and the outer model replies</b>
+        <ul class="pts"><li>Jev marks which intents are present. The hint grants no permission. See <a href="classification.html">Classifying a message</a>.</li><li>The outer model receives the history, task records and hint. It returns a reply and two dispatches.</li><li>The usage row is written before the provider call, so a crash can't lose a billed request.</li></ul></div></div>
       <div class="step"><div class="n">4</div><div><b class="t">Commands are validated together, then accepted</b><span class="boundary">applied (later)</span>
-        <ul class="pts"><li>Every tool call in the batch is validated before any of them is accepted.</li><li>Each <code>dispatch</code> becomes a <code>start</code> command whose ID is also the task ID for the life of the task. It's saved with its run record and delivery intent in one transaction.</li><li>After a final check for newer input, the reply is published in the same transaction that consumes the inbox batch.</li></ul></div></div>
+        <ul class="pts"><li>Every command in the batch is validated before any of them is accepted.</li><li>Each dispatch becomes a start command whose ID is also the task ID.</li><li>The reply is published in the same transaction that consumes the inbox batch.</li></ul></div></div>
       <div class="step inner"><div class="n">5</div><div><b class="t">The relay starts one Temporal workflow per task</b>
-        <ul class="pts"><li>The delivery relay starts <code>nori-task-v3</code>, or signals a workflow that already exists.</li><li>A signal is only a wakeup, because the positions in Firestore are authoritative.</li><li>The user has already received the acknowledgment by now, and the weather and dinner tasks run independently.</li></ul></div></div>
+        <ul class="pts"><li>The runtime's relay, which delivers saved commands, starts a <code>nori-task-v3</code> workflow or signals one that exists.</li><li>A signal only wakes the workflow. Firestore holds the ordered commands.</li><li>The weather and dinner tasks now run independently.</li></ul></div></div>
       <div class="step inner"><div class="n">6</div><div><b class="t">Inner loops work, wait and finish</b><span class="boundary">completed</span>
-        <ul class="pts"><li>Each task reads the instructions it has incorporated, calls its model, runs admitted tool operations on the computer, and saves the matching results.</li><li>A message like “after seven” steers only the dinner task.</li><li>If a task needs to ask for a location, it parks and starts an outer turn while the other task carries on.</li><li>A task proposes its answer with <code>complete</code>. Record checks and a Jev verdict decide whether it can finish. See <a href="completion.html">Finishing a task</a>.</li></ul></div></div>
+        <ul class="pts"><li>Each task calls its model, runs tools on the computer and saves the results.</li><li>A message like “after seven” steers only the dinner task.</li><li>A task that needs an answer waits and starts an outer turn, while the other task carries on.</li><li>Record checks and a Jev verdict decide whether a task can finish. See <a href="completion.html">Finishing a task</a>.</li></ul></div></div>
       <div class="step outer"><div class="n">7</div><div><b class="t">The result comes back as a conversation event</b>
-        <ul class="pts"><li>The saved result goes into the same durable inbox as a task notification.</li><li>An outer turn without task tools explains it to the user.</li><li>If new user input is waiting, publication holds until that input has been routed, so a result can't get ahead of a correction that's still pending.</li></ul></div></div>
+        <ul class="pts"><li>The saved result goes into the same inbox as a task notification.</li><li>An outer turn without task tools explains it to the user.</li><li>If new user input is waiting, publication holds until that input has been routed.</li></ul></div></div>
     </div>
   </div>
     <aside class="trace-map" aria-label="Which systems the current step uses">
@@ -59,14 +56,15 @@
       </svg>
     </aside>
   </div>
+<p>At each handoff, Nori saves a record first and sends the notification afterwards. Data shows what each step sends.</p>
 <section><h2>Follow-ups and controls</h2>
 <div class="card"><table class="tall"><tr><th>Input</th><th>What should happen</th></tr>
 <tr><td>“Did you send it?”</td><td>Answer from the receipt, or dispatch a check. Never send it again.</td></tr>
 <tr><td>“Check that appointment again”</td><td>Steer the open task, or start a new task if it has finished.</td></tr>
 <tr><td>“Stop that”</td><td>Resolve which task is meant, and ask if it's unclear. The Stop button already has a target.</td></tr>
 <tr class="designed"><td>Approval button</td><td>Validate the exact pending operation and arguments before resuming.<span class="tag design">designed</span></td></tr>
-<tr><td>The app closes</td><td>Tasks keep running.</td></tr>
-<tr><td>The backend restarts</td><td>Resume from saved state and reconcile uncertain outcomes before any retry.</td></tr>
+<tr><td>The browser closes</td><td>Tasks keep running.</td></tr>
+<tr><td>The backend restarts</td><td>Resume from saved state, and check uncertain outcomes before any retry.</td></tr>
 <tr class="designed"><td>“Remind me tomorrow”</td><td>Save the time and delivery. A saved timer doesn't show the reminder arrived.<span class="tag design">designed</span></td></tr>
 </table></div></section>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/wake/http.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/classifier.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/state/conversation.go</code> · <code>core/internal/task/client.go</code></p></details>

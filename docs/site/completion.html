@@ -9,34 +9,35 @@
 </head>
 <body>
 <h1>Finishing a task</h1>
-<p class="lede">Milestone 4 adds saved-evidence checks and a Jev verdict before a task can finish.</p>
-<p>New tasks use <code>nori-task-v3</code>. Retained older workflows keep their original completion behavior.</p>
+<p class="lede">A task finishes only after checks on its saved records and a verdict from the Jev classifier.</p>
 <div class="card"><div class="flow">
 <div class="node inner"><b>The model calls <code>complete(answer, evidence, unmet)</code></b><small>A plain text answer no longer finishes a task.</small></div><div class="arrow">↓</div>
-<div class="node inner"><b>The records are checked</b><small>No unread steers. Every tool call has a result. Evidence references resolve to saved tool results. Claimed effects are confirmed.</small></div><div class="arrow">↓</div>
-<div class="node inner"><b>Jev checks the answer against the instructions</b><small>“Does this answer satisfy every part of the original request and every later instruction? Yes, partly, or no.” A yes needs at least 0.8 confidence.</small></div><div class="arrow">↓</div>
-<div class="node decide inner">What's the most the task tried to do?</div>
-<div class="branch"><div class="node inner"><b>Only reads</b><small>Allow up to two read-only corrections. Then publish a partial answer with the remaining gaps.</small></div><div class="node inner"><b>Wrote or sent something</b><small>Ask the user. Never repeat the action automatically.</small></div></div>
+<div class="node inner"><b>The records are checked</b><small>No unread steers. Every tool call has a result. Evidence resolves.</small></div><div class="arrow">↓</div>
+<div class="node inner"><b>Jev checks the answer</b><small>“Does this answer satisfy every instruction?” Yes needs 0.8 confidence.</small></div><div class="arrow">↓</div>
+<div class="node decide inner">Did the checks pass with a confident yes?</div>
+<div class="branch"><div class="node inner"><b>Yes</b><small>The task publishes its answer and completes.</small></div><div class="node decide inner">No: did it run anything except reads?</div></div><div class="arrow">↓ <span class="lbl">after no</span></div>
+<div class="branch"><div class="node inner"><b>Only reads</b><small>Up to two read-only corrections, then the answer is published as incomplete.</small></div><div class="node wait"><b>Anything else</b><small>Ask the user. The action is never repeated automatically.</small></div></div>
 </div></div>
 <section><h2>The decision table</h2>
-<p>The row comes from what the task attempted, read from its records. “Check the weather and add a picnic” counts as a write once it tries the calendar.</p>
-<div class="card"><table class="tall"><tr><th>Most it tried</th><th>Confident yes</th><th>Unsure yes</th><th>Partly, no, or failed checks</th></tr>
-<tr><td>Read only</td><td>Publish</td><td>Read-only correction</td><td>Read-only correction</td></tr>
-<tr><td>Reversible write</td><td>Publish</td><td>Ask the user</td><td>Ask the user</td></tr>
-<tr><td>Sensitive send or purchase</td><td>Publish</td><td>Ask the user</td><td>Ask the user</td></tr>
-</table></div><p>If Jev is unavailable, publish the proposed answer as unverified and explain what could not be checked. The task is not completed.</p></section>
+<p>The row comes from what the task attempted, read from its records. “Check the weather and save it to a file” counts as anything else once it runs a shell command.</p>
+<div class="card"><table class="tall"><tr><th>Most it tried</th><th>Confident yes</th><th>Unsure, partly, no or failed checks</th></tr>
+<tr><td>Browser reads only</td><td>Publish</td><td>Read-only correction</td></tr>
+<tr><td>Anything else</td><td>Publish</td><td>Ask the user</td></tr>
+</table></div>
+<p class="designed"><span class="tag design">designed</span> The planned action policy splits anything else into reversible writes and sensitive sends.</p><p>If Jev is unavailable, publish the proposed answer as unverified and explain what could not be checked. The task is not completed.</p></section>
 <section><h2>What this catches</h2>
-<div class="card"><p><span class="say me">What's the weather in Phoenix?</span> <span class="say me">Actually, Tucson.</span></p>
+<div class="card"><p><span class="say me">What's the weather in Phoenix?</span> <span class="say me">No, Tucson.</span></p>
 <p class="note">An answer about Phoenix can't be published, because the instructions changed while it was being written.</p></div>
-<div class="card"><p><span class="say me">Did you send it?</span></p>
+<div class="card designed"><p><span class="say me">Did you send it?</span> <span class="tag design">designed · AB-172</span></p>
 <p class="note">Nori answers from the receipt, or checks with the provider. A status question never sends anything again.</p></div>
-<ul class="pts"><li>Every check is logged so the 0.8 threshold can be tuned from the logged results.</li><li>The check covers completeness. It doesn't prove every fact in the answer is true.</li></ul>
+<ul class="pts"><li>Every check is logged so the 0.8 threshold can be tuned from the logged results.</li><li>The check covers completeness. It doesn't prove each fact in the answer.</li></ul>
 </section>
 <details class="more"><summary>Evidence and telemetry</summary>
+<p>New tasks use <code>nori-task-v3</code>. Older workflows keep their original completion behavior. Evidence references must resolve to saved tool results, and claimed effects must be confirmed.</p>
 <p>Each check reads the current request, accepted corrections, ordered tool calls, input answers and cited saved results. Asking which bill to read before opening it can be checked from that order.</p>
-<p>Private history references bind the task, parent and exact bytes. Temporal carries references instead of the cumulative transcript. Old workflows retain their original behavior.</p>
-<p>The check saves its verdict, confidence, revision and position. Sentry and Arize receive correlated spans and operational attributes; private history and credentials are excluded by default.</p>
-<p>On October 31, 2026, the local Sol/Terra/Jev suite passed bill selection, corrected Tucson weather with a held answer, and a failed command that waits for direction. The bill and weather results passed saved-record checks and Jev verification. Local fixtures are synthetic; they do not establish deployed acceptance.</p>
+<p>Private history references bind the task, parent and exact bytes. Temporal carries references instead of the cumulative transcript.</p>
+<p>The check saves its verdict, confidence, revision and position. Sentry and Arize receive correlated spans and operational attributes. Private history and credentials are excluded by default.</p>
+<p>On October 31, 2026, the local Sol/Terra/Jev suite passed bill selection, corrected Tucson weather with a held answer, and a failed command that waits for direction. The bill and weather results passed saved-record checks and Jev verification. These local fixtures do not establish deployed acceptance.</p>
 <p>Local collector checks exercise both exporter paths. They do not establish ingestion by the hosted Sentry or Arize projects.</p>
 </details>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/task/completion.go</code> · <a href="https://linear.app/a-barwick/issue/AB-152">AB-152</a> · <a href="https://linear.app/a-barwick/issue/AB-214">AB-214</a> · <a href="https://linear.app/a-barwick/issue/AB-219">AB-219</a></p></details>

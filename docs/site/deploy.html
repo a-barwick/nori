@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>Deployment</h1>
-<p class="lede">Everything runs on GCP and Temporal Cloud, and scales to zero when idle. Only the owner's account can reach the web client and agent service.</p>
+<p class="lede">Everything runs on GCP and Temporal Cloud. Only the owner's account can reach the web client and agent service.</p>
 <div class="card"><table class="tall"><tr><th>Piece</th><th>Runs on</th><th>When idle</th></tr>
 <tr><td>Web client</td><td>Cloud Run, at noribot.chat</td><td>Scales to zero</td></tr>
 <tr><td>Docs site</td><td>Cloud Run, at docs.noribot.chat</td><td>Scales to zero</td></tr>
@@ -23,30 +23,19 @@
 </table></div>
 <div class="grid2">
 <div class="card tight"><p class="keyline">Who can reach it</p><p class="note">Google IAP plus an exact owner email check. Signed-out requests and forged owner headers are rejected.</p></div>
-<div class="card tight"><p class="keyline">Request-driven workers</p><p class="note">A worker runs as a bounded slice per Cloud Tasks wake, on authenticated Cloud Run services. Older worker pools stay at zero.</p></div>
+<div class="card tight"><p class="keyline">Request-driven workers</p><p class="note">A wake is a Cloud Tasks request that starts a process. Each wake runs a worker for a limited slice of time, on authenticated Cloud Run services.</p></div>
 </div>
 <section><h2>Pausing</h2>
-<div class="branch"><div class="node"><b>What pause does</b><small>Blocks new execution, scales workers to zero and stops the computer.</small></div><div class="node"><b>What keeps working</b><small>The website, chat, saved history and any waiting tasks. Nothing is cancelled.</small></div></div>
-</section>
+<ul class="pts"><li>Pause blocks new execution, scales workers to zero and stops the computer.</li><li>The website, chat, saved history and waiting tasks keep working. Nothing is cancelled.</li></ul></section>
 <section><h2>Releases</h2>
 <ul class="pts"><li>CI/CD is off. When requested, <code>make deploy</code> releases the latest code from the owner's Mac and leaves Nori paused until <code>make unpause</code>.</li><li>Worker builds are immutable and pinned, so running tasks stay on code that's compatible with them.</li><li><code>core/infrastructure/release/</code> holds the release and smoke test scripts.</li></ul></section>
 <section><h2>Backups</h2>
 <ul class="pts"><li>Production's Firestore records and the computer's data disk get a daily copy, kept for seven days. The boot disk and sandbox have no scheduled copies.</li><li>Restores go into a new database or a new disk, never over the live ones.</li><li>On October 31, 2026, restored Firestore collection counts matched the export, and a disk restored from the snapshot reached ready state. Files inside the restored disk weren't checked.</li></ul></section>
-<section><h2>Seeing what happened</h2>
-<p>The debug view shows saved records for each reply. Sentry and Arize exports are optional, and a failed export doesn't fail the request. See <a href="observability.html">Observability</a>.</p></section>
-<section><h2>What it costs</h2>
-<p>These are planning rates from October 24, 2026. They aren't measurements or caps.</p>
-<div class="card"><table class="tall"><tr><th>Usage per month</th><th>About</th></tr>
-<tr><td>10,000 Temporal actions</td><td>$0.55</td></tr><tr><td>100,000 Temporal actions</td><td>$5.50</td></tr>
-<tr><td>Cloud Run worker, 10 hours</td><td>$0.45</td></tr><tr><td>Cloud Run worker, 100 hours</td><td>$4.49</td></tr>
-<tr><td>Retained 20 GiB computer disk</td><td>$0.80</td></tr></table>
-<p class="note">Model calls and running compute are extra. GCP budget alerts don't cap Temporal, so a separate daily check alerts on Temporal spend.</p></div></section>
-<details class="more"><summary>Trial evidence for the computer</summary>
-<ul class="pts"><li>A file, an installed package, a browser cookie and local storage all survived a guest restart and a move to a new host.</li><li>This covers graceful restarts. RAM, live tabs and sudden crashes aren't covered.</li></ul></details>
-<details class="more"><summary>Network and credential checks</summary>
+<section><h2>Spend alerts</h2>
+<p>GCP budget alerts don't cap Temporal, so a separate daily check alerts on Temporal spend. <a href="budgets.html">Budgets and controls</a> lists the model call limits, and <a href="observability.html">Observability</a> covers traces.</p></section>
+<details class="more"><summary>Computer trials and options</summary>
 <p>These are checks from the October 2026 trials. They don't establish production hardening.</p>
-<ul class="pts"><li>The computer has public IPv4 egress through host NAT, and guest IPv6 is off.</li><li>Guest attempts to reach cloud metadata and host SSH were rejected.</li><li>Chromium's debugging port binds to guest loopback, and host SSH accepts only IAP's source range.</li><li>The GCE host has no service account.</li><li>Credentials stay in a mode-600 <code>.env</code>, or in Secret Manager for hosted services. They're kept out of images, logs, model context and workflow history.</li></ul></details>
-<details class="more"><summary>Options considered for the computer</summary>
+<ul class="pts"><li>A file, an installed package, a browser cookie and local storage all survived a guest restart and a move to a new host. RAM, live tabs and sudden crashes aren't covered.</li><li>The computer has public IPv4 egress through host NAT, and guest IPv6 is off.</li><li>Guest attempts to reach cloud metadata and host SSH were rejected.</li><li>Chromium's debugging port binds to guest loopback, and host SSH accepts only IAP's source range.</li><li>The GCE host's service account can only read release objects.</li></ul>
 <table class="tall"><tr><th>Option</th><th>Assessment</th></tr>
 <tr><td>Firecracker on a GCE host</td><td>Chosen. Smallest footprint and direct lifecycle control, but the guest image and startup are ours to own.</td></tr>
 <tr><td>GKE Sandbox</td><td>Managed, but adds a cluster and node pools.</td></tr>

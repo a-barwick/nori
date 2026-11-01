@@ -26,7 +26,7 @@ BOX_LIMIT = 15
 LONG_PAGES = {"scenarios", "decisions", "reading", "sources", "words", "code", "open-questions"}
 QUOTED_DATA_PAGES = {"scenarios"}
 VISUALS = {"table", "svg", "img", "pre"}
-VISUAL_CLASSES = {"flow", "states", "shots", "map", "say", "branch", "node"}
+VISUAL_CLASSES = {"flow", "states", "shots", "map", "say", "branch", "branch3", "branch4", "node", "seq", "road", "swatches"}
 RAW = {"code", "pre", "script", "style", "svg"}
 VOID = {"br", "hr", "img", "input", "link", "meta", "path", "circle", "rect", "line", "polygon"}
 

@@ -9,21 +9,20 @@
 </head>
 <body>
 <h1>Observability</h1>
-<p class="lede">Each Nori process records traces, errors, logs and metrics, filters them, and exports them to Sentry and Arize when those are configured.</p>
+<p class="lede">Each Nori process records traces, errors, logs and metrics, and exports them to Sentry and Arize when configured.</p>
 <div class="card"><div class="flow" role="img" aria-label="One trace follows a message from the browser through the web server, agent service, outer loop and inner loop to the computer">
-<div class="node"><b>Browser</b> <span class="mono">nori.submit_to_reply</span><small>Starts when the user sends “Check Saturday's weather in Tucson”. Ends at the reply, an error or 15 minutes.</small></div>
+<div class="node"><b>Browser</b><small>Starts when the user sends “Check Saturday's weather in Tucson”.</small></div>
 <div class="arrow">↓ <span class="lbl">traceparent header</span></div>
 <div class="node"><b>Web server</b><small>Builds new trace headers and forwards no other browser headers.</small></div>
 <div class="arrow">↓ <span class="lbl">traceparent header</span></div>
-<div class="node"><b>Agent service</b> <span class="mono">HTTP /api/turn</span>, <span class="mono">conversation.accept</span><small>Saves the traceparent with the input in Firestore.</small></div>
+<div class="node"><b>Agent service</b><small>Saves the traceparent with the input in Firestore.</small></div>
 <div class="arrow">↓ <span class="lbl">saved traceparent</span></div>
-<div class="node outer"><b>Outer loop</b> <span class="mono">conversation.turn</span>, <span class="mono">conversation.acceptance_to_reply</span><small>Continues the trace from the saved input. The dispatch saves the traceparent on the task.</small></div>
+<div class="node outer"><b>Outer loop</b><small>Continues the saved trace, and the dispatch saves it on the task.</small></div>
 <div class="arrow">↓ <span class="lbl">saved traceparent</span></div>
-<div class="node inner"><b>Inner loop</b> <span class="mono">task.model</span>, <span class="mono">task.tool</span>, <span class="mono">task.acceptance_to_terminal</span><small>Each Temporal activity reads the traceparent from the task.</small></div>
+<div class="node inner"><b>Inner loop</b><small>Each Temporal activity reads the traceparent from the task.</small></div>
 <div class="arrow">↓ <span class="lbl">traceparent header</span></div>
-<div class="node computer"><b>Computer</b> <span class="mono">computer.navigate</span>, <span class="mono">HTTP /navigate</span><small>The host and the guest each export as their own service.</small></div>
-</div>
-<ul class="pts note"><li>If a turn claims several messages, the first sampled message's trace becomes the parent. The others and the queue wake become links.</li><li>A sampled steer moves later activities to the steer's trace, with a link back to the trace that started the task.</li></ul></div>
+<div class="node computer"><b>Computer</b><small>The host and guest each export as their own service.</small></div>
+</div></div>
 <section><h2>Where each signal goes</h2>
 <div class="card"><table class="tall"><tr><th>Signal</th><th>Sentry</th><th>Arize</th><th>Process stderr</th></tr>
 <tr><td>Spans</td><td>All spans in sampled traces</td><td>Spans in sampled traces with <code>openinference.span.kind</code></td><td>None</td></tr>
@@ -56,14 +55,19 @@
 </section>
 <section><h2>Sampling and failures</h2>
 <ul class="pts">
-<li>The browser and each process sample 5% of new traces by default. A child span follows its parent's decision, so a trace is kept or dropped as a whole.</li>
-<li>Successful health checks and session polling create no request spans. A 5xx response on those routes is still captured as an error.</li>
+<li>The browser and each process sample 5% of new traces by default.</li>
 <li>Each export has a 2-second timeout and no retries.</li>
-<li>A failed export writes one line to stderr, at most once a minute for each destination and reason.</li>
-<li>With no destination configured, processes sample nothing and still write logs to stderr.</li>
+<li>A failed export writes one line to stderr, at most once a minute.</li>
 </ul>
 </section>
-<details class="more"><summary>Settings</summary>
+<details class="more"><summary>Span names, trace links and settings</summary>
+<table class="tall"><tr><th>Process</th><th>Spans</th></tr>
+<tr><td>Browser</td><td><code>nori.submit_to_reply</code>, ending at the reply, an error or 15 minutes</td></tr>
+<tr><td>Agent service</td><td><code>HTTP /api/turn</code>, <code>conversation.accept</code></td></tr>
+<tr><td>Outer loop</td><td><code>conversation.turn</code>, <code>conversation.acceptance_to_reply</code></td></tr>
+<tr><td>Inner loop</td><td><code>task.model</code>, <code>task.tool</code>, <code>task.acceptance_to_terminal</code></td></tr>
+<tr><td>Computer</td><td><code>computer.navigate</code>, <code>HTTP /navigate</code></td></tr></table>
+<ul class="pts"><li>If a turn claims several messages, the first sampled message's trace becomes the parent. The others and the queue wake become links.</li><li>A sampled steer moves later activities to the steer's trace, with a link back to the trace that started the task.</li><li>A child span follows its parent's decision, so a trace is kept or dropped as a whole.</li><li>Successful health checks and session polling create no request spans. A 5xx response on those routes is still captured as an error.</li><li>With no destination configured, processes sample nothing and still write logs to stderr.</li></ul>
 <div class="card"><table class="tall"><tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
 <tr><td><code>SENTRY_DSN</code></td><td>Empty</td><td>Turns on Sentry for Go processes.</td></tr>
 <tr><td><code>NEXT_PUBLIC_SENTRY_DSN</code>, <code>SENTRY_WEB_DSN</code></td><td>Empty</td><td>Turn on Sentry for the web client. The second overrides the first on its server.</td></tr>

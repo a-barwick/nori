@@ -9,12 +9,12 @@
 </head>
 <body>
 <h1>Web client architecture</h1>
-<p class="lede">The browser talks to a Next.js server, and that server talks to the agent service. The client never calls a model.</p>
+<p class="lede">The browser talks to a Next.js server, and that server talks to the agent service.</p>
 <section><h2>Request path</h2>
 <div class="card"><div class="flow">
 <div class="node"><b>React client</b><small><code>NoriApp</code> and its components. All state comes from one hook, <code>useRuntime</code>.</small></div>
 <div class="arrow">↓ <span class="lbl">same-origin POST /api/{operation}</span></div>
-<div class="node"><b>Next.js server</b><small><code>proxy.ts</code> checks the owner on every private route. <code>lib/runtime/server.ts</code> checks the origin and the operation, then adds a Google token.</small></div>
+<div class="node"><b>Next.js server</b><small>Checks the owner, origin and operation, then adds a Google token.</small></div>
 <div class="arrow">↓ <span class="lbl">POST /api/{operation} with server credentials</span></div>
 <div class="node"><b>Agent service</b><small>Saves commands and returns snapshots. See <a href="api.html">Service API</a> for the endpoints.</small></div>
 </div></div>
@@ -25,11 +25,11 @@
 <tr><td><code>artifact</code></td><td>Fetches a screenshot as PNG bytes.</td></tr>
 <tr><td><code>trace</code></td><td>Fetches task steps when a debug row is open, every 3 seconds while the task runs.</td></tr>
 </table></div>
-<p>The server also forwards <code>input</code> and <code>cancel</code>, but the client doesn't call them.</p>
+<p>The client never calls a model.</p>
 </section>
 <section><h2>Sending a message</h2>
 <div class="card"><div class="flow">
-<div class="node"><b>Enter</b><small><code>send()</code> creates a UUID and saves the message to <code>sessionStorage</code>.</small></div>
+<div class="node"><b>Enter</b><small>“Check Saturday's weather in Tucson” gets a UUID and is saved locally.</small></div>
 <div class="arrow">↓</div>
 <div class="node"><b>POST /api/turn</b><small>The agent service returns a snapshot.</small></div>
 <div class="arrow">↓</div>
@@ -41,7 +41,7 @@
 <li>If a response is lost, Retry sends the same UUID. Pending messages also resend after a reload, a reconnect or a manual refresh.</li>
 <li>A message can be up to 8,192 UTF-8 bytes, and up to 20 messages can be pending.</li>
 <li>Task commands work the same way, with their own stored list. A command clears when the agent service accepts it or a snapshot shows the task has applied it.</li>
-<li>A <code>4xx</code> marks a command as rejected, and the panel offers Edit. Any other failure offers Retry.</li>
+<li>A 4xx response marks a command as rejected, and the panel offers Edit. Any other failure offers Retry.</li>
 </ul>
 </section>
 <section><h2>Polling</h2>
@@ -50,35 +50,35 @@
 <tr><td>Nothing is in progress</td><td>Doesn't poll.</td></tr>
 <tr><td>The tab is hidden</td><td>Stops polling, then fetches once when the tab is visible again.</td></tr>
 <tr><td>The browser comes back online</td><td>Fetches once.</td></tr>
-<tr><td>A request fails</td><td>Stops polling and shows the error, with a link to refresh.</td></tr>
+<tr><td>A network error or a 429, 502, 503 or 504</td><td>Retries up to 3 times, after 2, 4 and 8 seconds.</td></tr>
+<tr><td>Those retries fail, or another error returns</td><td>Stops polling and shows the error, with a link to refresh.</td></tr>
 </table></div>
 <p>While the client is idle with the tab open, a new message from Nori doesn't appear until a refresh. Refresh history and returning to the tab both fetch a snapshot.</p>
-<details class="more"><summary>How snapshots merge</summary>
+</section>
+<details class="more"><summary>Merging, sign-in, telemetry, components and builds</summary>
+<h3>How snapshots merge</h3>
 <ul class="pts">
 <li>A snapshot with an older conversation revision, or the same revision from an older request, is ignored.</li>
 <li>Messages and traces merge by ID, so older pages stay loaded.</li>
 <li>A saved task only replaces the one in memory if its position, event sequence, applied commands, status and Stop flag haven't moved backward.</li>
 </ul>
-</details>
-<details class="more"><summary>Sign-in and limits</summary>
+<h3>Sign-in and limits</h3>
 <ul class="pts">
-<li>Production sits behind Google IAP. The server verifies the signed assertion and the owner's email, and ignores unsigned identity headers.</li>
+<li>Production requires Google IAP sign-in. The server verifies the signed assertion and the owner's email, and ignores unsigned identity headers.</li>
 <li>POST routes also require a matching <code>Origin</code>. Browser credentials are never forwarded to the agent service.</li>
+<li>The server also forwards <code>input</code> and <code>cancel</code>, but the client doesn't call them.</li>
 <li>The hosted route allows bodies up to 128,000 characters and waits up to 145 seconds. The agent service URL must use HTTPS.</li>
 <li>In development on loopback, the owner check passes. If <code>NORI_LOCAL_AGENT_URL</code> is set, the client uses <code>/api/agent/{operation}</code> instead, with limits of 64,000 characters and 100 seconds.</li>
 <li><code>/api/health</code> is the only API route with no owner check.</li>
 </ul>
-</details>
-<details class="more"><summary>Observability</summary>
+<h3>Telemetry</h3>
 <ul class="pts">
 <li>The layout writes public Sentry settings to <code>data-nori-observability</code> at request time, so one image can move between environments.</li>
 <li><code>useRuntime</code> records the time from submit to reply as <code>nori.submit_to_reply</code>, with a 15-minute timeout, and sends trace headers on <code>turn</code>.</li>
 <li>Filters in <code>lib/observability/privacy.ts</code> run before events, spans, logs and metrics are sent. The <code>sentry-tunnel</code> route checks the owner and strips request headers before forwarding.</li>
 <li><a href="observability.html">Observability</a> covers the full trace and where each signal goes.</li>
 </ul>
-</details>
-</section>
-<section><h2>Components</h2>
+<h3>Components</h3>
 <div class="card"><table class="tall"><tr><th>File in <code>web/src/</code></th><th>Job</th></tr>
 <tr><td><code>app/page.tsx</code></td><td>Server entry. Chooses local agent mode, then renders <code>NoriApp</code>.</td></tr>
 <tr><td><code>components/runtime/NoriApp.tsx</code></td><td>Composes the screen. Converts the session into thread items, sets status text and owns panel, debug and document state.</td></tr>
@@ -93,17 +93,14 @@
 <tr><td><code>components/mark/NoriMark.tsx</code></td><td>The mark, plus <code>Medallion</code>, which gives it a fixed box.</td></tr>
 <tr><td><code>components/ui/primitives.tsx</code></td><td><code>Button</code>, <code>IconButton</code>, <code>SectionHeader</code>.</td></tr>
 </table></div>
-<p class="note">Radix supplies dialogs and tooltips, lucide supplies icons, and <code>react-markdown</code> with <code>remark-gfm</code> renders Markdown.</p>
-</section>
-<section><h2>Run and build</h2>
+<h3>Run and build</h3>
 <div class="card"><table class="tall"><tr><th>Command, from the repo root</th><th>What it does</th></tr>
 <tr><td><code>make dev</code></td><td>Runs the client on port 3210 with the local Go agent.</td></tr>
 <tr><td><code>make web</code></td><td>Runs only the client. With no agent service configured, it shows the connection error and disables Send.</td></tr>
-<tr><td><code>make web-build</code></td><td>Builds the Next.js standalone output.</td></tr>
 <tr><td><code>make check</code></td><td>Runs the repo checks before a merge.</td></tr>
 </table></div>
-<p>The stack is Next.js 16, React 19, Tailwind 4 and Bun. Production runs the Docker image on Cloud Run with <code>NORI_RUNTIME_URL</code>, <code>IAP_AUDIENCE</code> and <code>NORI_APP_ORIGIN</code>. See <a href="deploy.html">Deployment</a>.</p>
-</section>
+<p>The stack is Next.js 16, React 19, Tailwind 4 and Bun. Production runs the Docker image on Cloud Run with <code>NORI_RUNTIME_URL</code> and <code>IAP_AUDIENCE</code>. See <a href="deploy.html">Deployment</a>.</p>
+</details>
 <details class="sources"><summary>Sources</summary><p><code>web/src</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/server.ts</code> · <code>Makefile</code> · <a href="https://linear.app/a-barwick/issue/AB-182">AB-182</a> · <a href="https://linear.app/a-barwick/issue/AB-218">AB-218</a></p></details>
 </body>
 </html>
