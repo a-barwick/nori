@@ -1,0 +1,1257 @@
+{
+ "pages": [
+  {
+   "page": "docs/site/api.html",
+   "title": "Service API",
+   "summary": "Clients send messages and task commands to the agent service over HTTP, and read back snapshots.",
+   "status": "built",
+   "code": [
+    "core/internal/wake/http.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 18
+    },
+    {
+     "id": "endpoints-today",
+     "title": "Endpoints today",
+     "status": "built",
+     "words": 137
+    },
+    {
+     "id": "the-protocol-for-many-clients",
+     "title": "The protocol for many clients",
+     "status": "designed",
+     "words": 237
+    }
+   ]
+  },
+  {
+   "page": "docs/site/authority.html",
+   "title": "Approvals and writes",
+   "summary": "Nori can read freely. Before it changes anything outside its own computer, the user approves the exact action.",
+   "status": "planned",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 94
+    },
+    {
+     "id": "every-tool-declares-what-it-does",
+     "title": "Every tool declares what it does",
+     "status": "built",
+     "words": 52
+    },
+    {
+     "id": "what-an-approval-covers",
+     "title": "What an approval covers",
+     "status": "built",
+     "words": 43
+    },
+    {
+     "id": "what-can-t-grant-permission",
+     "title": "What can't grant permission",
+     "status": "built",
+     "words": 32
+    },
+    {
+     "id": "recording-what-happened",
+     "title": "Recording what happened",
+     "status": "built",
+     "words": 45
+    },
+    {
+     "id": "still-open",
+     "title": "Still open",
+     "status": "built",
+     "words": 20
+    }
+   ]
+  },
+  {
+   "page": "docs/site/budgets.html",
+   "title": "Budgets and controls",
+   "summary": "How Nori counts model spending, and the four controls that pause or stop work.",
+   "status": "built",
+   "code": [
+    "core/internal/spend/client.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 96
+    },
+    {
+     "id": "four-controls",
+     "title": "Four controls",
+     "status": "built",
+     "words": 65
+    },
+    {
+     "id": "operating-rules",
+     "title": "Operating rules",
+     "status": "built",
+     "words": 41
+    },
+    {
+     "id": "development-inference",
+     "title": "Development inference",
+     "status": "built",
+     "words": 149
+    }
+   ]
+  },
+  {
+   "page": "docs/site/classification.html",
+   "title": "Classifying a message",
+   "summary": "Jev, a classifier model, marks the intents in the current user messages. The outer model gets them as a hint.",
+   "status": "built",
+   "code": [
+    "core/internal/conversation/call.go",
+    "core/internal/conversation/classifier.go",
+    "core/internal/conversation/model.go",
+    "core/internal/state/conversation.go",
+    "core/internal/wake/http.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 142
+    },
+    {
+     "id": "the-nine-questions",
+     "title": "The nine questions",
+     "status": "built",
+     "words": 190
+    },
+    {
+     "id": "what-jev-receives",
+     "title": "What Jev receives",
+     "status": "built",
+     "words": 104
+    },
+    {
+     "id": "what-the-outer-model-receives",
+     "title": "What the outer model receives",
+     "status": "built",
+     "words": 91
+    }
+   ]
+  },
+  {
+   "page": "docs/site/clients.html",
+   "title": "Clients",
+   "summary": "If two clients could disagree about something, the service owns it. A client only owns its own screen.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 91
+    },
+    {
+     "id": "what-a-client-never-does",
+     "title": "What a client never does",
+     "status": "built",
+     "words": 42
+    },
+    {
+     "id": "each-client",
+     "title": "Each client",
+     "status": "built",
+     "words": 221
+    }
+   ]
+  },
+  {
+   "page": "docs/site/code.html",
+   "title": "Code map",
+   "summary": "Where to look when you want to read or change something.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 319
+    }
+   ]
+  },
+  {
+   "page": "docs/site/completion.html",
+   "title": "Finishing a task",
+   "summary": "A task finishes only after checks on its saved records and a verdict from the Jev classifier.",
+   "status": "built",
+   "code": [
+    "core/internal/task/completion.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 118
+    },
+    {
+     "id": "the-decision-table",
+     "title": "The decision table",
+     "status": "built",
+     "words": 95
+    },
+    {
+     "id": "what-this-catches",
+     "title": "What this catches",
+     "status": "built",
+     "words": 242
+    }
+   ]
+  },
+  {
+   "page": "docs/site/computer.html",
+   "title": "Persistent computer",
+   "summary": "A small Linux machine that tasks use for shell and browser work. It keeps its files between runs.",
+   "status": "built",
+   "code": [
+    "core/cmd/computer-agent/main.go",
+    "core/internal/computer/computer.go",
+    "core/internal/computerd/"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 262
+    }
+   ]
+  },
+  {
+   "page": "docs/site/contract.html",
+   "title": "How the loops talk",
+   "summary": "The outer loop sends commands in, and tasks send events back. Nothing else crosses between them.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 96
+    },
+    {
+     "id": "the-rules",
+     "title": "The rules",
+     "status": "built",
+     "words": 91
+    },
+    {
+     "id": "outer-loop-tools",
+     "title": "Outer loop tools",
+     "status": "built",
+     "words": 76
+    },
+    {
+     "id": "inner-loop-control-tools",
+     "title": "Inner loop control tools",
+     "status": "built",
+     "words": 60
+    },
+    {
+     "id": "events",
+     "title": "Events",
+     "status": "built",
+     "words": 61
+    },
+    {
+     "id": "subtasks-designed-milestone-7",
+     "title": "Subtasks designed · milestone 7",
+     "status": "designed",
+     "words": 140
+    },
+    {
+     "id": "interrupting-a-task",
+     "title": "Interrupting a task",
+     "status": "built",
+     "words": 53
+    }
+   ]
+  },
+  {
+   "page": "docs/site/decisions.html",
+   "title": "Decisions",
+   "summary": "What was decided, why, and what was turned down. All dates are 2026.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 14
+    },
+    {
+     "id": "the-loops",
+     "title": "The loops",
+     "status": "built",
+     "words": 290
+    },
+    {
+     "id": "milestone-4-choices",
+     "title": "Milestone 4 choices",
+     "status": "built",
+     "words": 172
+    },
+    {
+     "id": "subtasks",
+     "title": "Subtasks",
+     "status": "built",
+     "words": 95
+    },
+    {
+     "id": "finishing-and-budgets",
+     "title": "Finishing and budgets",
+     "status": "built",
+     "words": 125
+    },
+    {
+     "id": "runtime-and-infrastructure",
+     "title": "Runtime and infrastructure",
+     "status": "built",
+     "words": 245
+    },
+    {
+     "id": "models",
+     "title": "Models",
+     "status": "built",
+     "words": 54
+    },
+    {
+     "id": "clients",
+     "title": "Clients",
+     "status": "built",
+     "words": 119
+    },
+    {
+     "id": "planning",
+     "title": "Planning",
+     "status": "built",
+     "words": 37
+    },
+    {
+     "id": "older-statements-that-no-longer-apply",
+     "title": "Older statements that no longer apply",
+     "status": "built",
+     "words": 121
+    }
+   ]
+  },
+  {
+   "page": "docs/site/deploy.html",
+   "title": "Deployment",
+   "summary": "Everything runs on GCP and Temporal Cloud. Only the owner's account can reach the web client and agent service.",
+   "status": "built",
+   "code": [
+    "core/infrastructure/README.md",
+    "core/infrastructure/poc/terraform/backups.tf"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 177
+    },
+    {
+     "id": "pausing",
+     "title": "Pausing",
+     "status": "built",
+     "words": 25
+    },
+    {
+     "id": "releases",
+     "title": "Releases",
+     "status": "built",
+     "words": 46
+    },
+    {
+     "id": "backups",
+     "title": "Backups",
+     "status": "built",
+     "words": 68
+    },
+    {
+     "id": "spend-alerts",
+     "title": "Spend alerts",
+     "status": "built",
+     "words": 192
+    }
+   ]
+  },
+  {
+   "page": "docs/site/frontend.html",
+   "title": "Web client architecture",
+   "summary": "The browser talks to a Next.js server, and that server talks to the agent service.",
+   "status": "built",
+   "code": [
+    "Makefile",
+    "web/src",
+    "web/src/lib/runtime/server.ts",
+    "web/src/lib/runtime/useRuntime.ts"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 18
+    },
+    {
+     "id": "request-path",
+     "title": "Request path",
+     "status": "built",
+     "words": 119
+    },
+    {
+     "id": "sending-a-message",
+     "title": "Sending a message",
+     "status": "built",
+     "words": 136
+    },
+    {
+     "id": "polling",
+     "title": "Polling",
+     "status": "built",
+     "words": 595
+    }
+   ]
+  },
+  {
+   "page": "docs/site/index.html",
+   "title": "How Nori works",
+   "summary": "Nori is a personal assistant. One long conversation stays open while background tasks run.",
+   "status": "built",
+   "code": [
+    "core/internal/task/completion.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 130
+    },
+    {
+     "id": "an-example-conversation",
+     "title": "An example conversation",
+     "status": "built",
+     "words": 54
+    },
+    {
+     "id": "where-it-stands",
+     "title": "Where it stands",
+     "status": "built",
+     "words": 82
+    },
+    {
+     "id": "where-to-go-next",
+     "title": "Where to go next",
+     "status": "built",
+     "words": 42
+    }
+   ]
+  },
+  {
+   "page": "docs/site/inner-loop.html",
+   "title": "Inner loop",
+   "summary": "One loop per task: call the model, run the tools it asks for, save the results, repeat.",
+   "status": "built",
+   "code": [
+    "core/cmd/nori-worker/main.go",
+    "core/internal/agent/steps.go",
+    "core/internal/task/activities.go",
+    "core/internal/task/workflow.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 152
+    },
+    {
+     "id": "when-instructions-change",
+     "title": "When instructions change",
+     "status": "built",
+     "words": 51
+    },
+    {
+     "id": "when-something-fails",
+     "title": "When something fails",
+     "status": "built",
+     "words": 335
+    }
+   ]
+  },
+  {
+   "page": "docs/site/memory.html",
+   "title": "Memory and context",
+   "summary": "Each loop starts with a small context, built from recent messages or its own instructions.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 100
+    },
+    {
+     "id": "five-kinds-of-memory",
+     "title": "Five kinds of memory",
+     "status": "designed",
+     "words": 74
+    },
+    {
+     "id": "how-far-does-a-correction-reach",
+     "title": "How far does a correction reach?",
+     "status": "designed",
+     "words": 33
+    },
+    {
+     "id": "what-every-memory-carries",
+     "title": "What every memory carries",
+     "status": "designed",
+     "words": 41
+    },
+    {
+     "id": "keeping-context-small",
+     "title": "Keeping context small",
+     "status": "designed",
+     "words": 54
+    },
+    {
+     "id": "still-open",
+     "title": "Still open",
+     "status": "designed",
+     "words": 16
+    }
+   ]
+  },
+  {
+   "page": "docs/site/observability.html",
+   "title": "Observability",
+   "summary": "Each Nori process records traces, errors, logs and metrics, and exports them to Sentry and Arize when configured.",
+   "status": "built",
+   "code": [
+    "core/cmd/computer-agent/main.go",
+    "core/infrastructure/poc/terraform/observability.tf",
+    "core/internal/computer/computer.go",
+    "core/internal/conversation/telemetry.go",
+    "core/internal/observability",
+    "core/internal/state/task_google.go",
+    "core/internal/task/telemetry.go",
+    "web/src/app/sentry-tunnel/route.ts",
+    "web/src/components/dev/DebugBlock.tsx",
+    "web/src/lib/observability",
+    "web/src/lib/runtime/useRuntime.ts"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 103
+    },
+    {
+     "id": "where-each-signal-goes",
+     "title": "Where each signal goes",
+     "status": "built",
+     "words": 91
+    },
+    {
+     "id": "where-to-look",
+     "title": "Where to look",
+     "status": "built",
+     "words": 98
+    },
+    {
+     "id": "what-s-removed-before-export",
+     "title": "What's removed before export",
+     "status": "built",
+     "words": 145
+    },
+    {
+     "id": "sampling-and-failures",
+     "title": "Sampling and failures",
+     "status": "built",
+     "words": 269
+    }
+   ]
+  },
+  {
+   "page": "docs/site/open-questions.html",
+   "title": "Open questions",
+   "summary": "Design questions that aren't settled yet. Settled ones move to Decisions.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 13
+    },
+    {
+     "id": "tasks",
+     "title": "Tasks",
+     "status": "built",
+     "words": 115
+    },
+    {
+     "id": "conversation",
+     "title": "Conversation",
+     "status": "built",
+     "words": 67
+    },
+    {
+     "id": "tools-and-approvals",
+     "title": "Tools and approvals",
+     "status": "built",
+     "words": 126
+    },
+    {
+     "id": "memory-and-results",
+     "title": "Memory and results",
+     "status": "built",
+     "words": 69
+    },
+    {
+     "id": "schedules-and-proactive-messages",
+     "title": "Schedules and proactive messages",
+     "status": "built",
+     "words": 82
+    },
+    {
+     "id": "clients-and-operations",
+     "title": "Clients and operations",
+     "status": "built",
+     "words": 99
+    }
+   ]
+  },
+  {
+   "page": "docs/site/outer-loop.html",
+   "title": "Outer loop",
+   "summary": "The part of Nori that handles the conversation. It runs one short turn at a time and dispatches tasks.",
+   "status": "built",
+   "code": [
+    "core/internal/conversation/model.go",
+    "core/internal/conversation/response.go",
+    "core/internal/conversation/runner.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 141
+    },
+    {
+     "id": "batching-rules",
+     "title": "Batching rules",
+     "status": "built",
+     "words": 86
+    },
+    {
+     "id": "one-message-several-jobs",
+     "title": "One message, several jobs",
+     "status": "built",
+     "words": 208
+    }
+   ]
+  },
+  {
+   "page": "docs/site/outer-model-failure.html",
+   "title": "When the outer model call fails",
+   "summary": "A failed outer model call accepts no task commands, and publishes an error reply unless newer input restarted the turn.",
+   "status": "built",
+   "code": [
+    "core/internal/conversation/call.go",
+    "core/internal/conversation/model.go",
+    "core/internal/conversation/runner.go",
+    "core/internal/state/conversation.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 79
+    },
+    {
+     "id": "what-the-user-sees",
+     "title": "What the user sees",
+     "status": "built",
+     "words": 65
+    },
+    {
+     "id": "what-stays-saved",
+     "title": "What stays saved",
+     "status": "built",
+     "words": 156
+    }
+   ]
+  },
+  {
+   "page": "docs/site/product.html",
+   "title": "What Nori should do",
+   "summary": "Fourteen things the finished product should do, and the 106 conversations we use to measure progress.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 290
+    },
+    {
+     "id": "how-we-measure-progress",
+     "title": "How we measure progress",
+     "status": "built",
+     "words": 198
+    }
+   ]
+  },
+  {
+   "page": "docs/site/reading.html",
+   "title": "Reading list",
+   "summary": "Public material on how similar assistants are built, checked on October 25, 2026.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 68
+    },
+    {
+     "id": "meta-muse",
+     "title": "Meta Muse",
+     "status": "built",
+     "words": 166
+    },
+    {
+     "id": "grok-bot",
+     "title": "Grok Bot",
+     "status": "built",
+     "words": 211
+    },
+    {
+     "id": "openai-dots",
+     "title": "OpenAI dots",
+     "status": "built",
+     "words": 203
+    },
+    {
+     "id": "what-nori-takes-from-this",
+     "title": "What Nori takes from this",
+     "status": "built",
+     "words": 87
+    }
+   ]
+  },
+  {
+   "page": "docs/site/records.html",
+   "title": "Records and delivery",
+   "summary": "What gets saved, where, and how a saved command reaches Temporal.",
+   "status": "built",
+   "code": [
+    "core/internal/conversation/runner.go",
+    "core/internal/state/",
+    "core/internal/task/client.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 247
+    },
+    {
+     "id": "what-happens-when-something-dies",
+     "title": "What happens when something dies",
+     "status": "built",
+     "words": 256
+    }
+   ]
+  },
+  {
+   "page": "docs/site/request.html",
+   "title": "Following a request",
+   "summary": "One message, “Check Saturday's weather in Tucson. Also find a time for dinner.”, followed from send to result.",
+   "status": "built",
+   "code": [
+    "core/internal/conversation/call.go",
+    "core/internal/conversation/classifier.go",
+    "core/internal/conversation/model.go",
+    "core/internal/state/conversation.go",
+    "core/internal/task/client.go",
+    "core/internal/wake/http.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 419
+    },
+    {
+     "id": "follow-ups-and-controls",
+     "title": "Follow-ups and controls",
+     "status": "built",
+     "words": 118
+    }
+   ]
+  },
+  {
+   "page": "docs/site/results.html",
+   "title": "Results and files",
+   "summary": "A saved result should reopen later, and its records should show whether it reached the user.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 45
+    },
+    {
+     "id": "what-a-result-records",
+     "title": "What a result records",
+     "status": "designed",
+     "words": 35
+    },
+    {
+     "id": "finding-it-later",
+     "title": "Finding it later",
+     "status": "designed",
+     "words": 35
+    },
+    {
+     "id": "where-things-live",
+     "title": "Where things live",
+     "status": "built",
+     "words": 55
+    },
+    {
+     "id": "also-in-this-milestone",
+     "title": "Also in this milestone",
+     "status": "designed",
+     "words": 32
+    },
+    {
+     "id": "still-open",
+     "title": "Still open",
+     "status": "designed",
+     "words": 15
+    }
+   ]
+  },
+  {
+   "page": "docs/site/roadmap.html",
+   "title": "Roadmap",
+   "summary": "Twelve milestones, in order. A milestone is done when it works on noribot.chat against its scenarios.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 127
+    },
+    {
+     "id": "what-each-piece-adds",
+     "title": "What each piece adds",
+     "status": "built",
+     "words": 467
+    }
+   ]
+  },
+  {
+   "page": "docs/site/scenarios.html",
+   "title": "Scenarios",
+   "summary": "The 106 written conversations used to measure progress. They contain 223 user messages in 16 categories and 12 writing styles.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 83
+    },
+    {
+     "id": "what-s-in-a-scenario",
+     "title": "What's in a scenario",
+     "status": "built",
+     "words": 56
+    },
+    {
+     "id": "shared-setup",
+     "title": "Shared setup",
+     "status": "built",
+     "words": 64
+    },
+    {
+     "id": "running-a-conversation",
+     "title": "Running a conversation",
+     "status": "built",
+     "words": 221
+    },
+    {
+     "id": "scoring",
+     "title": "Scoring",
+     "status": "built",
+     "words": 933
+    },
+    {
+     "id": "conversation-and-personal-support",
+     "title": "Conversation and personal support",
+     "status": "built",
+     "words": 409
+    },
+    {
+     "id": "information-weather-and-local-questions",
+     "title": "Information weather and local questions",
+     "status": "built",
+     "words": 464
+    },
+    {
+     "id": "calendar-and-availability",
+     "title": "Calendar and availability",
+     "status": "built",
+     "words": 584
+    },
+    {
+     "id": "email-and-messages",
+     "title": "Email and messages",
+     "status": "built",
+     "words": 648
+    },
+    {
+     "id": "writing-and-creative-work",
+     "title": "Writing and creative work",
+     "status": "built",
+     "words": 392
+    },
+    {
+     "id": "research-shopping-and-decisions",
+     "title": "Research shopping and decisions",
+     "status": "built",
+     "words": 515
+    },
+    {
+     "id": "travel-and-outings",
+     "title": "Travel and outings",
+     "status": "built",
+     "words": 469
+    },
+    {
+     "id": "household-food-and-life-admin",
+     "title": "Household food and life admin",
+     "status": "built",
+     "words": 430
+    },
+    {
+     "id": "files-documents-and-data",
+     "title": "Files documents and data",
+     "status": "built",
+     "words": 416
+    },
+    {
+     "id": "learning-and-troubleshooting",
+     "title": "Learning and troubleshooting",
+     "status": "built",
+     "words": 437
+    },
+    {
+     "id": "reminders-and-scheduled-work",
+     "title": "Reminders and scheduled work",
+     "status": "built",
+     "words": 668
+    },
+    {
+     "id": "monitoring-and-conditional-tasks",
+     "title": "Monitoring and conditional tasks",
+     "status": "built",
+     "words": 420
+    },
+    {
+     "id": "memory-and-personalization",
+     "title": "Memory and personalization",
+     "status": "built",
+     "words": 354
+    },
+    {
+     "id": "active-work-interruptions-and-recovery",
+     "title": "Active work interruptions and recovery",
+     "status": "built",
+     "words": 491
+    },
+    {
+     "id": "privacy-uncertainty-and-consequential-requests",
+     "title": "Privacy uncertainty and consequential requests",
+     "status": "built",
+     "words": 313
+    },
+    {
+     "id": "nori-task-execution",
+     "title": "Nori task execution",
+     "status": "built",
+     "words": 585
+    }
+   ]
+  },
+  {
+   "page": "docs/site/schedules.html",
+   "title": "Schedules and proactive help",
+   "summary": "A reminder runs at the time the user asked for. A proactive offer starts from a trigger, with no request.",
+   "status": "planned",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 72
+    },
+    {
+     "id": "requested-and-proactive",
+     "title": "Requested and proactive",
+     "status": "built",
+     "words": 45
+    },
+    {
+     "id": "task-results-aren-t-proactive-messages",
+     "title": "Task results aren't proactive messages",
+     "status": "built",
+     "words": 25
+    },
+    {
+     "id": "what-the-rest-need",
+     "title": "What the rest need",
+     "status": "built",
+     "words": 51
+    },
+    {
+     "id": "proactive-help-is-still-being-designed",
+     "title": "Proactive help is still being designed",
+     "status": "built",
+     "words": 50
+    }
+   ]
+  },
+  {
+   "page": "docs/site/sources.html",
+   "title": "Sources",
+   "summary": "The design is on this site. Linear tracks the work. When they disagree, the code decides what's running today.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 27
+    },
+    {
+     "id": "other-files-in-the-repo",
+     "title": "Other files in the repo",
+     "status": "built",
+     "words": 41
+    },
+    {
+     "id": "known-mismatches",
+     "title": "Known mismatches",
+     "status": "built",
+     "words": 35
+    }
+   ]
+  },
+  {
+   "page": "docs/site/system.html",
+   "title": "Service overview",
+   "summary": "Every box Nori runs on, and what each one is responsible for.",
+   "status": "built",
+   "code": [
+    "core/internal/conversation/call.go",
+    "core/internal/task/client.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 283
+    }
+   ]
+  },
+  {
+   "page": "docs/site/tasks.html",
+   "title": "Task lifecycle",
+   "summary": "A task keeps one ID for its whole life, from dispatch until it finishes, fails or is stopped.",
+   "status": "built",
+   "code": [
+    "core/internal/conversation/commands.go",
+    "core/internal/state/",
+    "core/internal/task/workflow.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 115
+    },
+    {
+     "id": "moving-between-states",
+     "title": "Moving between states",
+     "status": "built",
+     "words": 73
+    },
+    {
+     "id": "commands",
+     "title": "Commands",
+     "status": "built",
+     "words": 81
+    },
+    {
+     "id": "steering-keeps-what-still-applies",
+     "title": "Steering keeps what still applies",
+     "status": "built",
+     "words": 39
+    }
+   ]
+  },
+  {
+   "page": "docs/site/theme.html",
+   "title": "Theme",
+   "summary": "The web client is a white window on a lavender background, with one purple accent. The theme is light only.",
+   "status": "built",
+   "code": [
+    "web/src/app/globals.css",
+    "web/src/components/mark/NoriMark.tsx"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 150
+    },
+    {
+     "id": "the-mark",
+     "title": "The mark",
+     "status": "built",
+     "words": 229
+    }
+   ]
+  },
+  {
+   "page": "docs/site/tools.html",
+   "title": "Tool discovery",
+   "summary": "How the inner loop will find and load only the tools a task needs.",
+   "status": "planned",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 132
+    },
+    {
+     "id": "an-example",
+     "title": "An example",
+     "status": "built",
+     "words": 61
+    },
+    {
+     "id": "rules-that-don-t-change",
+     "title": "Rules that don't change",
+     "status": "built",
+     "words": 47
+    }
+   ]
+  },
+  {
+   "page": "docs/site/web-client.html",
+   "title": "Web client",
+   "summary": "A Next.js app that shows one conversation with Nori and the activity of its tasks.",
+   "status": "built",
+   "code": [
+    "web/src/components",
+    "web/src/lib/hybrid.ts",
+    "web/src/lib/units.ts"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 48
+    },
+    {
+     "id": "the-screen",
+     "title": "The screen",
+     "status": "built",
+     "words": 166
+    },
+    {
+     "id": "status-and-task-labels",
+     "title": "Status and task labels",
+     "status": "built",
+     "words": 180
+    },
+    {
+     "id": "bubbles-and-documents",
+     "title": "Bubbles and documents",
+     "status": "built",
+     "words": 147
+    }
+   ]
+  },
+  {
+   "page": "docs/site/words.html",
+   "title": "Words we use",
+   "summary": "The same words mean the same things on every page.",
+   "status": "built",
+   "code": [],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 535
+    }
+   ]
+  }
+ ]
+}
