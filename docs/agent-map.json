@@ -514,7 +514,7 @@
   },
   {
    "page": "docs/site/index.html",
-   "title": "How Nori works",
+   "title": "Nori Dokyu",
    "summary": "Nori is a personal assistant. One long conversation stays open while background tasks run.",
    "status": "built",
    "code": [
@@ -526,7 +526,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 130
+     "words": 128
     },
     {
      "id": "an-example-conversation",
