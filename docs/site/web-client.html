@@ -42,12 +42,14 @@
 <tr><td>Waiting for your answer</td><td>Running with a question</td><td>Answer question, Stop task, Send task update</td></tr>
 <tr><td>Waiting for budget approval</td><td>Running with a budget question</td><td>Continue task, Stop task, Send task update</td></tr>
 <tr><td>Waiting for your approval</td><td>Running with an action to approve</td><td>Approve, Decline, Stop task, Send task update</td></tr>
-<tr><td>Answer accepted, Budget accepted, Decision saved</td><td>Running, and the question is resolved</td><td>Stop task, Send task update</td></tr>
+<tr><td>Asking for separate work</td><td>Running with a work request</td><td>Answer question, Stop task, Send task update</td></tr>
+<tr><td>Answer accepted, Budget accepted, Decision saved, Waiting for its subtasks</td><td>Running, and the question is resolved</td><td>Stop task, Send task update</td></tr>
 <tr><td>Stopping…</td><td>Running, and Stop was requested</td><td>None until the agent service confirms</td></tr>
 <tr><td>Completed, Failed, Stopped</td><td>Finished</td><td>None</td></tr>
 </table></div>
-<p>The thread status line can also say that task execution is paused. Chat still works during a pause. See <a href="tasks.html">Task lifecycle</a>.</p>
+<p>The thread status line can also say that task execution is paused. Chat still works during a pause.</p>
 <p>A task update sent while an action waits voids that approval request. See <a href="authority.html">Approvals and writes</a>.</p>
+<p>A <a href="contract.html#subtasks">subtask's</a> label starts with “Subtask”.</p>
 </section>
 <section><h2>Bubbles and documents</h2>
 <p>The client picks the layout from the Markdown of each saved reply. User messages are always bubbles.</p>
