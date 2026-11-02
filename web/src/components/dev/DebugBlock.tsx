@@ -49,7 +49,7 @@ export function DebugBlock({ info }: { info: DebugInfo }) {
         <summary className={cn(SUMMARY, "mt-1 border-t border-hairline pt-1")}>
           <Chevron /><span>task</span>
           <span className="min-w-0 truncate"><Status status={run.status} /> <span title={run.id}>{run.id}</span>{run.revision !== undefined && <> · rev {run.revision}</>}</span>
-          <span>{run.spent_usd !== undefined ? usd(run.spent_usd) : "cost unknown"}{run.cost_unknown && run.spent_usd !== undefined && " + unknown"}</span>
+          <span>{run.spent_usd !== undefined ? usd(run.spent_usd + (run.subtask_spent_usd ?? 0)) : "cost unknown"}{run.cost_unknown && run.spent_usd !== undefined && " + unknown"}</span>
         </summary>
         <div className={DETAIL}>
           <KV rows={[
