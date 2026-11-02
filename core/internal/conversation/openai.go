@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -117,9 +118,26 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	reply.Usage.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		logRefusal(res)
 		return reply, providerHTTPError{res.StatusCode, fmt.Sprintf("model provider returned HTTP %d", res.StatusCode)}
 	}
 	return decodeOpenAIReply(res, reply, request.NoDispatch, span)
+}
+
+// logRefusal records why the provider refused a request: its error type and code and its rate-limit headers. The
+// error's message is left out because it can quote the account.
+func logRefusal(res *http.Response) {
+	var body struct {
+		Error struct {
+			Type string `json:"type"`
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.NewDecoder(io.LimitReader(res.Body, 16<<10)).Decode(&body)
+	h := res.Header
+	log.Printf("outer model refused: status=%d type=%q code=%q retry_after=%q limit_requests=%q remaining_requests=%q reset_requests=%q limit_tokens=%q remaining_tokens=%q reset_tokens=%q",
+		res.StatusCode, body.Error.Type, body.Error.Code, h.Get("Retry-After"), h.Get("X-Ratelimit-Limit-Requests"), h.Get("X-Ratelimit-Remaining-Requests"), h.Get("X-Ratelimit-Reset-Requests"),
+		h.Get("X-Ratelimit-Limit-Tokens"), h.Get("X-Ratelimit-Remaining-Tokens"), h.Get("X-Ratelimit-Reset-Tokens"))
 }
 
 // requestBody builds the Chat Completions request from the saved messages.
