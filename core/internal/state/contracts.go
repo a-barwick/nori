@@ -19,12 +19,20 @@ type RunStore interface {
 	Spend(ctx context.Context, update SpendUpdate) error
 	// Artifact records that a run owns an artifact. Its bytes are written with PutPNG.
 	Artifact(ctx context.Context, runID string, artifact Artifact) error
+	GetUpload(ctx context.Context, id string) (Upload, error)
+	SaveResult(ctx context.Context, result Result) (Result, error)
+	GetResult(ctx context.Context, id string) (Result, error)
+	RecentResults(ctx context.Context, limit int) ([]Result, error)
+	RecentRuns(ctx context.Context, limit int) ([]Run, error)
 }
 
 // Artifacts writes and reads private PNG artifacts by run and artifact ID.
 type Artifacts interface {
 	PutPNG(ctx context.Context, run, id string, data []byte) error
 	GetPNG(ctx context.Context, run, id string) ([]byte, error)
+	// PutFile saves a file once under a key from ValidFileKey, and returns ErrFileExists when the key is taken.
+	PutFile(ctx context.Context, key, mediaType string, data []byte) error
+	GetFile(ctx context.Context, key string) ([]byte, error)
 }
 
 // Store is the run-state surface the agent steps use.
@@ -111,7 +119,9 @@ type Database interface {
 
 // ConversationDatabase is the conversation half of a document backend.
 type ConversationDatabase interface {
-	AcceptConversationInput(ctx context.Context, id, text string) error
+	AcceptConversationInput(ctx context.Context, id, text string, attachments []string) error
+	CreateUpload(ctx context.Context, upload Upload) (Upload, error)
+	MarkDelivered(ctx context.Context, ids []string) error
 	AcquireConversation(ctx context.Context, owner, turnID string) (ConversationControl, *ConversationTurn, error)
 	CheckConversation(ctx context.Context, f ConversationFence) (stale bool, err error)
 	ConversationCommand(ctx context.Context, id string) (*CommandReceipt, error)
@@ -127,6 +137,11 @@ type ConversationDatabase interface {
 	RestartConversation(ctx context.Context, f ConversationFence, t ConversationTurn) (ConversationTurn, time.Duration, error)
 	SaveConversation(ctx context.Context, f ConversationFence, t ConversationTurn) error
 	UserRoutingPending(ctx context.Context) (bool, error)
+
+	// The event log. Writes happen inside the transactions above.
+	EventPosition(ctx context.Context) (int64, error)
+	WatchEvents(ctx context.Context, after int64, deliver func([]LogEvent) error) error
+	ConversationMessage(ctx context.Context, id string) (Message, error)
 }
 
 // ConversationStore is the storage used by conversation processing and its HTTP API. Task activities need only

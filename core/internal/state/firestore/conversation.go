@@ -41,29 +41,43 @@ func (d *Database) UserRoutingPending(ctx context.Context) (bool, error) {
 	return c.RoutingPending(), err
 }
 
-func (d *Database) AcceptConversationInput(ctx context.Context, id, text string) error {
+func (d *Database) AcceptConversationInput(ctx context.Context, id, text string, attachments []string) error {
 	traceContext := observability.InjectTrace(ctx)
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		doc, err := tx.Get(d.conversationInputs().Doc(id))
 		if err == nil {
 			var saved state.ConversationInput
 			if err = doc.DataTo(&saved); err != nil {
 				return err
 			}
-			return state.ReplayUserInput(saved, text)
+			return state.ReplayUserInput(saved, text, attachments)
 		}
 		if !notFound(err) {
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
 			return err
 		}
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
 		}
-		c, input, message := state.AdmitUserInput(c, id, text, time.Now().UTC(), traceContext)
+		attached, err := d.readAttachments(tx, attachments)
+		if err != nil {
+			return err
+		}
+		c, input, message := state.AdmitUserInput(c, id, text, attached, time.Now().UTC(), traceContext)
 		if err = tx.Set(d.conversation(), c); err != nil {
 			return err
 		}
 		if err = tx.Create(d.conversationInputs().Doc(id), input); err != nil {
+			return err
+		}
+		if err = log.add(state.EventMessage, message.ID); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
 			return err
 		}
 		return tx.Create(d.messages().Doc(message.ID), message)
@@ -134,7 +148,7 @@ func (d *Database) markTurn(tx *firestore.Transaction, turn state.ConversationTu
 func (d *Database) AcquireConversation(ctx context.Context, owner, turnID string) (state.ConversationControl, *state.ConversationTurn, error) {
 	var c state.ConversationControl
 	var turn *state.ConversationTurn
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		var err error
 		c, err = d.readConversation(tx)
 		if err != nil {
@@ -174,12 +188,19 @@ func (d *Database) AcquireConversation(ctx context.Context, owner, turnID string
 			t = state.NewTurn(turnID, inputs, unresolved, c, now)
 			c.Active = t.ID
 		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c = state.Lease(c, owner, now)
 		turn = &t
 		if err = tx.Set(d.conversation(), c); err != nil {
 			return err
 		}
 		if err = d.markTurn(tx, t); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
 			return err
 		}
 		return tx.Set(d.conversationTurns().Doc(t.ID), t)
@@ -220,12 +241,19 @@ func (d *Database) RenewConversation(ctx context.Context, f state.ConversationFe
 }
 
 func (d *Database) ReleaseConversation(ctx context.Context, f state.ConversationFence) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
 		}
 		if c, err = state.Release(c, f, time.Now()); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
 			return err
 		}
 		return tx.Set(d.conversation(), c)
@@ -234,12 +262,19 @@ func (d *Database) ReleaseConversation(ctx context.Context, f state.Conversation
 
 // SaveConversation fences every checkpoint, including model replies and failed attempts.
 func (d *Database) SaveConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
 		}
 		if err = state.CheckOwned(c, f, time.Now()); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
 			return err
 		}
 		if err = tx.Set(d.conversationTurns().Doc(t.ID), t); err != nil {
@@ -259,7 +294,7 @@ func (d *Database) RestartConversation(
 ) (state.ConversationTurn, time.Duration, error) {
 	var wait time.Duration
 	original := t
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		t = original
 		c, err := d.readConversation(tx)
 		if err != nil {
@@ -272,6 +307,10 @@ func (d *Database) RestartConversation(
 		restart, wait = state.RestartWait(c, t, time.Now())
 		if !restart {
 			return nil
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
 		}
 		inputs, err := d.inputBatch(tx, c.Consumed)
 		if err != nil {
@@ -299,13 +338,20 @@ func (d *Database) RestartConversation(
 				return err
 			}
 		}
+		if err = log.add(state.EventConversation, ""); err != nil {
+			return err
+		}
 		return tx.Set(d.conversationTurns().Doc(t.ID), t)
 	})
 	return t, wait, err
 }
 
 func (d *Database) PublishConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn, text string) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
@@ -317,11 +363,36 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 		if err != nil {
 			return err
 		}
-		c, completed, message := state.CompleteTurn(c, t, text, time.Now().UTC())
+		results, err := d.replyResults(tx, t)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		c, completed, message := state.CompleteTurn(c, t, text, now)
+		marked, parts := state.ReportResults(results, t.Attempt.ShowResults, message.ID, now)
+		message.Parts = append(message.Parts, parts...)
+		for _, result := range marked {
+			message.ResultIDs = append(message.ResultIDs, result.ID)
+			if err = tx.Set(d.results().Doc(result.ID), result); err != nil {
+				return err
+			}
+			if err = log.add(state.EventResult, result.ID); err != nil {
+				return err
+			}
+		}
 		for id, run := range heldRuns {
 			if err = tx.Set(d.runs().Doc(id), run); err != nil {
 				return err
 			}
+			if err = log.add(state.EventTask, id); err != nil {
+				return err
+			}
+		}
+		if err = log.add(state.EventMessage, message.ID); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
+			return err
 		}
 		if err = tx.Set(d.conversation(), c); err != nil {
 			return err
@@ -419,7 +490,7 @@ func (d *Database) ConversationCommand(ctx context.Context, id string) (*state.C
 // EnsureConversationIntroduction shares admission ordering with real messages. Concurrent first loads enqueue one
 // introduction; existing history is untouched.
 func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt string) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		c, err := d.readConversation(tx)
 		if err != nil || !state.NeedsIntroduction(c) {
 			return err
@@ -431,8 +502,15 @@ func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt st
 		} else if !isDone(err) {
 			return err
 		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c, input := state.Introduce(c, prompt, time.Now().UTC())
 		if err = tx.Set(d.conversation(), c); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
 			return err
 		}
 		return tx.Create(d.conversationInputs().Doc(input.ID), input)

@@ -22,6 +22,8 @@ import (
 type Input struct {
 	ID      string `json:"id"`
 	Message string `json:"message"`
+	// Attachments are the IDs of files already uploaded.
+	Attachments []string `json:"attachments,omitempty"`
 }
 type Message = state.Message
 type Dispatch struct {
@@ -67,6 +69,10 @@ type Session struct {
 	Conversation   ConversationStatus `json:"conversation"`
 	Traces         []Trace            `json:"traces"`
 	NextCursor     string             `json:"next_cursor,omitempty"`
+	Results        []state.Result     `json:"results"`
+	// Position is the event log's position when this snapshot was read. Events after it may already be included, and
+	// applying one again changes nothing.
+	Position int64 `json:"position"`
 }
 type Runner struct {
 	model      ReplyModel
@@ -85,7 +91,7 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 	if _, e := uuid.Parse(input.ID); e != nil {
 		return Session{}, fmt.Errorf("message ID must be a UUID")
 	}
-	if strings.TrimSpace(input.Message) == "" || len(input.Message) > state.MaxMessageBytes {
+	if (strings.TrimSpace(input.Message) == "" && len(input.Attachments) == 0) || len(input.Message) > state.MaxMessageBytes {
 		return Session{}, fmt.Errorf("message must contain 1–8192 bytes")
 	}
 	ctx, span := conversationTracer.Start(ctx, "conversation.accept", trace.WithAttributes(
@@ -93,7 +99,7 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 		attribute.String("nori.input.id", input.ID),
 	))
 	defer span.End()
-	if e := r.tasks.Store.AcceptConversationInput(ctx, input.ID, input.Message); e != nil {
+	if e := r.tasks.Store.AcceptConversationInput(ctx, input.ID, input.Message, input.Attachments); e != nil {
 		if !errors.Is(e, state.ErrConversationConflict) && !errors.Is(ctx.Err(), context.Canceled) {
 			observability.RecordErrorCategory(ctx, "conversation.accept", e)
 		}
@@ -258,6 +264,9 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		}
 		if t.Attempt.Status != "error" {
 			attemptEnd(&t.Attempt, "completed", "")
+		}
+		if strings.TrimSpace(text) == "" && len(t.Attempt.ShowResults) > 0 {
+			text = "Here it is."
 		}
 		buildProtocol(&t, text)
 		e = r.tasks.Store.PublishConversation(ctx, f, t, text)

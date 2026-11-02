@@ -60,7 +60,8 @@ type Usage struct {
 type InspectRequest struct {
 	Instructions    string
 	Question        string
-	PNG             []byte
+	Image           []byte
+	MediaType       string
 	MaxOutputTokens int
 }
 

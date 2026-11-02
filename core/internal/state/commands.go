@@ -37,18 +37,22 @@ const (
 )
 
 type Command struct {
-	Interrupt      bool        `json:"interrupt,omitempty" firestore:"interrupt,omitempty"`
-	QuestionID     string      `json:"question_id,omitempty" firestore:"question_id,omitempty"`
-	SourceInputIDs []string    `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
-	ID             string      `json:"id" firestore:"id"`
-	RunID          string      `json:"run_id" firestore:"run_id"`
-	ParentID       string      `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
-	Kind           CommandKind `json:"kind" firestore:"kind"`
-	Text           string      `json:"text" firestore:"text"`
-	Position       int64       `json:"position" firestore:"position"`
-	Revision       int64       `json:"revision" firestore:"revision"`
-	Delivered      bool        `json:"delivered" firestore:"delivered"`
-	CreatedAt      time.Time   `json:"created_at" firestore:"created_at"`
+	Interrupt      bool     `json:"interrupt,omitempty" firestore:"interrupt,omitempty"`
+	QuestionID     string   `json:"question_id,omitempty" firestore:"question_id,omitempty"`
+	SourceInputIDs []string `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
+	// Attachments are files this command gives the task.
+	Attachments []Attachment `json:"attachments,omitempty" firestore:"attachments,omitempty"`
+	// Revises names the saved result a start command is meant to change.
+	Revises   string      `json:"revises,omitempty" firestore:"revises,omitempty"`
+	ID        string      `json:"id" firestore:"id"`
+	RunID     string      `json:"run_id" firestore:"run_id"`
+	ParentID  string      `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
+	Kind      CommandKind `json:"kind" firestore:"kind"`
+	Text      string      `json:"text" firestore:"text"`
+	Position  int64       `json:"position" firestore:"position"`
+	Revision  int64       `json:"revision" firestore:"revision"`
+	Delivered bool        `json:"delivered" firestore:"delivered"`
+	CreatedAt time.Time   `json:"created_at" firestore:"created_at"`
 }
 
 type TaskSnapshot struct {
@@ -71,7 +75,8 @@ const (
 // SameCommand reports whether a retry carries the same intent as a saved command with that ID.
 func SameCommand(a, b Command) bool {
 	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID &&
-		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs)
+		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs) &&
+		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises
 }
 
 // ValidateCommandBatch checks a batch before anything is read. A rejected batch never partly commits.
@@ -232,7 +237,7 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 			run = Run{
 				ID: cmd.RunID, Request: cmd.Text, Status: RunRunning, Temporal: true, ProtocolVersion: TaskProtocolVersion,
 				WorkflowVersion: TaskWorkflowVersion, StartedAt: now, Budget: TaskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
-				TraceContext: traceContext, OriginTraceContext: traceContext,
+				TraceContext: traceContext, OriginTraceContext: traceContext, Revises: cmd.Revises,
 			}
 			if cmd.ParentID != "" {
 				parent, question, err := linkSubtask(runs[cmd.ParentID], exists[cmd.ParentID], cmd, opened)
@@ -247,6 +252,7 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 		if run.Position >= MaxTaskCommands && cmd.Kind != CommandStop {
 			return prepared, fmt.Errorf("%w: task input limit reached (32 accepted commands)", ErrCommandInvalid)
 		}
+		run.Uploads = MergeAttachments(run.Uploads, cmd.Attachments)
 		switch cmd.Kind {
 		case CommandStart, CommandSteer:
 			if strings.TrimSpace(cmd.Text) == "" {

@@ -1,4 +1,4 @@
-import { classify, extractHints } from "./hybrid";
+import { classify } from "./hybrid";
 import { separatorLabel, minutes } from "./time";
 import type { Sender, TextItem, ThreadItem } from "./types";
 
@@ -24,8 +24,7 @@ export function buildUnits(items: ThreadItem[], now = Date.now()): Unit[] {
       group = undefined;
     }
     prevAt = item.at;
-    const { body, hints } = extractHints(item.text);
-    const classified = item.sender === "me" ? { mode: "bubble" as const, body: item.text, cover: undefined } : classify(body, hints.mode);
+    const classified = item.sender === "me" ? { mode: "bubble" as const, body: item.text, cover: undefined } : classify(item.text, item.display);
     if (!group || group.sender !== item.sender || item.at - lastGroupAt > GROUP_WINDOW) {
       group = { type: "group", key: `g-${item.id}`, sender: item.sender, units: [] };
       out.push(group);

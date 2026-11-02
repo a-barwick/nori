@@ -18,10 +18,11 @@ import (
 
 func toolEffect(name string) string {
 	switch name {
-	case "browser_navigate", "browser_screenshot", "web_search", "calendar_read", "screenshot_inspect", "job_status", "job_wait":
+	case "browser_navigate", "browser_screenshot", "web_search", "calendar_read", "screenshot_inspect", "upload_open", "upload_inspect", "results_find", "result_read", "result_open", "job_status", "job_wait":
 		return "read"
-	case "job_stop":
-		// Stopping repeats safely, so an unresolved write never blocks it.
+	case "job_stop", "result_save", "result_link":
+		// Stopping repeats safely, and so does saving a result, whose ID comes from its content. An unresolved write
+		// blocks neither, and a task limited to reads can't save a result.
 		return "control"
 	}
 	if effect := agent.WriteEffect(name); effect != "" {
@@ -37,7 +38,7 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	effect := toolEffect(in.Call.Name)
 	// A screenshot read is a paid model call whose interrupted cost can't be
 	// established, so a correction waits for it. Stop still cancels it.
-	ctx, done, run, err := a.bounded(parent, in.Step, effect == "read" && in.Call.Name != "screenshot_inspect")
+	ctx, done, run, err := a.bounded(parent, in.Step, effect == "read" && !agent.PaidRead(in.Call.Name))
 	if err != nil {
 		return nil, err
 	}
@@ -294,8 +295,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			}
 			continue
 		}
+		// Saving a result changes nothing outside Nori and is safe to repeat, so a failure is a plain failure.
 		outcome := "uncertain"
-		if effect == "read" || (receiptErr == nil && receipt.Status == "completed") {
+		if effect == "read" || in.Call.Name == "result_save" || (receiptErr == nil && receipt.Status == "completed") {
 			outcome = "failed"
 		}
 		return persist(outcome, nil, callErr)

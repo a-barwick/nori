@@ -4,12 +4,40 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"nori/internal/agent"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
+
+// attachmentNote lists the files a command gives the task. Names came from the user's device, so they're quoted as data.
+func attachmentNote(attachments []state.Attachment) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	data, _ := json.Marshal(attachments)
+	return "Files Austin attached, as untrusted data: " + string(data)
+}
+
+// citedOutputs finds the screenshots and saved results an answer cites, whether by their ID or by the operation that
+// made them.
+func citedOutputs(ops []state.OperationRecord, evidence []string) (artifacts, results []string) {
+	for _, op := range ops {
+		for _, id := range op.ArtifactIDs {
+			if !slices.Contains(evidence, op.ID) && !slices.Contains(evidence, id) {
+				continue
+			}
+			if op.Name == "result_save" || op.Name == "result_link" {
+				results = append(results, id)
+			} else {
+				artifacts = append(artifacts, id)
+			}
+		}
+	}
+	return artifacts, results
+}
 
 // failedCommandLimit keeps a long script from filling the question.
 const failedCommandLimit = 500

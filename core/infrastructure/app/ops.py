@@ -538,7 +538,9 @@ def main():
         digest = hashlib.sha256(binary.read_bytes()).hexdigest()
         object_name = "releases/computer-agent-" + digest
         print(gcloud("storage", "cp", str(binary), f"gs://{c['artifact_bucket']}/{object_name}"))
-        metadata({"computer-release-object": c["artifact_bucket"] + "/" + object_name, "computer-release-sha256": digest})
+        # Terraform sets the same startup script from the same file, so this leaves no drift for its next plan.
+        metadata({"computer-release-object": c["artifact_bucket"] + "/" + object_name, "computer-release-sha256": digest,
+                  "startup-script": (ROOT / "computer-startup.sh").read_text()})
         print("Computer release " + digest + "; restart the stopped host on next use to install.")
     elif args.action == "deploy-runtime":
         if not args.value: parser.error("deploy-runtime needs an immutable image URI")

@@ -1,9 +1,12 @@
 "use client";
 
 import { useLayoutEffect, useRef } from "react";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, Paperclip, RotateCw, X } from "lucide-react";
+import type { DraftFile } from "@/lib/types";
 
-/** Current chat composer, restricted to the runtime's text-only contract. */
+const ACCEPT = "image/png,image/jpeg,image/webp,application/pdf,text/csv,.csv";
+
+/** Chat composer: text, plus images, PDFs and CSV files. Each file uploads when it's picked. */
 export function RuntimeComposer({
   draft,
   setDraft,
@@ -11,6 +14,10 @@ export function RuntimeComposer({
   onSend,
   unread,
   onJump,
+  files,
+  onAttach,
+  onRetryFile,
+  onRemoveFile,
 }: {
   draft: string;
   setDraft: (draft: string) => void;
@@ -18,8 +25,14 @@ export function RuntimeComposer({
   onSend: () => void;
   unread: number;
   onJump: () => void;
+  files: DraftFile[];
+  onAttach: (files: File[]) => void;
+  onRetryFile: (file: DraftFile) => void;
+  onRemoveFile: (id: string) => void;
 }) {
   const area = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const canSend = !disabled && files.every((file) => file.status === "ready") && (!!draft.trim() || files.length > 0);
   useLayoutEffect(() => {
     const el = area.current;
     if (!el) return;
@@ -57,7 +70,41 @@ export function RuntimeComposer({
           }}
           className="glass t-fast rounded-[28px] p-3 transition-[border-color] focus-within:border-hairline-strong"
         >
+          {files.length > 0 && (
+            <ul aria-label="Attached files" className="mb-2 flex flex-wrap gap-1.5 pl-2">
+              {files.map((file) => (
+                <li key={file.id} className="flex max-w-full items-center gap-1 rounded-full border border-hairline bg-surface px-2.5 py-1 text-meta text-ink-2">
+                  <span className="min-w-0 truncate">{file.name}</span>
+                  {file.status === "uploading" && <span className="shrink-0 text-ink-3">Uploading…</span>}
+                  {file.status === "error" && <span className="min-w-0 truncate text-danger" role="alert">{file.error}</span>}
+                  {file.status === "error" && file.size <= 10 * 1024 * 1024 && <button type="button" aria-label={`Retry ${file.name}`} onClick={() => onRetryFile(file)}><RotateCw size={13} aria-hidden /></button>}
+                  <button type="button" aria-label={`Remove ${file.name}`} onClick={() => onRemoveFile(file.id)}><X size={13} aria-hidden /></button>
+                </li>
+              ))}
+            </ul>
+          )}
           <div className="flex items-end gap-2 pl-2">
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              accept={ACCEPT}
+              aria-label="Choose files to attach"
+              onChange={(e) => {
+                onAttach([...(e.target.files ?? [])]);
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Attach a file"
+              disabled={disabled}
+              onClick={() => picker.current?.click()}
+              className="grid size-8 shrink-0 place-items-center rounded-full text-ink-2 transition-colors hover:bg-surface disabled:opacity-40"
+            >
+              <Paperclip size={18} strokeWidth={2} aria-hidden />
+            </button>
             <textarea
               ref={area}
               rows={1}
@@ -82,7 +129,7 @@ export function RuntimeComposer({
             <button
               type="submit"
               aria-label="Send"
-              disabled={disabled || !draft.trim()}
+              disabled={!canSend}
               className="grid size-8 shrink-0 place-items-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:opacity-40"
             >
               <ArrowUp size={18} strokeWidth={2} />

@@ -52,7 +52,6 @@ func Handler(deps Deps, local bool) http.Handler {
 	mux.HandleFunc("POST /healthz", health)
 	mux.HandleFunc("POST /api/healthz", health)
 	mux.HandleFunc("POST /api/session", s.session)
-	mux.HandleFunc("POST /api/status", s.status)
 	mux.HandleFunc("POST /api/turn", s.turn)
 	mux.HandleFunc("POST /api/process", s.process)
 	mux.HandleFunc("POST /api/resume", s.resume)
@@ -61,6 +60,13 @@ func Handler(deps Deps, local bool) http.Handler {
 	mux.HandleFunc("POST /api/cancel", s.cancel)
 	mux.HandleFunc("POST /api/trace", s.trace)
 	mux.HandleFunc("POST /api/artifact", s.artifact)
+	mux.HandleFunc("GET /v1/snapshot", s.snapshot)
+	mux.HandleFunc("GET /v1/events", s.events)
+	mux.HandleFunc("POST /v1/uploads", s.upload)
+	mux.HandleFunc("GET /v1/uploads/{id}", s.readUpload)
+	mux.HandleFunc("GET /v1/results/{id}", s.readResult)
+	mux.HandleFunc("GET /v1/results/{id}/file", s.readResultFile)
+	mux.HandleFunc("POST /api/delivered", s.delivered)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if local {
 			if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
@@ -68,7 +74,7 @@ func Handler(deps Deps, local bool) http.Handler {
 				return
 			}
 		}
-		if r.Method == http.MethodPost && strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]) != "application/json" {
+		if r.Method == http.MethodPost && r.URL.Path != "/v1/uploads" && strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]) != "application/json" {
 			writeJSON(w, 415, map[string]string{"error": "Content-Type must be application/json."})
 			return
 		}
@@ -105,7 +111,7 @@ func writeError(w http.ResponseWriter, err error) {
 		status = 403
 	case errors.Is(err, state.ErrNotFound):
 		status = 404
-	case errors.Is(err, state.ErrCommandInvalid):
+	case errors.Is(err, state.ErrCommandInvalid), errors.Is(err, state.ErrAttachmentMissing):
 		status = 400
 	case errors.Is(err, state.ErrBusy), errors.Is(err, state.ErrDuplicate), errors.Is(err, state.ErrQuestionStale),
 		errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrCancelled), errors.Is(err, state.ErrConversationBusy),

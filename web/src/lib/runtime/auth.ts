@@ -49,6 +49,11 @@ export function sameOrigin(request: Request) {
   }
 }
 
+/** A browser's EventSource and same-origin GET send no Origin header, so a read checks Sec-Fetch-Site. */
+export function sameOriginRead(request: Request): boolean {
+  return request.headers.get("sec-fetch-site") === "same-origin";
+}
+
 // ---- Google IAP: the only provider-specific code -------------------------------------------------------------------
 
 const verifier = new OAuth2Client();

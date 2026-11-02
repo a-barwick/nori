@@ -251,6 +251,13 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 			q = nil
 			out.QuestionResolved = true
 			messages = append(messages, transcript.UserText(cmd.Text))
+			if note := attachmentNote(cmd.Attachments); note != "" {
+				messages = append(messages, transcript.UserText(note))
+			}
+			if cmd.Revises != "" {
+				messages = append(messages, transcript.UserText("This task revises saved result "+cmd.Revises+". Read it with result_read, and with result_open if it's a file. "+
+					"Your answer or first saved file becomes the new version, and the old one stays as history."))
+			}
 			if cmd.Kind == state.CommandStart {
 				out.Request = clip(cmd.Text, 1500)
 			}
@@ -264,6 +271,9 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 					messages = append(messages, transcript.ToolResultMessage(q.CallID, questionTool(q), answer))
 				} else {
 					messages = append(messages, transcript.UserText(cmd.Text))
+				}
+				if note := attachmentNote(cmd.Attachments); note != "" {
+					messages = append(messages, transcript.UserText(note))
 				}
 				q = nil
 				out.QuestionResolved = true
@@ -481,6 +491,11 @@ func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run sta
 			return state.Run{}, classified(e)
 		}
 		in.Text, _ = call.Args["answer"].(string)
+		proposed := proposal(call)
+		in.Answer = &state.ResultDraft{Checked: in.Status == state.RunCompleted && !in.Unverified, Evidence: proposed.Evidence, Unmet: proposed.Unmet}
+		if ops, e := a.Store.Operations(ctx, in.RunID); e == nil {
+			in.Answer.Artifacts, in.Answer.Cited = citedOutputs(ops, proposed.Evidence)
+		}
 	}
 	if in.Unverified {
 		in.Text += "\n\nCompletion verification was unavailable; this answer is unverified."

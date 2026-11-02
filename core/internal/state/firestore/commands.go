@@ -17,7 +17,7 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 	}
 	var receipts []state.CommandReceipt
 	traceContext := observability.InjectTrace(ctx)
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		receipts = make([]state.CommandReceipt, 0, len(commands))
 		batch, err := d.readCommandBatch(tx, commands)
 		if err != nil {
@@ -117,11 +117,26 @@ func (d *Database) admitCommandBatch(
 func (d *Database) writeCommandBatch(
 	tx *firestore.Transaction, batch state.CommandBatch, prepared state.PreparedCommands, traceContext map[string]string,
 ) error {
+	if len(prepared.Changed) == 0 && len(prepared.Accepted) == 0 && len(prepared.ReadyEvents) == 0 {
+		return nil
+	}
+	log, err := d.openLog(tx)
+	if err != nil {
+		return err
+	}
 	if err := d.appendHeldEvents(tx, prepared.ReadyEvents, traceContext); err != nil {
 		return err
 	}
+	if len(prepared.ReadyEvents) > 0 {
+		if err := log.add(state.EventConversation, ""); err != nil {
+			return err
+		}
+	}
 	for id := range prepared.Changed {
 		if err := tx.Set(d.runs().Doc(id), batch.Runs[id]); err != nil {
+			return err
+		}
+		if err := log.add(state.EventTask, id); err != nil {
 			return err
 		}
 	}

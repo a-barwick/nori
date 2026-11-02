@@ -106,6 +106,25 @@ Restart=no
 [Install]
 WantedBy=multi-user.target
 SERVICE
+  # Older images lack pdftotext, which tasks use to read attached PDFs. This runs inside the guest on its next boot, so
+  # host root still runs no guest program. It runs beside the agent, because the host gives up on a guest that takes
+  # too long to answer. An install cut off by a stop is finished on the next boot, and a failure only leaves it missing.
+  test ! -L "$guest_root/etc/systemd/system/nori-guest-packages.service"
+  cat > "$guest_root/etc/systemd/system/nori-guest-packages.service" <<'SERVICE'
+[Unit]
+Description=Nori guest packages
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+Environment=DEBIAN_FRONTEND=noninteractive
+ExecStart=/bin/sh -c 'command -v pdftotext >/dev/null || { dpkg --configure -a; apt-get update && apt-get install -y --no-install-recommends poppler-utils; }'
+TimeoutStartSec=600
+[Install]
+WantedBy=multi-user.target
+SERVICE
+  packages_link="$guest_root/etc/systemd/system/multi-user.target.wants/nori-guest-packages.service"
+  if [ ! -e "$packages_link" ] && [ ! -L "$packages_link" ]; then ln -s /etc/systemd/system/nori-guest-packages.service "$packages_link"; fi
   link="$guest_root/etc/systemd/system/multi-user.target.wants/bot-computer-agent.service"
   if [ -e "$link" ] || [ -L "$link" ]; then
     test -L "$link"
