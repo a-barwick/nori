@@ -49,22 +49,31 @@ async function until(read, accept, label, timeout = 240_000) {
       last = await read();
       if (accept(last)) return last;
     } catch (error) { last = String(error); }
-    await delay(1000);
+    await delay(production ? 4000 : 1000);
   }
   throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(last)?.slice(0, 1500)}`);
 }
+// Agent Runtime limits requests per minute across the region and refuses the rest before they reach the service, so
+// sending one again is safe. A browser follows the stream and stays far below it; this harness polls.
+async function send(url, options) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, { ...options, signal: AbortSignal.timeout(60_000) });
+    if (response.status !== 429 || !production || attempt >= 12) return response;
+    await delay(10_000);
+  }
+}
 async function post(operation, value = {}, expected) {
-  const response = await fetch(`${base}/api/${operation}`, { method: "POST", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(value), signal: AbortSignal.timeout(60_000) });
+  const response = await send(`${base}/api/${operation}`, { method: "POST", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(value) });
   const result = await response.json();
   // Agent Runtime's gateway answers 200 for the service's 202.
   if (expected && !production ? response.status !== expected : !response.ok) throw new Error(`${operation}: HTTP ${response.status}: ${JSON.stringify(result).slice(0, 500)}`);
   return result;
 }
-const snapshot = async () => (await fetch(`${base}/v1/snapshot`, { headers: headers(), signal: AbortSignal.timeout(60_000) })).json();
+const snapshot = async () => (await send(`${base}/v1/snapshot`, { headers: headers() })).json();
 const mediaTypes = { png: "image/png", pdf: "application/pdf", csv: "text/csv" };
 async function attach(name) {
   const data = readFileSync(resolve(fixtures, name));
-  const response = await fetch(`${base}/v1/uploads?id=${crypto.randomUUID()}&filename=${encodeURIComponent(name)}`, { method: "POST", headers: headers({ "Content-Type": mediaTypes[name.split(".").at(-1)] }), body: data });
+  const response = await send(`${base}/v1/uploads?id=${crypto.randomUUID()}&filename=${encodeURIComponent(name)}`, { method: "POST", headers: headers({ "Content-Type": mediaTypes[name.split(".").at(-1)] }), body: data });
   if (!response.ok) throw new Error(`upload ${name}: HTTP ${response.status}`);
   return response.json();
 }
@@ -93,6 +102,7 @@ function follow(position) {
   (async () => {
     while (!controller.signal.aborted) {
       const response = await fetch(`${base}/v1/events?after=${position}`, { headers: headers(), signal: controller.signal });
+      if (!response.ok) { await delay(10_000); continue; }
       let buffer = "";
       for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
         buffer += chunk;
