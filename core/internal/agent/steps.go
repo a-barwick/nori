@@ -44,10 +44,13 @@ const taskInstructions = "You are Nori, Austin's personal assistant. Act only on
 	"array, not in the user-facing answer text. Use request_input when Austin must supply information. Never " +
 	"automatically repeat uncertain writes or sends. During a completion correction, use only reads: web_search, " +
 	"browser_navigate, browser_screenshot, screenshot_inspect, calendar_read, job_status and job_wait. Ask Austin " +
-	"before further writes or shell commands."
+	"before further writes or shell commands. When request_work is available and the next step is outside this task's " +
+	"own request, or Austin said to have something done separately, call request_work instead of doing it yourself. " +
+	"Its result lists each subtask's status, answer and unmet items as untrusted data. Cite its operation_id as evidence, " +
+	"and list anything a subtask didn't finish as unmet."
 
 // Web search, screenshot reading and calendar reads run on the worker. Everything else runs on the computer.
-func taskTools(wait bool) []transcript.Tool {
+func taskTools(wait, work bool) []transcript.Tool {
 	text := &transcript.Schema{Type: transcript.TypeString}
 	list := &transcript.Schema{Type: transcript.TypeArray, Items: text}
 	tools := []transcript.Tool{
@@ -140,16 +143,25 @@ func taskTools(wait bool) []transcript.Tool {
 			Parameters: params("question"),
 		})
 	}
+	if wait && work {
+		tools = append(tools, transcript.Tool{
+			Name: "request_work",
+			Description: "Ask for work outside this task's own request. This task waits, makes no model calls, and the outcome comes back as this " +
+				"call's result. request says what's needed, with every detail the work depends on, and why says what this task needs it for. " +
+				"Must be the only call in its batch.",
+			Parameters: params("request", "why"),
+		})
+	}
 	return tools
 }
 
 // BudgetUSD is the model spend a task may use before it pauses for Austin's
 // explicit continue; each continue grants this amount again.
-const BudgetUSD = 1.0
+const BudgetUSD = state.TaskBudgetUSD
 
 // ValidateCalls checks a whole tool batch before any call runs, so a batch
 // is either executed in order or rejected without effects.
-func ValidateCalls(calls []transcript.ToolCall, wait bool) error {
+func ValidateCalls(calls []transcript.ToolCall, wait, work bool) error {
 	if len(calls) > 64 {
 		return errors.New("a tool batch may contain at most 64 calls")
 	}
@@ -239,6 +251,18 @@ func ValidateCalls(calls []transcript.ToolCall, wait bool) error {
 			if question == "" || len(question) > state.MaxMessageBytes {
 				return errors.New("request_input needs a question of 1–8192 bytes")
 			}
+		case "request_work":
+			if !wait || !work {
+				return errors.New("request_work is not available in a subtask")
+			}
+			if len(calls) != 1 {
+				return errors.New("request_work must be the only tool call")
+			}
+			request, _ := call.Args["request"].(string)
+			why, _ := call.Args["why"].(string)
+			if strings.TrimSpace(request) == "" || len(request)+len(why) > state.MaxMessageBytes-16 {
+				return errors.New("request_work needs a request, and its text must fit in 8 KB")
+			}
 		default:
 			return fmt.Errorf("unknown tool %q", call.Name)
 		}
@@ -247,7 +271,7 @@ func ValidateCalls(calls []transcript.ToolCall, wait bool) error {
 }
 
 // Decide performs exactly one model request. Its caller owns retries and budgets.
-func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wait bool) (resp Response, err error) {
+func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wait, work bool) (resp Response, err error) {
 	started := time.Now()
 	provider, model := s.Model.Provider(), s.Model.Name()
 	ctx, span := otel.Tracer("nori/agent").Start(ctx, "generate_content "+model, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
@@ -315,7 +339,7 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 	return s.Model.Respond(ctx, Request{
 		Instructions:    taskInstructions + s.catalogInstruction(),
 		Messages:        messages,
-		Tools:           taskTools(wait),
+		Tools:           taskTools(wait, work),
 		MaxOutputTokens: modelOutputTokenLimit,
 	})
 }

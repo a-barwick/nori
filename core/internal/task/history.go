@@ -32,6 +32,12 @@ type HistorySync struct {
 	Grants             int
 	QuestionResolved   bool
 	Request            string
+	// Others, Budget and CostUnknown are the family's shared accounting: what its other tasks have spent, its budget,
+	// and whether any of it has an unknown cost.
+	Others, Budget float64
+	CostUnknown    bool
+	// Subtask and ReadOnly are fixed when the task is accepted.
+	Subtask, ReadOnly bool
 	// Decision is the approve or decline command for the pending write. A later
 	// instruction overrides an approval. ActionClosed is the outcome when an
 	// instruction ended the write here, so its call already has a result.
@@ -53,7 +59,8 @@ func (a *Activities) CurrentPosition(ctx context.Context, id string) (out Curren
 
 type RefModelInput struct {
 	Step
-	Ref string
+	Ref     string
+	Subtask bool
 }
 type CallRef struct {
 	ID, Name string
@@ -82,8 +89,9 @@ type RefToolOutcome struct {
 }
 type RefInput struct {
 	Step
-	Ref   string
-	Index int
+	Ref      string
+	Index    int
+	ReadOnly bool
 }
 type AppendResult struct {
 	Step
@@ -187,7 +195,19 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 	if e != nil {
 		return out, e
 	}
-	out = HistorySync{Ref: in.Ref, Revision: snap.Run.Revision, Position: in.Position, Request: clip(snap.Run.Request, 1500)}
+	out = HistorySync{
+		Ref: in.Ref, Revision: snap.Run.Revision, Position: in.Position, Request: clip(snap.Run.Request, 1500),
+		Subtask: snap.Run.ParentID != "", ReadOnly: snap.Run.ReadOnly,
+	}
+	var parent *state.Run
+	if snap.Run.ParentID != "" {
+		owner, e := a.Store.GetRun(ctx, snap.Run.ParentID)
+		if e != nil {
+			return out, classified(e)
+		}
+		parent = &owner
+	}
+	out.Others, out.Budget, out.CostUnknown = state.FamilyCost(snap.Run, parent)
 	if in.Ref == "" {
 		background, e := a.Context(ctx, in.RunID)
 		if e != nil {
@@ -220,7 +240,10 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 			}
 			if q != nil && q.CallID != "" {
 				superseded := map[string]any{"superseded": true, "reason": "Austin changed the task instructions."}
-				messages = append(messages, transcript.ToolResultMessage(q.CallID, "request_input", superseded))
+				if q.Kind == state.QuestionWork {
+					superseded["reason"] = "Austin changed the task instructions, so this request is closed and any subtask started for it was stopped. Ask again if the work is still needed."
+				}
+				messages = append(messages, transcript.ToolResultMessage(q.CallID, questionTool(q), superseded))
 			}
 			q = nil
 			out.QuestionResolved = true
@@ -232,10 +255,21 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 			if q != nil && q.ID == cmd.QuestionID {
 				if q.CallID != "" {
 					answer := map[string]any{"answer": cmd.Text, "question_id": cmd.QuestionID}
-					messages = append(messages, transcript.ToolResultMessage(q.CallID, "request_input", answer))
+					messages = append(messages, transcript.ToolResultMessage(q.CallID, questionTool(q), answer))
 				} else {
 					messages = append(messages, transcript.UserText(cmd.Text))
 				}
+				q = nil
+				out.QuestionResolved = true
+			}
+		case state.CommandSubtaskResult:
+			// A closed wait already has its call's one result.
+			if q != nil && q.ID == cmd.QuestionID {
+				result, e := a.subtaskResult(ctx, snap.Run, *q, cmd)
+				if e != nil {
+					return out, classified(e)
+				}
+				messages = append(messages, transcript.ToolResultMessage(q.CallID, questionTool(q), result))
 				q = nil
 				out.QuestionResolved = true
 			}
@@ -271,7 +305,7 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	if e != nil {
 		return out, classified(e)
 	}
-	outcome, e := a.Model(ctx, ModelInput{Step: in.Step, Messages: messages, Interruptible: true})
+	outcome, e := a.Model(ctx, ModelInput{Step: in.Step, Messages: messages, Interruptible: true, Subtask: in.Subtask})
 	if e != nil {
 		return out, e
 	}
@@ -300,7 +334,7 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 		}
 		return out, nil
 	}
-	if e = agent.ValidateCalls(response.Calls, true); e != nil {
+	if e = agent.ValidateCalls(response.Calls, true, !in.Subtask); e != nil {
 		parts := []transcript.Part{}
 		for _, call := range response.Calls {
 			rejected := map[string]any{"rejected": true, "reason": e.Error(), "executed": false}
@@ -369,6 +403,9 @@ func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Quest
 		return out, classified(e)
 	}
 	text, _ := call.Args["question"].(string)
+	if call.Name == "request_work" {
+		return a.workQuestion(ctx, in, call)
+	}
 	// A provider may explain a failure in output_text and put only the next
 	// question in request_input. Publish both so the user can make a decision.
 	for i := len(messages) - 1; i >= 0; i-- {

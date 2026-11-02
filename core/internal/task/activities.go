@@ -38,6 +38,7 @@ type ModelInput struct {
 	Step
 	Messages      []transcript.Message
 	Interruptible bool
+	Subtask       bool
 }
 
 // ModelOutcome preserves billed usage in Temporal history even when the
@@ -57,6 +58,7 @@ type Publication struct {
 	Detail, Text       string
 	StopConfirmed      bool
 	CostUnknown        bool
+	Spent              float64
 	BypassRouting      bool
 	ExpectedIncomplete bool
 }
@@ -224,7 +226,7 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	// model deadline that leaves room for both, while bounded still observes Stop.
 	modelCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
 	defer stop()
-	response, e := a.Agent.Decide(observability.SuppressErrorCapture(modelCtx), in.Messages, true)
+	response, e := a.Agent.Decide(observability.SuppressErrorCapture(modelCtx), in.Messages, true, !in.Subtask)
 	span.SetAttributes(attribute.Bool("nori.output.present", response.Answer != ""), attribute.Int("nori.tool.call_count", len(response.Calls)))
 	recordActivityFailure(modelCtx, e, "task.model")
 	outcome := ModelOutcome{Response: response}
@@ -392,7 +394,7 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 	}
 	r, err := a.Store.Publish(ctx, state.PublishRequest{
 		RunID: p.RunID, Revision: p.Revision, Status: p.Status, Detail: p.Detail, Text: p.Text,
-		CostUnknown: p.CostUnknown, BypassRouting: p.BypassRouting,
+		CostUnknown: p.CostUnknown, Spent: p.Spent, BypassRouting: p.BypassRouting,
 	})
 	if err == nil {
 		if (run.Status == state.RunRunning || run.Status == "") && r.FinishedAt != nil && !r.StartedAt.IsZero() && !r.FinishedAt.Before(r.StartedAt) {

@@ -80,10 +80,7 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	}
 	if recovering == nil {
 		for _, saved := range records {
-			// A provider's refusal of a write is a definite answer, so it doesn't hold up later tools.
-			unresolved := saved.Outcome == "uncertain" || saved.Outcome == "pending" || saved.Outcome == "attempted" ||
-				(saved.Outcome == "failed" && agent.WriteEffect(saved.Name) == "")
-			if effect != "read" && effect != "control" && saved.EffectClass != "read" && saved.EffectClass != "control" && unresolved {
+			if effect != "read" && effect != "control" && unresolvedWrite(saved) {
 				return map[string]any{
 					"operation_id": saved.ID, "outcome": "uncertain", "effect_class": saved.EffectClass,
 					"error": "An earlier write has an unresolved outcome. Ask Austin; no further tool was admitted.",

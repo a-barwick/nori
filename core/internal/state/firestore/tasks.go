@@ -227,18 +227,65 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 				})
 			}
 		}
-		finished, event := state.FinishRun(run, admitted, time.Now().UTC())
-		eventTraceContext := traceContext
-		if len(eventTraceContext) == 0 {
-			eventTraceContext = run.TraceContext
+		now := time.Now().UTC()
+		var parent state.Run
+		if run.ParentID != "" {
+			if parent, err = decodeRun(tx.Get(d.runs().Doc(run.ParentID))); err != nil {
+				return err
+			}
 		}
-		inserted, err := d.appendTaskEvent(tx, event, eventTraceContext)
-		if err != nil {
-			return err
+		// A parent that ends for any reason ends its subtasks, so this covers failure and recovery as well as Stop.
+		children := map[string]state.Run{}
+		for _, id := range state.RunningSubtasks(run) {
+			if children[id], err = decodeRun(tx.Get(d.runs().Doc(id))); err != nil {
+				return err
+			}
+		}
+		finished, event := state.FinishRun(run, admitted, now)
+		announce := run.ParentID == ""
+		var result *state.Command
+		if run.ParentID != "" {
+			var waiting bool
+			parent, result, waiting = state.SettleSubtask(parent, run, finished, now)
+			// A waiting parent receives this outcome with no model call. Holds still need their answer, and a subtask
+			// that outlived its parent's wait may have done something Austin has to hear about.
+			announce = len(event.Holds) > 0 || (!waiting && len(finished.OperationRefs) > 0)
+		}
+		if announce {
+			eventTraceContext := traceContext
+			if len(eventTraceContext) == 0 {
+				eventTraceContext = run.TraceContext
+			}
+			inserted, err := d.appendTaskEvent(tx, event, eventTraceContext)
+			if err != nil {
+				return err
+			}
+			if inserted {
+				finished.EventSequence = event.Sequence
+			}
 		}
 		run = finished
-		if inserted {
-			run.EventSequence = event.Sequence
+		for id, child := range children {
+			stopped, stop, changed := state.StopSubtask(child, req.RunID+":ended", now)
+			if !changed {
+				continue
+			}
+			if err = tx.Set(d.runs().Doc(id), stopped); err != nil {
+				return err
+			}
+			if err = tx.Create(d.commands().Doc(stop.ID), stop); err != nil {
+				return err
+			}
+		}
+		if run.ParentID != "" {
+			if err = tx.Set(d.runs().Doc(run.ParentID), parent); err != nil {
+				return err
+			}
+		}
+		if result != nil {
+			if err = tx.Create(d.commands().Doc(result.ID), *result); err != nil {
+				return err
+			}
 		}
 		return tx.Set(ref, run)
 	})
