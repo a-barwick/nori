@@ -23,13 +23,16 @@ const at = flat.findIndex(([id]) => id === current);
 // The tab icon
 document.head.insertAdjacentHTML('beforeend', '<link rel="icon" type="image/svg+xml" href="favicon.svg">');
 
+// Tab titles: Dokyu on the first page, Dokyu · Section on the rest
+document.title = current === 'index' ? 'Dokyu' : `Dokyu · ${document.title.split(' · ')[0]}`;
+
 // Layout
 const main = document.createElement('main');
 main.append(...document.body.childNodes);
 const rail = document.createElement('nav');
 rail.className = 'rail';
 rail.setAttribute('aria-label', 'Pages');
-rail.innerHTML = `<div class="brand"><a href="index.html"><img src="favicon.svg" alt="">Nori</a><button class="menu-btn" type="button">Pages</button></div>
+rail.innerHTML = `<div class="brand"><a href="index.html"><img src="favicon.svg" alt="">Nori Dokyu</a><button class="menu-btn" type="button">Pages</button></div>
   <div class="links">${NAV.map(([group, pages]) => `<a class="group" href="${pages[0][0]}.html">${group}</a>` + pages.map(([id, title]) =>
     `<a href="${id}.html"${id === current ? ' aria-current="page"' : ''}>${title}</a>`).join('')).join('')}</div>`;
 rail.querySelector('.menu-btn').addEventListener('click', () => rail.classList.toggle('open'));

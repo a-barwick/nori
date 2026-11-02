@@ -178,7 +178,7 @@ def publish(out):
         (out / path.name).write_text(public_html(path), encoding="utf-8")
         body = "\n\n".join((f"## {s['title']}\n\n" if s["title"] != "Overview" else "") + s["text"] for s in page["sections"])
         (out / f"{path.stem}.md").write_text(body + "\n", encoding="utf-8")
-    lines = ["# Nori", "", "> How the Nori personal assistant works. Each page below has a plain text copy.", ""]
+    lines = ["# Nori Dokyu", "", "> How the Nori personal assistant works. Each page below has a plain text copy.", ""]
     lines += [f"- [{p['title']}]({PUBLIC_URL}{Path(p['page']).stem}.md): {p['summary']}" for p in pages]
     (out / "llms.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (out / "robots.txt").write_text("User-agent: *\nAllow: /\n", encoding="utf-8")
