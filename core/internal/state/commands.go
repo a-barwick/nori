@@ -76,7 +76,7 @@ const (
 func SameCommand(a, b Command) bool {
 	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID &&
 		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs) &&
-		slices.Equal(a.Attachments, b.Attachments)
+		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises
 }
 
 // ValidateCommandBatch checks a batch before anything is read. A rejected batch never partly commits.

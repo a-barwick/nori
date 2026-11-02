@@ -2,6 +2,7 @@ package computerd
 
 import (
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -119,9 +120,20 @@ func (s *server) getFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "file is larger than 10 MB", 413)
 		return
 	}
-	data, err := root.ReadFile(path.Clean(req.Path))
+	file, err := root.Open(path.Clean(req.Path))
 	if err != nil {
 		http.Error(w, "file could not be read", 500)
+		return
+	}
+	defer file.Close()
+	// The limit holds even if a command is still writing to the file.
+	data, err := io.ReadAll(io.LimitReader(file, maxFile+1))
+	if err != nil {
+		http.Error(w, "file could not be read", 500)
+		return
+	}
+	if len(data) > maxFile {
+		http.Error(w, "file is larger than 10 MB", 413)
 		return
 	}
 	respond(w, map[string]any{"name": path.Base(req.Path), "data": data})

@@ -32,11 +32,7 @@ func (d *Database) readResult(tx *firestore.Transaction, id string) (*state.Resu
 // SaveResult creates a task's result once. A retry finds the saved record.
 func (d *Database) SaveResult(ctx context.Context, result state.Result) (state.Result, error) {
 	saved := result
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		log, err := d.openLog(tx)
-		if err != nil {
-			return err
-		}
+	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		if _, err := decodeRun(tx.Get(d.runs().Doc(result.RunID))); err != nil {
 			return err
 		}
@@ -49,6 +45,10 @@ func (d *Database) SaveResult(ctx context.Context, result state.Result) (state.R
 			return nil
 		}
 		saved = result
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		if err = log.add(state.EventResult, result.ID); err != nil {
 			return err
 		}
@@ -81,20 +81,24 @@ func (d *Database) RecentRuns(ctx context.Context, limit int) ([]state.Run, erro
 
 // MarkDelivered records that a browser showed these results. The first report stands.
 func (d *Database) MarkDelivered(ctx context.Context, ids []string) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		log, err := d.openLog(tx)
-		if err != nil {
-			return err
-		}
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		results := []*state.Result{}
 		for _, id := range ids {
 			result, err := d.readResult(tx, id)
 			if err != nil {
 				return err
 			}
-			if result != nil && result.DeliveredAt == nil {
+			// A result no reply has named can't have been shown.
+			if result != nil && result.ReportedAt != nil && result.DeliveredAt == nil {
 				results = append(results, result)
 			}
+		}
+		if len(results) == 0 {
+			return nil
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
 		}
 		now := time.Now().UTC()
 		for _, result := range results {

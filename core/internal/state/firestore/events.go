@@ -10,19 +10,27 @@ import (
 	"nori/internal/state"
 )
 
+const logAttempts = 20
+
 func (d *Database) events() *firestore.CollectionRef { return d.root().Collection("events") }
 func (d *Database) eventHead() *firestore.DocumentRef {
 	return d.root().Collection("event_head").Doc("head")
 }
 
-// eventLog adds entries to the log inside one transaction. Open it before the transaction's first write, because
-// Firestore requires reads to come first.
+// eventLog adds entries to the log inside one transaction. Open it once the transaction knows it will write, so a replay
+// or an idle check doesn't conflict with anything, and before its first write, because Firestore requires reads first.
 type eventLog struct {
 	d     *Database
 	tx    *firestore.Transaction
 	seq   int64
 	start int64
 	added map[[2]string]bool
+}
+
+// logged runs a transaction that adds to the log. Every one of them writes the same head, so they conflict with each
+// other, and more attempts let a burst of task and conversation changes finish.
+func (d *Database) logged(ctx context.Context, f func(context.Context, *firestore.Transaction) error) error {
+	return d.db.RunTransaction(ctx, f, firestore.MaxAttempts(logAttempts))
 }
 
 func (d *Database) openLog(tx *firestore.Transaction) (*eventLog, error) {

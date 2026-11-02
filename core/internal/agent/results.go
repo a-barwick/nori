@@ -66,7 +66,7 @@ func (s *Service) resultSave(ctx context.Context, run string, c *computer.Client
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"result_id": saved.ID, "title": saved.Title, "name": saved.Name, "size": saved.Size}, nil
+	return map[string]any{"result_id": saved.ID, "artifact_id": saved.ID, "title": saved.Title, "name": saved.Name, "size": saved.Size}, nil
 }
 
 func (s *Service) resultLink(ctx context.Context, run, address, title string) (map[string]any, error) {
@@ -88,7 +88,7 @@ func (s *Service) resultLink(ctx context.Context, run, address, title string) (m
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"result_id": saved.ID, "title": saved.Title, "url": saved.URL}, nil
+	return map[string]any{"result_id": saved.ID, "artifact_id": saved.ID, "title": saved.Title, "url": saved.URL}, nil
 }
 
 // resultsFind searches saved results, and tasks from before results existed. There are few enough for one owner to read
