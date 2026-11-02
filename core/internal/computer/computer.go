@@ -28,6 +28,7 @@ type Client struct {
 	receipts  bool
 	taskTabs  bool
 	jobs      bool
+	files     bool
 	operation string
 	taskID    string
 	run       string
@@ -76,6 +77,7 @@ type Health struct {
 	Receipts bool `json:"operation_receipts_v1"`
 	TaskTabs bool `json:"browser_task_tabs_v1"`
 	Jobs     bool `json:"shell_jobs_v1"`
+	Files    bool `json:"files_v1"`
 }
 
 // Probe asks the guest for its health, waiting at most three seconds. It records
@@ -102,7 +104,7 @@ func (c *Client) Probe(ctx context.Context) (Health, error) {
 	if decodeErr != nil {
 		return Health{}, fmt.Errorf("%w: %v", ErrUnhealthy, decodeErr)
 	}
-	c.receipts, c.taskTabs, c.jobs = health.Receipts, health.TaskTabs, health.Jobs
+	c.receipts, c.taskTabs, c.jobs, c.files = health.Receipts, health.TaskTabs, health.Jobs, health.Files
 	return health, nil
 }
 
@@ -225,6 +227,43 @@ func (c *Client) Exec(ctx context.Context, command string) (map[string]any, erro
 	}
 	return bound(result), nil
 }
+
+// PutFile copies a file into this task's uploads folder and returns its path inside the task's folder.
+func (c *Client) PutFile(ctx context.Context, name string, data []byte) (string, error) {
+	if !c.files {
+		return "", errors.New("the computer needs an update before it can receive files")
+	}
+	response, err := c.post(ctx, "/file/put", map[string]any{"run_id": c.run, "task_id": c.taskID, "name": name, "data": data}, 64<<10)
+	if err != nil {
+		return "", err
+	}
+	var saved struct {
+		Path string `json:"path"`
+	}
+	if err = json.Unmarshal(response, &saved); err != nil || saved.Path == "" {
+		return "", errors.New("the computer didn't confirm the file")
+	}
+	return saved.Path, nil
+}
+
+// GetFile reads a file from this task's folder.
+func (c *Client) GetFile(ctx context.Context, path string) ([]byte, error) {
+	if !c.files {
+		return nil, errors.New("the computer needs an update before it can send files")
+	}
+	response, err := c.post(ctx, "/file/get", map[string]any{"run_id": c.run, "task_id": c.taskID, "path": path}, 15<<20)
+	if err != nil {
+		return nil, err
+	}
+	var file struct {
+		Data []byte `json:"data"`
+	}
+	if err = json.Unmarshal(response, &file); err != nil {
+		return nil, errors.New("the computer returned an unreadable file")
+	}
+	return file.Data, nil
+}
+
 func (c *Client) Navigate(ctx context.Context, address string) (map[string]any, error) {
 	u, e := url.Parse(address)
 	if e != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {

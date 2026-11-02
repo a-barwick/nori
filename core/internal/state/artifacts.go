@@ -52,6 +52,18 @@ func ArtifactListed(run Run, id string) bool {
 	return false
 }
 
+// ErrFileExists is returned when a file key is already taken.
+var ErrFileExists = errors.New("file already exists")
+
+// ReadFile reads a stored file, refusing anything over the limit without reading it all.
+func ReadFile(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, MaxUploadBytes+1))
+	if len(data) > MaxUploadBytes {
+		return nil, fmt.Errorf("file exceeds limit")
+	}
+	return data, err
+}
+
 // ReadArtifact reads an artifact's bytes, refusing anything over MaxArtifactBytes without reading it all.
 func ReadArtifact(r io.Reader) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, MaxArtifactBytes+1))
@@ -91,6 +103,20 @@ func (s *composed) GetPNG(ctx context.Context, run, id string) ([]byte, error) {
 		return nil, ErrNotFound
 	}
 	return s.artifacts.GetPNG(ctx, run, id)
+}
+
+func (s *composed) PutFile(ctx context.Context, key, mediaType string, data []byte) error {
+	if !ValidFileKey(key) || len(data) > MaxUploadBytes {
+		return fmt.Errorf("invalid file")
+	}
+	return s.artifacts.PutFile(ctx, key, mediaType, data)
+}
+
+func (s *composed) GetFile(ctx context.Context, key string) ([]byte, error) {
+	if !ValidFileKey(key) {
+		return nil, ErrNotFound
+	}
+	return s.artifacts.GetFile(ctx, key)
 }
 
 func (s *composed) Close() error { return errors.Join(s.Database.Close(), s.artifacts.Close()) }

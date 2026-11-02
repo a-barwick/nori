@@ -424,7 +424,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 					var application *temporal.ApplicationError
 					if !errors.As(err, &application) {
 						switch call.Name {
-						case "screenshot_inspect":
+						case "screenshot_inspect", "upload_inspect":
 							c.CostUnknown = true
 						case "web_search":
 							c.Spent += agent.SearchCostUSD

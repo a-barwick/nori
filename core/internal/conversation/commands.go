@@ -32,11 +32,22 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				For     *string `json:"for"`
 				// The question it settles, so a late dispatch can't attach to a newer request.
 				QuestionID *string `json:"question_id"`
+				// Earlier files the task also needs. The current message's files go with it anyway.
+				Attachments []string `json:"attachments"`
 			}
 			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
 				return nil, err
 			}
 			command.Kind, command.Text = "start", strings.TrimSpace(args.Request)
+			if len(args.Attachments) > state.MaxAttachments {
+				return nil, fmt.Errorf("a dispatch can name at most %d files", state.MaxAttachments)
+			}
+			for _, id := range args.Attachments {
+				if !state.ValidUploadID(id) {
+					return nil, fmt.Errorf("a dispatch names an invalid file ID")
+				}
+				command.Attachments = append(command.Attachments, state.Attachment{ID: id})
+			}
 			if args.For != nil && *args.For != "" {
 				id, err := uuid.Parse(*args.For)
 				if err != nil || id.String() != *args.For {

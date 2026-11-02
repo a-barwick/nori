@@ -22,6 +22,8 @@ import (
 type Input struct {
 	ID      string `json:"id"`
 	Message string `json:"message"`
+	// Attachments are the IDs of files already uploaded.
+	Attachments []string `json:"attachments,omitempty"`
 }
 type Message = state.Message
 type Dispatch struct {
@@ -88,7 +90,7 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 	if _, e := uuid.Parse(input.ID); e != nil {
 		return Session{}, fmt.Errorf("message ID must be a UUID")
 	}
-	if strings.TrimSpace(input.Message) == "" || len(input.Message) > state.MaxMessageBytes {
+	if (strings.TrimSpace(input.Message) == "" && len(input.Attachments) == 0) || len(input.Message) > state.MaxMessageBytes {
 		return Session{}, fmt.Errorf("message must contain 1–8192 bytes")
 	}
 	ctx, span := conversationTracer.Start(ctx, "conversation.accept", trace.WithAttributes(
@@ -96,7 +98,7 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 		attribute.String("nori.input.id", input.ID),
 	))
 	defer span.End()
-	if e := r.tasks.Store.AcceptConversationInput(ctx, input.ID, input.Message); e != nil {
+	if e := r.tasks.Store.AcceptConversationInput(ctx, input.ID, input.Message, input.Attachments); e != nil {
 		if !errors.Is(e, state.ErrConversationConflict) && !errors.Is(ctx.Err(), context.Canceled) {
 			observability.RecordErrorCategory(ctx, "conversation.accept", e)
 		}

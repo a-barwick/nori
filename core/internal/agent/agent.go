@@ -48,6 +48,9 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 	case "shell":
 		command, _ := call.Args["command"].(string)
 		return c.Exec(ctx, command)
+	case "upload_open":
+		id, _ := call.Args["upload_id"].(string)
+		return s.uploadOpen(ctx, run, c, id)
 	case "browser_navigate":
 		address, _ := call.Args["url"].(string)
 		return c.Navigate(ctx, address)

@@ -21,6 +21,8 @@ type ConversationInput struct {
 	Introduction bool              `firestore:"introduction,omitempty"`
 	Event        *TaskEvent        `firestore:"event,omitempty"`
 	TraceContext map[string]string `json:"-" firestore:"trace_context,omitempty"`
+	// Attachments are the files sent with a user's message.
+	Attachments []Attachment `firestore:"attachments,omitempty"`
 }
 
 type ConversationControl struct {
@@ -176,9 +178,14 @@ func StaleFor(c ConversationControl, f ConversationFence) bool {
 }
 
 // ReplayUserInput checks a repeated submission of an accepted message ID. The same text is a harmless replay.
-func ReplayUserInput(saved ConversationInput, text string) error {
-	if saved.Text != text {
+func ReplayUserInput(saved ConversationInput, text string, attachments []string) error {
+	if saved.Text != text || len(saved.Attachments) != len(attachments) {
 		return ErrConversationConflict
+	}
+	for i, attachment := range saved.Attachments {
+		if attachment.ID != attachments[i] {
+			return ErrConversationConflict
+		}
 	}
 	return nil
 }
@@ -186,13 +193,17 @@ func ReplayUserInput(saved ConversationInput, text string) error {
 // AdmitUserInput numbers a new user message and returns the updated control record, the inbox input and the visible
 // message to create in one transaction.
 func AdmitUserInput(
-	c ConversationControl, id, text string, now time.Time, traceContext map[string]string,
+	c ConversationControl, id, text string, attachments []Attachment, now time.Time, traceContext map[string]string,
 ) (ConversationControl, ConversationInput, Message) {
 	c.Received++
 	c.UserReceived = c.Received
 	c.LatestAt = now
-	input := ConversationInput{ID: id, Text: text, Position: c.Received, CreatedAt: now, TraceContext: traceContext}
-	message := Message{ID: UserMessageID(id), Role: "user", Text: text, CreatedAt: now, TurnID: id}
+	input := ConversationInput{ID: id, Text: text, Position: c.Received, CreatedAt: now, TraceContext: traceContext, Attachments: attachments}
+	parts := []Part{{Type: PartText, Text: text}}
+	for _, attachment := range attachments {
+		parts = append(parts, AttachmentPart(attachment))
+	}
+	message := Message{ID: UserMessageID(id), Role: "user", Text: text, Parts: parts, CreatedAt: now, TurnID: id}
 	return c, input, message
 }
 

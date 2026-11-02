@@ -4,9 +4,12 @@ package gcs
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"net/http"
 
 	"cloud.google.com/go/storage"
+	"google.golang.org/api/googleapi"
 	"nori/internal/state"
 )
 
@@ -49,6 +52,39 @@ func (s *Store) GetPNG(ctx context.Context, run, id string) ([]byte, error) {
 	}
 	defer reader.Close()
 	return state.ReadArtifact(reader)
+}
+
+// PutFile keeps files under artifacts/ too, because that's the prefix the runtime's storage role allows. It refuses to
+// replace an existing file. A dropped write commits nothing.
+func (s *Store) PutFile(ctx context.Context, key, mediaType string, data []byte) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	w := s.client.Bucket(s.bucket).Object("artifacts/" + key).If(storage.Conditions{DoesNotExist: true}).NewWriter(ctx)
+	w.ContentType = mediaType
+	w.CacheControl = "private, no-store"
+	if _, err := io.Copy(w, bytes.NewReader(data)); err != nil {
+		cancel()
+		_ = w.Close()
+		return err
+	}
+	err := w.Close()
+	var api *googleapi.Error
+	if errors.As(err, &api) && api.Code == http.StatusPreconditionFailed {
+		return state.ErrFileExists
+	}
+	return err
+}
+
+func (s *Store) GetFile(ctx context.Context, key string) ([]byte, error) {
+	reader, err := s.client.Bucket(s.bucket).Object("artifacts/" + key).NewReader(ctx)
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return nil, state.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	return state.ReadFile(reader)
 }
 
 func (s *Store) Close() error { return s.client.Close() }

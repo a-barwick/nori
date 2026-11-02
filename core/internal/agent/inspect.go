@@ -21,11 +21,16 @@ const inspectInstruction = "You read one screenshot for a task. Answer the quest
 // no tools. Only its text joins the task's history, so the image isn't resent on
 // later turns and text inside it can't call a tool. Any result carrying
 // cost_unknown means a request was sent without a usable cost.
-func (s *Service) inspectScreenshot(ctx context.Context, run, artifactID, question string) (result map[string]any, err error) {
+func (s *Service) inspectScreenshot(ctx context.Context, run, artifactID, question string) (map[string]any, error) {
 	data, err := s.Store.GetPNG(ctx, run, artifactID)
 	if err != nil {
 		return nil, errors.New("this task has no saved screenshot with that artifact_id")
 	}
+	return s.inspect(ctx, "artifact_id", artifactID, inspectInstruction, question, data, "image/png")
+}
+
+// inspect makes the no-tools model call for one image. idKey and id name the image in the result.
+func (s *Service) inspect(ctx context.Context, idKey, id, instruction, question string, data []byte, mediaType string) (result map[string]any, err error) {
 	provider, model := s.Model.Provider(), s.Model.Name()
 	ctx, span := otel.Tracer("nori/agent").Start(ctx, "inspect_screenshot "+model, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
 		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID()),
@@ -44,19 +49,19 @@ func (s *Service) inspectScreenshot(ctx context.Context, run, artifactID, questi
 		span.End()
 	}()
 	inspection, err := s.Model.Inspect(ctx, InspectRequest{
-		Instructions: inspectInstruction, Question: question, PNG: data, MaxOutputTokens: inspectOutputTokens,
+		Instructions: instruction, Question: question, Image: data, MediaType: mediaType, MaxOutputTokens: inspectOutputTokens,
 	})
 	switch {
 	case inspection.CostKnown:
-		result = map[string]any{"artifact_id": artifactID, "cost_usd": inspection.Cost}
+		result = map[string]any{idKey: id, "cost_usd": inspection.Cost}
 	case inspection.Sent:
-		result = map[string]any{"artifact_id": artifactID, "cost_unknown": true}
+		result = map[string]any{idKey: id, "cost_unknown": true}
 	}
 	if err != nil {
 		return result, err
 	}
 	if result == nil {
-		result = map[string]any{"artifact_id": artifactID}
+		result = map[string]any{idKey: id}
 	}
 	observation := strings.TrimSpace(inspection.Observation)
 	if observation == "" {

@@ -251,6 +251,9 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 			q = nil
 			out.QuestionResolved = true
 			messages = append(messages, transcript.UserText(cmd.Text))
+			if note := attachmentNote(cmd.Attachments); note != "" {
+				messages = append(messages, transcript.UserText(note))
+			}
 			if cmd.Kind == state.CommandStart {
 				out.Request = clip(cmd.Text, 1500)
 			}
@@ -264,6 +267,9 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 					messages = append(messages, transcript.ToolResultMessage(q.CallID, questionTool(q), answer))
 				} else {
 					messages = append(messages, transcript.UserText(cmd.Text))
+				}
+				if note := attachmentNote(cmd.Attachments); note != "" {
+					messages = append(messages, transcript.UserText(note))
 				}
 				q = nil
 				out.QuestionResolved = true

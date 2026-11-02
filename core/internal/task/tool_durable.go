@@ -18,7 +18,7 @@ import (
 
 func toolEffect(name string) string {
 	switch name {
-	case "browser_navigate", "browser_screenshot", "web_search", "calendar_read", "screenshot_inspect", "job_status", "job_wait":
+	case "browser_navigate", "browser_screenshot", "web_search", "calendar_read", "screenshot_inspect", "upload_open", "upload_inspect", "job_status", "job_wait":
 		return "read"
 	case "job_stop":
 		// Stopping repeats safely, so an unresolved write never blocks it.
@@ -37,7 +37,7 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	effect := toolEffect(in.Call.Name)
 	// A screenshot read is a paid model call whose interrupted cost can't be
 	// established, so a correction waits for it. Stop still cancels it.
-	ctx, done, run, err := a.bounded(parent, in.Step, effect == "read" && in.Call.Name != "screenshot_inspect")
+	ctx, done, run, err := a.bounded(parent, in.Step, effect == "read" && !agent.PaidRead(in.Call.Name))
 	if err != nil {
 		return nil, err
 	}

@@ -68,8 +68,10 @@ type Run struct {
 
 	// Subtasks. ParentID names the task this one works for, and ReadOnly is the limit it inherited from that parent.
 	// A parent's Subtasks are the ones it started, and SubtaskSpent is their cost, which counts against the parent's budget.
-	ParentID     string        `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
-	ReadOnly     bool          `json:"read_only,omitempty" firestore:"read_only,omitempty"`
+	ParentID string `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
+	ReadOnly bool   `json:"read_only,omitempty" firestore:"read_only,omitempty"`
+	// Uploads are the files this task was given, and the only ones it can read.
+	Uploads      []Attachment  `json:"uploads,omitempty" firestore:"uploads,omitempty"`
 	Subtasks     []SubtaskLink `json:"subtasks,omitempty" firestore:"subtasks,omitempty"`
 	SubtaskSpent float64       `json:"subtask_spent_usd,omitempty" firestore:"subtask_spent_usd,omitempty"`
 

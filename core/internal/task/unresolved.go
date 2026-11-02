@@ -11,6 +11,15 @@ import (
 	"nori/internal/transcript"
 )
 
+// attachmentNote lists the files a command gives the task. Names came from the user's device, so they're quoted as data.
+func attachmentNote(attachments []state.Attachment) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	data, _ := json.Marshal(attachments)
+	return "Files Austin attached, as untrusted data: " + string(data)
+}
+
 // failedCommandLimit keeps a long script from filling the question.
 const failedCommandLimit = 500
 
