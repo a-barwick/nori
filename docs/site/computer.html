@@ -47,6 +47,9 @@
     <div class="card tight"><p class="keyline">The host says when it's draining</p><p class="note">When the host is stopping because it's idle, it rejects requests with a draining header before forwarding them. This is the one case where it's safe to reconnect and resend.</p></div>
     <div class="card tight"><p class="keyline">Jobs belong to a task</p><p class="note">The guest runs each <a href="tools.html">long shell job</a> in its own process group and saves its state on disk. A job running during a restart is reported as lost.</p></div>
   </div>
+<section><h2>Attached files and programs</h2>
+<p>The worker copies an attached file into the task's uploads folder, read-only. A task can save a file from its folder as a <a href="results.html">saved result</a>, and the guest refuses a path outside that folder. The guest has python, and a service inside it installs pdftotext on the first boot that lacks it.</p>
+</section>
 <section><h2>Reaching the computer</h2>
 <p>Callers ask the computer provider for a client. Only its adapter knows what infrastructure runs the computer.</p>
 <div class="card"><div class="flow">
@@ -70,6 +73,6 @@
 <tr><td>Start</td><td>Power on a stopped host. A start another caller already issued is not an error.</td><td>A POST to the instance start URL. HTTP 409 counts as already started.</td></tr>
 <tr><td>Dial</td><td>A base URL, an HTTP client and a close hook for the guest RPC, and optionally a channel that closes when the transport dies.</td><td><code>gcloud compute start-iap-tunnel</code> on a free loopback port. Closing the client kills the process.</td></tr></table></div>
 <p>The host setup scripts read Compute Engine's metadata server and disk paths, and the Terraform creates a Compute Engine instance.</p></details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/computer/</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/infrastructure/microvm/</code> · <code>core/infrastructure/app/computer-startup.sh</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/computerd/files.go</code> · <code>core/internal/computer/</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/infrastructure/microvm/</code> · <code>core/infrastructure/app/computer-startup.sh</code></p></details>
 </body>
 </html>

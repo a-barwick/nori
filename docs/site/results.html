@@ -9,25 +9,34 @@
 </head>
 <body>
 <h1>Results and files</h1>
-<p class="lede">A saved result should reopen later, and its records should show whether it reached the user.</p>
-<div class="card designed"><div class="states"><span class="state">Created</span><span class="state-arrow">→</span><span class="state">Checked</span><span class="state-arrow">→</span><span class="state run">Delivered</span></div>
-<p class="note" style="margin-top:12px">These are separate facts. A saved result might not have reached the user yet, and a saved reminder timer doesn't show the reminder arrived.</p></div>
-<section class="designed"><h2>What a result records</h2>
-<ul class="pts"><li>A stable ID and a place to find it.</li><li>The task that made it, and which instructions it answers.</li><li>The evidence behind it, and what's still uncertain.</li><li>Its revisions, so old versions stay as history.</li></ul></section>
-<section class="designed"><h2>Finding it later</h2>
+<p class="lede">A saved result reopens later, and its record shows whether it reached the user.</p>
+<div class="card"><div class="states"><span class="state">Created</span><span class="state-arrow">→</span><span class="state">Checked</span><span class="state-arrow">→</span><span class="state">Reported</span><span class="state-arrow">→</span><span class="state run">Delivered</span></div>
+<p class="note" style="margin-top:12px">These are separate times on one record. For “Write up the Tucson forecast”, the task saves the file, the completion check accepts it, a reply names it, and the browser reports showing that reply.</p></div>
+<section><h2>What a result records</h2>
+<ul class="pts"><li>A stable ID, and its kind: an answer, a file, a screenshot or a link.</li><li>The task that made it, and the instruction revision it answers.</li><li>The saved tool results its answer cites, and anything left unmet.</li><li>A file counts as checked only if the answer cites it.</li></ul></section>
+<section><h2>Finding it later</h2>
 <div class="card">
-<p><span class="say me">Show me that research.</span> <span class="note">Finds the same saved result, even after a reconnect.</span></p>
-<p><span class="say me">Revise it for Thursday.</span> <span class="note">A new revision linked to the original.</span></p>
-<p><span class="say me">What happened with Tom?</span> <span class="note">No need to find the original task.</span></p>
+<p><span class="say me">Show me that research.</span> <span class="note">The outer loop sees the newest 20 results and shows one without starting a task.</span></p>
+<p><span class="say me">Revise it for Thursday.</span> <span class="note">A task saves a new result that links to the original. A task that doesn't finish leaves the original current.</span></p>
+<p><span class="say me">What happened with Tom?</span> <span class="note">A task searches earlier results by word, along with older tasks that have no result record.</span></p>
 </div></section>
+<section><h2>Files the user attaches</h2>
+<div class="card"><div class="flow">
+<div class="node"><b>Web client</b><small>Uploads a file when it's picked. A retry stores one copy.</small></div>
+<div class="arrow">↓ <span class="lbl">bytes, up to 10 MiB</span></div>
+<div class="node"><b>Agent service</b><small>Accepts PNG, JPEG, WebP, PDF or CSV, judged from the bytes.</small></div>
+<div class="arrow">↓ <span class="lbl">message with file IDs</span></div>
+<div class="node outer"><b>Outer loop</b><small>Sees a file's name, type and size, and never its contents.</small></div>
+<div class="arrow">↓ <span class="lbl">start, steer or answer command</span></div>
+<div class="node inner"><b>Inner loop</b><small>Reads only files it was given. Images go to a no-tools model call.</small></div>
+<div class="arrow">↓ <span class="lbl">read-only copy</span></div>
+<div class="node computer"><b>Computer</b><small>Shell commands read PDFs and CSVs there, away from the worker's credentials.</small></div>
+</div></div>
+<p>Both prompts mark file contents and names as untrusted data. Approvals still guard calendar and email writes. Shell has public internet, and only the prompt's instruction to treat a file as data guards against a hidden instruction there.</p></section>
 <section><h2>Where things live</h2>
 <div class="card"><table class="tall"><tr><th>Thing</th><th>Where</th></tr>
-<tr><td>Metadata and links</td><td>Firestore</td></tr><tr><td>Large files</td><td>Cloud Storage</td></tr><tr><td>Task run history in Temporal</td><td>References only</td></tr><tr><td>Working files</td><td>The disk of Nori's Linux computer</td></tr></table>
-<p class="note">This table runs today. Screenshots under <code>artifacts/</code> are the only files in Cloud Storage. <span class="designed">The rest of this page is milestone 8.</span></p></div></section>
-<section class="designed"><h2>Also in this milestone</h2>
-<ul class="pts"><li><b>Typed message parts</b>, so clients stop reading model text.</li><li><b>Uploads from the user</b>, stored separately and read as data.</li><li><b>An event log and live stream</b> in place of polling.</li></ul></section>
-<section class="designed"><h2>Still open</h2>
-<ul class="pts"><li>Which previews to support.</li><li>Editing in place versus new revisions.</li><li>How long to keep things.</li></ul></section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/state/artifacts.go</code> · <code>core/internal/state/gcs/gcs.go</code> · <code>core/internal/agent/steps.go</code> · <a href="open-questions.html">Open questions</a></p></details>
+<tr><td>Metadata and links</td><td>Firestore</td></tr><tr><td>Screenshots, attached files and saved files</td><td>Cloud Storage, in a private folder only the runtime can read</td></tr><tr><td>Task run history in Temporal</td><td>References only</td></tr><tr><td>Working files</td><td>The disk of Nori's Linux computer</td></tr></table>
+<p class="note">The browser previews images and PDFs, and other files download. An attached or saved file is served with an attachment header and a sandbox policy.</p></div></section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state/results.go</code> · <code>core/internal/state/firestore/results.go</code> · <code>core/internal/state/uploads.go</code> · <code>core/internal/state/artifacts.go</code> · <code>core/internal/state/gcs/gcs.go</code> · <code>core/internal/agent/results.go</code> · <code>core/internal/agent/uploads.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/computerd/files.go</code> · <code>core/internal/conversation/call.go</code> · <code>web/src/components/chat/Parts.tsx</code></p></details>
 </body>
 </html>

@@ -19,14 +19,18 @@ owners/{owner}/
 ├─ conversation_inputs/   ← durable inbox (ordered)
 ├─ conversation_turns/    ← captured batches
 ├─ conversation_attempts/ ← traces: model, hint, usage
-├─ messages/              ← the visible messages
+├─ messages/              ← the visible messages, as typed parts
+├─ events/                ← the ordered event log
+├─ event_head/            ← the log's newest number
+├─ uploads/               ← attached files' records
+├─ results/               ← saved results
 ├─ runs/{taskId}          ← copy of task status
 │   ├─ history/           ← the task transcript, in blocks
 │   ├─ steps/             ← per-activity traces
 │   └─ operations/        ← tool call records
 ├─ task_commands/         ← commands waiting to reach Temporal
 └─ model_usage/           ← provider calls, saved first</pre>
-      <p class="note" style="margin-top:10px">Cloud Storage holds binaries, which today means screenshots at <code>artifacts/{run}/{id}.png</code>.
+      <p class="note" style="margin-top:10px">Cloud Storage holds binaries under <code>artifacts/</code>: screenshots, attached files and saved files.
       Large transcripts and outputs stay out of workflow history, and workflows carry references to them.</p>
     </div>
     <div>
@@ -69,7 +73,7 @@ owners/{owner}/
 <div class="card"><table class="tall"><tr><th>Layer</th><th>Code</th><th>Job</th></tr>
 <tr><td>Records and rules</td><td><code>state/</code></td><td>The record types, errors and store contracts, and the rules that decide whether a write is allowed, such as accepting commands, checking revisions and leases, and publishing results.</td></tr>
 <tr><td>Document backend</td><td><code>state/firestore/</code></td><td>Reads and writes documents inside Firestore transactions and applies those rules. Document paths and field names are the saved layout.</td></tr>
-<tr><td>Artifact bytes</td><td><code>state/gcs/</code> and <code>state/localfs/</code></td><td>Stores screenshot bytes in Cloud Storage, or in a private folder for local runs.</td></tr>
+<tr><td>File bytes</td><td><code>state/gcs/</code> and <code>state/localfs/</code></td><td>Stores screenshots, attached files and saved files in Cloud Storage, or in a private folder for local runs.</td></tr>
 <tr><td>Development spend</td><td><code>spend/</code> and <code>spend/firestore/</code></td><td>The budget rules, and a ledger that reserves and settles model spend atomically.</td></tr>
 <tr><td>Wiring</td><td><code>platform/</code></td><td>Opens the backends a process is configured for, from <code>NORI_PROJECT_ID</code> and <code>FIRESTORE_DATABASE_ID</code>. Neither has a default, so a process missing one stops at startup. It is the only production code that names a backend.</td></tr>
 </table></div>
@@ -81,7 +85,7 @@ owners/{owner}/
 <tr><td>Task</td><td>Stable ID, request, ordered instructions, incorporated position, revision, lifecycle, wait reason, budget, result references, and its parent or subtasks.</td></tr>
 <tr><td>Command or event</td><td>Stable ID, target, kind, order, revision, payload and delivery state.</td></tr>
 <tr><td>Operation</td><td>Stable ID, parameters, attempt state, confirmation or uncertainty, and evidence.</td></tr>
-<tr class="designed"><td>Artifact</td><td>Stable ID, task link, location, version and preview metadata.</td></tr>
+<tr><td>Saved result</td><td>Stable ID, task link, file details, version and delivery times.</td></tr>
 <tr class="designed"><td>Approval</td><td>Exact operation and argument revision, effect, scope, decision and validity.</td></tr>
 </table></details>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/state/</code> · <code>core/internal/state/firestore/</code> · <code>core/internal/state/gcs/</code> · <code>core/internal/state/localfs/</code> · <code>core/internal/spend/</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/dispatch/dispatcher.go</code> · <code>core/internal/task/client.go</code> · <code>core/internal/conversation/runner.go</code></p></details>

@@ -11,7 +11,7 @@
 <h1>Roadmap</h1>
 <p class="lede">Twelve milestones, in order. A milestone is done when it works on noribot.chat against its scenarios.</p>
   <div class="road" id="roadGrid" aria-label="Milestone timeline"></div>
-<ul class="pts"><li>Nori has twelve milestones. Milestones 8 to 12 are planned.</li><li>We measure progress against 109 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show completed work items. Milestones 3 to 7 are deployed. Milestone 5 has run one production browser task, and milestone 7 ran its scenarios in production on Nov 1, 2026.</li><li>Milestone 4 stopped a finished task when the Jev classifier returned low confidence. Milestone 5 removes that check.</li></ul>
+<ul class="pts"><li>Nori has twelve milestones. Milestone 8's code is built, and its work items stay open until its final scenario run. Milestones 9 to 12 are planned.</li><li>We measure progress against 109 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show completed work items. Milestones 3 to 7 are deployed. Milestone 5 has run one production browser task, and milestone 7 ran its scenarios in production on Nov 1, 2026.</li><li>Milestone 4 stopped a finished task when the Jev classifier returned low confidence. Milestone 5 removes that check.</li></ul>
   <div style="margin-top:14px">
 <div class="card tight"><p class="keyline">What milestone 4 changed</p>
       <ul class="pts note"><li>Tasks finish with an explicit <code>complete</code> call and a completeness check from the Jev classifier, which milestone 5 removes.</li><li>Tool errors go back to the model.</li><li>Reads can be corrected within limits. Failed tasks and uncertain writes wait for user direction.</li><li>History moved out of workflow payloads.</li></ul></div>
@@ -26,7 +26,7 @@
           <tr><td>Task supervision</td><td>The runtime reports crashes with completed and unresolved operations. Milestone 4 waits for user direction instead of re-issuing failed tasks automatically.</td><td>4</td></tr>
           <tr class="designed"><td>Context</td><td>Each loop starts with a small context and retrieves more when it would change the next decision. Older context is compacted with links back to the originals.</td><td>10</td></tr>
           <tr class="designed"><td>Memory</td><td>Separate stores for user knowledge, history, active work, procedures and authority. Memories have a source and scope, and the user can inspect, correct and forget them.</td><td>10</td></tr>
-          <tr class="designed"><td>Results and files</td><td>Saved outputs with stable IDs and revisions, text, images and files in one message, uploads from the user, and an event log with a live stream.</td><td>8</td></tr>
+          <tr><td>Results and files</td><td>Saved outputs with stable IDs and revisions, text, images and files in one message, uploads from the user, and an event log with a live stream.</td><td>8</td></tr>
           <tr class="designed"><td>Schedules and monitors</td><td>One-time reminders, recurring schedules, conditional monitors, and notifications when the app is closed.</td><td>9</td></tr>
           <tr class="designed"><td>Proactive assistance</td><td>Nori starts work from a trigger and states the reason. The first trigger isn't chosen yet.</td><td>11</td></tr>
           <tr class="designed"><td>More clients</td><td>Identity, devices and push for native clients.</td><td>12</td></tr>
@@ -50,7 +50,7 @@ const miles = [
     [5, 'Search, vision and tools', 5, 6, 'deployed, one production task run'],
     [6, 'Approvals and writes', 4, 9, 'deployed, 5 work items open'],
     [7, 'Subtasks', 1, 1, 'deployed, scenarios run in production'],
-    [8, 'Results and files', 0, 8, 'message parts, uploads, event log'],
+    [8, 'Results and files', 0, 8, 'built, final run open'],
     [9, 'Schedules and monitors', 0, 4, 'reminders, recurrence'],
     [10, 'Memory and context', 0, 7, 'persistent memory'],
     [11, 'Proactive assistance', 0, 1, 'first trigger choice'],

@@ -15,12 +15,12 @@
 <p class="note">Screenshots come from the running client, with made-up data.</p>
 </div>
 <p>Rules for every client are on <a href="clients.html">Clients</a> and <a href="api.html">Service API</a>.</p>
-<div class="grid2"><a class="card tight go" href="theme.html"><b>Theme</b><span>Colors, type, tokens and the mark.</span></a><a class="card tight go" href="frontend.html"><b>Web client architecture</b><span>Components, requests, polling and builds.</span></a></div>
+<div class="grid2"><a class="card tight go" href="theme.html"><b>Theme</b><span>Colors, type, tokens and the mark.</span></a><a class="card tight go" href="frontend.html"><b>Web client architecture</b><span>Components, requests, live updates and builds.</span></a></div>
 <section><h2>The screen</h2>
 <div class="card"><table class="tall"><tr><th>Part</th><th>What it shows</th><th>Component</th></tr>
 <tr><td>Header</td><td>Nori's mark and status, debug toggle, Refresh, Activity.</td><td>Shell</td></tr>
 <tr><td>Thread</td><td>Saved messages, documents, time separators, older-message loading and one status line.</td><td><code>Thread</code></td></tr>
-<tr><td>Composer</td><td>A text box that grows to 196 px, Send and a count of new messages. Enter sends and Shift+Enter adds a line.</td><td><code>RuntimeComposer</code></td></tr>
+<tr><td>Composer</td><td>A text box, Attach for up to 10 files, Send and a new-message count. Enter sends and Shift+Enter adds a line.</td><td><code>RuntimeComposer</code></td></tr>
 <tr><td>Activity panel</td><td>Running tasks, recent tasks, questions, events, results and screenshots. <code>⌘.</code> or <code>Ctrl+.</code> toggles it.</td><td><code>TaskPanel</code></td></tr>
 <tr><td>Reading view</td><td>A full-screen copy of a saved reply, with Download as Markdown and Back to chat.</td><td><code>DocumentViewer</code></td></tr>
 </table></div>
@@ -49,12 +49,11 @@
 </table></div>
 <p>The thread status line can also say that task execution is paused. Chat still works during a pause.</p>
 <p>A task update sent while an action waits voids that approval request. See <a href="authority.html">Approvals and writes</a>.</p>
-<p>A <a href="contract.html#subtasks">subtask's</a> label starts with “Subtask”.</p>
 </section>
 <section><h2>Bubbles and documents</h2>
-<p>The client picks the layout from the Markdown of each saved reply. User messages are always bubbles.</p>
+<p>The client picks the layout from each saved reply's text part. User messages are always bubbles.</p>
 <div class="card"><div class="flow">
-<div class="node"><b>Saved reply</b><small><code>&lt;!-- nori:page --&gt;</code> or <code>&lt;!-- nori:bubble --&gt;</code> in the text forces a layout.</small></div>
+<div class="node"><b>Saved reply</b><small>The service can set a page or bubble layout on the part.</small></div>
 <div class="arrow">↓</div>
 <div class="node decide">Does it have structure?</div>
 <div class="branch">

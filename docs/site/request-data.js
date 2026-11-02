@@ -10,7 +10,7 @@ window.REQUEST_FLOW = [
   [ // 1. The user sends a message
     { from: 'Browser', to: 'Go service', edge: 'user-service', call: 'POST /api/turn', source: 'core/internal/api/http.go',
       request: { id: INPUT, message: MESSAGE },
-      response: { status: 202, body: { messages: ['…'], runs: ['…'], paused: false, dispatches: [],
+      response: { status: 202, body: { messages: ['…'], runs: ['…'], paused: false, dispatches: [], results: ['…'], position: 41,
         conversation: { pending: true, processing: false, revision: 12, consumed: 11, input_ids: [], restart_count: 0, frozen: false, routing_blocked: false }, traces: ['…'] } },
       other: ['400 if the ID isn\'t a UUID or the message isn\'t 1–8192 bytes', '409 if the same ID arrives with different text', '503 if the message saved but the wake couldn\'t be confirmed. Retrying with the same ID is safe.'] },
     { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'conversation_inputs/{id}', source: 'core/internal/state/conversation.go',
@@ -46,10 +46,10 @@ window.REQUEST_FLOW = [
       note: 'The start command\'s ID is also the task ID. There\'s one of these per dispatch.' },
     { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'runs/{id}', source: 'core/internal/state/run.go',
       saved: { id: WEATHER, status: 'running', request: REQUEST, revision: 1, incorporated: 0, spent_usd: 0, budget_usd: 1, cancel_requested: false, started_at: TIME } },
-    { from: 'Browser', to: 'Go service', edge: 'user-service', call: 'POST /api/session', source: 'core/internal/api/http.go',
+    { from: 'Go service', to: 'Browser', edge: 'user-service', call: 'GET /v1/events?after=41', source: 'core/internal/api/events.go',
       request: {},
-      response: { status: 200, body: { messages: [{ id: '…', turn_id: '…', role: 'assistant', text: "On it. I've started both.", created_at: TIME }], runs: [{ id: WEATHER, status: 'running', '…': '…' }], dispatches: ['…'], conversation: { pending: false, processing: false, revision: 13, consumed: 12, '…': '…' } } },
-      note: 'This is how the reply reaches the user. The browser polls for it.' },
+      response: { status: 200, body: { id: 42, event: 'message', data: { message: { id: '…', turn_id: '…', role: 'assistant', text: "On it. I've started both.", parts: [{ type: 'text', text: "On it. I've started both." }], created_at: TIME } } } },
+      note: 'This is how the reply reaches the user. The stream sends it to the browser as a log event.' },
   ],
   [ // 5. The relay starts one Temporal workflow per task
     { from: 'Go service', to: 'Temporal', edge: 'service-temporal', call: 'SignalWithStartWorkflow', source: 'core/internal/task/client.go',
@@ -86,8 +86,8 @@ window.REQUEST_FLOW = [
       request: { model: 'gpt-6.1-sol', max_completion_tokens: 4096, reasoning_effort: 'low', service_tier: 'default', store: false, prompt_cache_options: { mode: 'explicit' }, messages: ['…', { role: 'user', content: 'Task result: …' }] },
       response: { choices: [{ message: { role: 'assistant', content: 'Saturday in Tucson looks sunny, around 82°F.' } }], usage: { prompt_tokens: 2240, completion_tokens: 21, total_tokens: 2261 } },
       note: 'Notification turns run without task tools, so this turn can only explain the result. The content format shown is simplified.' },
-    { from: 'Browser', to: 'Go service', edge: 'user-service', call: 'POST /api/session', source: 'core/internal/api/http.go',
+    { from: 'Go service', to: 'Browser', edge: 'user-service', call: 'GET /v1/events?after=60', source: 'core/internal/api/events.go',
       request: {},
-      response: { status: 200, body: { messages: ['…', { role: 'assistant', run_id: WEATHER, text: 'Saturday in Tucson looks sunny, around 82°F.', created_at: TIME }], runs: [{ id: WEATHER, status: 'completed', result: '…', spent_usd: 0.0003, budget_usd: 1 }] } } },
+      response: { status: 200, body: { id: 61, event: 'message', data: { message: { id: '…', turn_id: '…', role: 'assistant', text: 'Saturday in Tucson looks sunny, around 82°F.', parts: [{ type: 'text', text: 'Saturday in Tucson looks sunny, around 82°F.' }], result_ids: ['…'], created_at: TIME } } } } },
   ],
 ];
