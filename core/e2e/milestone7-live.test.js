@@ -303,7 +303,7 @@ journey("109: a subtask's writes wait for approval, and Stop ends the whole fami
   // First run: approve each write.
   const startedAt = Date.now();
   const before = await known7();
-  await say("See what's on Friday. Keep that task to reading my calendar. If 3 p.m. is open, have a half-hour 'Order cake' added then, and have an email sent to me saying it's on there, both done separately, and give me one answer.");
+  await say("Start one task to see what's on Friday, and keep it to reading my calendar. Once it knows 3 p.m. is open, it should ask for the rest as separate work: a half-hour 'Order cake' at 3 p.m., and an email to me saying it's on there. Give me one answer at the end.");
   const id = await newTask(before);
   const approvals = [];
   const done = await until(async () => {
@@ -336,7 +336,7 @@ journey("109: a subtask's writes wait for approval, and Stop ends the whole fami
 
   // Second run: stop at the first approval.
   const second = await known7();
-  await say("See what's on Friday. Keep that task to reading my calendar. If 3 p.m. is open, have a half-hour 'Order cake' added then, and have an email sent to me saying it's on there, both done separately, and give me one answer.");
+  await say("Start one task to see what's on Friday, and keep it to reading my calendar. Once it knows 3 p.m. is open, it should ask for the rest as separate work: a half-hour 'Order cake' at 3 p.m., and an email to me saying it's on there. Give me one answer at the end.");
   const parent = await newTask(second);
   await until(async () => (await family(parent)).some((run) => run.question?.kind === "approval" && !run.question.resolved_by), Boolean, "a subtask's approval", 300_000);
   await say("stop all of that");
