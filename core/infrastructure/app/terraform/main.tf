@@ -510,7 +510,8 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
 
       min_instances         = 0
       max_instances         = 1
-      container_concurrency = 3
+      # A stream holds a slot until its next heartbeat notices the browser left, so a reload can't be allowed to fill them.
+      container_concurrency = 20
       resource_limits = {
         cpu = "1", memory = "1Gi"
       }
