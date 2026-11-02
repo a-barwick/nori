@@ -127,6 +127,13 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if e != nil {
 		return e
 	}
+	control, _, e := r.tasks.Store.ConversationStatus(callCtx)
+	if e != nil {
+		return e
+	}
+	if control.ContextFrom.After(ciStart) {
+		ciStart = control.ContextFrom
+	}
 	if !ciStart.IsZero() {
 		visible = slices.DeleteFunc(visible, func(m Message) bool { return m.CreatedAt.Before(ciStart) })
 	}
@@ -596,7 +603,7 @@ func (r *Runner) prepareAttemptTasks(
 			eventRunIDs = append(eventRunIDs, input.Event.RunID)
 		}
 	}
-	taskContext, err := r.tasks.ContextRecords(callCtx, snapshot.Runs, eventRunIDs)
+	taskContext, err := r.tasks.ContextRecords(callCtx, snapshot.Runs, eventRunIDs, ciStart)
 	if err != nil {
 		return TaskContext{}, err
 	}

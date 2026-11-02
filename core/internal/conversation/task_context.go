@@ -90,7 +90,7 @@ type TaskContextCommand struct {
 
 // ContextRecords reads each selected task's accepted commands once. Direct panel
 // commands are user instructions even though they create no conversation message.
-func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunIDs []string) (TaskContext, error) {
+func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunIDs []string, since time.Time) (TaskContext, error) {
 	result := TaskContext{ActiveTasks: []*TaskContextRecord{}, EventTasks: []*TaskContextRecord{}, RecentTasks: []*TaskContextRecord{},
 		Instructions: "Accepted task commands are Austin's instructions, including direct panel controls that do not appear as chat messages. " +
 			"Applied means the worker incorporated that command position, not that its requested effects completed. " +
@@ -188,6 +188,9 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 		return result, err
 	}
 	for _, item := range saved {
+		if item.CreatedAt.Before(since) {
+			continue
+		}
 		result.SavedResults = append(result.SavedResults, SavedResult{
 			ID: item.ID, TaskID: item.RunID, Kind: item.Kind, Title: item.Title, Version: item.Version, SupersededBy: item.SupersededBy,
 			CreatedAt: item.CreatedAt, CheckedAt: item.CheckedAt, ReportedAt: item.ReportedAt, DeliveredAt: item.DeliveredAt,

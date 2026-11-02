@@ -37,6 +37,9 @@ type ConversationControl struct {
 	Fence           int64     `firestore:"fence"`
 	LeaseUntil      time.Time `firestore:"lease_until"`
 	LatestAt        time.Time `firestore:"latest_at"`
+	// ContextFrom is the time an operator started a fresh context. The outer model sees nothing from before it, and
+	// nothing is deleted.
+	ContextFrom time.Time `firestore:"context_from,omitempty"`
 }
 
 type ConversationAction struct {
