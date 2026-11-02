@@ -299,8 +299,8 @@ journey("the result comes back as the parent's request_work result, with no mode
   const done = await finished(id);
   expect(done.status, done.error).toBe("completed");
   expect(done.result).toContain("Rain from 1 p.m.");
-  const [child] = await subtasksOf(id);
-  const finishedChild = await task(child);
+  const [first] = await subtasksOf(id);
+  const finishedChild = await task(first);
   expect(finishedChild.parent_id).toBe(id);
   expect(finishedChild.status).toBe("completed");
   // One result, delivered to the original call.
