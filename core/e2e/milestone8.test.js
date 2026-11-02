@@ -183,7 +183,7 @@ async function dispatch(script) {
 const running = (id) => until(() => task(id), (run) => run?.status === "running", `task ${id} to run`);
 const settled = () => until(snapshot, (now) => !now.conversation.pending && !now.conversation.processing, "the conversation to settle");
 const saidTo = (message) => post("turn", { id: crypto.randomUUID(), message }, 202);
-const upload = (id, name, type, data) => fetch(`${address}/v1/uploads?id=${id}&name=${encodeURIComponent(name)}`, { method: "POST", headers: { "Content-Type": type }, body: data });
+const upload = (id, name, type, data) => fetch(`${address}/v1/uploads?id=${id}&filename=${encodeURIComponent(name)}`, { method: "POST", headers: { "Content-Type": type }, body: data });
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
 const PNG = Buffer.concat([Buffer.from("\x89PNG\r\n\x1a\n", "latin1"), Buffer.alloc(32, 1)]);
 const CSV = Buffer.from("category,amount\ncoffee,5\n");
@@ -369,7 +369,7 @@ journey("an interrupted upload saves nothing, and a retry with the same ID store
   const { port, hostname } = new URL(address);
   await new Promise((done, fail) => {
     const socket = connect({ host: hostname, port: Number(port) }, () => {
-      socket.write(`POST /v1/uploads?id=${id}&name=cut.pdf HTTP/1.1\r\nHost: x\r\nContent-Type: application/pdf\r\nContent-Length: 100000\r\n\r\n%PDF-1.4 only part of it`, () => setTimeout(() => { socket.destroy(); done(); }, 100));
+      socket.write(`POST /v1/uploads?id=${id}&filename=cut.pdf HTTP/1.1\r\nHost: x\r\nContent-Type: application/pdf\r\nContent-Length: 100000\r\n\r\n%PDF-1.4 only part of it`, () => setTimeout(() => { socket.destroy(); done(); }, 100));
     });
     socket.on("error", fail);
   });

@@ -12,7 +12,8 @@ import (
 )
 
 // upload saves one file. The body is read whole before anything is stored, so a dropped connection leaves nothing, and
-// a retry with the same ID is safe. The file goes to quarantined storage and is only ever read as data.
+// a retry with the same ID is safe. The file goes to quarantined storage and is only ever read as data. The file's name
+// travels as `filename` because Agent Runtime's gateway takes a `name` parameter as a resource of its own and refuses it.
 func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if !state.ValidUploadID(id) {
@@ -31,7 +32,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "The upload was interrupted, so nothing was saved. Try again.", "retryable": true})
 		return
 	}
-	upload, err := s.Tasks.SaveUpload(r.Context(), id, r.URL.Query().Get("name"), r.Header.Get("Content-Type"), data)
+	upload, err := s.Tasks.SaveUpload(r.Context(), id, r.URL.Query().Get("filename"), r.Header.Get("Content-Type"), data)
 	if errors.Is(err, state.ErrUploadType) {
 		writeJSON(w, 415, map[string]string{"error": err.Error()})
 		return

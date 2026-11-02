@@ -45,7 +45,7 @@ type Pending = { id: string; text: string; started: number; error?: string; atta
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_FILES = 10;
 async function uploadFile(item: DraftFile, agentMode: boolean): Promise<Attachment> {
-  const query = new URLSearchParams({ id: item.id, name: item.name });
+  const query = new URLSearchParams({ id: item.id, filename: item.name });
   const response = await fetch(`${agentMode ? "/api/agent" : "/api"}/v1/uploads?${query}`, {
     method: "POST", body: item.file, cache: "no-store", headers: { "Content-Type": item.file.type || "application/octet-stream" },
   });

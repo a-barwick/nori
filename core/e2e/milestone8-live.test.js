@@ -63,7 +63,7 @@ const snapshot = async () => (await fetch(`${base}/v1/snapshot`, { headers: head
 const mediaTypes = { png: "image/png", pdf: "application/pdf", csv: "text/csv" };
 async function attach(name) {
   const data = readFileSync(resolve(fixtures, name));
-  const response = await fetch(`${base}/v1/uploads?id=${crypto.randomUUID()}&name=${encodeURIComponent(name)}`, { method: "POST", headers: headers({ "Content-Type": mediaTypes[name.split(".").at(-1)] }), body: data });
+  const response = await fetch(`${base}/v1/uploads?id=${crypto.randomUUID()}&filename=${encodeURIComponent(name)}`, { method: "POST", headers: headers({ "Content-Type": mediaTypes[name.split(".").at(-1)] }), body: data });
   if (!response.ok) throw new Error(`upload ${name}: HTTP ${response.status}`);
   return response.json();
 }
@@ -112,11 +112,14 @@ function follow(position) {
 
 // One conversation from a fresh context. say() waits until nothing is running: either every task has ended or one is
 // waiting on a question.
+let lastStream;
 async function conversation(id) {
+  // A scenario that failed partway leaves its stream open, and the runtime only serves three requests at once.
+  lastStream?.close();
   const at = await freshContext();
   const start = await snapshot();
   const known = new Set(start.runs.map((run) => run.id));
-  const stream = follow(start.position);
+  const stream = lastStream = follow(start.position);
   const state = { id, known, at, stream, questions: 0, turns: [] };
   const fresh = (now) => now.runs.filter((run) => !known.has(run.id));
   const remember = (now) => { for (const run of fresh(now)) earlier.add(run.id); return now; };
