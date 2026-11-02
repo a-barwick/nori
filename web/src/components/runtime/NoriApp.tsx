@@ -9,10 +9,17 @@ import { NovaShell } from "@/components/nova/NovaShell";
 import { IconButton } from "@/components/ui/primitives";
 import { useHydrated, useWide } from "@/lib/hooks";
 import { useRuntime } from "@/lib/runtime/useRuntime";
-import type { Thread as Conversation, ThreadItem } from "@/lib/types";
+import type { Message, Thread as Conversation, ThreadItem } from "@/lib/types";
 import { DocumentViewer } from "./DocumentViewer";
 import { RuntimeComposer } from "./RuntimeComposer";
 import { TaskPanel } from "./TaskPanel";
+
+/** The service sends parts. Text parts become the message body and the others show under it. */
+function partsOf(message: Message) {
+  const parts = message.parts?.length ? message.parts : [{ type: "text", text: message.text }];
+  const text = parts.filter((part) => part.type === "text");
+  return { text: text.map((part) => part.text ?? "").join("\n\n"), display: text.find((part) => part.display)?.display, parts: parts.filter((part) => part.type !== "text") };
+}
 
 export function NoriApp({ agentMode = false }: { agentMode?: boolean }) {
   const hydrated = useHydrated();
@@ -71,7 +78,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       kind: "text",
       sender: message.role === "user" ? "me" : "nori",
       at: Date.parse(message.created_at),
-      text: message.text,
+      ...partsOf(message),
       debug: debug && message.role === "assistant"
         ? { run: session?.runs.find((run) => run.id === message.run_id), turns: session?.traces?.filter((trace) => trace.turn_id === (message.turn_id || message.id.replace(/-assistant$/, ""))), agentMode, turnId: message.turn_id }
         : undefined,

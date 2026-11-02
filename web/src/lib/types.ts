@@ -1,4 +1,7 @@
 export type Sender = "nori" | "me";
+
+/** One piece of a message. A client that doesn't know the type shows `fallback`. */
+export type Part = { type: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number };
 export type MarkState = "idle" | "attentive" | "thinking" | "writing" | "listening" | "pleased";
 
 /** Saved runtime message; markdown structure selects bubble or document rendering. */
@@ -8,6 +11,10 @@ export interface TextItem {
   at: number;
   kind: "text";
   text: string;
+  /** Text-part layout requested by the service, when it set one. */
+  display?: Part["display"];
+  /** Non-text parts, shown under the text. */
+  parts?: Part[];
   debug?: DebugInfo;
 }
 
@@ -22,7 +29,7 @@ export interface Thread {
 
 // Wire types for the Go runtime API. Field names match its JSON exactly.
 
-export type Message = { id: string; run_id: string; turn_id?: string; role: "user" | "assistant"; text: string; created_at: string };
+export type Message = { id: string; run_id: string; turn_id?: string; role: "user" | "assistant"; text: string; parts?: Part[]; created_at: string };
 export type RunEvent = { id?: string; sequence?: number; instruction_revision?: number; kind: string; text: string; created_at: string };
 export type TaskQuestion = { id: string; kind: "input" | "budget" | "approval" | "work"; text: string; call_id?: string; instruction_revision: number; resolved_by?: string };
 export type TaskHold = { id: string; task_id: string; question: string; status: "pending" | "ready" | "answered" | "failed"; answered_turn_id?: string; created_at: string };

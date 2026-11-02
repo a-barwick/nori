@@ -8,15 +8,6 @@ const PAGE_WORDS = 150;
 const MAX_BUBBLE_LIST_ITEMS = 5;
 const MAX_BUBBLE_CODE_LINES = 3;
 
-export function extractHints(markdown: string): { body: string; hints: { mode?: "page" | "bubble" } } {
-  const hints: { mode?: "page" | "bubble" } = {};
-  const body = markdown.replace(/<!--\s*nori:([a-z]+)[\s\S]*?-->/g, (_match, name: string) => {
-    if (name === "page" || name === "bubble") hints.mode = name;
-    return "";
-  }).replace(/<!--(?![\s\S]*-->)[\s\S]*$/, "");
-  return { body: body.trim(), hints };
-}
-
 function parse(markdown: string): Root {
   return fromMarkdown(markdown, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
 }
