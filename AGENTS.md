@@ -9,7 +9,6 @@ Use a `codex/*` branch and PR; merge completed, verified work without an extra a
 ## Threads
 
 - One thread writes one deliverable. Start subagents or message other threads only when Austin asks in this thread.
-- A brief for delegated work names its acceptance check, what is out of scope, and when to stop.
 - A stop covers the action Austin named. Do not widen it into removing a check, changing a pipeline, or cancelling a running deployment without asking.
 
 ## Monitored verification
