@@ -121,7 +121,7 @@ func taskTools(wait, work bool) []transcript.Tool {
 		{
 			Name: "result_save",
 			Description: "Save a file from this task's folder as a result Austin can open later, and return its result_id. A file on the computer alone isn't delivered. " +
-				"Your answer is saved automatically, so use this only for a file. Files up to 10 MB.",
+				"Your answer is saved automatically, so use this only for a file. The path is inside this task's folder, where shell commands start. Files up to 10 MB.",
 			Parameters: params("path", "title"),
 		},
 		{

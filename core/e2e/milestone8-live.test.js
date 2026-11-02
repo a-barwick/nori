@@ -70,7 +70,12 @@ async function attach(name) {
 
 // The operator's marker: the outer model sees nothing from before it, and nothing is deleted. Only an idle conversation
 // takes it, because the turn's own save would overwrite it.
+let earlier = new Set();
 async function freshContext() {
+  // A scenario that failed partway can leave its own task open. Only tasks from earlier scenarios here are stopped.
+  for (const run of (await snapshot()).runs.filter((item) => item.status === "running" && earlier.has(item.id))) {
+    await post("command", { id: crypto.randomUUID(), run_id: run.id, kind: "stop" }, 202);
+  }
   await until(snapshot, (now) => !now.conversation.pending && !now.conversation.processing && !now.runs.some((run) => run.status === "running"), "the system to be idle");
   const at = new Date().toISOString();
   const response = await fetch(`${documents}/owners/austinbarwickdavis@gmail.com/conversation/control?updateMask.fieldPaths=context_from`, {
@@ -114,6 +119,7 @@ async function conversation(id) {
   const stream = follow(start.position);
   const state = { id, known, at, stream, questions: 0, turns: [] };
   const fresh = (now) => now.runs.filter((run) => !known.has(run.id));
+  const remember = (now) => { for (const run of fresh(now)) earlier.add(run.id); return now; };
   const quiet = (now) => !now.conversation.pending && !now.conversation.processing && fresh(now).every((run) => run.status !== "running" || (run.question && !run.question.resolved_by && run.incorporated === run.position));
   state.say = async (text, files = []) => {
     const before = new Set((await snapshot()).messages.map((message) => message.id));
@@ -121,9 +127,9 @@ async function conversation(id) {
     for (const name of files) attachments.push((await attach(name)).id);
     await post("turn", { id: crypto.randomUUID(), message: text, attachments }, 202);
     await delay(1500);
-    let now = await until(snapshot, quiet, `"${text}" to settle`, 420_000);
+    let now = remember(await until(snapshot, (value) => { remember(value); return quiet(value); }, `"${text}" to settle`, 420_000));
     await delay(3000);
-    now = await until(snapshot, quiet, `"${text}" to stay settled`, 420_000);
+    now = remember(await until(snapshot, quiet, `"${text}" to stay settled`, 420_000));
     const replies = now.messages.filter((message) => message.role === "assistant" && !before.has(message.id));
     const reply = replies.map((message) => message.text).join("\n\n");
     const open = fresh(now).filter((run) => run.status === "running" && run.question);
@@ -224,20 +230,47 @@ scenario("060", "a spending file with a refund", async (id) => {
   await talk.finish();
 });
 
+// The scenario's setup is a folder on the computer. Its message has to say where that is, which is the one change to its
+// wording. The same guest URL reaches the local guest or, through a tunnel, the real computer.
+async function guestShell(command) {
+  const id = `m8-setup-${unique}`;
+  const response = await fetch(`${process.env.NORI_M8_GUEST_URL}/exec`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run_id: id, task_id: id, command, timeout_seconds: 30 }) });
+  if (!response.ok) throw new Error(`guest shell: HTTP ${response.status}`);
+  const result = await response.json();
+  if (result.exit_code !== 0) throw new Error(`guest shell: ${result.stderr}`);
+  return result.stdout;
+}
+
 scenario("061", "organizing files without losing originals", async (id) => {
-  const files = ["scan-0417.pdf", "scan-0422.pdf", "scan-0431.pdf", "doc-1138.pdf", "doc-1142.pdf", "doc-1150.pdf", "photo-7.png", "photo-9.png"];
-  const talk = await conversation(id);
-  const first = await talk.say("Sort these files into Receipts and Manuals based on what's inside them. Show me the proposed moves first.", files);
-  const proposal = first.reply + first.open.map((run) => run.question.text).join("\n");
-  for (const name of files) expect(proposal, `the proposal names ${name}`).toContain(name);
-  const moved = (await shellSteps(first.tasks)).filter((step) => /\bmv\b/.test(step.arguments ?? ""));
-  expect(moved.length, "nothing moves before the proposal is accepted").toBe(0);
-  const second = await talk.say("Looks good. Keep the original filenames.");
-  const shells = await shellSteps(second.tasks);
-  const output = shells.map((step) => step.result ?? "").join("\n");
-  for (const name of ["scan-0417.pdf", "scan-0422.pdf", "scan-0431.pdf", "photo-7.png"]) expect(output, `${name} is in Receipts`).toMatch(new RegExp(`Receipts/(?:\\S*/)?${name.replace(".", "\\.")}|Receipts[\\s\\S]*${name.replace(".", "\\.")}`));
-  for (const name of ["doc-1138.pdf", "doc-1142.pdf", "doc-1150.pdf", "photo-9.png"]) expect(output, `${name} is in Manuals`).toMatch(new RegExp(`Manuals/(?:\\S*/)?${name.replace(".", "\\.")}|Manuals[\\s\\S]*${name.replace(".", "\\.")}`));
-  await talk.finish({ questions: first.open.length });
+  const receipts = ["scan-0417.pdf", "scan-0422.pdf", "scan-0431.pdf", "photo-7.png"];
+  const manuals = ["doc-1138.pdf", "doc-1142.pdf", "doc-1150.pdf", "photo-9.png"];
+  const folder = `/workspace/scenario-061-${unique}`;
+  await guestShell(`mkdir -p ${folder}`);
+  const hashes = {};
+  for (const name of [...receipts, ...manuals]) {
+    const data = readFileSync(resolve(fixtures, name));
+    hashes[name] = new Bun.CryptoHasher("sha256").update(data).digest("hex");
+    await guestShell(`echo ${data.toString("base64")} | base64 -d > ${folder}/${name}`);
+  }
+  try {
+    const talk = await conversation(id);
+    const first = await talk.say(`Sort these files in ${folder} into Receipts and Manuals based on what's inside them. Show me the proposed moves first.`);
+    const proposal = first.reply + first.open.map((run) => run.question.text).join("\n");
+    for (const name of [...receipts, ...manuals]) expect(proposal, `the proposal names ${name}`).toContain(name);
+    const before = await guestShell(`cd ${folder} && find . -type f | sort`);
+    expect(before.trim().split("\n").length, "nothing moved yet").toBe(8);
+    expect(before, "nothing moved yet").not.toMatch(/Receipts|Manuals/);
+    await talk.say("Looks good. Keep the original filenames.");
+    const listed = await guestShell(`cd ${folder} && find . -type f -exec sha256sum {} + | sort -k2`);
+    console.log(`--- 061 folder:\n${listed}`);
+    for (const [group, names] of [["Receipts", receipts], ["Manuals", manuals]]) {
+      for (const name of names) expect(listed, `${name} is in ${group}, unchanged`).toContain(`${hashes[name]}  ./${group}/${name}`);
+    }
+    expect(listed.trim().split("\n").length, "no extra files, and no copies left behind").toBe(8);
+    await talk.finish({ questions: first.open.length });
+  } finally {
+    await guestShell(`rm -rf ${folder}`).catch(() => {});
+  }
 });
 
 scenario("062", "two versions of a document", async (id) => {
