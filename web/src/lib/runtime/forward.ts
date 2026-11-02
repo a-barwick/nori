@@ -80,7 +80,7 @@ export async function uploadRoute(request: Request, mode: Mode) {
   if (!(await allowedCaller(request, mode, sameOrigin))) return forbidden();
   if (Number(request.headers.get("content-length") ?? 0) > MAX_UPLOAD_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
   const incoming = new URL(request.url).searchParams;
-  const query = new URLSearchParams({ id: incoming.get("id") ?? "", name: incoming.get("name") ?? "" });
+  const query = new URLSearchParams({ id: incoming.get("id") ?? "", filename: incoming.get("filename") ?? "" });
   let body: ArrayBuffer;
   try { body = await request.arrayBuffer(); } catch {
     return Response.json({ error: "The upload was interrupted, so nothing was saved. Try again.", retryable: true }, { status: 400 });
