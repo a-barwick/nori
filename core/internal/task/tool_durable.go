@@ -83,7 +83,8 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			if effect != "read" && effect != "control" && unresolvedWrite(saved) {
 				return map[string]any{
 					"operation_id": saved.ID, "outcome": "uncertain", "effect_class": saved.EffectClass,
-					"error": "An earlier write has an unresolved outcome. Ask Austin; no further tool was admitted.",
+					"error": fmt.Sprintf("An earlier %s call failed or has no known result and may have changed something, so no further "+
+						"tool was admitted. Ask Austin with request_input. The runtime names the command in your question, and his answer lets later commands run.", saved.Name),
 				}, nil
 			}
 		}
@@ -132,6 +133,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			return nil, classified(e)
 		}
 		op.Outcome = outcome
+		if outcome == "failed" && op.Cleared == "" {
+			op.Cleared = failureCleared(in.Call, output)
+		}
 		if id, yes := output["artifact_id"].(string); yes && id != "" {
 			op.ArtifactIDs = []string{id}
 		}
@@ -196,18 +200,22 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	if errors.Is(err, computer.ErrStopped) && existingJobTool(in.Call.Name) {
 		return persist("failed", lostJob(in.Call), nil)
 	}
+	// Nothing has reached the computer yet, so these failures can't have changed anything.
 	if err != nil {
+		op.Cleared = state.ClearedDidNotRun
 		return persist("failed", nil, err)
 	}
 	defer c.Close()
 	c.SetTaskID(in.RunID)
 	if err = c.RequireReceipts(); err != nil {
+		op.Cleared = state.ClearedDidNotRun
 		return persist("failed", nil, err)
 	}
 	if in.Call.Name == "job_start" {
 		err = c.RequireJobs()
 	}
 	if err != nil {
+		op.Cleared = state.ClearedDidNotRun
 		return persist("failed", nil, err)
 	}
 	for attempt := 1; attempt <= 2; attempt++ {

@@ -86,6 +86,9 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 		if op.Action != nil {
 			data["action"] = op.Action
 		}
+		if op.Cleared != "" {
+			data["cleared"] = op.Cleared
+		}
 		if err := tx.Set(ref, data, firestore.MergeAll); err != nil {
 			return err
 		}

@@ -502,12 +502,17 @@ func (c *Checkpoint) afterTool(output RefToolOutcome, id string) bool {
 			Revision: c.Revision,
 		}
 	case output.Outcome == "uncertain" && output.EffectClass != "read":
+		text := "An attempted action has an uncertain outcome. Nori will not repeat it automatically. " +
+			"Please confirm what happened or clarify how to proceed."
+		if output.Unresolved != "" {
+			text = output.Unresolved + "\n\nNori will not repeat it automatically. Please confirm what happened or clarify how to proceed."
+		}
 		c.Question = &state.Question{
-			ID:   fmt.Sprintf("%s-operation-q%d", id, c.Tools),
-			Kind: "input",
-			Text: "An attempted action has an uncertain outcome. Nori will not repeat it automatically. " +
-				"Please confirm what happened or clarify how to proceed.",
+			ID:       fmt.Sprintf("%s-operation-q%d", id, c.Tools),
+			Kind:     "input",
+			Text:     text,
 			Revision: c.Revision,
+			Clears:   output.Clears,
 		}
 	default:
 		return false

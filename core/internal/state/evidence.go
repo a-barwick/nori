@@ -32,7 +32,19 @@ type OperationRecord struct {
 	// Action is set for a write that needs approval. The runtime sends what it holds, so model output after the
 	// approval can't change what runs.
 	Action *Action `json:"action,omitempty" firestore:"action,omitempty"`
+	// Cleared says why a failed or uncertain operation no longer blocks later ones. The outcome and result stay as saved.
+	Cleared string `json:"cleared,omitempty" firestore:"cleared,omitempty"`
 }
+
+// Reasons an operation is cleared.
+const (
+	// ClearedDidNotRun is a command that never started.
+	ClearedDidNotRun = "did_not_run"
+	// ClearedReadOnly is a shell command the task declared would only read.
+	ClearedReadOnly = "read_only"
+	// ClearedAnswered is an operation named in a question Austin answered.
+	ClearedAnswered = "answered"
+)
 
 // Action is the exact write the user was shown. Digest covers the tool, account and Spec.
 type Action struct {
@@ -211,6 +223,17 @@ func PlanOperation(saved *SavedOperation, op OperationRecord) (OperationWrite, e
 	}
 	if old.Action != nil && (op.Action == nil || old.Action.Digest != op.Action.Digest) {
 		return OperationWrite{}, errors.New("operation evidence identity conflict")
+	}
+	if old.Cleared != "" && old.Cleared != op.Cleared {
+		return OperationWrite{}, errors.New("operation evidence identity conflict")
+	}
+	// Clearing adds one field to a settled record and changes nothing else on it.
+	if old.Cleared == "" && op.Cleared != "" && old.Outcome == op.Outcome && (op.Outcome == "failed" || op.Outcome == "uncertain") {
+		cleared := old
+		cleared.Cleared = op.Cleared
+		if reflect.DeepEqual(cleared, op) {
+			return OperationWrite{}, nil
+		}
 	}
 	if !outcomeMayFollow(old.Outcome, op.Outcome) {
 		return OperationWrite{}, errors.New("recorded operation outcome is immutable")

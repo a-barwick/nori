@@ -86,6 +86,9 @@ type RefToolOutcome struct {
 	Cost                 float64
 	CostUnknown          bool
 	StartedJob, EndedJob string
+	// Unresolved names the operations a question about this result is for, and Clears lists those an answer releases.
+	Unresolved string
+	Clears     []string
 }
 type RefInput struct {
 	Step
@@ -253,6 +256,9 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 			}
 		case state.CommandAnswer:
 			if q != nil && q.ID == cmd.QuestionID {
+				if e := a.clearAnswered(ctx, in.RunID, q); e != nil {
+					return out, classified(e)
+				}
 				if q.CallID != "" {
 					answer := map[string]any{"answer": cmd.Text, "question_id": cmd.QuestionID}
 					messages = append(messages, transcript.ToolResultMessage(q.CallID, questionTool(q), answer))
@@ -389,6 +395,12 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	out.Cost, _ = result["cost_usd"].(float64)
 	out.CostUnknown, _ = result["cost_unknown"].(bool)
 	out.StartedJob, out.EndedJob = jobTransition(call, result)
+	if out.Outcome == "uncertain" && out.EffectClass != "read" {
+		out.Unresolved, out.Clears, e = a.nameUnresolved(ctx, in.RunID, messages)
+		if e != nil {
+			return out, classified(e)
+		}
+	}
 	return out, nil
 }
 func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Question, err error) {
@@ -424,7 +436,16 @@ func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Quest
 		}
 		break
 	}
-	return state.Question{Kind: "input", Text: text, CallID: call.ID, Revision: in.Revision}, nil
+	named, clears, e := a.nameUnresolved(ctx, in.RunID, messages)
+	if e != nil {
+		return out, classified(e)
+	}
+	if named != "" {
+		// The runtime's lines come first and stay whole, so a long model question is the part that's shortened.
+		named = clip(named, 4096)
+		text = named + "\n\n" + clip(text, state.MaxMessageBytes-len(named)-8)
+	}
+	return state.Question{Kind: "input", Text: text, CallID: call.ID, Revision: in.Revision, Clears: clears}, nil
 }
 func (a *Activities) AppendToolResult(ctx context.Context, in AppendResult) (ref string, err error) {
 	ctx, span := startActivity(ctx, "task.history.append_result", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)

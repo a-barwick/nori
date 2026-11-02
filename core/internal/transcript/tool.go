@@ -12,9 +12,10 @@ type Tool struct {
 type SchemaType string
 
 const (
-	TypeObject SchemaType = "object"
-	TypeString SchemaType = "string"
-	TypeArray  SchemaType = "array"
+	TypeObject  SchemaType = "object"
+	TypeString  SchemaType = "string"
+	TypeArray   SchemaType = "array"
+	TypeBoolean SchemaType = "boolean"
 )
 
 // Schema is the subset of JSON Schema that Nori's tools use. Adapters translate it to
