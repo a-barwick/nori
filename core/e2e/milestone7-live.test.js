@@ -21,7 +21,7 @@ const deployment = `nori-m7-live-${unique}`;
 const build = `live-${unique}`;
 const zone = "America/Los_Angeles";
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
-let directory, address, api, worker, relay, token;
+let directory, address, api, worker, relay, guest, token;
 const created = [];
 const relayState = { dropNextInsert: false, inserts: 0 };
 
@@ -56,6 +56,25 @@ async function relayHandler(req, res) {
   }
   res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") || "application/json" });
   res.end(body);
+}
+
+// No computer runs locally, so this stands in for one. It reads pages with a plain fetch and refuses shell commands.
+async function guestHandler(req, res) {
+  let data = "";
+  for await (const chunk of req) data += chunk;
+  const send = (status, value) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(value)); };
+  if (req.url === "/healthz") return send(200, { ready: true, operation_receipts_v1: true, browser_task_tabs_v1: true, shell_jobs_v1: true });
+  if (req.url === "/navigate") {
+    const { url } = JSON.parse(data);
+    try {
+      const page = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { "User-Agent": "Mozilla/5.0" } });
+      const text = (await page.text()).replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 4_000);
+      return send(200, { url, title: "", text, status: page.status });
+    } catch { return send(200, { url, title: "", text: "The page could not be read.", status: 0 }); }
+  }
+  if (req.url === "/exec") return send(200, { exit_code: 127, stdout: "", stderr: "No shell is available in this environment." });
+  if (req.url === "/operation") return send(404, {});
+  return send(200, { stopped: true, closed: true });
 }
 
 async function refreshToken() {
@@ -144,6 +163,8 @@ beforeAll(async () => {
   relay = createServer((req, res) => relayHandler(req, res).catch(() => res.destroy()));
   await new Promise((done) => relay.listen(0, "127.0.0.1", done));
   const relayURL = `http://127.0.0.1:${relay.address().port}`;
+  guest = createServer((req, res) => guestHandler(req, res).catch(() => res.destroy()));
+  await new Promise((done) => guest.listen(0, "127.0.0.1", done));
   const port = 20000 + Math.floor(Math.random() * 20000);
   address = `http://127.0.0.1:${port}`;
   const shared = {
@@ -156,7 +177,7 @@ beforeAll(async () => {
   api = start("nori-local", { ...shared, PORT: String(port) });
   await until(() => fetch(`${address}/healthz`), (response) => response.ok, "API");
   // The scenarios' default clock is Friday November 6, 2026 at 09:00 Los Angeles.
-  worker = start("nori-worker", { ...shared, PORT: "", NORI_E2E_GOOGLE_URL: relayURL, GOOGLE_CALENDAR_WRITE_ID: calendar, NORI_E2E_NOW: "2026-11-06T09:00:00-08:00" });
+  worker = start("nori-worker", { ...shared, PORT: "", NORI_E2E_GOOGLE_URL: relayURL, NORI_LOCAL_COMPUTER_URL: `http://127.0.0.1:${guest.address().port}`, GOOGLE_CALENDAR_WRITE_ID: calendar, NORI_E2E_NOW: "2026-11-06T09:00:00-08:00" });
   await until(() => cli("worker", "deployment", "describe-version", "--deployment-name", deployment, "--build-id", build), () => true, "worker registration");
   cli("worker", "deployment", "set-current-version", "--deployment-name", deployment, "--build-id", build, "--yes");
   await clearCalendar();
@@ -167,6 +188,7 @@ afterAll(async () => {
   await stop(worker);
   await stop(api);
   relay?.close();
+  guest?.close();
   await clearCalendar().catch(() => {});
   if (directory) rmSync(directory, { recursive: true, force: true });
 });
@@ -186,7 +208,7 @@ const family = async (id) => { const { runs } = await session(); return runs.fil
 function show(label, value) { console.log(`\n--- ${label}: ${JSON.stringify(value).slice(0, 1500)}`); }
 
 journey("107: a lookup outside the task comes back as the parent's result, with no outer turn for delivery", async () => {
-  await seed("Picnic", "2026-11-07T14:00:00-08:00", "2026-11-07T16:00:00-08:00");
+  await seed("Picnic at Lake Merritt, Oakland", "2026-11-07T14:00:00-08:00", "2026-11-07T16:00:00-08:00");
   const before = await known7();
   await say("Check my calendar and tell me if Saturday's picnic still makes sense. Keep that task to my calendar. If it needs anything else, have that done separately and give me one answer.");
   const id = await newTask(before);

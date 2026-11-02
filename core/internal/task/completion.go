@@ -81,7 +81,9 @@ func completionFailures(
 		if op.Outcome == "pending" || op.Outcome == "attempted" || op.Outcome == "" || (op.Outcome == "uncertain" && len(p.Unmet) == 0) {
 			failures = append(failures, "An attempted operation has an unresolved outcome.")
 		}
-		if citable(op.Outcome) && op.ResultRef != "" {
+		// A request_work result is always a saved result, even when a subtask left a write unresolved. That unresolved
+		// write must still be listed as unmet.
+		if (citable(op.Outcome) || op.Name == "request_work") && op.ResultRef != "" {
 			resolved = true
 			refs[op.ID] = true
 			refs[op.ResultRef] = true
