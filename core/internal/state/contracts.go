@@ -127,6 +127,11 @@ type ConversationDatabase interface {
 	RestartConversation(ctx context.Context, f ConversationFence, t ConversationTurn) (ConversationTurn, time.Duration, error)
 	SaveConversation(ctx context.Context, f ConversationFence, t ConversationTurn) error
 	UserRoutingPending(ctx context.Context) (bool, error)
+
+	// The event log. Writes happen inside the transactions above.
+	EventPosition(ctx context.Context) (int64, error)
+	WatchEvents(ctx context.Context, after int64, deliver func([]LogEvent) error) error
+	ConversationMessage(ctx context.Context, id string) (Message, error)
 }
 
 // ConversationStore is the storage used by conversation processing and its HTTP API. Task activities need only

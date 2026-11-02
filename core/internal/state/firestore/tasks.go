@@ -51,6 +51,10 @@ func (d *Database) Reconcile(ctx context.Context, runID string) (state.TaskSnaps
 
 func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		ref := d.runs().Doc(req.RunID)
 		run, err := decodeRun(tx.Get(ref))
 		if err != nil {
@@ -65,6 +69,9 @@ func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest
 		updates := []firestore.Update{{Path: "incorporated", Value: req.Position}}
 		if plan.ClearQuestion {
 			updates = append(updates, firestore.Update{Path: "waiting", Value: ""}, firestore.Update{Path: "question", Value: firestore.Delete})
+		}
+		if err = log.add(state.EventTask, req.RunID); err != nil {
+			return err
 		}
 		return tx.Update(ref, updates)
 	})
@@ -152,10 +159,17 @@ func (d *Database) UseApproval(ctx context.Context, runID string, revision int64
 
 func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		if _, err := d.guard(tx, req.RunID, req.Revision); err != nil {
 			return err
 		}
 		waiting, event := state.ProjectionEvent(req.Kind, req.Text, time.Now().UTC())
+		if err = log.add(state.EventTask, req.RunID); err != nil {
+			return err
+		}
 		// A new projection supersedes the last job progress line.
 		return tx.Update(d.runs().Doc(req.RunID), []firestore.Update{
 			{Path: "waiting", Value: waiting}, {Path: "progress", Value: ""}, {Path: "events", Value: firestore.ArrayUnion(event)},
@@ -167,7 +181,14 @@ func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error 
 // grow the task's saved record.
 func (d *Database) SetProgress(ctx context.Context, runID string, revision int64, text string) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		if _, err := d.guard(tx, runID, revision); err != nil {
+			return err
+		}
+		if err = log.add(state.EventTask, runID); err != nil {
 			return err
 		}
 		return tx.Update(d.runs().Doc(runID), []firestore.Update{{Path: "progress", Value: text}})
@@ -178,6 +199,10 @@ func (d *Database) SetProgress(ctx context.Context, runID string, revision int64
 func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision int64, question state.Question) error {
 	traceContext := observability.InjectTrace(ctx)
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		run, err := d.guard(tx, runID, revision)
 		if err != nil {
 			return err
@@ -194,6 +219,12 @@ func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision i
 		if err != nil || !inserted {
 			return err
 		}
+		if err = log.add(state.EventTask, runID); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
+			return err
+		}
 		return tx.Set(d.runs().Doc(runID), state.WithQuestion(run, question, event))
 	})
 }
@@ -205,7 +236,10 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		routingPending = false
 		ref := d.runs().Doc(req.RunID)
-		var err error
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		run, err = decodeRun(tx.Get(ref))
 		if err != nil {
 			return err
@@ -262,9 +296,15 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			}
 			if inserted {
 				finished.EventSequence = event.Sequence
+				if err = log.add(state.EventConversation, ""); err != nil {
+					return err
+				}
 			}
 		}
 		run = finished
+		if err = log.add(state.EventTask, req.RunID); err != nil {
+			return err
+		}
 		for id, child := range children {
 			stopped, stop, changed := state.StopSubtask(child, req.RunID+":ended", now)
 			if !changed {
@@ -273,12 +313,18 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			if err = tx.Set(d.runs().Doc(id), stopped); err != nil {
 				return err
 			}
+			if err = log.add(state.EventTask, id); err != nil {
+				return err
+			}
 			if err = tx.Create(d.commands().Doc(stop.ID), stop); err != nil {
 				return err
 			}
 		}
 		if run.ParentID != "" {
 			if err = tx.Set(d.runs().Doc(run.ParentID), parent); err != nil {
+				return err
+			}
+			if err = log.add(state.EventTask, run.ParentID); err != nil {
 				return err
 			}
 		}

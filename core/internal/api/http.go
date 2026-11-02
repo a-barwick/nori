@@ -52,7 +52,6 @@ func Handler(deps Deps, local bool) http.Handler {
 	mux.HandleFunc("POST /healthz", health)
 	mux.HandleFunc("POST /api/healthz", health)
 	mux.HandleFunc("POST /api/session", s.session)
-	mux.HandleFunc("POST /api/status", s.status)
 	mux.HandleFunc("POST /api/turn", s.turn)
 	mux.HandleFunc("POST /api/process", s.process)
 	mux.HandleFunc("POST /api/resume", s.resume)
@@ -61,6 +60,8 @@ func Handler(deps Deps, local bool) http.Handler {
 	mux.HandleFunc("POST /api/cancel", s.cancel)
 	mux.HandleFunc("POST /api/trace", s.trace)
 	mux.HandleFunc("POST /api/artifact", s.artifact)
+	mux.HandleFunc("GET /v1/snapshot", s.snapshot)
+	mux.HandleFunc("GET /v1/events", s.events)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if local {
 			if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {

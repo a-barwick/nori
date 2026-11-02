@@ -22,10 +22,10 @@ export function DebugBlock({ info }: { info: DebugInfo }) {
   const run = info.run;
   const runId = run?.id;
   const runStatus = run?.status;
+  const runChanges = `${run?.events?.length}:${run?.progress}:${run?.spent_usd}`;
   useEffect(() => {
     if (!expanded || !runId) return;
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
     async function load() {
       try {
         const response = await fetch(`${info.agentMode ? "/api/agent" : "/api"}/trace`, {
@@ -35,12 +35,12 @@ export function DebugBlock({ info }: { info: DebugInfo }) {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Task trace unavailable.");
         if (!controller.signal.aborted) { setSteps(data.steps ?? []); setError(""); }
-        if (!controller.signal.aborted && runStatus === "running") timer = setTimeout(load, 3000);
       } catch (err) { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "Task trace unavailable."); }
     }
     void load();
-    return () => { controller.abort(); clearTimeout(timer); };
-  }, [expanded, runId, runStatus, info.agentMode, retry]);
+    return () => controller.abort();
+    // A saved change to the task reaches this component through the stream, and that is when the trace can have changed.
+  }, [expanded, runId, runStatus, runChanges, info.agentMode, retry]);
 
   return (
     <div className="mt-2 w-full max-w-[640px] rounded-tile border border-hairline bg-surface/70 px-1.5 py-1.5 font-mono text-mono-label leading-[18px] tracking-normal text-ink-2 tabular-nums">

@@ -67,6 +67,9 @@ type Session struct {
 	Conversation   ConversationStatus `json:"conversation"`
 	Traces         []Trace            `json:"traces"`
 	NextCursor     string             `json:"next_cursor,omitempty"`
+	// Position is the event log's position when this snapshot was read. Events after it may already be included, and
+	// applying one again changes nothing.
+	Position int64 `json:"position"`
 }
 type Runner struct {
 	model      ReplyModel

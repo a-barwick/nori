@@ -44,6 +44,10 @@ func (d *Database) UserRoutingPending(ctx context.Context) (bool, error) {
 func (d *Database) AcceptConversationInput(ctx context.Context, id, text string) error {
 	traceContext := observability.InjectTrace(ctx)
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		doc, err := tx.Get(d.conversationInputs().Doc(id))
 		if err == nil {
 			var saved state.ConversationInput
@@ -64,6 +68,12 @@ func (d *Database) AcceptConversationInput(ctx context.Context, id, text string)
 			return err
 		}
 		if err = tx.Create(d.conversationInputs().Doc(id), input); err != nil {
+			return err
+		}
+		if err = log.add(state.EventMessage, message.ID); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
 			return err
 		}
 		return tx.Create(d.messages().Doc(message.ID), message)
@@ -135,7 +145,10 @@ func (d *Database) AcquireConversation(ctx context.Context, owner, turnID string
 	var c state.ConversationControl
 	var turn *state.ConversationTurn
 	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		var err error
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c, err = d.readConversation(tx)
 		if err != nil {
 			return err
@@ -182,6 +195,9 @@ func (d *Database) AcquireConversation(ctx context.Context, owner, turnID string
 		if err = d.markTurn(tx, t); err != nil {
 			return err
 		}
+		if err = log.add(state.EventConversation, ""); err != nil {
+			return err
+		}
 		return tx.Set(d.conversationTurns().Doc(t.ID), t)
 	})
 	return c, turn, err
@@ -221,11 +237,18 @@ func (d *Database) RenewConversation(ctx context.Context, f state.ConversationFe
 
 func (d *Database) ReleaseConversation(ctx context.Context, f state.ConversationFence) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
 		}
 		if c, err = state.Release(c, f, time.Now()); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
 			return err
 		}
 		return tx.Set(d.conversation(), c)
@@ -235,11 +258,18 @@ func (d *Database) ReleaseConversation(ctx context.Context, f state.Conversation
 // SaveConversation fences every checkpoint, including model replies and failed attempts.
 func (d *Database) SaveConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
 		}
 		if err = state.CheckOwned(c, f, time.Now()); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
 			return err
 		}
 		if err = tx.Set(d.conversationTurns().Doc(t.ID), t); err != nil {
@@ -261,6 +291,10 @@ func (d *Database) RestartConversation(
 	original := t
 	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		t = original
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
@@ -299,6 +333,9 @@ func (d *Database) RestartConversation(
 				return err
 			}
 		}
+		if err = log.add(state.EventConversation, ""); err != nil {
+			return err
+		}
 		return tx.Set(d.conversationTurns().Doc(t.ID), t)
 	})
 	return t, wait, err
@@ -306,6 +343,10 @@ func (d *Database) RestartConversation(
 
 func (d *Database) PublishConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn, text string) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
@@ -322,6 +363,15 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 			if err = tx.Set(d.runs().Doc(id), run); err != nil {
 				return err
 			}
+			if err = log.add(state.EventTask, id); err != nil {
+				return err
+			}
+		}
+		if err = log.add(state.EventMessage, message.ID); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
+			return err
 		}
 		if err = tx.Set(d.conversation(), c); err != nil {
 			return err
@@ -420,6 +470,10 @@ func (d *Database) ConversationCommand(ctx context.Context, id string) (*state.C
 // introduction; existing history is untouched.
 func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt string) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		c, err := d.readConversation(tx)
 		if err != nil || !state.NeedsIntroduction(c) {
 			return err
@@ -433,6 +487,9 @@ func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt st
 		}
 		c, input := state.Introduce(c, prompt, time.Now().UTC())
 		if err = tx.Set(d.conversation(), c); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
 			return err
 		}
 		return tx.Create(d.conversationInputs().Doc(input.ID), input)
