@@ -26,14 +26,17 @@
 <div class="card"><table><tr><th>Tool</th><th>Runs on</th><th>Type</th><th>Returns</th></tr>
 <tr><td>web_search</td><td>Worker</td><td>Read</td><td>Up to 8 results with URLs and publication dates when known.</td></tr>
 <tr><td>calendar_read</td><td>Worker</td><td>Read</td><td>Events in a range of up to 31 days, and the account it read.</td></tr>
+<tr><td>calendar_create</td><td>Worker</td><td>Reversible write</td><td>After approval, the event ID and a read of the event.</td></tr>
+<tr><td>calendar_move</td><td>Worker</td><td>Reversible write</td><td>After approval, the event ID and a read of the new time.</td></tr>
+<tr><td>email_send</td><td>Worker</td><td>Sensitive send</td><td>After approval, the message ID and a read of the sent message.</td></tr>
 <tr><td>screenshot_inspect</td><td>Worker</td><td>Read</td><td>The text answer to one question about a saved screenshot.</td></tr>
 <tr><td>browser_navigate</td><td>Computer</td><td>Read</td><td>The page title and visible text.</td></tr>
 <tr><td>browser_screenshot</td><td>Computer</td><td>Read</td><td>A reference to a saved PNG.</td></tr>
-<tr><td>shell</td><td>Computer</td><td>Write</td><td>Output and exit code, within 45 seconds.</td></tr>
-<tr><td>job_start</td><td>Computer</td><td>Write</td><td>A job ID. The command runs in the background.</td></tr>
+<tr><td>shell</td><td>Computer</td><td>Unknown</td><td>Output and exit code, within 45 seconds.</td></tr>
+<tr><td>job_start</td><td>Computer</td><td>Unknown</td><td>A job ID. The command runs in the background.</td></tr>
 <tr><td>job_status</td><td>Computer</td><td>Read</td><td>The job's state, elapsed time and latest output.</td></tr>
 <tr><td>job_wait</td><td>Computer</td><td>Read</td><td>The same, once the job ends or new instructions arrive.</td></tr>
-<tr><td>job_stop</td><td>Computer</td><td>Stop</td><td>The job's final state, once its processes have exited.</td></tr>
+<tr><td>job_stop</td><td>Computer</td><td>Control</td><td>The job's final state, once its processes have exited.</td></tr>
 </table></div></section>
 <section><h2>Confirming a change</h2>
 <p>A tool that changes something must come with a way to confirm the change. The inner loop runs the confirmation and cites it, and lists anything it couldn't confirm as unmet.</p>
@@ -41,27 +44,31 @@
 <tr><td>job_start</td><td>The wait returns the end state, exit code and output.</td></tr>
 <tr><td>job_stop</td><td>Its result is the final state.</td></tr>
 <tr><td>shell</td><td>The exit code shows the command ran. A follow-up read, such as a file count, shows its effect.</td></tr>
-<tr class="designed"><td>Future connectors</td><td>A write returns the provider's status and the ID it changed. An upload returns a 200 and a file ID, and a GET on that ID confirms it.</td></tr>
-</table></div></section>
+<tr><td>calendar_create, calendar_move</td><td>The result has Google's status and the event ID, and a follow-up read shows the event.</td></tr>
+<tr><td>email_send</td><td>The result has Google's status and the message ID, and a follow-up read shows the sent message.</td></tr>
+<tr class="designed"><td>Future connectors</td><td>An upload returns a 200 and a file ID, and a GET on that ID confirms it.</td></tr>
+</table></div>
+<p>The calendar and email write tools wait for the user. See <a href="authority.html">Approvals and writes</a>.</p></section>
 <section><h2>Long shell jobs</h2>
 <div class="states"><span class="state">running</span><span class="state-arrow">→</span><span class="state">finished</span><span class="state-arrow">or</span><span class="state">stopped</span><span class="state-arrow">or</span><span class="state">timed_out</span><span class="state-arrow">or</span><span class="state">lost</span></div>
 <p class="note">A job that can't start ends as failed_to_start. A stop the guest can't confirm ends as stop_unconfirmed.</p>
+</section>
+<section class="designed"><h2>Loading tools on demand</h2>
+<p>Every task gets the same tool list today. Milestone 10 plans for the inner loop to load only the tool definitions a task needs.</p>
+</section>
+<details class="more"><summary>Job limits, screenshots, calendar and the catalog</summary>
 <ul class="pts">
 <li>A job can run for up to 60 minutes, and a task can have 4 running at once.</li>
 <li>Waiting on a job makes no model calls. The task's progress shows the latest output line.</li>
 <li>A task can't finish while its job is running, and task cleanup stops any job left running.</li>
 <li>If the computer restarts or stops, the job is killed and reported as lost, never as finished.</li>
-</ul></section>
-<section class="designed"><h2>Loading tools on demand</h2>
-<p>Every task gets the same tool list today. Milestone 10 plans for the inner loop to load only the tool definitions a task needs.</p>
-</section>
-<details class="more"><summary>Screenshots, calendar and the catalog</summary>
+</ul>
 <p><code>screenshot_inspect</code> sends one saved image and one question to the task model in a separate call with no tools. Only the text answer joins the task's history, so text inside an image can't call a tool. The cost counts against the task's budget.</p>
-<p><code>nori-connect-calendar</code> opens one Google consent screen for read-only access, then saves the refresh token and account name in <code>.env</code>. Production reads them from Secret Manager, and the token stays on the worker. The tool covers the primary calendar and up to 9 others selected in Google Calendar.</p>
-<p>If the account isn't connected or Google refuses the token, the tool returns <code>available: false</code> and the task says so. An OAuth app in Google's testing state loses its refresh token after 7 days.</p>
+<p><code>nori-connect-calendar</code> opens one Google consent screen for calendar and email access, then saves the refresh token and account name in <code>.env</code> and Secret Manager. Production reads them from Secret Manager, and the token stays on the worker. <code>calendar_read</code> covers the primary calendar and up to 9 others selected in Google Calendar.</p>
+<p>If the account isn't connected or Google refuses the token, the calendar or email tool returns <code>available: false</code> and the task says so. An OAuth app in Google's testing state loses its refresh token after 7 days.</p>
 <p>The worker adds a short catalog to the inner loop's instructions, with today's date in the configured time zone. Each entry gives the capability's tools, account and availability, what to do on failure, and how to confirm a result. A missing credential leaves the tool in place, and the tool reports itself unavailable.</p>
 <p>Each search charges the task's budget $0.005, Brave's listed price on Oct 31, 2026.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code>, <code>catalog.go</code>, <code>search.go</code>, <code>calendar.go</code>, <code>inspect.go</code>, <code>core/internal/computerd/jobs.go</code>, <code>core/internal/task/jobs.go</code>, <code>core/cmd/nori-connect-calendar/main.go</code>.</p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code>, <code>catalog.go</code>, <code>search.go</code>, <code>calendar.go</code>, <code>calendar_write.go</code>, <code>gmail.go</code>, <code>writes.go</code>, <code>inspect.go</code>, <code>core/internal/computerd/jobs.go</code>, <code>core/internal/task/jobs.go</code>, <code>core/internal/task/tool_durable.go</code>, <code>core/cmd/nori-connect-calendar/main.go</code>.</p></details>
 </body>
 </html>

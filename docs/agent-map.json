@@ -518,6 +518,7 @@
    "summary": "Nori is a personal assistant. One long conversation stays open while background tasks run.",
    "status": "built",
    "code": [
+    "core/internal/task/actions.go",
     "core/internal/task/completion.go"
    ],
    "sections": [
@@ -537,7 +538,7 @@
      "id": "where-it-stands",
      "title": "Where it stands",
      "status": "built",
-     "words": 77
+     "words": 79
     },
     {
      "id": "where-to-go-next",
@@ -983,7 +984,10 @@
    "title": "Roadmap",
    "summary": "Twelve milestones, in order. A milestone is done when it works on noribot.chat against its scenarios.",
    "status": "built",
-   "code": [],
+   "code": [
+    "core/internal/agent/steps.go",
+    "core/internal/agent/writes.go"
+   ],
    "sections": [
     {
      "id": "overview",
@@ -995,7 +999,7 @@
      "id": "what-each-piece-adds",
      "title": "What each piece adds",
      "status": "built",
-     "words": 420
+     "words": 413
     }
    ]
   },
@@ -1286,13 +1290,17 @@
    "status": "built",
    "code": [
     "calendar.go",
+    "calendar_write.go",
     "catalog.go",
     "core/cmd/nori-connect-calendar/main.go",
     "core/internal/agent/steps.go",
     "core/internal/computerd/jobs.go",
     "core/internal/task/jobs.go",
+    "core/internal/task/tool_durable.go",
+    "gmail.go",
     "inspect.go",
-    "search.go"
+    "search.go",
+    "writes.go"
    ],
    "sections": [
     {
@@ -1305,25 +1313,25 @@
      "id": "the-tools",
      "title": "The tools",
      "status": "built",
-     "words": 162
+     "words": 221
     },
     {
      "id": "confirming-a-change",
      "title": "Confirming a change",
      "status": "built",
-     "words": 112
+     "words": 155
     },
     {
      "id": "long-shell-jobs",
      "title": "Long shell jobs",
      "status": "built",
-     "words": 86
+     "words": 18
     },
     {
      "id": "loading-tools-on-demand",
      "title": "Loading tools on demand",
      "status": "designed",
-     "words": 220
+     "words": 297
     }
    ]
   },
@@ -1374,19 +1382,19 @@
      "id": "the-screen",
      "title": "The screen",
      "status": "built",
-     "words": 166
+     "words": 100
     },
     {
      "id": "status-and-task-labels",
      "title": "Status and task labels",
      "status": "built",
-     "words": 180
+     "words": 220
     },
     {
      "id": "bubbles-and-documents",
      "title": "Bubbles and documents",
      "status": "built",
-     "words": 147
+     "words": 216
     }
    ]
   },
