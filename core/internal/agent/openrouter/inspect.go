@@ -32,7 +32,7 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 		return out, err
 	}
 	defer control.Close()
-	image := "data:image/png;base64," + base64.StdEncoding.EncodeToString(req.PNG)
+	image := "data:" + req.MediaType + ";base64," + base64.StdEncoding.EncodeToString(req.Image)
 	body, err := json.Marshal(map[string]any{
 		"model": c.ModelName, "instructions": req.Instructions, "max_output_tokens": limit, "store": false,
 		"input": []any{map[string]any{"role": "user", "content": []any{

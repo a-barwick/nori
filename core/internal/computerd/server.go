@@ -64,7 +64,7 @@ func New(tasks string) (http.Handler, error) {
 		}
 		// Readiness validates the browser CDP connection without creating a task tab.
 		_ = c.conn.CloseNow()
-		respond(w, map[string]bool{"ready": true, "operation_receipts_v1": true, "browser_task_tabs_v1": true, "shell_jobs_v1": true})
+		respond(w, map[string]bool{"ready": true, "operation_receipts_v1": true, "browser_task_tabs_v1": true, "shell_jobs_v1": true, "files_v1": true})
 	})
 	mux.HandleFunc("POST /cancel", s.cancelRun)
 	mux.HandleFunc("POST /browser/close", s.closeTaskBrowser)
@@ -72,6 +72,8 @@ func New(tasks string) (http.Handler, error) {
 	mux.HandleFunc("POST /navigate", s.receipted(s.navigate))
 	mux.HandleFunc("POST /screenshot", s.receipted(s.screenshot))
 	mux.HandleFunc("POST /job/start", s.receipted(s.startJob))
+	mux.HandleFunc("POST /file/put", s.putFile)
+	mux.HandleFunc("POST /file/get", s.getFile)
 	mux.HandleFunc("POST /job/status", s.jobStatus)
 	mux.HandleFunc("POST /job/stop", s.jobStop)
 	mux.HandleFunc("POST /job/stop-task", s.stopTaskJobs)
@@ -187,7 +189,7 @@ func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle fu
 		}
 	}()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/browser/close" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation" || r.URL.Path == "/operation/cancel" || r.URL.Path == "/job/start" || r.URL.Path == "/job/status" || r.URL.Path == "/job/stop" || r.URL.Path == "/job/stop-task"))) {
+		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/browser/close" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation" || r.URL.Path == "/operation/cancel" || r.URL.Path == "/job/start" || r.URL.Path == "/job/status" || r.URL.Path == "/job/stop" || r.URL.Path == "/job/stop-task" || r.URL.Path == "/file/put" || r.URL.Path == "/file/get"))) {
 			http.NotFound(w, r)
 			return
 		}
@@ -211,7 +213,11 @@ func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle fu
 				activity.mu.Unlock()
 			}
 		}()
-		r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
+		limit := int64(128 << 10)
+		if r.URL.Path == "/file/put" {
+			limit = maxFileRequest
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		p.ServeHTTP(w, r)
 	})
 }

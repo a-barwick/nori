@@ -92,4 +92,42 @@ func (s *Store) GetPNG(_ context.Context, run, id string) ([]byte, error) {
 	return state.ReadArtifact(file)
 }
 
+// PutFile writes the file completely before it appears under its final name, and refuses to replace an existing one.
+func (s *Store) PutFile(ctx context.Context, key, _ string, data []byte) error {
+	dir := filepath.Dir(key)
+	if err := s.root.Mkdir(dir, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	temporary := filepath.Join(dir, "."+uuid.NewString()+".tmp")
+	file, err := s.root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	defer s.root.Remove(temporary)
+	_, writeErr := file.Write(data)
+	if writeErr == nil {
+		writeErr = file.Sync()
+	}
+	if err := errors.Join(writeErr, file.Close(), ctx.Err()); err != nil {
+		return err
+	}
+	err = s.root.Link(temporary, key)
+	if errors.Is(err, os.ErrExist) {
+		return state.ErrFileExists
+	}
+	return err
+}
+
+func (s *Store) GetFile(_ context.Context, key string) ([]byte, error) {
+	file, err := s.root.Open(key)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, state.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return state.ReadFile(file)
+}
+
 func (s *Store) Close() error { return s.root.Close() }

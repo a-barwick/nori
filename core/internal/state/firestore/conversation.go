@@ -41,7 +41,7 @@ func (d *Database) UserRoutingPending(ctx context.Context) (bool, error) {
 	return c.RoutingPending(), err
 }
 
-func (d *Database) AcceptConversationInput(ctx context.Context, id, text string) error {
+func (d *Database) AcceptConversationInput(ctx context.Context, id, text string, attachments []string) error {
 	traceContext := observability.InjectTrace(ctx)
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		log, err := d.openLog(tx)
@@ -54,7 +54,7 @@ func (d *Database) AcceptConversationInput(ctx context.Context, id, text string)
 			if err = doc.DataTo(&saved); err != nil {
 				return err
 			}
-			return state.ReplayUserInput(saved, text)
+			return state.ReplayUserInput(saved, text, attachments)
 		}
 		if !notFound(err) {
 			return err
@@ -63,7 +63,11 @@ func (d *Database) AcceptConversationInput(ctx context.Context, id, text string)
 		if err != nil {
 			return err
 		}
-		c, input, message := state.AdmitUserInput(c, id, text, time.Now().UTC(), traceContext)
+		attached, err := d.readAttachments(tx, attachments)
+		if err != nil {
+			return err
+		}
+		c, input, message := state.AdmitUserInput(c, id, text, attached, time.Now().UTC(), traceContext)
 		if err = tx.Set(d.conversation(), c); err != nil {
 			return err
 		}

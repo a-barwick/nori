@@ -29,7 +29,7 @@ cp /etc/resolv.conf "$root/etc/resolv.conf"
 chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update
 timeout 600 chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   systemd-sysv udev openssh-server sudo chromium chromium-sandbox fonts-dejavu-core curl ca-certificates \
-  python3 python3-websocket iproute2 procps dbus-user-session
+  python3 python3-websocket poppler-utils iproute2 procps dbus-user-session
 rm "$root/usr/sbin/policy-rc.d"
 chroot "$root" useradd --create-home --shell /bin/bash bot
 # Password login is disabled; unlock account for public-key SSH only.

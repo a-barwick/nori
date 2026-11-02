@@ -83,9 +83,19 @@ func (s *server) turn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Message = strings.TrimSpace(input.Message)
-	if !validID(input.ID) || input.Message == "" || len(input.Message) > state.MaxMessageBytes {
+	if !validID(input.ID) || (input.Message == "" && len(input.Attachments) == 0) || len(input.Message) > state.MaxMessageBytes {
 		writeJSON(w, 400, map[string]string{"error": "A UUID id and a message of 1–8192 bytes are required."})
 		return
+	}
+	if len(input.Attachments) > state.MaxAttachments {
+		writeJSON(w, 400, map[string]string{"error": "A message can have at most 5 attached files."})
+		return
+	}
+	for _, id := range input.Attachments {
+		if !state.ValidUploadID(id) {
+			writeJSON(w, 400, map[string]string{"error": "Send each attachment's upload ID."})
+			return
+		}
 	}
 	session, err := s.Runner.HandleInput(r.Context(), input)
 	if err != nil {
