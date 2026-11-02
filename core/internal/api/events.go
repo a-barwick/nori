@@ -60,6 +60,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	presence := s.sendPresence(ctx, stream, "")
+	open := map[string]string{}
 	heartbeat := time.NewTicker(streamHeartbeat)
 	defer heartbeat.Stop()
 	for {
@@ -74,9 +75,15 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		case <-heartbeat.C:
 			stream.comment()
 			presence = s.sendPresence(ctx, stream, presence)
+			open = s.sendOpenTasks(ctx, stream, open)
 		case batch := <-batches:
 			for _, event := range state.CoalesceEvents(batch) {
-				if err := s.sendEvent(ctx, stream, event); err != nil {
+				err := s.sendEvent(ctx, stream, event)
+				// A record that's gone can't be sent, and it mustn't block every event after it.
+				if errors.Is(err, state.ErrNotFound) {
+					err = stream.send("unknown", event.Seq, map[string]string{"kind": event.Kind})
+				}
+				if err != nil {
 					log.Printf("event %d could not be sent: %v", event.Seq, err)
 					return
 				}
@@ -147,6 +154,36 @@ func (s *server) sendPresence(ctx context.Context, stream *eventStream, last str
 	}
 	stream.send("presence", 0, presence)
 	return string(encoded)
+}
+
+// sendOpenTasks catches what the log can't: a worker on an older build writes no events, and a few small changes, such
+// as a new screenshot, don't either. It sends each open task that changed since the last heartbeat, and the final state
+// of one that has since closed. These carry no log position.
+func (s *server) sendOpenTasks(ctx context.Context, stream *eventStream, last map[string]string) map[string]string {
+	runs, err := s.Tasks.Store.OpenTasks(ctx)
+	if err != nil {
+		return last
+	}
+	current := make(map[string]string, len(runs))
+	for _, run := range runs {
+		encoded, err := json.Marshal(run)
+		if err != nil {
+			continue
+		}
+		current[run.ID] = string(encoded)
+		if last[run.ID] != string(encoded) {
+			stream.send(state.EventTask, 0, map[string]any{"run": run})
+		}
+	}
+	for id := range last {
+		if _, still := current[id]; still {
+			continue
+		}
+		if run, err := s.Tasks.Store.GetRun(ctx, id); err == nil {
+			stream.send(state.EventTask, 0, map[string]any{"run": run})
+		}
+	}
+	return current
 }
 
 type eventStream struct {

@@ -494,7 +494,7 @@ func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run sta
 		proposed := proposal(call)
 		in.Answer = &state.ResultDraft{Checked: in.Status == state.RunCompleted && !in.Unverified, Evidence: proposed.Evidence, Unmet: proposed.Unmet}
 		if ops, e := a.Store.Operations(ctx, in.RunID); e == nil {
-			in.Answer.Artifacts = citedArtifacts(ops, proposed.Evidence)
+			in.Answer.Artifacts, in.Answer.Cited = citedOutputs(ops, proposed.Evidence)
 		}
 	}
 	if in.Unverified {

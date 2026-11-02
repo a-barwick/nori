@@ -43,11 +43,7 @@ func (d *Database) UserRoutingPending(ctx context.Context) (bool, error) {
 
 func (d *Database) AcceptConversationInput(ctx context.Context, id, text string, attachments []string) error {
 	traceContext := observability.InjectTrace(ctx)
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		log, err := d.openLog(tx)
-		if err != nil {
-			return err
-		}
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		doc, err := tx.Get(d.conversationInputs().Doc(id))
 		if err == nil {
 			var saved state.ConversationInput
@@ -57,6 +53,10 @@ func (d *Database) AcceptConversationInput(ctx context.Context, id, text string,
 			return state.ReplayUserInput(saved, text, attachments)
 		}
 		if !notFound(err) {
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
 			return err
 		}
 		c, err := d.readConversation(tx)
@@ -148,11 +148,8 @@ func (d *Database) markTurn(tx *firestore.Transaction, turn state.ConversationTu
 func (d *Database) AcquireConversation(ctx context.Context, owner, turnID string) (state.ConversationControl, *state.ConversationTurn, error) {
 	var c state.ConversationControl
 	var turn *state.ConversationTurn
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		log, err := d.openLog(tx)
-		if err != nil {
-			return err
-		}
+	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		var err error
 		c, err = d.readConversation(tx)
 		if err != nil {
 			return err
@@ -190,6 +187,10 @@ func (d *Database) AcquireConversation(ctx context.Context, owner, turnID string
 			}
 			t = state.NewTurn(turnID, inputs, unresolved, c, now)
 			c.Active = t.ID
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
 		}
 		c = state.Lease(c, owner, now)
 		turn = &t
@@ -240,7 +241,7 @@ func (d *Database) RenewConversation(ctx context.Context, f state.ConversationFe
 }
 
 func (d *Database) ReleaseConversation(ctx context.Context, f state.ConversationFence) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		log, err := d.openLog(tx)
 		if err != nil {
 			return err
@@ -261,7 +262,7 @@ func (d *Database) ReleaseConversation(ctx context.Context, f state.Conversation
 
 // SaveConversation fences every checkpoint, including model replies and failed attempts.
 func (d *Database) SaveConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		log, err := d.openLog(tx)
 		if err != nil {
 			return err
@@ -293,12 +294,8 @@ func (d *Database) RestartConversation(
 ) (state.ConversationTurn, time.Duration, error) {
 	var wait time.Duration
 	original := t
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		t = original
-		log, err := d.openLog(tx)
-		if err != nil {
-			return err
-		}
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
@@ -310,6 +307,10 @@ func (d *Database) RestartConversation(
 		restart, wait = state.RestartWait(c, t, time.Now())
 		if !restart {
 			return nil
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
 		}
 		inputs, err := d.inputBatch(tx, c.Consumed)
 		if err != nil {
@@ -346,7 +347,7 @@ func (d *Database) RestartConversation(
 }
 
 func (d *Database) PublishConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn, text string) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		log, err := d.openLog(tx)
 		if err != nil {
 			return err
@@ -489,11 +490,7 @@ func (d *Database) ConversationCommand(ctx context.Context, id string) (*state.C
 // EnsureConversationIntroduction shares admission ordering with real messages. Concurrent first loads enqueue one
 // introduction; existing history is untouched.
 func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt string) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		log, err := d.openLog(tx)
-		if err != nil {
-			return err
-		}
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		c, err := d.readConversation(tx)
 		if err != nil || !state.NeedsIntroduction(c) {
 			return err
@@ -503,6 +500,10 @@ func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt st
 		if _, err = messages.Next(); err == nil {
 			return nil
 		} else if !isDone(err) {
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
 			return err
 		}
 		c, input := state.Introduce(c, prompt, time.Now().UTC())

@@ -339,6 +339,7 @@ export function useRuntime(agentMode = false) {
     let source: EventSource;
     let timer: ReturnType<typeof setTimeout>;
     let failures = 0;
+    let stopped = false;
     const applyPresence = (presence: Presence) => {
       const { conversation } = presence;
       if (conversation.revision < appliedRevision.current) return;
@@ -377,7 +378,8 @@ export function useRuntime(agentMode = false) {
       listen<{ position: number }>("reset", (value) => {
         position.current = value.position;
         source.close();
-        void refresh().catch(() => undefined).finally(open);
+        const reload = () => refresh().then(() => { if (!stopped) open(); }, () => { if (!stopped) timer = setTimeout(reload, 5000); });
+        void reload();
       });
       source.onerror = () => {
         if (source.readyState !== EventSource.CLOSED) return;
@@ -387,7 +389,7 @@ export function useRuntime(agentMode = false) {
       };
     };
     open();
-    return () => { source.close(); clearTimeout(timer); };
+    return () => { stopped = true; source.close(); clearTimeout(timer); };
   }, [started, visible, streamAwake, agentMode, refresh, updatePending, updateTaskCommands]);
 
   async function refreshHistory() {

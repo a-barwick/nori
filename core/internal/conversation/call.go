@@ -465,24 +465,44 @@ func (r *Runner) finishCall(
 		} else {
 			t.Attempt.Reply = string(reply.Message)
 			t.Attempt.Text = reply.Text
-			t.Attempt.ShowResults = shows
+			// Only a turn carrying Austin's own message can show a result or hand files to a task. Task output reaches
+			// the model too, and it mustn't be able to get a file into another task.
+			fromUser := slices.ContainsFunc(t.Inputs, func(input state.ConversationInput) bool { return input.IsUser() })
+			if fromUser {
+				t.Attempt.ShowResults = shows
+			}
+			// A message's files go with it when it reaches one task. When it reaches several, each dispatch names its own.
+			receivers := 0
+			for _, command := range commands {
+				if command.Kind == state.CommandStart || command.Kind == state.CommandSteer || command.Kind == state.CommandAnswer {
+					receivers++
+				}
+			}
 			for i, call := range calls {
 				id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(t.Attempt.ID+":"+call.ID)).String()
 				command := commands[i]
 				command.ID = id
+				if !fromUser {
+					command.Attachments, command.Revises = nil, ""
+				}
 				if command.Revises != "" {
 					// A revision must link to a result that exists, and the task is told which one.
-					if _, err := r.tasks.Store.GetResult(ctx, command.Revises); err != nil {
+					if _, err := r.tasks.Store.GetResult(ctx, command.Revises); errors.Is(err, state.ErrNotFound) {
 						command.Revises = ""
+					} else if err != nil {
+						return err
 					}
 				}
 				named := command.Attachments
 				command.Attachments = nil
 				for _, attachment := range named {
 					upload, err := r.tasks.Store.GetUpload(ctx, attachment.ID)
-					if err != nil {
+					if errors.Is(err, state.ErrNotFound) {
 						// A file that isn't there is left out, and the task reports what it was given.
 						continue
+					}
+					if err != nil {
+						return err
 					}
 					command.Attachments = append(command.Attachments, upload.Attachment)
 				}
@@ -493,7 +513,7 @@ func (r *Runner) finishCall(
 					if input.IsUser() {
 						command.SourceInputIDs = append(command.SourceInputIDs, input.ID)
 						// A file sent with this message goes to the task this message starts or changes.
-						if command.Kind == state.CommandStart || command.Kind == state.CommandSteer || command.Kind == state.CommandAnswer {
+						if receivers == 1 && (command.Kind == state.CommandStart || command.Kind == state.CommandSteer || command.Kind == state.CommandAnswer) {
 							command.Attachments = state.MergeAttachments(command.Attachments, input.Attachments)
 						}
 					}

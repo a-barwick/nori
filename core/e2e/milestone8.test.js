@@ -108,7 +108,7 @@ async function guestHandler(req, res) {
   if (req.url === "/exec") {
     guest.commands.push(sent.command);
     const written = sent.command.match(/^write (\S+)$/)?.[1];
-    if (written) guest.files.set(`${sent.task_id}/${written}`, PDF);
+    if (written) guest.files.set(`${sent.task_id}/${written}`, written.endsWith("-b") ? Buffer.concat([PDF, Buffer.from(written)]) : PDF);
     if (sent.command.includes("hold")) await new Promise((done) => guest.release.push(done));
     return reply(res, 200, { exit_code: 0, stdout: "ran", stderr: "" });
   }
@@ -600,3 +600,120 @@ journey("changing a draft doesn't keep an earlier approval", async () => {
   expect(google.sent.length).toBe(1);
   expect(google.sent[0]).toContain(Buffer.from("A friendlier draft.").toString("base64"));
 }, 180_000);
+
+journey("a revising task that doesn't finish leaves the original current, and an uncited draft isn't checked", async () => {
+  scripts.base = seq(() => shell("write base.pdf"), () => ({ name: "result_save", args: { path: "base.pdf", title: "Base" } }));
+  const first = await dispatch("base");
+  await finished(first);
+  await settled();
+  const original = (await snapshot()).results.find((item) => item.run_id === first && item.kind === "file");
+  expect(original.checked_at, "the answer cited it").toBeTruthy();
+  guest.commands.length = 0;
+  scripts.unfinished = seq(() => shell("write partial.pdf"), () => ({ name: "result_save", args: { path: "partial.pdf", title: "Partial draft" } }), () => shell("hold-unfinished"));
+  outer.onUser = () => [dispatchAction("script:unfinished", { revises: original.id })];
+  const runs = new Set((await snapshot()).runs.map((run) => run.id));
+  await saidTo("change it");
+  const value = await until(snapshot, (now) => now.runs.some((run) => !runs.has(run.id)), "the revision task");
+  outer.onUser = undefined;
+  const second = value.runs.find((run) => !runs.has(run.id)).id;
+  await until(() => guest.release.length, (count) => count > 0, "the task to reach its held command");
+  await post("command", { id: crypto.randomUUID(), run_id: second, kind: "stop" }, 202);
+  for (const go of guest.release.splice(0)) go();
+  const done = await finished(second);
+  expect(done.status).toBe("cancelled");
+  await settled();
+  expect((await result(original.id)).superseded_by, "the original stays current").toBeUndefined();
+  const draft = (await snapshot()).results.find((item) => item.run_id === second && item.kind === "file");
+  expect(draft).toMatchObject({ title: "Partial draft", version: 1 });
+  expect(draft.revises).toBeUndefined();
+  expect(draft.checked_at).toBeUndefined();
+  scripts.twoFiles = (outputs) => {
+    if (outputs.length === 0) return shell("write one.pdf");
+    if (outputs.length === 1) return { name: "result_save", args: { path: "one.pdf", title: "First try" } };
+    if (outputs.length === 2) return shell("write two.pdf-b");
+    if (outputs.length === 3) return { name: "result_save", args: { path: "two.pdf-b", title: "Final" } };
+    return { name: "complete", args: { answer: "Saved the final file.", evidence: [outputs[3].operation_id], unmet: [] } };
+  };
+  const third = await dispatch("twoFiles");
+  await finished(third);
+  const saved = (await snapshot()).results.filter((item) => item.run_id === third);
+  expect(saved.find((item) => item.title === "Final").checked_at, "the cited file").toBeTruthy();
+  expect(saved.find((item) => item.title === "First try").checked_at, "the file it didn't cite").toBeUndefined();
+  expect(saved.find((item) => item.kind === "answer").checked_at).toBeTruthy();
+}, 180_000);
+
+journey("a result no reply has named can't be marked delivered", async () => {
+  scripts.quiet = seq(() => shell("write quiet.pdf"), () => ({ name: "result_save", args: { path: "quiet.pdf", title: "Quiet" } }), () => shell("hold-quiet"));
+  const id = await dispatch("quiet");
+  await until(() => guest.release.length, (count) => count > 0, "the held command");
+  const saved = (await snapshot()).results.find((item) => item.run_id === id);
+  await post("delivered", { ids: [saved.id] });
+  expect((await result(saved.id)).delivered_at).toBeUndefined();
+  for (const go of guest.release.splice(0)) go();
+  await finished(id);
+  await settled();
+}, 120_000);
+
+journey("a change that wrote no event still reaches a connected client on the heartbeat", async () => {
+  scripts.silent = seq(() => shell("hold-silent"));
+  const id = await dispatch("silent");
+  await until(() => guest.release.length, (count) => count > 0, "the held command");
+  await settled();
+  const stream = follow(`?after=${(await snapshot()).position}`);
+  // This is what a worker on an older build does: it saves the task and adds nothing to the log.
+  const patched = await fetch(`${documents}/owners/austinbarwickdavis@gmail.com/runs/${id}?updateMask.fieldPaths=progress`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: { progress: { stringValue: "from an older worker" } } }) });
+  expect(patched.ok).toBe(true);
+  await until(() => stream.events.filter((event) => event.kind === "task" && event.data.run.id === id && event.data.run.progress === "from an older worker"), (found) => found.length > 0, "the heartbeat to carry the change", 60_000);
+  await stream.close();
+  for (const go of guest.release.splice(0)) go();
+  await finished(id);
+  await settled();
+}, 120_000);
+
+journey("a burst of tasks and messages all commit through the shared log, in order", async () => {
+  const start = await snapshot();
+  const stream = follow(`?after=${start.position}`);
+  scripts.burst = seq(() => shell("one"), () => shell("two"), () => shell("three"), () => shell("four"));
+  const before = new Set(start.runs.map((run) => run.id));
+  let dispatched = false;
+  outer.onUser = (_, request) => {
+    if (dispatched || !JSON.stringify(request.messages).includes("burst of work")) return [];
+    dispatched = true;
+    return [1, 2, 3, 4, 5, 6].map(() => dispatchAction("script:burst"));
+  };
+  const accepted = await Promise.all([saidTo("burst of work"), ...[1, 2, 3, 4, 5].map((n) => saidTo(`message ${n}`))]);
+  expect(accepted.length).toBe(6);
+  const value = await until(snapshot, (now) => now.runs.filter((run) => !before.has(run.id)).length >= 6, "all six tasks", 60_000);
+  outer.onUser = undefined;
+  const ids = value.runs.filter((run) => !before.has(run.id)).map((run) => run.id);
+  const ended = await Promise.all(ids.map(finished));
+  for (const run of ended) expect(run.status, run.error).toBe("completed");
+  await settled();
+  const seen = await until(() => stream.events.filter((event) => event.id).map((event) => event.id), (found) => found.at(-1) >= 1, "events");
+  expect(seen).toEqual([...seen].sort((a, b) => a - b));
+  for (const id of ids) expect(stream.events.some((event) => event.kind === "task" && event.data.run.id === id)).toBe(true);
+  await stream.close();
+}, 240_000);
+
+journey("a message's files go only to the task that needs them, and task output can't hand out files", async () => {
+  const shared = await attached("shared.pdf", "application/pdf", PDF);
+  const named = await attached("named.pdf", "application/pdf", PDF);
+  scripts.plain = (outputs) => finish("Done.", outputs);
+  let dispatched = false;
+  outer.onUser = (_, request) => {
+    if (dispatched || !JSON.stringify(request.messages).includes("two jobs")) return [];
+    dispatched = true;
+    return [dispatchAction("script:plain first", { attachments: [named.id] }), dispatchAction("script:plain second")];
+  };
+  const before = new Set((await snapshot()).runs.map((run) => run.id));
+  await post("turn", { id: crypto.randomUUID(), message: "two jobs", attachments: [shared.id, named.id] }, 202);
+  const value = await until(snapshot, (now) => now.runs.filter((run) => !before.has(run.id)).length === 2, "both tasks");
+  outer.onUser = undefined;
+  const runs = value.runs.filter((run) => !before.has(run.id));
+  const first = runs.find((run) => run.request.includes("first"));
+  const second = runs.find((run) => run.request.includes("second"));
+  expect(first.uploads.map((file) => file.id)).toEqual([named.id]);
+  expect(second.uploads ?? []).toEqual([]);
+  await Promise.all(runs.map((run) => finished(run.id)));
+  await settled();
+}, 120_000);

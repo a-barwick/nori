@@ -50,11 +50,7 @@ func (d *Database) Reconcile(ctx context.Context, runID string) (state.TaskSnaps
 }
 
 func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		log, err := d.openLog(tx)
-		if err != nil {
-			return err
-		}
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		ref := d.runs().Doc(req.RunID)
 		run, err := decodeRun(tx.Get(ref))
 		if err != nil {
@@ -64,6 +60,10 @@ func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest
 		if err != nil || plan.Noop {
 			// A wake without new commands must not rewrite the task while a user answers its question. The
 			// revision and position fence still applies, and the read transaction ends without writing.
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
 			return err
 		}
 		updates := []firestore.Update{{Path: "incorporated", Value: req.Position}}
@@ -158,7 +158,7 @@ func (d *Database) UseApproval(ctx context.Context, runID string, revision int64
 }
 
 func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		log, err := d.openLog(tx)
 		if err != nil {
 			return err
@@ -180,12 +180,17 @@ func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error 
 // SetProgress replaces the task's latest progress line. Unlike Project it adds no event, so polling a long job can't
 // grow the task's saved record.
 func (d *Database) SetProgress(ctx context.Context, runID string, revision int64, text string) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		log, err := d.openLog(tx)
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		run, err := d.guard(tx, runID, revision)
 		if err != nil {
 			return err
 		}
-		if _, err := d.guard(tx, runID, revision); err != nil {
+		// A long job is polled often, and an unchanged line is nothing to save or send.
+		if run.Progress == text {
+			return nil
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
 			return err
 		}
 		if err = log.add(state.EventTask, runID); err != nil {
@@ -198,17 +203,17 @@ func (d *Database) SetProgress(ctx context.Context, runID string, revision int64
 // ProjectQuestion commits the durable wait and its outer inbox event together.
 func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision int64, question state.Question) error {
 	traceContext := observability.InjectTrace(ctx)
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		log, err := d.openLog(tx)
-		if err != nil {
-			return err
-		}
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		run, err := d.guard(tx, runID, revision)
 		if err != nil {
 			return err
 		}
 		event, replay, err := state.QuestionEvent(run, revision, question, time.Now().UTC())
 		if err != nil || replay {
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
 			return err
 		}
 		eventTraceContext := traceContext
@@ -233,13 +238,10 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 	var run state.Run
 	routingPending := false
 	traceContext := observability.InjectTrace(ctx)
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		routingPending = false
 		ref := d.runs().Doc(req.RunID)
-		log, err := d.openLog(tx)
-		if err != nil {
-			return err
-		}
+		var err error
 		run, err = decodeRun(tx.Get(ref))
 		if err != nil {
 			return err
@@ -260,6 +262,10 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 					{Path: "publication_pending", Value: true}, {Path: "publication_generation", Value: run.PublicationGeneration},
 				})
 			}
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
 		}
 		now := time.Now().UTC()
 		existing, err := d.runResults(tx, req.RunID)

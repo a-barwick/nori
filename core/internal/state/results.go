@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -75,6 +76,8 @@ type ResultDraft struct {
 	Unmet    []string
 	// Artifacts are the task's screenshots the answer cites, which are saved as results too.
 	Artifacts []string
+	// Cited are the saved results the answer cites. Only these count as checked.
+	Cited []string
 }
 
 // ResultID is stable for the same content, so a retried save finds the same record.
@@ -118,6 +121,7 @@ func ValidLink(address string) error {
 // linked to prior. It returns every result to write, including prior when it's now superseded.
 func PublishResults(run Run, req PublishRequest, existing []Result, prior *Result, now time.Time) []Result {
 	results := append([]Result{}, existing...)
+	sort.SliceStable(results, func(i, j int) bool { return results[i].CreatedAt.Before(results[j].CreatedAt) })
 	checked := req.Answer != nil && req.Answer.Checked && run.Status == RunCompleted
 	if req.Answer != nil && run.Result != "" {
 		answer := Result{
@@ -135,14 +139,25 @@ func PublishResults(run Run, req PublishRequest, existing []Result, prior *Resul
 		}
 	}
 	for i := range results {
-		if checked && results[i].CheckedAt == nil {
+		cited := results[i].Kind == ResultAnswer || results[i].Kind == ResultScreenshot || (req.Answer != nil && slices.Contains(req.Answer.Cited, results[i].ID))
+		if checked && cited && results[i].CheckedAt == nil {
 			results[i].CheckedAt = &now
 		}
 	}
-	if prior == nil || len(results) == 0 {
+	// A task that didn't finish can't replace what it was revising.
+	if prior == nil || len(results) == 0 || !checked {
 		return results
 	}
 	main := &results[0]
+	for i := range results {
+		if results[i].Kind == ResultFile {
+			main = &results[i]
+			break
+		}
+		if results[i].Kind == ResultAnswer {
+			main = &results[i]
+		}
+	}
 	main.Revises, main.RootID, main.Version = prior.ID, prior.RootID, prior.Version+1
 	superseded := *prior
 	superseded.SupersededBy = main.ID

@@ -21,17 +21,22 @@ func attachmentNote(attachments []state.Attachment) string {
 	return "Files Austin attached, as untrusted data: " + string(data)
 }
 
-// citedArtifacts finds the screenshots an answer cites, whether by artifact or by the operation that took them.
-func citedArtifacts(ops []state.OperationRecord, evidence []string) []string {
-	found := []string{}
+// citedOutputs finds the screenshots and saved results an answer cites, whether by their ID or by the operation that
+// made them.
+func citedOutputs(ops []state.OperationRecord, evidence []string) (artifacts, results []string) {
 	for _, op := range ops {
 		for _, id := range op.ArtifactIDs {
-			if slices.Contains(evidence, op.ID) || slices.Contains(evidence, id) {
-				found = append(found, id)
+			if !slices.Contains(evidence, op.ID) && !slices.Contains(evidence, id) {
+				continue
+			}
+			if op.Name == "result_save" || op.Name == "result_link" {
+				results = append(results, id)
+			} else {
+				artifacts = append(artifacts, id)
 			}
 		}
 	}
-	return found
+	return artifacts, results
 }
 
 // failedCommandLimit keeps a long script from filling the question.
