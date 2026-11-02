@@ -36,16 +36,25 @@ func (s *server) session(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	if len(body.Before) > 256 || strings.Contains(body.Before, "/") {
+	s.writeSession(w, r, body.Before)
+}
+
+// snapshot is the session read a client starts from before it follows the stream.
+func (s *server) snapshot(w http.ResponseWriter, r *http.Request) {
+	s.writeSession(w, r, r.URL.Query().Get("before"))
+}
+
+func (s *server) writeSession(w http.ResponseWriter, r *http.Request, before string) {
+	if len(before) > 256 || strings.Contains(before, "/") {
 		writeJSON(w, 400, map[string]string{"error": "Invalid history cursor."})
 		return
 	}
-	session, err := s.Runner.SnapshotPage(r.Context(), body.Before)
+	session, err := s.Runner.SnapshotPage(r.Context(), before)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	if body.Before == "" && session.Conversation.Revision == 0 && len(session.Messages) == 0 {
+	if before == "" && session.Conversation.Revision == 0 && len(session.Messages) == 0 {
 		if err := s.Runner.EnsureIntroduction(r.Context()); err != nil {
 			writeError(w, err)
 			return

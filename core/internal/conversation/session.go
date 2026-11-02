@@ -20,6 +20,10 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 	// Read completion before its projections: an idle snapshot must include the
 	// reply committed with that status. Reading these concurrently can stop UI
 	// polling on an older message list just as a turn completes.
+	position, err := r.tasks.Store.EventPosition(ctx)
+	if err != nil {
+		return Session{}, err
+	}
 	c, t, err := r.tasks.Store.ConversationStatus(ctx)
 	if err != nil {
 		return Session{}, err
@@ -38,19 +42,8 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 	}
 	native.Messages = messages
 	result := Session{
-		Session: native, NextCursor: next, Dispatches: []Dispatch{}, Traces: []Trace{},
-		Conversation: ConversationStatus{
-			Introducing: c.Introducing, Pending: c.Received > c.Consumed, Processing: c.Active != "" && c.LeaseUntil.After(time.Now()),
-			Revision: c.Received, Consumed: c.Consumed, InputIDs: []string{}, RoutingBlocked: c.UserReceived > c.UserRouted,
-		},
-	}
-	if t != nil {
-		result.Conversation.TurnID = t.ID
-		result.Conversation.RestartCount = t.Restarts
-		result.Conversation.Frozen = t.Frozen
-		for _, in := range t.Inputs {
-			result.Conversation.InputIDs = append(result.Conversation.InputIDs, in.ID)
-		}
+		Session: native, NextCursor: next, Dispatches: []Dispatch{}, Traces: []Trace{}, Position: position,
+		Conversation: conversationStatus(c, t),
 	}
 	for _, a := range attempts {
 		trace := Trace{
@@ -88,4 +81,38 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 		}
 	}
 	return result, nil
+}
+
+func conversationStatus(c state.ConversationControl, t *state.ConversationTurn) ConversationStatus {
+	status := ConversationStatus{
+		Introducing: c.Introducing, Pending: c.Received > c.Consumed, Processing: c.Active != "" && c.LeaseUntil.After(time.Now()),
+		Revision: c.Received, Consumed: c.Consumed, InputIDs: []string{}, RoutingBlocked: c.UserReceived > c.UserRouted,
+	}
+	if t != nil {
+		status.TurnID = t.ID
+		status.RestartCount = t.Restarts
+		status.Frozen = t.Frozen
+		for _, in := range t.Inputs {
+			status.InputIDs = append(status.InputIDs, in.ID)
+		}
+	}
+	return status
+}
+
+// Presence is the small state the stream sends when the conversation or the pause changes.
+type Presence struct {
+	Conversation ConversationStatus `json:"conversation"`
+	Paused       bool               `json:"paused"`
+}
+
+func (r *Runner) Presence(ctx context.Context) (Presence, error) {
+	c, t, err := r.tasks.Store.ConversationStatus(ctx)
+	if err != nil {
+		return Presence{}, err
+	}
+	control, err := r.tasks.Store.Control(ctx)
+	if err != nil {
+		return Presence{}, err
+	}
+	return Presence{Conversation: conversationStatus(c, t), Paused: control.Paused}, nil
 }

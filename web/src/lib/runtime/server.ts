@@ -1,6 +1,6 @@
-import { isOwner, sameOrigin } from "./auth";
+import { isOwner, sameOrigin, sameOriginRead } from "./auth";
 import { runtimeAuthorization } from "./credentials";
-import { isRuntimeMethod } from "./methods";
+import { isRuntimeMethod, isRuntimeRead } from "./methods";
 import { reportUpstreamFailure, reportUpstreamRejection, rejectionHeaders, upstreamTraceHeaders } from "@/lib/observability/upstream";
 
 export async function runtimeRequest(request: Request, method: string) {
@@ -63,5 +63,62 @@ export async function runtimeRequest(request: Request, method: string) {
     return Response.json({
       error: "Connection to Nori's runtime was interrupted. Refresh history to confirm the task's status.",
     }, { status: 502 });
+  }
+}
+
+// A stream ends upstream first. This limit only catches one that stopped responding.
+const READ_TIMEOUT_MS = 170_000;
+
+/** Forwards `GET /v1/<name>`. EventSource sends its resume position as a header, and Agent Runtime only passes the URL on. */
+export function readQuery(request: Request) {
+  const incoming = new URL(request.url).searchParams;
+  const query = new URLSearchParams();
+  const after = request.headers.get("last-event-id") || incoming.get("after");
+  if (after) query.set("after", after);
+  const before = incoming.get("before");
+  if (before) query.set("before", before);
+  return query.size ? `?${query}` : "";
+}
+
+export function streamHeaders(upstream: Response) {
+  return {
+    "Content-Type": upstream.headers.get("content-type") || "application/json",
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+    "X-Content-Type-Options": "nosniff",
+  };
+}
+
+export async function runtimeRead(request: Request, name: string) {
+  if (!isRuntimeRead(name)) return Response.json({ error: "Not found." }, { status: 404 });
+  if (!sameOriginRead(request) || !(await isOwner(request.headers))) {
+    return Response.json({ error: "Forbidden." }, { status: 403 });
+  }
+  const configured = process.env.NORI_RUNTIME_URL;
+  if (!configured) return Response.json({ error: "Nori's runtime is not configured yet." }, { status: 503 });
+  let target: URL;
+  try {
+    target = new URL(`${configured.replace(/\/+$/, "")}/v1/${name}${readQuery(request)}`);
+    if (target.protocol !== "https:" || target.username || target.password || target.hash) throw new Error();
+  } catch {
+    return Response.json({ error: "Nori's runtime URL is invalid." }, { status: 503 });
+  }
+  try {
+    const upstream = await fetch(target, {
+      headers: { Authorization: await runtimeAuthorization(), ...upstreamTraceHeaders(request) },
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(READ_TIMEOUT_MS)]),
+      redirect: "error",
+      cache: "no-store",
+    });
+    if (upstream.status >= 500) reportUpstreamFailure(name, "hosted", upstream.status);
+    const type = upstream.headers.get("content-type") || "";
+    if (!type.includes("application/json") && !type.startsWith("text/event-stream")) {
+      void upstream.body?.cancel().catch(() => undefined);
+      return Response.json({ error: "The runtime returned an unsupported response." }, { status: 502 });
+    }
+    return new Response(upstream.body, { status: upstream.status, headers: streamHeaders(upstream) });
+  } catch {
+    if (!request.signal.aborted) reportUpstreamFailure(name, "hosted");
+    return Response.json({ error: "Connection to Nori's runtime was interrupted." }, { status: 502 });
   }
 }

@@ -98,6 +98,8 @@ export type Session = {
   conversation?: { introducing?: boolean; pending: boolean; processing: boolean; turn_id?: string; input_ids: string[]; restart_count: number; routing_blocked?: boolean; frozen: boolean; revision: number; consumed: number };
   traces?: ConversationTrace[];
   next_cursor?: string;
+  /** Event log position this snapshot reflects. */
+  position?: number;
 };
 
 /** Debug values come from saved provider/task records, never inferred reasoning. */

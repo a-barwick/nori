@@ -148,6 +148,10 @@ func (d *Database) GetRun(ctx context.Context, id string) (state.Run, error) {
 
 func (d *Database) Spend(ctx context.Context, update state.SpendUpdate) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		ref := d.runs().Doc(update.RunID)
 		run, err := decodeRun(tx.Get(ref))
 		if err != nil {
@@ -166,6 +170,12 @@ func (d *Database) Spend(ctx context.Context, update state.SpendUpdate) error {
 			}); err != nil {
 				return err
 			}
+			if err := log.add(state.EventTask, run.ParentID); err != nil {
+				return err
+			}
+		}
+		if err = log.add(state.EventTask, update.RunID); err != nil {
+			return err
 		}
 		return tx.Update(ref, []firestore.Update{
 			{Path: "spent_usd", Value: spent}, {Path: "budget_usd", Value: budget}, {Path: "cost_unknown", Value: costUnknown},
