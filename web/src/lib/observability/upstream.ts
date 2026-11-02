@@ -65,8 +65,8 @@ export function reportUpstreamRejection(operation: string, request: Request, sen
 let lastPollFailure = 0;
 
 export function reportUpstreamFailure(operation: string, mode: "local" | "hosted", status?: number) {
-  // A failed idle refresh may be the only evidence of a runtime outage. Status polls repeat every two seconds.
-  if (operation === "session" || operation === "status") {
+  // A failed idle refresh may be the only evidence of a runtime outage. A stream retries by itself, so it can repeat.
+  if (operation === "v1/snapshot" || operation === "v1/events") {
     if (Date.now() - lastPollFailure < 60_000) return;
     lastPollFailure = Date.now();
   }

@@ -262,6 +262,16 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			}
 		}
 		now := time.Now().UTC()
+		existing, err := d.runResults(tx, req.RunID)
+		if err != nil {
+			return err
+		}
+		var prior *state.Result
+		if run.Revises != "" {
+			if prior, err = d.readResult(tx, run.Revises); err != nil {
+				return err
+			}
+		}
 		var parent state.Run
 		if run.ParentID != "" {
 			if parent, err = decodeRun(tx.Get(d.runs().Doc(run.ParentID))); err != nil {
@@ -304,6 +314,14 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 		run = finished
 		if err = log.add(state.EventTask, req.RunID); err != nil {
 			return err
+		}
+		for _, result := range state.PublishResults(run, admitted, existing, prior, now) {
+			if err = tx.Set(d.results().Doc(result.ID), result); err != nil {
+				return err
+			}
+			if err = log.add(state.EventResult, result.ID); err != nil {
+				return err
+			}
 		}
 		for id, child := range children {
 			stopped, stop, changed := state.StopSubtask(child, req.RunID+":ended", now)

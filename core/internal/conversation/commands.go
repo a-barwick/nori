@@ -12,6 +12,29 @@ import (
 )
 
 // commandRequests validates the entire model batch before any command is accepted.
+// splitShows separates show_result actions, which start no task, from task commands.
+func splitShows(calls []ToolCall) ([]ToolCall, []string, error) {
+	commands := make([]ToolCall, 0, len(calls))
+	shows := []string{}
+	for _, call := range calls {
+		if call.Function.Name != "show_result" {
+			commands = append(commands, call)
+			continue
+		}
+		var args struct {
+			ResultID string `json:"result_id"`
+		}
+		if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
+			return nil, nil, err
+		}
+		if !state.ValidUploadID(args.ResultID) {
+			return nil, nil, fmt.Errorf("show_result needs a saved result's ID")
+		}
+		shows = append(shows, args.ResultID)
+	}
+	return commands, shows, nil
+}
+
 // The turn owner assigns stable command IDs and source inputs after validation.
 func commandRequests(calls []ToolCall) ([]state.Command, error) {
 	if len(calls) > 16 {
@@ -34,6 +57,8 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				QuestionID *string `json:"question_id"`
 				// Earlier files the task also needs. The current message's files go with it anyway.
 				Attachments []string `json:"attachments"`
+				// A saved result this task changes. The new result links to it.
+				Revises *string `json:"revises"`
 			}
 			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
 				return nil, err
@@ -47,6 +72,12 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 					return nil, fmt.Errorf("a dispatch names an invalid file ID")
 				}
 				command.Attachments = append(command.Attachments, state.Attachment{ID: id})
+			}
+			if args.Revises != nil && *args.Revises != "" {
+				if !state.ValidUploadID(*args.Revises) {
+					return nil, fmt.Errorf("a dispatch names an invalid result ID")
+				}
+				command.Revises = *args.Revises
 			}
 			if args.For != nil && *args.For != "" {
 				id, err := uuid.Parse(*args.For)

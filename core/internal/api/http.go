@@ -64,6 +64,9 @@ func Handler(deps Deps, local bool) http.Handler {
 	mux.HandleFunc("GET /v1/events", s.events)
 	mux.HandleFunc("POST /v1/uploads", s.upload)
 	mux.HandleFunc("GET /v1/uploads/{id}", s.readUpload)
+	mux.HandleFunc("GET /v1/results/{id}", s.readResult)
+	mux.HandleFunc("GET /v1/results/{id}/file", s.readResultFile)
+	mux.HandleFunc("POST /api/delivered", s.delivered)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if local {
 			if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {

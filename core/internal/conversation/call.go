@@ -435,7 +435,11 @@ func (r *Runner) finishCall(
 	} else {
 		t.Attempt.Reply = string(reply.Message)
 		t.Attempt.StructuredReply = reply.Structured
-		commands, err := commandRequests(reply.Calls)
+		calls, shows, err := splitShows(reply.Calls)
+		var commands []state.Command
+		if err == nil {
+			commands, err = commandRequests(calls)
+		}
 		if noDispatch && len(reply.Calls) != 0 {
 			err = fmt.Errorf("a turn without user input cannot authorize task commands")
 		}
@@ -454,10 +458,17 @@ func (r *Runner) finishCall(
 		} else {
 			t.Attempt.Reply = string(reply.Message)
 			t.Attempt.Text = reply.Text
-			for i, call := range reply.Calls {
+			t.Attempt.ShowResults = shows
+			for i, call := range calls {
 				id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(t.Attempt.ID+":"+call.ID)).String()
 				command := commands[i]
 				command.ID = id
+				if command.Revises != "" {
+					// A revision must link to a result that exists, and the task is told which one.
+					if _, err := r.tasks.Store.GetResult(ctx, command.Revises); err != nil {
+						command.Revises = ""
+					}
+				}
 				named := command.Attachments
 				command.Attachments = nil
 				for _, attachment := range named {

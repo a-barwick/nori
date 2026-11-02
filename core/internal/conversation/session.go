@@ -29,11 +29,13 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 		return Session{}, err
 	}
 	var attempts []state.ConversationAttempt
-	var readErrors [3]error
+	var results []state.Result
+	var readErrors [4]error
 	var reads sync.WaitGroup
 	reads.Go(func() { native, readErrors[0] = r.tasks.Store.ConversationProjection(ctx) })
 	reads.Go(func() { messages, next, readErrors[1] = r.tasks.Store.ConversationMessages(ctx, before) })
 	reads.Go(func() { attempts, readErrors[2] = r.tasks.Store.ConversationTraces(ctx) })
+	reads.Go(func() { results, readErrors[3] = r.tasks.Store.RecentResults(ctx, state.RecentResultLimit) })
 	reads.Wait()
 	for _, err := range readErrors {
 		if err != nil {
@@ -41,8 +43,11 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 		}
 	}
 	native.Messages = messages
+	for i := range results {
+		results[i] = results[i].Summary()
+	}
 	result := Session{
-		Session: native, NextCursor: next, Dispatches: []Dispatch{}, Traces: []Trace{}, Position: position,
+		Session: native, NextCursor: next, Dispatches: []Dispatch{}, Traces: []Trace{}, Position: position, Results: results,
 		Conversation: conversationStatus(c, t),
 	}
 	for _, a := range attempts {

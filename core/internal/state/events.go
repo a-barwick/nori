@@ -7,6 +7,7 @@ const (
 	EventMessage      = "message"
 	EventTask         = "task"
 	EventConversation = "conversation"
+	EventResult       = "result"
 )
 
 // EventReplayLimit is how far behind a client may resume. A client further behind starts again from a snapshot.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 	"unicode/utf8"
 
 	"nori/internal/state"
@@ -13,11 +14,28 @@ const taskContextLimit = 64 << 10
 const actionResultLimit = 1 << 10
 
 type TaskContext struct {
-	ActiveTasks  []*TaskContextRecord `json:"active_tasks"`
-	EventTasks   []*TaskContextRecord `json:"event_task_records"`
-	RecentTasks  []*TaskContextRecord `json:"recent_task_records"`
-	Truncated    bool                 `json:"truncated"`
-	Instructions string               `json:"instructions"`
+	ActiveTasks []*TaskContextRecord `json:"active_tasks"`
+	EventTasks  []*TaskContextRecord `json:"event_task_records"`
+	RecentTasks []*TaskContextRecord `json:"recent_task_records"`
+	// SavedResults lists the newest results, without their text.
+	SavedResults []SavedResult `json:"saved_results,omitempty"`
+	Truncated    bool          `json:"truncated"`
+	Instructions string        `json:"instructions"`
+}
+
+// SavedResult is what the outer loop knows about a saved result. Titles came from task requests and tool calls, so
+// they're untrusted data.
+type SavedResult struct {
+	ID           string     `json:"id"`
+	TaskID       string     `json:"task_id"`
+	Kind         string     `json:"kind"`
+	Title        string     `json:"title"`
+	Version      int        `json:"version"`
+	SupersededBy string     `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	CheckedAt    *time.Time `json:"checked_at,omitempty"`
+	ReportedAt   *time.Time `json:"reported_at,omitempty"`
+	DeliveredAt  *time.Time `json:"delivered_at,omitempty"`
 }
 
 type TaskContextRecord struct {
@@ -164,6 +182,16 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 		if err := add(run.ID, &result.RecentTasks); err != nil {
 			return result, err
 		}
+	}
+	saved, err := t.Store.RecentResults(ctx, state.RecentResultLimit)
+	if err != nil {
+		return result, err
+	}
+	for _, item := range saved {
+		result.SavedResults = append(result.SavedResults, SavedResult{
+			ID: item.ID, TaskID: item.RunID, Kind: item.Kind, Title: item.Title, Version: item.Version, SupersededBy: item.SupersededBy,
+			CreatedAt: item.CreatedAt, CheckedAt: item.CheckedAt, ReportedAt: item.ReportedAt, DeliveredAt: item.DeliveredAt,
+		})
 	}
 	fits := func() bool { data, err := json.Marshal(result); return err == nil && len(data) <= taskContextLimit }
 	if fits() {

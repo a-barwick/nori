@@ -5,7 +5,7 @@ import { taskControlKinds } from "../types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import type { Span } from "@sentry/nextjs";
-import type { Message, PendingTaskCommand, Run, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
+import type { Attachment, DraftFile, Message, PendingTaskCommand, Run, SavedResult, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
 
 class RequestError extends Error {
   constructor(message: string, readonly status: number, readonly details?: TaskCommandResponse) { super(message); }
@@ -40,7 +40,19 @@ async function snapshot(before: string | undefined, signal: AbortSignal | undefi
 // With nothing running, a visible tab drops its stream after this long, so an open tab doesn't hold the service awake.
 const STREAM_IDLE_MS = 5 * 60_000;
 type Presence = { conversation: NonNullable<Session["conversation"]>; paused: boolean };
-type Pending = { id: string; text: string; started: number; error?: string };
+type Pending = { id: string; text: string; started: number; error?: string; attachments?: Attachment[] };
+
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_FILES = 10;
+async function uploadFile(item: DraftFile, agentMode: boolean): Promise<Attachment> {
+  const query = new URLSearchParams({ id: item.id, name: item.name });
+  const response = await fetch(`${agentMode ? "/api/agent" : "/api"}/v1/uploads?${query}`, {
+    method: "POST", body: item.file, cache: "no-store", headers: { "Content-Type": item.file.type || "application/octet-stream" },
+  });
+  const data = await response.json().catch(() => ({ error: "Nori returned an unreadable response." }));
+  if (!response.ok) throw new Error(data.error || `Upload failed (${response.status}).`);
+  return data as Attachment;
+}
 type ReplyTiming = { started: number; span: Span; timer: ReturnType<typeof setTimeout> };
 const STORAGE_KEY = "nori-pending-turns-v1";
 const MAX_PENDING = 20;
@@ -79,7 +91,7 @@ function restorePending(): Pending[] {
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is Pending => item && typeof item.id === "string" &&
       /^[a-f0-9-]{36}$/.test(item.id) && typeof item.text === "string" &&
-      new TextEncoder().encode(item.text).length <= 8192 && typeof item.started === "number").slice(0, MAX_PENDING);
+      new TextEncoder().encode(item.text).length <= 8192 && typeof item.started === "number" && (item.attachments === undefined || Array.isArray(item.attachments))).slice(0, MAX_PENDING);
   } catch { return []; }
 }
 const acknowledged = (data: Session, id: string) => data.conversation?.input_ids.includes(id) || data.messages.some((message) => message.id === `${id}-user`);
@@ -105,6 +117,7 @@ function mergeRuns(older: Run[], newer: Run[]): Run[] {
 export function useRuntime(agentMode = false) {
   const [session, setSession] = useState<Session>();
   const [draft, setDraftState] = useState("");
+  const [draftFiles, setDraftFiles] = useState<DraftFile[]>([]);
   const draftValue = useRef("");
   const setDraft = (text: string) => { draftValue.current = text; setDraftState(text); };
   const [error, setError] = useState("");
@@ -141,7 +154,7 @@ export function useRuntime(agentMode = false) {
     pendingRef.current = next;
     setPending(next);
     try {
-      if (next.length) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next.map(({ id, text, started }) => ({ id, text, started }))));
+      if (next.length) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next.map(({ id, text, started, attachments }) => ({ id, text, started, attachments }))));
       else sessionStorage.removeItem(STORAGE_KEY);
     } catch { /* Private browsing may disable storage; current-tab retries still work. */ }
   }, []);
@@ -225,7 +238,7 @@ export function useRuntime(agentMode = false) {
     updatePending((current) => current.map((entry) => entry.id === item.id ? { ...entry, error: undefined } : entry));
     const serial = ++requestSerial.current;
     try {
-      const data = await post<Session>("turn", { id: item.id, message: item.text }, controller.signal, agentMode, replyTimings.current.get(item.id)?.span);
+      const data = await post<Session>("turn", { id: item.id, message: item.text, attachments: item.attachments?.map((file) => file.id) }, controller.signal, agentMode, replyTimings.current.get(item.id)?.span);
       if (!controller.signal.aborted) { applySnapshot(data, serial); setError(""); }
     } catch (err) {
       if (!controller.signal.aborted) {
@@ -308,6 +321,17 @@ export function useRuntime(agentMode = false) {
     return () => clearTimeout(timer);
   }, [busy, streamAwake]);
 
+  // A browser that shows a reply reports its results as delivered. Only a visible tab counts.
+  const reported = useRef(new Set<string>());
+  useEffect(() => {
+    if (!session || !visible) return;
+    const shown = new Set(session.messages.flatMap((message) => message.result_ids ?? []));
+    const ids = (session.results ?? []).filter((result) => shown.has(result.id) && !result.delivered_at && !reported.current.has(result.id)).map((result) => result.id);
+    if (!ids.length) return;
+    for (const id of ids) reported.current.add(id);
+    void post("delivered", { ids }, undefined, agentMode).catch(() => { for (const id of ids) reported.current.delete(id); });
+  }, [session, visible, agentMode]);
+
   // Follow the event log while the tab is visible. The browser reconnects by itself with Last-Event-ID after a stream
   // ends. It gives up only when a response isn't a stream, and then this reopens it from the last event.
   useEffect(() => {
@@ -342,6 +366,9 @@ export function useRuntime(agentMode = false) {
       listen<{ run: Run }>("task", ({ run }) => {
         setSession((current) => current && { ...current, runs: mergeRuns(current.runs, [run]) });
         updateTaskCommands((current) => current.filter((item) => !commandApplied(item, [run])));
+      });
+      listen<{ result: SavedResult }>("result", ({ result }) => {
+        setSession((current) => current && { ...current, results: mergeById(current.results ?? [], [result]).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)) });
       });
       listen<Presence>("conversation", applyPresence);
       listen<Presence>("presence", applyPresence);
@@ -394,16 +421,39 @@ export function useRuntime(agentMode = false) {
 
   async function send() {
     const text = draftValue.current.trim();
-    if (!text || !session || loading || session.conversation?.introducing) return;
+    const ready = draftFiles.filter((file) => file.status === "ready");
+    if ((!text && !ready.length) || draftFiles.some((file) => file.status !== "ready") || !session || loading || session.conversation?.introducing) return;
     if (new TextEncoder().encode(text).length > 8192) { setError("Please keep the message within 8,192 UTF-8 bytes."); return; }
     if (pendingRef.current.length >= MAX_PENDING) { setError("Reconnect or retry your pending messages before sending more."); return; }
-    const item = { id: crypto.randomUUID(), text, started: Date.now() };
+    const item: Pending = { id: crypto.randomUUID(), text, started: Date.now(), ...(ready.length ? { attachments: ready.map(({ id, name, media_type, size }) => ({ id, name, media_type, size })) } : {}) };
     beginTiming(item);
     Sentry.metrics.count("nori.submissions", 1, { attributes: { mode: agentMode ? "local" : "hosted" } });
     Sentry.addBreadcrumb({ category: "nori", message: "turn submitted" });
     updatePending((current) => [...current, item]);
-    setDraft(""); setError("");
+    setDraft(""); setError(""); setDraftFiles([]);
     await submit(item);
+  }
+
+  // A retry keeps the same ID, so a file that did reach the service isn't stored twice.
+  const sendFile = useCallback(async (item: DraftFile) => {
+    setDraftFiles((current) => current.map((file) => file.id === item.id ? { ...file, status: "uploading", error: undefined } : file));
+    try {
+      const saved = await uploadFile(item, agentMode);
+      setDraftFiles((current) => current.map((file) => file.id === item.id ? { ...file, ...saved, status: "ready" } : file));
+    } catch (err) {
+      setDraftFiles((current) => current.map((file) => file.id === item.id ? { ...file, status: "error", error: err instanceof Error ? err.message : "Upload failed. Try again." } : file));
+    }
+  }, [agentMode]);
+
+  function attachFiles(files: File[]) {
+    const room = MAX_FILES - draftFiles.length;
+    if (files.length > room) setError(`A message can have at most ${MAX_FILES} files.`);
+    for (const file of files.slice(0, Math.max(0, room))) {
+      const item: DraftFile = { id: crypto.randomUUID(), name: file.name, media_type: file.type, size: file.size, status: "uploading", file };
+      if (file.size > MAX_FILE_BYTES) { setDraftFiles((current) => [...current, { ...item, status: "error", error: "A file can be at most 10 MB." }]); continue; }
+      setDraftFiles((current) => [...current, item]);
+      void sendFile(item);
+    }
   }
 
   async function commandTask(runId: string, kind: TaskCommand["kind"], text?: string, questionId?: string) {
@@ -421,7 +471,8 @@ export function useRuntime(agentMode = false) {
     updateTaskCommands((current) => current.filter((item) => item.command.id !== id || !item.rejected));
   }
 
-  return { session, draft, setDraft, error: error || streamError, loading, loadingOlder, pending, selectedId, setSelectedId,
+  return { session, draft, setDraft, draftFiles, attachFiles, retryFile: sendFile,
+    removeFile: (id: string) => setDraftFiles((current) => current.filter((file) => file.id !== id)), error: error || streamError, loading, loadingOlder, pending, selectedId, setSelectedId,
     activeTasks, selected, tasksUnavailable, busy, conversationBusy, taskCommands, taskDrafts,
     setTaskDraft: (id: string, text: string) => setTaskDrafts((current) => ({ ...current, [id]: text })),
     refreshHistory, loadOlder, send, retry: submit, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand };

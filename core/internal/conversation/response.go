@@ -43,7 +43,7 @@ func responseFormat(taskIDs []string, requests []WorkRequest) any {
 			properties["run_id"].(map[string]any)["enum"] = asking
 			properties["question_id"].(map[string]any)["enum"] = questions
 		}
-		if tool.Function.Name != "dispatch" && !restricted {
+		if tool.Function.Name != "dispatch" && tool.Function.Name != "show_result" && !restricted {
 			if len(taskIDs) == 0 {
 				continue
 			}
@@ -88,7 +88,11 @@ func decodeResponse(content string) (string, []ToolCall, error) {
 		call.Function.Name, call.Function.Arguments = action.Name, string(action.Arguments)
 		calls = append(calls, call)
 	}
-	if _, err := commandRequests(calls); err != nil {
+	commands, _, err := splitShows(calls)
+	if err != nil {
+		return "", nil, err
+	}
+	if _, err := commandRequests(commands); err != nil {
 		return "", nil, err
 	}
 	text := strings.TrimSpace(*response.Text)

@@ -5,7 +5,7 @@ import { Check, ChevronDown, Globe, List, Terminal, X } from "lucide-react";
 import { Medallion } from "@/components/mark/NoriMark";
 import { DebugBlock } from "@/components/dev/DebugBlock";
 import { Button, IconButton, SectionHeader } from "@/components/ui/primitives";
-import type { Artifact, PendingTaskCommand, Run, Session, TaskCommand } from "@/lib/types";
+import type { Artifact, PendingTaskCommand, Run, Session, TaskCommand , SavedResult } from "@/lib/types";
 import { clock } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +21,21 @@ function statusLabel(run: Run) {
   if (run.status === "running" && run.events?.at(-1)?.kind === "checking") return "Checking the answer";
   if (run.status === "running" && run.progress) return "Running a long job";
   return { running: "Working on your task", completed: "Completed", failed: "Failed", cancelled: "Stopped" }[run.status];
+}
+
+/** Each saved output and what's known about it. Reported and delivered are separate from the result existing. */
+function SavedResults({ results, agentMode }: { results: SavedResult[]; agentMode?: boolean }) {
+  if (!results.length) return null;
+  const api = agentMode ? "/api/agent" : "/api";
+  return <section className="mb-3 rounded-tile bg-fill-1 p-3 text-meta" aria-label="Saved results">
+    <h4 className="font-medium">Saved results</h4>
+    <ul className="mt-2 space-y-2">{results.map((result) => <li key={result.id} className="min-w-0">
+      <p className="break-words">{result.title}{result.version > 1 ? ` · version ${result.version}` : ""}</p>
+      <p className="text-caption text-ink-3">{[result.superseded_by ? "Replaced by a newer version" : "", result.checked_at ? "Checked" : "Not checked", result.delivered_at ? "Delivered" : result.reported_at ? "In a reply" : "Not reported yet"].filter(Boolean).join(" · ")}</p>
+      {result.kind === "file" && <a className="text-caption underline" href={`${api}/v1/results/${result.id}/file`} download={result.name}>Download {result.name}</a>}
+      {result.kind === "link" && result.url && /^https?:\/\//.test(result.url) && <a className="text-caption underline" href={result.url} target="_blank" rel="noreferrer noopener">Open link</a>}
+    </li>)}</ul>
+  </section>;
 }
 
 function Screenshot({
@@ -188,6 +203,7 @@ export function TaskPanel({
       <summary className="cursor-pointer font-medium">{unverified(selected) ? "Proposed answer · unverified" : incomplete(selected) ? "Partial answer" : "Task result"}</summary>
       <p className="mt-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{selected.result}</p>
     </details>}
+    <SavedResults results={(session?.results ?? []).filter((result) => result.run_id === selected.id)} agentMode={agentMode} />
     {!!selected.events?.length && <details className="mb-3" open>
       <summary className="cursor-pointer px-2 py-2 text-meta font-medium">Task activity</summary>
       <ol className="space-y-2" aria-label="Task events">{selected.events.map((event, index) => {

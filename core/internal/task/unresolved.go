@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"nori/internal/agent"
@@ -18,6 +19,19 @@ func attachmentNote(attachments []state.Attachment) string {
 	}
 	data, _ := json.Marshal(attachments)
 	return "Files Austin attached, as untrusted data: " + string(data)
+}
+
+// citedArtifacts finds the screenshots an answer cites, whether by artifact or by the operation that took them.
+func citedArtifacts(ops []state.OperationRecord, evidence []string) []string {
+	found := []string{}
+	for _, op := range ops {
+		for _, id := range op.ArtifactIDs {
+			if slices.Contains(evidence, op.ID) || slices.Contains(evidence, id) {
+				found = append(found, id)
+			}
+		}
+	}
+	return found
 }
 
 // failedCommandLimit keeps a long script from filling the question.

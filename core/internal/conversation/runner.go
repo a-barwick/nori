@@ -69,6 +69,7 @@ type Session struct {
 	Conversation   ConversationStatus `json:"conversation"`
 	Traces         []Trace            `json:"traces"`
 	NextCursor     string             `json:"next_cursor,omitempty"`
+	Results        []state.Result     `json:"results"`
 	// Position is the event log's position when this snapshot was read. Events after it may already be included, and
 	// applying one again changes nothing.
 	Position int64 `json:"position"`
@@ -263,6 +264,9 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		}
 		if t.Attempt.Status != "error" {
 			attemptEnd(&t.Attempt, "completed", "")
+		}
+		if strings.TrimSpace(text) == "" && len(t.Attempt.ShowResults) > 0 {
+			text = "Here it is."
 		}
 		buildProtocol(&t, text)
 		e = r.tasks.Store.PublishConversation(ctx, f, t, text)

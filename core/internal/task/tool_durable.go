@@ -18,7 +18,7 @@ import (
 
 func toolEffect(name string) string {
 	switch name {
-	case "browser_navigate", "browser_screenshot", "web_search", "calendar_read", "screenshot_inspect", "upload_open", "upload_inspect", "job_status", "job_wait":
+	case "browser_navigate", "browser_screenshot", "web_search", "calendar_read", "screenshot_inspect", "upload_open", "upload_inspect", "result_save", "result_link", "results_find", "result_read", "result_open", "job_status", "job_wait":
 		return "read"
 	case "job_stop":
 		// Stopping repeats safely, so an unresolved write never blocks it.

@@ -9,16 +9,26 @@ import { NovaShell } from "@/components/nova/NovaShell";
 import { IconButton } from "@/components/ui/primitives";
 import { useHydrated, useWide } from "@/lib/hooks";
 import { useRuntime } from "@/lib/runtime/useRuntime";
-import type { Message, Thread as Conversation, ThreadItem } from "@/lib/types";
+import type { Message, Part, Thread as Conversation, ThreadItem } from "@/lib/types";
 import { DocumentViewer } from "./DocumentViewer";
 import { RuntimeComposer } from "./RuntimeComposer";
 import { TaskPanel } from "./TaskPanel";
 
+/** Where a file part's bytes are. A link part already has its address. */
+function partURL(part: Part, api: string) {
+  if (part.type === "attachment" && part.id) return `${api}/v1/uploads/${part.id}`;
+  if ((part.type === "artifact" || part.type === "image") && part.id) return `${api}/v1/results/${part.id}/file`;
+  return part.url;
+}
+
 /** The service sends parts. Text parts become the message body and the others show under it. */
-function partsOf(message: Message) {
-  const parts = message.parts?.length ? message.parts : [{ type: "text", text: message.text }];
+function partsOf(message: Pick<Message, "text" | "parts">, api: string) {
+  const parts: Part[] = message.parts?.length ? message.parts : [{ type: "text", text: message.text }];
   const text = parts.filter((part) => part.type === "text");
-  return { text: text.map((part) => part.text ?? "").join("\n\n"), display: text.find((part) => part.display)?.display, parts: parts.filter((part) => part.type !== "text") };
+  return {
+    text: text.map((part) => part.text ?? "").join("\n\n"), display: text.find((part) => part.display)?.display,
+    parts: parts.filter((part) => part.type !== "text").map((part) => ({ ...part, url: partURL(part, api) })),
+  };
 }
 
 export function NoriApp({ agentMode = false }: { agentMode?: boolean }) {
@@ -78,14 +88,15 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       kind: "text",
       sender: message.role === "user" ? "me" : "nori",
       at: Date.parse(message.created_at),
-      ...partsOf(message),
+      ...partsOf(message, agentMode ? "/api/agent" : "/api"),
       debug: debug && message.role === "assistant"
         ? { run: session?.runs.find((run) => run.id === message.run_id), turns: session?.traces?.filter((trace) => trace.turn_id === (message.turn_id || message.id.replace(/-assistant$/, ""))), agentMode, turnId: message.turn_id }
         : undefined,
     }));
     for (const item of pending) {
       if (!session?.messages.some((message) => message.id === `${item.id}-user`)) items.push({
-        id: `${item.id}-user`, kind: "text", sender: "me", at: item.started, text: item.text,
+        id: `${item.id}-user`, kind: "text", sender: "me", at: item.started,
+        ...partsOf({ text: item.text, parts: [{ type: "text", text: item.text }, ...(item.attachments ?? []).map((file) => ({ type: "attachment", ...file, fallback: `Attached file: ${file.name}` }))] }, agentMode ? "/api/agent" : "/api"),
       });
     }
     items.sort((a, b) => a.at - b.at);
@@ -208,6 +219,10 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
           setDraft={runtime.setDraft}
           disabled={!session || loading || !!session.conversation?.introducing}
           onSend={() => void runtime.send()}
+          files={runtime.draftFiles}
+          onAttach={runtime.attachFiles}
+          onRetryFile={(file) => void runtime.retryFile(file)}
+          onRemoveFile={runtime.removeFile}
           unread={unread.count}
           onJump={unread.jump}
         />

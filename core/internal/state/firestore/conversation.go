@@ -362,7 +362,23 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 		if err != nil {
 			return err
 		}
-		c, completed, message := state.CompleteTurn(c, t, text, time.Now().UTC())
+		results, err := d.replyResults(tx, t)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		c, completed, message := state.CompleteTurn(c, t, text, now)
+		marked, parts := state.ReportResults(results, t.Attempt.ShowResults, message.ID, now)
+		message.Parts = append(message.Parts, parts...)
+		for _, result := range marked {
+			message.ResultIDs = append(message.ResultIDs, result.ID)
+			if err = tx.Set(d.results().Doc(result.ID), result); err != nil {
+				return err
+			}
+			if err = log.add(state.EventResult, result.ID); err != nil {
+				return err
+			}
+		}
 		for id, run := range heldRuns {
 			if err = tx.Set(d.runs().Doc(id), run); err != nil {
 				return err

@@ -77,3 +77,75 @@ func serveFile(w http.ResponseWriter, name, mediaType string, data []byte) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Write(data)
 }
+
+func (s *server) readResult(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !state.ValidUploadID(id) {
+		writeJSON(w, 404, map[string]string{"error": "That result doesn't exist."})
+		return
+	}
+	result, err := s.Tasks.Store.GetResult(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, 200, result)
+}
+
+func (s *server) readResultFile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !state.ValidUploadID(id) {
+		writeJSON(w, 404, map[string]string{"error": "That result doesn't exist."})
+		return
+	}
+	result, err := s.Tasks.Store.GetResult(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	var data []byte
+	switch result.Kind {
+	case state.ResultFile:
+		data, err = s.Tasks.Store.GetFile(r.Context(), state.ResultKey(id))
+	case state.ResultScreenshot:
+		data, err = s.Tasks.Store.GetPNG(r.Context(), result.RunID, result.ArtifactID)
+		result.Name, result.MediaType = result.Title+".png", "image/png"
+	default:
+		writeJSON(w, 404, map[string]string{"error": "This result has no file."})
+		return
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		writeJSON(w, 410, map[string]string{"error": "This file is no longer available."})
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	serveFile(w, result.Name, result.MediaType, data)
+}
+
+// delivered records that a browser showed these results.
+func (s *server) delivered(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if len(body.IDs) == 0 || len(body.IDs) > state.RecentResultLimit {
+		writeJSON(w, 400, map[string]string{"error": "Send the IDs of the results shown."})
+		return
+	}
+	for _, id := range body.IDs {
+		if !state.ValidUploadID(id) {
+			writeJSON(w, 400, map[string]string{"error": "Send the IDs of the results shown."})
+			return
+		}
+	}
+	if err := s.Tasks.Store.MarkDelivered(r.Context(), body.IDs); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"recorded": true})
+}

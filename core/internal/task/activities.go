@@ -61,6 +61,7 @@ type Publication struct {
 	Spent              float64
 	BypassRouting      bool
 	ExpectedIncomplete bool
+	Answer             *state.ResultDraft
 }
 type Projection struct {
 	Step
@@ -394,7 +395,7 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 	}
 	r, err := a.Store.Publish(ctx, state.PublishRequest{
 		RunID: p.RunID, Revision: p.Revision, Status: p.Status, Detail: p.Detail, Text: p.Text,
-		CostUnknown: p.CostUnknown, Spent: p.Spent, BypassRouting: p.BypassRouting,
+		CostUnknown: p.CostUnknown, Spent: p.Spent, BypassRouting: p.BypassRouting, Answer: p.Answer,
 	})
 	if err == nil {
 		if (run.Status == state.RunRunning || run.Status == "") && r.FinishedAt != nil && !r.StartedAt.IsZero() && !r.FinishedAt.Before(r.StartedAt) {

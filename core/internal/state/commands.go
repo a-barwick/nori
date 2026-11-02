@@ -42,15 +42,17 @@ type Command struct {
 	SourceInputIDs []string `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
 	// Attachments are files this command gives the task.
 	Attachments []Attachment `json:"attachments,omitempty" firestore:"attachments,omitempty"`
-	ID          string       `json:"id" firestore:"id"`
-	RunID       string       `json:"run_id" firestore:"run_id"`
-	ParentID    string       `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
-	Kind        CommandKind  `json:"kind" firestore:"kind"`
-	Text        string       `json:"text" firestore:"text"`
-	Position    int64        `json:"position" firestore:"position"`
-	Revision    int64        `json:"revision" firestore:"revision"`
-	Delivered   bool         `json:"delivered" firestore:"delivered"`
-	CreatedAt   time.Time    `json:"created_at" firestore:"created_at"`
+	// Revises names the saved result a start command is meant to change.
+	Revises   string      `json:"revises,omitempty" firestore:"revises,omitempty"`
+	ID        string      `json:"id" firestore:"id"`
+	RunID     string      `json:"run_id" firestore:"run_id"`
+	ParentID  string      `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
+	Kind      CommandKind `json:"kind" firestore:"kind"`
+	Text      string      `json:"text" firestore:"text"`
+	Position  int64       `json:"position" firestore:"position"`
+	Revision  int64       `json:"revision" firestore:"revision"`
+	Delivered bool        `json:"delivered" firestore:"delivered"`
+	CreatedAt time.Time   `json:"created_at" firestore:"created_at"`
 }
 
 type TaskSnapshot struct {
@@ -235,7 +237,7 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 			run = Run{
 				ID: cmd.RunID, Request: cmd.Text, Status: RunRunning, Temporal: true, ProtocolVersion: TaskProtocolVersion,
 				WorkflowVersion: TaskWorkflowVersion, StartedAt: now, Budget: TaskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
-				TraceContext: traceContext, OriginTraceContext: traceContext,
+				TraceContext: traceContext, OriginTraceContext: traceContext, Revises: cmd.Revises,
 			}
 			if cmd.ParentID != "" {
 				parent, question, err := linkSubtask(runs[cmd.ParentID], exists[cmd.ParentID], cmd, opened)

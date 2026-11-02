@@ -38,6 +38,7 @@ func (s *Service) Catalog() []Capability {
 		{Name: "Web search", Tools: "web_search", Account: "public web", Availability: search, OnFailure: "report that the search failed; retry only if useful", Verify: "the results are the evidence"},
 		{Name: "Browser", Tools: "browser_navigate, browser_screenshot, screenshot_inspect", Account: "the computer's browser", Availability: "available", OnFailure: "report the page or image as unread", Verify: "the page text or screenshot_inspect answer is the evidence"},
 		{Name: "Attached files", Tools: "upload_open, upload_inspect", Account: "files Austin attached to this task", Availability: "available", OnFailure: "say the file couldn't be read; never guess what it says", Verify: "the shell output or upload_inspect answer is the evidence"},
+		{Name: "Saved results", Tools: "result_save, result_link, results_find, result_read, result_open", Account: "Nori's saved results", Availability: "available", OnFailure: "say the result couldn't be saved or read", Verify: "the returned result_id is the evidence"},
 		{Name: "Shell", Tools: "shell, job_start, job_status, job_wait, job_stop", Account: "the computer", Availability: "available", OnFailure: "report the observed exit code or job state; never repeat a write automatically", Verify: "use the job's end state and exit code, and read back what the command changed"},
 		{Name: "Google Calendar read", Tools: "calendar_read", Account: account, Availability: calendar, OnFailure: "tell Austin it needs connecting; never guess events", Verify: "the result names the account and range it read"},
 		{Name: "Google Calendar write", Tools: "calendar_create, calendar_move", Account: account, Availability: calendar, OnFailure: "report the outcome; never repeat a write automatically", Verify: "the result carries the provider's status, the event ID and a read of the event"},
@@ -68,7 +69,7 @@ func (s *Service) catalogInstruction() string {
 // RuntimeTool reports a tool the worker runs itself, without the computer.
 func RuntimeTool(name string) bool {
 	switch name {
-	case "web_search", "calendar_read", "screenshot_inspect", "upload_inspect":
+	case "web_search", "calendar_read", "screenshot_inspect", "upload_inspect", "result_link", "results_find", "result_read":
 		return true
 	}
 	return false
@@ -90,6 +91,12 @@ func (s *Service) CallRuntimeTool(ctx context.Context, run, name string, args ma
 		return s.inspectScreenshot(ctx, run, text("artifact_id"), text("question"))
 	case "upload_inspect":
 		return s.uploadInspect(ctx, run, text("upload_id"), text("question"))
+	case "result_link":
+		return s.resultLink(ctx, run, text("url"), text("title"))
+	case "results_find":
+		return s.resultsFind(ctx, text("query"))
+	case "result_read":
+		return s.resultRead(ctx, text("result_id"))
 	}
 	return nil, errors.New("unknown tool")
 }
