@@ -141,7 +141,6 @@ async function conversation(id) {
   };
   state.finish = async ({ questions = 0 } = {}) => {
     const now = await snapshot();
-    stream.close();
     const tasks = fresh(now);
     const spent = tasks.reduce((sum, run) => sum + (run.spent_usd ?? 0), 0);
     summary.push({ id, tasks: tasks.map((run) => run.status), questions: state.questions, spent });
@@ -151,8 +150,10 @@ async function conversation(id) {
     for (const run of tasks) expect(run.status, `${id} task: ${run.error ?? ""}`).toBe("completed");
     expect(state.questions, `${id} asked questions it shouldn't have`).toBe(questions);
     const assistant = now.messages.filter((message) => message.role === "assistant" && new Date(message.created_at) > new Date(at)).map((message) => message.id);
-    await until(() => stream.seen, (seen) => assistant.every((message) => seen.includes(message)) || true, "the stream", 1000);
-    expect(assistant.filter((message) => !stream.seen.includes(message)), `${id} replies missing from the stream`).toEqual([]);
+    // A scenario can reconnect, so this reads whichever stream is current and everything earlier ones saw.
+    await until(() => state.stream.seen, (seen) => assistant.every((message) => seen.includes(message)), "replies on the stream", 15_000).catch(() => {});
+    state.stream.close();
+    expect(assistant.filter((message) => !state.stream.seen.includes(message)), `${id} replies missing from the stream`).toEqual([]);
     return now;
   };
   return state;
@@ -312,10 +313,12 @@ scenario("095", "returning after a disconnect", async (id) => {
   const setup = await talk.say("Write a short report on the history of the paperclip, as a text file on the computer, and save the file so I can open it later.");
   const saved = (await snapshot()).results.filter((result) => setup.tasks.some((run) => run.id === result.run_id) && result.kind === "file");
   expect(saved.length, "the setup task saved a file").toBeGreaterThan(0);
-  talk.stream.close();
+  const before = talk.stream;
+  before.close();
   const reloaded = await snapshot();
   const runs = reloaded.runs.length;
   talk.stream = follow(reloaded.position);
+  talk.stream.seen.push(...before.seen);
   const back = await talk.say("I'm back. Did you finish that report, or do I need to ask again?");
   expect(back.reply).toMatch(/finish|done|complete|yes|saved/i);
   expect(back.reply).not.toMatch(/\b(lost|start over|ask again to)\b/i);
@@ -323,7 +326,6 @@ scenario("095", "returning after a disconnect", async (id) => {
   expect(reply.result_ids ?? [], "the reply links the saved result").toContain(saved[0].id);
   expect(reply.parts.some((part) => part.id === saved[0].id && part.fallback)).toBe(true);
   expect((await snapshot()).runs.length, "nothing was rerun").toBe(runs);
-  talk.stream.seen.push(...setup.replies.map((message) => message.id));
   await talk.finish();
 });
 
