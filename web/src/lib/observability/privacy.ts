@@ -101,7 +101,7 @@ export function sampler(rate: number) {
   return (context: SamplingContext) => {
     const candidates = [context.normalizedRequest?.url, context.name,
       context.attributes["http.target"], context.attributes["url.path"], context.attributes["url.full"]];
-    if (candidates.some((value) => typeof value === "string" && /\/api\/(?:agent\/)?(?:health|session|status|observability)(?:[/?#\s]|$)/.test(value))) return 0;
+    if (candidates.some((value) => typeof value === "string" && /\/api\/(?:agent\/)?(?:health|v1\/snapshot|v1\/events|observability)(?:[/?#\s]|$)/.test(value))) return 0;
     return context.inheritOrSampleWith(rate);
   };
 }

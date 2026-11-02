@@ -17,7 +17,7 @@ import (
 )
 
 // HTTPHandler records only known route names and status codes, not URLs,
-// headers, query strings, or bodies. Successful health and polling routes are excluded.
+// headers, query strings, or bodies. Successful health and read routes are excluded.
 func HTTPHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w = httpsnoop.Wrap(w, httpsnoop.Hooks{WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
@@ -112,7 +112,7 @@ func (e httpFailure) HTTPStatusCode() int { return int(e) }
 // These routes stay untraced on success. Unknown paths never leave the process.
 func failedPollRoute(path string) string {
 	switch path {
-	case "/healthz", "/api/healthz", "/api/session", "/api/status", "/api/trace", "/api/artifact", "/operation", "/operation/cancel", "/activity":
+	case "/healthz", "/api/healthz", "/api/session", "/v1/snapshot", "/v1/events", "/api/trace", "/api/artifact", "/operation", "/operation/cancel", "/activity":
 		return path
 	default:
 		return "unknown"
