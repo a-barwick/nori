@@ -28,12 +28,6 @@
 <img class="shot" src="img/web-phone.png" width="780" height="1688" alt="The conversation at phone width. The window fills the screen.">
 <img class="shot" src="img/web-phone-activity.png" width="780" height="1688" alt="The Activity panel at phone width, open as a sheet over the conversation.">
 </div>
-<div class="card"><table class="tall"><tr><th>Width</th><th>Layout</th></tr>
-<tr><td>1280 px and up</td><td>Activity docks beside the thread at 360 px.</td></tr>
-<tr><td>Below 1280 px</td><td>Activity opens as a sheet from the right, over a scrim.</td></tr>
-<tr><td>900 px and below</td><td>The lavender margin shrinks from 28 px to 16 px.</td></tr>
-<tr><td>600 px and below</td><td>The window fills the screen and the Activity button shows only its icon.</td></tr>
-</table></div>
 </section>
 <section><h2>Status and task labels</h2>
 <div class="card"><table class="tall"><tr><th>Header status</th><th>When</th></tr>
@@ -47,11 +41,13 @@
 <tr><td>Working on your task</td><td>Running</td><td>Stop task, Send task update</td></tr>
 <tr><td>Waiting for your answer</td><td>Running with a question</td><td>Answer question, Stop task, Send task update</td></tr>
 <tr><td>Waiting for budget approval</td><td>Running with a budget question</td><td>Continue task, Stop task, Send task update</td></tr>
-<tr><td>Answer accepted</td><td>Running, and the question is resolved</td><td>Stop task, Send task update</td></tr>
+<tr><td>Waiting for your approval</td><td>Running with an action to approve</td><td>Approve, Decline, Stop task, Send task update</td></tr>
+<tr><td>Answer accepted, Budget accepted, Decision saved</td><td>Running, and the question is resolved</td><td>Stop task, Send task update</td></tr>
 <tr><td>Stopping…</td><td>Running, and Stop was requested</td><td>None until the agent service confirms</td></tr>
 <tr><td>Completed, Failed, Stopped</td><td>Finished</td><td>None</td></tr>
 </table></div>
 <p>The thread status line can also say that task execution is paused. Chat still works during a pause. See <a href="tasks.html">Task lifecycle</a>.</p>
+<p>A task update sent while an action waits voids that approval request. See <a href="authority.html">Approvals and writes</a>.</p>
 </section>
 <section><h2>Bubbles and documents</h2>
 <p>The client picks the layout from the Markdown of each saved reply. User messages are always bubbles.</p>
@@ -70,6 +66,14 @@
 <li>Messages from one sender within 3 minutes share a group, with pinched bubble corners where they touch. A gap of more than 15 minutes adds a time separator.</li>
 </ul>
 </section>
+<details class="more"><summary>Layout by width</summary>
+<table class="tall"><tr><th>Width</th><th>Layout</th></tr>
+<tr><td>1280 px and up</td><td>Activity docks beside the thread at 360 px.</td></tr>
+<tr><td>Below 1280 px</td><td>Activity opens as a sheet from the right, over a scrim.</td></tr>
+<tr><td>900 px and below</td><td>The lavender margin shrinks from 28 px to 16 px.</td></tr>
+<tr><td>600 px and below</td><td>The window fills the screen and the Activity button shows only its icon.</td></tr>
+</table>
+</details>
 <details class="sources"><summary>Sources</summary><p><code>web/src/components</code> · <code>web/src/lib/hybrid.ts</code> · <code>web/src/lib/units.ts</code></p></details>
 </body>
 </html>
