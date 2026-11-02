@@ -5,7 +5,7 @@ from pathlib import Path
 
 out = Path(sys.argv[1])
 out.mkdir(parents=True, exist_ok=True)
-STYLE = "<style>body{font:18px 'DejaVu Sans',sans-serif;margin:40px;color:#111}h1{font-size:24px}td{padding:4px 16px 4px 0}.row{display:flex;justify-content:space-between;width:520px;padding:14px;border-bottom:1px solid #ccc}.on{background:#2a7;color:#fff;border-radius:12px;padding:2px 12px}</style>"
+STYLE = "<style>body{font:18px 'DejaVu Sans',sans-serif;margin:40px;color:#111}h1{font-size:24px}td{padding:4px 16px 4px 0}.row{display:flex;justify-content:space-between;width:520px;padding:14px;border-bottom:1px solid #ccc}.switch{width:52px;height:30px;background:#2a7;border-radius:15px;position:relative;display:inline-block}.switch:after{content:'';position:absolute;right:3px;top:3px;width:24px;height:24px;border-radius:12px;background:#fff}</style>"
 CHROME = ["chromium", "--headless", "--no-sandbox", "--disable-gpu", "--no-pdf-header-footer"]
 
 def render(name, body, size=None):
@@ -44,7 +44,7 @@ for name, rsvp, venue in [("brief-version-a.pdf", "November 10", "Elm Hall"), ("
     render(name, f"<h1>Autumn volunteer dinner</h1><p>Join us for dinner with the volunteer team on Saturday, November 21 at 6 p.m.</p><p>Venue: {venue}</p><p>RSVP by: {rsvp}</p><p>Please bring a dish to share. Parking is free after 5 p.m.</p>")
 
 # 063: a settings screen.
-render("settings.png", "<h1>Settings</h1><div class=row><span>Notifications</span><span class=on>On</span></div><div class=row><span>Marketing emails</span><span class=on>On</span></div>", "640,320")
+render("settings.png", "<h1>Settings</h1><div class=row><span>Notifications</span><span class=switch role=switch></span></div><div class=row><span>Marketing emails</span><span class=switch role=switch></span></div>", "640,320")
 
 # 064: a two-page report.
 render("library-roof-report.pdf", "<h1>Harbor Street Library roof report</h1><p>The inspection on October 3 found water damage above the reading room. The contractor quoted $18,400 to replace the flat section.</p><div style='page-break-after:always'></div><h1>Page two: schedule</h1><p>Work is planned for January, and the reading room will close for two weeks during it.</p>")

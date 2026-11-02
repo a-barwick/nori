@@ -95,8 +95,16 @@ func (s *server) getFile(w http.ResponseWriter, r *http.Request) {
 	if req.TaskID == "" {
 		req.TaskID = req.RunID
 	}
-	if !runPattern.MatchString(req.RunID) || !runPattern.MatchString(req.TaskID) || req.Path == "" || !fs.ValidPath(path.Clean(req.Path)) {
+	if !runPattern.MatchString(req.RunID) || !runPattern.MatchString(req.TaskID) {
 		http.Error(w, "run_id and a relative path required", 400)
+		return
+	}
+	// A command's output names full paths, so a full path inside the task's folder means the same file.
+	if relative, err := filepath.Rel(filepath.Join(s.tasks, req.TaskID), req.Path); path.IsAbs(req.Path) && err == nil {
+		req.Path = relative
+	}
+	if req.Path == "" || !fs.ValidPath(path.Clean(req.Path)) {
+		http.Error(w, "a path inside the task's folder required", 400)
 		return
 	}
 	_, finish, err := s.begin(r.Context(), req.RunID)

@@ -295,8 +295,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			}
 			continue
 		}
+		// Saving a result changes nothing outside Nori and is safe to repeat, so a failure is a plain failure.
 		outcome := "uncertain"
-		if effect == "read" || (receiptErr == nil && receipt.Status == "completed") {
+		if effect == "read" || in.Call.Name == "result_save" || (receiptErr == nil && receipt.Status == "completed") {
 			outcome = "failed"
 		}
 		return persist(outcome, nil, callErr)

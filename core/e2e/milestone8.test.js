@@ -165,7 +165,7 @@ async function startWorker() {
   await until(() => cli("worker", "deployment", "describe-version", "--deployment-name", deployment, "--build-id", build), () => true, "worker registration");
 }
 async function post(operation, value = {}, expected) {
-  const response = await fetch(`${address}/api/${operation}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value), signal: AbortSignal.timeout(15_000) });
+  const response = await fetch(`${address}/api/${operation}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value), signal: AbortSignal.timeout(60_000) });
   const result = await response.json();
   if (expected ? response.status !== expected : !response.ok) throw new Error(`${operation}: HTTP ${response.status}: ${JSON.stringify(result)}`);
   return result;
@@ -716,4 +716,18 @@ journey("a message's files go only to the task that needs them, and task output 
   expect(second.uploads ?? []).toEqual([]);
   await Promise.all(runs.map((run) => finished(run.id)));
   await settled();
+}, 120_000);
+
+journey("a result_save that fails is a plain failure the task can correct, with no question", async () => {
+  scripts.badpath = (outputs) => {
+    if (outputs.length === 0) return { name: "result_save", args: { path: "missing.pdf", title: "Missing" } };
+    if (outputs.length === 1) return shell("write found.pdf");
+    if (outputs.length === 2) return { name: "result_save", args: { path: "found.pdf", title: "Found" } };
+    return finish("Saved after correcting the path.", outputs);
+  };
+  const id = await dispatch("badpath");
+  const done = await finished(id);
+  expect(done.status, done.error).toBe("completed");
+  expect(done.question).toBeUndefined();
+  expect((await snapshot()).results.find((item) => item.run_id === id && item.kind === "file").title).toBe("Found");
 }, 120_000);
