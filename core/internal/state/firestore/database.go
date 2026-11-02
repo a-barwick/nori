@@ -154,6 +154,19 @@ func (d *Database) Spend(ctx context.Context, update state.SpendUpdate) error {
 			return err
 		}
 		spent, budget, costUnknown := state.MergeSpend(run, update)
+		if run.ParentID != "" {
+			parentRef := d.runs().Doc(run.ParentID)
+			parent, err := decodeRun(tx.Get(parentRef))
+			if err != nil {
+				return err
+			}
+			parent = state.RollUpSpend(parent, run, update)
+			if err := tx.Update(parentRef, []firestore.Update{
+				{Path: "subtask_spent_usd", Value: parent.SubtaskSpent}, {Path: "cost_unknown", Value: parent.CostUnknown},
+			}); err != nil {
+				return err
+			}
+		}
 		return tx.Update(ref, []firestore.Update{
 			{Path: "spent_usd", Value: spent}, {Path: "budget_usd", Value: budget}, {Path: "cost_unknown", Value: costUnknown},
 		})

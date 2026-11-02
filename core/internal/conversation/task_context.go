@@ -23,6 +23,9 @@ type TaskContext struct {
 type TaskContextRecord struct {
 	Holds                   []state.TaskHold     `json:"held_questions,omitempty"`
 	ID                      string               `json:"id"`
+	ParentID                string               `json:"parent_id,omitempty"`
+	Subtasks                []state.SubtaskLink  `json:"subtasks,omitempty"`
+	SubtaskSpent            float64              `json:"subtask_spent,omitempty"`
 	Request                 string               `json:"request"`
 	Status                  state.RunStatus      `json:"status"`
 	Question                *state.Question      `json:"question,omitempty"`
@@ -88,7 +91,7 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			return err
 		}
 		run := snapshot.Run
-		record := &TaskContextRecord{ID: run.ID, Request: run.Request, Status: run.Status, Waiting: run.Waiting, Progress: run.Progress,
+		record := &TaskContextRecord{ID: run.ID, ParentID: run.ParentID, Subtasks: run.Subtasks, SubtaskSpent: run.SubtaskSpent, Request: run.Request, Status: run.Status, Waiting: run.Waiting, Progress: run.Progress,
 			Revision: run.Revision, Position: run.Position, Incorporated: run.Incorporated, CancelRequested: run.CancelRequested,
 			Holds: append([]state.TaskHold{}, run.Holds...), Spent: run.Spent, Budget: run.Budget, Error: run.Error, Result: run.Result,
 			Commands: []TaskContextCommand{}}
@@ -122,6 +125,18 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 	for _, id := range eventRunIDs {
 		if err := add(id, &result.EventTasks); err != nil {
 			return result, err
+		}
+	}
+	// A parent's report needs its subtasks' writes and results.
+	for _, id := range eventRunIDs {
+		snapshot, err := t.Store.GetRun(ctx, id)
+		if err != nil {
+			return result, err
+		}
+		for _, link := range snapshot.Subtasks {
+			if err := add(link.ID, &result.EventTasks); err != nil {
+				return result, err
+			}
 		}
 	}
 	// Only the turn reporting a task's end compares its answer with the cited results.

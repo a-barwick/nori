@@ -30,6 +30,10 @@ const (
 	CommandHold     CommandKind = "hold"
 	CommandApprove  CommandKind = "approve"
 	CommandDecline  CommandKind = "decline"
+	// CommandSubtaskResult delivers finished subtasks to the parent that asked for them. Only the transaction that
+	// saves a subtask's outcome creates one; it never passes through Prepare, because a pause or the command limit must
+	// not lose a result.
+	CommandSubtaskResult CommandKind = "subtask_result"
 )
 
 type Command struct {
@@ -38,6 +42,7 @@ type Command struct {
 	SourceInputIDs []string    `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
 	ID             string      `json:"id" firestore:"id"`
 	RunID          string      `json:"run_id" firestore:"run_id"`
+	ParentID       string      `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
 	Kind           CommandKind `json:"kind" firestore:"kind"`
 	Text           string      `json:"text" firestore:"text"`
 	Position       int64       `json:"position" firestore:"position"`
@@ -66,7 +71,7 @@ const (
 // SameCommand reports whether a retry carries the same intent as a saved command with that ID.
 func SameCommand(a, b Command) bool {
 	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID &&
-		a.Interrupt == b.Interrupt && slices.Equal(a.SourceInputIDs, b.SourceInputIDs)
+		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs)
 }
 
 // ValidateCommandBatch checks a batch before anything is read. A rejected batch never partly commits.
@@ -99,6 +104,34 @@ func NewCommandBatch() CommandBatch {
 	return CommandBatch{Prior: map[string]*Command{}, Runs: map[string]Run{}, Exists: map[string]bool{}}
 }
 
+// Related names the other tasks a batch's commands change, which the transaction also has to read: a subtask's parent,
+// and the running subtasks a Stop or correction ends.
+func (b CommandBatch) Related(commands []Command) []string {
+	related := []string{}
+	add := func(id string) {
+		if _, read := b.Exists[id]; !read && !slices.Contains(related, id) {
+			related = append(related, id)
+		}
+	}
+	for _, cmd := range commands {
+		switch cmd.Kind {
+		case CommandStart:
+			if cmd.ParentID != "" {
+				add(cmd.ParentID)
+			}
+		case CommandContinue:
+			if parent := b.Runs[cmd.RunID].ParentID; parent != "" {
+				add(parent)
+			}
+		case CommandStop, CommandSteer:
+			for _, id := range RunningSubtasks(b.Runs[cmd.RunID]) {
+				add(id)
+			}
+		}
+	}
+	return related
+}
+
 // AllDuplicates reports whether every command was already accepted. A replay needs no admission checks.
 func (b CommandBatch) AllDuplicates(commands []Command) bool {
 	for _, cmd := range commands {
@@ -125,6 +158,8 @@ type PreparedCommands struct {
 // rejection cannot partly accept a batch.
 func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time, traceContext map[string]string) (PreparedCommands, error) {
 	prior, runs, exists := b.Prior, b.Runs, b.Exists
+	opened := map[string]bool{}
+	cascaded := []CommandReceipt{}
 	prepared := PreparedCommands{
 		Receipts: make([]CommandReceipt, 0, len(commands)), Accepted: []Command{}, ReadyEvents: []TaskEvent{}, Changed: map[string]bool{},
 	}
@@ -196,8 +231,16 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 			}
 			run = Run{
 				ID: cmd.RunID, Request: cmd.Text, Status: RunRunning, Temporal: true, ProtocolVersion: TaskProtocolVersion,
-				WorkflowVersion: TaskWorkflowVersion, StartedAt: now, Budget: 1, Events: []Event{}, Artifacts: []Artifact{},
+				WorkflowVersion: TaskWorkflowVersion, StartedAt: now, Budget: TaskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
 				TraceContext: traceContext, OriginTraceContext: traceContext,
+			}
+			if cmd.ParentID != "" {
+				parent, question, err := linkSubtask(runs[cmd.ParentID], exists[cmd.ParentID], cmd, opened)
+				if err != nil {
+					return prepared, err
+				}
+				run.ParentID, run.ReadOnly, run.Budget = parent.ID, question.ReadOnly, parent.Budget
+				runs[parent.ID], prepared.Changed[parent.ID] = parent, true
 			}
 			exists[cmd.RunID] = true
 		}
@@ -216,6 +259,9 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 			run.Question, run.Waiting, run.PublicationPending = nil, "", false
 		case CommandAnswer, CommandContinue, CommandApprove, CommandDecline:
 			kind := "input"
+			if run.Question != nil && run.Question.Kind == QuestionWork && cmd.Kind == CommandAnswer {
+				kind = QuestionWork
+			}
 			switch cmd.Kind {
 			case CommandContinue:
 				kind = "budget"
@@ -230,12 +276,32 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 				return prepared, fmt.Errorf("%w: answer is empty", ErrCommandInvalid)
 			}
 			run.Question.ResolvedBy = cmd.ID
+			if cmd.Kind == CommandContinue {
+				if run.ParentID == "" {
+					run.Budget += TaskBudgetUSD
+				} else if owner, known := runs[run.ParentID]; known {
+					grantBudget(&owner)
+					run.Budget = owner.Budget
+					runs[owner.ID], prepared.Changed[owner.ID] = owner, true
+				}
+			}
 		case CommandStop:
 			run.Revision++
 			run.CancelRequested = true
 			run.Question, run.Waiting, run.PublicationPending = nil, "", false
 		default:
 			return prepared, fmt.Errorf("%w: unknown command kind", ErrCommandInvalid)
+		}
+		if cmd.Kind == CommandStop || cmd.Kind == CommandSteer {
+			for _, id := range RunningSubtasks(run) {
+				child, stop, changed := StopSubtask(runs[id], cmd.ID, now)
+				if !changed {
+					continue
+				}
+				runs[id], prepared.Changed[id] = child, true
+				prepared.Accepted = append(prepared.Accepted, stop)
+				cascaded = append(cascaded, CommandReceipt{Command: stop, Run: child})
+			}
 		}
 		run.Position++
 		run.TraceContext = PreferTraceContext(run.TraceContext, traceContext)
@@ -244,6 +310,8 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 		prepared.Accepted = append(prepared.Accepted, cmd)
 		prepared.Receipts = append(prepared.Receipts, CommandReceipt{Command: cmd, Run: run})
 	}
+	// A cascaded Stop follows the receipts for the batch itself, which callers match by index.
+	prepared.Receipts = append(prepared.Receipts, cascaded...)
 	for i := range prepared.Receipts {
 		prepared.Receipts[i].Run = runs[prepared.Receipts[i].Command.RunID]
 	}

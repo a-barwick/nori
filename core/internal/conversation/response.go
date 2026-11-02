@@ -8,7 +8,7 @@ import (
 
 // Reuse the runtime's command schemas in one strict action-list response.
 // Validated actions enter the same durable admission and replay path.
-func responseFormat(taskIDs []string) any {
+func responseFormat(taskIDs []string, requests []WorkRequest) any {
 	var tools []struct {
 		Function struct {
 			Name, Description string
@@ -17,8 +17,31 @@ func responseFormat(taskIDs []string) any {
 	}
 	_ = json.Unmarshal([]byte(taskTools), &tools)
 	variants := []any{}
+	restricted := len(requests) > 0
+	asking, questions := []string{}, []string{}
+	for _, request := range requests {
+		asking, questions = append(asking, request.TaskID), append(questions, request.QuestionID)
+	}
 	for _, tool := range tools {
-		if tool.Function.Name != "dispatch" {
+		if restricted && tool.Function.Name != "dispatch" && tool.Function.Name != "answer" {
+			continue
+		}
+		if tool.Function.Name == "dispatch" {
+			parents := []any{nil}
+			for _, id := range taskIDs {
+				parents = append(parents, id)
+			}
+			field := tool.Function.Parameters["properties"].(map[string]any)["for"].(map[string]any)
+			field["enum"] = parents
+			if restricted {
+				field["type"], field["enum"] = "string", asking
+			}
+		} else if restricted {
+			properties := tool.Function.Parameters["properties"].(map[string]any)
+			properties["run_id"].(map[string]any)["enum"] = asking
+			properties["question_id"].(map[string]any)["enum"] = questions
+		}
+		if tool.Function.Name != "dispatch" && !restricted {
 			if len(taskIDs) == 0 {
 				continue
 			}

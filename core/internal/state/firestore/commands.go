@@ -68,6 +68,21 @@ func (d *Database) readCommandBatch(tx *firestore.Transaction, commands []state.
 			return batch, err
 		}
 	}
+	for _, id := range batch.Related(commands) {
+		doc, err := tx.Get(d.runs().Doc(id))
+		switch {
+		case err == nil:
+			run, err := decodeRun(doc, nil)
+			if err != nil {
+				return batch, err
+			}
+			batch.Runs[id], batch.Exists[id] = run, true
+		case notFound(err):
+			batch.Exists[id] = false
+		default:
+			return batch, err
+		}
+	}
 	return batch, nil
 }
 

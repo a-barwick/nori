@@ -28,12 +28,20 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 		switch call.Function.Name {
 		case "dispatch":
 			var args struct {
-				Request string `json:"request"`
+				Request string  `json:"request"`
+				For     *string `json:"for"`
 			}
 			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
 				return nil, err
 			}
 			command.Kind, command.Text = "start", strings.TrimSpace(args.Request)
+			if args.For != nil && *args.For != "" {
+				id, err := uuid.Parse(*args.For)
+				if err != nil || id.String() != *args.For {
+					return nil, fmt.Errorf("task command requires a canonical task UUID")
+				}
+				command.ParentID = *args.For
+			}
 		case "steer":
 			var args struct {
 				RunID     string `json:"run_id"`
@@ -135,6 +143,40 @@ func approvalAllowed(commands []state.Command, inputs []state.ConversationInput)
 	return true
 }
 
+// workRequests lists the requests a turn with no user input can settle. A worker's text can reach the model on any turn,
+// so this check bounds what a notification alone can cause. The transaction still checks each request is open.
+func workRequests(inputs []state.ConversationInput) []WorkRequest {
+	requests := []WorkRequest{}
+	for _, input := range inputs {
+		if input.IsUser() {
+			return nil
+		}
+		if input.Event != nil && input.Event.Kind == "needs_input" && input.Event.Reason == state.QuestionWork {
+			requests = append(requests, WorkRequest{TaskID: input.Event.RunID, QuestionID: input.Event.QuestionID})
+		}
+	}
+	return requests
+}
+
+// workCommandsAllowed keeps a notification turn to settling its own requests. It can't approve, continue, stop or steer.
+func workCommandsAllowed(commands []state.Command, requests []WorkRequest) bool {
+	for _, command := range commands {
+		allowed := false
+		for _, request := range requests {
+			switch command.Kind {
+			case state.CommandStart:
+				allowed = allowed || command.ParentID == request.TaskID
+			case state.CommandAnswer:
+				allowed = allowed || (command.RunID == request.TaskID && command.QuestionID == request.QuestionID)
+			}
+		}
+		if !allowed {
+			return false
+		}
+	}
+	return true
+}
+
 func decodeCommandArguments(arguments string, target any) error {
 	decoder := json.NewDecoder(strings.NewReader(arguments))
 	decoder.DisallowUnknownFields()
@@ -153,7 +195,11 @@ func acceptedCommandText(actions []state.ConversationAction) string {
 	counts := map[string]int{}
 	for _, action := range actions {
 		if action.Status == "accepted" {
-			counts[string(action.Command.Kind)]++
+			kind := string(action.Command.Kind)
+			if action.Command.ParentID != "" {
+				kind = "subtask"
+			}
+			counts[kind]++
 		}
 	}
 	parts := []string{}
@@ -163,6 +209,7 @@ func acceptedCommandText(actions []state.ConversationAction) string {
 		parts = append(parts, fmt.Sprintf("I've accepted your %d tasks. I'll let you know when they need your input or have results.", n))
 	}
 	for _, item := range []struct{ kind, text string }{
+		{"subtask", "I've started separate work that a task asked for. It'll pick up from the result."},
 		{"steer", "I've saved your task updates."},
 		{"answer", "I've saved your answer."},
 		{"continue", "I've accepted your request to continue."},

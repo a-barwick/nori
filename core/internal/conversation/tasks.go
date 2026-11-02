@@ -110,7 +110,7 @@ func (t *Tasks) Update(ctx context.Context, id, runID, message string) (state.Ru
 	command := state.Command{ID: id, RunID: runID, Kind: state.CommandSteer, Text: message}
 	if question := current.Question; question != nil && question.ResolvedBy == "" && question.Revision == current.Revision {
 		switch {
-		case question.Kind == "input":
+		case question.Kind == "input" || question.Kind == state.QuestionWork:
 			command.Kind, command.QuestionID = "answer", question.ID
 		case question.Kind == "budget" && strings.EqualFold(strings.TrimSpace(message), "continue"):
 			command.Kind, command.QuestionID = "continue", question.ID

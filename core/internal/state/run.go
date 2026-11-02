@@ -66,6 +66,13 @@ type Run struct {
 	Budget      float64 `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
 	CostUnknown bool    `json:"cost_unknown,omitempty" firestore:"cost_unknown,omitempty"`
 
+	// Subtasks. ParentID names the task this one works for, and ReadOnly is the limit it inherited from that parent.
+	// A parent's Subtasks are the ones it started, and SubtaskSpent is their cost, which counts against the parent's budget.
+	ParentID     string        `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
+	ReadOnly     bool          `json:"read_only,omitempty" firestore:"read_only,omitempty"`
+	Subtasks     []SubtaskLink `json:"subtasks,omitempty" firestore:"subtasks,omitempty"`
+	SubtaskSpent float64       `json:"subtask_spent_usd,omitempty" firestore:"subtask_spent_usd,omitempty"`
+
 	// Hand-off to the outer loop. EventSequence numbers the events this task has put in the conversation inbox, Holds
 	// are conversation questions waiting for the outcome, and publication is deferred while user input awaits routing.
 	EventSequence         int64      `json:"event_sequence,omitempty" firestore:"event_sequence,omitempty"`
@@ -100,6 +107,8 @@ type Question struct {
 	Text       string `json:"text" firestore:"text"`
 	CallID     string `json:"call_id,omitempty" firestore:"call_id,omitempty"`
 	Revision   int64  `json:"instruction_revision" firestore:"revision"`
+	// ReadOnly limits subtasks started for a work request: the parent could only read when it asked.
+	ReadOnly bool `json:"read_only,omitempty" firestore:"read_only,omitempty"`
 }
 
 // TaskEvent is a task outcome or need that the outer loop reads from the conversation inbox.
@@ -190,7 +199,7 @@ func ProjectionEvent(kind, text string, now time.Time) (waiting string, event Ev
 // task already holds this question.
 func QuestionEvent(run Run, revision int64, question Question, now time.Time) (event TaskEvent, replay bool, err error) {
 	if question.ID == "" || question.Text == "" || question.Revision != revision ||
-		(question.Kind != "input" && question.Kind != "budget" && question.Kind != "approval") {
+		(question.Kind != "input" && question.Kind != "budget" && question.Kind != "approval" && question.Kind != QuestionWork) {
 		return TaskEvent{}, false, fmt.Errorf("invalid task question")
 	}
 	if run.Question != nil && run.Question.ID == question.ID {
@@ -219,6 +228,8 @@ type PublishRequest struct {
 	Text   string
 	// CostUnknown marks the task as having an unpriced provider request.
 	CostUnknown bool
+	// Spent is the task's final cost, saved with its outcome so a parent's budget never misses it.
+	Spent float64
 	// BypassRouting publishes without waiting for pending user input to be routed.
 	BypassRouting bool
 }
@@ -278,6 +289,7 @@ func FinishRun(run Run, req PublishRequest, now time.Time) (Run, TaskEvent) {
 	}
 	run.PublicationPending = false
 	run.CostUnknown = run.CostUnknown || req.CostUnknown
+	run.Spent = max(run.Spent, req.Spent)
 	run.Status, run.Error, run.Result, run.Waiting, run.Question, run.FinishedAt = status, detail, text, "", nil, &now
 	return run, event
 }

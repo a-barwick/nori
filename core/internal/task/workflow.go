@@ -41,6 +41,10 @@ type Checkpoint struct {
 	JobsStarted bool
 	// Action is the write waiting for a decision or, once approved, to run.
 	Action *PendingAction
+	// Others is what the rest of this task's family has spent, read from the store before each budget check. A
+	// subtask inherits a read-only limit from its parent, and that limit outlasts a correction.
+	Others             float64
+	Subtask, Inherited bool
 }
 
 func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.Run, err error) {
@@ -51,6 +55,10 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 	ctx = workflow.WithActivityOptions(ctx, options)
 	quick := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: 20 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
+	})
+	// A sync only appends to the history and saves evidence, so a worker crash during delivery can safely repeat it.
+	syncing := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 20 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3},
 	})
 	stopCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: 200 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
@@ -119,7 +127,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 			for signals.ReceiveAsync(&signal) {
 			}
 			var synced HistorySync
-			err = workflow.ExecuteActivity(quick, a.SyncHistory, HistoryInput{
+			err = workflow.ExecuteActivity(syncing, a.SyncHistory, HistoryInput{
 				Step: Step{id, c.Revision}, Ref: c.Ref, Position: c.Position, Question: c.Question, Action: c.Action,
 			}).Get(ctx, &synced)
 			if boundary(err) {
@@ -144,13 +152,13 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 			if err != nil {
 				return
 			}
-			if c.Question == nil && c.Spent >= c.Budget {
+			if c.Question == nil && c.Spent+c.Others >= c.Budget {
 				c.Question = &state.Question{
 					ID:   fmt.Sprintf("%s-budget-p%d", id, c.Position),
 					Kind: "budget",
-					Text: fmt.Sprintf("I reached this task’s $%.2f model allowance ($%.4f spent across %d model calls and %d tool attempts). "+
+					Text: fmt.Sprintf("I reached this task’s $%.2f model allowance ($%.4f spent across %d model calls and %d tool attempts, plus $%.4f by its related tasks). "+
 						"The task is not finished. Request: %s\n\nReply continue to grant another $%.2f, or Stop to end the task.",
-						c.Budget, c.Spent, c.Models, c.Tools, c.Request, agent.BudgetUSD),
+						c.Budget, c.Spent, c.Models, c.Tools, c.Others, c.Request, agent.BudgetUSD),
 					Revision: c.Revision,
 				}
 				c.QuestionPublished = false
@@ -222,13 +230,16 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 					c.Ref = ref
 					continue
 				}
-				if call.Name == "request_input" {
+				if call.Name == "request_input" || call.Name == "request_work" {
 					var q state.Question
-					err = workflow.ExecuteActivity(quick, a.InputRef, RefInput{Step: Step{id, c.Revision}, Ref: c.Ref, Index: call.Index}).Get(ctx, &q)
+					err = workflow.ExecuteActivity(quick, a.InputRef, RefInput{Step: Step{id, c.Revision}, Ref: c.Ref, Index: call.Index, ReadOnly: c.ReadOnly}).Get(ctx, &q)
 					if err != nil {
 						return
 					}
 					q.ID = fmt.Sprintf("%s-question-m%d", id, c.Models)
+					if call.Name == "request_work" {
+						q.ID = fmt.Sprintf("%s-work-m%d", id, c.Models)
+					}
 					c.Question = &q
 					c.QuestionPublished = false
 					break
@@ -280,7 +291,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 							status = "failed"
 						}
 						err = publish(RefPublication{
-							Publication: Publication{Step: Step{id, c.Revision}, Status: status, Detail: check.Detail, StopConfirmed: true},
+							Publication: Publication{Step: Step{id, c.Revision}, Status: status, Detail: check.Detail, StopConfirmed: true, Spent: c.Spent},
 							Ref:         c.Ref, Unverified: check.Action == "unverified",
 						})
 						if boundary(err) {
@@ -355,7 +366,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				if agent.WriteEffect(call.Name) != "" {
 					var prepared ActionPrepared
 					err = workflow.ExecuteActivity(ctx, a.PrepareAction, RefToolInput{
-						Step: Step{id, c.Revision}, Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly,
+						Step: Step{id, c.Revision}, Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly || c.Inherited,
 					}).Get(ctx, &prepared)
 					if boundary(err) {
 						revised = true
@@ -393,7 +404,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 				c.JobsStarted = c.JobsStarted || call.Name == "job_start"
 				var output RefToolOutcome
 				err = workflow.ExecuteActivity(ctx, a.ToolRef, RefToolInput{
-					Step: Step{id, c.Revision}, Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly,
+					Step: Step{id, c.Revision}, Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly || c.Inherited,
 				}).Get(ctx, &output)
 				if boundary(err) {
 					revised = true
@@ -486,7 +497,7 @@ func (c *Checkpoint) afterTool(output RefToolOutcome, id string) bool {
 		c.Question = &state.Question{
 			ID:   fmt.Sprintf("%s-correction-q%d", id, c.Tools),
 			Kind: "input",
-			Text: "Completing this task appears to require another action beyond the permitted read-only correction. " +
+			Text: "Completing this task appears to require another action beyond what it may do, because it can only read right now. " +
 				"Please clarify or authorize what should happen next.",
 			Revision: c.Revision,
 		}
@@ -517,9 +528,11 @@ func (c *Checkpoint) applySync(synced HistorySync) {
 		c.Corrections = 0
 		c.ReadOnly = false
 	}
-	if synced.Grants > 0 {
-		c.Budget += float64(synced.Grants) * agent.BudgetUSD
-	}
+	// Accepting a continue adds the grant to the store, so a subtask's grant reaches its parent.
+	c.Budget = max(c.Budget, synced.Budget)
+	c.Others = synced.Others
+	c.CostUnknown = c.CostUnknown || synced.CostUnknown
+	c.Subtask, c.Inherited = synced.Subtask, synced.ReadOnly
 }
 
 // callModel retains and accounts for the response before any newer-input check.
@@ -530,7 +543,7 @@ func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string)
 	if err != nil {
 		return model, err
 	}
-	err = workflow.ExecuteActivity(ctx, a.ModelRef, RefModelInput{Step: Step{id, c.Revision}, Ref: c.Ref}).Get(ctx, &model)
+	err = workflow.ExecuteActivity(ctx, a.ModelRef, RefModelInput{Step: Step{id, c.Revision}, Ref: c.Ref, Subtask: c.Subtask}).Get(ctx, &model)
 	if err != nil {
 		var application *temporal.ApplicationError
 		if !errors.As(err, &application) {
@@ -567,7 +580,7 @@ func (c *Checkpoint) publishFailure(ctx, stopCtx workflow.Context, id string, fa
 	}
 	p := RefPublication{Publication: Publication{
 		Step: Step{id, c.Revision}, Status: status, Detail: failure.Error(), StopConfirmed: c.Stopped,
-		CostUnknown: c.CostUnknown, BypassRouting: c.CostUnknown || !c.Stopped || status == "cancelled",
+		CostUnknown: c.CostUnknown, Spent: c.Spent, BypassRouting: c.CostUnknown || !c.Stopped || status == "cancelled",
 	}}
 	var publishErr error
 	for {
