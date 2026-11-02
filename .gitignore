@@ -3,6 +3,7 @@
 .worktrees/
 .claude/*
 !.claude/skills/
+!.claude/settings.json
 .env
 .env.*
 !.env.example
