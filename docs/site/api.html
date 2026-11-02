@@ -9,36 +9,42 @@
 </head>
 <body>
 <h1>Service API</h1>
-<p class="lede">Clients send messages and task commands to the agent service over HTTP, and read back snapshots.</p>
+<p class="lede">Clients send messages and task commands to the agent service over HTTP, and follow saved log events on a stream.</p>
 <section><h2>Endpoints</h2>
 <div class="card"><table class="tall"><tr><th>Endpoint</th><th>What it does</th></tr>
-<tr><td><code>POST /api/session</code></td><td>Returns the conversation and tasks.</td></tr>
-<tr><td><code>POST /api/status</code></td><td>Returns <code>version</code> and <code>busy</code>, a cheap check for whether the session changed.</td></tr>
-<tr><td><code>POST /api/turn</code></td><td>Sends a message. Returns 202 once it's saved.</td></tr>
+<tr><td><code>GET /v1/snapshot</code></td><td>Returns the conversation, tasks, results and the event log position.</td></tr>
+<tr><td><code>GET /v1/events</code></td><td>Streams saved log events after a position.</td></tr>
+<tr><td><code>POST /api/session</code></td><td>Returns the same snapshot for older callers.</td></tr>
+<tr><td><code>POST /api/turn</code></td><td>Sends a message with any attached file IDs. Returns 202 once it's saved.</td></tr>
 <tr><td><code>POST /api/command</code></td><td>Sends a task command, such as an answer or a continue.</td></tr>
 <tr><td><code>POST /api/input</code></td><td>Sends an explicit update to one task.</td></tr>
 <tr><td><code>POST /api/cancel</code></td><td>Requests Stop for one task.</td></tr>
 <tr><td><code>POST /api/trace</code></td><td>Reads the debug steps for one task.</td></tr>
 <tr><td><code>POST /api/artifact</code></td><td>Reads a saved screenshot.</td></tr>
+<tr><td><code>POST /v1/uploads</code>, <code>GET /v1/uploads/{id}</code></td><td>Saves one attached file, and reads it back.</td></tr>
+<tr><td><code>GET /v1/results/{id}</code>, <code>GET /v1/results/{id}/file</code></td><td>Reads a saved result, and its file.</td></tr>
+<tr><td><code>POST /api/delivered</code></td><td>Records that a browser showed these results.</td></tr>
 <tr><td><code>POST /api/process</code></td><td>Cloud Tasks calls this to process saved messages. Clients don't call it.</td></tr>
 <tr><td><code>POST /api/resume</code></td><td>Redelivers saved commands and wakes tasks. Clients don't call it.</td></tr>
 </table></div>
-<p>The web client is the only caller. It reaches these endpoints through its Next.js server. While work is running, it polls <code>/api/status</code>, as <a href="frontend.html#polling">Polling</a> describes.</p>
-<div class="card"><table class="tall"><tr><th>Status field</th><th>Behavior</th></tr>
-<tr><td>Reads</td><td>The paused flag, the conversation counters, the active turn and the open tasks. A snapshot also reads messages, finished tasks, attempts and usage.</td></tr>
-<tr><td><code>busy</code></td><td>Set while chat input is waiting or processing, or an open task can still progress. The web client keeps polling while it is set.</td></tr>
-<tr><td><code>version</code></td><td>Changes with anything those reads cover, including every lease renewal during a turn. It doesn't change for a finished task's late spend, or for usage records written outside a turn.</td></tr>
-<tr><td>Session fetch</td><td>The client fetches the session on its first status call, when <code>version</code> changes, when a status call fails, and once when <code>busy</code> turns false.</td></tr>
-<tr><td>Missing or failing</td><td>If the endpoint is missing, or a status call fails three times in a row, the web client polls the session every 2 seconds instead.</td></tr></table></div>
+<p>The web client is the only caller, through its Next.js server. See <a href="frontend.html#live-updates">Live updates</a>.</p>
+</section>
+<section><h2>The event stream</h2>
+<div class="card"><div class="flow">
+<div class="node"><b>Runtime</b><small>Saves “Check Saturday's weather in Tucson” and a numbered log event together.</small></div><div class="arrow">↓ <span class="lbl">log event number and record ID</span></div>
+<div class="node"><b>Event stream</b><small>Reads the record's current state and sends it.</small></div><div class="arrow">↓ <span class="lbl">message, task, result or conversation</span></div>
+<div class="node"><b>Client</b><small>Merges the record by ID and remembers the last number.</small></div>
+</div></div>
+<div class="card"><table class="tall"><tr><th>Case</th><th>What happens</th></tr>
+<tr><td>A reconnect</td><td>The client sends its last number as <code>Last-Event-ID</code> or <code>after</code>. The agent service's host drops that header, so the web server passes it in the URL.</td></tr>
+<tr><td>A position it can't resume</td><td>Unusable, ahead of the log, or over 1,000 log events behind. The stream sends <code>reset</code>, and the client reads a new snapshot.</td></tr>
+<tr><td>A long stream</td><td>Ends after 150 seconds, inside the web service's 180-second limit, and the browser reconnects.</td></tr>
+<tr><td>Changes with no log event</td><td>Every 20 seconds, the stream also checks the conversation state and open tasks, and wakes processing for a saved message.</td></tr>
+</table></div>
 </section>
 <section class="designed"><h2>The protocol for many clients</h2>
-<p><span class="tag design">designed · milestones 8 and 12</span></p>
-<p>Once there's more than one client, polling gives way to an ordered event log.</p>
-<div class="card"><div class="flow">
-<div class="node designed-node"><b>Start from a snapshot</b><small><code>GET /v1/snapshot</code> returns the state and the log position it reflects.</small></div><div class="arrow">↓</div>
-<div class="node designed-node"><b>Follow the stream</b><small><code>GET /v1/events</code> sends saved events and resumes after a reconnect.</small></div><div class="arrow">↓</div>
-<div class="node designed-node"><b>Send commands</b><small><code>POST /v1/commands</code> returns once a command is saved.</small></div>
-</div></div>
+<p><span class="tag design">designed · milestone 12</span></p>
+<p>More clients would send commands through one route, and the stream would stay as it is.</p>
 <details class="more"><summary>Protocol details</summary>
 <table class="tall"><tr><th>Command</th><th>Effect</th></tr>
 <tr><td><code>message.send</code></td><td>Saves the user's message and puts it in the inbox.</td></tr>
@@ -49,10 +55,9 @@
 <tr><td><code>settings.update</code></td><td>Changes quiet hours, the daily cap and so on.</td></tr>
 <tr><td><code>device.register</code></td><td>Registers a device for push.</td></tr>
 </table>
-<p>Replies arrive as typed parts: <code>text</code>, <code>chips</code>, <code>image</code>, <code>artifact</code>, <code>approval</code> and <code>attachment</code>. Each non-text part has fallback text, so an older client can still show something.</p>
-<ul class="pts"><li>One log and one stream per owner, since tasks and badges span threads.</li><li>Server-sent events with a long-poll fallback. WebSockets were rejected for now because commands already use POST.</li><li>Clients don't read Firestore directly, so its schema doesn't become the contract.</li><li>Task results land in the thread that started the task.</li></ul>
-<p>Everything beyond today's API is a proposal.</p></details>
+<ul class="pts"><li>Clients don't read Firestore directly, so its schema doesn't become the contract.</li><li>Task results land in the thread that started the task.</li></ul>
+<p>Everything in this section is a proposal.</p></details>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/status.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/state/events.go</code> · <code>core/internal/state/firestore/events.go</code> · <code>web/src/lib/runtime/forward.ts</code></p></details>
 </body>
 </html>

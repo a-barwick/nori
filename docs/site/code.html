@@ -28,7 +28,10 @@
           <tr><td>Outer command validation</td><td><span class="mono">core/internal/conversation/commands.go</span></td></tr>
           <tr><td>Task and conversation records, store contracts and write rules</td><td><span class="mono">core/internal/state/</span></td></tr>
           <tr><td>Firestore transactions for those records</td><td><span class="mono">core/internal/state/firestore/</span></td></tr>
-          <tr><td>Screenshot bytes in Cloud Storage or a local folder</td><td><span class="mono">core/internal/state/gcs/, localfs/</span></td></tr>
+          <tr><td>The event log, uploads and saved results</td><td><span class="mono">core/internal/state/events.go, uploads.go, results.go</span></td></tr>
+          <tr><td>The task tools for attached files and saved results</td><td><span class="mono">core/internal/agent/uploads.go, results.go</span></td></tr>
+          <tr><td>The computer's file routes</td><td><span class="mono">core/internal/computerd/files.go</span></td></tr>
+          <tr><td>File bytes in Cloud Storage or a local folder</td><td><span class="mono">core/internal/state/gcs/, localfs/</span></td></tr>
           <tr><td><a href="budgets.html">Development spend</a> rules and ledger</td><td><span class="mono">core/internal/spend/, spend/firestore/</span></td></tr>
           <tr><td>Which storage a process opens</td><td><span class="mono">core/internal/platform/</span></td></tr>
           <tr><td>The task workflow and activities</td><td><span class="mono">core/internal/task/workflow.go, activities.go</span></td></tr>
@@ -53,8 +56,8 @@
           <tr><td>Live end-to-end tests</td><td><span class="mono">core/e2e/</span></td></tr>
           <tr><th colspan="2">Clients <span class="mono">web/src/</span></th></tr>
           <tr><td>The chat UI and task panel (<a href="web-client.html">Web client</a>, <a href="frontend.html">components</a>)</td><td><span class="mono">web/src/components/runtime/, web/src/components/chat/</span></td></tr>
-          <tr><td>How the browser sends messages and polls</td><td><span class="mono">web/src/lib/runtime/useRuntime.ts</span></td></tr>
-          <tr><td>Routes between the browser and the service</td><td><span class="mono">web/src/app/api/</span></td></tr>
+          <tr><td>How the browser sends messages and follows the stream</td><td><span class="mono">web/src/lib/runtime/useRuntime.ts</span></td></tr>
+          <tr><td>Routes between the browser and the service</td><td><span class="mono">web/src/app/api/, web/src/lib/runtime/forward.ts</span></td></tr>
           <tr><td>Browser and server telemetry filters</td><td><span class="mono">web/src/lib/observability/</span></td></tr>
           <tr><td>Theme tokens (<a href="theme.html">Theme</a>)</td><td><span class="mono">web/src/app/globals.css</span></td></tr>
     </table>

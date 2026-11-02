@@ -32,16 +32,17 @@
 </ul></section>
 <section><h2>Outer loop tools</h2>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>When it's used</th></tr>
-<tr data-flow="dispatch"><td><code>dispatch(request, for, question_id)</code></td><td>Start new work, or a subtask for an open work request.</td></tr>
+<tr data-flow="dispatch"><td><code>dispatch(request, for, question_id, attachments, revises)</code></td><td>Start new work or a subtask, with any earlier files or a result to revise.</td></tr>
 <tr data-flow="tool-steer"><td><code>steer(run_id, text, interrupt)</code></td><td>Change an unfinished task.</td></tr>
 <tr data-flow="tool-answer"><td><code>answer(run_id, question_id, text)</code></td><td>Answer that task's open question.</td></tr>
 <tr data-flow="tool-continue"><td><code>continue(run_id, question_id)</code></td><td>Add budget, only after the user says to keep going.</td></tr>
 <tr><td><code>approve(run_id, question_id)</code>, <code>decline(run_id, question_id)</code></td><td>Decide one exact action from the user's message.</td></tr>
 <tr data-flow="tool-stop"><td><code>stop(run_id)</code></td><td>Stop one task and its subtasks.</td></tr>
 <tr><td><code>hold(task_id, question)</code></td><td>Answer one of the user's questions when that task's result arrives.</td></tr>
-</table><p class="note">A plain reply or clarifying question is just text, with no tool call.</p></div></section>
+<tr><td><code>show_result(result_id)</code></td><td>Show a <a href="results.html">saved result</a> with no task.</td></tr>
+</table><p class="note">A plain reply is just text, with no tool call.</p></div></section>
 <section><h2>Inner loop control tools</h2>
-<p>These sit next to the task's work tools, and each must be the only call in its response.</p>
+<p>Each must be the only call in its response.</p>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>What it does</th></tr>
 <tr data-flow="wait"><td><code>request_input(question)</code></td><td>Save a question and wait for its exact answer.</td></tr>
 <tr><td><code>complete(answer, evidence, unmet)</code></td><td>Propose that the task is done. <a href="completion.html">The checks decide</a>.</td></tr>
@@ -70,8 +71,8 @@
 </section>
 <section><h2>Interrupting a task</h2>
 <p>An explicit correction interrupts a read or a model call by default.</p>
-<div class="branch"><div class="node inner"><b>Can be cut short</b><small>A model call, or a browser read.</small></div>
-<div class="node wait"><b>Runs to the end</b><small>Any other tool, including shell.</small></div></div>
+<div class="branch"><div class="node inner"><b>Can be cut short</b><small>A model call, or a read tool.</small></div>
+<div class="node wait"><b>Runs to the end</b><small>Any other tool, including shell and image reads.</small></div></div>
 </section>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/model.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/task/tool_durable.go</code> · <code>core/internal/task/subtasks.go</code> · <code>core/internal/state/subtasks.go</code> · <code>core/internal/state/commands.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/conversation/commands.go</code> · <code>core/internal/agent/steps.go</code></p></details>
 </body>

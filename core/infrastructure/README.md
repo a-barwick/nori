@@ -2,7 +2,7 @@
 
 The application uses Cloud Run for the Next.js web client, Agent Runtime for
 the Go API, Temporal Cloud for durable task orchestration, Firestore for saved
-task state, and Cloud Storage for screenshots. Request-driven workers use
+task state, and Cloud Storage for screenshots, attached files and saved results. Request-driven workers use
 authenticated Cloud Run services, with retained legacy worker pools at zero and
 native WCI scalers removed. Computer tools connect through IAP to
 the retained Firecracker guest.

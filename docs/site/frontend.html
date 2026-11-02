@@ -13,30 +13,32 @@
 <section><h2>Request path</h2>
 <div class="card"><div class="flow">
 <div class="node"><b>React client</b><small><code>NoriApp</code> and its components. All state comes from one hook, <code>useRuntime</code>.</small></div>
-<div class="arrow">↓ <span class="lbl">same-origin POST /api/{operation}</span></div>
+<div class="arrow">↓ <span class="lbl">same-origin /api/ requests and an event stream</span></div>
 <div class="node"><b>Next.js server</b><small>Checks the owner, origin and operation, then adds a Google token.</small></div>
-<div class="arrow">↓ <span class="lbl">POST /api/{operation} with server credentials</span></div>
-<div class="node"><b>Agent service</b><small>Saves commands and returns snapshots. See <a href="api.html">Service API</a> for the endpoints.</small></div>
+<div class="arrow">↓ <span class="lbl">the same requests with server credentials</span></div>
+<div class="node"><b>Agent service</b><small>Saves commands and sends log events. See <a href="api.html">Service API</a> for the endpoints.</small></div>
 </div></div>
 <div class="card"><table class="tall"><tr><th>Operation</th><th>Client use</th></tr>
-<tr><td><code>session</code></td><td>Loads a snapshot, or an older page with <code>before</code>.</td></tr>
-<tr><td><code>status</code></td><td>Checks whether the snapshot changed.</td></tr>
+<tr><td><code>v1/snapshot</code></td><td>Loads a snapshot, or an older page with <code>before</code>.</td></tr>
+<tr><td><code>v1/events</code></td><td>Follows the event stream.</td></tr>
+<tr><td><code>v1/uploads</code></td><td>Uploads an attached file when it's picked.</td></tr>
 <tr><td><code>turn</code></td><td>Sends a message with a client-made UUID.</td></tr>
 <tr><td><code>command</code></td><td>Sends <code>steer</code>, <code>answer</code>, <code>continue</code> or <code>stop</code> for one task.</td></tr>
 <tr><td><code>artifact</code></td><td>Fetches a screenshot as PNG bytes.</td></tr>
-<tr><td><code>trace</code></td><td>Fetches task steps when a debug row is open, every 3 seconds while the task runs.</td></tr>
+<tr><td><code>delivered</code></td><td>Reports the results a visible tab has shown.</td></tr>
+<tr><td><code>trace</code></td><td>Fetches task steps when a debug row is open, and when the task changes.</td></tr>
 </table></div>
 <p>The client never calls a model.</p>
 </section>
 <section><h2>Sending a message</h2>
 <div class="card"><div class="flow">
-<div class="node"><b>Enter</b><small>“Check Saturday's weather in Tucson” gets a UUID and is saved locally.</small></div>
-<div class="arrow">↓</div>
-<div class="node"><b>POST /api/turn</b><small>The agent service returns a snapshot.</small></div>
-<div class="arrow">↓</div>
-<div class="node"><b>Acknowledged</b><small>The client removes its pending copy once the snapshot lists that UUID.</small></div>
-<div class="arrow">↓</div>
-<div class="node"><b>Poll</b><small>The reply appears in a later snapshot, with no streaming.</small></div>
+<div class="node"><b>React client</b><small>“Check Saturday's weather in Tucson” gets a UUID and is saved locally.</small></div>
+<div class="arrow">↓ <span class="lbl">POST /api/turn</span></div>
+<div class="node"><b>Agent service</b><small>Saves the message.</small></div>
+<div class="arrow">↓ <span class="lbl">snapshot listing the UUID</span></div>
+<div class="node"><b>React client</b><small>Removes its pending copy.</small></div>
+<div class="arrow">↓ <span class="lbl">later, a log event with the whole reply</span></div>
+<div class="node"><b>React client</b><small>Shows the reply.</small></div>
 </div></div>
 <ul class="pts">
 <li>If a response is lost, Retry sends the same UUID. Pending messages also resend after a reload, reconnect or manual refresh.</li>
@@ -45,16 +47,15 @@
 <li>A 4xx response marks a command as rejected, and the panel offers Edit. Any other failure offers Retry.</li>
 </ul>
 </section>
-<section><h2>Polling</h2>
+<section><h2>Live updates</h2>
 <div class="card"><table class="tall"><tr><th>Situation</th><th>Client behavior</th></tr>
-<tr><td>A turn, unpaused task, Stop or command is in progress</td><td>Calls <code>POST /api/status</code> after 1 second, then every 2. Fetches a snapshot on the first call, when <code>version</code> changes, when a call fails, and once when <code>busy</code> turns false. If <code>status</code> is missing or fails 3 times in a row, it polls snapshots instead.</td></tr>
-<tr><td>Nothing is in progress</td><td>Doesn't poll.</td></tr>
-<tr><td>The tab is hidden</td><td>Stops polling, then fetches once when the tab is visible again.</td></tr>
-<tr><td>The browser comes back online</td><td>Fetches once.</td></tr>
-<tr><td>A network error or a 429, 502, 503 or 504</td><td>Retries up to 3 times, after 2, 4 and 8 seconds.</td></tr>
-<tr><td>Those retries fail, or another error returns</td><td>Stops polling and shows the error, with a link to refresh.</td></tr>
+<tr><td>The tab is visible</td><td>Follows the event stream and merges each record by ID.</td></tr>
+<tr><td>A turn ends</td><td>Reads one snapshot for its traces.</td></tr>
+<tr><td>Nothing has run for 5 minutes</td><td>Closes the stream, so an open tab doesn't hold the service awake. It reopens on focus or on a new message.</td></tr>
+<tr><td>The tab is hidden</td><td>Closes the stream, then reads one snapshot when the tab is visible again.</td></tr>
+<tr><td>The stream sends <code>reset</code></td><td>Reads a snapshot until one succeeds, then follows from its position.</td></tr>
+<tr><td>A response isn't a stream</td><td>Reopens from the last log event, after up to 30 seconds. After 3 failures it says updates are reconnecting.</td></tr>
 </table></div>
-<p>While the client is idle, a new message from Nori waits until the next refresh.</p>
 </section>
 <details class="more"><summary>Merging, sign-in, telemetry, components and builds</summary>
 <h3>How snapshots merge</h3>
@@ -66,9 +67,8 @@
 <h3>Sign-in and limits</h3>
 <ul class="pts">
 <li>Production requires Google IAP sign-in. The server verifies the signed assertion and the owner's email, and ignores unsigned identity headers.</li>
-<li>POST routes also require a matching <code>Origin</code>. Browser credentials are never forwarded to the agent service.</li>
-<li>The server also forwards <code>input</code> and <code>cancel</code>, but the client doesn't call them.</li>
-<li>The hosted route allows bodies up to 128,000 characters and waits up to 145 seconds. The agent service URL must use HTTPS.</li>
+<li>POST routes require a matching <code>Origin</code>, and reads require a same-origin fetch. Browser credentials are never forwarded to the agent service.</li>
+<li>The hosted route allows JSON bodies up to 128,000 characters and waits up to 145 seconds. Streams and uploads wait up to 170. The agent service URL must use HTTPS.</li>
 <li>In development on loopback, the owner check passes. If <code>NORI_LOCAL_AGENT_URL</code> is set, the client uses <code>/api/agent/{operation}</code> instead, with limits of 64,000 characters and 100 seconds.</li>
 <li><code>/api/health</code> is the only API route with no owner check.</li>
 </ul>
@@ -86,8 +86,9 @@
 <tr><td><code>components/chat/Thread.tsx</code></td><td>Scrolling, follow-to-bottom, unread counts, older-message anchoring, documents and the status line.</td></tr>
 <tr><td><code>components/chat/Message.tsx</code></td><td>One bubble.</td></tr>
 <tr><td><code>components/chat/Markdown.tsx</code></td><td>Renders Markdown in a <code>bubble</code> or <code>page</code> variant, with copy buttons on page code blocks.</td></tr>
-<tr><td><code>components/runtime/RuntimeComposer.tsx</code></td><td>Message input.</td></tr>
-<tr><td><code>components/runtime/TaskPanel.tsx</code></td><td>Task list, task commands, events, results and protected screenshots.</td></tr>
+<tr><td><code>components/chat/Parts.tsx</code></td><td>Files, images and links in a message, and fallback text for an unknown part.</td></tr>
+<tr><td><code>components/runtime/RuntimeComposer.tsx</code></td><td>Message input and attached files.</td></tr>
+<tr><td><code>components/runtime/TaskPanel.tsx</code></td><td>Task list, task commands, events, saved results and screenshots.</td></tr>
 <tr><td><code>components/runtime/DocumentViewer.tsx</code></td><td>Reading view and Download.</td></tr>
 <tr><td><code>components/dev/DebugBlock.tsx</code></td><td>Saved outer attempts, usage, cost and task steps, shown by the debug toggle.</td></tr>
 <tr><td><code>components/mark/NoriMark.tsx</code></td><td>The mark, plus <code>Medallion</code>, which gives it a fixed box.</td></tr>
@@ -95,11 +96,11 @@
 <h3>Run and build</h3>
 <div class="card"><table class="tall"><tr><th>Command, from the repo root</th><th>What it does</th></tr>
 <tr><td><code>make dev</code></td><td>Runs the client on port 3210 with the local Go agent.</td></tr>
-<tr><td><code>make web</code></td><td>Runs only the client. With no agent service configured, it shows the connection error and disables Send.</td></tr>
+<tr><td><code>make web</code></td><td>Runs only the client.</td></tr>
 <tr><td><code>make check</code></td><td>Runs the repo checks before a merge.</td></tr>
 </table></div>
 <p>The stack is Next.js 16, React 19, Tailwind 4 and Bun. Production runs the Docker image on Cloud Run with <code>NORI_RUNTIME_URL</code> and <code>IAP_AUDIENCE</code>. See <a href="deploy.html">Deployment</a>.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>web/src</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/server.ts</code> · <code>Makefile</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/src</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/server.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>Makefile</code></p></details>
 </body>
 </html>
