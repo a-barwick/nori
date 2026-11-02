@@ -21,7 +21,7 @@ const deployment = `nori-m7-live-${unique}`;
 const build = `live-${unique}`;
 const zone = "America/Los_Angeles";
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
-let directory, address, api, worker, relay, guest, token;
+let directory, address, api, worker, relay, guest, workerModel, token;
 const created = [];
 const relayState = { dropNextInsert: false, inserts: 0 };
 
@@ -75,6 +75,26 @@ async function guestHandler(req, res) {
   if (req.url === "/exec") return send(200, { exit_code: 127, stdout: "", stderr: "No shell is available in this environment." });
   if (req.url === "/operation") return send(404, {});
   return send(200, { stopped: true, closed: true });
+}
+
+// With NORI_M7_SCRIPTED_WORKER the worker's model is scripted, so a journey can test the real outer model's decisions on
+// exact requests. Each task's text names what it asks.
+const asked = { calls: 0 };
+async function scriptedWorker(req, res) {
+  let data = "";
+  for await (const chunk of req) data += chunk;
+  const request = JSON.parse(data);
+  asked.calls++;
+  const items = Array.isArray(request.input) ? request.input : [];
+  const text = items.filter((item) => item.role === "user").map((item) => typeof item.content === "string" ? item.content : item.content?.map((part) => part.text).join("")).join("\n");
+  const outputs = items.filter((item) => item.type === "function_call_output").map((item) => JSON.parse(item.output));
+  const need = text.match(/need:([^.]*)\./)?.[1];
+  const hasTool = (request.tools ?? []).some((tool) => tool.name === "request_work");
+  const call = need && hasTool && !outputs.length
+    ? { name: "request_work", arguments: { request: need, why: "the task's answer depends on it" } }
+    : { name: "complete", arguments: { answer: `Finished with: ${JSON.stringify(outputs.at(-1) ?? "nothing").slice(0, 500)}`, evidence: outputs.flatMap((item) => item.operation_id ? [item.operation_id] : []), unmet: [] } };
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ status: "completed", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2, cost: 0.0001 }, output: [{ type: "function_call", call_id: `call_${crypto.randomUUID()}`, name: call.name, arguments: JSON.stringify(call.arguments) }] }));
 }
 
 async function refreshToken() {
@@ -168,6 +188,11 @@ beforeAll(async () => {
   const relayURL = `http://127.0.0.1:${relay.address().port}`;
   guest = createServer((req, res) => guestHandler(req, res).catch(() => res.destroy()));
   await new Promise((done) => guest.listen(0, "127.0.0.1", done));
+  const scripted = process.env.NORI_M7_SCRIPTED_WORKER === "1";
+  if (scripted) {
+    workerModel = createServer((req, res) => scriptedWorker(req, res).catch(() => res.destroy()));
+    await new Promise((done) => workerModel.listen(0, "127.0.0.1", done));
+  }
   const port = 20000 + Math.floor(Math.random() * 20000);
   address = `http://127.0.0.1:${port}`;
   const shared = {
@@ -180,7 +205,7 @@ beforeAll(async () => {
   api = start("nori-local", { ...shared, PORT: String(port) });
   await until(() => fetch(`${address}/healthz`), (response) => response.ok, "API");
   // These scenarios read real forecasts, so they run on the real date.
-  worker = start("nori-worker", { ...shared, PORT: "", NORI_E2E_GOOGLE_URL: relayURL, NORI_LOCAL_COMPUTER_URL: `http://127.0.0.1:${guest.address().port}`, GOOGLE_CALENDAR_WRITE_ID: calendar });
+  worker = start("nori-worker", { ...shared, PORT: "", ...(scripted ? { NORI_E2E_MODEL_URL: `http://127.0.0.1:${workerModel.address().port}` } : {}), NORI_E2E_GOOGLE_URL: relayURL, NORI_LOCAL_COMPUTER_URL: `http://127.0.0.1:${guest.address().port}`, GOOGLE_CALENDAR_WRITE_ID: calendar });
   await until(() => cli("worker", "deployment", "describe-version", "--deployment-name", deployment, "--build-id", build), () => true, "worker registration");
   cli("worker", "deployment", "set-current-version", "--deployment-name", deployment, "--build-id", build, "--yes");
   await clearCalendar();
@@ -192,6 +217,7 @@ afterAll(async () => {
   await stop(api);
   relay?.close();
   guest?.close();
+  workerModel?.close();
   await clearCalendar().catch(() => {});
   if (directory) rmSync(directory, { recursive: true, force: true });
 });
@@ -242,10 +268,10 @@ journey("107: a lookup outside the task comes back as the parent's result, with 
 
 journey("108: the outer loop settles what it can from the conversation, asks about the rest, and the same parent finishes", async () => {
   await seed("Haircut", upcoming(6, "17:00"), upcoming(6, "18:00"));
-  await seed("Dinner at the Okafors'", upcoming(6, "19:00"), upcoming(6, "21:00"));
-  await say("The Okafors moved to 1200 Grand Ave in Oakland, by the way.");
+  await seed("Dinner at Sam's", upcoming(6, "19:00"), upcoming(6, "21:00"));
+  await say("Sam's new place is 1200 Grand Ave in Oakland, by the way.");
   const before = await known7();
-  await say("Can I get from my haircut to dinner on time on Saturday? Just use my calendar in that task, and get anything else some other way.");
+  await say("Can I get from my haircut to dinner on time on Saturday? Keep that task to my calendar. If it needs anything else, have that done separately and give me one answer.");
   const id = await newTask(before);
   const seen = new Map();
   const replies = [];
@@ -257,7 +283,7 @@ journey("108: the outer loop settles what it can from the conversation, asks abo
     const last = value.messages.at(-1);
     const open = run?.question && !run.question.resolved_by && run.incorporated === run.position;
     if (open && !value.conversation.pending && !value.conversation.processing && last?.role === "assistant" && replies.length < 4 && /\?/.test(last.text)) {
-      const answer = /haircut|salon|barber/i.test(last.text) ? "It's at the Hair Bar on Piedmont Ave in Oakland." : "That's everything I know. Use your best estimate.";
+      const answer = /haircut|salon|barber/i.test(last.text) ? "It's at the Hair Bar, 4385 Piedmont Ave, Oakland." : "That's everything I know. Use your best estimate.";
       replies.push(answer);
       await say(answer);
     }
@@ -265,7 +291,7 @@ journey("108: the outer loop settles what it can from the conversation, asks abo
   }, terminal, "parent to end", 400_000);
   const value = await session();
   const started = value.runs.filter((run) => !before.has(run.id));
-  show("108", { status: done.status, result: done.result, error: done.error, questions: [...seen.values()], replies, tasks: started.map((run) => ({ parent: run.parent_id, request: run.request, status: run.status })) });
+  show("108", { questions: [...seen.values()], replies, status: done.status, result: done.result?.slice(0, 400), error: done.error?.slice(0, 200), tasks: started.map((run) => ({ parent: run.parent_id, request: run.request, status: run.status })) });
   expect(started.filter((run) => !run.parent_id)).toHaveLength(1);
   expect([...seen.values()].some((question) => question.kind === "work")).toBe(true);
   expect(terminal(done) && done.status !== "cancelled").toBe(true);
@@ -277,7 +303,7 @@ journey("109: a subtask's writes wait for approval, and Stop ends the whole fami
   // First run: approve each write.
   const startedAt = Date.now();
   const before = await known7();
-  await say("See what's on Friday. Only read in that task, and separately add 'Order cake' at 3 p.m. and email me that it's on there.");
+  await say("See what's on Friday. Keep that task to reading my calendar. If 3 p.m. is open, have a half-hour 'Order cake' added then, and have an email sent to me saying it's on there, both done separately, and give me one answer.");
   const id = await newTask(before);
   const approvals = [];
   const done = await until(async () => {
@@ -310,7 +336,7 @@ journey("109: a subtask's writes wait for approval, and Stop ends the whole fami
 
   // Second run: stop at the first approval.
   const second = await known7();
-  await say("See what's on Friday. Only read in that task, and separately add 'Order cake' at 3 p.m. and email me that it's on there.");
+  await say("See what's on Friday. Keep that task to reading my calendar. If 3 p.m. is open, have a half-hour 'Order cake' added then, and have an email sent to me saying it's on there, both done separately, and give me one answer.");
   const parent = await newTask(second);
   await until(async () => (await family(parent)).some((run) => run.question?.kind === "approval" && !run.question.resolved_by), Boolean, "a subtask's approval", 300_000);
   await say("stop all of that");
@@ -323,4 +349,40 @@ journey("109: a subtask's writes wait for approval, and Stop ends the whole fami
   expect((await onCalendar()).filter((item) => /cake/i.test(item.summary))).toHaveLength(0);
   expect(Date.now()).toBeGreaterThan(startedAt);
   await report("109 stop");
+}, 900_000);
+
+journey("real Sol: answers from the conversation, asks when it can't, and dispatches separate work", async () => {
+  const parentOf = async (message, before) => { await say(message); return newTask(before); };
+  // It already knows this.
+  await say("Sam's gate code is 4471, in case it ever comes up.");
+  let before = await known7();
+  const answered = await parentOf("Start a background task with exactly this text: need:What is the gate code at Sam's place. Then report back.", before);
+  const first = await ended(answered);
+  show("Sol answer", { status: first.status, result: first.result, children: (await family(answered)).length });
+  expect(first.status, first.error).toBe("completed");
+  expect(first.result).toContain("4471");
+  expect(await family(answered)).toHaveLength(0);
+
+  // Only Austin knows this.
+  before = await known7();
+  const asking = await parentOf("Start a background task with exactly this text: need:Which of Austin's two friends named Alex is coming to dinner. Then report back.", before);
+  await until(() => get(asking), (run) => run?.question?.kind === "work" && !run.question.resolved_by, "the work request", 120_000);
+  await settled();
+  const { messages } = await session();
+  show("Sol ask", messages.at(-1)?.text);
+  expect((await get(asking)).question?.resolved_by ?? "").toBe("");
+  expect(await family(asking)).toHaveLength(0);
+  await say("Alex Rivera, the one from work.");
+  const second = await ended(asking);
+  show("Sol after asking", { status: second.status, result: second.result, children: (await family(asking)).length });
+  expect(second.status, second.error).toBe("completed");
+
+  // This is separate work.
+  before = await known7();
+  const separate = await parentOf("Start a background task with exactly this text: need:Look up Oakland's forecast for this Saturday on the public web and report it. Then report back.", before);
+  const third = await ended(separate);
+  const children = await family(separate);
+  show("Sol dispatch", { status: third.status, result: third.result?.slice(0, 300), children: children.map((run) => run.request) });
+  expect(third.status, third.error).toBe("completed");
+  expect(children).toHaveLength(1);
 }, 900_000);
