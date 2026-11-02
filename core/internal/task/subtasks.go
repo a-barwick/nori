@@ -90,7 +90,9 @@ func (a *Activities) subtaskResult(ctx context.Context, parent state.Run, q stat
 		item := map[string]any{"task_id": child.ID, "status": child.Status, "request": clip(child.Request, 1500)}
 		if child.Result != "" {
 			item["answer"] = clip(child.Result, subtaskAnswerLimit)
-			item["answer_shortened"] = len(child.Result) > subtaskAnswerLimit
+			if len(child.Result) > subtaskAnswerLimit {
+				item["answer_shortened"] = true
+			}
 		}
 		if child.Error != "" {
 			item["detail"] = clip(child.Error, 2048)
