@@ -299,8 +299,7 @@ journey("108: the outer loop settles what it can from the conversation, asks abo
 }, 900_000);
 
 const CAKE = "Order cake";
-journey("109: a subtask's writes wait for approval, and Stop ends the whole family", async () => {
-  // First run: approve each write.
+journey("109: a subtask's writes wait for approval, on the subtask's own question", async () => {
   const startedAt = Date.now();
   const before = await known7();
   await say("Start one task to see what's on Friday, and keep it to reading my calendar. Once it knows 3 p.m. is open, it should ask for the rest as separate work: a half-hour 'Order cake' at 3 p.m., and an email to me saying it's on there. Give me one answer at the end.");
@@ -333,8 +332,11 @@ journey("109: a subtask's writes wait for approval, and Stop ends the whole fami
   expect(recent).toHaveLength(1);
   await report("109 approve");
   await clearCalendar();
+}, 900_000);
 
-  // Second run: stop at the first approval.
+// A fresh conversation: in the same one, Nori rightly won't add the event again.
+journey("109 stop: Stop at a subtask's approval ends the whole family with no write", async () => {
+  const startedAt = Date.now();
   const second = await known7();
   await say("Start one task to see what's on Friday, and keep it to reading my calendar. Once it knows 3 p.m. is open, it should ask for the rest as separate work: a half-hour 'Order cake' at 3 p.m., and an email to me saying it's on there. Give me one answer at the end.");
   const parent = await newTask(second);
