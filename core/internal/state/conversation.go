@@ -384,7 +384,7 @@ func CompleteTurn(c ConversationControl, t ConversationTurn, text string, now ti
 	c.Active = ""
 	c.Owner = ""
 	c.LeaseUntil = time.Time{}
-	message := Message{ID: AssistantMessageID(t.ID), Role: "assistant", Text: text, CreatedAt: now, TurnID: t.ID}
+	message := Message{ID: AssistantMessageID(t.ID), Role: "assistant", Text: text, Parts: TextParts(text), CreatedAt: now, TurnID: t.ID}
 	return c, t, message
 }
 

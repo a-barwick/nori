@@ -65,7 +65,7 @@ async function modelHandler(req, res) {
 }
 
 // Scripted outer model: "task: ..." dispatches. A turn with no action returns plain text.
-const outer = { calls: 0, requests: [] };
+const outer = { calls: 0, requests: [], text: "Noted." };
 async function outerHandler(req, res) {
   const request = await body(req);
   outer.calls++;
@@ -75,7 +75,7 @@ async function outerHandler(req, res) {
   let content = "Noted.";
   if (variants) {
     const actions = outer.onUser?.(String(last), request) ?? (String(last).includes("task:") ? [{ name: "dispatch", arguments: { request: String(last), for: null, question_id: null } }] : []);
-    content = JSON.stringify({ actions, text: actions.length ? "" : "Noted." });
+    content = JSON.stringify({ actions, text: actions.length ? "" : outer.text });
   }
   reply(res, 200, {
     id: "chat", model: "gpt-6.1-sol", service_tier: "default",
@@ -261,3 +261,17 @@ journey("the removed status route is gone, and the snapshot reports the log posi
   await settled();
   expect((await snapshot()).position).toBeGreaterThan(before.position);
 }, 30_000);
+
+journey("replies arrive as typed parts, with the model's layout hint removed, and old messages still read", async () => {
+  outer.text = "<!-- nori:page -->\n# Report\n\nThe body.";
+  await post("turn", { id: crypto.randomUUID(), message: "write it up" }, 202);
+  await settled();
+  outer.text = "Noted.";
+  const message = (await snapshot()).messages.findLast((item) => item.role === "assistant");
+  expect(message.parts).toEqual([{ type: "text", text: "# Report\n\nThe body.", display: "page" }]);
+  const old = crypto.randomUUID();
+  const fields = { id: { stringValue: old }, run_id: { stringValue: "" }, role: { stringValue: "assistant" }, text: { stringValue: "Saved before parts existed." }, created_at: { timestampValue: new Date().toISOString() } };
+  const saved = await fetch(`${documents}/owners/austinbarwickdavis@gmail.com/messages/${old}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields }) });
+  expect(saved.ok).toBe(true);
+  expect((await snapshot()).messages.find((item) => item.id === old).parts).toEqual([{ type: "text", text: "Saved before parts existed." }]);
+}, 60_000);

@@ -80,6 +80,9 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 			}
 		}
 	}
+	for i := range result.Messages {
+		result.Messages[i] = result.Messages[i].WithParts()
+	}
 	return result, nil
 }
 

@@ -44,6 +44,7 @@ type Message struct {
 	RunID     string    `json:"run_id" firestore:"run_id"`
 	Role      string    `json:"role" firestore:"role"`
 	Text      string    `json:"text" firestore:"text"`
+	Parts     []Part    `json:"parts,omitempty" firestore:"parts,omitempty"`
 	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
 }
 

@@ -105,7 +105,7 @@ func (s *server) sendEvent(ctx context.Context, stream *eventStream, event state
 		if err != nil {
 			return err
 		}
-		return stream.send(event.Kind, event.Seq, map[string]any{"message": message})
+		return stream.send(event.Kind, event.Seq, map[string]any{"message": message.WithParts()})
 	case state.EventTask:
 		run, err := s.Tasks.Store.GetRun(ctx, event.Ref)
 		if err != nil {
