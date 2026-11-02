@@ -15,13 +15,13 @@
 <div class="node inner"><b>Workflow adds to spent</b><small>The task's spent figure grows between calls.</small></div><div class="arrow">↓ <span class="lbl">spent reaches $1</span></div>
 <div class="node wait"><b>Task waits at $1</b><small>It saves a budget question, and continue adds $1.</small></div>
 </div></div>
-<ul class="pts"><li>The $1 limit is checked between calls, so it isn't a hard cap on billing.</li><li>Each web search adds $0.005 to the task's spent figure.</li><li>An unknown cost fails the task.</li><li>Outer-loop and Jev classifier calls write a usage row before the provider call.</li></ul>
+<ul class="pts"><li>The $1 limit is checked between calls, so it isn't a hard cap on billing.</li><li>Each web search adds $0.005 to the task's spent figure.</li><li>An unknown cost fails the task, and a subtask's unknown cost also fails its parent.</li><li>A subtask's cost counts against its parent's budget, and each check reads the shared total from Firestore. Each running subtask can overrun by one model response and its tool calls.</li><li>Outer-loop and Jev classifier calls write a usage row before the provider call.</li></ul>
 <section><h2>Four controls</h2>
 <div class="grid4">
-  <div class="card tight"><p class="keyline">Task budget · $1</p><p class="note">Applies to each task. When it runs out, the task saves its progress and asks, and <code>continue</code> adds $1.</p></div>
+  <div class="card tight"><p class="keyline">Task budget · $1</p><p class="note">Applies to a top-level task and its subtasks. When it runs out, the task that reached it saves its progress and asks, and <code>continue</code> adds $1 to the parent.</p></div>
   <div class="card tight"><p class="keyline">Input wait</p><p class="note">The task parks with its question and records intact. No timer ends it.</p></div>
   <div class="card tight"><p class="keyline">Pause</p><p class="note">Blocks new execution for all tasks. Workers exit and the computer stops, while chat keeps working.</p></div>
-  <div class="card tight"><p class="keyline">Task Stop</p><p class="note">Ends one task and confirms the computer stopped.</p></div>
+  <div class="card tight"><p class="keyline">Task Stop</p><p class="note">Ends one task and its subtasks, and confirms the computer stopped.</p></div>
 </div></section>
 <section><h2>Operating rules</h2>
 <ul class="pts"><li>Cloud Run and Agent Runtime run with a minimum of 0 and a maximum of 1 instance.</li><li>When live work finishes, worker pools scale to zero and the computer stops.</li><li>The computer's guest receives no cloud credentials.</li></ul></section>
@@ -29,6 +29,6 @@
 <div class="card"><table><tr><th>Scope</th><th>Limit</th></tr><tr><td>One logical development chat</td><td>$0.25 initially, with $0.25 increases up to $1. An explicit approval can raise a chat to $2.</td></tr><tr><td>Shared model use</td><td>$2 per UTC day and $20 per UTC month. The Jev classifier is excluded.</td></tr></table></div>
 <p>OpenAI and OpenRouter calls reserve maximum request cost atomically before dispatch. Unknown usage keeps the reservation.</p>
 <details class="more"><summary>Provider pricing and enforcement</summary><p>Pricing checked October 31, 2026: Sol standard tier costs $2 per million input tokens, $0.10 per million cached input tokens and $10 per million output tokens. Nori disables implicit cache writes and refuses requests above the 272K input pricing threshold. Terra's ceilings remain $1 input and $5 output per million tokens.</p><p>Nori's adapters enforce the shared ledger, and calls outside them are not intercepted. The direct OpenAI project key has no native per-chat cap, and OpenRouter has a scoped native key limit.</p><p><a href="https://developers.openai.com/api/docs/models/gpt-6.1-sol">Sol pricing</a></p></details></section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/spend/client.go</code> · <code>core/internal/computerd/server.go</code> · <code>core/internal/spend/ledger.go</code> · <code>core/internal/spend/firestore/ledger.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/state/subtasks.go</code> · <code>core/internal/spend/client.go</code> · <code>core/internal/computerd/server.go</code> · <code>core/internal/spend/ledger.go</code> · <code>core/internal/spend/firestore/ledger.go</code></p></details>
 </body>
 </html>

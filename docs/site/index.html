@@ -26,7 +26,7 @@
 </svg></div>
 <div class="grid3">
 <div class="card tight"><p class="keyline">The outer loop handles the conversation</p><p class="note">It replies to the user, starts tasks and passes on corrections. It only has task tools, so replies don't wait on task work.</p></div>
-<div class="card tight"><p class="keyline">Inner loops run tasks</p><p class="note">Each task gets its own loop with its own instructions and budget. One can wait or fail without affecting the others.</p></div>
+<div class="card tight"><p class="keyline">Inner loops run tasks</p><p class="note">Each task gets its own loop and instructions. One can wait or fail without affecting the others, except that a subtask shares its parent's budget and stops with it.</p></div>
 <div class="card tight"><p class="keyline">The runtime checks and records</p><p class="note">Models return proposed actions. The runtime saves and validates them, and replies report only what the records show.</p></div>
 </div>
 <section><h2>An example conversation</h2>
@@ -40,9 +40,9 @@
 </div></section>
 <section><h2>Where it stands</h2>
 <ul class="pts">
-<li><b>Working:</b> durable chat at noribot.chat, several tasks at once, steering, Stop, budgets, questions that survive restarts, checked completion, and a persistent computer with shell and browser.</li>
+<li><b>Working:</b> durable chat at noribot.chat, several tasks at once, steering, Stop, budgets, questions that survive restarts, checked completion, subtasks, and a persistent computer with shell and browser.</li>
 <li><b>Deployed, tested locally:</b> web search, longer shell jobs, screenshots the model can read, calendar read, approved calendar and email writes, and finishing tasks from record checks and cited results.</li>
-<li><b>Later:</b> subtasks, schedules, memory, proactive help and more clients.</li>
+<li><b>Later:</b> schedules, memory, proactive help and more clients.</li>
 <li>Production is paused between live sessions to save money. Saved data stays. <a href="roadmap.html">See the roadmap</a>.</li>
 </ul></section>
 <section><h2>Where to go next</h2>

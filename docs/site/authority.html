@@ -18,6 +18,7 @@
 <div class="node outer"><b>Outer loop</b><small>Compares the answer with those results and reports what is done.</small></div>
 </div></div>
 <section><h2>The write tools</h2>
+<p>A write made by a <a href="contract.html#subtasks">subtask</a> asks the user for its own approval.</p>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>Stops a duplicate</th><th>Confirms the change</th></tr>
 <tr><td><code>calendar_create</code></td><td>The event ID comes from the exact action, and the runtime looks it up first.</td><td>Reads the event back.</td></tr>
 <tr><td><code>calendar_move</code></td><td>A repeat finds the approval used and only reads the event. An event already at the new time needs no write.</td><td>Reads the new time back.</td></tr>

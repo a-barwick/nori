@@ -63,7 +63,7 @@
      "id": "the-write-tools",
      "title": "The write tools",
      "status": "built",
-     "words": 88
+     "words": 101
     },
     {
      "id": "what-an-approval-covers",
@@ -108,6 +108,7 @@
     "core/internal/spend/client.go",
     "core/internal/spend/firestore/ledger.go",
     "core/internal/spend/ledger.go",
+    "core/internal/state/subtasks.go",
     "core/internal/task/workflow.go"
    ],
    "sections": [
@@ -115,13 +116,13 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 106
+     "words": 145
     },
     {
      "id": "four-controls",
      "title": "Four controls",
      "status": "built",
-     "words": 65
+     "words": 78
     },
     {
      "id": "operating-rules",
@@ -300,7 +301,13 @@
    "summary": "The outer loop sends commands in, and tasks send events back. Nothing else crosses between them.",
    "status": "built",
    "code": [
+    "core/internal/agent/steps.go",
+    "core/internal/conversation/commands.go",
     "core/internal/conversation/model.go",
+    "core/internal/state/commands.go",
+    "core/internal/state/firestore/tasks.go",
+    "core/internal/state/subtasks.go",
+    "core/internal/task/subtasks.go",
     "core/internal/task/tool_durable.go",
     "core/internal/task/workflow.go"
    ],
@@ -309,43 +316,43 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 96
+     "words": 100
     },
     {
      "id": "the-rules",
      "title": "The rules",
      "status": "built",
-     "words": 90
+     "words": 95
     },
     {
      "id": "outer-loop-tools",
      "title": "Outer loop tools",
      "status": "built",
-     "words": 76
+     "words": 103
     },
     {
      "id": "inner-loop-control-tools",
      "title": "Inner loop control tools",
      "status": "built",
-     "words": 60
+     "words": 67
     },
     {
      "id": "events",
      "title": "Events",
      "status": "built",
-     "words": 61
+     "words": 80
     },
     {
-     "id": "subtasks-designed-milestone-7",
-     "title": "Subtasks designed · milestone 7",
-     "status": "designed",
-     "words": 140
+     "id": "subtasks",
+     "title": "Subtasks",
+     "status": "built",
+     "words": 192
     },
     {
      "id": "interrupting-a-task",
      "title": "Interrupting a task",
      "status": "built",
-     "words": 53
+     "words": 32
     }
    ]
   },
@@ -378,7 +385,7 @@
      "id": "subtasks",
      "title": "Subtasks",
      "status": "built",
-     "words": 95
+     "words": 313
     },
     {
      "id": "approvals-and-writes",
@@ -526,7 +533,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 128
+     "words": 136
     },
     {
      "id": "an-example-conversation",
@@ -565,7 +572,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 148
+     "words": 152
     },
     {
      "id": "when-instructions-change",
@@ -765,7 +772,7 @@
      "id": "one-message-several-jobs",
      "title": "One message, several jobs",
      "status": "built",
-     "words": 208
+     "words": 234
     }
    ]
   },
@@ -805,7 +812,7 @@
   {
    "page": "docs/site/product.html",
    "title": "What Nori should do",
-   "summary": "Fourteen things the finished product should do, and the 106 conversations we use to measure progress.",
+   "summary": "Fourteen things the finished product should do, and the 109 conversations we use to measure progress.",
    "status": "built",
    "code": [],
    "sections": [
@@ -895,7 +902,7 @@
      "id": "storage-layers",
      "title": "Storage layers",
      "status": "built",
-     "words": 291
+     "words": 295
     }
    ]
   },
@@ -986,27 +993,28 @@
    "status": "built",
    "code": [
     "core/internal/agent/steps.go",
-    "core/internal/agent/writes.go"
+    "core/internal/agent/writes.go",
+    "core/internal/state/subtasks.go"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 132
+     "words": 144
     },
     {
      "id": "what-each-piece-adds",
      "title": "What each piece adds",
      "status": "built",
-     "words": 413
+     "words": 442
     }
    ]
   },
   {
    "page": "docs/site/scenarios.html",
    "title": "Scenarios",
-   "summary": "The 106 written conversations used to measure progress. They contain 223 user messages in 16 categories and 12 writing styles.",
+   "summary": "The 109 written conversations used to measure progress. They contain 229 user messages in 16 categories and 12 writing styles.",
    "status": "built",
    "code": [],
    "sections": [
@@ -1026,7 +1034,7 @@
      "id": "shared-setup",
      "title": "Shared setup",
      "status": "built",
-     "words": 82
+     "words": 85
     },
     {
      "id": "running-a-conversation",
@@ -1134,7 +1142,7 @@
      "id": "nori-task-execution",
      "title": "Nori task execution",
      "status": "built",
-     "words": 585
+     "words": 1022
     }
    ]
   },
@@ -1218,7 +1226,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 281
+     "words": 292
     }
    ]
   },
@@ -1237,7 +1245,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 115
+     "words": 116
     },
     {
      "id": "moving-between-states",
@@ -1249,7 +1257,7 @@
      "id": "commands",
      "title": "Commands",
      "status": "built",
-     "words": 81
+     "words": 108
     },
     {
      "id": "steering-keeps-what-still-applies",
@@ -1319,7 +1327,7 @@
      "id": "confirming-a-change",
      "title": "Confirming a change",
      "status": "built",
-     "words": 155
+     "words": 141
     },
     {
      "id": "long-shell-jobs",
@@ -1331,7 +1339,7 @@
      "id": "loading-tools-on-demand",
      "title": "Loading tools on demand",
      "status": "designed",
-     "words": 297
+     "words": 298
     }
    ]
   },
@@ -1388,7 +1396,7 @@
      "id": "status-and-task-labels",
      "title": "Status and task labels",
      "status": "built",
-     "words": 220
+     "words": 246
     },
     {
      "id": "bubbles-and-documents",
@@ -1409,7 +1417,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 639
+     "words": 694
     }
    ]
   }

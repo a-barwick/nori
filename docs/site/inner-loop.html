@@ -13,7 +13,7 @@
 <div class="card"><div class="flow">
 <div class="node inner"><b>Read new commands</b><small>Instructions arrive in order, such as “Check Saturday's weather in Tucson.”</small></div>
 <div class="arrow">↓</div>
-<div class="node decide inner">Has the task spent its $1 budget?</div>
+<div class="node decide inner">Has the task, with its subtasks, spent its budget?</div>
 <div class="branch">
 <div class="node wait"><b>Yes</b><small>The task saves a budget question and waits, with no model call.</small></div>
 <div class="node inner"><b>No</b><small>The loop continues to the next model call.</small></div>
@@ -25,7 +25,7 @@
 <div class="branch3">
 <div class="node inner"><b><code>complete</code></b><small>Record checks decide whether it finishes.</small></div>
 <div class="node computer"><b>Tool calls</b><small>The worker or computer runs each tool, and each result is saved.</small></div>
-<div class="node wait"><b><code>request_input</code></b><small>The task saves a question and waits for the answer.</small></div>
+<div class="node wait"><b><code>request_input</code> or <code>request_work</code></b><small>The task waits for the answer or the subtasks' result.</small></div>
 </div>
 <div class="loopback">↺ results saved → back to Read new commands</div>
 <div class="node"><b>Finish</b><small>Confirms the computer stopped, then publishes the outcome.</small></div>

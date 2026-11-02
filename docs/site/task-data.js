@@ -45,7 +45,7 @@
 
   window.FLOWS = {
     // ---- Contract page: outer loop tools
-    dispatch: toolFlow('dispatch', { request: REQUEST }, command('start', { id: TASK, text: REQUEST, position: 1, revision: 1, source_input_ids: ['3f6c…'] }),
+    dispatch: toolFlow('dispatch', { request: REQUEST, for: null, question_id: null }, command('start', { id: TASK, text: REQUEST, position: 1, revision: 1, source_input_ids: ['3f6c…'] }),
       'Every call in a response is validated before any is accepted, up to 16 calls.'),
     'tool-steer': toolFlow('steer', { run_id: TASK, text: 'After seven, please.', interrupt: false }, command('steer', { text: 'After seven, please.', revision: 2, source_input_ids: ['8d21…'] }),
       'The model has to use the exact task ID from the task records.', NOT_OPEN),

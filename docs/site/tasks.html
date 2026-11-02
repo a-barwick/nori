@@ -18,7 +18,7 @@
 <div class="states"><span class="state run">Running</span><span class="state-arrow">→<small>can't continue</small></span><span class="state term">Failed</span></div>
 <div class="states"><span class="state">Running or waiting</span><span class="state-arrow">→<small>Stop</small></span><span class="state term">Cancelled</span></div>
 </div>
-    <p class="note" style="margin:12px 0 0;font-weight:600">While a task is waiting</p><ul class="pts note"><li>It has exactly one open question and a reason: <code>input</code>, <code>budget</code><span class="designed">, <code>work</code><span class="tag design">designed</span></span>.</li><li>It doesn't expire on its own, and it survives reloads, pauses, restarts and worker deploys.</li><li>If a steer arrives while the task is over budget, the task asks its budget question again with a new ID.</li></ul><p class="note" style="margin:8px 0 0;font-weight:600">When a task ends</p><ul class="pts note"><li>Finished tasks stay closed, so follow-up work becomes a new task.</li><li>Stop is shown as <b>requested, stopping, then confirmed</b>.</li></ul>
+    <p class="note" style="margin:12px 0 0;font-weight:600">While a task is waiting</p><ul class="pts note"><li>It has exactly one open question and a reason, such as <code>input</code> or <code>budget</code>.</li><li>It doesn't expire on its own, and it survives reloads, pauses, restarts and worker deploys.</li><li>If a steer arrives while the task is over budget, the task asks its budget question again with a new ID.</li></ul><p class="note" style="margin:8px 0 0;font-weight:600">When a task ends</p><ul class="pts note"><li>Finished tasks stay closed, so follow-up work becomes a new task.</li><li>Stop is shown as <b>requested, stopping, then confirmed</b>.</li></ul>
     </div>
 <section><h2>Moving between states</h2>
 <div class="card"><table>
@@ -34,11 +34,12 @@
 <div class="card"><table>
           <tr><th>Kind</th><th>What it does</th></tr>
           <tr data-flow="start"><td><code>start</code></td><td>Creates the task. The command ID becomes the task ID.</td></tr>
-          <tr data-flow="steer"><td><code>steer</code></td><td>Adds new instructions and increments the revision.</td></tr>
+          <tr data-flow="steer"><td><code>steer</code></td><td>Adds new instructions, increments the revision, and stops any running subtasks.</td></tr>
           <tr data-flow="answer"><td><code>answer</code></td><td>Resolves the question in <code>question_id</code>.</td></tr>
-          <tr data-flow="continue"><td><code>continue</code></td><td>Resolves the budget question and adds $1.</td></tr>
-          <tr data-flow="stop"><td><code>stop</code></td><td>Cancels this task<span class="designed"> and its descendants<span class="tag design">designed</span></span>.</td></tr>
-          <tr class="designed"><td><code>subtask_result</code></td><td>The runtime delivers a subtask's outcome to its parent.</td></tr>
+          <tr data-flow="continue"><td><code>continue</code></td><td>Resolves the budget question and adds $1, to the parent for a subtask.</td></tr>
+          <tr><td><code>approve</code>, <code>decline</code></td><td>Resolves the approval question for one exact action.</td></tr>
+          <tr data-flow="stop"><td><code>stop</code></td><td>Cancels this task and its subtasks.</td></tr>
+          <tr><td><code>subtask_result</code></td><td>The runtime delivers finished subtasks to their parent, as the result of its work request.</td></tr>
         </table>
 <p class="note">Only steer and stop are corrections. Answers and continuations resume work without rewriting its instructions.</p></div></section>
 <section><h2>Steering keeps what still applies</h2>

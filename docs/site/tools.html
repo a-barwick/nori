@@ -46,15 +46,14 @@
 <tr><td>shell</td><td>The exit code shows the command ran. A follow-up read, such as a file count, shows its effect.</td></tr>
 <tr><td>calendar_create, calendar_move</td><td>The result has Google's status and the event ID, and a follow-up read shows the event.</td></tr>
 <tr><td>email_send</td><td>The result has Google's status and the message ID, and a follow-up read shows the sent message.</td></tr>
-<tr class="designed"><td>Future connectors</td><td>An upload returns a 200 and a file ID, and a GET on that ID confirms it.</td></tr>
 </table></div>
-<p>The calendar and email write tools wait for the user. See <a href="authority.html">Approvals and writes</a>.</p></section>
+<p>The calendar and email write tools wait for the user. See <a href="authority.html">Approvals and writes</a>. For work outside a task's request, see <a href="contract.html#subtasks">Subtasks</a>.</p></section>
 <section><h2>Long shell jobs</h2>
 <div class="states"><span class="state">running</span><span class="state-arrow">→</span><span class="state">finished</span><span class="state-arrow">or</span><span class="state">stopped</span><span class="state-arrow">or</span><span class="state">timed_out</span><span class="state-arrow">or</span><span class="state">lost</span></div>
 <p class="note">A job that can't start ends as failed_to_start. A stop the guest can't confirm ends as stop_unconfirmed.</p>
 </section>
 <section class="designed"><h2>Loading tools on demand</h2>
-<p>Every task gets the same tool list today. Milestone 10 plans for the inner loop to load only the tool definitions a task needs.</p>
+<p>Top-level tasks all get the same tool list today. Milestone 10 plans for the inner loop to load only the tool definitions a task needs.</p>
 </section>
 <details class="more"><summary>Job limits, screenshots, calendar and the catalog</summary>
 <ul class="pts">

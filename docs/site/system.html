@@ -83,7 +83,7 @@
   </svg>
   </div>
   <p>“Check Saturday's weather in Tucson” goes from the client to the agent service, then through Temporal to the inner loop, the computer and back.</p>
-  <p>Firestore records what Nori has <b>accepted</b>, and Temporal records <b>how far execution has got</b>. Firestore's task view is a copy of the workflow, and budget checks run inside the workflow.</p>
+  <p>Firestore records what Nori has <b>accepted</b>, and Temporal records <b>how far execution has got</b>. Firestore's task view is a copy of the workflow, and budget checks run inside the workflow, adding the spend of related tasks, which it reads from Firestore.</p>
   <div class="grid3">
     <div class="card tight"><p class="keyline">Accepted, applied and completed are different states</p>
       <p class="note">A saved command only shows that it was accepted, and a tool attempt doesn't show that it had any effect. Nori's reply describes the furthest outcome the records support.</p></div>
