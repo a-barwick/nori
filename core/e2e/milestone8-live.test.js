@@ -56,7 +56,8 @@ async function until(read, accept, label, timeout = 240_000) {
 async function post(operation, value = {}, expected) {
   const response = await fetch(`${base}/api/${operation}`, { method: "POST", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(value), signal: AbortSignal.timeout(60_000) });
   const result = await response.json();
-  if (expected ? response.status !== expected : !response.ok) throw new Error(`${operation}: HTTP ${response.status}: ${JSON.stringify(result).slice(0, 500)}`);
+  // Agent Runtime's gateway answers 200 for the service's 202.
+  if (expected && !production ? response.status !== expected : !response.ok) throw new Error(`${operation}: HTTP ${response.status}: ${JSON.stringify(result).slice(0, 500)}`);
   return result;
 }
 const snapshot = async () => (await fetch(`${base}/v1/snapshot`, { headers: headers(), signal: AbortSignal.timeout(60_000) })).json();
