@@ -109,6 +109,8 @@ type Question struct {
 	Revision   int64  `json:"instruction_revision" firestore:"revision"`
 	// ReadOnly limits subtasks started for a work request: the parent could only read when it asked.
 	ReadOnly bool `json:"read_only,omitempty" firestore:"read_only,omitempty"`
+	// Clears lists the operations this question names. An answer stops them blocking later commands.
+	Clears []string `json:"clears,omitempty" firestore:"clears,omitempty"`
 }
 
 // TaskEvent is a task outcome or need that the outer loop reads from the conversation inbox.

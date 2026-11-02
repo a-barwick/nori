@@ -82,6 +82,9 @@ grep -qx debian-bookworm-firecracker-1.17.0-kernel-6.1.188 /srv/nori-guest/READY
   test ! -L "$guest_root/workspace/tasks"
   install -d -o 1000 -g 1000 -m 700 "$guest_root/workspace/tasks"
   install -m 755 /usr/local/bin/computer-agent "$guest_root/usr/local/bin/computer-agent"
+  # Tasks reach for `python`, and Debian ships only python3. A file the guest already put there stays.
+  python_link="$guest_root/usr/local/bin/python"
+  if [ ! -e "$python_link" ] && [ ! -L "$python_link" ]; then ln -s /usr/bin/python3 "$python_link"; fi
   test ! -L "$guest_root/etc/nori-telemetry.env"
   install -m 644 /etc/nori-computer/telemetry.env "$guest_root/etc/nori-telemetry.env"
   cat > "$guest_root/etc/systemd/system/bot-computer-agent.service" <<'SERVICE'

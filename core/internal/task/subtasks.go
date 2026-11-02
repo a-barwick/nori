@@ -23,9 +23,10 @@ func questionTool(q *state.Question) string {
 
 // unresolvedWrite reports a write or shell operation whose effect isn't known. A provider's refusal of a write is a
 // definite answer, so it doesn't count, and neither does a request_work whose subtask ended without finishing: that
-// outcome is saved and final, and a write the subtask left unresolved makes it uncertain instead.
+// outcome is saved and final, and a write the subtask left unresolved makes it uncertain instead. A cleared operation
+// doesn't count either: it never ran, it only read, or Austin answered a question naming it.
 func unresolvedWrite(op state.OperationRecord) bool {
-	if op.EffectClass == "read" || op.EffectClass == "control" {
+	if op.EffectClass == "read" || op.EffectClass == "control" || op.Cleared != "" {
 		return false
 	}
 	return op.Outcome == "uncertain" || op.Outcome == "pending" || op.Outcome == "attempted" ||

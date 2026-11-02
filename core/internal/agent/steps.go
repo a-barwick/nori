@@ -64,9 +64,14 @@ func taskTools(wait, work bool) []transcript.Tool {
 			},
 		},
 		{
-			Name:        "shell",
-			Description: "Run a shell command on Austin's persistent computer. Work under /workspace. Command exits after at most 45 seconds.",
-			Parameters:  params("command"),
+			Name: "shell",
+			Description: "Run a shell command on Austin's persistent computer. Work under /workspace. Command exits after at most 45 seconds. " +
+				"Set read_only to true when the command only reads or computes and changes no files or anything remote, so a failure doesn't stop later commands.",
+			Parameters: &transcript.Schema{
+				Type:       transcript.TypeObject,
+				Properties: map[string]*transcript.Schema{"command": {Type: transcript.TypeString}, "read_only": {Type: transcript.TypeBoolean}},
+				Required:   []string{"command", "read_only"},
+			},
 		},
 		{
 			Name: "job_start",
