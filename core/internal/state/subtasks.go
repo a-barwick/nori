@@ -52,7 +52,7 @@ func linkSubtask(parent Run, exists bool, cmd Command, opened map[string]bool) (
 		return parent, Question{}, fmt.Errorf("%w: a subtask can't have its own subtasks", ErrCommandInvalid)
 	}
 	question := parent.Question
-	if question == nil || question.Kind != QuestionWork || question.Revision != parent.Revision ||
+	if question == nil || question.Kind != QuestionWork || question.ID != cmd.QuestionID || question.Revision != parent.Revision ||
 		(question.ResolvedBy != "" && !opened[question.ID]) {
 		return parent, Question{}, ErrQuestionStale
 	}

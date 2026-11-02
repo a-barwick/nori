@@ -35,6 +35,8 @@ func responseFormat(taskIDs []string, requests []WorkRequest) any {
 			field["enum"] = parents
 			if restricted {
 				field["type"], field["enum"] = "string", asking
+				question := tool.Function.Parameters["properties"].(map[string]any)["question_id"].(map[string]any)
+				question["type"], question["enum"] = "string", questions
 			}
 		} else if restricted {
 			properties := tool.Function.Parameters["properties"].(map[string]any)

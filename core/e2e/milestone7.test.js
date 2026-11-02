@@ -153,7 +153,7 @@ async function modelHandler(req, res) {
 // Scripted outer model: "task: ..." dispatches. A restricted turn offers only dispatch and answer, and
 // outer.onWork decides it. A turn with neither is a notification, which returns plain text.
 const outer = { calls: 0, workTurns: 0, notifications: 0 };
-const subtask = (parent, script) => ({ name: "dispatch", arguments: { request: `script:${script}`, for: parent } });
+const subtask = (event, script) => ({ name: "dispatch", arguments: { request: `script:${script}`, for: event.run_id, question_id: event.question_id } });
 async function outerHandler(req, res) {
   const request = await body(req);
   outer.calls++;
@@ -166,10 +166,10 @@ async function outerHandler(req, res) {
       .map((message) => JSON.parse(message.content.slice(message.content.indexOf("\n") + 1)));
     const event = events.at(-1);
     outer.lastSchema = variants;
-    const actions = outer.onWork?.(event) ?? [];
+    const actions = (await outer.onWork?.(event)) ?? [];
     content = JSON.stringify({ actions, text: actions.length ? "" : "Which one should it be?" });
   } else if (variants) {
-    const actions = outer.onUser?.(String(last)) ?? (String(last).includes("task:") ? [{ name: "dispatch", arguments: { request: String(last), for: null } }] : []);
+    const actions = outer.onUser?.(String(last)) ?? (String(last).includes("task:") ? [{ name: "dispatch", arguments: { request: String(last), for: null, question_id: null } }] : []);
     content = JSON.stringify({ actions, text: actions.length ? "" : "Noted." });
   } else {
     outer.notifications++;
@@ -179,6 +179,15 @@ async function outerHandler(req, res) {
     usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, prompt_tokens_details: { cached_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 0 } },
     choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
   });
+}
+
+// Stands in for the computer: every shell command succeeds and has unknown effects.
+async function guestHandler(req, res) {
+  await body(req).catch(() => {});
+  if (req.url === "/healthz") return reply(res, 200, { ready: true, operation_receipts_v1: true, browser_task_tabs_v1: true, shell_jobs_v1: true });
+  if (req.url === "/exec") return reply(res, 200, { exit_code: 0, stdout: "ran", stderr: "" });
+  if (req.url === "/operation") return reply(res, 404, {});
+  reply(res, 200, { stopped: true, closed: true });
 }
 
 function serve(handler) {
@@ -246,14 +255,14 @@ beforeAll(async () => {
     if (built.status !== 0) throw new Error(`Build ${name} failed: ${built.stderr}`);
   }
   writeFileSync(resolve(directory, "empty.env"), "");
-  const [googleURL, modelURL, outerURL] = await Promise.all([serve(googleHandler), serve(modelHandler), serve(outerHandler)]);
+  const [googleURL, modelURL, outerURL, guestURL] = await Promise.all([serve(googleHandler), serve(modelHandler), serve(outerHandler), serve(guestHandler)]);
   const port = 20000 + Math.floor(Math.random() * 20000);
   address = `http://127.0.0.1:${port}`;
   env = {
     PATH: process.env.PATH, HOME: process.env.HOME, NORI_ENV_FILE: resolve(directory, "empty.env"), NORI_PROJECT_ID: "bot-111549", FIRESTORE_DATABASE_ID: database,
     FIRESTORE_EMULATOR_HOST: emulator, NORI_LOCAL_ARTIFACT_DIR: resolve(directory, "artifacts"), PORT: String(port), TEMPORAL_ADDRESS: temporalAddress, TEMPORAL_NAMESPACE: "default", TEMPORAL_LOCAL: "true",
     TEMPORAL_TASK_QUEUE: deployment, TEMPORAL_DEPLOYMENT_NAME: deployment, TEMPORAL_BUILD_ID: build, COMPUTER_ZONE: "invalid-e2e-zone", COMPUTER_INSTANCE: "no-computer-e2e", NORI_EXECUTION_MODE: "temporal",
-    OPENAI_API_KEY: "fake", JEV_API_KEY: "fake", OPENROUTER_API_KEY: "fake", NORI_E2E_GOOGLE_URL: googleURL, NORI_E2E_MODEL_URL: modelURL, NORI_E2E_OPENAI_URL: outerURL,
+    OPENAI_API_KEY: "fake", JEV_API_KEY: "fake", OPENROUTER_API_KEY: "fake", NORI_E2E_GOOGLE_URL: googleURL, NORI_E2E_MODEL_URL: modelURL, NORI_E2E_OPENAI_URL: outerURL, NORI_LOCAL_COMPUTER_URL: guestURL,
     GOOGLE_CALENDAR_CLIENT_ID: "fake", GOOGLE_CALENDAR_CLIENT_SECRET: "fake", GOOGLE_CALENDAR_REFRESH_TOKEN: "fake", GOOGLE_CALENDAR_ACCOUNT: account,
   };
   const control = await fetch(`${documents}/system/control`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: { paused: { booleanValue: false } } }) });
@@ -289,7 +298,7 @@ journey("the result comes back as the parent's request_work result, with no mode
   scripts.parent107 = asks();
   scripts.child107 = async (outputs) => { await held2(); return finish("Rain from 1 p.m.", outputs); };
   costs.child107 = 0.05;
-  outer.onWork = (event) => [subtask(event.run_id, "child107")];
+  outer.onWork = (event) => [subtask(event, "child107")];
   const id = await dispatch("parent107");
   await child(id);
   await until(() => holds.length, (count) => count > 0, "subtask's model call");
@@ -352,9 +361,9 @@ journey("the outer loop can ask the user, and both answers and subtasks work on 
   scripts.ask2 = asks();
   scripts.askchild = answers("From the subtask.");
   const second = await dispatch("ask2");
-  await parks(second, "work");
+  const open = await parks(second, "work");
   await settled();
-  outer.onUser = () => [subtask(second, "askchild")];
+  outer.onUser = () => [subtask({ run_id: second, question_id: open.question.id }, "askchild")];
   await say("go ahead");
   const again = await finished(second);
   expect(again.status, again.error).toBe("completed");
@@ -385,7 +394,7 @@ journey("several subtasks finish together in one result, and a repeat dispatch c
   scripts.two = asks();
   scripts.twoA = answers("first");
   scripts.twoB = async (outputs) => { await held2(); return finish("second", outputs); };
-  outer.onWork = (event) => [subtask(event.run_id, "twoA"), subtask(event.run_id, "twoB")];
+  outer.onWork = (event) => [subtask(event, "twoA"), subtask(event, "twoB")];
   const id = await dispatch("two");
   const a = await child(id, 0);
   const b = await child(id, 1);
@@ -412,7 +421,7 @@ journey("the budget is shared: a parent at $0.90 with four subtasks stops near $
     // Each keeps spending until it is told to stop.
     scripts[name] = (outputs) => (outputs.length >= 3 ? finish(`${name} done`, outputs) : { name: "calendar_read", args: { start: "2026-11-02T00:00:00-08:00", end: "2026-11-03T00:00:00-08:00" } });
   }
-  outer.onWork = (event) => ["b1", "b2", "b3", "b4"].map((name) => subtask(event.run_id, name));
+  outer.onWork = (event) => ["b1", "b2", "b3", "b4"].map((name) => subtask(event, name));
   const id = await dispatch("bigparent");
   const ids = [];
   for (let i = 0; i < 4; i++) ids.push(await child(id, i));
@@ -448,7 +457,7 @@ journey("Stop works during each wait, and ends the subtasks with no write", asyn
 
   // While a subtask runs a model call.
   scripts.stoprun = async (outputs) => { await held2(); return finish("late", outputs); };
-  outer.onWork = (event) => [subtask(event.run_id, "stoprun")];
+  outer.onWork = (event) => [subtask(event, "stoprun")];
   const running1 = await dispatch("stopparent");
   const runningChild = await child(running1);
   await delay(1_000);
@@ -459,7 +468,7 @@ journey("Stop works during each wait, and ends the subtasks with no write", asyn
 
   // While a subtask asks the user.
   scripts.stopask = askThenFinish;
-  outer.onWork = (event) => [subtask(event.run_id, "stopask")];
+  outer.onWork = (event) => [subtask(event, "stopask")];
   const asking = await dispatch("stopparent");
   const askingChild = await child(asking);
   await parks(askingChild, "input");
@@ -469,7 +478,7 @@ journey("Stop works during each wait, and ends the subtasks with no write", asyn
 
   // While a subtask awaits approval.
   scripts.stopwrite = createThenFinish();
-  outer.onWork = (event) => [subtask(event.run_id, "stopwrite")];
+  outer.onWork = (event) => [subtask(event, "stopwrite")];
   const writing = await dispatch("stopparent");
   const writingChild = await child(writing);
   await parks(writingChild, "approval");
@@ -481,7 +490,7 @@ journey("Stop works during each wait, and ends the subtasks with no write", asyn
   // While a subtask awaits budget.
   scripts.stopbudget = (outputs) => (outputs.length ? finish("late", outputs) : { name: "calendar_read", args: { start: "2026-11-02T00:00:00-08:00", end: "2026-11-03T00:00:00-08:00" } });
   costs.stopbudget = 1.1;
-  outer.onWork = (event) => [subtask(event.run_id, "stopbudget")];
+  outer.onWork = (event) => [subtask(event, "stopbudget")];
   const costly = await dispatch("stopparent");
   const costlyChild = await child(costly);
   await parks(costlyChild, "budget");
@@ -493,7 +502,7 @@ journey("Stop works during each wait, and ends the subtasks with no write", asyn
 journey("stopping only a subtask returns that to the parent, which then finishes", async () => {
   scripts.onlyparent = asks();
   scripts.onlychild = askThenFinish;
-  outer.onWork = (event) => [subtask(event.run_id, "onlychild")];
+  outer.onWork = (event) => [subtask(event, "onlychild")];
   const id = await dispatch("onlyparent");
   const sub = await child(id);
   await parks(sub, "input");
@@ -509,7 +518,7 @@ journey("stopping only a subtask returns that to the parent, which then finishes
 journey("a correction closes the wait and stops the subtask, and its late result can't reach the parent", async () => {
   scripts.fixparent = (outputs, users) => (users.join().includes("use Thursday") ? finish("Using Thursday.", outputs) : request());
   scripts.fixchild = async (outputs) => { await held2(); return finish("too late", outputs); };
-  outer.onWork = (event) => [subtask(event.run_id, "fixchild")];
+  outer.onWork = (event) => [subtask(event, "fixchild")];
   const id = await dispatch("fixparent");
   const sub = await child(id);
   await delay(1_000);
@@ -527,7 +536,7 @@ journey("a correction closes the wait and stops the subtask, and its late result
 journey("a parent whose workflow ends is failed by recovery, and its subtask stops", async () => {
   scripts.deadparent = asks();
   scripts.deadchild = askThenFinish;
-  outer.onWork = (event) => [subtask(event.run_id, "deadchild")];
+  outer.onWork = (event) => [subtask(event, "deadchild")];
   const id = await dispatch("deadparent");
   const sub = await child(id);
   await parks(sub, "input");
@@ -542,7 +551,7 @@ journey("a parent whose workflow ends is failed by recovery, and its subtask sto
 journey("a repeated delivery changes nothing, and a worker crash around delivery still resumes the parent once", async () => {
   scripts.crashparent = async (outputs) => (outputs.length ? finish(`Got ${outputs.filter((item) => item.subtasks).length} results`, outputs) : request());
   scripts.crashchild = async (outputs) => { await held2(); return finish("from the subtask", outputs); };
-  outer.onWork = (event) => [subtask(event.run_id, "crashchild")];
+  outer.onWork = (event) => [subtask(event, "crashchild")];
   const id = await dispatch("crashparent");
   const sub = await child(id);
   await delay(1_000);
@@ -566,7 +575,7 @@ journey("a repeated delivery changes nothing, and a worker crash around delivery
 journey("a subtask whose worker dies takes the parent with it, because its cost is unknown", async () => {
   scripts.unknownparent = asks();
   scripts.unknownchild = async () => { await held2(); return { name: "complete", args: { answer: "never", evidence: [], unmet: [] } }; };
-  outer.onWork = (event) => [subtask(event.run_id, "unknownchild")];
+  outer.onWork = (event) => [subtask(event, "unknownchild")];
   const id = await dispatch("unknownparent");
   const sub = await child(id);
   await delay(1_000);
@@ -585,7 +594,7 @@ journey("a pause can't lose a result, and Stop still works during one", async ()
   // The subtask saves its outcome during the pause.
   scripts.pauseparent = asks();
   scripts.pausechild = async (outputs) => { await setPaused(true); return finish("during the pause", outputs); };
-  outer.onWork = (event) => [subtask(event.run_id, "pausechild")];
+  outer.onWork = (event) => [subtask(event, "pausechild")];
   const id = await dispatch("pauseparent");
   const sub = await child(id);
   await until(() => task(sub), terminal, "subtask to end during the pause");
@@ -605,7 +614,7 @@ journey("a pause can't lose a result, and Stop still works during one", async ()
   // Stop during a pause reaches the subtask, without starting any work.
   scripts.pausestop = asks();
   scripts.pausestopchild = askThenFinish;
-  outer.onWork = (event) => [subtask(event.run_id, "pausestopchild")];
+  outer.onWork = (event) => [subtask(event, "pausestopchild")];
   const parent = await dispatch("pausestop");
   const stopping = await child(parent);
   await parks(stopping, "input");
@@ -630,7 +639,7 @@ journey("every write in a subtask needs approval, on the subtask's own question"
   for (const [name, call] of Object.entries(tools)) {
     scripts[`${name}parent`] = asks();
     scripts[name] = (outputs) => (outputs.length ? finish(`Outcome ${outputs.at(-1).outcome}`, outputs) : call);
-    outer.onWork = (event) => [subtask(event.run_id, name)];
+    outer.onWork = (event) => [subtask(event, name)];
     const id = await dispatch(`${name}parent`);
     const sub = await child(id);
     const before = google.writes.length;
@@ -657,7 +666,7 @@ journey("a parent limited to reads can't get a write done by asking", async () =
     return finish("Finished.", outputs.filter((item) => item.operation_id));
   };
   scripts.limitedchild = (outputs) => (outputs.length ? finish(`Outcome ${outputs.at(-1).outcome}`, outputs, ["Couldn't write."]) : { name: "calendar_create", args: lunch });
-  outer.onWork = (event) => [subtask(event.run_id, "limitedchild")];
+  outer.onWork = (event) => [subtask(event, "limitedchild")];
   const id = await dispatch("limited");
   const sub = await child(id);
   const run = await until(() => task(sub), (value) => value?.read_only && (value.question || terminal(value)), "read-only subtask");
@@ -670,7 +679,7 @@ journey("a parent limited to reads can't get a write done by asking", async () =
 journey("a subtask can't ask for its own subtask, and a long answer reaches the parent clipped", async () => {
   scripts.nested = asks();
   scripts.nestedchild = (outputs) => (outputs.length ? finish("x".repeat(20_000), []) : request());
-  outer.onWork = (event) => [subtask(event.run_id, "nestedchild")];
+  outer.onWork = (event) => [subtask(event, "nestedchild")];
   const id = await dispatch("nested");
   const sub = await child(id);
   const finishedSub = await finished(sub);
@@ -681,4 +690,55 @@ journey("a subtask can't ask for its own subtask, and a long answer reaches the 
   const result = inner.lastOutputs.find((item) => item.subtasks);
   expect(result.subtasks[0].answer_shortened).toBe(true);
   expect(result.subtasks[0].answer.length).toBeLessThan(9_000);
+}, 180_000);
+
+journey("a dispatch that arrives late can't attach to a newer request", async () => {
+  scripts.lateparent = (outputs) => {
+    if (!outputs.length) return request({ request: "first" });
+    if (outputs.length === 1) return request({ request: "second" });
+    return finish(`Results: ${outputs.map((item) => item.answer ?? "subtask").join(", ")}`, []);
+  };
+  scripts.latechild = answers("for the first request");
+  let turns = 0;
+  let resume;
+  const inFlight = new Promise((done) => { resume = done; });
+  let entered;
+  const entering = new Promise((done) => { entered = done; });
+  outer.onWork = async (event) => {
+    if (turns++ === 0) {
+      entered();
+      await inFlight;
+      return [subtask(event, "latechild")];
+    }
+    return [{ name: "answer", arguments: { run_id: event.run_id, question_id: event.question_id, text: "second answer" } }];
+  };
+  const id = await dispatch("lateparent");
+  await entering;
+  // Austin answers the first request from the panel while that outer turn is still running.
+  const first = await parks(id, "work");
+  await command("answer", id, first.question, "first answer");
+  await until(() => task(id), (run) => run?.question?.kind === "work" && run.question.id !== first.question.id && run.incorporated === run.position, "the second request");
+  resume();
+  const done = await finished(id);
+  expect(done.status, done.error).toBe("completed");
+  expect(done.subtasks).toBeUndefined();
+  expect(done.result).toContain("second answer");
+  expect(counts.latechild ?? 0).toBe(0);
+}, 180_000);
+
+journey("a subtask that ran shell and ended with unmet items doesn't block the parent's own tools", async () => {
+  scripts.shellparent = (outputs) => {
+    if (!outputs.length) return request();
+    if (outputs.length === 1) return { name: "shell", args: { command: "echo parent" } };
+    return finish("Finished.", outputs);
+  };
+  scripts.shellchild = (outputs) => (outputs.length ? finish("Partly done.", outputs, ["One part didn't finish."]) : { name: "shell", args: { command: "echo child" } });
+  outer.onWork = (event) => [subtask(event, "shellchild")];
+  const id = await dispatch("shellparent");
+  const done = await finished(id);
+  expect(done.status, done.error).toBe("completed");
+  const shell = inner.lastOutputs.find((item) => item.exit_code !== undefined || item.effect_class === "unknown" && item.subtasks === undefined);
+  expect(shell.error).toBeUndefined();
+  expect(shell.stdout).toBe("ran");
+  expect((await task(id)).question).toBeUndefined();
 }, 180_000);

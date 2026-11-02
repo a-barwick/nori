@@ -93,7 +93,10 @@ async function seed(title, start, end) {
   created.push(event.id);
   return event;
 }
-const onCalendar = async () => (await google("GET", `/events?singleEvents=true&timeMin=2026-11-01T00:00:00Z&timeMax=2026-12-01T00:00:00Z`)).items;
+const onCalendar = async () => {
+  const start = new Date(Date.now() - 86_400_000).toISOString(), end = new Date(Date.now() + 30 * 86_400_000).toISOString();
+  return (await google("GET", `/events?singleEvents=true&timeMin=${start}&timeMax=${end}`)).items;
+};
 const instant = (value) => new Date(value).getTime();
 async function clearCalendar() {
   for (const event of await onCalendar()) await google("DELETE", `/events/${event.id}`);
@@ -176,8 +179,8 @@ beforeAll(async () => {
   if (!control.ok) throw new Error("control document could not be set");
   api = start("nori-local", { ...shared, PORT: String(port) });
   await until(() => fetch(`${address}/healthz`), (response) => response.ok, "API");
-  // The scenarios' default clock is Friday November 6, 2026 at 09:00 Los Angeles.
-  worker = start("nori-worker", { ...shared, PORT: "", NORI_E2E_GOOGLE_URL: relayURL, NORI_LOCAL_COMPUTER_URL: `http://127.0.0.1:${guest.address().port}`, GOOGLE_CALENDAR_WRITE_ID: calendar, NORI_E2E_NOW: "2026-11-06T09:00:00-08:00" });
+  // These scenarios read real forecasts, so they run on the real date.
+  worker = start("nori-worker", { ...shared, PORT: "", NORI_E2E_GOOGLE_URL: relayURL, NORI_LOCAL_COMPUTER_URL: `http://127.0.0.1:${guest.address().port}`, GOOGLE_CALENDAR_WRITE_ID: calendar });
   await until(() => cli("worker", "deployment", "describe-version", "--deployment-name", deployment, "--build-id", build), () => true, "worker registration");
   cli("worker", "deployment", "set-current-version", "--deployment-name", deployment, "--build-id", build, "--yes");
   await clearCalendar();
@@ -195,6 +198,13 @@ afterAll(async () => {
 
 beforeEach(async () => { if (live) await clearCalendar(); });
 
+// The next Saturday and Friday in Los Angeles, as local dates with the zone's offset.
+function upcoming(weekday, time) {
+  const now = new Date();
+  const day = new Date(now.getTime() + (((weekday - now.getUTCDay() + 7) % 7 || 7) * 86_400_000));
+  const offset = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" }).formatToParts(day).find((part) => part.type === "timeZoneName").value.replace("GMT", "");
+  return `${day.toISOString().slice(0, 10)}T${time}:00${offset}`;
+}
 const known7 = async () => new Set((await session()).runs.map((run) => run.id));
 // The newest top-level task, waiting for nothing from its subtasks.
 async function newTask(before) {
@@ -208,7 +218,7 @@ const family = async (id) => { const { runs } = await session(); return runs.fil
 function show(label, value) { console.log(`\n--- ${label}: ${JSON.stringify(value).slice(0, 1500)}`); }
 
 journey("107: a lookup outside the task comes back as the parent's result, with no outer turn for delivery", async () => {
-  await seed("Picnic at Lake Merritt, Oakland", "2026-11-07T14:00:00-08:00", "2026-11-07T16:00:00-08:00");
+  await seed("Picnic at Lake Merritt, Oakland", upcoming(6, "14:00"), upcoming(6, "16:00"));
   const before = await known7();
   await say("Check my calendar and tell me if Saturday's picnic still makes sense. Keep that task to my calendar. If it needs anything else, have that done separately and give me one answer.");
   const id = await newTask(before);
@@ -225,4 +235,88 @@ journey("107: a lookup outside the task comes back as the parent's result, with 
   const usage = (await session()).usage.filter((item) => item.provider === "outer" && item.input_id !== "nori-introduction");
   expect(usage.length).toBeLessThanOrEqual(3);
   await report("107");
+}, 900_000);
+
+journey("108: the outer loop settles what it can from the conversation, asks about the rest, and the same parent finishes", async () => {
+  await seed("Dinner", upcoming(6, "19:00"), upcoming(6, "21:00"));
+  await say("Mom lands at 6:40 on Saturday.");
+  const before = await known7();
+  await say("Can I make Saturday dinner after picking up Mom? Just use my calendar in that task, and get anything else some other way.");
+  const id = await newTask(before);
+  const kinds = [];
+  let replied = false;
+  const done = await until(async () => {
+    const run = await get(id);
+    if (run?.question && !kinds.includes(run.question.id)) kinds.push(run.question.id);
+    const { conversation } = await session();
+    // Answer once, when Nori has asked about the restaurant.
+    if (!replied && run?.question && !run.question.resolved_by && !conversation.pending && !conversation.processing) {
+      const last = (await session()).messages.at(-1)?.text ?? "";
+      if (/restaurant|where|which|location|address/i.test(last) || /restaurant|where|location|address/i.test(run.question.text)) {
+        replied = true;
+        await say("Nopa, on Divisadero");
+      }
+    }
+    return run;
+  }, terminal, "parent to end", 400_000);
+  const value = await session();
+  const started = value.runs.filter((run) => !before.has(run.id));
+  show("108", { status: done.status, result: done.result, error: done.error, questions: kinds, replied, tasks: started.map((run) => ({ parent: run.parent_id, request: run.request, status: run.status })) });
+  expect(done.status === "completed" || done.status === "failed", done.error).toBe(true);
+  expect(started.filter((run) => !run.parent_id)).toHaveLength(1);
+  expect(kinds.some((question) => question.includes("-work-"))).toBe(true);
+  await report("108");
+}, 900_000);
+
+const CAKE = "Order cake";
+journey("109: a subtask's writes wait for approval, and Stop ends the whole family", async () => {
+  // First run: approve each write.
+  const startedAt = Date.now();
+  const before = await known7();
+  await say("See what's on Friday. Only read in that task, and separately add 'Order cake' at 3 p.m. and email me that it's on there.");
+  const id = await newTask(before);
+  const approvals = [];
+  const done = await until(async () => {
+    const value = await session();
+    for (const run of value.runs.filter((item) => item.parent_id === id)) {
+      if (run.question?.kind === "approval" && !run.question.resolved_by && run.incorporated === run.position && !approvals.includes(run.question.id)) {
+        expect((await get(id)).status).toBe("running");
+        approvals.push(run.question.id);
+        show("109 approval", run.question.text);
+        await post("command", { id: crypto.randomUUID(), run_id: run.id, kind: "approve", question_id: run.question.id }, 202);
+      }
+    }
+    return value.runs.find((run) => run.id === id);
+  }, terminal, "parent after approvals", 500_000);
+  const children = await family(id);
+  show("109 approve run", { status: done.status, result: done.result, error: done.error, approvals, children: children.map((run) => ({ request: run.request, status: run.status, spent: run.spent_usd })) });
+  expect(approvals.length).toBeGreaterThanOrEqual(2);
+  expect(children.every((run) => run.parent_id === id)).toBe(true);
+  const events = (await onCalendar()).filter((item) => /cake/i.test(item.summary));
+  expect(events).toHaveLength(1);
+  // The metadata scope can't search, so read the newest sent mail's headers.
+  const gmail = "https://gmail.googleapis.com/gmail/v1/users/me";
+  const { messages = [] } = await google("GET", "/messages?labelIds=SENT&maxResults=5", undefined, gmail);
+  const heads = await Promise.all(messages.map((item) => google("GET", `/messages/${item.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=Date`, undefined, gmail)));
+  const recent = heads.filter((item) => Number(item.internalDate) >= startedAt).map((item) => Object.fromEntries(item.payload.headers.map((header) => [header.name, header.value])));
+  show("109 mail", recent);
+  expect(recent).toHaveLength(1);
+  await report("109 approve");
+  await clearCalendar();
+
+  // Second run: stop at the first approval.
+  const second = await known7();
+  await say("See what's on Friday. Only read in that task, and separately add 'Order cake' at 3 p.m. and email me that it's on there.");
+  const parent = await newTask(second);
+  await until(async () => (await family(parent)).some((run) => run.question?.kind === "approval" && !run.question.resolved_by), Boolean, "a subtask's approval", 300_000);
+  await say("stop all of that");
+  const stopped = await ended(parent);
+  const stoppedChildren = await family(parent);
+  for (const run of stoppedChildren) await ended(run.id);
+  show("109 stop run", { status: stopped.status, children: (await family(parent)).map((run) => run.status) });
+  expect(stopped.status).toBe("cancelled");
+  expect((await family(parent)).every((run) => run.status === "cancelled" || run.status === "completed")).toBe(true);
+  expect((await onCalendar()).filter((item) => /cake/i.test(item.summary))).toHaveLength(0);
+  expect(Date.now()).toBeGreaterThan(startedAt);
+  await report("109 stop");
 }, 900_000);

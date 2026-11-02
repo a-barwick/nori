@@ -22,13 +22,14 @@ func questionTool(q *state.Question) string {
 }
 
 // unresolvedWrite reports a write or shell operation whose effect isn't known. A provider's refusal of a write is a
-// definite answer, so it doesn't count.
+// definite answer, so it doesn't count, and neither does a request_work whose subtask ended without finishing: that
+// outcome is saved and final, and a write the subtask left unresolved makes it uncertain instead.
 func unresolvedWrite(op state.OperationRecord) bool {
 	if op.EffectClass == "read" || op.EffectClass == "control" {
 		return false
 	}
 	return op.Outcome == "uncertain" || op.Outcome == "pending" || op.Outcome == "attempted" ||
-		(op.Outcome == "failed" && agent.WriteEffect(op.Name) == "")
+		(op.Outcome == "failed" && agent.WriteEffect(op.Name) == "" && op.Name != "request_work")
 }
 
 // workQuestion parks the parent on its request. A parent that can't do a write itself can't get one done by asking, so

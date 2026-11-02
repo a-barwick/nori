@@ -30,6 +30,8 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 			var args struct {
 				Request string  `json:"request"`
 				For     *string `json:"for"`
+				// The question it settles, so a late dispatch can't attach to a newer request.
+				QuestionID *string `json:"question_id"`
 			}
 			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
 				return nil, err
@@ -40,7 +42,10 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				if err != nil || id.String() != *args.For {
 					return nil, fmt.Errorf("task command requires a canonical task UUID")
 				}
-				command.ParentID = *args.For
+				if args.QuestionID == nil || *args.QuestionID == "" || len(*args.QuestionID) > 256 {
+					return nil, fmt.Errorf("a subtask needs the question ID it settles")
+				}
+				command.ParentID, command.QuestionID = *args.For, *args.QuestionID
 			}
 		case "steer":
 			var args struct {
@@ -165,7 +170,7 @@ func workCommandsAllowed(commands []state.Command, requests []WorkRequest) bool 
 		for _, request := range requests {
 			switch command.Kind {
 			case state.CommandStart:
-				allowed = allowed || command.ParentID == request.TaskID
+				allowed = allowed || (command.ParentID == request.TaskID && command.QuestionID == request.QuestionID)
 			case state.CommandAnswer:
 				allowed = allowed || (command.RunID == request.TaskID && command.QuestionID == request.QuestionID)
 			}
