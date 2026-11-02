@@ -140,6 +140,8 @@ async function conversation(id) {
     const spent = tasks.reduce((sum, run) => sum + (run.spent_usd ?? 0), 0);
     summary.push({ id, tasks: tasks.map((run) => run.status), questions: state.questions, spent });
     console.log(`=== ${id}: tasks ${JSON.stringify(tasks.map((run) => run.status))}, questions ${state.questions}, task model spend $${spent.toFixed(4)}`);
+    // A task this scenario left open would hold up the next one. Only this scenario's own tasks are stopped.
+    for (const run of tasks.filter((item) => item.status === "running")) await post("command", { id: crypto.randomUUID(), run_id: run.id, kind: "stop" }, 202);
     for (const run of tasks) expect(run.status, `${id} task: ${run.error ?? ""}`).toBe("completed");
     expect(state.questions, `${id} asked questions it shouldn't have`).toBe(questions);
     const assistant = now.messages.filter((message) => message.role === "assistant" && new Date(message.created_at) > new Date(at)).map((message) => message.id);
