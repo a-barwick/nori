@@ -71,7 +71,9 @@ type Run struct {
 	ParentID string `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
 	ReadOnly bool   `json:"read_only,omitempty" firestore:"read_only,omitempty"`
 	// Uploads are the files this task was given, and the only ones it can read.
-	Uploads      []Attachment  `json:"uploads,omitempty" firestore:"uploads,omitempty"`
+	Uploads []Attachment `json:"uploads,omitempty" firestore:"uploads,omitempty"`
+	// Revises is the saved result this task was started to change.
+	Revises      string        `json:"revises,omitempty" firestore:"revises,omitempty"`
 	Subtasks     []SubtaskLink `json:"subtasks,omitempty" firestore:"subtasks,omitempty"`
 	SubtaskSpent float64       `json:"subtask_spent_usd,omitempty" firestore:"subtask_spent_usd,omitempty"`
 
@@ -236,6 +238,8 @@ type PublishRequest struct {
 	Spent float64
 	// BypassRouting publishes without waiting for pending user input to be routed.
 	BypassRouting bool
+	// Answer is set when the task proposed an answer, which is then saved as a result.
+	Answer *ResultDraft
 }
 
 // GatesOnRouting reports whether publication must wait for pending user input to be routed. A stop, an unknown cost

@@ -50,6 +50,8 @@ type ConversationAction struct {
 }
 
 type ConversationAttempt struct {
+	// ShowResults are saved results the outer model chose to show in its reply.
+	ShowResults      []string             `firestore:"show_results,omitempty"`
 	StructuredReply  bool                 `firestore:"structured_reply,omitempty"`
 	ID               string               `firestore:"id"`
 	TurnID           string               `firestore:"turn_id"`

@@ -20,6 +20,10 @@ type RunStore interface {
 	// Artifact records that a run owns an artifact. Its bytes are written with PutPNG.
 	Artifact(ctx context.Context, runID string, artifact Artifact) error
 	GetUpload(ctx context.Context, id string) (Upload, error)
+	SaveResult(ctx context.Context, result Result) (Result, error)
+	GetResult(ctx context.Context, id string) (Result, error)
+	RecentResults(ctx context.Context, limit int) ([]Result, error)
+	RecentRuns(ctx context.Context, limit int) ([]Run, error)
 }
 
 // Artifacts writes and reads private PNG artifacts by run and artifact ID.
@@ -117,6 +121,7 @@ type Database interface {
 type ConversationDatabase interface {
 	AcceptConversationInput(ctx context.Context, id, text string, attachments []string) error
 	CreateUpload(ctx context.Context, upload Upload) (Upload, error)
+	MarkDelivered(ctx context.Context, ids []string) error
 	AcquireConversation(ctx context.Context, owner, turnID string) (ConversationControl, *ConversationTurn, error)
 	CheckConversation(ctx context.Context, f ConversationFence) (stale bool, err error)
 	ConversationCommand(ctx context.Context, id string) (*CommandReceipt, error)

@@ -18,11 +18,11 @@ const (
 	// MaxUploadBytes is the size limit for one file. Agent Runtime accepted 16 MiB and refused 33 MiB in a probe.
 	MaxUploadBytes = 10 << 20
 	// MaxAttachments limits the files on one message.
-	MaxAttachments = 5
+	MaxAttachments = 10
 )
 
 // ErrUploadType refuses a file whose bytes aren't an image, PDF or CSV, or don't match what the client declared.
-var ErrUploadType = errors.New("only PNG, JPEG or WebP images, PDFs and CSV files can be attached")
+var ErrUploadType = errors.New("Only PNG, JPEG or WebP images, PDFs and CSV files can be attached")
 
 // ErrAttachmentMissing refuses a message that names an upload with no saved record.
 var ErrAttachmentMissing = errors.New("an attached file wasn't uploaded")

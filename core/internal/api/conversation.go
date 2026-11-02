@@ -88,7 +88,7 @@ func (s *server) turn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(input.Attachments) > state.MaxAttachments {
-		writeJSON(w, 400, map[string]string{"error": "A message can have at most 5 attached files."})
+		writeJSON(w, 400, map[string]string{"error": "A message can have at most 10 attached files."})
 		return
 	}
 	for _, id := range input.Attachments {

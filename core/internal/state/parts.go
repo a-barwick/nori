@@ -11,6 +11,7 @@ const (
 	PartAttachment = "attachment"
 	PartArtifact   = "artifact"
 	PartImage      = "image"
+	PartLink       = "link"
 )
 
 // Part is one piece of a message. Clients read parts and never parse model output.
@@ -26,6 +27,7 @@ type Part struct {
 	Name      string `json:"name,omitempty" firestore:"name,omitempty"`
 	MediaType string `json:"media_type,omitempty" firestore:"media_type,omitempty"`
 	Size      int64  `json:"size,omitempty" firestore:"size,omitempty"`
+	URL       string `json:"url,omitempty" firestore:"url,omitempty"`
 }
 
 var (

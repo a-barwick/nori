@@ -58,12 +58,16 @@ async function modelHandler(req, res) {
   const users = items.filter((item) => item.role === "user").map((item) => typeof item.content === "string" ? item.content : item.content?.map((part) => part.text).join("")).filter(Boolean);
   const outputs = items.filter((item) => item.type === "function_call_output").map((item) => JSON.parse(item.output));
   const name = [...users.join("\n").matchAll(/script:(\w+)/g)].at(-1)?.[1];
+  if (gates.inner) await gates.inner.promise;
   const call = await scripts[name]?.(outputs, users) ?? { name: "complete", args: { answer: "No script.", evidence: [], unmet: [] } };
   reply(res, 200, {
     status: "completed", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2, cost: 0.0001 },
     output: [{ type: "function_call", call_id: `call_${crypto.randomUUID()}`, name: call.name, arguments: JSON.stringify(call.args) }],
   });
 }
+
+// Scripted inner model holds:
+const gates = { inner: null, outer: null };
 
 // Scripted outer model: "task: ..." dispatches. A turn with no action returns plain text.
 const outer = { calls: 0, requests: [], text: "Noted." };
@@ -72,9 +76,11 @@ async function outerHandler(req, res) {
   outer.calls++;
   outer.requests.push(request);
   const last = request.messages.findLast((message) => message.role === "user")?.content ?? "";
+  if (gates.outer && !request.response_format) { gates.outer.entered++; await gates.outer.promise; }
   const variants = request.response_format?.json_schema.schema.properties.actions.items.anyOf;
   let content = "Noted.";
   if (variants) {
+    outer.lastContext = JSON.stringify(request.messages);
     const actions = outer.onUser?.(String(last), request) ?? (String(last).includes("task:") ? [{ name: "dispatch", arguments: { request: String(last), for: null, question_id: null } }] : []);
     content = JSON.stringify({ actions, text: actions.length ? "" : outer.text });
   }
@@ -101,11 +107,34 @@ async function guestHandler(req, res) {
   }
   if (req.url === "/exec") {
     guest.commands.push(sent.command);
+    const written = sent.command.match(/^write (\S+)$/)?.[1];
+    if (written) guest.files.set(`${sent.task_id}/${written}`, PDF);
     if (sent.command.includes("hold")) await new Promise((done) => guest.release.push(done));
     return reply(res, 200, { exit_code: 0, stdout: "ran", stderr: "" });
   }
   if (req.url === "/operation") return reply(res, 404, {});
   reply(res, 200, { stopped: true, closed: true });
+}
+
+// Fake Google: enough to send one email and read it back.
+const google = { sent: [], mail: [] };
+async function googleHandler(req, res) {
+  const url = new URL(req.url, "http://fake");
+  if (url.pathname === "/token") return reply(res, 200, { access_token: "fake", token_type: "Bearer", expires_in: 3600 });
+  if (url.pathname.endsWith("/users/me/calendarList")) return reply(res, 200, { items: [{ id: "owner@example.test", summary: "Personal", primary: true, selected: true, timeZone: "America/Los_Angeles" }] });
+  if (url.pathname === "/gmail/v1/users/me/messages/send") {
+    const { raw } = await body(req);
+    const text = Buffer.from(raw, "base64url").toString();
+    google.sent.push(text);
+    const header = (name) => text.match(new RegExp(`^${name}: (.*)$`, "mi"))?.[1]?.trim();
+    const id = `m${google.mail.length + 1}`;
+    google.mail.unshift({ id, labelIds: ["SENT"], payload: { headers: ["X-Nori-Action", "To", "Subject"].map((name) => ({ name, value: header(name) })) } });
+    return reply(res, 200, { id });
+  }
+  if (url.pathname === "/gmail/v1/users/me/messages") return reply(res, 200, { messages: google.mail.map(({ id }) => ({ id })) });
+  const mail = url.pathname.match(/^\/gmail\/v1\/users\/me\/messages\/(.+)$/);
+  if (mail) return reply(res, 200, google.mail.find((item) => item.id === mail[1]));
+  reply(res, 404);
 }
 
 function serve(handler) {
@@ -204,7 +233,7 @@ beforeAll(async () => {
     if (built.status !== 0) throw new Error(`Build ${name} failed: ${built.stderr}`);
   }
   writeFileSync(resolve(directory, "empty.env"), "");
-  const [modelURL, outerURL, guestURL] = await Promise.all([serve(modelHandler), serve(outerHandler), serve(guestHandler)]);
+  const [modelURL, outerURL, guestURL, googleURL] = await Promise.all([serve(modelHandler), serve(outerHandler), serve(guestHandler), serve(googleHandler)]);
   const port = 20000 + Math.floor(Math.random() * 20000);
   address = `http://127.0.0.1:${port}`;
   env = {
@@ -212,6 +241,7 @@ beforeAll(async () => {
     FIRESTORE_EMULATOR_HOST: emulator, NORI_LOCAL_ARTIFACT_DIR: resolve(directory, "artifacts"), PORT: String(port), TEMPORAL_ADDRESS: temporalAddress, TEMPORAL_NAMESPACE: "default", TEMPORAL_LOCAL: "true",
     TEMPORAL_TASK_QUEUE: deployment, TEMPORAL_DEPLOYMENT_NAME: deployment, TEMPORAL_BUILD_ID: build, COMPUTER_ZONE: "invalid-e2e-zone", COMPUTER_INSTANCE: "no-computer-e2e", NORI_EXECUTION_MODE: "temporal",
     OPENAI_API_KEY: "fake", JEV_API_KEY: "fake", OPENROUTER_API_KEY: "fake", NORI_E2E_MODEL_URL: modelURL, NORI_E2E_OPENAI_URL: outerURL, NORI_LOCAL_COMPUTER_URL: guestURL,
+    NORI_E2E_GOOGLE_URL: googleURL, GOOGLE_CALENDAR_CLIENT_ID: "fake", GOOGLE_CALENDAR_CLIENT_SECRET: "fake", GOOGLE_CALENDAR_REFRESH_TOKEN: "fake", GOOGLE_CALENDAR_ACCOUNT: "owner@example.test",
   };
   const control = await fetch(`${documents}/system/control`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: { paused: { booleanValue: false } } }) });
   if (!control.ok) throw new Error("control document could not be set");
@@ -231,6 +261,13 @@ afterAll(async () => {
   if (directory) rmSync(directory, { recursive: true, force: true });
 });
 
+function gate() {
+  let open;
+  const promise = new Promise((done) => { open = done; });
+  return { promise, open, entered: 0 };
+}
+const result = async (id) => (await fetch(`${address}/v1/results/${id}`)).json();
+const dispatchAction = (request, extra = {}) => ({ name: "dispatch", arguments: { request, for: null, question_id: null, attachments: [], revises: null, ...extra } });
 const shell = (command) => ({ name: "shell", args: { command, read_only: false } });
 const seq = (...steps) => (outputs) => steps[outputs.length]?.(outputs) ?? finish("Done.", outputs);
 
@@ -409,3 +446,157 @@ journey("stopping a task while it reads an upload ends it without finishing the 
   for (const go of guest.release.splice(0)) go();
   expect(done.status).toBe("cancelled");
 }, 120_000);
+
+journey("a saved file keeps its facts apart: created, then checked, then reported, then delivered", async () => {
+  scripts.report = seq(() => shell("write report.pdf"), () => ({ name: "result_save", args: { path: "report.pdf", title: "November report" } }));
+  gates.outer = gate();
+  const id = await dispatch("report");
+  await finished(id);
+  await until(() => gates.outer.entered, (count) => count > 0, "the reply to start");
+  const held = (await snapshot()).results.filter((item) => item.run_id === id);
+  const file = held.find((item) => item.kind === "file");
+  const answer = held.find((item) => item.kind === "answer");
+  expect(file).toMatchObject({ title: "November report", version: 1, media_type: "application/pdf" });
+  expect(file.checked_at, "the completion check accepted it").toBeTruthy();
+  expect(file.reported_at, "no reply has been saved yet").toBeUndefined();
+  expect(file.delivered_at).toBeUndefined();
+  expect(answer.text).toBe("Done.");
+  gates.outer.open();
+  gates.outer = null;
+  await settled();
+  const reply = await until(snapshot, (now) => now.messages.some((message) => message.result_ids?.includes(file.id)), "the reply").then((now) => now.messages.find((message) => message.result_ids?.includes(file.id)));
+  expect(reply.parts.find((part) => part.id === file.id)).toMatchObject({ type: "artifact", name: "report.pdf", fallback: expect.stringContaining("Saved file") });
+  const reported = await result(file.id);
+  expect(reported.reported_at).toBeTruthy();
+  expect(reported.message_id).toBe(reply.id);
+  expect(reported.delivered_at, "a saved reply doesn't prove anyone saw it").toBeUndefined();
+  await post("delivered", { ids: [file.id] });
+  const delivered = await result(file.id);
+  expect(delivered.delivered_at).toBeTruthy();
+  await post("delivered", { ids: [file.id] });
+  expect((await result(file.id)).delivered_at, "the first report stands").toBe(delivered.delivered_at);
+  const bytes = await fetch(`${address}/v1/results/${file.id}/file`);
+  expect(Buffer.from(await bytes.arrayBuffer()).equals(PDF)).toBe(true);
+}, 120_000);
+
+journey("restarts between saving and delivery lose nothing and duplicate nothing", async () => {
+  scripts.restart = seq(() => shell("write restart.pdf"), () => ({ name: "result_save", args: { path: "restart.pdf", title: "Survives a restart" } }));
+  gates.inner = gate();
+  const id = await dispatch("restart");
+  await running(id);
+  gates.inner.open();
+  gates.inner = null;
+  const saved = await until(snapshot, (now) => now.results.some((item) => item.run_id === id && item.kind === "file"), "the file to be saved").then((now) => now.results.find((item) => item.run_id === id && item.kind === "file"));
+  // The worker goes down right after the save, and comes back to finish the task.
+  await stop(worker, "SIGKILL");
+  await startWorker();
+  gates.outer = gate();
+  const done = await finished(id);
+  await until(() => gates.outer.entered, (count) => count > 0, "the reply to start");
+  expect((await result(saved.id)).title).toBe("Survives a restart");
+  // The API goes down with the reply unsaved, and the reply is written once after it comes back.
+  await stop(api, "SIGKILL");
+  gates.outer.open();
+  gates.outer = null;
+  api = start("nori-local");
+  await until(() => fetch(`${address}/healthz`), (response) => response.ok, "API");
+  const reply = await until(snapshot, (now) => now.messages.some((message) => message.result_ids?.includes(saved.id)), "the reply after a restart", 120_000);
+  await settled();
+  expect(reply.messages.filter((message) => message.result_ids?.includes(saved.id)).length).toBe(1);
+  const final = await snapshot();
+  expect(final.messages.filter((message) => message.result_ids?.includes(saved.id)).length, "exactly one reply").toBe(1);
+  expect(final.results.find((item) => item.id === saved.id).reported_at).toBeTruthy();
+  expect(done.status === "completed" || done.status === "failed").toBe(true);
+}, 300_000);
+
+journey("a saved result can be shown again without starting a task, and the outer loop can see it", async () => {
+  scripts.research = seq(() => shell("write research.pdf"), () => ({ name: "result_save", args: { path: "research.pdf", title: "Solar research" } }));
+  const id = await dispatch("research");
+  await finished(id);
+  await settled();
+  const file = (await snapshot()).results.find((item) => item.run_id === id && item.kind === "file");
+  const answer = (await snapshot()).results.find((item) => item.run_id === id && item.kind === "answer");
+  const runs = (await snapshot()).runs.length;
+  const before = inner.calls;
+  outer.onUser = () => [{ name: "show_result", arguments: { result_id: file.id } }, { name: "show_result", arguments: { result_id: answer.id } }];
+  await saidTo("show me that research");
+  await settled();
+  outer.onUser = undefined;
+  expect(outer.lastContext).toContain("Solar research");
+  expect(outer.lastContext).toContain("saved_results");
+  const now = await snapshot();
+  const reply = now.messages.at(-1);
+  expect(reply.parts.some((part) => part.id === file.id)).toBe(true);
+  expect(reply.parts.some((part) => part.type === "text" && part.text === "Done.")).toBe(true);
+  expect(now.runs.length, "no new task").toBe(runs);
+  expect(inner.calls).toBe(before);
+}, 120_000);
+
+journey("a revision is a new result linked to the original, which stays as history", async () => {
+  scripts.draft = seq(() => shell("write draft.pdf"), () => ({ name: "result_save", args: { path: "draft.pdf", title: "Draft" } }));
+  const first = await dispatch("draft");
+  await finished(first);
+  await settled();
+  const original = (await snapshot()).results.find((item) => item.run_id === first && item.kind === "file");
+  scripts.revise = (outputs, users) => {
+    const asked = users.join("\n").match(/revises saved result ([0-9a-f-]{36})/)?.[1];
+    if (outputs.length === 0) return { name: "result_read", args: { result_id: asked } };
+    if (outputs.length === 1) return { name: "result_open", args: { result_id: asked } };
+    if (outputs.length === 2) return shell("write draft-v2.pdf-x");
+    if (outputs.length === 3) return { name: "result_save", args: { path: "draft-v2.pdf-x", title: "Draft for Thursday" } };
+    return finish("Revised for Thursday.", outputs);
+  };
+  outer.onUser = () => [dispatchAction("script:revise change that draft for Thursday", { revises: original.id })];
+  const runs = new Set((await snapshot()).runs.map((run) => run.id));
+  await saidTo("change that draft for Thursday");
+  const value = await until(snapshot, (now) => now.runs.some((run) => !runs.has(run.id)), "the revision task");
+  outer.onUser = undefined;
+  const second = value.runs.find((run) => !runs.has(run.id)).id;
+  const done = await finished(second);
+  expect(done.status, done.error).toBe("completed");
+  await settled();
+  expect(guest.files.has(`${second}/uploads/${original.id.slice(0, 8)}-draft.pdf`), "the revision started from the original").toBe(true);
+  const revised = (await snapshot()).results.find((item) => item.run_id === second && item.kind === "file");
+  expect(revised).toMatchObject({ revises: original.id, root_id: original.root_id, version: 2 });
+  const old = await result(original.id);
+  expect(old.superseded_by).toBe(revised.id);
+  expect(old.title).toBe("Draft");
+  expect((await fetch(`${address}/v1/results/${original.id}/file`)).status, "the old version still opens").toBe(200);
+}, 180_000);
+
+journey("older tasks with no saved result stay readable and can be found", async () => {
+  const old = crypto.randomUUID();
+  const when = new Date(Date.now() - 86_400_000).toISOString();
+  const fields = { id: { stringValue: old }, request: { stringValue: "What happened with Tom's invoice?" }, status: { stringValue: "completed" }, result: { stringValue: "Tom paid the invoice in full." }, started_at: { timestampValue: when }, finished_at: { timestampValue: when }, revision: { integerValue: "1" }, position: { integerValue: "1" }, incorporated: { integerValue: "1" } };
+  const saved = await fetch(`${documents}/owners/austinbarwickdavis@gmail.com/runs/${old}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields }) });
+  expect(saved.ok).toBe(true);
+  expect((await snapshot()).runs.some((run) => run.id === old), "still in the snapshot").toBe(true);
+  scripts.tom = (outputs) => outputs.length ? finish(JSON.stringify(outputs[0].results), outputs) : { name: "results_find", args: { query: "Tom invoice" } };
+  const id = await dispatch("tom");
+  const done = await finished(id);
+  expect(done.status, done.error).toBe("completed");
+  expect(done.result).toContain(old);
+  expect(done.result).toContain("Tom paid the invoice");
+}, 120_000);
+
+journey("changing a draft doesn't keep an earlier approval", async () => {
+  scripts.mail = (outputs, users) => {
+    const body = users.join(" ").includes("friendlier") ? "A friendlier draft." : "The first draft.";
+    if (outputs.at(-1)?.outcome === "submitted" || outputs.at(-1)?.outcome === "confirmed") return finish(`Sent: ${body}`, outputs);
+    return { name: "email_send", args: { to: "tom@example.test", subject: "Report", body } };
+  };
+  const id = await dispatch("mail");
+  const first = await until(() => task(id), (run) => run?.question?.kind === "approval", "the first approval");
+  expect(first.question.text).toContain("The first draft.");
+  await post("command", { id: crypto.randomUUID(), run_id: id, kind: "steer", text: "make it friendlier" }, 202);
+  const second = await until(() => task(id), (run) => run?.question?.kind === "approval" && run.question.id !== first.question.id, "the new approval");
+  expect(second.question.text).toContain("A friendlier draft.");
+  const stale = await fetch(`${address}/api/command`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: crypto.randomUUID(), run_id: id, kind: "approve", question_id: first.question.id }) });
+  expect(stale.status, "the old approval no longer applies").toBe(409);
+  expect(google.sent).toEqual([]);
+  await post("command", { id: crypto.randomUUID(), run_id: id, kind: "approve", question_id: second.question.id }, 202);
+  const done = await finished(id);
+  expect(done.status, done.error).toBe("completed");
+  expect(google.sent.length).toBe(1);
+  expect(google.sent[0]).toContain(Buffer.from("A friendlier draft.").toString("base64"));
+}, 180_000);
