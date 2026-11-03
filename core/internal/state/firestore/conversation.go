@@ -367,7 +367,14 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 		if err != nil {
 			return err
 		}
+		memories, err := d.readMemoryChanges(tx, t.Attempt.Memory)
+		if err != nil {
+			return err
+		}
 		now := time.Now().UTC()
+		if err = d.writeMemoryChanges(tx, t, memories, now); err != nil {
+			return err
+		}
 		c, completed, message := state.CompleteTurn(c, t, text, now)
 		marked, parts := state.ReportResults(results, t.Attempt.ShowResults, message.ID, now)
 		message.Parts = append(message.Parts, parts...)
@@ -419,29 +426,6 @@ func (d *Database) holdAcknowledgements(tx *firestore.Transaction, t state.Conve
 		runs[id] = state.AcknowledgeHolds(run, holds, t, text)
 	}
 	return runs, nil
-}
-
-func (d *Database) ConversationHistory(ctx context.Context) ([]state.ConversationTurn, bool, error) {
-	it := d.conversationTurns().OrderBy("started_at", firestore.Desc).Limit(state.HistoryTurnsExamined).Documents(ctx)
-	defer it.Stop()
-	window := state.NewHistoryWindow()
-	for {
-		doc, err := it.Next()
-		if isDone(err) {
-			break
-		}
-		if err != nil {
-			return nil, false, err
-		}
-		var t state.ConversationTurn
-		if err = doc.DataTo(&t); err != nil {
-			return nil, false, err
-		}
-		if !window.Add(t) {
-			break
-		}
-	}
-	return window.Chronological(), window.Truncated, nil
 }
 
 func (d *Database) ConversationTraces(ctx context.Context) ([]state.ConversationAttempt, error) {

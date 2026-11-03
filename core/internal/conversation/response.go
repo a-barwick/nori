@@ -8,7 +8,7 @@ import (
 
 // Reuse the runtime's command schemas in one strict action-list response.
 // Validated actions enter the same durable admission and replay path.
-func responseFormat(taskIDs []string, requests []WorkRequest) any {
+func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string) any {
 	var tools []struct {
 		Function struct {
 			Name, Description string
@@ -24,6 +24,23 @@ func responseFormat(taskIDs []string, requests []WorkRequest) any {
 	}
 	for _, tool := range tools {
 		if restricted && tool.Function.Name != "dispatch" && tool.Function.Name != "answer" {
+			continue
+		}
+		if tool.Function.Name == "remember" || tool.Function.Name == "forget" {
+			if len(memoryIDs) == 0 && tool.Function.Name == "forget" {
+				continue
+			}
+			properties := tool.Function.Parameters["properties"].(map[string]any)
+			if tool.Function.Name == "forget" {
+				properties["memory_id"].(map[string]any)["enum"] = memoryIDs
+			} else {
+				replaces := []any{nil}
+				for _, id := range memoryIDs {
+					replaces = append(replaces, id)
+				}
+				properties["replaces"].(map[string]any)["enum"] = replaces
+			}
+			variants = append(variants, actionVariant(tool.Function.Name, tool.Function.Description, tool.Function.Parameters))
 			continue
 		}
 		if tool.Function.Name == "dispatch" {
@@ -54,11 +71,7 @@ func responseFormat(taskIDs []string, requests []WorkRequest) any {
 			}
 			properties[key].(map[string]any)["enum"] = taskIDs
 		}
-		variants = append(variants, map[string]any{
-			"type": "object", "description": tool.Function.Description,
-			"properties": map[string]any{"name": map[string]any{"type": "string", "enum": []string{tool.Function.Name}}, "arguments": tool.Function.Parameters},
-			"required":   []string{"name", "arguments"}, "additionalProperties": false,
-		})
+		variants = append(variants, actionVariant(tool.Function.Name, tool.Function.Description, tool.Function.Parameters))
 	}
 	return map[string]any{"type": "json_schema", "json_schema": map[string]any{
 		"name": "nori_response", "strict": true, "schema": map[string]any{
@@ -68,6 +81,14 @@ func responseFormat(taskIDs []string, requests []WorkRequest) any {
 			}, "required": []string{"actions", "text"}, "additionalProperties": false,
 		},
 	}}
+}
+
+func actionVariant(name, description string, parameters map[string]any) map[string]any {
+	return map[string]any{
+		"type": "object", "description": description,
+		"properties": map[string]any{"name": map[string]any{"type": "string", "enum": []string{name}}, "arguments": parameters},
+		"required":   []string{"name", "arguments"}, "additionalProperties": false,
+	}
 }
 
 func decodeResponse(content string) (string, []ToolCall, error) {
@@ -89,6 +110,9 @@ func decodeResponse(content string) (string, []ToolCall, error) {
 		calls = append(calls, call)
 	}
 	commands, _, err := splitShows(calls)
+	if err == nil {
+		commands, _, err = splitMemory(commands)
+	}
 	if err != nil {
 		return "", nil, err
 	}

@@ -10,7 +10,7 @@ import (
 	"nori/internal/state"
 )
 
-const taskContextLimit = 64 << 10
+const taskContextLimit = 12 << 10
 const actionResultLimit = 1 << 10
 
 type TaskContext struct {
@@ -249,7 +249,7 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			}
 		}
 		if longest == nil {
-			return result, fmt.Errorf("task identities and current questions exceed the 64 KiB context limit")
+			return result, fmt.Errorf("task identities and current questions exceed the 12 KiB context limit")
 		}
 		longest.Commands = longest.Commands[1:]
 		longest.CommandHistoryTruncated = true

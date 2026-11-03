@@ -30,6 +30,8 @@ type Request struct {
 	Messages        []transcript.Message
 	Tools           []transcript.Tool
 	MaxOutputTokens int
+	// Reasoning is the reasoning effort to ask for. Empty leaves the provider's default.
+	Reasoning string
 }
 
 // Response is one model turn.

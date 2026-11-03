@@ -16,7 +16,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/observability"
-	"nori/internal/spend"
 	"nori/internal/state"
 )
 
@@ -115,24 +114,17 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			callErr = nil
 		}
 	}()
-	work.Go(func() { historyReady <- r.readAttemptHistory(callCtx) })
 	work.Go(func() { tasksReady <- r.readAttemptTasks(callCtx) })
+	ciStart, e := r.contextStart(callCtx)
+	if e != nil {
+		return e
+	}
+	work.Go(func() { historyReady <- r.readAttemptHistory(callCtx, ciStart) })
 	readStarted := time.Now()
 	visible, next, e := r.tasks.Store.ConversationMessages(callCtx, "")
 	visibleMS = time.Since(readStarted).Milliseconds()
 	if e != nil {
 		return e
-	}
-	ciStart, e := spend.CIContextStart(callCtx)
-	if e != nil {
-		return e
-	}
-	control, _, e := r.tasks.Store.ConversationStatus(callCtx)
-	if e != nil {
-		return e
-	}
-	if control.ContextFrom.After(ciStart) {
-		ciStart = control.ContextFrom
 	}
 	if !ciStart.IsZero() {
 		visible = slices.DeleteFunc(visible, func(m Message) bool { return m.CreatedAt.Before(ciStart) })
@@ -179,13 +171,13 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if historyRead.err != nil {
 		return historyRead.err
 	}
-	history, truncated := historyRead.turns, historyRead.truncated
-	if !ciStart.IsZero() {
-		history = slices.DeleteFunc(history, func(turn state.ConversationTurn) bool { return turn.StartedAt.Before(ciStart) })
-		truncated = true
+	view := historyRead.view
+	view.Truncated = view.Truncated || !ciStart.IsZero()
+	for _, memory := range view.Memories {
+		request.MemoryIDs = append(request.MemoryIDs, memory.ID)
 	}
 	promptStarted := time.Now()
-	messages := buildMessages(t, visible, history, truncated, next)
+	messages := buildMessages(t, visible, view, next)
 	promptMS = time.Since(promptStarted).Milliseconds()
 	taskRead := <-tasksReady
 	tasksMS = taskRead.durationMS
@@ -218,8 +210,15 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		return callCtx.Err()
 	}
 	advice, _ := json.Marshal(map[string]any{"classification_hint": hint, "task_context": taskContext})
-	messages = append(messages, modelMessage(map[string]string{"role": "system", "content": "Advisory context for the current inputs: " + string(advice)}))
-	t.Attempt.ContextBytes += len(messages[len(messages)-1])
+	advisory := modelMessage(map[string]string{"role": "system", "content": "Advisory context for the current inputs: " + string(advice)})
+	// The oldest recent turns give way first when the whole input would pass its budget. Compaction folds them into
+	// the summary.
+	for t.Attempt.ContextBytes+len(advisory) > state.OuterInputBytes && len(view.Turns) > 0 {
+		view.Turns, view.Truncated = view.Turns[1:], true
+		messages = buildMessages(t, visible, view, next)
+	}
+	messages = append(messages, advisory)
+	t.Attempt.ContextBytes += len(advisory)
 	outerStarted := time.Now()
 	request.Messages = messages
 	reply, modelErr := r.model.Respond(callCtx, request)
@@ -229,7 +228,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if e = r.recordUsage(inputID, reply.Usage); e != nil {
 		return e
 	}
-	return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch)
+	return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view.Memories)
 }
 
 func (r *Runner) modelFailureText(ctx context.Context, inputs []state.ConversationInput, modelErr error) string {
@@ -357,16 +356,37 @@ func classifyHistory(visible []Message, t *state.ConversationTurn) []Message {
 	return classificationHistory
 }
 
-func buildMessages(t *state.ConversationTurn, visible []Message, history []state.ConversationTurn, truncated bool, next string) []json.RawMessage {
+// historyView is what the outer model sees of the conversation before the current inputs: saved memories, the summary
+// of older turns, and the recent turns after it.
+type historyView struct {
+	Memories  []state.Memory
+	Summary   *state.ConversationSummary
+	Turns     []state.ConversationTurn
+	Truncated bool
+}
+
+// legacyBytes bounds the task records replayed between turns.
+const legacyBytes = 4 << 10
+
+func buildMessages(t *state.ConversationTurn, visible []Message, view historyView, next string) []json.RawMessage {
 	messages := []json.RawMessage{modelMessage(map[string]string{"role": "system", "content": Instructions})}
+	messages = append(messages, memoryMessage(view.Memories))
+	if view.Summary != nil {
+		messages = append(messages, summaryMessage(*view.Summary))
+	}
+	history, truncated := view.Turns, view.Truncated
 	if next != "" {
 		truncated = true
 	}
+	var since time.Time
+	if view.Summary != nil {
+		since = view.Summary.Through
+	}
 	legacy := []Message{}
-	legacyBytes := 0
+	size := 0
 	for i := len(visible) - 1; i >= 0; i-- {
 		m := visible[i]
-		if m.TurnID != "" {
+		if m.TurnID != "" || !m.CreatedAt.After(since) {
 			continue
 		}
 		if m.RunID != "" && m.ID == m.RunID+"-user" {
@@ -376,11 +396,11 @@ func buildMessages(t *state.ConversationTurn, visible []Message, history []state
 			m.Text = "[Task " + m.RunID + " record; background, not a new request]\n" + m.Text
 		}
 		p := modelMessage(map[string]string{"role": m.Role, "content": m.Text})
-		if legacyBytes+len(p) > 32<<10 {
+		if size+len(p) > legacyBytes {
 			truncated = true
 			break
 		}
-		legacyBytes += len(p)
+		size += len(p)
 		legacy = append(legacy, m)
 	}
 	// Merge older visible records around complete protocol blocks. Appending all
@@ -419,6 +439,7 @@ func buildMessages(t *state.ConversationTurn, visible []Message, history []state
 
 func (r *Runner) finishCall(
 	ctx, callCtx context.Context, f state.ConversationFence, t *state.ConversationTurn, reply Reply, modelErr error, noDispatch bool,
+	memories []state.Memory,
 ) error {
 	if modelErr != nil {
 		if callCtx.Err() != nil {
@@ -443,6 +464,10 @@ func (r *Runner) finishCall(
 		t.Attempt.Reply = string(reply.Message)
 		t.Attempt.StructuredReply = reply.Structured
 		calls, shows, err := splitShows(reply.Calls)
+		var remembered []memoryCall
+		if err == nil {
+			calls, remembered, err = splitMemory(calls)
+		}
 		var commands []state.Command
 		if err == nil {
 			commands, err = commandRequests(calls)
@@ -470,6 +495,10 @@ func (r *Runner) finishCall(
 			fromUser := slices.ContainsFunc(t.Inputs, func(input state.ConversationInput) bool { return input.IsUser() })
 			if fromUser {
 				t.Attempt.ShowResults = shows
+			}
+			// Remember and forget only reach a turn with Austin's message: other turns have no actions at all.
+			if fromUser && len(remembered) > 0 {
+				t.Attempt.Memory, _ = planMemory(t.Attempt.ID, remembered, memories)
 			}
 			// A message's files go with it when it reaches one task. When it reaches several, each dispatch names its own.
 			receivers := 0
@@ -584,8 +613,7 @@ func budgetDenied(attempt state.ConversationAttempt) bool {
 }
 
 type historyResult struct {
-	turns      []state.ConversationTurn
-	truncated  bool
+	view       historyView
 	err        error
 	durationMS int64
 }
@@ -595,10 +623,37 @@ type taskResult struct {
 	durationMS int64
 }
 
-func (r *Runner) readAttemptHistory(ctx context.Context) historyResult {
+// readAttemptHistory reads the memories, the summary that applies to the context starting at from, and the turns after
+// it that fit the recent window.
+func (r *Runner) readAttemptHistory(ctx context.Context, from time.Time) historyResult {
 	started := time.Now()
-	history, truncated, err := r.tasks.Store.ConversationHistory(ctx)
-	return historyResult{history, truncated, err, time.Since(started).Milliseconds()}
+	var view historyView
+	result := func(err error) historyResult { return historyResult{view, err, time.Since(started).Milliseconds()} }
+	memories, err := r.tasks.Store.Memories(ctx)
+	if err != nil {
+		return result(err)
+	}
+	view.Memories = memories
+	summary, err := r.tasks.Store.ConversationSummary(ctx)
+	if err != nil {
+		return result(err)
+	}
+	after := from
+	if summary.Applies(from) {
+		view.Summary, after = &summary, summary.Through
+	}
+	turns, err := r.tasks.Store.ConversationTurnsAfter(ctx, after)
+	if err != nil {
+		return result(err)
+	}
+	window := state.NewHistoryWindow()
+	for _, t := range turns {
+		if !window.Add(t) {
+			break
+		}
+	}
+	view.Turns, view.Truncated = window.Chronological(), window.Truncated
+	return result(nil)
 }
 
 func (r *Runner) readAttemptTasks(ctx context.Context) taskResult {

@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"nori/internal/conversation"
@@ -95,7 +97,7 @@ func conversationBoundary(ctx context.Context, store state.ConversationStore, ta
 	newRunner := func() *conversation.Runner {
 		model := conversation.NewOpenAIModel("fixture-only", "gpt-6.1-sol")
 		model.Client = &http.Client{Transport: localModelTransport{provider.URL}}
-		return conversation.New(model, classifier, &conversation.Tasks{Store: store})
+		return conversation.New(model, classifier, nil, &conversation.Tasks{Store: store})
 	}
 	runner := newRunner()
 	input := conversation.Input{ID: uuid.NewString(), Message: "Hold my question for the existing fixture task."}
@@ -109,7 +111,7 @@ func conversationBoundary(ctx context.Context, store state.ConversationStore, ta
 	if err != nil {
 		return nil, err
 	}
-	history, _, err := store.ConversationHistory(ctx)
+	history, err := completedTurns(ctx, store)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +172,7 @@ func conversationBoundary(ctx context.Context, store state.ConversationStore, ta
 		return nil, err
 	}
 	report["provider omission of required routing cannot publish a false start acknowledgment"] = missing.Traces[0].Status == "error" && missing.Messages[len(missing.Messages)-1].Text != "I started that task." && len(missing.Runs) == len(first.Runs) && calls.Load() == 3
-	history, _, err = store.ConversationHistory(ctx)
+	history, err = completedTurns(ctx, store)
 	if err != nil {
 		return nil, err
 	}
@@ -211,4 +213,12 @@ func (t localModelTransport) RoundTrip(r *http.Request) (*http.Response, error) 
 	}
 	r.URL, r.Host = u, u.Host
 	return http.DefaultTransport.RoundTrip(r)
+}
+
+// completedTurns returns the saved completed turns, oldest first.
+func completedTurns(ctx context.Context, store state.ConversationStore) ([]state.ConversationTurn, error) {
+	turns, err := store.ConversationTurnsAfter(ctx, time.Time{})
+	turns = slices.DeleteFunc(turns, func(t state.ConversationTurn) bool { return t.Status != "completed" })
+	slices.Reverse(turns)
+	return turns, err
 }

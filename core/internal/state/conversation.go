@@ -76,6 +76,8 @@ type ConversationAttempt struct {
 	ContextTruncated bool                 `firestore:"context_truncated"`
 	ContextTurns     int                  `firestore:"context_turns"`
 	ContextBytes     int                  `firestore:"context_bytes"`
+	// Memory holds the remember and forget changes this attempt asked for. They apply when its reply is published.
+	Memory []MemoryChange `firestore:"memory,omitempty"`
 }
 
 type ConversationTurn struct {
@@ -117,10 +119,9 @@ const (
 	RestartQuiet = time.Second
 	// MessagePageSize is the number of messages one history page returns.
 	MessagePageSize = 80
-	// HistoryTurnsExamined, HistoryTurnLimit and HistoryProtocolBytes bound the completed turns replayed to the model.
-	HistoryTurnsExamined = 25
-	HistoryTurnLimit     = 24
-	HistoryProtocolBytes = 192 << 10
+	// HistoryTurnsExamined bounds the turns one history read returns. RecentTurnLimit and RecentTurnBytes bound the
+	// ones replayed to the model.
+	HistoryTurnsExamined = 40
 	// TraceLimit bounds the attempts returned for debugging.
 	TraceLimit = 60
 )
@@ -443,11 +444,11 @@ func MessagePage(newestFirst []Message) (page []Message, next string) {
 	return Chronological(append([]Message{}, newestFirst...)), next
 }
 
-// HistoryWindow collects completed turns from a newest-first read, within the replay bounds.
+// HistoryWindow collects the turns after the summary from a newest-first read, within the recent window's bounds.
 type HistoryWindow struct {
-	Turns     []ConversationTurn
+	Turns []ConversationTurn
+	// Truncated is set when a turn after the summary didn't fit. Compaction folds it into the summary later.
 	Truncated bool
-	examined  int
 	size      int
 }
 
@@ -455,18 +456,11 @@ func NewHistoryWindow() *HistoryWindow { return &HistoryWindow{Turns: []Conversa
 
 // Add takes the next newest turn and reports whether to keep reading.
 func (w *HistoryWindow) Add(t ConversationTurn) bool {
-	w.examined++
-	if w.examined >= HistoryTurnsExamined {
-		w.Truncated = true
-	}
 	if t.Status != "completed" {
 		return true
 	}
-	n := 0
-	for _, p := range t.Protocol {
-		n += len(p)
-	}
-	if w.size+n > HistoryProtocolBytes || len(w.Turns) >= HistoryTurnLimit {
+	n := TurnBytes(t)
+	if w.size+n > RecentTurnBytes || len(w.Turns) >= RecentTurnLimit {
 		w.Truncated = true
 		return false
 	}

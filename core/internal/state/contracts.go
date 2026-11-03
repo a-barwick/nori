@@ -125,7 +125,11 @@ type ConversationDatabase interface {
 	AcquireConversation(ctx context.Context, owner, turnID string) (ConversationControl, *ConversationTurn, error)
 	CheckConversation(ctx context.Context, f ConversationFence) (stale bool, err error)
 	ConversationCommand(ctx context.Context, id string) (*CommandReceipt, error)
-	ConversationHistory(ctx context.Context) (turns []ConversationTurn, truncated bool, err error)
+	// ConversationTurnsAfter returns up to HistoryTurnsExamined turns that started after a time, newest first.
+	ConversationTurnsAfter(ctx context.Context, after time.Time) ([]ConversationTurn, error)
+	ConversationSummary(ctx context.Context) (ConversationSummary, error)
+	SaveConversationSummary(ctx context.Context, s ConversationSummary) error
+	Memories(ctx context.Context) ([]Memory, error)
 	ConversationMessages(ctx context.Context, before string) (messages []Message, next string, err error)
 	ConversationProjection(ctx context.Context) (Session, error)
 	ConversationStatus(ctx context.Context) (ConversationControl, *ConversationTurn, error)
