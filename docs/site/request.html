@@ -47,10 +47,10 @@
         <g class="tn c-store" data-node="tasks"><rect x="6" y="80" width="86" height="44" rx="8"/><text x="49" y="99">Cloud Tasks</text><text class="sub" x="49" y="113">wake queue</text></g>
         <g class="tn frame" data-node="service"><rect x="100" y="70" width="100" height="100" rx="9"/></g>
         <g class="tn c-outer" data-node="outer"><rect x="106" y="76" width="88" height="42" rx="7"/><text x="150" y="102">Outer loop</text></g>
-        <g class="tn c-outer" data-node="runtime"><rect x="106" y="122" width="88" height="42" rx="7"/><text x="150" y="148">Runtime</text></g>
+        <g class="tn c-store" data-node="runtime"><rect x="106" y="122" width="88" height="42" rx="7"/><text x="150" y="148">Runtime</text></g>
         <g class="tn c-store" data-node="firestore"><rect x="6" y="207" width="86" height="44" rx="8"/><text x="49" y="226">Firestore</text><text class="sub" x="49" y="240">saved records</text></g>
         <g class="tn c-inner" data-node="temporal"><rect x="104" y="207" width="92" height="44" rx="8"/><text x="150" y="226">Temporal</text><text class="sub" x="150" y="240">1 workflow per task</text></g>
-        <g class="tn c-store" data-node="models"><rect x="208" y="207" width="86" height="44" rx="8"/><text x="251" y="226">Models</text><text class="sub" x="251" y="240">Jev, Sol, Terra</text></g>
+        <g class="tn c-store" data-node="models"><rect x="208" y="207" width="86" height="44" rx="8"/><text x="251" y="226">Models</text></g>
         <g class="tn c-inner" data-node="inner"><rect x="104" y="297" width="92" height="44" rx="8"/><text x="150" y="316">Inner loop</text><text class="sub" x="150" y="330">one per task</text></g>
         <g class="tn c-computer" data-node="computer"><rect x="104" y="387" width="92" height="44" rx="8"/><text x="150" y="406">Computer</text><text class="sub" x="150" y="420">shell and browser</text></g>
       </svg>
@@ -62,11 +62,11 @@
 <tr><td>“Did you send it?”</td><td>Answer from the receipt, or dispatch a check. Never send it again.</td></tr>
 <tr><td>“Check that appointment again”</td><td>Steer the open task, or start a new task if it has finished.</td></tr>
 <tr><td>“Stop that”</td><td>Resolve which task is meant, and ask if it's unclear. The Stop button already has a target.</td></tr>
-<tr class="designed"><td>Approval button</td><td>Validate the exact pending operation and arguments before resuming.<span class="tag design">designed</span></td></tr>
+<tr><td>Approval button</td><td>Validate the saved action and use approval once. See <a href="authority.html">Approvals and writes</a>.</td></tr>
 <tr><td>The browser closes</td><td>Tasks keep running.</td></tr>
 <tr><td>The backend restarts</td><td>Resume from saved state, and check uncertain outcomes before any retry.</td></tr>
 <tr class="designed"><td>“Remind me tomorrow”</td><td>Save the time and delivery. A saved timer doesn't show the reminder arrived.<span class="tag design">designed</span></td></tr>
 </table></div></section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/classifier.go</code> · <code>core/internal/conversation/jev.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/conversation/openai.go</code> · <code>core/internal/state/conversation.go</code> · <code>core/internal/dispatch/dispatcher.go</code> · <code>core/internal/task/client.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/classifier.go</code> · <code>core/internal/conversation/jev.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/conversation/openai.go</code> · <code>core/internal/state/conversation.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/dispatch/dispatcher.go</code> · <code>core/internal/task/actions.go</code> · <code>core/internal/task/client.go</code> · <code>docs/site/site.js</code></p></details>
 </body>
 </html>

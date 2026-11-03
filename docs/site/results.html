@@ -16,7 +16,7 @@
 <ul class="pts"><li>A stable ID, and its kind: an answer, a file, a screenshot or a link.</li><li>The task that made it, and the instruction revision it answers.</li><li>The saved tool results its answer cites, and anything left unmet.</li><li>A file counts as checked only if the answer cites it.</li></ul></section>
 <section><h2>Finding it later</h2>
 <div class="card">
-<p><span class="say me">Show me that research.</span> <span class="note">The outer loop sees the newest 20 results and shows one without starting a task.</span></p>
+<p><span class="say me">Show me that research.</span> <span class="note">The outer loop sees up to 20 recent results and shows one without starting a task.</span></p>
 <p><span class="say me">Revise it for Thursday.</span> <span class="note">A task saves a new result that links to the original. A task that doesn't finish leaves the original current.</span></p>
 <p><span class="say me">What happened with Tom?</span> <span class="note">A task searches earlier results by word, along with older tasks that have no result record.</span></p>
 </div></section>
@@ -24,7 +24,7 @@
 <div class="card"><div class="flow">
 <div class="node"><b>Web client</b><small>Uploads a file when it's picked. A retry stores one copy.</small></div>
 <div class="arrow">↓ <span class="lbl">bytes, up to 10 MiB</span></div>
-<div class="node"><b>Agent service</b><small>Accepts PNG, JPEG, WebP, PDF or CSV, judged from the bytes.</small></div>
+<div class="node"><b>Agent service</b><small>Checks image and PDF headers, or CSV names and text.</small></div>
 <div class="arrow">↓ <span class="lbl">message with file IDs</span></div>
 <div class="node outer"><b>Outer loop</b><small>Sees a file's name, type and size, and never its contents.</small></div>
 <div class="arrow">↓ <span class="lbl">start, steer or answer command</span></div>
@@ -32,6 +32,7 @@
 <div class="arrow">↓ <span class="lbl">read-only copy</span></div>
 <div class="node computer"><b>Computer</b><small>Shell commands read PDFs and CSVs there, away from the worker's credentials.</small></div>
 </div></div>
+<p>A CSV must have a .csv name and UTF-8 text without NUL bytes. The upload check does not parse its rows.</p>
 <p>Both prompts mark file contents and names as untrusted data. Approvals still guard calendar and email writes. Shell has public internet, and only the prompt's instruction to treat a file as data guards against a hidden instruction there.</p></section>
 <section><h2>Where things live</h2>
 <div class="card"><table class="tall"><tr><th>Thing</th><th>Where</th></tr>

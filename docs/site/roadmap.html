@@ -9,57 +9,34 @@
 </head>
 <body>
 <h1>Roadmap</h1>
-<p class="lede">Twelve milestones, in order. A milestone is done when it works on noribot.chat against its scenarios.</p>
-  <div class="road" id="roadGrid" aria-label="Milestone timeline"></div>
-<ul class="pts"><li>Nori has twelve milestones. Milestone 8's code is built, and its work items stay open until its final scenario run. Milestones 9, 10 and 12 are planned, and the <a href="proactive.html">calendar check</a> from milestone 11 is built.</li><li>We measure progress against 116 written <a href="scenarios.html">conversation scenarios</a>, scoring outcome, context, grounding, control and interaction separately.</li><li>The bars show completed work items. Milestones 3 to 7 are deployed. Milestone 5 has run one production browser task, and milestone 7 ran its scenarios in production on Nov 1, 2026.</li><li>Milestone 4 stopped a finished task when the Jev classifier returned low confidence. Milestone 5 removes that check.</li></ul>
-  <div style="margin-top:14px">
-<div class="card tight"><p class="keyline">What milestone 4 changed</p>
-      <ul class="pts note"><li>Tasks finish with an explicit <code>complete</code> call and a completeness check from the Jev classifier, which milestone 5 removes.</li><li>Tool errors go back to the model.</li><li>Reads can be corrected within limits. Failed tasks and uncertain writes wait for user direction.</li><li>History moved out of workflow payloads.</li></ul></div>
-      </div>
-<section><h2>What each piece adds</h2>
-<div class="card"><table>
-      <tr><th>Capability</th><th>What it adds</th><th>Milestone</th></tr>
-          <tr><td>Connectors and tools</td><td>Web search, shell jobs longer than 45 seconds, screenshots the model can see, and calendar read with a connected account.</td><td>5</td></tr>
-          <tr><td>Action policies</td><td>Browser, search, calendar read and job status tools count as reads. Stopping a job is a control, and shell and job start have unknown effects. That sets their retries.</td><td>4</td></tr>
-          <tr><td>Approvals</td><td>Calendar writes and email sends as separate types, and <a href="authority.html">approvals</a> that cover one exact action.</td><td>6</td></tr>
-          <tr><td>Subtasks</td><td>A task asks for work outside its request and receives the outcome. Cost counts against the parent, and stopping the parent stops its <a href="contract.html#subtasks">subtasks</a>.</td><td>7</td></tr>
-          <tr><td>Task supervision</td><td>The runtime reports crashes with completed and unresolved operations. Milestone 4 waits for user direction instead of re-issuing failed tasks automatically.</td><td>4</td></tr>
-          <tr class="designed"><td>Context</td><td>Each loop starts with a small context and retrieves more when it would change the next decision. Older context is compacted with links back to the originals.</td><td>10</td></tr>
-          <tr class="designed"><td>Memory</td><td>Separate stores for user knowledge, history, active work, procedures and authority. Memories have a source and scope, and the user can inspect, correct and forget them.</td><td>10</td></tr>
-          <tr><td>Results and files</td><td>Saved outputs with stable IDs and revisions, text, images and files in one message, uploads from the user, and an event log with a live stream.</td><td>8</td></tr>
-          <tr class="designed"><td>Schedules and monitors</td><td>One-time reminders, recurring schedules, conditional monitors, and notifications when the app is closed.</td><td>9</td></tr>
-          <tr><td>Proactive assistance</td><td>A <a href="proactive.html">calendar check</a> twice a day offers help with events too close to drive between.</td><td>11</td></tr>
-          <tr class="designed"><td>More clients</td><td>Identity, devices and push for native clients.</td><td>12</td></tr>
-          <tr class="designed"><td>Terraform state backups</td><td>Backups for Terraform state.</td><td>None yet</td></tr>
-    </table></div>
-<div class="card tight designed">
-    <p class="keyline">Planned, with no milestone yet</p>
-    <ul class="pts note" style="margin-bottom:0">
-      <li>Tools that read email and documents.</li>
-      <li>Reusable procedures learned from feedback.</li>
-      <li>Taking over the computer by hand, and concurrent browser access.</li>
-    </ul>
-  </div>
+<p class="lede">Twelve milestones, showing what is built and what remains.</p>
+<div class="card"><table><tr><th>Milestone</th><th>Capability</th><th>Implementation</th></tr>
+<tr><td>1</td><td>Simpler and cheaper</td><td>Built. Pause, idle computer stop, task budgets and a billing alert.</td></tr>
+<tr><td>2</td><td>Conversational home</td><td>Built. Saved chat, message batching and debug traces.</td></tr>
+<tr><td>3</td><td>Many tasks at once</td><td>Built. Independent tasks, separate browser pages, steering and task events.</td></tr>
+<tr><td>4</td><td>Waits and finishing properly</td><td>Built. Durable questions, tool error handling and <a href="completion.html">record checks before completion</a>.</td></tr>
+<tr><td>5</td><td>Real capabilities</td><td>Built. Search, long shell jobs, image reading and calendar reads.</td></tr>
+<tr><td>6</td><td>Approvals and writes</td><td>Built. Exact <a href="authority.html">calendar and email approvals</a>, saved outcomes and provider checks after a lost response.</td></tr>
+<tr><td>7</td><td>Subtasks</td><td>Built. Linked work, a shared budget and Stop across parent and subtasks.</td></tr>
+<tr><td>8</td><td>Results and files</td><td>Built. <a href="results.html">Saved results</a>, revisions, uploads, typed messages and an event stream.</td></tr>
+<tr class="designed"><td>9</td><td>Schedules and monitors</td><td>Planned. Requested reminders, recurring work, monitors and closed-app notifications.</td></tr>
+<tr><td>10</td><td>Memory and context</td><td>Partly built. <a href="memory.html">Remember, correct, forget and conversation summaries</a> work. <span class="designed">Worker retrieval and tool selection remain open.</span></td></tr>
+<tr><td>11</td><td>Proactive assistance</td><td>Built. The <a href="proactive.html">calendar check</a> offers help with events too close to drive between.</td></tr>
+<tr class="designed"><td>12</td><td>More clients</td><td>Planned. Native apps, sign-in, devices, push and shared read positions.</td></tr>
+</table></div>
+<p>Built means implemented. It does not mean every acceptance scenario has passed. The <a href="scenarios.html">116 written conversations</a> define behavior to check.</p>
+<section><h2>What remains</h2>
+<ul class="pts"><li>The billing alert still needs a nonzero provider report and spend-threshold delivery verification.</li><li>Saved memory reaches the outer loop. Tasks receive their own instructions and history, without direct memory retrieval or task-history compaction.</li><li>Every task receives the full tool list. <span class="designed">Capability discovery and selected schema loading remain planned.</span></li><li>The calendar check is a fixed trigger. It doesn't provide user-created reminders, recurrence, monitors or closed-app notifications.</li></ul>
 </section>
-<script>
-const miles = [
-    [1, 'Simpler and cheaper', 5, 6, 'spend alert in review'],
-    [2, 'Conversational home, deployed', 6, 8, 'in progress'],
-    [3, 'Many tasks at once', 7, 13, 'deployed, 6 work items open'],
-    [4, 'Waits and finishing properly', 8, 17, 'deployed'],
-    [5, 'Search, vision and tools', 5, 6, 'deployed, one production task run'],
-    [6, 'Approvals and writes', 4, 9, 'deployed, 5 work items open'],
-    [7, 'Subtasks', 1, 1, 'deployed, scenarios run in production'],
-    [8, 'Results and files', 0, 8, 'built, final run open'],
-    [9, 'Schedules and monitors', 0, 4, 'reminders, recurrence'],
-    [10, 'Memory and context', 0, 7, 'persistent memory'],
-    [11, 'Proactive assistance', 0, 1, 'calendar check built'],
-    [12, 'More clients', 0, 1, 'identity, devices, push'],
-  ];
-window.ROAD = miles;
-</script>
-<details class="more"><summary>Behavior the milestones have to show</summary>
-<ul class="pts"><li>Ordinary conversation creates no task, and a mixed message answers and dispatches.</li><li>A three-message burst produces one current reply.</li><li>A restart preserves messages and task IDs, and retrying an ID does nothing.</li><li>Two tasks progress separately, and a correction, question, budget pause or Stop in one leaves the other alone.</li><li>A question survives reload, pause and restart.</li><li>An uncertain write is resolved without a duplicate.</li><li>Subtask outcomes resume their parent, costs roll up, and stopping a parent includes subtasks.</li><li>Saved results reopen after a disconnect, and status questions don't rerun actions.</li><li>Chat works while task execution is paused.</li></ul></details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/writes.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/state/subtasks.go</code> · <a href="decisions.html">Decisions</a> · <a href="open-questions.html">Open questions</a></p></details>
+<section><h2>Following one request</h2>
+<p>“Check Saturday's weather in Tucson” starts a task. “No, Phoenix” changes its instructions. The result stays saved after a disconnect.</p>
+<p>“Please remember that I prefer evenings” changes saved memory without starting a task. <span class="designed">“Remind me tomorrow” still needs the planned scheduling work.</span></p>
+</section>
+<details class="more"><summary>Completion and approval boundaries</summary>
+<p>Completion checks saved instructions, tool results and evidence references. The outer model compares the proposed answer with cited results. There is no Jev completeness check.</p>
+<p>Calendar writes and email sends require approval. Shell and browser calls have no approval step. Standing permissions are not implemented.</p>
+<p>Remaining defects and unrun scenarios stay open separately from implemented capabilities. An implementation label makes no claim about the current deployed revision.</p>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/runner.go</code> · <code>core/internal/conversation/compact.go</code> · <code>core/internal/conversation/task_context.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/task/completion.go</code> · <code>core/internal/task/actions.go</code> · <code>core/internal/task/activities.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/agent/catalog.go</code></p><p><code>core/internal/computerd/browser_tasks.go</code> · <code>core/internal/state/subtasks.go</code> · <code>core/internal/state/results.go</code> · <code>core/internal/state/memory.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/proactive/check.go</code> · <code>core/infrastructure/temporal/spend-alert.py</code> · <a href="decisions.html">Decisions</a> · <a href="open-questions.html">Open questions</a></p></details>
 </body>
 </html>

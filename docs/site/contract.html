@@ -23,8 +23,8 @@
 <div class="card"><p class="note">For “Check Saturday's weather in Tucson”, the outer loop calls <code>dispatch</code>, which saves a start command. “No, Phoenix” becomes a steer on that task. When the forecast is saved, the task sends a result event.</p></div>
 <section><h2>The rules</h2>
 <ul class="pts">
-<li><b>Only the outer loop starts tasks.</b> A task can't start another task by itself.</li>
-<li><b>One task, one ID.</b> The start command's ID is the task ID, and later commands and events use it.</li>
+<li>A task can't dispatch another task. The outer loop starts requested work. The calendar check can start a read-only <a href="proactive.html">preparation task</a>.</li>
+<li><b>One task, one ID.</b> Every command and event names its task.</li>
 <li><b>Finished tasks stay finished.</b> More work means a new task.</li>
 <li><b>Accepted comes before applied.</b> A command is saved first, and the task picks it up later.</li>
 <li><b>Buttons skip the models.</b> The Stop button and task panel edits send the same commands directly.</li>
@@ -50,7 +50,7 @@
 <tr><td><code>request_work(request, why)</code></td><td>Ask for work outside this task's own request, and wait. A subtask doesn't have this tool.</td></tr>
 </table></div></section>
 <section><h2>Events</h2>
-<p>Each event goes into the conversation inbox in the same transaction as the task's new state, then starts an outer turn. A subtask ending while its parent waits sends no event, unless it has a held question.</p>
+<p>Task events enter the conversation inbox with the task's new state. Subtask outcomes go to waiting parents, unless a held question needs a reply. Preparation-task outcomes go to their offers.</p>
 <div class="card"><table class="tall"><tr><th>Event</th><th>When it's sent</th></tr>
 <tr data-flow="event-needs_input"><td><code>needs_input</code></td><td>The task has a question, has a work request, or reached its budget.</td></tr>
 <tr data-flow="event-result"><td><code>result</code></td><td>The task finished.</td></tr>
@@ -72,9 +72,11 @@
 </section>
 <section><h2>Interrupting a task</h2>
 <p>An explicit correction interrupts a read or a model call by default.</p>
-<div class="branch"><div class="node inner"><b>Can be cut short</b><small>A model call, or a read tool.</small></div>
-<div class="node wait"><b>Runs to the end</b><small>Any other tool, including shell and image reads.</small></div></div>
+<div class="card"><table class="tall"><tr><th>Operation</th><th>On a correction</th></tr>
+<tr><td>Model call or read tool</td><td>Can be cut short.</td></tr>
+<tr><td>Shell, image read or other tool</td><td>Runs to the end.</td></tr>
+</table></div>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/model.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/task/tool_durable.go</code> · <code>core/internal/task/subtasks.go</code> · <code>core/internal/state/subtasks.go</code> · <code>core/internal/state/commands.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/conversation/commands.go</code> · <code>core/internal/agent/steps.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/model.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/task/tool_durable.go</code> · <code>core/internal/task/subtasks.go</code> · <code>core/internal/state/subtasks.go</code> · <code>core/internal/state/commands.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/conversation/commands.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/proactive/check.go</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>docs/site/task-data.js</code></p></details>
 </body>
 </html>

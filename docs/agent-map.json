@@ -241,7 +241,9 @@
    "summary": "The runtime checks a task's saved records, then the outer loop compares the answer with the results the task cited.",
    "status": "built",
    "code": [
+    "core/internal/conversation/model.go",
     "core/internal/conversation/task_context.go",
+    "core/internal/task/actions.go",
     "core/internal/task/completion.go",
     "core/internal/task/history.go"
    ],
@@ -256,13 +258,13 @@
      "id": "the-record-checks",
      "title": "The record checks",
      "status": "built",
-     "words": 40
+     "words": 50
     },
     {
      "id": "the-decision-table",
      "title": "The decision table",
      "status": "built",
-     "words": 100
+     "words": 102
     },
     {
      "id": "what-the-outer-loop-receives",
@@ -274,7 +276,7 @@
      "id": "what-this-catches",
      "title": "What this catches",
      "status": "built",
-     "words": 147
+     "words": 145
     }
    ]
   },
@@ -322,12 +324,15 @@
     "core/internal/agent/steps.go",
     "core/internal/conversation/commands.go",
     "core/internal/conversation/model.go",
+    "core/internal/proactive/check.go",
     "core/internal/state/commands.go",
     "core/internal/state/firestore/tasks.go",
     "core/internal/state/subtasks.go",
     "core/internal/task/subtasks.go",
     "core/internal/task/tool_durable.go",
-    "core/internal/task/workflow.go"
+    "core/internal/task/workflow.go",
+    "docs/site/task-data.js",
+    "web/src/lib/runtime/useRuntime.ts"
    ],
    "sections": [
     {
@@ -340,7 +345,7 @@
      "id": "the-rules",
      "title": "The rules",
      "status": "built",
-     "words": 92
+     "words": 91
     },
     {
      "id": "outer-loop-tools",
@@ -358,7 +363,7 @@
      "id": "events",
      "title": "Events",
      "status": "built",
-     "words": 80
+     "words": 73
     },
     {
      "id": "subtasks",
@@ -370,7 +375,7 @@
      "id": "interrupting-a-task",
      "title": "Interrupting a task",
      "status": "built",
-     "words": 35
+     "words": 38
     }
    ]
   },
@@ -562,15 +567,28 @@
    "summary": "Nori is a personal assistant. One long conversation stays open while background tasks run.",
    "status": "built",
    "code": [
+    "core/internal/agent/steps.go",
+    "core/internal/api/events.go",
+    "core/internal/api/uploads.go",
+    "core/internal/conversation/compact.go",
+    "core/internal/conversation/model.go",
+    "core/internal/conversation/runner.go",
+    "core/internal/proactive/check.go",
+    "core/internal/proactive/deliver.go",
+    "core/internal/state/memory.go",
+    "core/internal/state/results.go",
     "core/internal/task/actions.go",
-    "core/internal/task/completion.go"
+    "core/internal/task/completion.go",
+    "core/internal/task/subtasks.go",
+    "core/internal/task/workflow.go",
+    "web/src/components/runtime/NoriApp.tsx"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 136
+     "words": 144
     },
     {
      "id": "an-example-conversation",
@@ -582,7 +600,7 @@
      "id": "where-it-stands",
      "title": "Where it stands",
      "status": "built",
-     "words": 82
+     "words": 76
     },
     {
      "id": "where-to-go-next",
@@ -600,7 +618,11 @@
    "code": [
     "core/cmd/nori-worker/",
     "core/internal/agent/steps.go",
+    "core/internal/task/actions.go",
     "core/internal/task/activities.go",
+    "core/internal/task/history.go",
+    "core/internal/task/tool_durable.go",
+    "core/internal/task/unresolved.go",
     "core/internal/task/workflow.go",
     "core/internal/taskworker/"
    ],
@@ -609,7 +631,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 152
+     "words": 126
     },
     {
      "id": "when-instructions-change",
@@ -621,7 +643,7 @@
      "id": "when-something-fails",
      "title": "When something fails",
      "status": "built",
-     "words": 328
+     "words": 350
     }
    ]
   },
@@ -728,7 +750,18 @@
    "title": "Open questions",
    "summary": "Design questions that aren't settled yet. Settled ones move to Decisions.",
    "status": "built",
-   "code": [],
+   "code": [
+    "core/internal/agent/steps.go",
+    "core/internal/agent/writes.go",
+    "core/internal/conversation/model.go",
+    "core/internal/conversation/task_context.go",
+    "core/internal/proactive/deliver.go",
+    "core/internal/state/history.go",
+    "core/internal/state/summary.go",
+    "core/internal/task/history.go",
+    "core/internal/task/recovery.go",
+    "core/internal/task/workflow.go"
+   ],
    "sections": [
     {
      "id": "overview",
@@ -740,25 +773,25 @@
      "id": "tasks",
      "title": "Tasks",
      "status": "built",
-     "words": 113
+     "words": 102
     },
     {
      "id": "conversation",
      "title": "Conversation",
      "status": "built",
-     "words": 60
+     "words": 69
     },
     {
      "id": "tools-and-approvals",
      "title": "Tools and approvals",
      "status": "built",
-     "words": 92
+     "words": 102
     },
     {
      "id": "memory",
      "title": "Memory",
      "status": "built",
-     "words": 71
+     "words": 81
     },
     {
      "id": "schedules-and-proactive-messages",
@@ -770,7 +803,7 @@
      "id": "clients-and-operations",
      "title": "Clients and operations",
      "status": "built",
-     "words": 124
+     "words": 105
     }
    ]
   },
@@ -969,6 +1002,7 @@
     "core/internal/state/firestore/",
     "core/internal/state/gcs/",
     "core/internal/state/localfs/",
+    "core/internal/task/actions.go",
     "core/internal/task/client.go"
    ],
    "sections": [
@@ -976,19 +1010,19 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 284
+     "words": 325
     },
     {
      "id": "what-happens-when-something-dies",
      "title": "What happens when something dies",
      "status": "built",
-     "words": 140
+     "words": 147
     },
     {
      "id": "storage-layers",
      "title": "Storage layers",
      "status": "built",
-     "words": 300
+     "words": 311
     }
    ]
   },
@@ -1006,20 +1040,23 @@
     "core/internal/conversation/openai.go",
     "core/internal/dispatch/dispatcher.go",
     "core/internal/state/conversation.go",
-    "core/internal/task/client.go"
+    "core/internal/state/firestore/tasks.go",
+    "core/internal/task/actions.go",
+    "core/internal/task/client.go",
+    "docs/site/site.js"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 415
+     "words": 412
     },
     {
      "id": "follow-ups-and-controls",
      "title": "Follow-ups and controls",
      "status": "built",
-     "words": 118
+     "words": 120
     }
    ]
   },
@@ -1059,13 +1096,13 @@
      "id": "finding-it-later",
      "title": "Finding it later",
      "status": "built",
-     "words": 63
+     "words": 64
     },
     {
      "id": "files-the-user-attaches",
      "title": "Files the user attaches",
      "status": "built",
-     "words": 125
+     "words": 145
     },
     {
      "id": "where-things-live",
@@ -1078,25 +1115,45 @@
   {
    "page": "docs/site/roadmap.html",
    "title": "Roadmap",
-   "summary": "Twelve milestones, in order. A milestone is done when it works on noribot.chat against its scenarios.",
+   "summary": "Twelve milestones, showing what is built and what remains.",
    "status": "built",
    "code": [
+    "core/infrastructure/temporal/spend-alert.py",
+    "core/internal/agent/catalog.go",
     "core/internal/agent/steps.go",
-    "core/internal/agent/writes.go",
-    "core/internal/state/subtasks.go"
+    "core/internal/api/events.go",
+    "core/internal/api/uploads.go",
+    "core/internal/computerd/browser_tasks.go",
+    "core/internal/conversation/compact.go",
+    "core/internal/conversation/runner.go",
+    "core/internal/conversation/task_context.go",
+    "core/internal/proactive/check.go",
+    "core/internal/state/memory.go",
+    "core/internal/state/results.go",
+    "core/internal/state/subtasks.go",
+    "core/internal/task/actions.go",
+    "core/internal/task/activities.go",
+    "core/internal/task/completion.go",
+    "core/internal/task/workflow.go"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 170
+     "words": 250
     },
     {
-     "id": "what-each-piece-adds",
-     "title": "What each piece adds",
+     "id": "what-remains",
+     "title": "What remains",
      "status": "built",
-     "words": 439
+     "words": 66
+    },
+    {
+     "id": "following-one-request",
+     "title": "Following one request",
+     "status": "built",
+     "words": 114
     }
    ]
   },
@@ -1288,7 +1345,19 @@
    "title": "Sources",
    "summary": "The design is on this site. When it disagrees with the code, the code decides what's running today.",
    "status": "built",
-   "code": [],
+   "code": [
+    "core/internal/conversation/compact.go",
+    "core/internal/conversation/jev.go",
+    "core/internal/conversation/memory.go",
+    "core/internal/proactive/check.go",
+    "core/internal/task/actions.go",
+    "core/internal/task/activities.go",
+    "core/internal/task/completion.go",
+    "docs/client-contract.md",
+    "web/README.md",
+    "web/src/components/runtime/TaskPanel.tsx",
+    "web/src/lib/runtime/useRuntime.ts"
+   ],
    "sections": [
     {
      "id": "overview",
@@ -1300,13 +1369,19 @@
      "id": "other-files-in-the-repo",
      "title": "Other files in the repo",
      "status": "built",
-     "words": 48
+     "words": 51
     },
     {
      "id": "known-mismatches",
      "title": "Known mismatches",
      "status": "built",
      "words": 20
+    },
+    {
+     "id": "corrected-page-claims",
+     "title": "Corrected page claims",
+     "status": "built",
+     "words": 87
     }
    ]
   },
@@ -1335,8 +1410,13 @@
    "status": "built",
    "code": [
     "core/internal/conversation/commands.go",
-    "core/internal/state/",
-    "core/internal/task/workflow.go"
+    "core/internal/state/commands.go",
+    "core/internal/state/run.go",
+    "core/internal/state/subtasks.go",
+    "core/internal/task/history.go",
+    "core/internal/task/workflow.go",
+    "docs/site/task-data.js",
+    "web/src/lib/runtime/useRuntime.ts"
    ],
    "sections": [
     {
@@ -1355,7 +1435,7 @@
      "id": "commands",
      "title": "Commands",
      "status": "built",
-     "words": 108
+     "words": 105
     },
     {
      "id": "steering-keeps-what-still-applies",

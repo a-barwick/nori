@@ -21,7 +21,7 @@
     { from: 'Runtime', to: 'Firestore', call: 'task_commands/{id}', source: CODE.state, saved },
     { from: 'Runtime', to: 'Firestore', call: 'saved command receipt', source: CODE.call,
       saved: { command: { id: saved.id, kind: saved.kind, position: saved.position }, run: { id: saved.run_id, status: 'running' } },
-      note: 'Later model context contains historical receipt facts as text. No native tool-result message is sent to Sol.', other: rejected },
+      note: 'Later model context contains historical receipt facts as text. No native tool-result message is sent to the outer model.', other: rejected },
   ];
   const STALE = ['A rejection is saved as a command result, such as {"error": "question is no longer current"}. The turn itself doesn\'t fail.'];
   const NOT_OPEN = ['A rejection is saved as a command result, such as {"error": "task is not open"}. The turn itself doesn\'t fail.'];
@@ -40,12 +40,12 @@
       response: { functionCall: { id: 'call_7', name: 'request_input', args: { question: QUESTION } } } },
     { from: 'Worker', to: 'Firestore', call: 'runs/{id}', source: CODE.state, note: 'The record still says running. The question field is what makes it a waiting task.',
       saved: run({ waiting: QUESTION, event_sequence: 1, question: { id: QUESTION_ID, kind: 'input', text: QUESTION, call_id: 'call_7', instruction_revision: 1 } }) },
-    ...event(QUESTION_ID, 'needs_input', 1, { text: QUESTION, reason: 'input' }, 'Saved in the same transaction as the run. This starts an outer turn.'),
+    ...event(QUESTION_ID, 'needs_input', 1, { text: QUESTION, reason: 'input', instruction_revision: 1 }, 'Saved in the same transaction as the run. This starts an outer turn.'),
   ];
 
   window.FLOWS = {
     // ---- Contract page: outer loop tools
-    dispatch: toolFlow('dispatch', { request: REQUEST, for: null, question_id: null }, command('start', { id: TASK, text: REQUEST, position: 1, revision: 1, source_input_ids: ['3f6c…'] }),
+    dispatch: toolFlow('dispatch', { request: REQUEST, for: null, question_id: null, attachments: [], revises: null }, command('start', { id: TASK, text: REQUEST, position: 1, revision: 1, source_input_ids: ['3f6c…'] }),
       'Every call in a response is validated before any is accepted, up to 16 calls.'),
     'tool-steer': toolFlow('steer', { run_id: TASK, text: 'After seven, please.', interrupt: false }, command('steer', { text: 'After seven, please.', revision: 2, source_input_ids: ['8d21…'] }),
       'The model has to use the exact task ID from the task records.', NOT_OPEN),
@@ -64,7 +64,7 @@
 
     // ---- Task lifecycle page: commands
     start: [
-      { from: 'Outer loop', to: 'Firestore', call: 'runs/{id}', source: CODE.state, note: 'Only dispatch creates this command. The panel API has no start.',
+      { from: 'Outer loop', to: 'Firestore', call: 'runs/{id}', source: CODE.state, note: 'This example starts from an outer-loop dispatch. The panel API has no start.',
         saved: run({ request: REQUEST, temporal: true, protocol_version: 2, workflow_version: 3, revision: 1, position: 1, started_at: TIME }) },
       { from: 'Relay', to: 'Temporal', call: 'SignalWithStartWorkflow', source: 'core/internal/task/client.go',
         request: { workflow_id: `nori-task-${TASK}`, workflow_type: 'nori-task-v3', args: [TASK, {}], signal: 'task-command' } },
@@ -86,14 +86,15 @@
     ],
     continue: [
       panelFlow({ id: CMD, run_id: TASK, kind: 'continue', question_id: BUDGET_ID },
-        { command: command('continue', { position: 4, question_id: BUDGET_ID }), run: run({ revision: 1, position: 4, spent_usd: 1.0021, budget_usd: 1 }) },
+        { command: command('continue', { position: 4, question_id: BUDGET_ID }), run: run({ revision: 1, position: 4, spent_usd: 1.0021, budget_usd: 2 }) },
         ['409 if there\'s no matching budget question open', ...COMMON]),
-      { from: 'Workflow', to: 'Inner model', call: 'next model call', source: CODE.workflow, note: 'The workflow adds $1 to its budget, then tells the model. The Firestore copy catches up afterwards.',
+      { from: 'Workflow', to: 'Inner model', call: 'next model call', source: CODE.workflow, note: 'The acceptance transaction adds $1 to the stored budget. The workflow reads that grant before its next model call.',
         request: { role: 'user', parts: [{ text: 'The user approved another $1.00 of model spend for this task. Continue th…' }] } },
     ],
     stop: [
-      { from: 'Browser', to: 'Go service', call: 'POST /api/cancel', source: CODE.http, note: 'The Stop button uses this endpoint. POST /api/command with kind stop does the same.',
-        request: { id: TASK }, response: { status: 202, body: { run: run({ cancel_requested: true, revision: 2 }) } }, other: ['400 if the ID isn\'t a UUID', '404 if there\'s no such task', '409 if the task has finished', 'Stop is still accepted while the project is paused'] },
+      panelFlow({ id: CMD, run_id: TASK, kind: 'stop' },
+        { command: command('stop', { revision: 2 }), run: run({ cancel_requested: true, revision: 2, position: 2 }) },
+        ['400 if an ID isn\'t a UUID', '404 if there\'s no such task', '409 if the task has finished', 'Stop is still accepted while the project is paused']),
       { from: 'Worker', to: 'Firestore', call: 'runs/{id}', source: CODE.state, note: 'Requested isn\'t stopped. This is only written once the workflow has wound down.',
         saved: run({ status: 'cancelled', error: 'Stopped by the user.', cancel_requested: true, finished_at: TIME }) },
     ],
