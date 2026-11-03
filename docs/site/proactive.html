@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calendar offers · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Calendar offers</h1>
+<p class="lede">Twice a day the runtime checks the calendar for events too close to drive between, and offers help.</p>
+<div class="card"><div class="flow">
+<div class="node"><b>Cloud Scheduler calls the runtime</b><small>At 12 am and 12 pm Pacific time.</small></div><div class="arrow">↓ <span class="lbl">HTTP call</span></div>
+<div class="node"><b>Google Calendar returns events</b><small>The next 36 hours.</small></div><div class="arrow">↓ <span class="lbl">timed events with addresses</span></div>
+<div class="node"><b>Runtime finds a tight gap</b><small>Oakland dentist ends 1:45. San Francisco meeting starts 2:00.</small></div><div class="arrow">↓ <span class="lbl">both addresses</span></div>
+<div class="node"><b>Routes API returns the drive</b><small>24 minutes, more than the 15-minute gap.</small></div><div class="arrow">↓ <span class="lbl">the conflict and saved memories</span></div>
+<div class="node outer"><b>Outer model plans the offer</b><small>Writes the message and picks 8:00 am to send it.</small></div><div class="arrow">↓ <span class="lbl">unless task work is paused</span></div>
+<div class="node inner"><b>Read-only task looks for times</b><small>It can read the calendar and change nothing.</small></div><div class="arrow">↓ <span class="lbl">at 8:00, once the conversation is idle</span></div>
+<div class="node"><b>Web client shows the offer</b><small>With Yes, look and Dismiss.</small></div>
+</div></div>
+<section><h2>What counts as a conflict</h2>
+<ul class="pts"><li>Two events in a row, both with addresses, at different places.</li><li>The gap between them is shorter than the drive plus 10 minutes, and under 3 hours.</li><li>A day with no conflict makes no model call and no message.</li></ul></section>
+<section><h2>When the offer appears</h2>
+<p>The outer model picks a time from saved memories, such as “I'm usually up by 6.” With nothing saved, the midnight check sends at 8 am and the noon check at 6 pm.</p>
+<ul class="pts"><li>The runtime moves the time to no later than 45 minutes before the second event.</li><li>An offer that comes due during a reply waits until the reply finishes.</li><li>An offer still waiting when the second event starts is skipped.</li><li>The offer is a message in the conversation. Nothing is sent by email or push.</li></ul></section>
+<section><h2>What the user can do</h2>
+<div class="card"><table class="tall"><tr><th>Answer</th><th>Result</th></tr>
+<tr><td>Yes, look</td><td>Sends “Yes, please look for another time.” as a user message. Any task starts the usual way, and calendar changes still need approval.</td></tr>
+<tr><td>Dismiss</td><td>Stops the read-only task. The same two events, at the same times and places, never get another offer.</td></tr>
+<tr><td>A typed reply</td><td>The outer loop answers it like any other message.</td></tr></table></div>
+<p>Moving either event makes a new conflict, which can get its own offer.</p></section>
+<section><h2>Daily limits</h2>
+<div class="card"><table class="tall"><tr><th>Limit</th><th>Per day</th><th>Past it</th></tr>
+<tr><td>Offers delivered</td><td>3</td><td>The offer is saved as skipped, with the reason.</td></tr>
+<tr><td>Model spend</td><td>20¢</td><td>Fixed wording, the default time and no read-only task.</td></tr>
+<tr><td>Read-only tasks</td><td>3, with a 5¢ budget each</td><td>No task.</td></tr></table></div>
+<p>When task work is paused, the check still runs and plans offers, and it starts no read-only task.</p></section>
+<details class="more"><summary>Records and failures</summary><ul class="pts">
+<li>Each half-day check has one record, so a retry of a finished check does nothing. Up to 4 more checks a day can be started by hand for testing.</li>
+<li>An offer's ID comes from both events and their times, so finding the same conflict twice makes one offer.</li>
+<li>A failed calendar read ends the check with no offer and logs the error. The next check runs as usual.</li>
+<li>Each read-only task's full 5¢ counts against the 20¢ before it starts.</li>
+</ul></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/proactive/check.go</code>, <code>core/internal/proactive/detect.go</code>, <code>core/internal/proactive/plan.go</code>, <code>core/internal/proactive/deliver.go</code>, <code>core/internal/proactive/routes.go</code>, <code>core/internal/state/proactive.go</code>, <code>core/internal/state/firestore/proactive.go</code>, <code>core/internal/api/proactive.go</code>, <code>core/infrastructure/app/ops.py</code>, <code>web/src/components/chat/Parts.tsx</code>. Related: <a href="schedules.html">Schedules</a>, <a href="authority.html">Approvals and writes</a>, <a href="memory.html">Memory and context</a>.</p></details>
+</body>
+</html>

@@ -52,7 +52,7 @@
 <tr><td><code>task.stop</code></td><td>Requests Stop. Skips classification.</td></tr>
 <tr><td><code>approval.decide</code></td><td>Records approve or decline for one exact operation.</td></tr>
 <tr><td><code>doc.update</code></td><td>Edits soul or memory, with conflict detection.</td></tr>
-<tr><td><code>settings.update</code></td><td>Changes quiet hours, the daily cap and so on.</td></tr>
+<tr><td><code>settings.update</code></td><td>Changes the user's settings.</td></tr>
 <tr><td><code>device.register</code></td><td>Registers a device for push.</td></tr>
 </table>
 <ul class="pts"><li>Clients don't read Firestore directly, so its schema doesn't become the contract.</li><li>Task results land in the thread that started the task.</li></ul>
