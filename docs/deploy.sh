@@ -15,6 +15,8 @@ python3 ../.agents/skills/review-docs/scripts/check.py --live
 public=$(mktemp -d)
 trap 'rm -rf "$public"' EXIT
 python3 agent_map.py publish "$public"
+# The privacy policy and terms the Google sign-in screen links to. They aren't docs pages.
+cp -R legal "$public/legal"
 docker build --platform linux/amd64 -f Dockerfile -t "$image" "$public"
 docker push "$image"
 
