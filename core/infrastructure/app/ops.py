@@ -563,8 +563,10 @@ def proactive_setup(c):
         for member in readers:
             gcloud("secrets", "add-iam-policy-binding", secret, "--member=" + member, "--role=roles/secretmanager.secretAccessor", "--condition=None", "--format=none")
     gcloud("services", "enable", "cloudscheduler.googleapis.com")
+    # Enabling the API doesn't create its service agent, which mints the job's OAuth token.
+    gcloud("beta", "services", "identity", "create", "--service=cloudscheduler.googleapis.com", "--format=none")
     caller = c["conversation_wake_service_account"]
-    gcloud("iam", "service-accounts", "add-iam-policy-binding", caller, "--member=" + f"serviceAccount:service-{NUMBER}@gcp-cloudscheduler.iam.gserviceaccount.com",
+    gcloud("iam", "service-accounts", "add-iam-policy-binding", caller, "--member=" + f"serviceAccount:service-{NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com",
            "--role=roles/iam.serviceAccountTokenCreator", "--condition=None", "--format=none")
     job = ["--location=" + REGION, "--schedule=0 0,12 * * *", "--time-zone=America/Los_Angeles", "--uri=" + c["runtime_url"].rstrip("/") + "/api/proactive",
            "--http-method=POST", "--headers=Content-Type=application/json", "--message-body={}", "--oauth-service-account-email=" + caller,
