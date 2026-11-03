@@ -23,6 +23,8 @@ type ConversationInput struct {
 	TraceContext map[string]string `json:"-" firestore:"trace_context,omitempty"`
 	// Attachments are the files sent with a user's message.
 	Attachments []Attachment `firestore:"attachments,omitempty"`
+	// Offer names the proactive offer this input delivered. Its Text is the note the outer model sees about it.
+	Offer string `firestore:"offer,omitempty"`
 }
 
 type ConversationControl struct {
@@ -126,7 +128,9 @@ const (
 	TraceLimit = 60
 )
 
-func (in ConversationInput) IsUser() bool { return !in.Introduction && in.Event == nil }
+func (in ConversationInput) IsUser() bool {
+	return !in.Introduction && in.Event == nil && in.Offer == ""
+}
 
 // NewConversationControl is the control record of a conversation that has no saved control document yet.
 func NewConversationControl() ConversationControl { return ConversationControl{ProtocolVersion: 2} }

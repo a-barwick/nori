@@ -142,6 +142,8 @@ type ConversationDatabase interface {
 	SaveConversation(ctx context.Context, f ConversationFence, t ConversationTurn) error
 	UserRoutingPending(ctx context.Context) (bool, error)
 
+	ProactiveDatabase
+
 	// The event log. Writes happen inside the transactions above.
 	EventPosition(ctx context.Context) (int64, error)
 	WatchEvents(ctx context.Context, after int64, deliver func([]LogEvent) error) error
@@ -153,4 +155,21 @@ type ConversationDatabase interface {
 type ConversationStore interface {
 	Database
 	Artifacts
+}
+
+// ProactiveDatabase holds the calendar check's runs, the offers it plans and the daily counts that limit them.
+type ProactiveDatabase interface {
+	// BeginProactiveCheck claims a check by ID. proceed is false when it already finished.
+	BeginProactiveCheck(ctx context.Context, id, day, owner string, manual bool) (check ProactiveCheck, proceed bool, err error)
+	FinishProactiveCheck(ctx context.Context, check ProactiveCheck) error
+	// ClaimOffer saves a found conflict once. proceed is true while it still needs planning.
+	ClaimOffer(ctx context.Context, offer Offer) (saved Offer, proceed bool, err error)
+	ChargeProactivePlan(ctx context.Context, day string) error
+	SettleProactivePlan(ctx context.Context, day string, cost *float64) error
+	SavePlannedOffer(ctx context.Context, offer Offer) error
+	PlannedOffers(ctx context.Context) ([]Offer, error)
+	GetOffer(ctx context.Context, id string) (Offer, error)
+	// DeliverOffer publishes a due offer as a finished turn, or skips it. ErrConversationBusy means a turn is running.
+	DeliverOffer(ctx context.Context, id, day, note, text string, protocol []string, now time.Time) (Offer, error)
+	DecideOffer(ctx context.Context, id, decision string) (Offer, error)
 }

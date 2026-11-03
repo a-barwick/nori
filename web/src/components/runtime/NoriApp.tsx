@@ -18,6 +18,7 @@ import { TaskPanel } from "./TaskPanel";
 function partURL(part: Part, api: string) {
   if (part.type === "attachment" && part.id) return `${api}/v1/uploads/${part.id}`;
   if ((part.type === "artifact" || part.type === "image") && part.id) return `${api}/v1/results/${part.id}/file`;
+  if (part.type === "offer") return `${api}/offer`;
   return part.url;
 }
 

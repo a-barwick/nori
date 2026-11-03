@@ -12,6 +12,8 @@ const (
 	PartArtifact   = "artifact"
 	PartImage      = "image"
 	PartLink       = "link"
+	// PartOffer is a proactive offer's Accept and Dismiss card. ID names the offer.
+	PartOffer = "offer"
 )
 
 // Part is one piece of a message. Clients read parts and never parse model output.
@@ -28,6 +30,8 @@ type Part struct {
 	MediaType string `json:"media_type,omitempty" firestore:"media_type,omitempty"`
 	Size      int64  `json:"size,omitempty" firestore:"size,omitempty"`
 	URL       string `json:"url,omitempty" firestore:"url,omitempty"`
+	// Status is an offer card's state: open, accepted or dismissed.
+	Status string `json:"status,omitempty" firestore:"status,omitempty"`
 }
 
 var (

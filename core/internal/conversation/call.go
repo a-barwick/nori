@@ -20,7 +20,7 @@ import (
 )
 
 func inputRole(in state.ConversationInput) string {
-	if in.Introduction || in.Event != nil {
+	if in.Introduction || in.Event != nil || in.Offer != "" {
 		return "system"
 	}
 	return "user"
