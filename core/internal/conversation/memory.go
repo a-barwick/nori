@@ -58,6 +58,9 @@ func splitMemory(calls []ToolCall) ([]ToolCall, []memoryCall, error) {
 			}
 			change := state.MemoryChange{Kind: state.MemoryRemember, Text: strings.TrimSpace(args.Text), About: strings.TrimSpace(args.About)}
 			if args.Replaces != nil && *args.Replaces != "" {
+				if !canonicalID(*args.Replaces) {
+					return nil, nil, fmt.Errorf("remember names an invalid memory ID")
+				}
 				change.ID, change.Replaces = *args.Replaces, true
 			}
 			changes = append(changes, memoryCall{call.ID, change})
@@ -68,12 +71,21 @@ func splitMemory(calls []ToolCall) ([]ToolCall, []memoryCall, error) {
 			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
 				return nil, nil, err
 			}
+			if !canonicalID(args.MemoryID) {
+				return nil, nil, fmt.Errorf("forget names an invalid memory ID")
+			}
 			changes = append(changes, memoryCall{call.ID, state.MemoryChange{Kind: state.MemoryForget, ID: args.MemoryID}})
 		default:
 			commands = append(commands, call)
 		}
 	}
 	return commands, changes, nil
+}
+
+// canonicalID reports whether a memory ID is a canonical UUID, which is also a safe Firestore document ID.
+func canonicalID(id string) bool {
+	parsed, err := uuid.Parse(id)
+	return err == nil && parsed.String() == id
 }
 
 type memoryCall struct {
@@ -104,4 +116,12 @@ func memoryFailureText(changes []state.MemoryChange) string {
 		}
 	}
 	return ""
+}
+
+// memoryText acknowledges applied memory changes when the model wrote no reply text.
+func memoryText(changes []state.MemoryChange) string {
+	if len(changes) == 0 {
+		return ""
+	}
+	return "Done. I've updated what I remember."
 }

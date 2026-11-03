@@ -274,6 +274,9 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		if t.Attempt.Status != "error" {
 			attemptEnd(&t.Attempt, "completed", "")
 		}
+		if strings.TrimSpace(text) == "" {
+			text = memoryText(t.Attempt.Memory)
+		}
 		if strings.TrimSpace(text) == "" && len(t.Attempt.ShowResults) > 0 {
 			text = "Here it is."
 		}
