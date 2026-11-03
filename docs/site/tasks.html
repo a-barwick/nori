@@ -33,7 +33,7 @@
 <section><h2>Commands</h2>
 <div class="card"><table>
           <tr><th>Kind</th><th>What it does</th></tr>
-          <tr data-flow="start"><td><code>start</code></td><td>Creates the task. The command ID becomes the task ID.</td></tr>
+          <tr data-flow="start"><td><code>start</code></td><td>Creates the task with its stable ID.</td></tr>
           <tr data-flow="steer"><td><code>steer</code></td><td>Adds new instructions, increments the revision, and stops any running subtasks.</td></tr>
           <tr data-flow="answer"><td><code>answer</code></td><td>Resolves the question in <code>question_id</code>.</td></tr>
           <tr data-flow="continue"><td><code>continue</code></td><td>Resolves the budget question and adds $1, to the parent for a subtask.</td></tr>
@@ -49,6 +49,6 @@
           <tr><td>Vegetarian → under $60 → near home</td><td>All three constraints.</td></tr>
           <tr><td>Under $60 → “budget doesn't matter”</td><td>Drop price, keep the rest.</td></tr>
         </table></div></section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/task/workflow.go</code> · <code>core/internal/state/</code> · <code>core/internal/conversation/commands.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/task/workflow.go</code> · <code>core/internal/state/run.go</code> · <code>core/internal/state/commands.go</code> · <code>core/internal/state/subtasks.go</code> · <code>core/internal/task/history.go</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>docs/site/task-data.js</code> · <code>core/internal/conversation/commands.go</code></p></details>
 </body>
 </html>

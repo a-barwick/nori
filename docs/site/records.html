@@ -19,6 +19,11 @@ owners/{owner}/
 ├─ conversation_inputs/   ← durable inbox (ordered)
 ├─ conversation_turns/    ← captured batches
 ├─ conversation_attempts/ ← traces: model, hint, usage
+├─ conversation/summary  ← earlier turns, with source quotes
+├─ memories/              ← facts and preferences the user asked to save
+├─ proactive_checks/      ← calendar check runs
+├─ proactive_offers/      ← calendar offers and delivery state
+├─ proactive_days/        ← the calendar check's daily cost
 ├─ messages/              ← the visible messages, as typed parts
 ├─ events/                ← the ordered event log
 ├─ event_head/            ← the log's newest number
@@ -39,7 +44,7 @@ owners/{owner}/
         <div class="flow">
           <div class="node"><b>Runtime saves the command</b><small>“Check Saturday's weather in Tucson” becomes a start command.</small></div>
           <div class="arrow">↓</div>
-          <div class="node inner"><b>Relay starts the workflow</b><small>It starts or signals the task workflow, and retries until acknowledged.</small></div>
+          <div class="node"><b>Relay starts the workflow</b><small>It starts or signals the task workflow, and retries until acknowledged.</small></div>
           <div class="arrow">↓</div>
           <div class="node"><b>Relay marks it delivered</b><small>After a crash, positions make redelivery harmless.</small></div>
         </div>
@@ -64,7 +69,7 @@ owners/{owner}/
 <tr><td>The outer process dies around a dispatch</td><td>Recover the saved model response and command receipts before accepting anything again.</td></tr>
 <tr><td>A task command is delivered twice</td><td>Recognize its ID and position, and don't apply it again.</td></tr>
 <tr><td>A worker restarts while a task waits</td><td>Resume the same task and question on a worker build that can run it.</td></tr>
-<tr class="designed"><td>A provider's response is lost after a write</td><td>Check the outcome before any retry.<span class="tag design">designed</span></td></tr>
+<tr><td>A provider's response is lost after a write</td><td>Read the provider's record before considering another action. A used approval cannot send again.</td></tr>
 <tr><td>The result is saved, then the client disconnects</td><td>Reopen the saved result, and don't repeat the work.</td></tr>
 <tr><td>A task crashes before it can report</td><td>The runtime emits a failure event with completed and unresolved operations.</td></tr>
 </table></div></section>
@@ -86,8 +91,8 @@ owners/{owner}/
 <tr><td>Command or event</td><td>Stable ID, target, kind, order, revision, payload and delivery state.</td></tr>
 <tr><td>Operation</td><td>Stable ID, parameters, attempt state, confirmation or uncertainty, and evidence.</td></tr>
 <tr><td>Saved result</td><td>Stable ID, task link, file details, version and delivery times.</td></tr>
-<tr class="designed"><td>Approval</td><td>Exact operation and argument revision, effect, scope, decision and validity.</td></tr>
+<tr><td>Approval</td><td>The operation holds the exact saved action and its digest. A command records the decision, and one transaction marks the approval used.</td></tr>
 </table></details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/state/</code> · <code>core/internal/state/firestore/</code> · <code>core/internal/state/gcs/</code> · <code>core/internal/state/localfs/</code> · <code>core/internal/spend/</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/dispatch/dispatcher.go</code> · <code>core/internal/task/client.go</code> · <code>core/internal/conversation/runner.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state/</code> · <code>core/internal/state/firestore/</code> · <code>core/internal/state/gcs/</code> · <code>core/internal/state/localfs/</code> · <code>core/internal/spend/</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/dispatch/dispatcher.go</code> · <code>core/internal/task/client.go</code> · <code>core/internal/task/actions.go</code> · <code>core/internal/conversation/runner.go</code></p></details>
 </body>
 </html>

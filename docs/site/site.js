@@ -228,7 +228,7 @@ if (document.querySelector('.trace')) {
       edges: ['service>firestore', 'service>user'] },
     { cap: 'The relay reads saved commands and starts one workflow per task.', nodes: ['runtime', 'firestore', 'temporal'],
       edges: ['firestore>service', 'service>temporal'] },
-    { cap: 'Two inner loops run independently, calling GPT-6.1 Terra and using the computer.', nodes: ['temporal', 'inner', 'models', 'computer', 'firestore'],
+    { cap: 'Two inner loops run independently, calling their model and using the computer.', nodes: ['temporal', 'inner', 'models', 'computer', 'firestore'],
       edges: ['temporal>inner', 'inner>models', 'inner>computer', 'inner>firestore'] },
     { cap: 'The result reaches the inbox, and an outer turn explains it to the user.', nodes: ['inner', 'firestore', 'runtime', 'outer', 'models', 'user'],
       edges: ['inner>firestore', 'firestore>service', 'service>models', 'service>user'] },

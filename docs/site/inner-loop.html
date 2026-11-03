@@ -11,24 +11,16 @@
 <h1>Inner loop</h1>
 <p class="lede">One loop per task: call the model, run the tools it asks for, save the results, repeat.</p>
 <div class="card"><div class="flow">
-<div class="node inner"><b>Read new commands</b><small>Instructions arrive in order, such as “Check Saturday's weather in Tucson.”</small></div>
-<div class="arrow">↓</div>
-<div class="node decide inner">Has the task, with its subtasks, spent its budget?</div>
-<div class="branch">
-<div class="node wait"><b>Yes</b><small>The task saves a budget question and waits, with no model call.</small></div>
-<div class="node inner"><b>No</b><small>The loop continues to the next model call.</small></div>
-</div>
-<div class="arrow">↓</div>
-<div class="node inner"><b>Model call</b><small>One call to the inner model, with retries off. Its cost is added.</small></div>
-<div class="arrow">↓</div>
-<div class="node decide inner">What did the model return?</div>
-<div class="branch3">
-<div class="node inner"><b><code>complete</code></b><small>Record checks decide whether it finishes.</small></div>
-<div class="node computer"><b>Tool calls</b><small>The worker or computer runs each tool, and each result is saved.</small></div>
-<div class="node wait"><b><code>request_input</code> or <code>request_work</code></b><small>The task waits for the answer or the subtasks' result.</small></div>
-</div>
-<div class="loopback">↺ results saved → back to Read new commands</div>
-<div class="node"><b>Finish</b><small>Confirms the computer stopped, then publishes the outcome.</small></div>
+<div class="node inner"><b>Task workflow</b><small>Reads commands in order and checks the shared budget before calling the model.</small></div>
+<div class="arrow">↓ <span class="lbl">“Check Saturday's weather in Tucson” and saved history</span></div>
+<div class="node inner"><b>Inner model</b><small>Returns tool calls, a question, a work request or a completion proposal.</small></div>
+<div class="arrow">↓ <span class="lbl">proposed calls</span></div>
+<div class="node"><b>Runtime</b><small>Checks the instructions and runs tools, saves a question or checks completion.</small></div>
+<div class="arrow">↓ <span class="lbl">tool call, when needed</span></div>
+<div class="node computer"><b>Worker or computer</b><small>Runs the tool and returns its result.</small></div>
+<div class="arrow">↓ <span class="lbl">tool result</span></div>
+<div class="node"><b>Runtime</b><small>Saves results for the next step, or publishes the checked outcome after cleanup.</small></div>
+<div class="loopback">↺ saved results return to the task workflow</div>
 </div></div>
 <p>See <a href="completion.html">Finishing a task</a> for the checks, and <a href="tasks.html">Task lifecycle</a> for the states.</p>
 <section><h2>When instructions change</h2>
@@ -39,8 +31,9 @@
 </ul></section>
 <section><h2>When something fails</h2>
 <div class="card"><table class="tall"><tr><th>Outcome</th><th>What the task does</th></tr>
-<tr><td>A shell command exits with an error</td><td>The model receives the result and continues.</td></tr>
-<tr><td>A write has an uncertain outcome</td><td>Keeps the operation record and asks the user. It doesn't repeat the write.</td></tr>
+<tr><td>A tool returns an error</td><td>The model receives the error as a saved result.</td></tr>
+<tr><td>A shell command fails after starting</td><td>If it may have changed something, later shell commands wait for the user's answer.</td></tr>
+<tr><td>A write has an uncertain outcome</td><td>Keeps the operation record, then asks the user or reports an incomplete outcome. It doesn't repeat the write.</td></tr>
 <tr><td>A model call's cost is unknown</td><td>Fails, so unpriced work never counts as free.</td></tr>
 <tr><td>The task fails</td><td>Reports the failure, then waits for the user to start any new attempt.</td></tr>
 </table></div></section>
@@ -58,12 +51,11 @@
 <li>The workflow's spent figure is the one that counts. The copy in Firestore can lag.</li>
 <li>In request-driven mode, each Cloud Tasks wake runs a worker for up to 240 seconds and hands remaining work to the next wake. Parked tasks resume on a compatible pinned build.</li>
 </ul>
-<div class="designed"><p><span class="tag design">designed</span> The planned action policy adds these tool types.</p>
+<p>Calendar writes and email sends use the <a href="authority.html">approval and provider-check path</a>.</p>
 <table class="tall"><tr><th>Tool type</th><th>Temporary failure</th><th>Outcome unknown</th></tr>
-<tr><td>Reversible write</td><td>Retry only with the same operation ID and duplicate protection.</td><td>Check the provider before any repeat.</td></tr>
-<tr><td>Sensitive send or purchase</td><td>Ask the user first.</td><td>Check safely, then ask the user.</td></tr>
-</table></div>
+<tr><td>Calendar write or email send</td><td>A repeated activity only checks the provider once the approval is used.</td><td>Read the provider, then ask the user if the outcome remains uncertain.</td></tr>
+</table>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/task/workflow.go</code> · <code>core/internal/task/activities.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/cmd/nori-worker/</code> · <code>core/internal/taskworker/</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/task/workflow.go</code> · <code>core/internal/task/activities.go</code> · <code>core/internal/task/actions.go</code> · <code>core/internal/task/history.go</code> · <code>core/internal/task/tool_durable.go</code> · <code>core/internal/task/unresolved.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/cmd/nori-worker/</code> · <code>core/internal/taskworker/</code></p></details>
 </body>
 </html>
