@@ -36,7 +36,7 @@
      "id": "the-protocol-for-many-clients",
      "title": "The protocol for many clients",
      "status": "designed",
-     "words": 129
+     "words": 124
     }
    ]
   },
@@ -231,7 +231,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 623
+     "words": 634
     }
    ]
   },
@@ -448,6 +448,12 @@
      "words": 122
     },
     {
+     "id": "proactive-help",
+     "title": "Proactive help",
+     "status": "built",
+     "words": 173
+    },
+    {
      "id": "clients",
      "title": "Clients",
      "status": "built",
@@ -576,7 +582,7 @@
      "id": "where-it-stands",
      "title": "Where it stands",
      "status": "built",
-     "words": 79
+     "words": 82
     },
     {
      "id": "where-to-go-next",
@@ -758,7 +764,7 @@
      "id": "schedules-and-proactive-messages",
      "title": "Schedules and proactive messages",
      "status": "built",
-     "words": 73
+     "words": 63
     },
     {
      "id": "clients-and-operations",
@@ -840,9 +846,59 @@
    ]
   },
   {
+   "page": "docs/site/proactive.html",
+   "title": "Calendar offers",
+   "summary": "Twice a day the runtime checks the calendar for events too close to drive between, and offers help.",
+   "status": "built",
+   "code": [
+    "core/infrastructure/app/ops.py",
+    "core/internal/api/proactive.go",
+    "core/internal/proactive/check.go",
+    "core/internal/proactive/deliver.go",
+    "core/internal/proactive/detect.go",
+    "core/internal/proactive/plan.go",
+    "core/internal/proactive/routes.go",
+    "core/internal/state/firestore/proactive.go",
+    "core/internal/state/proactive.go",
+    "web/src/components/chat/Parts.tsx"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 136
+    },
+    {
+     "id": "what-counts-as-a-conflict",
+     "title": "What counts as a conflict",
+     "status": "built",
+     "words": 39
+    },
+    {
+     "id": "when-the-offer-appears",
+     "title": "When the offer appears",
+     "status": "built",
+     "words": 87
+    },
+    {
+     "id": "what-the-user-can-do",
+     "title": "What the user can do",
+     "status": "built",
+     "words": 76
+    },
+    {
+     "id": "daily-limits",
+     "title": "Daily limits",
+     "status": "built",
+     "words": 147
+    }
+   ]
+  },
+  {
    "page": "docs/site/product.html",
    "title": "What Nori should do",
-   "summary": "Fourteen things the finished product should do, and the 109 conversations we use to measure progress.",
+   "summary": "Fourteen things the finished product should do, and the 116 conversations we use to measure progress.",
    "status": "built",
    "code": [],
    "sections": [
@@ -850,7 +906,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 289
+     "words": 288
     },
     {
      "id": "how-we-measure-progress",
@@ -1034,20 +1090,20 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 160
+     "words": 170
     },
     {
      "id": "what-each-piece-adds",
      "title": "What each piece adds",
      "status": "built",
-     "words": 441
+     "words": 439
     }
    ]
   },
   {
    "page": "docs/site/scenarios.html",
    "title": "Scenarios",
-   "summary": "The 109 written conversations used to measure progress. They contain 229 user messages in 16 categories and 12 writing styles.",
+   "summary": "The 116 written conversations used to measure progress. They contain 232 user messages in 17 categories and 12 writing styles.",
    "status": "built",
    "code": [],
    "sections": [
@@ -1055,7 +1111,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 83
+     "words": 85
     },
     {
      "id": "what-s-in-a-scenario",
@@ -1067,7 +1123,7 @@
      "id": "shared-setup",
      "title": "Shared setup",
      "status": "built",
-     "words": 85
+     "words": 83
     },
     {
      "id": "running-a-conversation",
@@ -1079,7 +1135,7 @@
      "id": "scoring",
      "title": "Scoring",
      "status": "built",
-     "words": 933
+     "words": 948
     },
     {
      "id": "conversation-and-personal-support",
@@ -1176,21 +1232,30 @@
      "title": "Nori task execution",
      "status": "built",
      "words": 1022
+    },
+    {
+     "id": "proactive-assistance",
+     "title": "Proactive assistance",
+     "status": "built",
+     "words": 402
     }
    ]
   },
   {
    "page": "docs/site/schedules.html",
-   "title": "Schedules and proactive help",
-   "summary": "A reminder runs at the time the user asked for. A proactive offer starts from a trigger, with no request.",
+   "title": "Schedules",
+   "summary": "A reminder or scheduled task runs at the time the user asked for, with no new message.",
    "status": "planned",
-   "code": [],
+   "code": [
+    "core/infrastructure/app/ops.py",
+    "core/internal/state/proactive.go"
+   ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 72
+     "words": 60
     },
     {
      "id": "requested-and-proactive",
@@ -1199,8 +1264,14 @@
      "words": 45
     },
     {
-     "id": "task-results-aren-t-proactive-messages",
-     "title": "Task results aren't proactive messages",
+     "id": "the-one-timer-that-runs-today",
+     "title": "The one timer that runs today",
+     "status": "built",
+     "words": 26
+    },
+    {
+     "id": "task-results-aren-t-offers",
+     "title": "Task results aren't offers",
      "status": "built",
      "words": 25
     },
@@ -1208,13 +1279,7 @@
      "id": "what-the-rest-need",
      "title": "What the rest need",
      "status": "built",
-     "words": 49
-    },
-    {
-     "id": "proactive-help-is-still-being-designed",
-     "title": "Proactive help is still being designed",
-     "status": "built",
-     "words": 49
+     "words": 51
     }
    ]
   },
@@ -1426,7 +1491,7 @@
      "id": "the-screen",
      "title": "The screen",
      "status": "built",
-     "words": 99
+     "words": 101
     },
     {
      "id": "status-and-task-labels",
@@ -1453,7 +1518,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 761
+     "words": 783
     }
    ]
   }

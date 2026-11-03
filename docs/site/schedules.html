@@ -3,34 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Schedules and proactive help · Nori</title>
+<title>Schedules · Nori</title>
 <link rel="stylesheet" href="site.css">
 <script src="site.js" defer></script>
 </head>
 <body>
-<h1>Schedules and proactive help</h1>
-<p class="lede">A reminder runs at the time the user asked for. A proactive offer starts from a trigger, with no request.</p>
+<h1>Schedules</h1>
+<p class="lede">A reminder or scheduled task runs at the time the user asked for, with no new message.</p>
 <div class="card"><div class="flow">
 <div class="node designed-node"><b>Durable timer waits</b><small>“Remind me tomorrow at 9.” waits in the user's time zone.</small></div><div class="arrow">↓ <span class="lbl">starts a turn</span></div>
 <div class="node designed-node outer"><b>Outer loop writes the reminder</b><small>It's saved like any other message.</small></div><div class="arrow">↓</div>
-<div class="node designed-node"><b>Client delivers it</b><small>Delivery works with the app closed. Quiet hours can hold it back.</small></div>
+<div class="node designed-node"><b>Client delivers it</b><small>Delivery works with the app closed.</small></div>
 </div></div>
 <section><h2>Requested and proactive</h2>
 <div class="branch">
-<div class="card"><h3 style="margin-top:0">Requested</h3><p><span class="say me">Remind me tomorrow at 9.</span></p><p class="note">The user asked, so it's already authorized. Milestone 9.</p></div>
-<div class="card"><h3 style="margin-top:0">Proactive</h3><p><span class="say">Your appointment ends at 1:45, and the meeting is 30 minutes away. Want me to find another time?</span></p><p class="note">Nobody asked. The current proposal is to offer only. Milestone 11.</p></div>
+<div class="card"><h3 style="margin-top:0">Requested</h3><p><span class="say me">Remind me tomorrow at 9.</span></p><p class="note">The user asked, so it's already authorized. It's planned for milestone 9.</p></div>
+<div class="card"><h3 style="margin-top:0">Proactive</h3><p><span class="say">Your appointment ends at 1:45, and the meeting is 24 minutes away. Want me to look for another time?</span></p><p class="note">Nobody asked. Built as the <a href="proactive.html">calendar check</a>.</p></div>
 </div>
 </section>
-<section><h2>Task results aren't proactive messages</h2>
-<p>A result that arrives later belongs to a request the user made. It's always saved, and it doesn't count against any cap on proactive messages.</p></section>
+<section><h2>The one timer that runs today</h2>
+<p>Cloud Scheduler calls the calendar check at 12 am and 12 pm Pacific time. Reminders and recurring tasks the user asks for have no timer yet.</p></section>
+<section><h2>Task results aren't offers</h2>
+<p>A result that arrives later belongs to a request the user made. It's always saved, and it doesn't count against the daily cap on offers.</p></section>
 <section><h2>What the rest need</h2>
 <div class="grid2">
-<div class="card tight"><p class="keyline">Recurring schedules</p><ul class="pts note"><li>Local time across daylight saving, and business days</li><li>Skip and snooze</li><li>Exactly one catch-up after a missed run</li><li>List, change, pause and cancel</li><li>A report when nothing ran</li></ul></div>
-<div class="card tight"><p class="keyline">Monitors</p><ul class="pts note"><li>A threshold, a cadence and an end date</li><li>No alert unless the condition is met</li><li>No duplicate alerts</li></ul></div>
+<div class="card tight designed"><p class="keyline">Recurring schedules</p><ul class="pts note"><li>Local time across daylight saving, and business days</li><li>Skip and snooze</li><li>Exactly one catch-up after a missed run</li><li>List, change, pause and cancel</li><li>A report when nothing ran</li></ul></div>
+<div class="card tight designed"><p class="keyline">Monitors</p><ul class="pts note"><li>A threshold, a cadence and an end date</li><li>No alert unless the condition is met</li><li>No duplicate alerts</li></ul></div>
 </div></section>
-<section><h2>Proactive help is still being designed</h2>
-<p>A proactive turn starts with no request and can interrupt the user, so these get decided before building.</p>
-<ul class="pts"><li>The first trigger, such as a scheduled calendar check for travel conflicts.</li><li>What it may do alone. The current proposal is to offer only.</li><li>When it should interrupt.</li><li>Pacing and cost.</li></ul></section>
-<details class="sources"><summary>Sources</summary><p><a href="open-questions.html">Open questions</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/infrastructure/app/ops.py</code>, <code>core/internal/state/proactive.go</code>. Related: <a href="proactive.html">Calendar offers</a>, <a href="open-questions.html">Open questions</a>.</p></details>
 </body>
 </html>
