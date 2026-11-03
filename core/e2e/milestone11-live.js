@@ -77,9 +77,9 @@ async function usageFor(offerID) {
 }
 
 // The operator's marker: the outer model sees nothing from before it, and nothing is deleted.
-async function freshContext() {
+async function freshContext(from = new Date()) {
   await until(snapshot, quiet, "the conversation to be idle");
-  const at = new Date().toISOString();
+  const at = from.toISOString();
   const response = await send(`${owner}/conversation/control?updateMask.fieldPaths=context_from`, {
     method: "PATCH", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify({ fields: { context_from: { timestampValue: at } } }),
   });
@@ -279,8 +279,11 @@ const steps = {
   },
   // Austin says yes: a task starts on the normal path and nothing on the calendar changes without approval.
   async "110-accept"() {
-    await freshContext();
     const id = saved.offer110;
+    // Austin answers the offer, so the outer model's context starts just before it.
+    const shown = offerMessage(await snapshot(), id);
+    if (!shown) return result("110-accept", false, { offer: id, reason: "offer message not found" });
+    await freshContext(new Date(Date.parse(shown.created_at) - 1000));
     const before = Date.now();
     const answer = await say("yes, find me another time");
     const tasks = otherTasks(answer.now, before);
