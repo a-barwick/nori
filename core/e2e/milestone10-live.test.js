@@ -138,7 +138,7 @@ async function conversation(id) {
     await until(snapshot, quiet, `"${text}" to settle`, 420_000);
     await delay(3000);
     const now = await until(snapshot, quiet, `"${text}" to stay settled`, 420_000);
-    const reply = now.messages.filter((message) => message.role === "assistant" && !before.has(message.id)).map((message) => message.text).join("\n\n");
+    const reply = now.messages.filter((message) => message.role === "assistant" && !before.has(message.id)).map((message) => message.text).join("\n\n").replace(/[‘’]/g, "'");
     const trace = now.traces.find((item) => item.status === "completed");
     const outer = trace?.usage?.find((usage) => usage.provider === "outer");
     state.turns.push({ text, reply, context_bytes: trace?.context_bytes, input_tokens: outer?.input_tokens, cost: outer?.cost_usd });
