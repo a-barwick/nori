@@ -143,6 +143,7 @@ type ConversationDatabase interface {
 	UserRoutingPending(ctx context.Context) (bool, error)
 
 	ProactiveDatabase
+	ScheduleDatabase
 
 	// The event log. Writes happen inside the transactions above.
 	EventPosition(ctx context.Context) (int64, error)
@@ -173,4 +174,17 @@ type ProactiveDatabase interface {
 	// DeliverOffer publishes a due offer as a finished turn, or skips it. ErrConversationBusy means a turn is running.
 	DeliverOffer(ctx context.Context, id, day, note, text string, protocol []string, now time.Time) (Offer, error)
 	DecideOffer(ctx context.Context, id, decision string) (Offer, error)
+}
+
+// ScheduleDatabase holds the schedules Austin asked for and the notifications that reach him when the app is closed.
+type ScheduleDatabase interface {
+	Schedules(ctx context.Context) ([]Schedule, error)
+	// ClaimSchedule claims the due occurrence named by key and, with a message, publishes it. ErrConversationBusy means a
+	// turn is running; ErrScheduleState means the occurrence is no longer due.
+	ClaimSchedule(ctx context.Context, id, key, runID, reason string, message *ScheduleMessage, now time.Time) (Schedule, error)
+	ArmSchedule(ctx context.Context, id string, at time.Time) error
+	MarkSeen(ctx context.Context, messageID string) error
+	PendingNotifications(ctx context.Context) ([]Notification, error)
+	ClaimNotification(ctx context.Context, id string, quiet QuietHours, local time.Time) (Notification, string, error)
+	FinishNotification(ctx context.Context, id, status, reason string, now time.Time) error
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -145,6 +146,27 @@ func (s *server) delivered(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.Tasks.Store.MarkDelivered(r.Context(), body.IDs); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"recorded": true})
+}
+
+var messageID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,200}$`)
+
+// seen records the newest message a visible browser showed, so a notification for it isn't sent.
+func (s *server) seen(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MessageID string `json:"message_id"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if !messageID.MatchString(body.MessageID) {
+		writeJSON(w, 400, map[string]string{"error": "Send the ID of the newest message shown."})
+		return
+	}
+	if err := s.Tasks.Store.MarkSeen(r.Context(), body.MessageID); err != nil {
 		writeError(w, err)
 		return
 	}

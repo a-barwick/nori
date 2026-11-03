@@ -69,6 +69,7 @@ func Handler(deps Deps, local bool) http.Handler {
 	mux.HandleFunc("GET /v1/results/{id}", s.readResult)
 	mux.HandleFunc("GET /v1/results/{id}/file", s.readResultFile)
 	mux.HandleFunc("POST /api/delivered", s.delivered)
+	mux.HandleFunc("POST /api/seen", s.seen)
 	mux.HandleFunc("POST /api/proactive", s.check)
 	mux.HandleFunc("POST /api/offer", s.offer)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

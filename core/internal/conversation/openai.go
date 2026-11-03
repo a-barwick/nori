@@ -170,7 +170,7 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, control
 		"service_tier": "default", "store": false, "prompt_cache_options": map[string]string{"mode": "explicit"},
 	}
 	if !request.NoDispatch {
-		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs)
+		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.ScheduleIDs)
 	}
 	span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", "low"), attribute.String("gen_ai.request.service_tier", "default"))
 	return json.Marshal(body)

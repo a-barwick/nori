@@ -46,7 +46,10 @@ type Command struct {
 	Revises string `json:"revises,omitempty" firestore:"revises,omitempty"`
 	// Offer names the proactive offer a start command prepares options for. Such a task can only read, has a small
 	// budget, and reports to the offer instead of the conversation.
-	Offer     string      `json:"offer,omitempty" firestore:"offer,omitempty"`
+	Offer string `json:"offer,omitempty" firestore:"offer,omitempty"`
+	// Schedule names the schedule a start command runs an occurrence of, and Quiet makes it a read-only monitor check.
+	Schedule  string      `json:"schedule,omitempty" firestore:"schedule,omitempty"`
+	Quiet     bool        `json:"quiet,omitempty" firestore:"quiet,omitempty"`
 	ID        string      `json:"id" firestore:"id"`
 	RunID     string      `json:"run_id" firestore:"run_id"`
 	ParentID  string      `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
@@ -79,7 +82,8 @@ const (
 func SameCommand(a, b Command) bool {
 	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID &&
 		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs) &&
-		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises && a.Offer == b.Offer
+		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises && a.Offer == b.Offer &&
+		a.Schedule == b.Schedule && a.Quiet == b.Quiet
 }
 
 // ValidateCommandBatch checks a batch before anything is read. A rejected batch never partly commits.
@@ -247,6 +251,12 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 					return prepared, fmt.Errorf("%w: an offer's task can't be a subtask", ErrCommandInvalid)
 				}
 				run.Offer, run.ReadOnly, run.Budget = cmd.Offer, true, ProactivePrepBudgetUSD
+			}
+			if cmd.Schedule != "" {
+				if cmd.ParentID != "" || cmd.Offer != "" {
+					return prepared, fmt.Errorf("%w: a scheduled task can't be a subtask or an offer's task", ErrCommandInvalid)
+				}
+				run.Schedule, run.Quiet, run.ReadOnly = cmd.Schedule, cmd.Quiet, cmd.Quiet
 			}
 			if cmd.ParentID != "" {
 				parent, question, err := linkSubtask(runs[cmd.ParentID], exists[cmd.ParentID], cmd, opened)

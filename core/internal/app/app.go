@@ -19,6 +19,7 @@ import (
 	"nori/internal/env"
 	"nori/internal/platform"
 	"nori/internal/proactive"
+	"nori/internal/schedules"
 	"nori/internal/spend"
 	"nori/internal/state"
 	"nori/internal/wake"
@@ -31,6 +32,7 @@ type App struct {
 	Waker      wake.Waker
 	Model      string
 	Proactive  *proactive.Service
+	Schedules  *schedules.Service
 	engine     dispatch.Orchestrator
 }
 
@@ -95,7 +97,28 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 		store.Close()
 		return nil, err
 	}
-	return &App{Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, Proactive: checks, engine: engine}, nil
+	runner.Clock = conversation.Clock{Location: checks.Location, Now: checks.Now}
+	later, err := openSchedules(store, tasks, waker, runner.Clock, checks.Calendar)
+	if err != nil {
+		engine.Close()
+		store.Close()
+		return nil, err
+	}
+	return &App{Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, Proactive: checks, Schedules: later, engine: engine}, nil
+}
+
+// openSchedules runs what Austin asked for later. Notifications go to his connected account by email; without one
+// they are skipped with that reason, and schedules still run.
+func openSchedules(store state.ConversationStore, tasks *conversation.Tasks, waker wake.Waker, clock conversation.Clock, calendar *agent.CalendarConfig) (*schedules.Service, error) {
+	quiet, err := state.ParseQuietHours(env.Get("NORI_QUIET_HOURS", "22:00-07:00"))
+	if err != nil {
+		return nil, fmt.Errorf("NORI_QUIET_HOURS: %w", err)
+	}
+	s := &schedules.Service{Store: store, Tasks: tasks, Waker: waker, Clock: clock, Quiet: quiet, AppURL: os.Getenv("NORI_APP_URL")}
+	if calendar != nil && os.Getenv("NORI_NOTIFY_EMAIL") != "off" {
+		s.Mailer = &agent.NotifyMailer{Config: *calendar, To: os.Getenv("NORI_NOTIFY_EMAIL")}
+	}
+	return s, nil
 }
 
 // openProactive sets up the calendar check with the same Google account the task worker uses. A missing credential
@@ -188,16 +211,23 @@ func (a *App) Process(ctx context.Context) error {
 	}
 	processErr := a.Runner.Process(ctx)
 	// Offers wait for an idle conversation, so they go out after the pass that published the latest reply.
-	var offerErr error
+	var offerErr, scheduleErr error
 	if processErr == nil {
 		offerErr = a.Proactive.Deliver(ctx)
+	}
+	// Schedules fire after the pass too, so a reminder never cuts into a reply.
+	if processErr == nil {
+		scheduleErr = a.Schedules.Run(ctx)
+		if errors.Is(scheduleErr, state.ErrConversationBusy) {
+			scheduleErr = nil
+		}
 	}
 	// Dispatch and explicit controls can outlive their first delivery attempt.
 	// Keep the queue notification until delivery is confirmed.
 	delivery, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	reconcileErr := a.Dispatcher.Reconcile(delivery, dispatch.Commands|dispatch.Publications)
-	return errors.Join(stopErr, processErr, offerErr, reconcileErr)
+	return errors.Join(stopErr, processErr, offerErr, scheduleErr, reconcileErr)
 }
 
 // LocalLoop is tied to the application, so browser cancellation and reconnects
