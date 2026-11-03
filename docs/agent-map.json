@@ -456,7 +456,7 @@
      "id": "proactive-help",
      "title": "Proactive help",
      "status": "built",
-     "words": 173
+     "words": 296
     },
     {
      "id": "clients",
@@ -575,6 +575,7 @@
     "core/internal/conversation/runner.go",
     "core/internal/proactive/check.go",
     "core/internal/proactive/deliver.go",
+    "core/internal/schedules/schedules.go",
     "core/internal/state/memory.go",
     "core/internal/state/results.go",
     "core/internal/task/actions.go",
@@ -600,7 +601,7 @@
      "id": "where-it-stands",
      "title": "Where it stands",
      "status": "built",
-     "words": 76
+     "words": 74
     },
     {
      "id": "where-to-go-next",
@@ -1039,6 +1040,7 @@
     "core/internal/conversation/model.go",
     "core/internal/conversation/openai.go",
     "core/internal/dispatch/dispatcher.go",
+    "core/internal/schedules/schedules.go",
     "core/internal/state/conversation.go",
     "core/internal/state/firestore/tasks.go",
     "core/internal/task/actions.go",
@@ -1056,7 +1058,7 @@
      "id": "follow-ups-and-controls",
      "title": "Follow-ups and controls",
      "status": "built",
-     "words": 120
+     "words": 115
     }
    ]
   },
@@ -1120,6 +1122,7 @@
    "code": [
     "core/infrastructure/temporal/spend-alert.py",
     "core/internal/agent/catalog.go",
+    "core/internal/agent/notify.go",
     "core/internal/agent/steps.go",
     "core/internal/api/events.go",
     "core/internal/api/uploads.go",
@@ -1130,6 +1133,7 @@
     "core/internal/proactive/check.go",
     "core/internal/state/memory.go",
     "core/internal/state/results.go",
+    "core/internal/state/schedule.go",
     "core/internal/state/subtasks.go",
     "core/internal/task/actions.go",
     "core/internal/task/activities.go",
@@ -1141,19 +1145,19 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 250
+     "words": 254
     },
     {
      "id": "what-remains",
      "title": "What remains",
      "status": "built",
-     "words": 66
+     "words": 70
     },
     {
      "id": "following-one-request",
      "title": "Following one request",
      "status": "built",
-     "words": 114
+     "words": 117
     }
    ]
   },
@@ -1301,42 +1305,51 @@
   {
    "page": "docs/site/schedules.html",
    "title": "Schedules",
-   "summary": "A reminder or scheduled task runs at the time the user asked for, with no new message.",
-   "status": "planned",
+   "summary": "Reminders, later tasks and monitors the user asks for run at their time with no new message.",
+   "status": "built",
    "code": [
-    "core/infrastructure/app/ops.py",
-    "core/internal/state/proactive.go"
+    "core/internal/agent/notify.go",
+    "core/internal/api/uploads.go",
+    "core/internal/app/app.go",
+    "core/internal/conversation/model.go",
+    "core/internal/conversation/schedules.go",
+    "core/internal/schedules/schedules.go",
+    "core/internal/state/firestore/schedules.go",
+    "core/internal/state/firestore/tasks.go",
+    "core/internal/state/notify.go",
+    "core/internal/state/schedule.go",
+    "web/src/lib/runtime/useRuntime.ts"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 60
+     "words": 90
     },
     {
-     "id": "requested-and-proactive",
-     "title": "Requested and proactive",
+     "id": "three-kinds",
+     "title": "Three kinds",
      "status": "built",
-     "words": 45
+     "words": 121
     },
     {
-     "id": "the-one-timer-that-runs-today",
-     "title": "The one timer that runs today",
+     "id": "repeats-and-changes",
+     "title": "Repeats and changes",
      "status": "built",
-     "words": 26
+     "words": 72
     },
     {
-     "id": "task-results-aren-t-offers",
-     "title": "Task results aren't offers",
+     "id": "missed-and-late-runs",
+     "title": "Missed and late runs",
      "status": "built",
-     "words": 25
+     "words": 49
     },
     {
-     "id": "what-the-rest-need",
-     "title": "What the rest need",
+     "id": "email-when-the-app-is-closed",
+     "title": "Email when the app is closed",
      "status": "built",
-     "words": 51
+     "words": 146
     }
    ]
   },
@@ -1598,7 +1611,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 783
+     "words": 834
     }
    ]
   }

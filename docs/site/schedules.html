@@ -9,27 +9,50 @@
 </head>
 <body>
 <h1>Schedules</h1>
-<p class="lede">A reminder or scheduled task runs at the time the user asked for, with no new message.</p>
+<p class="lede">Reminders, later tasks and monitors the user asks for run at their time with no new message.</p>
 <div class="card"><div class="flow">
-<div class="node designed-node"><b>Durable timer waits</b><small>“Remind me tomorrow at 9.” waits in the user's time zone.</small></div><div class="arrow">↓ <span class="lbl">starts a turn</span></div>
-<div class="node designed-node outer"><b>Outer loop writes the reminder</b><small>It's saved like any other message.</small></div><div class="arrow">↓</div>
-<div class="node designed-node"><b>Client delivers it</b><small>Delivery works with the app closed.</small></div>
+<div class="node outer"><b>Outer loop</b><small>Asks the runtime to save “Stretch at 3 p.m. every weekday”.</small></div><div class="arrow">↓ <span class="lbl">saved with the reply</span></div>
+<div class="node"><b>Runtime</b><small>Saves the rule and asks Cloud Tasks to call it at 3 pm.</small></div><div class="arrow">↓ <span class="lbl">due at 3 pm</span></div>
+<div class="node"><b>Runtime</b><small>Adds “Time to stretch.” to the conversation, after any reply in progress.</small></div><div class="arrow">↓ <span class="lbl">reminder text, if no tab showed it in 90 seconds</span></div>
+<div class="node"><b>Gmail</b><small>Emails the reminder to the user from the connected account.</small></div>
 </div></div>
-<section><h2>Requested and proactive</h2>
-<div class="branch">
-<div class="card"><h3 style="margin-top:0">Requested</h3><p><span class="say me">Remind me tomorrow at 9.</span></p><p class="note">The user asked, so it's already authorized. It's planned for milestone 9.</p></div>
-<div class="card"><h3 style="margin-top:0">Proactive</h3><p><span class="say">Your appointment ends at 1:45, and the meeting is 24 minutes away. Want me to look for another time?</span></p><p class="note">Nobody asked. Built as the <a href="proactive.html">calendar check</a>.</p></div>
-</div>
+<section><h2>Three kinds</h2>
+<div class="card"><table class="tall"><tr><th>Kind</th><th>Example</th><th>When it's due</th></tr>
+<tr><td>Reminder</td><td>Take the laundry out in 20 minutes.</td><td>The runtime adds the reminder text as its own message.</td></tr>
+<tr><td>Task</td><td>Tomorrow at 7 am, check the weekend weather and suggest a picnic.</td><td>A task starts with the saved instructions and looks things up then.</td></tr>
+<tr><td>Monitor</td><td>Tell me if the black 1 TB laptop drops below $600. Check daily for two weeks.</td><td>A read-only task checks. The user hears nothing unless the condition is met.</td></tr>
+</table></div>
+<p>A monitor ends at its end date, or when a check reports that the user's stopping point was reached. Each check gets the list of what was already reported, so the same news isn't sent twice.</p>
 </section>
-<section><h2>The one timer that runs today</h2>
-<p>Cloud Scheduler calls the calendar check at 12 am and 12 pm Pacific time. Reminders and recurring tasks the user asks for have no timer yet.</p></section>
-<section><h2>Task results aren't offers</h2>
-<p>A result that arrives later belongs to a request the user made. It's always saved, and it doesn't count against the daily cap on offers.</p></section>
-<section><h2>What the rest need</h2>
+<section><h2>Repeats and changes</h2>
 <div class="grid2">
-<div class="card tight designed"><p class="keyline">Recurring schedules</p><ul class="pts note"><li>Local time across daylight saving, and business days</li><li>Skip and snooze</li><li>Exactly one catch-up after a missed run</li><li>List, change, pause and cancel</li><li>A report when nothing ran</li></ul></div>
-<div class="card tight designed"><p class="keyline">Monitors</p><ul class="pts note"><li>A threshold, a cadence and an end date</li><li>No alert unless the condition is met</li><li>No duplicate alerts</li></ul></div>
-</div></section>
-<details class="sources"><summary>Sources</summary><p><code>core/infrastructure/app/ops.py</code>, <code>core/internal/state/proactive.go</code>. Related: <a href="proactive.html">Calendar offers</a>, <a href="open-questions.html">Open questions</a>.</p></details>
+<div class="card tight"><p class="keyline">Repeats</p><ul class="pts note"><li>Once, daily, weekdays or chosen weekdays</li><li>A day of the month, or its last business day</li><li>Every few hours</li><li>US federal holidays, when the user names that calendar</li></ul></div>
+<div class="card tight"><p class="keyline">Changes from chat</p><ul class="pts note"><li>Skip one date, such as next Wednesday</li><li>Snooze to a later time, once</li><li>Pause, resume or cancel</li><li>Run once now</li></ul></div>
+</div>
+<p>Times stay at the user's local time. A daily 8 am reminder is still 8 am after the clocks change.</p>
+</section>
+<section><h2>Missed and late runs</h2>
+<ul class="pts">
+<li>An occurrence more than 30 minutes late covers every time that passed, so it runs once.</li>
+<li>A late reminder is still delivered, with a line saying when it was due.</li>
+<li>A late task doesn't run. The runtime posts a notice, and the task runs once if the user asks.</li>
+</ul></section>
+<section><h2>Email when the app is closed</h2>
+<p>Reminders, and replies to task results and task questions, wait 90 seconds for an open tab to show them. A visible tab reports the newest reply it shows, and then no email goes out.</p>
+<ul class="pts">
+<li>Quiet hours, 10 pm to 7 am by default, hold emails until they end.</li>
+<li>Once 8 emails have gone out in a day, the rest are dropped. Reminders still go.</li>
+<li>Reminders skip quiet hours and the daily limit.</li>
+</ul></section>
+<details class="more"><summary>Limits and settings</summary>
+<table><tr><th>Item</th><th>Value</th></tr>
+<tr><td>Open schedules</td><td>30 at most</td></tr>
+<tr><td>Monitor result</td><td>A check whose result doesn't say whether it found anything counts as an alert, so the user sees it.</td></tr>
+<tr><td>Quiet hours</td><td><code>NORI_QUIET_HOURS</code>, such as <code>22:00-07:00</code></td></tr>
+<tr><td>Recipient</td><td><code>NORI_NOTIFY_EMAIL</code>, or the connected account's own address</td></tr>
+</table>
+<p>Calendar offers come from a separate check that runs twice a day. They aren't schedules, and they aren't emailed. See <a href="proactive.html">Calendar offers</a>.</p>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state/schedule.go</code> · <code>core/internal/state/firestore/schedules.go</code> · <code>core/internal/state/notify.go</code> · <code>core/internal/schedules/schedules.go</code> · <code>core/internal/conversation/schedules.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/agent/notify.go</code> · <code>core/internal/app/app.go</code> · <code>core/internal/api/uploads.go</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · Related: <a href="proactive.html">Calendar offers</a>, <a href="scenarios.html">Scenarios</a></p></details>
 </body>
 </html>
