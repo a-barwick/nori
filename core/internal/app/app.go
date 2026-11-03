@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"nori/internal/agent/openrouter"
 	"nori/internal/api"
 	"nori/internal/conversation"
 	"nori/internal/dispatch"
@@ -42,6 +43,10 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 	if strings.TrimSpace(key) == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY must be configured in the selected project environment")
 	}
+	summaryKey := os.Getenv("OPENROUTER_API_KEY")
+	if strings.TrimSpace(summaryKey) == "" {
+		return nil, fmt.Errorf("OPENROUTER_API_KEY must be configured for conversation summaries")
+	}
 	store, err := platform.OpenStore(ctx)
 	if err != nil {
 		return nil, err
@@ -69,7 +74,17 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 		}
 		outer.URL = address
 	}
-	runner := conversation.New(outer, conversation.NewJevClassifier(jevKey), tasks)
+	// The conversation summary is written by the inner task model, through the same OpenRouter key the task worker uses.
+	summarizer := openrouter.New(summaryKey, "openai/gpt-6.1-terra")
+	if address := os.Getenv("NORI_E2E_MODEL_URL"); address != "" {
+		if os.Getenv("TEMPORAL_LOCAL") != "true" || !strings.HasPrefix(address, "http://127.0.0.1:") {
+			engine.Close()
+			store.Close()
+			return nil, fmt.Errorf("NORI_E2E_MODEL_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
+		}
+		summarizer.Endpoint = address
+	}
+	runner := conversation.New(outer, conversation.NewJevClassifier(jevKey), summarizer, tasks)
 	return &App{Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, engine: engine}, nil
 }
 

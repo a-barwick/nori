@@ -84,12 +84,16 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, err
 	}
 	defer control.Close()
-	body, err := json.Marshal(map[string]any{
+	fields := map[string]any{
 		"model": c.ModelName, "input": input, "instructions": req.Instructions,
 		"tools": tools, "max_output_tokens": limit, "store": false,
 		"include":  []string{"reasoning.encrypted_content"},
 		"provider": routing(),
-	})
+	}
+	if req.Reasoning != "" {
+		fields["reasoning"] = map[string]string{"effort": req.Reasoning}
+	}
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return out, errors.New("task request could not be encoded")
 	}

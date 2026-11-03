@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -77,12 +78,15 @@ type Session struct {
 type Runner struct {
 	model      ReplyModel
 	classifier IntentClassifier
-	tasks      *Tasks
-	process    sync.Mutex
+	// summarizer writes the conversation summary. compactAfter pauses compaction after a failure.
+	summarizer   SummaryModel
+	compactAfter time.Time
+	tasks        *Tasks
+	process      sync.Mutex
 }
 
-func New(model ReplyModel, classifier IntentClassifier, tasks *Tasks) *Runner {
-	return &Runner{model: model, classifier: classifier, tasks: tasks}
+func New(model ReplyModel, classifier IntentClassifier, summarizer SummaryModel, tasks *Tasks) *Runner {
+	return &Runner{model: model, classifier: classifier, summarizer: summarizer, tasks: tasks}
 }
 
 // HandleInput only accepts the idempotent inbox item; provider I/O is performed
@@ -129,6 +133,8 @@ func (r *Runner) Process(ctx context.Context) error {
 			return e
 		}
 		if t == nil {
+			// Nothing is waiting, so this is when the summary can catch up without delaying a reply.
+			r.compact(ctx)
 			return nil
 		}
 		f := fenceFor(c, *t)
@@ -257,6 +263,9 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 				break
 			}
 		}
+		if failure := memoryFailureText(t.Attempt.Memory); failure != "" {
+			text = failure
+		}
 		if text == "" {
 			text = acceptedCommandText(t.Attempt.Actions)
 			span.SetAttributes(attribute.Bool("nori.reply.receipt_ack", true))
@@ -309,6 +318,11 @@ func decodeSavedReply(a state.ConversationAttempt, reply *Reply) error {
 			return err
 		}
 	}
+	// Actions line up with task commands only: shown results and memory changes have no action.
+	reply.Calls = slices.DeleteFunc(reply.Calls, func(call ToolCall) bool {
+		name := call.Function.Name
+		return name == "show_result" || name == state.MemoryRemember || name == state.MemoryForget
+	})
 	return nil
 }
 func (r *Runner) recoverActions(ctx context.Context, t *state.ConversationTurn) error {
@@ -404,6 +418,14 @@ func buildProtocol(t *state.ConversationTurn, text string) {
 		} else {
 			t.Protocol = append(t.Protocol, t.Attempt.Results...)
 		}
+	}
+	if len(t.Attempt.Memory) > 0 {
+		changes, _ := json.Marshal(t.Attempt.Memory)
+		t.Protocol = append(t.Protocol, string(modelMessage(map[string]string{
+			"role": "system",
+			"content": "Saved memory changes for the preceding response. A change with an error was refused, and then " +
+				"none of them applied. Historical facts only:\n" + string(changes),
+		})))
 	}
 	if t.Attempt.StructuredReply || t.Attempt.Reply == "" || t.Attempt.Status == "error" || text != t.Attempt.Text {
 		t.Protocol = append(t.Protocol, string(modelMessage(map[string]string{"role": "assistant", "content": text})))
