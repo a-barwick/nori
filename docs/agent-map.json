@@ -340,13 +340,13 @@
      "id": "the-rules",
      "title": "The rules",
      "status": "built",
-     "words": 95
+     "words": 92
     },
     {
      "id": "outer-loop-tools",
      "title": "Outer loop tools",
      "status": "built",
-     "words": 116
+     "words": 123
     },
     {
      "id": "inner-loop-control-tools",
@@ -434,6 +434,12 @@
      "title": "Code structure",
      "status": "built",
      "words": 402
+    },
+    {
+     "id": "memory-and-context",
+     "title": "Memory and context",
+     "status": "built",
+     "words": 192
     },
     {
      "id": "models",
@@ -616,47 +622,46 @@
   {
    "page": "docs/site/memory.html",
    "title": "Memory and context",
-   "summary": "Each loop starts with a small context, built from recent messages or its own instructions.",
+   "summary": "Each outer reply sees saved memories, a summary of older turns and the newest turns, within a fixed size.",
    "status": "built",
    "code": [
-    "core/internal/state/conversation.go"
+    "core/e2e/milestone10-live.test.js",
+    "core/internal/conversation/call.go",
+    "core/internal/conversation/compact.go",
+    "core/internal/conversation/memory.go",
+    "core/internal/conversation/model.go",
+    "core/internal/conversation/runner.go",
+    "core/internal/conversation/task_context.go",
+    "core/internal/state/conversation.go",
+    "core/internal/state/firestore/conversation.go",
+    "core/internal/state/firestore/memory.go",
+    "core/internal/state/memory.go",
+    "core/internal/state/summary.go"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 108
+     "words": 76
     },
     {
-     "id": "five-kinds-of-memory",
-     "title": "Five kinds of memory",
-     "status": "designed",
-     "words": 74
+     "id": "saving-and-forgetting",
+     "title": "Saving and forgetting",
+     "status": "built",
+     "words": 135
     },
     {
-     "id": "how-far-does-a-correction-reach",
-     "title": "How far does a correction reach?",
-     "status": "designed",
-     "words": 33
+     "id": "summarizing-older-turns",
+     "title": "Summarizing older turns",
+     "status": "built",
+     "words": 79
     },
     {
-     "id": "what-every-memory-carries",
-     "title": "What every memory carries",
-     "status": "designed",
-     "words": 41
-    },
-    {
-     "id": "keeping-context-small",
-     "title": "Keeping context small",
-     "status": "designed",
-     "words": 54
-    },
-    {
-     "id": "still-open",
-     "title": "Still open",
-     "status": "designed",
-     "words": 16
+     "id": "what-the-inner-loop-sees",
+     "title": "What the inner loop sees",
+     "status": "built",
+     "words": 118
     }
    ]
   },
@@ -747,7 +752,7 @@
      "id": "memory",
      "title": "Memory",
      "status": "built",
-     "words": 40
+     "words": 71
     },
     {
      "id": "schedules-and-proactive-messages",
