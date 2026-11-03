@@ -20,7 +20,7 @@ import (
 )
 
 func inputRole(in state.ConversationInput) string {
-	if in.Introduction || in.Event != nil || in.Offer != "" {
+	if in.Introduction || in.Event != nil || in.Offer != "" || in.Schedule != "" {
 		return "system"
 	}
 	return "user"
@@ -176,6 +176,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	for _, memory := range view.Memories {
 		request.MemoryIDs = append(request.MemoryIDs, memory.ID)
 	}
+	request.ScheduleIDs = openScheduleIDs(view.Schedules)
 	promptStarted := time.Now()
 	messages := buildMessages(t, visible, view, next)
 	promptMS = time.Since(promptStarted).Milliseconds()
@@ -209,7 +210,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if callCtx.Err() != nil {
 		return callCtx.Err()
 	}
-	advice, _ := json.Marshal(map[string]any{"classification_hint": hint, "task_context": taskContext})
+	advice, _ := json.Marshal(map[string]any{"classification_hint": hint, "task_context": taskContext, "time_and_schedules": scheduleContext(view.Schedules, r.Clock)})
 	advisory := modelMessage(map[string]string{"role": "system", "content": "Advisory context for the current inputs: " + string(advice)})
 	// The oldest recent turns give way first when the whole input would pass its budget. Compaction folds them into
 	// the summary.
@@ -228,7 +229,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if e = r.recordUsage(inputID, reply.Usage); e != nil {
 		return e
 	}
-	return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view.Memories)
+	return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view)
 }
 
 func (r *Runner) modelFailureText(ctx context.Context, inputs []state.ConversationInput, modelErr error) string {
@@ -360,6 +361,7 @@ func classifyHistory(visible []Message, t *state.ConversationTurn) []Message {
 // of older turns, and the recent turns after it.
 type historyView struct {
 	Memories  []state.Memory
+	Schedules []state.Schedule
 	Summary   *state.ConversationSummary
 	Turns     []state.ConversationTurn
 	Truncated bool
@@ -439,7 +441,7 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 
 func (r *Runner) finishCall(
 	ctx, callCtx context.Context, f state.ConversationFence, t *state.ConversationTurn, reply Reply, modelErr error, noDispatch bool,
-	memories []state.Memory,
+	view historyView,
 ) error {
 	if modelErr != nil {
 		if callCtx.Err() != nil {
@@ -467,6 +469,10 @@ func (r *Runner) finishCall(
 		var remembered []memoryCall
 		if err == nil {
 			calls, remembered, err = splitMemory(calls)
+		}
+		var scheduled []scheduleCall
+		if err == nil {
+			calls, scheduled, err = splitSchedules(calls)
 		}
 		var commands []state.Command
 		if err == nil {
@@ -498,7 +504,10 @@ func (r *Runner) finishCall(
 			}
 			// Remember and forget only reach a turn with Austin's message: other turns have no actions at all.
 			if fromUser && len(remembered) > 0 {
-				t.Attempt.Memory, _ = planMemory(t.Attempt.ID, remembered, memories)
+				t.Attempt.Memory, _ = planMemory(t.Attempt.ID, remembered, view.Memories)
+			}
+			if fromUser && len(scheduled) > 0 {
+				t.Attempt.Schedules, _ = planSchedules(t.Attempt.ID, scheduled, view.Schedules, r.Clock)
 			}
 			// A message's files go with it when it reaches one task. When it reaches several, each dispatch names its own.
 			receivers := 0
@@ -634,6 +643,9 @@ func (r *Runner) readAttemptHistory(ctx context.Context, from time.Time) history
 		return result(err)
 	}
 	view.Memories = memories
+	if view.Schedules, err = r.tasks.Store.Schedules(ctx); err != nil {
+		return result(err)
+	}
 	summary, err := r.tasks.Store.ConversationSummary(ctx)
 	if err != nil {
 		return result(err)

@@ -73,6 +73,10 @@ type Run struct {
 	// Offer names the proactive offer this read-only task prepares. Its questions and outcome stay out of the
 	// conversation; the offer shows its answer when it's delivered.
 	Offer string `json:"offer,omitempty" firestore:"offer,omitempty"`
+	// Schedule names the schedule that started this task. A Quiet one is a monitor check: it can only read, and its
+	// outcome reaches the conversation only when it found what Austin asked to hear about.
+	Schedule string `json:"schedule,omitempty" firestore:"schedule,omitempty"`
+	Quiet    bool   `json:"quiet,omitempty" firestore:"quiet,omitempty"`
 	// Uploads are the files this task was given, and the only ones it can read.
 	Uploads []Attachment `json:"uploads,omitempty" firestore:"uploads,omitempty"`
 	// Revises is the saved result this task was started to change.

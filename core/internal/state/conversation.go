@@ -25,6 +25,8 @@ type ConversationInput struct {
 	Attachments []Attachment `firestore:"attachments,omitempty"`
 	// Offer names the proactive offer this input delivered. Its Text is the note the outer model sees about it.
 	Offer string `firestore:"offer,omitempty"`
+	// Schedule names the schedule whose reminder or notice this input delivered.
+	Schedule string `firestore:"schedule,omitempty"`
 }
 
 type ConversationControl struct {
@@ -80,6 +82,8 @@ type ConversationAttempt struct {
 	ContextBytes     int                  `firestore:"context_bytes"`
 	// Memory holds the remember and forget changes this attempt asked for. They apply when its reply is published.
 	Memory []MemoryChange `firestore:"memory,omitempty"`
+	// Schedules holds the schedule changes this attempt asked for. They also apply when its reply is published.
+	Schedules []ScheduleChangeRequest `firestore:"schedules,omitempty"`
 }
 
 type ConversationTurn struct {
@@ -129,7 +133,7 @@ const (
 )
 
 func (in ConversationInput) IsUser() bool {
-	return !in.Introduction && in.Event == nil && in.Offer == ""
+	return !in.Introduction && in.Event == nil && in.Offer == "" && in.Schedule == ""
 }
 
 // NewConversationControl is the control record of a conversation that has no saved control document yet.

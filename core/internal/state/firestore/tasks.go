@@ -294,9 +294,26 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 				return err
 			}
 		}
+		var schedule *state.Schedule
+		if run.Schedule != "" {
+			if schedule, err = d.readSchedule(tx, run.Schedule); err != nil {
+				return err
+			}
+		}
 		finished, event := state.FinishRun(run, admitted, now)
 		// An offer's prep task reports to its offer, not the conversation.
 		announce := run.ParentID == "" && run.Offer == ""
+		// A monitor check that found nothing new says nothing. One that failed or was stopped still reports.
+		if run.Quiet && finished.Status == state.RunCompleted {
+			alert, _ := state.MonitorOutcome(finished.Result)
+			announce = announce && alert
+			if schedule != nil {
+				updated := state.ApplyMonitorResult(*schedule, finished.Result, now)
+				schedule = &updated
+			}
+		} else {
+			schedule = nil
+		}
 		var result *state.Command
 		if run.ParentID != "" {
 			var waiting bool
@@ -358,6 +375,11 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 		}
 		if result != nil {
 			if err = tx.Create(d.commands().Doc(result.ID), *result); err != nil {
+				return err
+			}
+		}
+		if schedule != nil {
+			if err = tx.Set(d.schedules().Doc(schedule.ID), *schedule); err != nil {
 				return err
 			}
 		}

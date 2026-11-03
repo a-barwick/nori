@@ -83,6 +83,8 @@ type Runner struct {
 	compactAfter time.Time
 	tasks        *Tasks
 	process      sync.Mutex
+	// Clock is Austin's time zone and the time, for schedules.
+	Clock Clock
 }
 
 func New(model ReplyModel, classifier IntentClassifier, summarizer SummaryModel, tasks *Tasks) *Runner {
@@ -266,6 +268,9 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		if failure := memoryFailureText(t.Attempt.Memory); failure != "" {
 			text = failure
 		}
+		if failure := scheduleFailureText(t.Attempt.Schedules); failure != "" {
+			text = failure
+		}
 		if text == "" {
 			text = acceptedCommandText(t.Attempt.Actions)
 			span.SetAttributes(attribute.Bool("nori.reply.receipt_ack", true))
@@ -276,6 +281,9 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		}
 		if strings.TrimSpace(text) == "" {
 			text = memoryText(t.Attempt.Memory)
+		}
+		if strings.TrimSpace(text) == "" {
+			text = scheduleText(t.Attempt.Schedules, r.Clock)
 		}
 		if strings.TrimSpace(text) == "" && len(t.Attempt.ShowResults) > 0 {
 			text = "Here it is."
@@ -324,7 +332,8 @@ func decodeSavedReply(a state.ConversationAttempt, reply *Reply) error {
 	// Actions line up with task commands only: shown results and memory changes have no action.
 	reply.Calls = slices.DeleteFunc(reply.Calls, func(call ToolCall) bool {
 		name := call.Function.Name
-		return name == "show_result" || name == state.MemoryRemember || name == state.MemoryForget
+		return name == "show_result" || name == state.MemoryRemember || name == state.MemoryForget ||
+			name == state.ScheduleCreate || name == state.ScheduleChange
 	})
 	return nil
 }
@@ -427,6 +436,14 @@ func buildProtocol(t *state.ConversationTurn, text string) {
 		t.Protocol = append(t.Protocol, string(modelMessage(map[string]string{
 			"role": "system",
 			"content": "Saved memory changes for the preceding response. A change with an error was refused, and then " +
+				"none of them applied. Historical facts only:\n" + string(changes),
+		})))
+	}
+	if len(t.Attempt.Schedules) > 0 {
+		changes, _ := json.Marshal(t.Attempt.Schedules)
+		t.Protocol = append(t.Protocol, string(modelMessage(map[string]string{
+			"role": "system",
+			"content": "Saved schedule changes for the preceding response. A change with an error was refused, and then " +
 				"none of them applied. Historical facts only:\n" + string(changes),
 		})))
 	}

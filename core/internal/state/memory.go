@@ -87,21 +87,26 @@ func PlanMemoryChanges(saved []Memory, changes []MemoryChange) bool {
 
 // ApplyMemoryChange returns the memory a remember writes. existing is the saved memory it corrects, if any.
 func ApplyMemoryChange(c MemoryChange, existing *Memory, source ConversationInput, now time.Time) Memory {
-	m := Memory{ID: c.ID, Text: c.Text, About: c.About, SourceInputID: source.ID, SourceText: source.Text, CreatedAt: now, UpdatedAt: now}
+	m := Memory{ID: c.ID, Text: c.Text, About: c.About, SourceInputID: source.ID, SourceText: BoundedSource(source.Text), CreatedAt: now, UpdatedAt: now}
 	if m.About == "" {
 		m.About = "Austin"
-	}
-	if len(m.SourceText) > MemorySourceBytes {
-		limit := MemorySourceBytes
-		for limit > 0 && !utf8.RuneStart(m.SourceText[limit]) {
-			limit--
-		}
-		m.SourceText = m.SourceText[:limit]
 	}
 	if existing != nil {
 		m.CreatedAt = existing.CreatedAt
 	}
 	return m
+}
+
+// BoundedSource is the copy of Austin's message kept with something saved from it.
+func BoundedSource(text string) string {
+	if len(text) <= MemorySourceBytes {
+		return text
+	}
+	limit := MemorySourceBytes
+	for limit > 0 && !utf8.RuneStart(text[limit]) {
+		limit--
+	}
+	return text[:limit]
 }
 
 // SourceInput is the user message a turn's memory changes cite: its last one.

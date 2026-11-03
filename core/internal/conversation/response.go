@@ -8,7 +8,7 @@ import (
 
 // Reuse the runtime's command schemas in one strict action-list response.
 // Validated actions enter the same durable admission and replay path.
-func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string) any {
+func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs, scheduleIDs []string) any {
 	var tools []struct {
 		Function struct {
 			Name, Description string
@@ -24,6 +24,18 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string
 	}
 	for _, tool := range tools {
 		if restricted && tool.Function.Name != "dispatch" && tool.Function.Name != "answer" {
+			continue
+		}
+		if tool.Function.Name == "schedule" {
+			variants = append(variants, actionVariant(tool.Function.Name, tool.Function.Description, tool.Function.Parameters))
+			continue
+		}
+		if tool.Function.Name == "change_schedule" {
+			if len(scheduleIDs) == 0 {
+				continue
+			}
+			tool.Function.Parameters["properties"].(map[string]any)["schedule_id"].(map[string]any)["enum"] = scheduleIDs
+			variants = append(variants, actionVariant(tool.Function.Name, tool.Function.Description, tool.Function.Parameters))
 			continue
 		}
 		if tool.Function.Name == "remember" || tool.Function.Name == "forget" {
@@ -112,6 +124,9 @@ func decodeResponse(content string) (string, []ToolCall, error) {
 	commands, _, err := splitShows(calls)
 	if err == nil {
 		commands, _, err = splitMemory(commands)
+	}
+	if err == nil {
+		commands, _, err = splitSchedules(commands)
 	}
 	if err != nil {
 		return "", nil, err

@@ -332,6 +332,16 @@ export function useRuntime(agentMode = false) {
     void post("delivered", { ids }, undefined, agentMode).catch(() => { for (const id of ids) reported.current.delete(id); });
   }, [session, visible, agentMode]);
 
+  // A visible tab also reports the newest reply it shows, so Nori doesn't email Austin about it.
+  const seen = useRef("");
+  useEffect(() => {
+    if (!session || !visible) return;
+    const newest = session.messages.findLast((message) => message.role === "assistant");
+    if (!newest || newest.id === seen.current) return;
+    seen.current = newest.id;
+    void post("seen", { message_id: newest.id }, undefined, agentMode).catch(() => { if (seen.current === newest.id) seen.current = ""; });
+  }, [session, visible, agentMode]);
+
   // Follow the event log while the tab is visible. The browser reconnects by itself with Last-Event-ID after a stream
   // ends. It gives up only when a response isn't a stream, and then this reopens it from the last event.
   useEffect(() => {
