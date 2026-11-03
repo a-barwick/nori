@@ -72,7 +72,12 @@ func (e *Engine) SignalOrStart(ctx context.Context, cmd state.Command) error {
 	options := client.StartWorkflowOptions{
 		ID: WorkflowID(cmd.RunID), TaskQueue: Queue(), WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 	}
-	_, err := e.c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, options, WorkflowName, cmd.RunID, Checkpoint{})
+	// An offer's prep task starts below the default budget. Budgets only move up later, so it is set here.
+	start := Checkpoint{}
+	if cmd.Offer != "" {
+		start.StartBudget = state.ProactivePrepBudgetUSD
+	}
+	_, err := e.c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, options, WorkflowName, cmd.RunID, start)
 	return err
 }
 

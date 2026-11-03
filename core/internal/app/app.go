@@ -11,13 +11,16 @@ import (
 	"strings"
 	"time"
 
+	"nori/internal/agent"
 	"nori/internal/agent/openrouter"
 	"nori/internal/api"
 	"nori/internal/conversation"
 	"nori/internal/dispatch"
 	"nori/internal/env"
 	"nori/internal/platform"
+	"nori/internal/proactive"
 	"nori/internal/spend"
+	"nori/internal/state"
 	"nori/internal/wake"
 )
 
@@ -27,6 +30,7 @@ type App struct {
 	Dispatcher *dispatch.Dispatcher
 	Waker      wake.Waker
 	Model      string
+	Proactive  *proactive.Service
 	engine     dispatch.Orchestrator
 }
 
@@ -85,7 +89,66 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 		summarizer.Endpoint = address
 	}
 	runner := conversation.New(outer, conversation.NewJevClassifier(jevKey), summarizer, tasks)
-	return &App{Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, engine: engine}, nil
+	checks, err := openProactive(store, runner, tasks, outer, waker)
+	if err != nil {
+		engine.Close()
+		store.Close()
+		return nil, err
+	}
+	return &App{Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, Proactive: checks, engine: engine}, nil
+}
+
+// openProactive sets up the calendar check with the same Google account the task worker uses. A missing credential
+// leaves the check refusing with a reason; delivery and offers still work.
+func openProactive(store state.ConversationStore, runner *conversation.Runner, tasks *conversation.Tasks, model conversation.ReplyModel, waker wake.Waker) (*proactive.Service, error) {
+	location, err := time.LoadLocation(env.Get("NORI_TIMEZONE", "America/Los_Angeles"))
+	if err != nil {
+		return nil, fmt.Errorf("NORI_TIMEZONE must be an IANA time zone")
+	}
+	s := &proactive.Service{Store: store, Runner: runner, Tasks: tasks, Model: model, Waker: waker, Location: location}
+	local := os.Getenv("TEMPORAL_LOCAL") == "true"
+	loopback := func(name string) (string, error) {
+		address := os.Getenv(name)
+		if address != "" && (!local || !strings.HasPrefix(address, "http://127.0.0.1:")) {
+			return "", fmt.Errorf("%s requires TEMPORAL_LOCAL=true and a 127.0.0.1 address", name)
+		}
+		return address, nil
+	}
+	google, err := loopback("NORI_E2E_GOOGLE_URL")
+	if err != nil {
+		return nil, err
+	}
+	routes, err := loopback("NORI_E2E_ROUTES_URL")
+	if err != nil {
+		return nil, err
+	}
+	if value := os.Getenv("NORI_E2E_NOW"); value != "" {
+		at, err := time.Parse(time.RFC3339, value)
+		if err != nil || !local {
+			return nil, fmt.Errorf("NORI_E2E_NOW requires TEMPORAL_LOCAL=true and an RFC 3339 time")
+		}
+		offset := time.Until(at)
+		s.Now = func() time.Time { return time.Now().Add(offset) }
+	}
+	calendar := agent.CalendarConfig{
+		ClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
+		RefreshToken: os.Getenv("GOOGLE_CALENDAR_REFRESH_TOKEN"), Account: env.Get("GOOGLE_CALENDAR_ACCOUNT", "the connected Google account"),
+		WriteCalendar: os.Getenv("GOOGLE_CALENDAR_WRITE_ID"),
+	}
+	if google != "" {
+		calendar.APIBase, calendar.TokenURL = google, google+"/token"
+	}
+	if calendar.ClientID != "" && calendar.ClientSecret != "" && calendar.RefreshToken != "" {
+		s.Calendar = &calendar
+	}
+	if key := os.Getenv("GOOGLE_ROUTES_API_KEY"); key != "" {
+		router := proactive.NewRoutesAPI(key)
+		if routes != "" {
+			router.URL = routes
+		}
+		s.Router = router
+	}
+	return s, nil
 }
 
 func (a *App) Close() {
@@ -95,7 +158,7 @@ func (a *App) Close() {
 
 // API returns what the HTTP routes call into.
 func (a *App) API() api.Deps {
-	return api.Deps{Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a}
+	return api.Deps{Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Proactive: a.Proactive}
 }
 
 func (a *App) Resume(ctx context.Context) error { return a.Dispatcher.Resume(ctx) }
@@ -124,12 +187,17 @@ func (a *App) Process(ctx context.Context) error {
 		}
 	}
 	processErr := a.Runner.Process(ctx)
+	// Offers wait for an idle conversation, so they go out after the pass that published the latest reply.
+	var offerErr error
+	if processErr == nil {
+		offerErr = a.Proactive.Deliver(ctx)
+	}
 	// Dispatch and explicit controls can outlive their first delivery attempt.
 	// Keep the queue notification until delivery is confirmed.
 	delivery, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	reconcileErr := a.Dispatcher.Reconcile(delivery, dispatch.Commands|dispatch.Publications)
-	return errors.Join(stopErr, processErr, reconcileErr)
+	return errors.Join(stopErr, processErr, offerErr, reconcileErr)
 }
 
 // LocalLoop is tied to the application, so browser cancellation and reconnects

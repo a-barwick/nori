@@ -43,7 +43,10 @@ type Command struct {
 	// Attachments are files this command gives the task.
 	Attachments []Attachment `json:"attachments,omitempty" firestore:"attachments,omitempty"`
 	// Revises names the saved result a start command is meant to change.
-	Revises   string      `json:"revises,omitempty" firestore:"revises,omitempty"`
+	Revises string `json:"revises,omitempty" firestore:"revises,omitempty"`
+	// Offer names the proactive offer a start command prepares options for. Such a task can only read, has a small
+	// budget, and reports to the offer instead of the conversation.
+	Offer     string      `json:"offer,omitempty" firestore:"offer,omitempty"`
 	ID        string      `json:"id" firestore:"id"`
 	RunID     string      `json:"run_id" firestore:"run_id"`
 	ParentID  string      `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
@@ -76,7 +79,7 @@ const (
 func SameCommand(a, b Command) bool {
 	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID &&
 		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs) &&
-		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises
+		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises && a.Offer == b.Offer
 }
 
 // ValidateCommandBatch checks a batch before anything is read. A rejected batch never partly commits.
@@ -238,6 +241,12 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 				ID: cmd.RunID, Request: cmd.Text, Status: RunRunning, Temporal: true, ProtocolVersion: TaskProtocolVersion,
 				WorkflowVersion: TaskWorkflowVersion, StartedAt: now, Budget: TaskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
 				TraceContext: traceContext, OriginTraceContext: traceContext, Revises: cmd.Revises,
+			}
+			if cmd.Offer != "" {
+				if cmd.ParentID != "" {
+					return prepared, fmt.Errorf("%w: an offer's task can't be a subtask", ErrCommandInvalid)
+				}
+				run.Offer, run.ReadOnly, run.Budget = cmd.Offer, true, ProactivePrepBudgetUSD
 			}
 			if cmd.ParentID != "" {
 				parent, question, err := linkSubtask(runs[cmd.ParentID], exists[cmd.ParentID], cmd, opened)

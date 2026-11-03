@@ -35,6 +35,8 @@ type Checkpoint struct {
 	Stopped                            bool
 	Request                            string
 	ReadOnly                           bool
+	// StartBudget replaces the default budget of a new task, and is used only before the first step.
+	StartBudget float64
 	// Jobs are started and not yet observed ended. They outlive a revision, so
 	// only terminal cleanup stops them, not a correction or a question.
 	Jobs        []string
@@ -69,6 +71,9 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 	c := resume
 	if c.Budget == 0 {
 		c.Budget = agent.BudgetUSD
+		if c.StartBudget > 0 {
+			c.Budget = c.StartBudget
+		}
 		c.Stopped = true
 	}
 	var a *Activities

@@ -220,14 +220,17 @@ func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision i
 		if len(eventTraceContext) == 0 {
 			eventTraceContext = run.TraceContext
 		}
-		inserted, err := d.appendTaskEvent(tx, event, eventTraceContext)
-		if err != nil || !inserted {
-			return err
+		// An offer's prep task waits quietly: the offer is how Austin hears about it.
+		if run.Offer == "" {
+			inserted, err := d.appendTaskEvent(tx, event, eventTraceContext)
+			if err != nil || !inserted {
+				return err
+			}
+			if err = log.add(state.EventConversation, ""); err != nil {
+				return err
+			}
 		}
 		if err = log.add(state.EventTask, runID); err != nil {
-			return err
-		}
-		if err = log.add(state.EventConversation, ""); err != nil {
 			return err
 		}
 		return tx.Set(d.runs().Doc(runID), state.WithQuestion(run, question, event))
@@ -292,7 +295,8 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			}
 		}
 		finished, event := state.FinishRun(run, admitted, now)
-		announce := run.ParentID == ""
+		// An offer's prep task reports to its offer, not the conversation.
+		announce := run.ParentID == "" && run.Offer == ""
 		var result *state.Command
 		if run.ParentID != "" {
 			var waiting bool

@@ -149,41 +149,61 @@ func calendarRange(start, end string) (time.Time, time.Time, error) {
 	return from, to, nil
 }
 
-func readCalendars(ctx context.Context, config CalendarConfig, client *http.Client, from, to, now time.Time) (map[string]any, error) {
+// CalendarEvent is one event from a calendar read. Titles and places come from the calendar, so they are data.
+type CalendarEvent struct {
+	Calendar string `json:"calendar"`
+	EventID  string `json:"event_id"`
+	Writable bool   `json:"writable,omitempty"`
+	Title    string `json:"title"`
+	Start    string `json:"start"`
+	End      string `json:"end"`
+	AllDay   bool   `json:"all_day,omitempty"`
+	Location string `json:"location,omitempty"`
+}
+
+// CalendarRead is the account, its time zone and the events between two times, earliest first.
+type CalendarRead struct {
+	Account, TimeZone string
+	Calendars         []string
+	Events            []CalendarEvent
+	Truncated         bool
+}
+
+// ReadCalendarEvents reads the connected account's calendars between two times. The proactive check uses it outside
+// any task, with the same account and limits as calendar_read.
+func ReadCalendarEvents(ctx context.Context, config CalendarConfig, from, to time.Time) (CalendarRead, error) {
+	if !config.connected() {
+		return CalendarRead{}, errors.New("Google Calendar is not connected")
+	}
+	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
+	defer cancel()
+	return listCalendarEvents(ctx, config, config.client(ctx), from, to)
+}
+
+func listCalendarEvents(ctx context.Context, config CalendarConfig, client *http.Client, from, to time.Time) (CalendarRead, error) {
+	var read CalendarRead
 	var list struct {
 		Items []calendarEntry `json:"items"`
 	}
 	if err := calendarGet(ctx, client, config.calendarURL()+"/users/me/calendarList?minAccessRole=reader&maxResults=50", &list); err != nil {
-		return nil, err
+		return read, err
 	}
-	account, zone := "", ""
 	selected := []calendarEntry{}
 	for _, entry := range list.Items {
 		if entry.Primary {
-			account, zone = entry.ID, entry.TimeZone
+			read.Account, read.TimeZone = entry.ID, entry.TimeZone
 			selected = append([]calendarEntry{entry}, selected...)
 		} else if entry.Selected {
 			selected = append(selected, entry)
 		}
 	}
-	truncated := len(selected) > maxCalendars
-	if truncated {
+	read.Truncated = len(selected) > maxCalendars
+	if read.Truncated {
 		selected = selected[:maxCalendars]
 	}
-	type event struct {
-		Calendar string `json:"calendar"`
-		EventID  string `json:"event_id"`
-		Writable bool   `json:"writable,omitempty"`
-		Title    string `json:"title"`
-		Start    string `json:"start"`
-		End      string `json:"end"`
-		AllDay   bool   `json:"all_day,omitempty"`
-		Location string `json:"location,omitempty"`
-	}
-	events := []event{}
-	names := []string{}
+	read.Events, read.Calendars = []CalendarEvent{}, []string{}
 	for _, entry := range selected {
-		names = append(names, entry.Summary)
+		read.Calendars = append(read.Calendars, entry.Summary)
 		query := url.Values{"timeMin": {from.Format(time.RFC3339)}, "timeMax": {to.Format(time.RFC3339)}, "singleEvents": {"true"}, "orderBy": {"startTime"}, "maxResults": {fmt.Sprint(maxCalendarEvents)}, "fields": {"nextPageToken,items(id,summary,start,end,location,status)"}}
 		var page struct {
 			NextPageToken string `json:"nextPageToken"`
@@ -196,22 +216,33 @@ func readCalendars(ctx context.Context, config CalendarConfig, client *http.Clie
 			} `json:"items"`
 		}
 		if err := calendarGet(ctx, client, config.calendarURL()+"/calendars/"+url.PathEscape(entry.ID)+"/events?"+query.Encode(), &page); err != nil {
-			return nil, err
+			return read, err
 		}
-		truncated = truncated || page.NextPageToken != ""
+		read.Truncated = read.Truncated || page.NextPageToken != ""
 		for _, item := range page.Items {
 			if item.Status == "cancelled" {
 				continue
 			}
 			writable := entry.ID == config.target() || (entry.Primary && config.target() == "primary")
-			found := event{Calendar: entry.Summary, EventID: item.ID, Writable: writable, Title: clipText(item.Summary, maxEventText), Start: item.Start.DateTime, End: item.End.DateTime, Location: clipText(item.Location, maxEventText)}
+			found := CalendarEvent{Calendar: entry.Summary, EventID: item.ID, Writable: writable, Title: clipText(item.Summary, maxEventText), Start: item.Start.DateTime, End: item.End.DateTime, Location: clipText(item.Location, maxEventText)}
 			if found.Start == "" {
 				found.Start, found.End, found.AllDay = item.Start.Date, item.End.Date, true
 			}
-			events = append(events, found)
+			read.Events = append(read.Events, found)
 		}
 	}
-	sort.SliceStable(events, func(i, j int) bool { return eventInstant(events[i].Start).Before(eventInstant(events[j].Start)) })
+	sort.SliceStable(read.Events, func(i, j int) bool {
+		return eventInstant(read.Events[i].Start).Before(eventInstant(read.Events[j].Start))
+	})
+	return read, nil
+}
+
+func readCalendars(ctx context.Context, config CalendarConfig, client *http.Client, from, to, now time.Time) (map[string]any, error) {
+	read, err := listCalendarEvents(ctx, config, client, from, to)
+	if err != nil {
+		return nil, err
+	}
+	events, truncated := read.Events, read.Truncated
 	for len(events) > 0 {
 		data, err := json.Marshal(events)
 		if err != nil || len(data) <= maxCalendarResult {
@@ -219,7 +250,7 @@ func readCalendars(ctx context.Context, config CalendarConfig, client *http.Clie
 		}
 		events, truncated = events[:len(events)*3/4], true
 	}
-	return map[string]any{"account": account, "time_zone": zone, "calendars": strings.Join(names, ", "), "start": from.Format(time.RFC3339), "end": to.Format(time.RFC3339), "retrieved_at": now.Format(time.RFC3339), "events": events, "truncated": truncated}, nil
+	return map[string]any{"account": read.Account, "time_zone": read.TimeZone, "calendars": strings.Join(read.Calendars, ", "), "start": from.Format(time.RFC3339), "end": to.Format(time.RFC3339), "retrieved_at": now.Format(time.RFC3339), "events": events, "truncated": truncated}, nil
 }
 
 // clipText shortens provider text without splitting a character.

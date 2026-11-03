@@ -8,6 +8,7 @@ package wake
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrNotConfigured is returned by a Waker that has no target for the requested
@@ -19,6 +20,9 @@ type Waker interface {
 	// returns only after the transport has accepted the wake, so the caller can
 	// keep its saved intent unacknowledged on any error.
 	WakeConversation(ctx context.Context) error
+	// WakeConversationAt asks for the same wake at a later time, such as a planned offer's delivery time. key names
+	// the wake, so asking twice for the same key schedules it once.
+	WakeConversationAt(ctx context.Context, at time.Time, key string) error
 	// WakeWorker asks the immutable worker build to poll for the named workflow
 	// executions. Like WakeConversation, it returns only once the wake is accepted.
 	WakeWorker(ctx context.Context, build string, workflowIDs ...string) error
@@ -32,9 +36,10 @@ type Waker interface {
 // worker polls Temporal itself and nothing sleeps.
 type Disabled struct{}
 
-func (Disabled) WakeConversation(context.Context) error              { return nil }
-func (Disabled) WakeWorker(context.Context, string, ...string) error { return nil }
-func (Disabled) WorkersNeedWake() bool                               { return false }
+func (Disabled) WakeConversation(context.Context) error                      { return nil }
+func (Disabled) WakeConversationAt(context.Context, time.Time, string) error { return nil }
+func (Disabled) WakeWorker(context.Context, string, ...string) error         { return nil }
+func (Disabled) WorkersNeedWake() bool                                       { return false }
 
 // InProcess wakes the conversation loop of the same process through a channel,
 // which is how local development replaces a queue. Worker wakes go to Workers.
@@ -57,6 +62,9 @@ func (w *InProcess) WakeConversation(context.Context) error {
 	}
 	return nil
 }
+
+// WakeConversationAt does nothing: the local loop looks every two seconds, which covers a planned time.
+func (w *InProcess) WakeConversationAt(context.Context, time.Time, string) error { return nil }
 
 func (w *InProcess) WakeWorker(ctx context.Context, build string, workflowIDs ...string) error {
 	return w.Workers.WakeWorker(ctx, build, workflowIDs...)

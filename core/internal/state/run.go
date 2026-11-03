@@ -70,6 +70,9 @@ type Run struct {
 	// A parent's Subtasks are the ones it started, and SubtaskSpent is their cost, which counts against the parent's budget.
 	ParentID string `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
 	ReadOnly bool   `json:"read_only,omitempty" firestore:"read_only,omitempty"`
+	// Offer names the proactive offer this read-only task prepares. Its questions and outcome stay out of the
+	// conversation; the offer shows its answer when it's delivered.
+	Offer string `json:"offer,omitempty" firestore:"offer,omitempty"`
 	// Uploads are the files this task was given, and the only ones it can read.
 	Uploads []Attachment `json:"uploads,omitempty" firestore:"uploads,omitempty"`
 	// Revises is the saved result this task was started to change.

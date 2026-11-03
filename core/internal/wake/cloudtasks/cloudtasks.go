@@ -4,16 +4,23 @@
 //
 // Cloud Tasks enqueues notifications, never conversation contents. Firestore
 // owns ordering and deduplication; unnamed tasks avoid deleted-name tombstones
-// when a client retries an input whose first wake could not be confirmed.
+// when a client retries an input whose first wake could not be confirmed. A
+// timed wake is named by its key, because it is asked for once per planned time.
 package cloudtasks
 
 import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"time"
+
+	"google.golang.org/api/googleapi"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -131,6 +138,34 @@ func (w *Waker) WakeConversation(ctx context.Context) error {
 	})
 	if err != nil {
 		observability.RecordErrorCategory(ctx, "wake.conversation", err)
+	}
+	return err
+}
+
+var taskName = regexp.MustCompile(`[^A-Za-z0-9_-]`)
+
+func (w *Waker) WakeConversationAt(ctx context.Context, at time.Time, key string) error {
+	if w.conversation == nil {
+		return wake.ErrNotConfigured
+	}
+	ctx, span := tracer.Start(ctx, "cloud_tasks.schedule_at", trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
+	c := w.conversation
+	err := w.create(ctx, c.queue, &cloudtasks.Task{
+		Name:             c.queue + "/tasks/" + taskName.ReplaceAllString(key, "-"),
+		ScheduleTime:     at.UTC().Format(time.RFC3339),
+		DispatchDeadline: "600s",
+		HttpRequest: &cloudtasks.HttpRequest{
+			Url: c.url, HttpMethod: "POST", Headers: requestHeaders(ctx), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
+			OauthToken: &cloudtasks.OAuthToken{ServiceAccountEmail: c.caller, Scope: "https://www.googleapis.com/auth/cloud-platform"},
+		},
+	})
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) && apiErr.Code == http.StatusConflict {
+		return nil
+	}
+	if err != nil {
+		observability.RecordErrorCategory(ctx, "wake.conversation_at", err)
 	}
 	return err
 }
