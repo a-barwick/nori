@@ -23,8 +23,8 @@
 <div class="card"><p class="note">For “Check Saturday's weather in Tucson”, the outer loop calls <code>dispatch</code>, which saves a start command. “No, Phoenix” becomes a steer on that task. When the forecast is saved, the task sends a result event.</p></div>
 <section><h2>The rules</h2>
 <ul class="pts">
-<li><b>Only the outer loop starts tasks.</b> This stops tasks from spawning more tasks on their own.</li>
-<li><b>One task, one ID.</b> The start command's ID is the task ID, and every later command and event uses it.</li>
+<li><b>Only the outer loop starts tasks.</b> A task can't start another task by itself.</li>
+<li><b>One task, one ID.</b> The start command's ID is the task ID, and later commands and events use it.</li>
 <li><b>Finished tasks stay finished.</b> More work means a new task.</li>
 <li><b>Accepted comes before applied.</b> A command is saved first, and the task picks it up later.</li>
 <li><b>Buttons skip the models.</b> The Stop button and task panel edits send the same commands directly.</li>
@@ -40,7 +40,8 @@
 <tr data-flow="tool-stop"><td><code>stop(run_id)</code></td><td>Stop one task and its subtasks.</td></tr>
 <tr><td><code>hold(task_id, question)</code></td><td>Answer one of the user's questions when that task's result arrives.</td></tr>
 <tr><td><code>show_result(result_id)</code></td><td>Show a <a href="results.html">saved result</a> with no task.</td></tr>
-</table><p class="note">A plain reply is just text, with no tool call.</p></div></section>
+<tr><td><code>remember(text, about, replaces)</code>, <code>forget(memory_id)</code></td><td>Change a saved <a href="memory.html">memory</a>.</td></tr>
+</table><p class="note">A plain reply has no tool call.</p></div></section>
 <section><h2>Inner loop control tools</h2>
 <p>Each must be the only call in its response.</p>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>What it does</th></tr>
