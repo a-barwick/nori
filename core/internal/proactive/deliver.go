@@ -38,6 +38,8 @@ func (s *Service) Deliver(ctx context.Context) error {
 			return err
 		}
 		log.Printf("proactive offer %s %s %s", offer.ID, delivered.Status, delivered.SkipReason)
+		// Once its offer is out or skipped, nothing waits on the prep task, and nobody could answer its questions.
+		s.stopPrep(ctx, offer)
 	}
 	return nil
 }
@@ -63,7 +65,7 @@ func (s *Service) prepText(ctx context.Context, offer state.Offer) string {
 		}
 		return "\n\nTimes that look open, from a read of your calendar:\n" + result
 	case run.Status == state.RunRunning:
-		return "\n\nI'm still looking for other times."
+		return "\n\nI didn't finish looking for other times."
 	}
 	return "\n\nI couldn't find other times on my own."
 }
@@ -99,14 +101,22 @@ func (s *Service) Decide(ctx context.Context, offerID, decision string) (state.O
 			_, err = s.Runner.HandleInput(ctx, conversation.Input{ID: id, Message: "Yes, please look for another time."})
 		}
 	case state.OfferDismissed:
-		if s.Tasks != nil && offer.PrepRunID != "" {
-			if run, readErr := s.Store.GetRun(ctx, offer.PrepRunID); readErr == nil && run.Status == state.RunRunning && !run.CancelRequested {
-				_, stopErr := s.Tasks.AcceptBatch(ctx, []state.Command{{ID: offer.PrepRunID + "-stop", RunID: offer.PrepRunID, Kind: state.CommandStop}}, nil)
-				if stopErr != nil && !errors.Is(stopErr, state.ErrDuplicate) {
-					log.Printf("dismissed offer %s left its prep task running: %v", offer.ID, stopErr)
-				}
-			}
-		}
+		s.stopPrep(ctx, offer)
 	}
 	return offer, err
+}
+
+// stopPrep stops an offer's prep task that is still running.
+func (s *Service) stopPrep(ctx context.Context, offer state.Offer) {
+	if s.Tasks == nil || offer.PrepRunID == "" {
+		return
+	}
+	run, err := s.Store.GetRun(ctx, offer.PrepRunID)
+	if err != nil || run.Status != state.RunRunning || run.CancelRequested {
+		return
+	}
+	_, err = s.Tasks.AcceptBatch(ctx, []state.Command{{ID: offer.PrepRunID + "-stop", RunID: offer.PrepRunID, Kind: state.CommandStop}}, nil)
+	if err != nil && !errors.Is(err, state.ErrDuplicate) {
+		log.Printf("proactive offer %s left its prep task running: %v", offer.ID, err)
+	}
 }

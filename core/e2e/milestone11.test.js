@@ -235,7 +235,8 @@ journey("a conflict makes one offer with its reason, prepared by a quiet read-on
   const runs = await collection("runs");
   const prep = runs.find((run) => run.id === saved.prep_run_id);
   expect(prep).toMatchObject({ offer: id, read_only: true, budget_usd: 0.05 });
-  await until(async () => (await collection("runs")).find((run) => run.id === prep.id), (run) => run.status === "completed", "the prep task to finish");
+  // Delivery stops a prep task that hasn't finished, since nothing waits on it after that.
+  await until(async () => (await collection("runs")).find((run) => run.id === prep.id), (run) => run.status !== "running", "the prep task to end");
   await delay(1000);
   const inputs = await collection("conversation_inputs");
   expect(inputs.some((input) => input.event?.run_id === prep.id)).toBe(false);
@@ -318,6 +319,11 @@ journey("the daily cap holds, and the planning call sees saved memories", async 
   const settledOffers = await until(async () => (await offers()).filter((o) => ids.has(o.id)), (list) => list.every((o) => o.status !== "planned"), "every offer to be delivered or skipped");
   expect(settledOffers.filter((o) => o.status === "delivered").length).toBe(3);
   expect(settledOffers.filter((o) => o.status === "skipped").every((o) => o.skip_reason.includes("already delivered"))).toBe(true);
+  // At most three prep tasks a day, each counted at its whole budget against the day's cap.
+  expect((await collection("runs")).filter((run) => ids.has(run.offer)).length).toBe(3);
+  const [day] = await collection("proactive_days");
+  expect(Number(day.preps)).toBe(3);
+  expect(Number(day.spent_usd)).toBeLessThanOrEqual(0.2);
   await fetch(`${owner}/memories/${memory}`, { method: "DELETE" });
 });
 

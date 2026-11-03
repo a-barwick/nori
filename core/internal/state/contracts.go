@@ -164,7 +164,8 @@ type ProactiveDatabase interface {
 	FinishProactiveCheck(ctx context.Context, check ProactiveCheck) error
 	// ClaimOffer saves a found conflict once. proceed is true while it still needs planning.
 	ClaimOffer(ctx context.Context, offer Offer) (saved Offer, proceed bool, err error)
-	ChargeProactivePlan(ctx context.Context, day string) error
+	// ChargeProactive reserves a planning call, or with prep a prep task's budget, against the day's cap.
+	ChargeProactive(ctx context.Context, day string, prep bool) error
 	SettleProactivePlan(ctx context.Context, day string, cost *float64) error
 	SavePlannedOffer(ctx context.Context, offer Offer) error
 	PlannedOffers(ctx context.Context) ([]Offer, error)

@@ -138,7 +138,7 @@ func (s *Service) plan(ctx context.Context, offer *state.Offer, now time.Time, d
 	if err != nil {
 		return err
 	}
-	if err = s.Store.ChargeProactivePlan(ctx, day); err != nil {
+	if err = s.Store.ChargeProactive(ctx, day, false); err != nil {
 		log.Printf("proactive offer %s planned without the model: %v", offer.ID, err)
 	} else {
 		chosen, cost, err := s.ask(ctx, offer, memories, planned, now)
@@ -161,13 +161,10 @@ func (s *Service) plan(ctx context.Context, offer *state.Offer, now time.Time, d
 		return err
 	}
 	if !control.Paused && s.Tasks != nil {
-		offer.PrepRunID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(offer.ID)).String()
-		_, err := s.Tasks.AcceptBatch(ctx, []state.Command{{
-			ID: offer.PrepRunID + "-start", RunID: offer.PrepRunID, Kind: state.CommandStart, Text: prepRequest(offer.Finding, s.Location), Offer: offer.ID,
-		}}, nil)
-		if err != nil && !errors.Is(err, state.ErrDuplicate) {
+		if err := s.Store.ChargeProactive(ctx, day, true); err != nil {
 			log.Printf("proactive offer %s has no prep task: %v", offer.ID, err)
-			offer.PrepRunID = ""
+		} else {
+			s.startPrep(ctx, offer)
 		}
 	}
 	if err = s.Store.SavePlannedOffer(ctx, *offer); err != nil {
@@ -180,6 +177,19 @@ func (s *Service) plan(ctx context.Context, offer *state.Offer, now time.Time, d
 		}
 	}
 	return nil
+}
+
+// startPrep starts the read-only task that looks for other times. Its ID comes from the offer, so a re-planned offer
+// finds the same task.
+func (s *Service) startPrep(ctx context.Context, offer *state.Offer) {
+	offer.PrepRunID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(offer.ID)).String()
+	_, err := s.Tasks.AcceptBatch(ctx, []state.Command{{
+		ID: offer.PrepRunID + "-start", RunID: offer.PrepRunID, Kind: state.CommandStart, Text: prepRequest(offer.Finding, s.Location), Offer: offer.ID,
+	}}, nil)
+	if err != nil && !errors.Is(err, state.ErrDuplicate) {
+		log.Printf("proactive offer %s has no prep task: %v", offer.ID, err)
+		offer.PrepRunID = ""
+	}
 }
 
 func clock(at time.Time, location *time.Location) string { return at.In(location).Format("3:04 PM") }

@@ -114,14 +114,19 @@ func (d *Database) ClaimOffer(ctx context.Context, offer state.Offer) (state.Off
 	return saved, proceed, err
 }
 
-// ChargeProactivePlan reserves one planning call against the day's cap.
-func (d *Database) ChargeProactivePlan(ctx context.Context, day string) error {
+// ChargeProactive reserves one planning call, or a prep task's whole budget, against the day's cap.
+func (d *Database) ChargeProactive(ctx context.Context, day string, prep bool) error {
 	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		counts, err := d.readProactiveDay(tx, day)
 		if err != nil {
 			return err
 		}
-		if counts, err = state.ChargePlan(counts, day); err != nil {
+		if prep {
+			counts, err = state.ChargePrep(counts, day)
+		} else {
+			counts, err = state.ChargePlan(counts, day)
+		}
+		if err != nil {
 			return err
 		}
 		return tx.Set(d.proactiveDays().Doc(day), counts)

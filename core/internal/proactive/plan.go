@@ -125,6 +125,12 @@ func parsePlan(text string, f state.TravelFinding, now time.Time) (planned, erro
 	if !at.Before(f.Second.Start) || at.After(now.Add(Window)) {
 		return planned{}, errors.New("planning reply chose a time after the conflict")
 	}
+	if latest := f.Second.Start.Add(-lead); at.After(latest) {
+		at = latest
+		if at.Before(now) {
+			at = now
+		}
+	}
 	timing := strings.TrimSpace(out.Timing)
 	if len(timing) > 200 {
 		timing = timing[:200]

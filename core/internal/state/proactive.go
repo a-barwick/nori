@@ -16,15 +16,18 @@ import (
 const (
 	// ProactiveOffersPerDay is the most offers delivered in one local day.
 	ProactiveOffersPerDay = 3
-	// ProactiveSpendPerDayUSD bounds the model calls that plan offers in one local day.
-	ProactiveSpendPerDayUSD = 0.05
+	// ProactiveSpendPerDayUSD bounds one local day's proactive model spend: the calls that plan offers and the prep
+	// tasks, each prep task counted at its full budget before it starts.
+	ProactiveSpendPerDayUSD = 0.20
 	// ProactivePlanEstimateUSD is charged before a planning call, and kept when its cost is unknown.
-	ProactivePlanEstimateUSD = 0.01
+	ProactivePlanEstimateUSD = 0.02
+	// ProactivePrepBudgetUSD is the budget of the read-only task that prepares options for an offer, and
+	// ProactivePrepsPerDay the most of them started in one local day.
+	ProactivePrepBudgetUSD = 0.05
+	ProactivePrepsPerDay   = 3
 	// Scheduled checks are named by their half-day slot, so at most two run a day. ProactiveManualChecksPerDay bounds
 	// the checks an operator starts by hand to test the trigger.
 	ProactiveManualChecksPerDay = 4
-	// ProactivePrepBudgetUSD is the budget of the read-only task that prepares options for an offer.
-	ProactivePrepBudgetUSD = 0.05
 	// ProactiveCheckLease is how long a running check holds its slot before another call may take it over.
 	ProactiveCheckLease = 90 * time.Second
 )
@@ -107,6 +110,7 @@ type ProactiveDay struct {
 	ManualChecks int     `firestore:"manual_checks"`
 	Delivered    int     `firestore:"delivered"`
 	SpentUSD     float64 `firestore:"spent_usd"`
+	Preps        int     `firestore:"preps"`
 }
 
 // OfferID names a conflict by both events and their times, so a later check that finds the same conflict finds the
@@ -151,11 +155,27 @@ func BeginCheck(saved *ProactiveCheck, day ProactiveDay, id, localDay, owner str
 
 // ChargePlan reserves the estimate for one planning call, or refuses when the day's cap would be passed.
 func ChargePlan(day ProactiveDay, localDay string) (ProactiveDay, error) {
-	if day.SpentUSD+ProactivePlanEstimateUSD > ProactiveSpendPerDayUSD+1e-9 {
+	return charge(day, localDay, ProactivePlanEstimateUSD)
+}
+
+// ChargePrep reserves a prep task's whole budget, or refuses past the day's cap or prep count.
+func ChargePrep(day ProactiveDay, localDay string) (ProactiveDay, error) {
+	if day.Preps >= ProactivePrepsPerDay {
+		return day, fmt.Errorf("%w: %d prep tasks already started on %s", ErrProactiveLimit, day.Preps, localDay)
+	}
+	day, err := charge(day, localDay, ProactivePrepBudgetUSD)
+	if err == nil {
+		day.Preps++
+	}
+	return day, err
+}
+
+func charge(day ProactiveDay, localDay string, amount float64) (ProactiveDay, error) {
+	if day.SpentUSD+amount > ProactiveSpendPerDayUSD+1e-9 {
 		return day, fmt.Errorf("%w: proactive model spend for %s is at its cap", ErrProactiveLimit, localDay)
 	}
 	day.Day = localDay
-	day.SpentUSD += ProactivePlanEstimateUSD
+	day.SpentUSD += amount
 	return day, nil
 }
 

@@ -33,7 +33,8 @@ func (s *server) check(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 503, map[string]string{"error": "The calendar check isn't configured."})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
+	// Shorter than the check's lease, so a call can't still be running when another takes the check over.
+	ctx, cancel := context.WithTimeout(r.Context(), 80*time.Second)
 	defer cancel()
 	result, err := s.Proactive.Check(ctx, body.Manual)
 	if errors.Is(err, state.ErrCheckRunning) {
