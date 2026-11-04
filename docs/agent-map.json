@@ -851,17 +851,28 @@
    "summary": "The part of Nori that handles the conversation. It runs one short turn at a time and dispatches tasks.",
    "status": "built",
    "code": [
+    "core/internal/conversation/call.go",
+    "core/internal/conversation/command_plan.go",
     "core/internal/conversation/model.go",
     "core/internal/conversation/openai.go",
     "core/internal/conversation/response.go",
-    "core/internal/conversation/runner.go"
+    "core/internal/conversation/runner.go",
+    "core/internal/conversation/task_context.go",
+    "core/internal/state/firestore/evidence.go",
+    "core/internal/state/summary.go"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 141
+     "words": 180
+    },
+    {
+     "id": "where-task-instructions-come-from",
+     "title": "Where task instructions come from",
+     "status": "built",
+     "words": 68
     },
     {
      "id": "when-a-task-ends",
@@ -879,7 +890,7 @@
      "id": "one-message-several-jobs",
      "title": "One message, several jobs",
      "status": "built",
-     "words": 234
+     "words": 299
     }
    ]
   },
