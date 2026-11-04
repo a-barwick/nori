@@ -19,7 +19,7 @@
     <text x="85" y="154" text-anchor="middle" font-size="11" fill="#4a5163">sends tool calls</text>
     <text x="85" y="169" text-anchor="middle" font-size="11" fill="#4a5163">starts the host if stopped</text>
     <rect x="230" y="40" width="300" height="220" rx="12" fill="#faf0e4" stroke="#a8551c" stroke-width="2"/>
-    <text x="380" y="66" text-anchor="middle" font-size="13.5" font-weight="700" fill="#a8551c">GCE host</text>
+    <text x="380" y="66" text-anchor="middle" font-size="13.5" font-weight="700" fill="#a8551c">Compute Engine host</text>
     <rect x="250" y="80" width="260" height="56" rx="8" fill="#fff" stroke="#a8551c" stroke-width="1.5"/>
     <text x="380" y="103" text-anchor="middle" font-size="12.5" font-weight="650">Host proxy (computer-agent --proxy)</text>
     <text x="380" y="120" text-anchor="middle" font-size="11" fill="#4a5163">15 idle minutes → graceful guest stop</text>
@@ -27,26 +27,32 @@
     <text x="380" y="172" text-anchor="middle" font-size="12.5" font-weight="650">Firecracker guest</text>
     <text x="380" y="190" text-anchor="middle" font-size="11" fill="#4a5163">Runs shell and browser tools</text>
     <text x="380" y="206" text-anchor="middle" font-size="11" fill="#4a5163">shell · Chromium</text>
-    <text x="380" y="222" text-anchor="middle" font-size="11" fill="#4a5163">operation receipts · one browser tab per task · shell jobs</text>
     <rect x="600" y="80" width="300" height="80" rx="10" fill="#fff" stroke="#5b6474" stroke-width="1.8"/>
     <text x="750" y="110" text-anchor="middle" font-size="13.5" font-weight="700">Retained disk</text>
     <text x="750" y="128" text-anchor="middle" font-size="11" fill="#4a5163">workspace · tools · browser profile</text>
     <text x="750" y="144" text-anchor="middle" font-size="11" fill="#4a5163">Kept when the computer stops. Not a backup.</text>
     <path class="flow-anim" d="M160 145 H226" stroke="#a8551c" stroke-width="2" fill="none" marker-end="url(#ah2)"/>
-    <text x="195" y="132" text-anchor="middle" font-size="10.5" fill="#4a5163">IAP tunnel</text>
+    <text x="195" y="132" text-anchor="middle" font-size="10.5" fill="#4a5163">tool calls</text>
     <text x="520" y="146" font-size="10.5" fill="#4a5163" text-anchor="end">forwards calls</text>
     <text x="600" y="184" font-size="10.5" fill="#4a5163">reads and writes files</text>
     <path d="M380 136 V146" stroke="#a8551c" stroke-width="2" fill="none" marker-end="url(#ah2)"/>
     <path d="M510 196 C 550 180 560 150 596 132" stroke="#5b6474" stroke-width="1.5" fill="none" marker-end="url(#ah2)"/>
   </svg>
   </div>
-  <p>“Check Saturday's weather in Tucson” reaches the computer as one browser call from the worker, and the page text comes back as its result.</p>
-  <ul class="pts"><li><b>Kept</b> across guest restarts and host replacement: files, installed tools and the browser profile.</li><li><b>Lost</b> on restart: running processes and open tabs.</li><li><b>Access</b> goes through an IAP tunnel to a private guest IP, with no separate token.</li><li><b>Browser tabs</b> share cookies, so tasks aren't isolated from each other.</li></ul>
+  <p>If the worker opens a weather page for “Check Saturday's weather in Tucson,” the browser returns the page's text.</p>
+  <ul class="pts"><li><b>Kept</b> across guest restarts and host replacement: files, installed tools and the browser profile.</li><li><b>Lost</b> on restart: running processes and open tabs.</li><li><b>Access</b> uses Google's authenticated tunnel to the host proxy, which forwards calls to the guest.</li><li><b>Browser tabs</b> share cookies, so tasks aren't isolated from each other.</li></ul>
   <div class="grid3">
     <div class="card tight"><p class="keyline">Receipts make retries safe</p><p class="note">The guest records the request and response for each operation ID before acknowledging. If a shell command's outcome is uncertain, the worker reads the receipt and doesn't run it again.</p></div>
     <div class="card tight"><p class="keyline">The host says when it's draining</p><p class="note">When the host is stopping because it's idle, it rejects requests with a draining header before forwarding them. This is the one case where it's safe to reconnect and resend.</p></div>
-    <div class="card tight"><p class="keyline">Jobs belong to a task</p><p class="note">The guest runs each <a href="tools.html">long shell job</a> in its own process group and saves its state on disk. A job running during a restart is reported as lost.</p></div>
+    <div class="card tight"><p class="keyline">Jobs belong to a task</p><p class="note">The guest runs each <a href="tools.html">long shell job</a> for one task and saves its state on disk. A job without a saved final state is reported as lost after restart.</p></div>
   </div>
+<section><h2>When job saves fail</h2>
+<div class="card"><table class="tall"><tr><th>Situation</th><th>Guest behavior</th></tr>
+<tr><td>Final save fails</td><td>The guest reports the final state from memory with <code>state_persisted: false</code>. The ended job no longer prevents idle shutdown.</td></tr>
+<tr><td>Storage recovers</td><td>The next status read retries saving the final state.</td></tr>
+<tr><td>Guest restarts</td><td>If the final state was never saved, restart recovery reports the job as lost.</td></tr>
+</table></div>
+</section>
 <section><h2>Attached files and programs</h2>
 <p>The worker copies an attached file into the task's uploads folder, read-only. A task can save a file from its folder as a <a href="results.html">saved result</a>, and the guest refuses a path outside that folder. The guest has python, and a service inside it installs pdftotext on the first boot that lacks it.</p>
 </section>
@@ -57,7 +63,7 @@
 <div class="node decide inner">Is <code>NORI_LOCAL_COMPUTER_URL</code> set?</div>
 <div class="branch">
 <div class="node inner"><b>Set: local adapter</b><small>Connects to a computer-agent on a loopback address.</small></div>
-<div class="node inner"><b>Unset: GCE adapter</b><small>Starts the host through the Compute API. Connects over an IAP tunnel.</small></div>
+<div class="node inner"><b>Unset: Compute Engine adapter</b><small>Starts the host. Connects through Google's authenticated tunnel.</small></div>
 </div><div class="arrow">↓<span class="lbl">base URL, HTTP client, close hook</span></div>
 <div class="node computer"><b>Guest RPC on the computer</b><small>The same calls whichever adapter connected.</small></div>
 </div></div>
@@ -68,11 +74,11 @@
 </section>
 <details class="more"><summary>Adapter calls</summary>
 <p>An adapter with a power state implements three calls. A shared loop polls State once a second, reports Stopped only after the host has finished stopping, and never sends a start during Stopping.</p>
-<div class="card"><table class="tall"><tr><th>Call</th><th>The loop needs</th><th>GCE adapter</th></tr>
+<div class="card"><table class="tall"><tr><th>Call</th><th>The loop needs</th><th>Compute Engine adapter</th></tr>
 <tr><td>State</td><td>Stopped, Stopping, Starting or Running. Any other state is an error that ends the attempt.</td><td>Instance status: TERMINATED, STOPPING, STAGING or PROVISIONING, and RUNNING. Statuses such as SUSPENDED end the attempt.</td></tr>
 <tr><td>Start</td><td>Power on a stopped host. A start another caller already issued is not an error.</td><td>A POST to the instance start URL. HTTP 409 counts as already started.</td></tr>
 <tr><td>Dial</td><td>A base URL, an HTTP client and a close hook for the guest RPC, and optionally a channel that closes when the transport dies.</td><td><code>gcloud compute start-iap-tunnel</code> on a free loopback port. Closing the client kills the process.</td></tr></table></div>
 <p>The host setup scripts read Compute Engine's metadata server and disk paths, and the Terraform creates a Compute Engine instance.</p></details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/computerd/files.go</code> · <code>core/internal/computer/</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/infrastructure/microvm/</code> · <code>core/infrastructure/app/computer-startup.sh</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/computerd/jobs.go</code> · <code>core/internal/computerd/server.go</code> · <code>core/internal/computerd/files.go</code> · <code>core/internal/computer/</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/infrastructure/microvm/</code> · <code>core/infrastructure/app/computer-startup.sh</code></p></details>
 </body>
 </html>

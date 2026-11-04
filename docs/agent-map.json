@@ -110,15 +110,20 @@
   {
    "page": "docs/site/budgets.html",
    "title": "Budgets and controls",
-   "summary": "How Nori counts model spending, and the four controls that pause or stop work.",
+   "summary": "Nori counts model spending and uses four controls to pause or stop work.",
    "status": "built",
    "code": [
+    "core/internal/agent/openrouter/responses.go",
     "core/internal/agent/steps.go",
     "core/internal/computerd/server.go",
     "core/internal/spend/client.go",
     "core/internal/spend/firestore/ledger.go",
     "core/internal/spend/ledger.go",
+    "core/internal/state/commands.go",
     "core/internal/state/subtasks.go",
+    "core/internal/task/activities.go",
+    "core/internal/task/history.go",
+    "core/internal/task/jobs.go",
     "core/internal/task/workflow.go"
    ],
    "sections": [
@@ -126,13 +131,13 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 145
+     "words": 144
     },
     {
      "id": "four-controls",
      "title": "Four controls",
      "status": "built",
-     "words": 78
+     "words": 83
     },
     {
      "id": "operating-rules",
@@ -144,7 +149,7 @@
      "id": "development-inference",
      "title": "Development inference",
      "status": "built",
-     "words": 147
+     "words": 170
     }
    ]
   },
@@ -325,6 +330,8 @@
     "core/internal/computer/",
     "core/internal/computerd/",
     "core/internal/computerd/files.go",
+    "core/internal/computerd/jobs.go",
+    "core/internal/computerd/server.go",
     "core/internal/platform/platform.go"
    ],
    "sections": [
@@ -332,7 +339,13 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 262
+     "words": 248
+    },
+    {
+     "id": "when-job-saves-fail",
+     "title": "When job saves fail",
+     "status": "built",
+     "words": 57
     },
     {
      "id": "attached-files-and-programs",
@@ -344,7 +357,7 @@
      "id": "reaching-the-computer",
      "title": "Reaching the computer",
      "status": "built",
-     "words": 341
+     "words": 339
     }
    ]
   },
@@ -361,6 +374,7 @@
     "core/internal/state/commands.go",
     "core/internal/state/firestore/tasks.go",
     "core/internal/state/subtasks.go",
+    "core/internal/task/history.go",
     "core/internal/task/subtasks.go",
     "core/internal/task/tool_durable.go",
     "core/internal/task/workflow.go",
@@ -378,7 +392,7 @@
      "id": "the-rules",
      "title": "The rules",
      "status": "built",
-     "words": 91
+     "words": 92
     },
     {
      "id": "outer-loop-tools",
@@ -402,7 +416,7 @@
      "id": "subtasks",
      "title": "Subtasks",
      "status": "built",
-     "words": 192
+     "words": 264
     },
     {
      "id": "interrupting-a-task",
@@ -859,17 +873,28 @@
    "summary": "The part of Nori that handles the conversation. It runs one short turn at a time and dispatches tasks.",
    "status": "built",
    "code": [
+    "core/internal/conversation/call.go",
+    "core/internal/conversation/command_plan.go",
     "core/internal/conversation/model.go",
     "core/internal/conversation/openai.go",
     "core/internal/conversation/response.go",
-    "core/internal/conversation/runner.go"
+    "core/internal/conversation/runner.go",
+    "core/internal/conversation/task_context.go",
+    "core/internal/state/firestore/evidence.go",
+    "core/internal/state/summary.go"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 141
+     "words": 180
+    },
+    {
+     "id": "where-task-instructions-come-from",
+     "title": "Where task instructions come from",
+     "status": "built",
+     "words": 68
     },
     {
      "id": "when-a-task-ends",
@@ -887,7 +912,7 @@
      "id": "one-message-several-jobs",
      "title": "One message, several jobs",
      "status": "built",
-     "words": 234
+     "words": 299
     }
    ]
   },
