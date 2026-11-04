@@ -431,7 +431,15 @@
    "title": "Decisions",
    "summary": "What was decided, why, and what was turned down. All dates are 2026.",
    "status": "built",
-   "code": [],
+   "code": [
+    "core/internal/conversation/call.go",
+    "core/internal/conversation/command_plan.go",
+    "core/internal/conversation/commands.go",
+    "core/internal/conversation/task_context.go",
+    "core/internal/state/conversation.go",
+    "core/internal/state/firestore/tasks.go",
+    "core/internal/state/results.go"
+   ],
    "sections": [
     {
      "id": "overview",
@@ -449,7 +457,7 @@
      "id": "milestone-4-choices",
      "title": "Milestone 4 choices",
      "status": "built",
-     "words": 142
+     "words": 204
     },
     {
      "id": "subtasks",
@@ -473,13 +481,13 @@
      "id": "results-and-files",
      "title": "Results and files",
      "status": "built",
-     "words": 421
+     "words": 463
     },
     {
      "id": "runtime-and-infrastructure",
      "title": "Runtime and infrastructure",
      "status": "built",
-     "words": 552
+     "words": 542
     },
     {
      "id": "code-structure",
@@ -508,7 +516,7 @@
     {
      "id": "clients",
      "title": "Clients",
-     "status": "built",
+     "status": "designed",
      "words": 64
     },
     {
@@ -521,7 +529,7 @@
      "id": "older-statements-that-no-longer-apply",
      "title": "Older statements that no longer apply",
      "status": "built",
-     "words": 180
+     "words": 181
     }
    ]
   },
@@ -1147,6 +1155,7 @@
     "core/internal/conversation/call.go",
     "core/internal/state/artifacts.go",
     "core/internal/state/firestore/results.go",
+    "core/internal/state/firestore/tasks.go",
     "core/internal/state/gcs/gcs.go",
     "core/internal/state/results.go",
     "core/internal/state/uploads.go",
@@ -1169,7 +1178,7 @@
      "id": "finding-it-later",
      "title": "Finding it later",
      "status": "built",
-     "words": 64
+     "words": 94
     },
     {
      "id": "files-the-user-attaches",
