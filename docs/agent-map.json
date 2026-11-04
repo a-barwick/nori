@@ -330,6 +330,8 @@
     "core/internal/computer/",
     "core/internal/computerd/",
     "core/internal/computerd/files.go",
+    "core/internal/computerd/jobs.go",
+    "core/internal/computerd/server.go",
     "core/internal/platform/platform.go"
    ],
    "sections": [
@@ -337,7 +339,13 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 262
+     "words": 248
+    },
+    {
+     "id": "when-job-saves-fail",
+     "title": "When job saves fail",
+     "status": "built",
+     "words": 57
     },
     {
      "id": "attached-files-and-programs",
@@ -349,7 +357,7 @@
      "id": "reaching-the-computer",
      "title": "Reaching the computer",
      "status": "built",
-     "words": 341
+     "words": 339
     }
    ]
   },
@@ -366,6 +374,7 @@
     "core/internal/state/commands.go",
     "core/internal/state/firestore/tasks.go",
     "core/internal/state/subtasks.go",
+    "core/internal/task/history.go",
     "core/internal/task/subtasks.go",
     "core/internal/task/tool_durable.go",
     "core/internal/task/workflow.go",
@@ -383,7 +392,7 @@
      "id": "the-rules",
      "title": "The rules",
      "status": "built",
-     "words": 91
+     "words": 92
     },
     {
      "id": "outer-loop-tools",
@@ -407,7 +416,7 @@
      "id": "subtasks",
      "title": "Subtasks",
      "status": "built",
-     "words": 192
+     "words": 264
     },
     {
      "id": "interrupting-a-task",
@@ -798,6 +807,7 @@
     "core/internal/conversation/model.go",
     "core/internal/conversation/task_context.go",
     "core/internal/proactive/deliver.go",
+    "core/internal/state/conversation.go",
     "core/internal/state/history.go",
     "core/internal/state/summary.go",
     "core/internal/task/history.go",
@@ -815,25 +825,25 @@
      "id": "tasks",
      "title": "Tasks",
      "status": "built",
-     "words": 102
+     "words": 107
     },
     {
      "id": "conversation",
      "title": "Conversation",
      "status": "built",
-     "words": 69
+     "words": 70
     },
     {
      "id": "tools-and-approvals",
      "title": "Tools and approvals",
      "status": "built",
-     "words": 59
+     "words": 32
     },
     {
      "id": "memory",
      "title": "Memory",
      "status": "built",
-     "words": 95
+     "words": 92
     },
     {
      "id": "schedules-and-proactive-messages",
@@ -973,15 +983,24 @@
   {
    "page": "docs/site/product.html",
    "title": "What Nori should do",
-   "summary": "Fourteen things the finished product should do, and the 116 conversations we use to measure progress.",
+   "summary": "Thirteen things the finished product should do, and the 116 conversations we use to measure progress.",
    "status": "built",
-   "code": [],
+   "code": [
+    "core/internal/conversation/memory.go",
+    "core/internal/conversation/model.go",
+    "core/internal/conversation/runner.go",
+    "core/internal/schedules/schedules.go",
+    "core/internal/state/firestore/memory.go",
+    "core/internal/state/firestore/schedules.go",
+    "core/internal/state/memory.go",
+    "core/internal/state/schedule.go"
+   ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 288
+     "words": 271
     },
     {
      "id": "how-we-measure-progress",
@@ -1181,7 +1200,8 @@
     "core/internal/task/activities.go",
     "core/internal/task/completion.go",
     "core/internal/task/context.go",
-    "core/internal/task/workflow.go"
+    "core/internal/task/workflow.go",
+    "web/src/components/runtime/TaskPanel.tsx"
    ],
    "sections": [
     {
@@ -1194,13 +1214,13 @@
      "id": "what-remains",
      "title": "What remains",
      "status": "built",
-     "words": 34
+     "words": 42
     },
     {
      "id": "following-one-request",
      "title": "Following one request",
      "status": "built",
-     "words": 117
+     "words": 122
     }
    ]
   },

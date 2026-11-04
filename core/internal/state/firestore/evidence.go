@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/grpc/codes"
@@ -45,8 +46,9 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 			return fmt.Errorf("operation result reference unavailable: %w", err)
 		}
 	}
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		if _, err := tx.Get(d.runs().Doc(runID)); err != nil {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		run, err := decodeRun(tx.Get(d.runs().Doc(runID)))
+		if err != nil {
 			return err
 		}
 		ref := d.runs().Doc(runID).Collection("operations").Doc(op.ID)
@@ -75,6 +77,29 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 			}
 			if err = state.CheckOperationCapacity(count); err != nil {
 				return err
+			}
+		}
+		if event, notify := state.LateWriteEvent(run, saved, op, time.Now().UTC()); notify {
+			log, err := d.openLog(tx)
+			if err != nil {
+				return err
+			}
+			// Reading the run in this transaction serializes the result with Stop:
+			// either its terminal notification can see the answer, or this one follows it.
+			inserted, err := d.appendTaskEvent(tx, event, run.TraceContext)
+			if err != nil {
+				return err
+			}
+			if inserted {
+				if err = tx.Update(d.runs().Doc(runID), []firestore.Update{{Path: "event_sequence", Value: event.Sequence}}); err != nil {
+					return err
+				}
+				if err = log.add(state.EventTask, runID); err != nil {
+					return err
+				}
+				if err = log.add(state.EventConversation, ""); err != nil {
+					return err
+				}
 			}
 		}
 		// Merge preserves admitted_at and any existing receipt/admission metadata.
