@@ -28,7 +28,7 @@ const (
 	openAIModelName = "gpt-6.1-sol"
 )
 
-// OpenAIModel makes one Chat Completions request per turn. It never executes a tool.
+// OpenAIModel makes one Chat Completions request for a reply or independent command plan. It never executes a tool.
 type OpenAIModel struct {
 	name   string
 	key    string
@@ -57,6 +57,7 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	span.SetAttributes(
 		attribute.Int("nori.prompt.message_count", len(request.Messages)), attribute.Int("nori.prompt.bytes", promptBytes),
 		attribute.Bool("nori.input.truncated", len(request.TelemetryInput) > 2048),
+		attribute.Bool("nori.command_plan", request.CommandPlan),
 	)
 	if a, ok := observability.ContentAttribute("input.value", request.TelemetryInput); ok {
 		span.SetAttributes(a)
@@ -170,7 +171,7 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, control
 		"service_tier": "default", "store": false, "prompt_cache_options": map[string]string{"mode": "explicit"},
 	}
 	if !request.NoDispatch {
-		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.ScheduleIDs)
+		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.ScheduleIDs, request.CommandPlan)
 	}
 	span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", "low"), attribute.String("gen_ai.request.service_tier", "default"))
 	return json.Marshal(body)

@@ -158,6 +158,39 @@ def config():
     return value
 
 
+def runtime_settings():
+    """Capacity settings shared with Terraform, read from this checkout, not old state."""
+    settings = json.loads((ROOT / "runtime-settings.json").read_text())
+    if (set(settings) != {"minInstances", "maxInstances", "containerConcurrency", "resourceLimits"} or
+            type(settings["minInstances"]) is not int or settings["minInstances"] != 0 or
+            type(settings["maxInstances"]) is not int or settings["maxInstances"] != 1 or
+            type(settings["containerConcurrency"]) is not int or settings["containerConcurrency"] < 1 or
+            not isinstance(settings["resourceLimits"], dict) or set(settings["resourceLimits"]) != {"cpu", "memory"} or
+            not all(isinstance(value, str) and value for value in settings["resourceLimits"].values())):
+        raise RuntimeError("Invalid runtime-settings.json: require minInstances=0, maxInstances=1, positive concurrency and CPU/memory limits")
+    return settings
+
+
+def runtime_deployment(runtime):
+    """Snapshot only fields the release owns; normalize API list order and omitted zero."""
+    deployment = runtime["spec"].get("deploymentSpec", {})
+    result = {key: deployment.get(key, 0 if key == "minInstances" else None) for key in runtime_settings()}
+    for key in ("env", "secretEnv"):
+        result[key] = sorted(deployment.get(key, []), key=lambda entry: entry["name"])
+    return result
+
+
+def patch_runtime(c, image, deployment):
+    base = f"https://{REGION}-aiplatform.googleapis.com/v1beta1/" + c["runtime_name"]
+    mask = ",".join(["spec.containerSpec.imageUri", *("spec.deploymentSpec." + key for key in deployment)])
+    operation(api("PATCH", base + "?updateMask=" + mask,
+                  {"spec": {"containerSpec": {"imageUri": image}, "deploymentSpec": deployment}}), "vertex")
+    current = api("GET", base)
+    expected = runtime_deployment({"spec": {"deploymentSpec": deployment}})
+    if current["spec"]["containerSpec"]["imageUri"] != image or runtime_deployment(current) != expected:
+        raise RuntimeError("Runtime image, environment or capacity settings do not match the release")
+
+
 def temporal_config():
     value = {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TEMPORAL_TF}", "output", *state_args(TEMPORAL_STATE), "-json"])).items()}
     expected = "nori-poc-runtime" if ENVIRONMENT == "production" else "nori-sandbox-runtime"
@@ -643,8 +676,7 @@ def main():
         secret_env["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "secretRef": {
             "secret": "nori-sandbox-openai-api-key" if ENVIRONMENT == "sandbox" else "nori-openai-api-key", "version": "latest"}}
         secret_env.update(proactive_secret_env())
-        deployment = {"env": list(env.values()), "secretEnv": list(secret_env.values())}
-        mask = "spec.containerSpec.imageUri,spec.deploymentSpec.env,spec.deploymentSpec.secretEnv"
+        deployment = {**runtime_settings(), "env": list(env.values()), "secretEnv": list(secret_env.values())}
         if ENVIRONMENT == "sandbox":
             spend_status()
             version = os.environ.get("NORI_SPEND_KEY_SECRET_VERSION", "")
@@ -660,8 +692,8 @@ def main():
                 secret_env.pop(key, None)
             secret_env["OPENROUTER_API_KEY"] = {"name": "OPENROUTER_API_KEY", "secretRef": {"secret": "nori-sandbox-openrouter-api-key", "version": version}}
             deployment.update(env=list(env.values()), secretEnv=list(secret_env.values()))
-        operation(api("PATCH", base + "?updateMask=" + mask, {"spec": {"containerSpec": {"imageUri": args.value, "port": 8080}, "deploymentSpec": deployment}}), "vertex")
-        print("Runtime image updated.")
+        patch_runtime(c, args.value, deployment)
+        print("Runtime image, environment and capacity settings updated and verified.")
     elif args.action == "deploy-web":
         if not args.value: parser.error("deploy-web needs an immutable image URI")
         print(gcloud("run", "services", "update", WEB, "--region=" + REGION, "--image=" + args.value))

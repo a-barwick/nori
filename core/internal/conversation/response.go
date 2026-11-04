@@ -8,7 +8,7 @@ import (
 
 // Reuse the runtime's command schemas in one strict action-list response.
 // Validated actions enter the same durable admission and replay path.
-func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs, scheduleIDs []string) any {
+func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs, scheduleIDs []string, commandPlan bool) any {
 	var tools []struct {
 		Function struct {
 			Name, Description string
@@ -23,6 +23,9 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs, schedul
 		asking, questions = append(asking, request.TaskID), append(questions, request.QuestionID)
 	}
 	for _, tool := range tools {
+		if commandPlan && tool.Function.Name != "dispatch" && tool.Function.Name != "steer" {
+			continue
+		}
 		if restricted && tool.Function.Name != "dispatch" && tool.Function.Name != "answer" {
 			continue
 		}
@@ -62,6 +65,10 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs, schedul
 			}
 			field := tool.Function.Parameters["properties"].(map[string]any)["for"].(map[string]any)
 			field["enum"] = parents
+			if commandPlan {
+				field["enum"] = []any{nil}
+				tool.Function.Parameters["properties"].(map[string]any)["question_id"].(map[string]any)["enum"] = []any{nil}
+			}
 			if restricted {
 				field["type"], field["enum"] = "string", asking
 				question := tool.Function.Parameters["properties"].(map[string]any)["question_id"].(map[string]any)

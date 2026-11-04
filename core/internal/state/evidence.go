@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -188,6 +189,34 @@ func ValidateOperation(runID string, op OperationRecord) (OperationRecord, error
 type SavedOperation struct {
 	Record           OperationRecord
 	EvidenceRecorded bool
+}
+
+// LateWriteEvent reports a provider answer saved after the task's terminal event.
+// The caller validates the transition and commits this event with the operation.
+func LateWriteEvent(run Run, saved *SavedOperation, op OperationRecord, now time.Time) (TaskEvent, bool) {
+	if run.Status == RunRunning || saved == nil || saved.Record.Outcome == op.Outcome ||
+		op.Action == nil || op.Action.ApprovedBy == "" || op.ResultRef == "" {
+		return TaskEvent{}, false
+	}
+	var text string
+	switch op.Outcome {
+	case "confirmed":
+		text = "The provider confirmed this approved write."
+	case "submitted":
+		text = "The provider accepted this approved write, but a follow-up read did not complete."
+	case "failed":
+		text = "The provider refused this approved write or a later read showed it did not happen."
+	case "uncertain":
+		text = "This approved write may have happened; its outcome could not be confirmed."
+	default:
+		return TaskEvent{}, false
+	}
+	return TaskEvent{
+		ID: run.ID + "-write-" + op.ID + "-" + op.Outcome, RunID: run.ID, Kind: "write_outcome",
+		Sequence: run.EventSequence + 1, Revision: run.Revision, CreatedAt: now,
+		Text: text + " " + op.Action.Text, Reason: fmt.Sprintf("The task remains %s.", run.Status),
+		OperationRefs: []string{op.ID},
+	}, true
 }
 
 // OperationWrite says how an operation record is saved.
