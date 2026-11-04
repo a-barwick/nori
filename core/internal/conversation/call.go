@@ -229,7 +229,8 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if e = r.recordUsage(inputID, reply.Usage); e != nil {
 		return e
 	}
-	return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view)
+	return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view,
+		chatApproval(t.Inputs, visible, view.Turns, taskContext), shownApproval(reply.Text, taskContext))
 }
 
 func (r *Runner) modelFailureText(ctx context.Context, inputs []state.ConversationInput, modelErr error) string {
@@ -441,7 +442,7 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 
 func (r *Runner) finishCall(
 	ctx, callCtx context.Context, f state.ConversationFence, t *state.ConversationTurn, reply Reply, modelErr error, noDispatch bool,
-	view historyView,
+	view historyView, approval, shown *state.ConversationApproval,
 ) error {
 	if modelErr != nil {
 		if callCtx.Err() != nil {
@@ -485,9 +486,12 @@ func (r *Runner) finishCall(
 			err = fmt.Errorf("a work request's turn can only settle that request")
 		}
 		failure := "The model returned invalid tool calls. No task commands were accepted."
-		if err == nil && !approvalAllowed(commands, t.Inputs) {
-			err = fmt.Errorf("an approval needs the user's own words")
-			failure = "Nothing was approved, because your message didn't read as a yes. Reply with a clear yes, or use the task's Approve button."
+		if len(reply.Calls) != 1 {
+			approval = nil
+		}
+		if err == nil && !approvalAllowed(commands, approval) {
+			err = fmt.Errorf("an approval needs a standalone reply to the exact saved question")
+			failure = "Nothing was approved. Use the task's Approve button, or ask me to show its exact approval question and reply with just yes."
 		}
 		if err != nil {
 			attemptEnd(&t.Attempt, "error", failure)
@@ -496,6 +500,7 @@ func (r *Runner) finishCall(
 		} else {
 			t.Attempt.Reply = string(reply.Message)
 			t.Attempt.Text = reply.Text
+			t.Attempt.Approval = shown
 			// Only a turn carrying Austin's own message can show a result or hand files to a task. Task output reaches
 			// the model too, and it mustn't be able to get a file into another task.
 			fromUser := slices.ContainsFunc(t.Inputs, func(input state.ConversationInput) bool { return input.IsUser() })
