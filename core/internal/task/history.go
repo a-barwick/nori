@@ -71,6 +71,7 @@ type RefModelOutcome struct {
 	Calls     []CallRef
 	Cost      float64
 	CostKnown bool
+	NotSent   bool
 	Failure   string
 	Invalid   bool
 }
@@ -326,7 +327,7 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 		return out, e
 	}
 	response := outcome.Response
-	out = RefModelOutcome{Ref: in.Ref, Cost: response.Cost, CostKnown: response.CostKnown, Failure: outcome.Failure}
+	out = RefModelOutcome{Ref: in.Ref, Cost: response.Cost, CostKnown: response.CostKnown, NotSent: response.NotSent, Failure: outcome.Failure}
 	// Accounting is returned even if persisting the response fails. Activity errors
 	// would discard this value, so persistence failure is an ordinary failure field.
 	if response.Message != nil {

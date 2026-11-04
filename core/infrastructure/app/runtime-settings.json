@@ -1,0 +1,9 @@
+{
+  "minInstances": 0,
+  "maxInstances": 1,
+  "containerConcurrency": 20,
+  "resourceLimits": {
+    "cpu": "1",
+    "memory": "1Gi"
+  }
+}
