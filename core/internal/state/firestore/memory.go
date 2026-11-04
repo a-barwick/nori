@@ -103,7 +103,16 @@ func (d *Database) SaveConversationSummary(ctx context.Context, s state.Conversa
 // ConversationTurnsAfter returns up to HistoryTurnsExamined turns that started after a time, newest first. A zero time
 // returns the newest turns.
 func (d *Database) ConversationTurnsAfter(ctx context.Context, after time.Time) ([]state.ConversationTurn, error) {
-	query := d.conversationTurns().OrderBy("started_at", firestore.Desc).Limit(state.HistoryTurnsExamined)
+	return d.turnsAfter(ctx, after, firestore.Desc)
+}
+
+// OldestConversationTurnsAfter returns up to HistoryTurnsExamined turns that started after a time, oldest first.
+func (d *Database) OldestConversationTurnsAfter(ctx context.Context, after time.Time) ([]state.ConversationTurn, error) {
+	return d.turnsAfter(ctx, after, firestore.Asc)
+}
+
+func (d *Database) turnsAfter(ctx context.Context, after time.Time, dir firestore.Direction) ([]state.ConversationTurn, error) {
+	query := d.conversationTurns().OrderBy("started_at", dir).Limit(state.HistoryTurnsExamined)
 	if !after.IsZero() {
 		query = query.Where("started_at", ">", after)
 	}

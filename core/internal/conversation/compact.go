@@ -120,6 +120,8 @@ func (r *Runner) compactOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A full page may not reach back to after, so the oldest turns come from a second, oldest-first read.
+	pageFull := len(turns) == state.HistoryTurnsExamined
 	turns = slices.DeleteFunc(turns, func(t state.ConversationTurn) bool { return t.Status != "completed" })
 	size := 0
 	for _, t := range turns {
@@ -128,9 +130,23 @@ func (r *Runner) compactOnce(ctx context.Context) error {
 	if len(turns) <= state.RecentTurnLimit && size <= state.RecentTurnBytes {
 		return nil
 	}
-	// Newest first: keep the newest turns out, then summarize the rest oldest first, within the read bounds.
+	// Newest first: keep the newest turns out, then summarize the rest oldest first, within the read bounds. The
+	// summary's through never moves past a turn compaction didn't read.
 	older := turns[min(state.CompactKeep, len(turns)):]
-	slices.Reverse(older)
+	if pageFull && len(older) > 0 {
+		newest := older[0].StartedAt
+		if older, err = r.tasks.Store.OldestConversationTurnsAfter(ctx, after); err != nil {
+			return err
+		}
+		older = slices.DeleteFunc(older, func(t state.ConversationTurn) bool {
+			return t.Status != "completed" || t.StartedAt.After(newest)
+		})
+	} else {
+		slices.Reverse(older)
+	}
+	if len(older) == 0 {
+		return nil
+	}
 	sources := map[string]string{}
 	for _, item := range summary.Items {
 		sources[item.InputID] = strings.TrimPrefix(sources[item.InputID]+"\n"+item.Quote, "\n")
