@@ -229,6 +229,10 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if e = r.recordUsage(inputID, reply.Usage); e != nil {
 		return e
 	}
+	if modelErr == nil && !request.NoDispatch {
+		reply, modelErr = r.planUserCommands(callCtx, t, reply, request, view, visible, taskContext, inputID)
+		outerMS = time.Since(outerStarted).Milliseconds()
+	}
 	return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view,
 		chatApproval(t.Inputs, visible, view.Turns, taskContext), shownApproval(reply.Text, taskContext))
 }

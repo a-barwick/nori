@@ -241,6 +241,8 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	}
 	if response.CostKnown {
 		trace.CostUSD, trace.CostStatus = &response.Cost, "reported"
+	} else if response.NotSent {
+		trace.CostStatus = "not_sent"
 	}
 	for _, call := range response.Calls {
 		trace.Calls = append(trace.Calls, state.TraceCall{Name: call.Name, Arguments: traceJSON(call.Args)})

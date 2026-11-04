@@ -135,6 +135,9 @@ func (a *Activities) saveWrite(ctx context.Context, run string, op state.Operati
 		observability.RecordErrorCategory(save, "task.evidence", err)
 		return nil, classified(err)
 	}
+	// A late provider answer may have queued a notification after the workflow
+	// already published Stop. Wake the outer loop even if this activity is cancelled.
+	a.notify(save)
 	return output, nil
 }
 

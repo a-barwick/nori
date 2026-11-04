@@ -38,6 +38,7 @@ type server struct {
 	readOperations map[string]*readOperation
 	jobsMu         sync.Mutex
 	jobs           map[string]*activeJob
+	unsavedJobs    map[string]jobRecord
 }
 type runState struct {
 	ctx     context.Context

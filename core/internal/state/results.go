@@ -118,8 +118,9 @@ func ValidLink(address string) error {
 
 // PublishResults decides what a task's end does to its results. existing holds what the task already saved, and prior
 // the result it revises, if any. The task's main result is its first file, or else its answer, and that's the one
-// linked to prior. It returns every result to write, including prior when it's now superseded.
-func PublishResults(run Run, req PublishRequest, existing []Result, prior *Result, now time.Time) []Result {
+// linked to prior. It returns every result to write, including prior when it's now superseded. If another task already
+// revised prior, these outputs stay separate and the returned notice explains why they didn't replace it.
+func PublishResults(run Run, req PublishRequest, existing []Result, prior *Result, now time.Time) ([]Result, string) {
 	results := append([]Result{}, existing...)
 	sort.SliceStable(results, func(i, j int) bool { return results[i].CreatedAt.Before(results[j].CreatedAt) })
 	checked := req.Answer != nil && req.Answer.Checked && run.Status == RunCompleted
@@ -146,7 +147,7 @@ func PublishResults(run Run, req PublishRequest, existing []Result, prior *Resul
 	}
 	// A task that didn't finish can't replace what it was revising.
 	if prior == nil || len(results) == 0 || !checked {
-		return results
+		return results, ""
 	}
 	main := &results[0]
 	for i := range results {
@@ -158,10 +159,24 @@ func PublishResults(run Run, req PublishRequest, existing []Result, prior *Resul
 			main = &results[i]
 		}
 	}
+	// Publication reads prior inside the same transaction that writes its successor. A concurrent completion must
+	// keep that successor and its history, rather than silently treating work based on an older version as current.
+	if prior.SupersededBy != "" && prior.SupersededBy != main.ID {
+		notice := fmt.Sprintf("Revision conflict: saved result %s was already replaced by %s. This task's output is saved separately; it did not replace either result.", prior.ID, prior.SupersededBy)
+		for i := range results {
+			if results[i].ID == main.ID || results[i].Kind == ResultAnswer {
+				results[i].Unmet = append(append([]string{}, results[i].Unmet...), notice)
+			}
+			if results[i].Kind == ResultAnswer {
+				results[i].Text = notice + "\n\n" + results[i].Text
+			}
+		}
+		return results, notice
+	}
 	main.Revises, main.RootID, main.Version = prior.ID, prior.RootID, prior.Version+1
 	superseded := *prior
 	superseded.SupersededBy = main.ID
-	return append(results, superseded)
+	return append(results, superseded), ""
 }
 
 // ReportResults marks results as named in a reply and returns the parts that show them. A result reported earlier keeps
