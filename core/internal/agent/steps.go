@@ -459,6 +459,8 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 				attribute.Float64("nori.cost.usd", resp.Cost), attribute.Float64("llm.cost.total", resp.Cost),
 				attribute.String("nori.cost.status", "reported"),
 			)
+		} else if resp.NotSent {
+			span.SetAttributes(attribute.String("nori.cost.status", "not_sent"))
 		} else {
 			span.SetAttributes(attribute.String("nori.cost.status", "unknown"))
 		}
