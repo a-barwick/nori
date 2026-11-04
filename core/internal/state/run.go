@@ -287,7 +287,10 @@ func DeferPublication(run Run) Run {
 func FinishRun(run Run, req PublishRequest, now time.Time) (Run, TaskEvent) {
 	status, detail, text := req.Status, req.Detail, req.Text
 	if run.CancelRequested && status != RunFailed {
-		status, detail, text = RunCancelled, "Stopped by Austin.", ""
+		if status != RunCancelled || detail == "" {
+			detail = "Stopped by Austin."
+		}
+		status, text = RunCancelled, ""
 	}
 	kind := "failure"
 	switch status {
