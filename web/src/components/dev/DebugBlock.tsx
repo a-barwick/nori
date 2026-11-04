@@ -121,7 +121,7 @@ function StepRow({ step }: { step: TaskStep }) {
         ...(step.cached_tokens !== undefined ? [["cached", n(step.cached_tokens)] as [string, ReactNode]] : []),
         ...(step.output_tokens !== undefined ? [["output", n(step.output_tokens)] as [string, ReactNode]] : []),
         ...(step.thinking_tokens !== undefined ? [["thinking tokens", n(step.thinking_tokens)] as [string, ReactNode]] : []),
-        ["cost", step.cost_usd !== undefined ? `${usd(step.cost_usd)} (${step.cost_status})` : step.cost_status === "not_applicable" ? "not applicable" : "unknown"],
+        ["cost", step.cost_usd !== undefined ? `${usd(step.cost_usd)} (${step.cost_status})` : step.cost_status === "not_applicable" ? "not applicable" : step.cost_status === "not_sent" ? "not sent" : "unknown"],
       ]} />
       {step.calls?.map((call, index) => <div key={index}>{call.name}<Code>{call.arguments}</Code></div>)}
       {step.arguments && <><span>Arguments</span><Code>{step.arguments}</Code></>}
