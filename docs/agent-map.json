@@ -149,6 +149,39 @@
    ]
   },
   {
+   "page": "docs/site/catalog.html",
+   "title": "Tool catalog",
+   "summary": "Every task's instructions list the worker's capabilities, and a task loads some of them before calling their tools.",
+   "status": "built",
+   "code": [
+    "core/internal/agent/catalog.go",
+    "core/internal/agent/memory.go",
+    "core/internal/agent/steps.go",
+    "core/internal/task/jobs.go",
+    "core/internal/task/tool_durable.go"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 89
+    },
+    {
+     "id": "the-capabilities",
+     "title": "The capabilities",
+     "status": "built",
+     "words": 95
+    },
+    {
+     "id": "what-loading-changes",
+     "title": "What loading changes",
+     "status": "built",
+     "words": 136
+    }
+   ]
+  },
+  {
    "page": "docs/site/classification.html",
    "title": "Classifying a message",
    "summary": "Jev, a classifier model, marks the intents in the current user messages. The outer model gets them as a hint.",
@@ -444,7 +477,7 @@
      "id": "memory-and-context",
      "title": "Memory and context",
      "status": "built",
-     "words": 192
+     "words": 366
     },
     {
      "id": "models",
@@ -655,6 +688,9 @@
    "status": "built",
    "code": [
     "core/e2e/milestone10-live.test.js",
+    "core/internal/agent/catalog.go",
+    "core/internal/agent/memory.go",
+    "core/internal/agent/steps.go",
     "core/internal/conversation/call.go",
     "core/internal/conversation/compact.go",
     "core/internal/conversation/memory.go",
@@ -690,7 +726,7 @@
      "id": "what-the-inner-loop-sees",
      "title": "What the inner loop sees",
      "status": "built",
-     "words": 118
+     "words": 189
     }
    ]
   },
@@ -786,13 +822,13 @@
      "id": "tools-and-approvals",
      "title": "Tools and approvals",
      "status": "built",
-     "words": 102
+     "words": 59
     },
     {
      "id": "memory",
      "title": "Memory",
      "status": "built",
-     "words": 81
+     "words": 95
     },
     {
      "id": "schedules-and-proactive-messages",
@@ -1122,6 +1158,7 @@
    "code": [
     "core/infrastructure/temporal/spend-alert.py",
     "core/internal/agent/catalog.go",
+    "core/internal/agent/memory.go",
     "core/internal/agent/notify.go",
     "core/internal/agent/steps.go",
     "core/internal/api/events.go",
@@ -1138,6 +1175,7 @@
     "core/internal/task/actions.go",
     "core/internal/task/activities.go",
     "core/internal/task/completion.go",
+    "core/internal/task/context.go",
     "core/internal/task/workflow.go"
    ],
    "sections": [
@@ -1145,13 +1183,13 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 254
+     "words": 255
     },
     {
      "id": "what-remains",
      "title": "What remains",
      "status": "built",
-     "words": 70
+     "words": 34
     },
     {
      "id": "following-one-request",
@@ -1394,7 +1432,7 @@
      "id": "corrected-page-claims",
      "title": "Corrected page claims",
      "status": "built",
-     "words": 87
+     "words": 90
     }
    ]
   },
@@ -1492,8 +1530,10 @@
     "calendar_write.go",
     "catalog.go",
     "core/cmd/nori-connect-calendar/main.go",
+    "core/internal/agent/memory.go",
     "core/internal/agent/steps.go",
     "core/internal/computerd/jobs.go",
+    "core/internal/task/context.go",
     "core/internal/task/jobs.go",
     "core/internal/task/tool_durable.go",
     "core/internal/task/unresolved.go",
@@ -1509,19 +1549,19 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 102
+     "words": 89
     },
     {
      "id": "the-tools",
      "title": "The tools",
      "status": "built",
-     "words": 288
+     "words": 330
     },
     {
      "id": "confirming-a-change",
      "title": "Confirming a change",
      "status": "built",
-     "words": 106
+     "words": 94
     },
     {
      "id": "long-shell-jobs",
@@ -1533,7 +1573,7 @@
      "id": "when-a-command-fails",
      "title": "When a command fails",
      "status": "built",
-     "words": 322
+     "words": 266
     }
    ]
   },
@@ -1545,7 +1585,10 @@
    "code": [
     "core/internal/agent/model.go",
     "core/internal/agent/openrouter/",
+    "core/internal/agent/steps.go",
+    "core/internal/task/context.go",
     "core/internal/task/history.go",
+    "core/internal/task/jobs.go",
     "core/internal/transcript/"
    ],
    "sections": [
@@ -1553,13 +1596,19 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 95
+     "words": 94
     },
     {
      "id": "an-example",
      "title": "An example",
      "status": "built",
-     "words": 240
+     "words": 96
+    },
+    {
+     "id": "long-tasks",
+     "title": "Long tasks",
+     "status": "built",
+     "words": 230
     }
    ]
   },
@@ -1611,7 +1660,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 834
+     "words": 876
     }
    ]
   }

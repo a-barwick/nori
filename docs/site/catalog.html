@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tool catalog · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Tool catalog</h1>
+<p class="lede">Every task's instructions list the worker's capabilities, and a task loads some of them before calling their tools.</p>
+<div class="card"><p><span class="say me">Move my gym block to Friday at 7am.</span></p>
+<div class="flow">
+<div class="node inner"><b>Inner loop</b><small>Reads the catalog and loads Google Calendar read and write.</small></div>
+<div class="arrow">↓ <span class="lbl">capability names</span></div>
+<div class="node"><b>Runtime on the worker</b><small>Checks the names and records the load in the transcript.</small></div>
+<div class="arrow">↓ <span class="lbl">account and availability</span></div>
+<div class="node inner"><b>Inner loop</b><small>Gets the calendar tools on its next model call and reads the calendar.</small></div>
+<div class="arrow">↓ <span class="lbl">the proposed move</span></div>
+<div class="node"><b>Runtime</b><small>Asks the user to approve the exact move.</small></div>
+</div></div>
+<section><h2>The capabilities</h2>
+<div class="card"><table><tr><th>Capability</th><th>Tools</th><th>Sent</th></tr>
+<tr><td>Web search</td><td>web_search</td><td>Always</td></tr>
+<tr><td>Browser</td><td>browser_navigate, browser_screenshot, screenshot_inspect</td><td>Always</td></tr>
+<tr><td>Saved results</td><td>result_save, result_link, results_find, result_read, result_open</td><td>Always</td></tr>
+<tr><td>Memory and conversation</td><td>memory_read, conversation_find, operation_read</td><td>Always</td></tr>
+<tr><td>Shell</td><td>shell, job_start, job_status, job_wait, job_stop</td><td>Always</td></tr>
+<tr><td>Attached files</td><td>upload_open, upload_inspect</td><td>After loading</td></tr>
+<tr><td>Google Calendar read</td><td>calendar_read</td><td>After loading</td></tr>
+<tr><td>Google Calendar write</td><td>calendar_create, calendar_move</td><td>After loading</td></tr>
+<tr><td>Email send</td><td>email_send</td><td>After loading</td></tr>
+</table>
+<p class="note">Tools outside the catalog, such as complete and request_input, are always sent.</p></div></section>
+<section><h2>What loading changes</h2>
+<ul class="pts"><li>Loading only adds tool definitions to later model calls. It doesn't change what a call is allowed to do, and calendar and email writes still wait for approval.</li>
+<li>The loaded set lasts until the task ends. The worker reads it back from the transcript, so it survives a worker restart.</li>
+<li>A capability with no connected account still loads. Its result says it's unavailable, and its tools report the same if called.</li></ul></section>
+<details class="more"><summary>What each catalog entry holds</summary>
+<p>The worker adds the catalog to the inner loop's instructions with today's date in the configured time zone. Each entry gives the capability's tools, account and availability, what to do on failure, and how to confirm a result.</p>
+<p>The text changes at most once a day unless an account changes, so the provider's prompt cache still applies to the instructions.</p>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/catalog.go</code> · <code>core/internal/agent/memory.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/task/jobs.go</code> · <code>core/internal/task/tool_durable.go</code> · <a href="tools.html">Tools</a> · <a href="authority.html">Approvals and writes</a></p></details>
+</body>
+</html>
