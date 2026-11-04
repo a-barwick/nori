@@ -67,6 +67,10 @@ func Conflicts(ctx context.Context, events []agent.CalendarEvent, router Router,
 		if second == nil || !second.start.After(now) {
 			continue
 		}
+		// Another event during the gap, such as an all-afternoon block, means the drive may not be between these two.
+		if busyBetween(list, first, *second) {
+			continue
+		}
 		gap := second.start.Sub(first.end)
 		from, to := place(first.event.Location), place(second.event.Location)
 		if gap >= maxGap || from == "" || to == "" || from == to {
@@ -99,4 +103,18 @@ func Conflicts(ctx context.Context, events []agent.CalendarEvent, router Router,
 		})
 	}
 	return found, skipped, nil
+}
+
+// busyBetween reports whether any event other than first and second overlaps the time from first's end to second's
+// start.
+func busyBetween(list []timed, first, second timed) bool {
+	for _, e := range list {
+		if e.event.EventID == first.event.EventID || e.event.EventID == second.event.EventID {
+			continue
+		}
+		if e.start.Before(second.start) && e.end.After(first.end) {
+			return true
+		}
+	}
+	return false
 }

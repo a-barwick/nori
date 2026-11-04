@@ -527,6 +527,8 @@ CALENDAR_SECRETS = {
     "GOOGLE_CALENDAR_ACCOUNT": "nori-google-calendar-account",
 }
 PROACTIVE_JOB = "nori-proactive-check"
+# The check's local time zone. deploy-runtime gives it to the runtime as NORI_TIMEZONE, and the Scheduler job runs in it.
+TIMEZONE = "America/Los_Angeles"
 
 
 def secret_enabled(secret):
@@ -547,17 +549,20 @@ def proactive_secret_env():
 def proactive_setup(c):
     if ENVIRONMENT != "production":
         raise RuntimeError("The calendar check is set up for production only")
-    if not secret_enabled(ROUTES_SECRET):
-        key = temporal_env().get("GOOGLE_ROUTES_API_KEY", "")
-        if not key:
-            raise RuntimeError("GOOGLE_ROUTES_API_KEY is missing from the root .env")
+    # A secret without a version is created and filled from the root .env, so setup doesn't stop partway.
+    for name, secret in {**CALENDAR_SECRETS, "GOOGLE_ROUTES_API_KEY": ROUTES_SECRET}.items():
+        if secret_enabled(secret):
+            continue
+        value = temporal_env().get(name, "")
+        if not value:
+            raise RuntimeError(name + " is missing from the root .env")
         try:
-            gcloud("secrets", "describe", ROUTES_SECRET, "--format=value(name)")
+            gcloud("secrets", "describe", secret, "--format=value(name)")
         except subprocess.CalledProcessError:
-            gcloud("secrets", "create", ROUTES_SECRET, "--replication-policy=automatic")
-        subprocess.run(["gcloud", "--project", PROJECT, "--quiet", "secrets", "versions", "add", ROUTES_SECRET, "--data-file=-"],
-                       input=key, text=True, check=True, capture_output=True, timeout=remaining(120))
-        print("Routes key saved to " + ROUTES_SECRET + ".")
+            gcloud("secrets", "create", secret, "--replication-policy=automatic")
+        subprocess.run(["gcloud", "--project", PROJECT, "--quiet", "secrets", "versions", "add", secret, "--data-file=-"],
+                       input=value, text=True, check=True, capture_output=True, timeout=remaining(120))
+        print(name + " saved to " + secret + ".")
     readers = ["serviceAccount:" + c["runtime_service_account"], f"serviceAccount:service-{NUMBER}@gcp-sa-aiplatform.iam.gserviceaccount.com"]
     for secret in [*CALENDAR_SECRETS.values(), ROUTES_SECRET]:
         for member in readers:
@@ -568,7 +573,7 @@ def proactive_setup(c):
     caller = c["conversation_wake_service_account"]
     gcloud("iam", "service-accounts", "add-iam-policy-binding", caller, "--member=" + f"serviceAccount:service-{NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com",
            "--role=roles/iam.serviceAccountTokenCreator", "--condition=None", "--format=none")
-    job = ["--location=" + REGION, "--schedule=0 0,12 * * *", "--time-zone=America/Los_Angeles", "--uri=" + c["runtime_url"].rstrip("/") + "/api/proactive",
+    job = ["--location=" + REGION, "--schedule=0 0,12 * * *", "--time-zone=" + TIMEZONE, "--uri=" + c["runtime_url"].rstrip("/") + "/api/proactive",
            "--http-method=POST", "--headers=Content-Type=application/json", "--message-body={}", "--oauth-service-account-email=" + caller,
            "--oauth-token-scope=https://www.googleapis.com/auth/cloud-platform", "--attempt-deadline=300s", "--max-retry-attempts=2", "--min-backoff=120s"]
     try:
@@ -576,7 +581,7 @@ def proactive_setup(c):
         gcloud("scheduler", "jobs", "update", "http", PROACTIVE_JOB, *job)
     except subprocess.CalledProcessError:
         gcloud("scheduler", "jobs", "create", "http", PROACTIVE_JOB, *job)
-    print("Calendar check scheduled at 12 am and 12 pm America/Los_Angeles. Run deploy-runtime to give the runtime its secrets.")
+    print("Calendar check scheduled at 12 am and 12 pm " + TIMEZONE + ". Run deploy-runtime to give the runtime its secrets.")
 
 
 def main():
@@ -624,6 +629,7 @@ def main():
             "NORI_WAKE_SERVICE_ACCOUNT": c["conversation_wake_service_account"],
             "NORI_RUNTIME_URL": c["runtime_url"],
             "NORI_EXECUTION_MODE": "temporal",
+            "NORI_TIMEZONE": TIMEZONE,
             "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",
             "TEMPORAL_NAMESPACE": "quickstart-nori.qtjow",
             "TEMPORAL_TASK_QUEUE": TASK_QUEUE,
