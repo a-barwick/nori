@@ -563,7 +563,7 @@ func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string)
 	}
 	c.Models++
 	c.Spent += model.Cost
-	c.CostUnknown = c.CostUnknown || !model.CostKnown
+	c.CostUnknown = c.CostUnknown || (!model.CostKnown && !model.NotSent)
 	c.Ref = model.Ref
 	c.projectSpend(spending, id)
 	if c.CostUnknown {
