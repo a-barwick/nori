@@ -194,6 +194,7 @@ type ScheduleDatabase interface {
 	ClaimSchedule(ctx context.Context, id, key, runID, reason string, message *ScheduleMessage, now time.Time) (Schedule, error)
 	ArmSchedule(ctx context.Context, id string, at time.Time) error
 	MarkSeen(ctx context.Context, messageID string) error
+	ReadPosition(ctx context.Context) (NotifySeenMark, error)
 	PendingNotifications(ctx context.Context) ([]Notification, error)
 	ClaimNotification(ctx context.Context, id string, quiet QuietHours, local time.Time) (Notification, string, error)
 	FinishNotification(ctx context.Context, id, status, reason string, now time.Time) error

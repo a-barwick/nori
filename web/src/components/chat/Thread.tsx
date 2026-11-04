@@ -6,7 +6,7 @@ import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import { clock } from "@/lib/time";
 import { buildUnits, posOf, type Unit } from "@/lib/units";
-import type { TextItem, Thread as Conversation } from "@/lib/types";
+import type { ReadPosition, TextItem, Thread as Conversation } from "@/lib/types";
 import { cn, firstSentence } from "@/lib/utils";
 import { scrollWithin } from "@/lib/dom";
 import { DebugBlock } from "@/components/dev/DebugBlock";
@@ -112,7 +112,11 @@ export function Thread({
   hasOlder = false,
   loadingOlder = false,
   onLoadOlder,
+  onRead,
+  readPosition,
 }: {
+  onRead?: (messageID: string) => void;
+  readPosition?: ReadPosition;
   hasOlder?: boolean;
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
@@ -134,8 +138,14 @@ export function Thread({
   const seenIds = useRef(new Set(items.map((item) => item.id)));
   const previousFirst = useRef(items[0]?.id);
   const prependAnchor = useRef<{ id: string; top: number } | null>(null);
-  const [firstUnread, setFirstUnread] = useState<string | null>(null);
-  const [unread, setUnread] = useState(0);
+  const [unreadIDs, setUnreadIDs] = useState<string[]>([]);
+  const readIndex = items.findIndex((item) => item.id === readPosition?.message_id);
+  const unreadItems = unreadIDs.filter((id) => {
+    const index = items.findIndex((item) => item.id === id);
+    return index >= 0 && (readIndex >= 0 ? index > readIndex : !readPosition?.message_id || items[index].at > Date.parse(readPosition.through));
+  });
+  const unread = unreadItems.length;
+  const firstUnread = unreadItems[0];
   const [announcement, setAnnouncement] = useState("");
 
   const scrollToBottom = (smooth = true) => {
@@ -147,6 +157,30 @@ export function Thread({
   useLayoutEffect(() => {
     scrollToBottom(false);
   }, []);
+
+  // Loading a reply into a visible tab isn't enough: it must enter the conversation's viewport. Keep intersection
+  // state while hidden, then report only what is still visible when the tab is shown again.
+  useEffect(() => {
+    const root = scroller.current;
+    if (!root || !onRead) return;
+    const shown = new Set<string>();
+    const report = () => {
+      if (document.hidden) return;
+      const newest = items.findLast((item) => item.sender === "nori" && shown.has(item.id));
+      if (newest) onRead(newest.id);
+    };
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const id = (entry.target as HTMLElement).dataset.itemId!;
+        if (entry.isIntersecting && entry.intersectionRect.height > 0) shown.add(id);
+        else shown.delete(id);
+      }
+      report();
+    }, { root, rootMargin: `${presence ? -104 : -56}px 0px 0px 0px` });
+    root.querySelectorAll<HTMLElement>("[data-item-id]").forEach((node) => observer.observe(node));
+    document.addEventListener("visibilitychange", report);
+    return () => { observer.disconnect(); document.removeEventListener("visibilitychange", report); };
+  }, [items, onRead, presence]);
 
 
   useLayoutEffect(() => {
@@ -173,8 +207,7 @@ export function Thread({
     if (atBottom.current || mine) {
       requestAnimationFrame(() => scrollToBottom(true));
     } else if (fromNori.length) {
-      setUnread((n) => n + fromNori.length);
-      setFirstUnread((f) => f ?? fromNori[0].id);
+      setUnreadIDs((ids) => [...ids, ...fromNori.map((item) => item.id)]);
     }
   }, [items]);
 
@@ -202,8 +235,7 @@ export function Thread({
       const el = firstUnread ? scroller.current?.querySelector<HTMLElement>(`[data-item-id="${firstUnread}"]`) : null;
       if (el) scrollWithin(el, "start");
       else scrollToBottom(true);
-      setUnread(0);
-      setFirstUnread(null);
+      setUnreadIDs([]);
     };
     onUnread(unread, jump);
   }, [unread, firstUnread, onUnread]);
@@ -213,8 +245,7 @@ export function Thread({
     if (!el) return;
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     if (atBottom.current && unread) {
-      setUnread(0);
-      setFirstUnread(null);
+      setUnreadIDs([]);
     }
   };
 

@@ -76,6 +76,8 @@ type Session struct {
 	// Position is the event log's position when this snapshot was read. Events after it may already be included, and
 	// applying one again changes nothing.
 	Position int64 `json:"position"`
+	// ReadPosition is shared by every client and only moves forward.
+	ReadPosition state.NotifySeenMark `json:"read_position"`
 }
 type Runner struct {
 	model      ReplyModel

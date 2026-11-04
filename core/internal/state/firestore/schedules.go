@@ -181,9 +181,24 @@ func (d *Database) ArmSchedule(ctx context.Context, id string, at time.Time) err
 	return err
 }
 
-// MarkSeen records the newest message a visible browser showed. The mark only moves forward.
+// ReadPosition returns the shared read position, or an empty mark before anything was read.
+func (d *Database) ReadPosition(ctx context.Context) (state.NotifySeenMark, error) {
+	doc, err := d.notifySeen().Get(ctx)
+	if notFound(err) {
+		return state.NotifySeenMark{}, nil
+	}
+	if err != nil {
+		return state.NotifySeenMark{}, err
+	}
+	var seen state.NotifySeenMark
+	err = doc.DataTo(&seen)
+	return seen, err
+}
+
+// MarkSeen records the newest reply shown in a client's viewport. The mark only moves forward, and its event is
+// committed with the mark so other clients can resume it after being offline.
 func (d *Database) MarkSeen(ctx context.Context, messageID string) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		doc, err := tx.Get(d.messages().Doc(messageID))
 		if notFound(err) {
 			return state.ErrNotFound
@@ -194,6 +209,9 @@ func (d *Database) MarkSeen(ctx context.Context, messageID string) error {
 		var m state.Message
 		if err = doc.DataTo(&m); err != nil {
 			return err
+		}
+		if m.Role != "assistant" {
+			return state.ErrCommandInvalid
 		}
 		var seen state.NotifySeenMark
 		doc, err = tx.Get(d.notifySeen())
@@ -207,7 +225,14 @@ func (d *Database) MarkSeen(ctx context.Context, messageID string) error {
 		if !m.CreatedAt.After(seen.Through) {
 			return nil
 		}
-		return tx.Set(d.notifySeen(), state.NotifySeenMark{MessageID: m.ID, Through: m.CreatedAt})
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		if err = log.add(state.EventReadPosition, ""); err != nil {
+			return err
+		}
+		return tx.Set(d.notifySeen(), state.NotifySeenMark{MessageID: m.ID, Through: m.CreatedAt, Position: log.seq})
 	})
 }
 

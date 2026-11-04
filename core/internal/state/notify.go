@@ -43,10 +43,12 @@ type Notification struct {
 	SentAt    *time.Time `json:"sent_at,omitempty" firestore:"sent_at,omitempty"`
 }
 
-// NotifySeenMark is the newest message a visible browser showed.
+// NotifySeenMark is the owner's shared read position, also used to suppress notifications.
 type NotifySeenMark struct {
-	MessageID string    `firestore:"message_id"`
-	Through   time.Time `firestore:"through"`
+	MessageID string    `json:"message_id" firestore:"message_id"`
+	Through   time.Time `json:"through" firestore:"through"`
+	// Position orders updates across snapshots and the event stream. Older saved marks have position zero.
+	Position int64 `json:"position" firestore:"position"`
 }
 
 // NotifyDay counts one local day's notifications.
