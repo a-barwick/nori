@@ -169,21 +169,76 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 	return commands, nil
 }
 
-// approvalWords is a floor under the model's reading of a chat approval. Text in a task's
-// question or results reaches the model too, so an approval also needs a word of assent in
-// what the user actually sent.
-var approvalWords = regexp.MustCompile(`(?i)\b(yes|yep|yeah|yup|ok|okay|sure|approve|approved|go ahead|do it|send|add|move|confirm|proceed|looks good|sounds good)\b`)
+// A whole reply can assent; a word inside an unrelated request, quote, negation or
+// correction cannot. The model doesn't get to extract an approving fragment.
+var approvalReply = regexp.MustCompile(`(?i)^(yes|yep|yeah|yup|ok|okay|sure|approve|approved|go ahead|do it|send|send it|add|add it|move|move it|confirm|proceed|looks good|sounds good|yes,? (send it|do it|go ahead))(,? please)?[.!]*$`)
 
-func approvalAllowed(commands []state.Command, inputs []state.ConversationInput) bool {
+// chatApproval binds assent to the exact saved question in the preceding visible
+// assistant message. Nothing from task output chooses a different target. Mixed
+// messages and multiple questions use clarification or the panel controls instead.
+func chatApproval(inputs []state.ConversationInput, visible []Message, turns []state.ConversationTurn, tasks TaskContext) *state.ConversationApproval {
+	var user *state.ConversationInput
+	for i := range inputs {
+		if inputs[i].IsUser() {
+			if user != nil {
+				return nil
+			}
+			user = &inputs[i]
+		}
+	}
+	if user == nil || len(user.Attachments) != 0 || !approvalReply.MatchString(strings.TrimSpace(user.Text)) {
+		return nil
+	}
+	var preceding *Message
+	for i := range visible {
+		if visible[i].ID == state.UserMessageID(user.ID) {
+			if i > 0 {
+				preceding = &visible[i-1]
+			}
+			break
+		}
+	}
+	if preceding == nil || preceding.Role != "assistant" || preceding.RunID != "" {
+		return nil
+	}
+	current := shownApproval(preceding.Text, tasks)
+	if current == nil {
+		return nil
+	}
+	for _, turn := range turns {
+		// Text alone cannot bind a new question that happens to look like an old one.
+		if turn.ID == preceding.TurnID && turn.Attempt.Approval != nil && *turn.Attempt.Approval == *current {
+			return current
+		}
+	}
+	return nil
+}
+
+func shownApproval(text string, tasks TaskContext) *state.ConversationApproval {
+	var target *state.ConversationApproval
+	for _, records := range [][]*TaskContextRecord{tasks.ActiveTasks, tasks.EventTasks, tasks.RecentTasks} {
+		for _, task := range records {
+			q := task.Question
+			if task.Status != state.RunRunning || task.CancelRequested || task.QuestionTextTruncated || q == nil || q.Kind != "approval" ||
+				q.ResolvedBy != "" || q.Revision != task.Revision || strings.TrimSpace(q.Text) == "" ||
+				strings.TrimSpace(text) != strings.TrimSpace(q.Text) {
+				continue
+			}
+			if target != nil {
+				return nil
+			}
+			target = &state.ConversationApproval{TaskID: task.ID, QuestionID: q.ID}
+		}
+	}
+	return target
+}
+
+func approvalAllowed(commands []state.Command, target *state.ConversationApproval) bool {
 	for _, command := range commands {
 		if command.Kind != state.CommandApprove {
 			continue
 		}
-		assent := false
-		for _, input := range inputs {
-			assent = assent || (input.IsUser() && approvalWords.MatchString(input.Text))
-		}
-		if !assent {
+		if len(commands) != 1 || target == nil || command.RunID != target.TaskID || command.QuestionID != target.QuestionID {
 			return false
 		}
 	}
