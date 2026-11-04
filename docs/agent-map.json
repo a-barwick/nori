@@ -1346,7 +1346,9 @@
    "summary": "Reminders, later tasks and monitors the user asks for run at their time with no new message.",
    "status": "built",
    "code": [
+    "core/infrastructure/app/ops.py",
     "core/internal/agent/notify.go",
+    "core/internal/api/proactive.go",
     "core/internal/api/uploads.go",
     "core/internal/app/app.go",
     "core/internal/conversation/model.go",
@@ -1356,6 +1358,7 @@
     "core/internal/state/firestore/tasks.go",
     "core/internal/state/notify.go",
     "core/internal/state/schedule.go",
+    "web/src/components/runtime/TaskPanel.tsx",
     "web/src/lib/runtime/useRuntime.ts"
    ],
    "sections": [
@@ -1375,19 +1378,19 @@
      "id": "repeats-and-changes",
      "title": "Repeats and changes",
      "status": "built",
-     "words": 72
+     "words": 89
     },
     {
      "id": "missed-and-late-runs",
      "title": "Missed and late runs",
      "status": "built",
-     "words": 49
+     "words": 76
     },
     {
      "id": "email-when-the-app-is-closed",
      "title": "Email when the app is closed",
      "status": "built",
-     "words": 146
+     "words": 161
     }
    ]
   },
