@@ -301,6 +301,11 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			}
 		}
 		finished, event := state.FinishRun(run, admitted, now)
+		published, conflict := state.PublishResults(finished, admitted, existing, prior, now)
+		if conflict != "" {
+			finished.Result = conflict + "\n\n" + finished.Result
+			event.Text = finished.Result
+		}
 		// An offer's prep task reports to its offer, not the conversation.
 		announce := run.ParentID == "" && run.Offer == ""
 		// A monitor check that found nothing new says nothing. One that failed or was stopped still reports.
@@ -342,7 +347,7 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 		if err = log.add(state.EventTask, req.RunID); err != nil {
 			return err
 		}
-		for _, result := range state.PublishResults(run, admitted, existing, prior, now) {
+		for _, result := range published {
 			if err = tx.Set(d.results().Doc(result.ID), result); err != nil {
 				return err
 			}
