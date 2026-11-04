@@ -39,6 +39,8 @@ type SavedResult struct {
 }
 
 type TaskContextRecord struct {
+	// Kept separately so a shortened question can't be mistaken for the exact action shown in chat.
+	QuestionTextTruncated   bool                 `json:"-"`
 	Holds                   []state.TaskHold     `json:"held_questions,omitempty"`
 	ID                      string               `json:"id"`
 	ParentID                string               `json:"parent_id,omitempty"`
@@ -230,8 +232,9 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 				trimContextText(&record.Actions[i].Result, limit, &record.TextTruncated)
 				trimContextText(&record.Actions[i].Text, limit, &record.TextTruncated)
 			}
-			if record.Question != nil {
-				trimContextText(&record.Question.Text, limit, &record.TextTruncated)
+			if record.Question != nil && (record.Question.Kind != "approval" || record.Question.ResolvedBy != "") {
+				trimContextText(&record.Question.Text, limit, &record.QuestionTextTruncated)
+				record.TextTruncated = record.TextTruncated || record.QuestionTextTruncated
 			}
 			for i := range record.Holds {
 				trimContextText(&record.Holds[i].Question, limit, &record.TextTruncated)
@@ -249,10 +252,26 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			}
 		}
 		if longest == nil {
-			return result, fmt.Errorf("task identities and current questions exceed the 12 KiB context limit")
+			break
 		}
 		longest.Commands = longest.Commands[1:]
 		longest.CommandHistoryTruncated = true
+	}
+	// An open approval must show the exact action. Sacrifice old task text and
+	// command history first; only shorten approval questions as a last resort.
+	for _, limit := range []int{8192, 4096, 2048, 1024, 512, 256, 64, 0} {
+		if fits() {
+			return result, nil
+		}
+		for _, record := range records {
+			if record.Question != nil && record.Question.Kind == "approval" && record.Question.ResolvedBy == "" {
+				trimContextText(&record.Question.Text, limit, &record.QuestionTextTruncated)
+				record.TextTruncated = record.TextTruncated || record.QuestionTextTruncated
+			}
+		}
+	}
+	if !fits() {
+		return result, fmt.Errorf("task identities and current questions exceed the 12 KiB context limit")
 	}
 	return result, nil
 }
