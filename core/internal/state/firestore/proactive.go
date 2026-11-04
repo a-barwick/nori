@@ -211,7 +211,8 @@ func (d *Database) DeliverOffer(ctx context.Context, id, day, note, text string,
 			offer.Status, offer.SkipReason = state.OfferSkipped, skip
 			return tx.Set(d.offers().Doc(id), offer)
 		}
-		if !state.Idle(c) {
+		// A conversation that has received nothing waits for its introduction, which runs only before any input.
+		if !state.Idle(c) || state.NeedsIntroduction(c) {
 			return state.ErrConversationBusy
 		}
 		c, input, turn, message := state.OfferTurn(c, offer, note, text, now)
