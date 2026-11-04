@@ -630,6 +630,8 @@ def main():
             "NORI_RUNTIME_URL": c["runtime_url"],
             "NORI_EXECUTION_MODE": "temporal",
             "NORI_TIMEZONE": TIMEZONE,
+            # Notification emails link here.
+            "NORI_APP_URL": c["web_url"],
             "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",
             "TEMPORAL_NAMESPACE": "quickstart-nori.qtjow",
             "TEMPORAL_TASK_QUEUE": TASK_QUEUE,

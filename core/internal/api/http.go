@@ -72,6 +72,7 @@ func Handler(deps Deps, local bool) http.Handler {
 	mux.HandleFunc("POST /api/seen", s.seen)
 	mux.HandleFunc("POST /api/proactive", s.check)
 	mux.HandleFunc("POST /api/offer", s.offer)
+	mux.HandleFunc("POST /api/schedule", s.schedule)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if local {
 			if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {

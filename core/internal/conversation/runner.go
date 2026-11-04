@@ -71,6 +71,8 @@ type Session struct {
 	Traces         []Trace            `json:"traces"`
 	NextCursor     string             `json:"next_cursor,omitempty"`
 	Results        []state.Result     `json:"results"`
+	// Schedules are the open reminders, tasks and monitors, oldest first.
+	Schedules []state.Schedule `json:"schedules"`
 	// Position is the event log's position when this snapshot was read. Events after it may already be included, and
 	// applying one again changes nothing.
 	Position int64 `json:"position"`

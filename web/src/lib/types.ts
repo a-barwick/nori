@@ -106,6 +106,11 @@ export type TaskStep = {
   cost_usd?: number; cost_status: string; calls?: { name: string; arguments: string }[];
   arguments?: string; result?: string; error?: string;
 };
+export type Schedule = {
+  id: string; kind: "reminder" | "task" | "monitor"; text: string; status: "active" | "paused";
+  rule: { repeat: string; start: string; time: string; days?: string[]; month_day?: number; every_hours?: number; ends?: string };
+  time_zone: string; next_at?: string; snooze_at?: string;
+};
 export type Session = {
   messages: Message[]; runs: Run[]; paused: boolean;
   dispatches?: { id: string; request: string; status: string; created_at: string }[];
@@ -115,6 +120,8 @@ export type Session = {
   traces?: ConversationTrace[];
   next_cursor?: string;
   results?: SavedResult[];
+  /** Open reminders, scheduled tasks and monitors, oldest first. */
+  schedules?: Schedule[];
   /** Event log position this snapshot reflects. */
   position?: number;
 };

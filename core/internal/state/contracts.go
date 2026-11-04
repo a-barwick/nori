@@ -186,6 +186,9 @@ type ProactiveDatabase interface {
 // ScheduleDatabase holds the schedules Austin asked for and the notifications that reach him when the app is closed.
 type ScheduleDatabase interface {
 	Schedules(ctx context.Context) ([]Schedule, error)
+	// ChangeScheduleNow applies a pause, resume or cancel from a client control. ErrScheduleState means the schedule
+	// was already closed.
+	ChangeScheduleNow(ctx context.Context, id, change string, location *time.Location, now time.Time) (Schedule, error)
 	// ClaimSchedule claims the due occurrence named by key and, with a message, publishes it. ErrConversationBusy means a
 	// turn is running; ErrScheduleState means the occurrence is no longer due.
 	ClaimSchedule(ctx context.Context, id, key, runID, reason string, message *ScheduleMessage, now time.Time) (Schedule, error)

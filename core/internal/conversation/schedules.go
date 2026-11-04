@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -31,6 +32,15 @@ func (c Clock) location() *time.Location {
 		return time.UTC
 	}
 	return c.Location
+}
+
+// ChangeSchedule pauses, resumes or cancels a schedule from a client control. The next conversation pass arms a
+// resumed schedule's wake.
+func (r *Runner) ChangeSchedule(ctx context.Context, id, change string) (state.Schedule, error) {
+	if change != state.ChangePause && change != state.ChangeResume && change != state.ChangeCancel {
+		return state.Schedule{}, fmt.Errorf("%w: change must be pause, resume or cancel", state.ErrCommandInvalid)
+	}
+	return r.tasks.Store.ChangeScheduleNow(ctx, id, change, r.Clock.location(), r.Clock.now())
 }
 
 type scheduleCall struct {
