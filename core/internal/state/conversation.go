@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -379,6 +380,14 @@ func RestartTurn(c ConversationControl, t ConversationTurn, inputs []Conversatio
 		if accepted && t.Attempt.Reply != "" {
 			t.Context = append(t.Context, t.Attempt.Reply)
 			t.Context = append(t.Context, t.Attempt.Results...)
+			// Memory and schedule changes apply only when a reply is published, so a superseded reply's never did.
+			// The note tells the next attempt to ask again for any that still apply.
+			if len(t.Attempt.Memory) > 0 || len(t.Attempt.Schedules) > 0 {
+				note, _ := json.Marshal(map[string]string{"role": "system", "content": "The preceding response was " +
+					"superseded by newer input before it was published. Its task commands were accepted, but none of its " +
+					"remember, forget or schedule changes were applied. Make any of them again if they still apply."})
+				t.Context = append(t.Context, string(note))
+			}
 		}
 		attempt := t.Attempt
 		attempt.Status = "superseded"

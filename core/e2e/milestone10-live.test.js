@@ -273,7 +273,9 @@ scenario("089", "a memory that was never provided", async (id) => {
 scenario("090", "separating two people's preferences", async (id) => {
   const talk = await conversation(id);
   const first = await talk.say("I like spicy food. My partner really doesn't. Help me pick dinner for both of us.");
-  expect(first.reply).toMatch(/side|separate|each|individual|add (your )?own|to taste/i);
+  // The criterion: one shared dinner kept mild, with heat added only for Austin.
+  expect(first.reply).toMatch(/mild|not spicy|non-spicy|without (the )?heat|no heat|same (dinner|meal|dish|base)|share|build[- ]your[- ]own|\bbase\b/i);
+  expect(first.reply).toMatch(/\b(add|top|drizzle|sprinkle|spoon|stir|pass|serve)\b.{0,80}(hot|heat|spic|chil|jalape|sriracha|salsa|harissa|gochujang|pepper)|(hot|heat|spic|chil|jalape|sriracha|salsa|harissa|gochujang|pepper).{0,80}(\byours\b|your (own )?(plate|bowl|portion|serving|side)|for you\b|on the side|at the table|to taste|separate)/i);
   const second = await talk.say("Something we can make together, with the heat on the side.");
   expect(second.reply).toMatch(/side|separate|to taste|at the table/i);
   expect(second.reply).toMatch(/chil|spic|heat|hot sauce|sriracha|pepper|jalape|harissa|gochujang|chili crisp/i);

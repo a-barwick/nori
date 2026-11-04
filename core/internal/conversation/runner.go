@@ -265,11 +265,9 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 				break
 			}
 		}
-		if failure := memoryFailureText(t.Attempt.Memory); failure != "" {
-			text = failure
-		}
-		if failure := scheduleFailureText(t.Attempt.Schedules); failure != "" {
-			text = failure
+		// A refused memory or schedule change replaces the reply, but tasks the same reply started still say so.
+		if failures := strings.TrimSpace(memoryFailureText(t.Attempt.Memory) + " " + scheduleFailureText(t.Attempt.Schedules)); failures != "" {
+			text = strings.TrimSpace(failures + " " + acceptedCommandText(t.Attempt.Actions))
 		}
 		if text == "" {
 			text = acceptedCommandText(t.Attempt.Actions)

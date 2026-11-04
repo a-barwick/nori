@@ -132,6 +132,8 @@ type ConversationDatabase interface {
 	ConversationCommand(ctx context.Context, id string) (*CommandReceipt, error)
 	// ConversationTurnsAfter returns up to HistoryTurnsExamined turns that started after a time, newest first.
 	ConversationTurnsAfter(ctx context.Context, after time.Time) ([]ConversationTurn, error)
+	// OldestConversationTurnsAfter returns up to HistoryTurnsExamined turns that started after a time, oldest first.
+	OldestConversationTurnsAfter(ctx context.Context, after time.Time) ([]ConversationTurn, error)
 	ConversationSummary(ctx context.Context) (ConversationSummary, error)
 	SaveConversationSummary(ctx context.Context, s ConversationSummary) error
 	Memories(ctx context.Context) ([]Memory, error)
