@@ -47,6 +47,9 @@ type Response struct {
 	Usage     *Usage
 	Cost      float64
 	CostKnown bool
+	// NotSent confirms the adapter stopped before dispatch, so missing cost is not
+	// uncertain billing. False stays conservative for older saved activity results.
+	NotSent bool
 }
 
 // Usage counts tokens for one request. OutputTokens excludes ReasoningTokens.
