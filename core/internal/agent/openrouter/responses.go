@@ -62,6 +62,7 @@ func (c *Client) Provider() string { return provider }
 func (c *Client) Name() string     { return c.ModelName }
 
 func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Response, err error) {
+	out.NotSent = true
 	if c.ModelName != selectedModel {
 		return out, errors.New("task model must be the selected openai/gpt-6.1-terra")
 	}
@@ -97,6 +98,12 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if err != nil {
 		return out, errors.New("task request could not be encoded")
 	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
+	httpReq.Header.Set("Content-Type", "application/json")
 	reservation, err := control.Reserve(ctx, provider, c.ModelName, len(body), limit, uuid.NewString())
 	if err != nil {
 		return out, err
@@ -110,12 +117,8 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			err = errors.Join(err, reservation.Settle(ctx, cost, "", nil))
 		}()
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(body))
-	if err != nil {
-		return out, err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	httpReq.Header.Set("Content-Type", "application/json")
+	// Once handed to HTTP, a transport failure cannot prove it was not billed.
+	out.NotSent = false
 	res, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return out, errors.New("task model request interrupted or unavailable")
