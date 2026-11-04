@@ -369,6 +369,7 @@
     "core/internal/state/commands.go",
     "core/internal/state/firestore/tasks.go",
     "core/internal/state/subtasks.go",
+    "core/internal/task/history.go",
     "core/internal/task/subtasks.go",
     "core/internal/task/tool_durable.go",
     "core/internal/task/workflow.go",
@@ -386,7 +387,7 @@
      "id": "the-rules",
      "title": "The rules",
      "status": "built",
-     "words": 91
+     "words": 92
     },
     {
      "id": "outer-loop-tools",
@@ -410,7 +411,7 @@
      "id": "subtasks",
      "title": "Subtasks",
      "status": "built",
-     "words": 192
+     "words": 264
     },
     {
      "id": "interrupting-a-task",

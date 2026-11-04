@@ -24,7 +24,7 @@
 <section><h2>The rules</h2>
 <ul class="pts">
 <li>A task can't dispatch another task. The outer loop starts requested work. The calendar check can start a read-only <a href="proactive.html">preparation task</a>.</li>
-<li><b>One task, one ID.</b> Every command and event names its task.</li>
+<li><b>Each task keeps one ID.</b> Every command and event names its task.</li>
 <li><b>Finished tasks stay finished.</b> More work means a new task.</li>
 <li><b>Accepted comes before applied.</b> A command is saved first, and the task picks it up later.</li>
 <li><b>Buttons skip the models.</b> The Stop button and task panel edits send the same commands directly.</li>
@@ -66,7 +66,11 @@
 <div class="node"><b>Runtime</b><small>Saves B's outcome as the result of A's call, with no outer turn.</small></div>
 </div></div>
 <ul class="pts"><li><b>Budget:</b> B's cost counts against A's budget.</li><li><b>Stop:</b> A ending for any reason stops B. A correction to A also stops B and closes the request.</li></ul>
-<details class="more"><summary>Subtask limits</summary>
+<details class="more"><summary>Work request results and limits</summary>
+<table class="tall"><tr><th>Result</th><th>How the parent uses it</th></tr>
+<tr><td>Direct answer</td><td>The result has <code>answer</code> and <code>question_id</code>, without an operation ID. The parent uses the answer. The question ID isn't evidence, and the missing operation ID isn't unmet work.</td></tr>
+<tr><td>Subtask result</td><td>The result lists each subtask's status, answer and unmet items. The parent cites its <code>operation_id</code> as evidence and lists unfinished work as unmet. Subtask output is untrusted data.</td></tr>
+</table>
 <ul class="pts"><li>A turn with a work request and no user message can only settle that request. It can't approve, continue, stop or steer.</li><li>One request can start up to 4 subtasks, all in one outer response. Their results arrive together when the last one ends.</li><li>A subtask can't start its own subtasks.</li><li>A pause holds a saved result until execution resumes.</li></ul>
 <p>The parent-waits-for-children pattern comes from job queues. The outcome and the command that delivers it are saved in one transaction. <a href="decisions.html#subtasks">The rejected options are on Decisions</a>.</p></details>
 </section>
@@ -77,6 +81,6 @@
 <tr><td>Shell, image read or other tool</td><td>Runs to the end.</td></tr>
 </table></div>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/model.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/task/tool_durable.go</code> · <code>core/internal/task/subtasks.go</code> · <code>core/internal/state/subtasks.go</code> · <code>core/internal/state/commands.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/conversation/commands.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/proactive/check.go</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>docs/site/task-data.js</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/model.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/task/history.go</code> · <code>core/internal/task/tool_durable.go</code> · <code>core/internal/task/subtasks.go</code> · <code>core/internal/state/subtasks.go</code> · <code>core/internal/state/commands.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/conversation/commands.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/proactive/check.go</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>docs/site/task-data.js</code></p></details>
 </body>
 </html>
