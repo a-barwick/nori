@@ -110,15 +110,20 @@
   {
    "page": "docs/site/budgets.html",
    "title": "Budgets and controls",
-   "summary": "How Nori counts model spending, and the four controls that pause or stop work.",
+   "summary": "Nori counts model spending and uses four controls to pause or stop work.",
    "status": "built",
    "code": [
+    "core/internal/agent/openrouter/responses.go",
     "core/internal/agent/steps.go",
     "core/internal/computerd/server.go",
     "core/internal/spend/client.go",
     "core/internal/spend/firestore/ledger.go",
     "core/internal/spend/ledger.go",
+    "core/internal/state/commands.go",
     "core/internal/state/subtasks.go",
+    "core/internal/task/activities.go",
+    "core/internal/task/history.go",
+    "core/internal/task/jobs.go",
     "core/internal/task/workflow.go"
    ],
    "sections": [
@@ -126,13 +131,13 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 145
+     "words": 144
     },
     {
      "id": "four-controls",
      "title": "Four controls",
      "status": "built",
-     "words": 78
+     "words": 83
     },
     {
      "id": "operating-rules",
@@ -144,7 +149,7 @@
      "id": "development-inference",
      "title": "Development inference",
      "status": "built",
-     "words": 147
+     "words": 170
     }
    ]
   },
