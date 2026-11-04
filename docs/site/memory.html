@@ -24,13 +24,13 @@
 <tr><td>“Forget my old home address.”</td><td>That memory is deleted. Earlier chat messages still contain the address, and the reply says so.</td></tr>
 <tr><td>“My partner really doesn't like spicy food.”</td><td>Nothing. A preference is saved only when the user asks.</td></tr>
 </table></div>
-<ul class="pts"><li>The outer model proposes each change, and the runtime saves it with the published reply, so a restart saves it once.</li><li>A memory never counts as permission. Approvals still need the user's own yes in the current message.</li></ul></section>
+<ul class="pts"><li>The outer model proposes each change, and the runtime saves it with the published reply, so a restart saves it once.</li><li>If a newer message replaces a reply after it started a task, the task stays accepted but the reply's memory changes aren't saved. The next reply is told so and can propose them again.</li><li>If the runtime refuses a change, the reply says nothing in memory changed and still says what the same reply accepted, such as a new task.</li><li>A memory never counts as permission. Approvals still need the user's own yes in the current message.</li></ul></section>
 <section><h2>Summarizing older turns</h2>
-<ul class="pts"><li>After a reply, with no message waiting, the runtime checks the turns after the summary.</li><li>When there are more than 8, or they pass 16 KiB, the inner loop's model adds up to 24 older turns to the summary. The newest 4 stay out.</li><li>Each summary item quotes the user's own words. The runtime drops any quote it can't find in the message the item names.</li><li>Stored turns and messages don't change. Only what the model sees gets shorter.</li></ul></section>
+<ul class="pts"><li>After a reply, with no message waiting, the runtime checks the turns after the summary.</li><li>When there are more than 8, or they pass 16 KiB, the inner loop's model adds the oldest turns not yet summarized, up to 24, to the summary. The newest 4 stay out.</li><li>Each summary item quotes the user's own words. The runtime drops any quote it can't find in the message the item names.</li><li>An item's note and the summary's short overview are the summary model's words. The outer model sees them labeled as the summary model's words and is told not to treat them as the user's.</li><li>Stored turns and messages don't change. Only what the model sees gets shorter.</li></ul></section>
 <section><h2>What the inner loop sees</h2>
 <p>A task sees its request, later instructions in order, and its own tool calls and results. Saved memory and older chat reach it through two read tools.</p>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>Returns</th></tr>
-<tr><td>memory_read</td><td>Every saved memory and the summary of older turns, marked as background.</td></tr>
+<tr><td>memory_read</td><td>Every saved memory and the summary of older turns, marked as background. Only quotes are labeled as the user's words.</td></tr>
 <tr><td>conversation_find</td><td>Up to 10 earlier chat messages that match the search words, from the newest 480.</td></tr>
 </table></div>
 <p>A task asked to book dinner for Saturday can read “eats fish but no other meat” before it searches. The memory still grants no permission. Long task histories are shortened as <a href="transcript.html#long-tasks">Task transcript</a> describes.</p></section>
