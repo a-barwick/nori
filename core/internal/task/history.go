@@ -321,7 +321,7 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	if e != nil {
 		return out, classified(e)
 	}
-	outcome, e := a.Model(ctx, ModelInput{Step: in.Step, Messages: messages, Interruptible: true, Subtask: in.Subtask})
+	outcome, e := a.Model(ctx, ModelInput{Step: in.Step, Messages: fitContext(messages), Interruptible: true, Subtask: in.Subtask})
 	if e != nil {
 		return out, e
 	}

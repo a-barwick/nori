@@ -283,7 +283,15 @@ func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.Op
 	if err := a.Store.PutOperation(ctx, in.RunID, *op); err != nil {
 		return nil, classified(err)
 	}
-	output, err := a.Agent.CallRuntimeTool(observability.SuppressErrorCapture(ctx), in.RunID, in.Call.Name, in.Call.Args)
+	var output map[string]any
+	var err error
+	if in.Call.Name == "operation_read" {
+		// The saved outputs belong to the task's evidence, which only the activities hold.
+		id, _ := in.Call.Args["operation_id"].(string)
+		output, err = a.operationRead(ctx, in.RunID, id)
+	} else {
+		output, err = a.Agent.CallRuntimeTool(observability.SuppressErrorCapture(ctx), in.RunID, in.Call.Name, in.Call.Args)
+	}
 	if err != nil {
 		return persist("failed", output, err)
 	}

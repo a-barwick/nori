@@ -24,6 +24,11 @@ type RunStore interface {
 	GetResult(ctx context.Context, id string) (Result, error)
 	RecentResults(ctx context.Context, limit int) ([]Result, error)
 	RecentRuns(ctx context.Context, limit int) ([]Run, error)
+	// Memories, ConversationSummary and ConversationMessages let a task read saved memory and earlier conversation
+	// its own instructions don't carry.
+	Memories(ctx context.Context) ([]Memory, error)
+	ConversationSummary(ctx context.Context) (ConversationSummary, error)
+	ConversationMessages(ctx context.Context, before string) (messages []Message, next string, err error)
 }
 
 // Artifacts writes and reads private PNG artifacts by run and artifact ID.
