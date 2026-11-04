@@ -111,6 +111,7 @@ export type Schedule = {
   rule: { repeat: string; start: string; time: string; days?: string[]; month_day?: number; every_hours?: number; ends?: string };
   time_zone: string; next_at?: string; snooze_at?: string;
 };
+export type ReadPosition = { message_id: string; through: string; position: number };
 export type Session = {
   messages: Message[]; runs: Run[]; paused: boolean;
   dispatches?: { id: string; request: string; status: string; created_at: string }[];
@@ -124,6 +125,8 @@ export type Session = {
   schedules?: Schedule[];
   /** Event log position this snapshot reflects. */
   position?: number;
+  /** The owner's read position, shared across sessions. */
+  read_position?: ReadPosition;
 };
 
 /** Debug values come from saved provider/task records, never inferred reasoning. */

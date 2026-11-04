@@ -125,6 +125,12 @@ func (s *server) sendEvent(ctx context.Context, stream *eventStream, event state
 			return err
 		}
 		return stream.send(event.Kind, event.Seq, map[string]any{"result": result.Summary()})
+	case state.EventReadPosition:
+		position, err := s.Tasks.Store.ReadPosition(ctx)
+		if err != nil {
+			return err
+		}
+		return stream.send(event.Kind, event.Seq, map[string]any{"read_position": position})
 	case state.EventConversation:
 		presence, err := s.Runner.Presence(ctx)
 		if err != nil {

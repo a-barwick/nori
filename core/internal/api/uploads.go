@@ -170,5 +170,10 @@ func (s *server) seen(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]bool{"recorded": true})
+	position, err := s.Tasks.Store.ReadPosition(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"recorded": true, "read_position": position})
 }

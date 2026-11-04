@@ -5,7 +5,7 @@ import { taskControlKinds } from "../types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import type { Span } from "@sentry/nextjs";
-import type { Attachment, DraftFile, Message, PendingTaskCommand, Run, SavedResult, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
+import type { Attachment, DraftFile, Message, PendingTaskCommand, ReadPosition, Run, SavedResult, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
 
 class RequestError extends Error {
   constructor(message: string, readonly status: number, readonly details?: TaskCommandResponse) { super(message); }
@@ -99,6 +99,11 @@ function mergeById<T extends { id: string }>(older: T[], newer: T[]): T[] {
   return [...new Map([...older, ...newer].map((item) => [item.id, item])).values()];
 }
 
+// A snapshot or POST response can arrive after a newer read-position event.
+function mergeReadPosition(older: ReadPosition | undefined, newer: ReadPosition | undefined) {
+  return !older || (newer && newer.position > older.position) ? newer : older;
+}
+
 // Responses can arrive out of order; keep newer task progress.
 function mergeRuns(older: Run[], newer: Run[]): Run[] {
   const runs = new Map(older.map((run) => [run.id, run]));
@@ -134,6 +139,8 @@ export function useRuntime(agentMode = false) {
   const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string>();
   const [visible, setVisible] = useState(true);
+  const [shownMessageID, setShownMessageID] = useState("");
+  const [readRetry, setReadRetry] = useState(0);
   const controllers = useRef(new Set<AbortController>());
   const submissions = useRef(new Set<string>());
   const replyTimings = useRef(new Map<string, ReplyTiming>());
@@ -179,6 +186,7 @@ export function useRuntime(agentMode = false) {
       messages: mergeById(current?.messages ?? [], data.messages).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
       runs: mergeRuns(current?.runs ?? [], data.runs),
       traces: mergeById(current?.traces ?? [], data.traces ?? []),
+      read_position: mergeReadPosition(current?.read_position, data.read_position),
       // Preserve pages already loaded while refreshing the newest page.
       next_cursor: current ? current.next_cursor : data.next_cursor,
     }));
@@ -332,15 +340,29 @@ export function useRuntime(agentMode = false) {
     void post("delivered", { ids }, undefined, agentMode).catch(() => { for (const id of ids) reported.current.delete(id); });
   }, [session, visible, agentMode]);
 
-  // A visible tab also reports the newest reply it shows, so Nori doesn't email Austin about it.
-  const seen = useRef("");
+  // Thread reports replies that entered its viewport. Keep the newest one pending across failed requests; retries
+  // use the same message and the service's mark only moves forward.
+  const markRead = useCallback((id: string) => {
+    const messages = session?.messages ?? [];
+    setShownMessageID((current) => messages.findIndex((message) => message.id === id) > messages.findIndex((message) => message.id === current) ? id : current);
+  }, [session?.messages]);
   useEffect(() => {
-    if (!session || !visible) return;
-    const newest = session.messages.findLast((message) => message.role === "assistant");
-    if (!newest || newest.id === seen.current) return;
-    seen.current = newest.id;
-    void post("seen", { message_id: newest.id }, undefined, agentMode).catch(() => { if (seen.current === newest.id) seen.current = ""; });
-  }, [session, visible, agentMode]);
+    if (!visible || document.hidden || !navigator.onLine || !shownMessageID) return;
+    const messages = session?.messages ?? [];
+    const shownIndex = messages.findIndex((message) => message.id === shownMessageID && message.role === "assistant");
+    if (shownIndex < 0) return;
+    const read = session?.read_position;
+    const readIndex = messages.findIndex((message) => message.id === read?.message_id);
+    if (readIndex >= shownIndex || (readIndex < 0 && read?.message_id && Date.parse(read.through) >= Date.parse(messages[shownIndex].created_at))) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    void post<{ read_position: ReadPosition }>("seen", { message_id: shownMessageID }, controller.signal, agentMode).then((data) => {
+      if (!controller.signal.aborted) setSession((current) => current && { ...current, read_position: mergeReadPosition(current.read_position, data.read_position) });
+    }).catch(() => {
+      if (!controller.signal.aborted) timer = setTimeout(() => setReadRetry((attempt) => attempt + 1), 5000);
+    });
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [session?.messages, session?.read_position, shownMessageID, visible, agentMode, readRetry]);
 
   // Follow the event log while the tab is visible. The browser reconnects by itself with Last-Event-ID after a stream
   // ends. It gives up only when a response isn't a stream, and then this reopens it from the last event.
@@ -380,6 +402,9 @@ export function useRuntime(agentMode = false) {
       });
       listen<{ result: SavedResult }>("result", ({ result }) => {
         setSession((current) => current && { ...current, results: mergeById(current.results ?? [], [result]).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)) });
+      });
+      listen<{ read_position: ReadPosition }>("read_position", ({ read_position }) => {
+        setSession((current) => current && { ...current, read_position: mergeReadPosition(current.read_position, read_position) });
       });
       listen<Presence>("conversation", applyPresence);
       listen<Presence>("presence", applyPresence);
@@ -487,5 +512,5 @@ export function useRuntime(agentMode = false) {
     removeFile: (id: string) => setDraftFiles((current) => current.filter((file) => file.id !== id)), error: error || streamError, loading, loadingOlder, pending, selectedId, setSelectedId,
     activeTasks, selected, tasksUnavailable, busy, conversationBusy, taskCommands, taskDrafts,
     setTaskDraft: (id: string, text: string) => setTaskDrafts((current) => ({ ...current, [id]: text })),
-    refreshHistory, loadOlder, send, retry: submit, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand };
+    refreshHistory, loadOlder, send, retry: submit, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand, markRead };
 }
