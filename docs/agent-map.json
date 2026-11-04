@@ -489,7 +489,7 @@
      "id": "proactive-help",
      "title": "Proactive help",
      "status": "built",
-     "words": 296
+     "words": 362
     },
     {
      "id": "clients",
@@ -834,7 +834,7 @@
      "id": "schedules-and-proactive-messages",
      "title": "Schedules and proactive messages",
      "status": "built",
-     "words": 63
+     "words": 91
     },
     {
      "id": "clients-and-operations",
@@ -943,13 +943,13 @@
      "id": "what-counts-as-a-conflict",
      "title": "What counts as a conflict",
      "status": "built",
-     "words": 39
+     "words": 52
     },
     {
      "id": "when-the-offer-appears",
      "title": "When the offer appears",
      "status": "built",
-     "words": 87
+     "words": 136
     },
     {
      "id": "what-the-user-can-do",
