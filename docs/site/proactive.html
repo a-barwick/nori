@@ -20,10 +20,10 @@
 <div class="node"><b>Web client shows the offer</b><small>With Yes, look and Dismiss.</small></div>
 </div></div>
 <section><h2>What counts as a conflict</h2>
-<ul class="pts"><li>Two events in a row, both with addresses, at different places.</li><li>The gap between them is shorter than the drive plus 10 minutes, and under 3 hours.</li><li>A day with no conflict makes no model call and no message.</li></ul></section>
+<ul class="pts"><li>Two events in a row, both with addresses, at different places.</li><li>No other event overlaps the time between them, such as an all-afternoon block.</li><li>The gap between them is shorter than the drive plus 10 minutes, and under 3 hours.</li><li>A day with no conflict makes no model call and no message.</li></ul></section>
 <section><h2>When the offer appears</h2>
 <p>The outer model picks a time from saved memories, such as “I'm usually up by 6.” With nothing saved, the midnight check sends at 8 am and the noon check at 6 pm.</p>
-<ul class="pts"><li>The runtime moves the time to no later than 45 minutes before the second event.</li><li>An offer that comes due during a reply waits until the reply finishes.</li><li>An offer still waiting when the second event starts is skipped.</li><li>The offer is a message in the conversation. Nothing is sent by email or push.</li></ul></section>
+<ul class="pts"><li>The runtime moves the time to no later than 45 minutes before the second event.</li><li>An offer that comes due during a reply waits until the reply finishes.</li><li>An offer still waiting when the second event starts is skipped.</li><li>In a conversation with no messages yet, the offer waits until Nori's first greeting is sent.</li><li>The offer lists the read-only task's times with the clock time it read the calendar. After a yes, the outer model is told to read the calendar again before it suggests a time.</li><li>The offer is a message in the conversation. Nothing is sent by email or push.</li></ul></section>
 <section><h2>What the user can do</h2>
 <div class="card"><table class="tall"><tr><th>Answer</th><th>Result</th></tr>
 <tr><td>Yes, look</td><td>Sends “Yes, please look for another time.” as a user message. Any task starts the usual way, and calendar changes still need approval.</td></tr>
