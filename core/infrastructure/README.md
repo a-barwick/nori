@@ -115,8 +115,24 @@ The first copies are kept until deleted by hand: snapshot
 `nori-computer-data-first-20261031` and export
 `gs://bot-111549-nori-poc/firestore-exports/nori-poc-20261031`. On October 31, 2026,
 the export restored into a temporary database with matching counts for runs, steps,
-inputs, attempts, and usage, and the snapshot restored to a ready disk. Files inside
-the restored disk were not checked. The boot disk and sandbox have no scheduled copies.
+inputs, attempts, and usage, and the snapshot restored to a ready disk. That check
+did not inspect files inside the restored disk. The boot disk and sandbox have no scheduled copies.
+
+On November 4, 2026, a restored clone was attached and mounted read-only, with
+journal replay disabled. The inspection hashed all 165 workspace files and all
+423 Chromium profile files. Preferences and Local State parsed successfully.
+SQLite quick checks passed for history and cookies. This establishes offline
+file/profile readability. Restored guest boot, browser launch and authenticated-session
+restoration remain unverified. The temporary VM and both disks were removed,
+and the original resource IDs, attachments and stopped VM states were unchanged.
+
+The same day's [state recovery rehearsal](state-recovery.py) downloaded current
+and earlier populated state generations for all five existing GCS backends,
+verified their checksums, and read them locally with Terraform. Live generations
+were unchanged. This verifies state-file retrieval and readability. Restoring an
+earlier state still requires checking its resource ownership against live
+infrastructure, because an older version can omit newer resources. The rehearsal
+does not restore soft-deleted objects or buckets.
 
 The outer runtime uses `gpt-6.1-sol` with low reasoning through the OpenAI
 platform API. Before a future deployment, provision the selected environment's
