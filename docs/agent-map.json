@@ -53,8 +53,11 @@
     "core/internal/conversation/commands.go",
     "core/internal/conversation/task_context.go",
     "core/internal/state/commands.go",
+    "core/internal/state/conversation.go",
     "core/internal/state/evidence.go",
+    "core/internal/state/firestore/evidence.go",
     "core/internal/state/firestore/tasks.go",
+    "core/internal/state/run.go",
     "core/internal/task/actions.go",
     "core/internal/task/completion.go",
     "core/internal/task/history.go",
@@ -79,31 +82,31 @@
      "id": "what-an-approval-covers",
      "title": "What an approval covers",
      "status": "built",
-     "words": 66
+     "words": 106
+    },
+    {
+     "id": "recording-what-happened",
+     "title": "Recording what happened",
+     "status": "built",
+     "words": 45
+    },
+    {
+     "id": "when-a-response-is-lost",
+     "title": "When a response is lost",
+     "status": "built",
+     "words": 72
+    },
+    {
+     "id": "what-this-doesn-t-cover",
+     "title": "What this doesn't cover",
+     "status": "built",
+     "words": 277
     },
     {
      "id": "what-can-t-grant-permission",
      "title": "What can't grant permission",
      "status": "built",
      "words": 39
-    },
-    {
-     "id": "recording-what-happened",
-     "title": "Recording what happened",
-     "status": "built",
-     "words": 43
-    },
-    {
-     "id": "when-a-response-is-lost",
-     "title": "When a response is lost",
-     "status": "built",
-     "words": 71
-    },
-    {
-     "id": "what-this-doesn-t-cover",
-     "title": "What this doesn't cover",
-     "status": "built",
-     "words": 272
     }
    ]
   },
