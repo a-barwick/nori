@@ -65,6 +65,8 @@ type ReplyModel interface {
 // hold no per-call state.
 type ReplyRequest struct {
 	Messages []json.RawMessage
+	// CommandPlan independently plans dispatch/steer from user-authored context only.
+	CommandPlan bool
 	// NoDispatch disables every task command for introduction and notification-only turns.
 	NoDispatch bool
 	// WorkRequests are the open work requests on a turn with no user input. The model can only settle these.
