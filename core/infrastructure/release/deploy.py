@@ -192,7 +192,8 @@ def read_previous(c):
     web = ops.api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/services/{ops.WEB}")
     runtime = ops.api("GET", "https://us-central1-aiplatform.googleapis.com/v1beta1/" + c["runtime_name"])
     items = {item["key"]: item["value"] for item in vm["metadata"].get("items", [])}
-    return {"web": web["template"]["containers"][0]["image"], "runtime": runtime["spec"]["containerSpec"]["imageUri"], "worker": current_worker(),
+    return {"web": web["template"]["containers"][0]["image"], "runtime": runtime["spec"]["containerSpec"]["imageUri"],
+            "runtime_deployment": ops.runtime_deployment(runtime), "worker": current_worker(),
             "computer": {key: items[key] for key in ("computer-release-object", "computer-release-sha256")}}
 
 
@@ -329,6 +330,7 @@ def register_worker(c, build):
 def verify(c, state):
     previous = read_previous(c)  # Also proves Nori is still paused with its computer stopped.
     require(previous["web"] == state["web"] and previous["runtime"] == state["runtime"], "Live images do not match this deploy")
+    require(all(previous["runtime_deployment"][key] == value for key, value in ops.runtime_settings().items()), "Live runtime capacity settings do not match this deploy")
     require(previous["worker"] == state["build"], "Temporal Current is not the new worker")
     require(previous["computer"]["computer-release-sha256"] == state["computer_sha256"], "The computer points at a different release")
     web = ops.api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/services/{ops.WEB}")
@@ -356,11 +358,16 @@ def rollback(c, state):
         read_previous(c)
     if previous and UNDONE_BY_ROLLBACK & attempted:
         log("Restoring the previous release")
-        ops_command("deploy-runtime", previous["runtime"])
+        if "runtime_deployment" in previous:
+            ops.patch_runtime(c, previous["runtime"], previous["runtime_deployment"])
+        else:
+            # Allow recovery of progress saved before runtime settings were captured.
+            ops_command("deploy-runtime", previous["runtime"])
         ops_command("deploy-web", previous["web"])
         ops.metadata(previous["computer"])
         ops.temporal("set-current-version", "--deployment-name=" + ops.DEPLOYMENT, "--build-id=" + previous["worker"], "--allow-no-pollers", "--yes")
-        require(read_previous(c) == previous, "The previous release could not be verified")
+        restored = read_previous(c)
+        require(all(restored.get(key) == value for key, value in previous.items()), "The previous release could not be verified")
     # A retry pauses and reads the live release again, in case Nori was used in between.
     state["done"] = [step for step in state["done"] if step not in UNDONE_BY_ROLLBACK and step != "pause"]
     state.pop("previous", None)
@@ -410,6 +417,7 @@ def deploy_locked(commit):
 
     c = None
     try:
+        ops.runtime_settings()  # Refuse invalid capacity policy before building or changing production.
         step("check", lambda: run(["make", "check"], cwd=ROOT))
         step("build", lambda: build_all(state))
         init_terraform()
@@ -457,6 +465,7 @@ def check(_args):
     commit = run(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
     log("Local check")
     run(["make", "check"], cwd=ROOT)
+    log("Runtime capacity settings: " + json.dumps(ops.runtime_settings(), sort_keys=True))
     log("Terraform state")
     DIR.mkdir(parents=True, mode=0o700, exist_ok=True)
     init_terraform()

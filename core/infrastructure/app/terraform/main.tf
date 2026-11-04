@@ -1,5 +1,8 @@
 locals {
 
+  # Shared with ops.py so native releases apply the same capacity settings.
+  runtime_settings = jsondecode(file("${path.module}/../runtime-settings.json"))
+
   production        = var.environment == "production"
   prefix            = local.production ? "nori-poc" : "nori-sandbox"
   web_name          = local.production ? "nori-web" : "nori-sandbox-web"
@@ -508,13 +511,11 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
 
     deployment_spec {
 
-      min_instances         = 0
-      max_instances         = 1
-      # A stream holds a slot until its next heartbeat notices the browser left, so a reload can't be allowed to fill them.
-      container_concurrency = 20
-      resource_limits = {
-        cpu = "1", memory = "1Gi"
-      }
+      min_instances = local.runtime_settings.minInstances
+      max_instances = local.runtime_settings.maxInstances
+      # Streams hold slots until their next heartbeat notices the browser left.
+      container_concurrency = local.runtime_settings.containerConcurrency
+      resource_limits       = local.runtime_settings.resourceLimits
 
       env {
         name  = "NORI_PROJECT_ID"
