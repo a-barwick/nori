@@ -105,6 +105,19 @@ func (s *server) writeJob(record jobRecord) error {
 }
 
 func (s *server) readJob(id string) (jobRecord, error) {
+	s.jobsMu.Lock()
+	record, unsaved := s.unsavedJobs[id]
+	if unsaved {
+		// A failed final write must never turn a completed job back into running.
+		// A later read also gets its final state onto disk once storage recovers.
+		// Serialize retries: writeJob uses one temporary file per job.
+		if err := s.writeJob(record); err == nil {
+			delete(s.unsavedJobs, id)
+		}
+		s.jobsMu.Unlock()
+		return record, nil
+	}
+	s.jobsMu.Unlock()
 	root, err := s.jobRoot()
 	if err != nil {
 		return jobRecord{}, err
@@ -114,8 +127,20 @@ func (s *server) readJob(id string) (jobRecord, error) {
 	if err != nil {
 		return jobRecord{}, err
 	}
-	var record jobRecord
 	return record, json.Unmarshal(data, &record)
+}
+
+func (s *server) finishJob(record jobRecord) error {
+	err := s.writeJob(record)
+	if err != nil {
+		s.jobsMu.Lock()
+		if s.unsavedJobs == nil {
+			s.unsavedJobs = make(map[string]jobRecord)
+		}
+		s.unsavedJobs[record.ID] = record
+		s.jobsMu.Unlock()
+	}
+	return err
 }
 
 // recoverJobs runs before the guest accepts requests. Nothing else can own a job
@@ -152,7 +177,7 @@ func (s *server) recoverJobs() {
 		}
 		now := time.Now().UTC()
 		record.State, record.FinishedAt, record.Group = "lost", &now, ""
-		if err = s.writeJob(record); err != nil {
+		if err = s.finishJob(record); err != nil {
 			log.Printf("job %s could not be marked lost: %v", record.ID, err)
 		}
 	}
@@ -192,7 +217,7 @@ func (s *server) startJob(w http.ResponseWriter, r *http.Request) {
 	s.jobsMu.Lock()
 	running := 0
 	for _, job := range s.jobs {
-		if job.record.TaskID == req.TaskID {
+		if job.snapshot().TaskID == req.TaskID {
 			running++
 		}
 	}
@@ -270,7 +295,7 @@ func (s *server) launchJob(job *activeJob, command string) error {
 		job.record.State, job.record.FinishedAt, job.record.Group = "failed_to_start", &now, ""
 		record = job.record
 		job.mu.Unlock()
-		return errors.Join(err, s.writeJob(record))
+		return errors.Join(err, s.finishJob(record))
 	}
 	go s.superviseJob(job, cmd, group, ctx)
 	return nil
@@ -308,7 +333,7 @@ func (s *server) superviseJob(job *activeJob, cmd *exec.Cmd, group *operationGro
 	}
 	record := job.record
 	job.mu.Unlock()
-	if err := s.writeJob(record); err != nil {
+	if err := s.finishJob(record); err != nil {
 		log.Printf("job %s final state could not be saved: %v", record.ID, err)
 	}
 	s.jobsMu.Lock()
@@ -329,6 +354,12 @@ func (s *server) jobStatusOf(record jobRecord, live *activeJob) map[string]any {
 		end = *record.FinishedAt
 	}
 	result := map[string]any{"job_id": record.ID, "state": record.State, "started_at": record.StartedAt, "elapsed_seconds": int(end.Sub(record.StartedAt).Seconds())}
+	s.jobsMu.Lock()
+	_, unsaved := s.unsavedJobs[record.ID]
+	s.jobsMu.Unlock()
+	if unsaved {
+		result["state_persisted"] = false
+	}
 	if record.ExitCode != nil {
 		result["exit_code"] = *record.ExitCode
 	}
