@@ -29,13 +29,13 @@
 <div class="card tight"><p class="keyline">Repeats</p><ul class="pts note"><li>Once, daily, weekdays or chosen weekdays</li><li>A day of the month, or its last business day</li><li>Every few hours</li><li>US federal holidays, when the user names that calendar</li></ul></div>
 <div class="card tight"><p class="keyline">Changes from chat</p><ul class="pts note"><li>Skip one date, such as next Wednesday</li><li>Snooze to a later time, once</li><li>Pause, resume or cancel</li><li>Run once now</li></ul></div>
 </div>
-<p>Times stay at the user's local time. A daily 8 am reminder is still 8 am after the clocks change.</p>
+<p>Times stay at the user's local time. A daily 8 am reminder is still 8 am after the clocks change.</p><p>The web client's activity panel also lists open schedules, each with Pause or Resume and Cancel buttons.</p>
 </section>
 <section><h2>Missed and late runs</h2>
 <ul class="pts">
 <li>An occurrence more than 30 minutes late covers every time that passed, so it runs once.</li>
 <li>A late reminder is still delivered, with a line saying when it was due.</li>
-<li>A late task doesn't run. The runtime posts a notice, and the task runs once if the user asks.</li>
+<li>A late task doesn't run. The runtime posts a notice, and the task runs once if the user asks.</li><li>If Cloud Tasks never calls the runtime at the due time, the runtime's twice-daily <a href="proactive.html">calendar check</a> runs any due schedules, so none waits more than 12 hours.</li>
 </ul></section>
 <section><h2>Email when the app is closed</h2>
 <p>Reminders, and replies to task results and task questions, wait 90 seconds for an open tab to show them. A visible tab reports the newest reply it shows, and then no email goes out.</p>
@@ -50,9 +50,10 @@
 <tr><td>Monitor result</td><td>A check whose result doesn't say whether it found anything counts as an alert, so the user sees it.</td></tr>
 <tr><td>Quiet hours</td><td><code>NORI_QUIET_HOURS</code>, such as <code>22:00-07:00</code></td></tr>
 <tr><td>Recipient</td><td><code>NORI_NOTIFY_EMAIL</code>, or the connected account's own address</td></tr>
+<tr><td>Link in emails</td><td><code>NORI_APP_URL</code>, which the deploy sets to the web client's address</td></tr>
 </table>
 <p>Calendar offers come from a separate check that runs twice a day. They aren't schedules, and they aren't emailed. See <a href="proactive.html">Calendar offers</a>.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/state/schedule.go</code> · <code>core/internal/state/firestore/schedules.go</code> · <code>core/internal/state/notify.go</code> · <code>core/internal/schedules/schedules.go</code> · <code>core/internal/conversation/schedules.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/agent/notify.go</code> · <code>core/internal/app/app.go</code> · <code>core/internal/api/uploads.go</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · Related: <a href="proactive.html">Calendar offers</a>, <a href="scenarios.html">Scenarios</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state/schedule.go</code> · <code>core/internal/state/firestore/schedules.go</code> · <code>core/internal/state/notify.go</code> · <code>core/internal/schedules/schedules.go</code> · <code>core/internal/conversation/schedules.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/state/firestore/tasks.go</code> · <code>core/internal/agent/notify.go</code></p><p><code>core/internal/app/app.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/api/proactive.go</code> · <code>core/infrastructure/app/ops.py</code> · <code>web/src/components/runtime/TaskPanel.tsx</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · Related: <a href="proactive.html">Calendar offers</a>, <a href="scenarios.html">Scenarios</a></p></details>
 </body>
 </html>
