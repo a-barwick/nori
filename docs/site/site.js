@@ -2,7 +2,7 @@
 const NAV = [
   ['Start', [['index', 'Overview'], ['product', 'What Nori should do'], ['request', 'Following a request']]],
   ['The loops', [['outer-loop', 'Outer loop'], ['classification', 'Classifying a message'], ['outer-model-failure', 'Outer model failure'], ['inner-loop', 'Inner loop'], ['transcript', 'Task transcript'], ['contract', 'How the loops talk'], ['tasks', 'Task lifecycle'], ['completion', 'Finishing a task']]],
-  ['Agent service', [['system', 'Service overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['tools', 'Tools'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['budgets', 'Budgets and controls'], ['observability', 'Observability'], ['deploy', 'Deployment'], ['authority', 'Approvals and writes'], ['proactive', 'Calendar offers'], ['schedules', 'Schedules']]],
+  ['Agent service', [['system', 'Service overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['tools', 'Tools'], ['catalog', 'Tool catalog'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['budgets', 'Budgets and controls'], ['observability', 'Observability'], ['deploy', 'Deployment'], ['authority', 'Approvals and writes'], ['proactive', 'Calendar offers'], ['schedules', 'Schedules']]],
   ['Clients', [['clients', 'Clients'], ['api', 'Service API'], ['web-client', 'Web client'], ['frontend', 'Web client architecture'], ['theme', 'Theme']]],
   ['Planned', [['roadmap', 'Roadmap']]],
   ['Reference', [['scenarios', 'Scenarios'], ['decisions', 'Decisions'], ['open-questions', 'Open questions'], ['code', 'Code map'], ['words', 'Words we use'], ['reading', 'Reading list'], ['sources', 'Sources']]],

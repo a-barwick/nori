@@ -13,8 +13,8 @@
 <div class="card"><div class="flow">
   <div class="node"><b>Firestore</b><small>Holds the transcript as private history blocks. Temporal carries references.</small></div>
   <div class="arrow">↓ <span class="lbl">transcript</span></div>
-  <div class="node inner"><b>Task activities</b><small>Load the transcript and call the model. They import no provider package.</small></div>
-  <div class="arrow">↓ <span class="lbl">instructions, transcript, tool list and output limit</span></div>
+  <div class="node inner"><b>Task activities</b><small>Load the transcript, shorten a long one, and call the model.</small></div>
+  <div class="arrow">↓ <span class="lbl">instructions, transcript, <a href="catalog.html">selected tools</a> and output limit</span></div>
   <div class="node inner"><b>OpenRouter adapter</b><small>Builds the Responses request, reserves spend and reads the cost.</small></div>
   <div class="arrow">↓ <span class="lbl">Responses request</span></div>
   <div class="node"><b>OpenRouter</b><small>Returns the turn, its tool calls, usage and cost.</small></div>
@@ -28,7 +28,12 @@
 <tr><td>user</td><td>The result of that call, with the page title and an evidence reference.</td></tr>
 <tr><td>model</td><td>Provider state, then a <code>complete</code> call with the answer.</td></tr>
 </table></div></section>
+<section><h2>Long tasks</h2>
+<ul class="pts"><li>Once a transcript passes 128 KiB, the activities replace the outputs of its oldest tool results with their operation ID and outcome. They stop when the newest 64 KiB of messages is left unchanged.</li>
+<li>The saved transcript keeps every result. The model reads a replaced output again with <code>operation_read</code>.</li>
+<li>Replacement starts again only when the request passes 128 KiB again. Until then each request starts with the same text as the last, so the provider's prompt cache still applies.</li></ul></section>
 <details class="more"><summary>Saved form</summary>
+<p>The task activities import no provider package.</p>
 <table class="tall"><tr><th>Transcript type</th><th>Saved JSON</th></tr>
 <tr><td>Message</td><td><code>{"parts": [...], "role": "user" | "model"}</code></td></tr>
 <tr><td>Text</td><td><code>{"text": "..."}</code></td></tr>
@@ -40,6 +45,6 @@
 <p>Blocks from the Gemini period also hold thought text and binary signatures. They read without error, and the model is never sent those parts.</p>
 <p>The OpenRouter adapter replays a turn exactly when it carries provider state the adapter wrote. It rebuilds every other turn from its text, tool calls and tool results.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/transcript/</code> · <code>core/internal/agent/model.go</code> · <code>core/internal/agent/openrouter/</code> · <code>core/internal/task/history.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/transcript/</code> · <code>core/internal/agent/model.go</code> · <code>core/internal/agent/openrouter/</code> · <code>core/internal/task/history.go</code> · <code>core/internal/task/context.go</code> · <code>core/internal/task/jobs.go</code> · <code>core/internal/agent/steps.go</code></p></details>
 </body>
 </html>
