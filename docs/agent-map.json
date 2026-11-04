@@ -9,8 +9,12 @@
     "core/internal/api/events.go",
     "core/internal/api/http.go",
     "core/internal/api/uploads.go",
+    "core/internal/conversation/runner.go",
+    "core/internal/conversation/session.go",
     "core/internal/state/events.go",
     "core/internal/state/firestore/events.go",
+    "core/internal/state/firestore/schedules.go",
+    "core/internal/state/notify.go",
     "web/src/lib/runtime/forward.ts"
    ],
    "sections": [
@@ -24,19 +28,25 @@
      "id": "endpoints",
      "title": "Endpoints",
      "status": "built",
-     "words": 192
+     "words": 209
     },
     {
      "id": "the-event-stream",
      "title": "The event stream",
      "status": "built",
-     "words": 154
+     "words": 156
+    },
+    {
+     "id": "shared-read-positions",
+     "title": "Shared read positions",
+     "status": "built",
+     "words": 98
     },
     {
      "id": "the-protocol-for-many-clients",
      "title": "The protocol for many clients",
      "status": "designed",
-     "words": 124
+     "words": 14
     }
    ]
   },
@@ -590,10 +600,19 @@
    "status": "built",
    "code": [
     "Makefile",
-    "web/src",
+    "web/src/app/api/agent/[operation]/route.ts",
+    "web/src/app/layout.tsx",
+    "web/src/app/page.tsx",
+    "web/src/components/chat/Thread.tsx",
+    "web/src/components/runtime/NoriApp.tsx",
+    "web/src/lib/observability/privacy.ts",
+    "web/src/lib/runtime/auth.ts",
     "web/src/lib/runtime/forward.ts",
+    "web/src/lib/runtime/methods.ts",
     "web/src/lib/runtime/server.ts",
-    "web/src/lib/runtime/useRuntime.ts"
+    "web/src/lib/runtime/useRuntime.ts",
+    "web/src/lib/types.ts",
+    "web/src/proxy.ts"
    ],
    "sections": [
     {
@@ -606,7 +625,7 @@
      "id": "request-path",
      "title": "Request path",
      "status": "built",
-     "words": 151
+     "words": 166
     },
     {
      "id": "sending-a-message",
@@ -618,7 +637,7 @@
      "id": "live-updates",
      "title": "Live updates",
      "status": "built",
-     "words": 577
+     "words": 527
     }
    ]
   },
@@ -1203,7 +1222,7 @@
   {
    "page": "docs/site/roadmap.html",
    "title": "Roadmap",
-   "summary": "Twelve milestones, showing what is built and what remains.",
+   "summary": "Twelve milestones show what is built and what remains.",
    "status": "built",
    "code": [
     "core/infrastructure/temporal/spend-alert.py",
@@ -1218,6 +1237,7 @@
     "core/internal/conversation/runner.go",
     "core/internal/conversation/task_context.go",
     "core/internal/proactive/check.go",
+    "core/internal/state/firestore/schedules.go",
     "core/internal/state/memory.go",
     "core/internal/state/results.go",
     "core/internal/state/schedule.go",
@@ -1227,14 +1247,15 @@
     "core/internal/task/completion.go",
     "core/internal/task/context.go",
     "core/internal/task/workflow.go",
-    "web/src/components/runtime/TaskPanel.tsx"
+    "web/src/components/runtime/TaskPanel.tsx",
+    "web/src/lib/runtime/useRuntime.ts"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 255
+     "words": 260
     },
     {
      "id": "what-remains",

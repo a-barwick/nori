@@ -12,7 +12,7 @@
 <p class="lede">The browser talks to a Next.js server, and that server talks to the agent service.</p>
 <section><h2>Request path</h2>
 <div class="card"><div class="flow">
-<div class="node"><b>React client</b><small><code>NoriApp</code> and its components. All state comes from one hook, <code>useRuntime</code>.</small></div>
+<div class="node"><b>React client</b><small><code>NoriApp</code> and its components use <code>useRuntime</code> for requests and saved state.</small></div>
 <div class="arrow">↓ <span class="lbl">same-origin /api/ requests and an event stream</span></div>
 <div class="node"><b>Next.js server</b><small>Checks the owner, origin and operation, then adds a Google token.</small></div>
 <div class="arrow">↓ <span class="lbl">the same requests with server credentials</span></div>
@@ -25,7 +25,8 @@
 <tr><td><code>turn</code></td><td>Sends a message with a client-made UUID.</td></tr>
 <tr><td><code>command</code></td><td>Sends <code>steer</code>, <code>answer</code>, <code>continue</code> or <code>stop</code> for one task.</td></tr>
 <tr><td><code>artifact</code></td><td>Fetches a screenshot as PNG bytes.</td></tr>
-<tr><td><code>delivered</code></td><td>Reports the results a visible tab has shown.</td></tr>
+<tr><td><code>seen</code></td><td>Reports a reply shown in the conversation viewport.</td></tr>
+<tr><td><code>delivered</code></td><td>Reports saved results referenced by loaded replies while the tab is visible.</td></tr>
 <tr><td><code>trace</code></td><td>Fetches task steps when a debug row is open, and when the task changes.</td></tr>
 </table></div>
 <p>The client never calls a model.</p>
@@ -50,12 +51,16 @@
 <section><h2>Live updates</h2>
 <div class="card"><table class="tall"><tr><th>Situation</th><th>Client behavior</th></tr>
 <tr><td>The tab is visible</td><td>Follows the event stream and merges each record by ID.</td></tr>
+<tr><td>A reply enters the viewport</td><td>A visible tab reports it as read. Failed reports retry while the tab is visible and online.</td></tr>
+<tr><td>A reply stays below the viewport</td><td>Loading it does not advance the shared read position.</td></tr>
+<tr><td>Another session reads a reply</td><td>The shared position clears new-message counts through that reply. The local scroll position stays unchanged.</td></tr>
 <tr><td>A turn ends</td><td>Reads one snapshot for its traces.</td></tr>
 <tr><td>Nothing has run for 5 minutes</td><td>Closes the stream, so an open tab doesn't hold the service awake. It reopens on focus or on a new message.</td></tr>
 <tr><td>The tab is hidden</td><td>Closes the stream, then reads one snapshot when the tab is visible again.</td></tr>
 <tr><td>The stream sends <code>reset</code></td><td>Reads a snapshot until one succeeds, then follows from its position.</td></tr>
 <tr><td>A response isn't a stream</td><td>Reopens from the last log event, after up to 30 seconds. After 3 failures it says updates are reconnecting.</td></tr>
 </table></div>
+<p>Reading the weather reply in another session clears its count in the first. The <a href="api.html#shared-read-positions">service owns the shared position</a>.</p>
 </section>
 <details class="more"><summary>Merging, sign-in, telemetry, components and builds</summary>
 <h3>How snapshots merge</h3>
@@ -79,20 +84,7 @@
 <li>Filters in <code>lib/observability/privacy.ts</code> run before events, spans, logs and metrics are sent. The <code>sentry-tunnel</code> route checks the owner and strips request headers before forwarding.</li>
 </ul>
 <h3>Components</h3>
-<div class="card"><table class="tall"><tr><th>File in <code>web/src/</code></th><th>Job</th></tr>
-<tr><td><code>app/page.tsx</code></td><td>Server entry. Chooses local agent mode, then renders <code>NoriApp</code>.</td></tr>
-<tr><td><code>components/runtime/NoriApp.tsx</code></td><td>Composes the screen. Converts the session into thread items, sets status text and owns panel, debug and document state.</td></tr>
-<tr><td>Shell component</td><td>Window frame and header.</td></tr>
-<tr><td><code>components/chat/Thread.tsx</code></td><td>Scrolling, follow-to-bottom, unread counts, older-message anchoring, documents and the status line.</td></tr>
-<tr><td><code>components/chat/Message.tsx</code></td><td>One bubble.</td></tr>
-<tr><td><code>components/chat/Markdown.tsx</code></td><td>Renders Markdown in a <code>bubble</code> or <code>page</code> variant, with copy buttons on page code blocks.</td></tr>
-<tr><td><code>components/chat/Parts.tsx</code></td><td>Files, images and links in a message, and fallback text for an unknown part.</td></tr>
-<tr><td><code>components/runtime/RuntimeComposer.tsx</code></td><td>Message input and attached files.</td></tr>
-<tr><td><code>components/runtime/TaskPanel.tsx</code></td><td>Task list, task commands, events, saved results and screenshots.</td></tr>
-<tr><td><code>components/runtime/DocumentViewer.tsx</code></td><td>Reading view and Download.</td></tr>
-<tr><td><code>components/dev/DebugBlock.tsx</code></td><td>Saved outer attempts, usage, cost and task steps, shown by the debug toggle.</td></tr>
-<tr><td><code>components/mark/NoriMark.tsx</code></td><td>The mark, plus <code>Medallion</code>, which gives it a fixed box.</td></tr>
-</table></div>
+<p>The runtime hook owns requests and saved state. The thread owns scrolling, viewport reporting and new-message counts. See <a href="code.html">Code map</a> for other components.</p>
 <h3>Run and build</h3>
 <div class="card"><table class="tall"><tr><th>Command, from the repo root</th><th>What it does</th></tr>
 <tr><td><code>make dev</code></td><td>Runs the client on port 3210 with the local Go agent.</td></tr>
@@ -101,6 +93,6 @@
 </table></div>
 <p>The stack is Next.js 16, React 19, Tailwind 4 and Bun. Production runs the Docker image on Cloud Run with <code>NORI_RUNTIME_URL</code> and <code>IAP_AUDIENCE</code>. See <a href="deploy.html">Deployment</a>.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>web/src</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/server.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>Makefile</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/components/chat/Thread.tsx</code> · <code>web/src/lib/types.ts</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/methods.ts</code> · <code>web/src/proxy.ts</code> · <code>web/src/app/page.tsx</code> · <code>web/src/app/layout.tsx</code> · <code>web/src/lib/observability/privacy.ts</code> · <code>web/src/app/api/agent/[operation]/route.ts</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/server.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>Makefile</code></p></details>
 </body>
 </html>

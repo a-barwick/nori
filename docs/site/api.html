@@ -12,7 +12,7 @@
 <p class="lede">Clients send messages and task commands to the agent service over HTTP, and follow saved log events on a stream.</p>
 <section><h2>Endpoints</h2>
 <div class="card"><table class="tall"><tr><th>Endpoint</th><th>What it does</th></tr>
-<tr><td><code>GET /v1/snapshot</code></td><td>Returns the conversation, tasks, results and the event log position.</td></tr>
+<tr><td><code>GET /v1/snapshot</code></td><td>Returns the conversation, tasks, results, shared read position and event log position.</td></tr>
 <tr><td><code>GET /v1/events</code></td><td>Streams saved log events after a position.</td></tr>
 <tr><td><code>POST /api/session</code></td><td>Returns the same snapshot for older callers.</td></tr>
 <tr><td><code>POST /api/turn</code></td><td>Sends a message with any attached file IDs. Returns 202 once it's saved.</td></tr>
@@ -23,16 +23,17 @@
 <tr><td><code>POST /api/artifact</code></td><td>Reads a saved screenshot.</td></tr>
 <tr><td><code>POST /v1/uploads</code>, <code>GET /v1/uploads/{id}</code></td><td>Saves one attached file, and reads it back.</td></tr>
 <tr><td><code>GET /v1/results/{id}</code>, <code>GET /v1/results/{id}/file</code></td><td>Reads a saved result, and its file.</td></tr>
+<tr><td><code>POST /api/seen</code></td><td>Records the newest reply shown in a client and returns the shared read position.</td></tr>
 <tr><td><code>POST /api/delivered</code></td><td>Records that a browser showed these results.</td></tr>
 <tr><td><code>POST /api/process</code></td><td>Cloud Tasks calls this to process saved messages. Clients don't call it.</td></tr>
 <tr><td><code>POST /api/resume</code></td><td>Redelivers saved commands and wakes tasks. Clients don't call it.</td></tr>
 </table></div>
-<p>The web client is the only caller, through its Next.js server. See <a href="frontend.html#live-updates">Live updates</a>.</p>
+<p>The web client calls through its Next.js server. See <a href="frontend.html#live-updates">Live updates</a>.</p>
 </section>
 <section><h2>The event stream</h2>
 <div class="card"><div class="flow">
 <div class="node"><b>Runtime</b><small>Saves “Check Saturday's weather in Tucson” and a numbered log event together.</small></div><div class="arrow">↓ <span class="lbl">log event number and record ID</span></div>
-<div class="node"><b>Event stream</b><small>Reads the record's current state and sends it.</small></div><div class="arrow">↓ <span class="lbl">message, task, result or conversation</span></div>
+<div class="node"><b>Event stream</b><small>Reads the record's current state and sends it.</small></div><div class="arrow">↓ <span class="lbl">message, task, result, conversation or read position</span></div>
 <div class="node"><b>Client</b><small>Merges the record by ID and remembers the last number.</small></div>
 </div></div>
 <div class="card"><table class="tall"><tr><th>Case</th><th>What happens</th></tr>
@@ -42,22 +43,18 @@
 <tr><td>Changes with no log event</td><td>Every 20 seconds, the stream also checks the conversation state and open tasks, and wakes processing for a saved message.</td></tr>
 </table></div>
 </section>
-<section class="designed"><h2>The protocol for many clients</h2>
-<p><span class="tag design">designed · milestone 12</span></p>
-<p>More clients would send commands through one route, and the stream would stay as it is.</p>
-<details class="more"><summary>Protocol details</summary>
-<table class="tall"><tr><th>Command</th><th>Effect</th></tr>
-<tr><td><code>message.send</code></td><td>Saves the user's message and puts it in the inbox.</td></tr>
-<tr><td><code>message.edit</code></td><td>Saves a new message that replaces the old one, treated as a correction.</td></tr>
-<tr><td><code>task.stop</code></td><td>Requests Stop. Skips classification.</td></tr>
-<tr><td><code>approval.decide</code></td><td>Records approve or decline for one exact operation.</td></tr>
-<tr><td><code>doc.update</code></td><td>Edits soul or memory, with conflict detection.</td></tr>
-<tr><td><code>settings.update</code></td><td>Changes the user's settings.</td></tr>
-<tr><td><code>device.register</code></td><td>Registers a device for push.</td></tr>
-</table>
-<ul class="pts"><li>Clients don't read Firestore directly, so its schema doesn't become the contract.</li><li>Task results land in the thread that started the task.</li></ul>
-<p>Everything in this section is a proposal.</p></details>
+<section><h2>Shared read positions</h2>
+<div class="card"><table class="tall"><tr><th>Case</th><th>What happens</th></tr>
+<tr><td>A reply is shown</td><td>The client sends its message ID. The service advances the saved read position and adds a log event in the same transaction.</td></tr>
+<tr><td>Another session connects</td><td>Its snapshot includes the shared mark. The event stream carries later changes.</td></tr>
+<tr><td>An older report arrives</td><td>The saved mark stays unchanged. Repeated reports add no event.</td></tr>
+</table></div>
+<p>Reading the Tucson weather reply in one web session clears its new-message count in another. See <a href="frontend.html#live-updates">Live updates</a> for viewport reporting.</p>
+<p>The mark also suppresses <a href="schedules.html#email-when-the-app-is-closed">closed-app emails</a>. Its event number lets clients discard older responses.</p>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/state/events.go</code> · <code>core/internal/state/firestore/events.go</code> · <code>web/src/lib/runtime/forward.ts</code></p></details>
+<section class="designed"><h2>The protocol for many clients</h2>
+<p>Native clients, their sign-in, device registration, push and offline catch-up remain planned. See <a href="clients.html">Clients</a>.</p>
+</section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/conversation/session.go</code> · <code>core/internal/conversation/runner.go</code> · <code>core/internal/state/notify.go</code> · <code>core/internal/state/firestore/schedules.go</code> · <code>core/internal/state/events.go</code> · <code>core/internal/state/firestore/events.go</code> · <code>web/src/lib/runtime/forward.ts</code></p></details>
 </body>
 </html>
