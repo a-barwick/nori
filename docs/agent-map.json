@@ -325,6 +325,8 @@
     "core/internal/computer/",
     "core/internal/computerd/",
     "core/internal/computerd/files.go",
+    "core/internal/computerd/jobs.go",
+    "core/internal/computerd/server.go",
     "core/internal/platform/platform.go"
    ],
    "sections": [
@@ -332,7 +334,13 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 262
+     "words": 248
+    },
+    {
+     "id": "when-job-saves-fail",
+     "title": "When job saves fail",
+     "status": "built",
+     "words": 57
     },
     {
      "id": "attached-files-and-programs",
@@ -344,7 +352,7 @@
      "id": "reaching-the-computer",
      "title": "Reaching the computer",
      "status": "built",
-     "words": 341
+     "words": 339
     }
    ]
   },
