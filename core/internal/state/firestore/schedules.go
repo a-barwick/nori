@@ -39,6 +39,25 @@ func (d *Database) Schedules(ctx context.Context) ([]state.Schedule, error) {
 	return documents[state.Schedule](it)
 }
 
+// ChangeScheduleNow applies a pause, resume or cancel from a client control to the saved schedule.
+func (d *Database) ChangeScheduleNow(ctx context.Context, id, change string, location *time.Location, now time.Time) (state.Schedule, error) {
+	var s state.Schedule
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		prior, err := d.readSchedule(tx, id)
+		if err != nil {
+			return err
+		}
+		if prior == nil {
+			return state.ErrNotFound
+		}
+		if s, err = state.ChangeSchedule(*prior, state.ScheduleChangeRequest{ID: id, Change: change}, location, now); err != nil {
+			return err
+		}
+		return tx.Set(d.schedules().Doc(id), s)
+	})
+	return s, err
+}
+
 // readScheduleChanges reads the schedules a turn's changes touch, before the publish transaction writes anything.
 func (d *Database) readScheduleChanges(tx *firestore.Transaction, changes []state.ScheduleChangeRequest) (map[string]*state.Schedule, error) {
 	saved := map[string]*state.Schedule{}

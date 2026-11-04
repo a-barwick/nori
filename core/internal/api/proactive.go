@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"nori/internal/proactive"
@@ -37,6 +38,11 @@ func (s *server) check(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 80*time.Second)
 	defer cancel()
 	result, err := s.Proactive.Check(ctx, body.Manual)
+	// The twice-daily call also wakes a conversation pass, which delivers due offers and fires due schedules. A
+	// schedule whose own wake was lost then waits at most until the next check.
+	if wakeErr := s.wakeConversation(r.Context()); wakeErr != nil {
+		log.Printf("proactive check couldn't wake the conversation: %v", wakeErr)
+	}
 	if errors.Is(err, state.ErrCheckRunning) {
 		writeJSON(w, 409, result)
 		return
@@ -52,6 +58,35 @@ func (s *server) check(w http.ResponseWriter, r *http.Request) {
 	}
 	// A failed calendar read is a finished check: retrying the same slot wouldn't help, and the next slot runs anyway.
 	writeJSON(w, 200, result)
+}
+
+// schedule pauses, resumes or cancels a schedule from the web client's list. A wake follows, so a resumed schedule is
+// armed for its next time.
+func (s *server) schedule(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID     string `json:"id"`
+		Change string `json:"change"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if body.ID == "" || strings.ContainsAny(body.ID, "/.") || (body.Change != state.ChangePause && body.Change != state.ChangeResume && body.Change != state.ChangeCancel) {
+		writeJSON(w, 400, map[string]string{"error": "Send a schedule ID and a change of pause, resume or cancel."})
+		return
+	}
+	saved, err := s.Runner.ChangeSchedule(r.Context(), body.ID, body.Change)
+	if errors.Is(err, state.ErrScheduleState) {
+		writeJSON(w, 409, map[string]string{"error": "This schedule has already ended."})
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := s.wakeConversation(r.Context()); err != nil {
+		log.Printf("schedule change couldn't wake the conversation: %v", err)
+	}
+	writeJSON(w, 200, saved)
 }
 
 // offer records Accept or Dismiss on a delivered offer. Accept also sends Austin's yes as an ordinary message, so
