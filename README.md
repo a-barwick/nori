@@ -12,6 +12,61 @@ Design:
 
 ## Run
 
+### Shared-service preparation
+
+[The migration plan](https://linear.app/a-barwick/issue/AB-284) tracks the proposed
+shared service and its acceptance criteria. `migration/plan.json` is the executable
+acceptance inventory. The runtime migration has not started.
+
+```sh
+cd chat && bun install --frozen-lockfile && cd ..
+make chat-fixture          # local Svelte fixture on http://127.0.0.1:3230
+make migration-prep        # HTTP fixture journeys, verifier checks, type check and build
+make migration-readiness   # deliberately exits 2: migration behavior is not verified
+```
+
+The fixture uses scripted replies and process-local memory. It can exercise separate
+conversations, streaming, targeted stop, request replay and reconnect. Reloading the
+browser retains its conversation while the fixture server runs. Restarting the server
+clears fixture data. It reads no project `.env`, calls no model and uses no existing
+Nori data. Its draft API is under `/__migration/v1`; it is not a production contract.
+The static build contains the client only. The fixture runs through the dev command.
+
+With that fixture running, `cd chat && bun --no-env-file run smoke` checks send,
+stop, conversation switching, reconnect and reload, then captures desktop and phone
+screenshots. It uses `playwright-core` without a browser-test framework. Set
+`CHAT_BROWSER_EXECUTABLE` to an existing Chromium executable if the driver's default
+browser is unavailable. This command never downloads a browser or connects to Nori.
+
+For the existing unpaid backend suites, start isolated Firestore and Temporal
+emulators on loopback, then provide their addresses explicitly:
+
+```sh
+export FIRESTORE_EMULATOR_HOST=127.0.0.1:8095
+export TEMPORAL_ADDRESS=127.0.0.1:7245
+make migration-doctor
+python3 migration/verify.py baseline --suite 8  # one representative suite
+make migration-baseline                      # all six registered unpaid suites
+```
+
+The runner requires reachable emulators, enables each suite explicitly, rejects skipped
+or empty runs, and passes only selected environment variables to child processes.
+Suites create their own isolated databases and task queues. Paid live suites are excluded.
+Each invocation writes a fresh report and logs under `.artifacts/migration/`, including
+the commit, dirty state, plan hash, selected suite and evidence boundary. A partial
+baseline or fixture pass never marks the migration ready. Future implementation must
+add real verifiers for every remaining criterion, including authenticated clients,
+provider cancellation, shared budgets, persistent isolation, upgrade and rollback.
+
+The same HTTP journeys can later target an isolated service with
+`python3 migration/verify.py contract --url http://127.0.0.1:PORT`.
+This creates test conversations. Before any write, the target must report the draft
+contract, `mode: isolated-test` and `deterministic: true` from its capabilities route.
+The fixture identifies itself differently and cannot pass this service check.
+Production URLs, redirects, missing prerequisites and unsupported contracts fail.
+
+### Existing assistant
+
 ```sh
 make dev     # local conversation on http://127.0.0.1:3210, Go runner on :8080
 make check   # Go vet and gofmt, then TypeScript and ESLint
