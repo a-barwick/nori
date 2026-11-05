@@ -163,7 +163,7 @@ def web_image(commit):
         with os.fdopen(fd, "w") as stream:
             stream.write(value)
         extra = ("--build-arg", "SENTRY_ORG=austin-barwick", "--build-arg", "SENTRY_PROJECT=nori-web", "--secret", f"id=sentry_auth_token,src={token}")
-        return build_image("web", ROOT / "web/Dockerfile", ROOT / "web", commit, extra)
+        return build_image("web", ROOT / "web/Dockerfile", ROOT, commit, extra)
     finally:
         if token:
             os.unlink(token)
