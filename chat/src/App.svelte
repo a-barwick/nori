@@ -44,7 +44,7 @@
     } catch (e) { if (selected === generation) error = String(e); }
   }
   async function create() {
-    try { const c = await request<Conversation>('/conversations', { method: 'POST' }); await list(); await select(c.id); }
+    try { const c = await request<Conversation>('/conversations', { method: 'POST', body: '{}' }); await list(); await select(c.id); }
     catch (e) { error = String(e); }
   }
   async function send(event: SubmitEvent) {

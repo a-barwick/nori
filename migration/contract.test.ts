@@ -21,7 +21,7 @@ beforeAll(async () => {
   expect(capabilities.deterministic).toBe(true);
 });
 afterAll(() => { for (const c of controllers) c.abort(); fixture?.close(); server?.stop(true); });
-const create = () => request<Conversation>('/conversations', { method: 'POST' }, base);
+const create = () => request<Conversation>('/conversations', { method: 'POST', body: '{}' }, base);
 const snapshot = (id: string) => request<Conversation>(`/conversations/${id}`, {}, base);
 const send = (id: string, message: string, messageID = crypto.randomUUID()) => request<{ turnId: string }>(`/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify({ id: messageID, text: message }) }, base);
 async function until(read: () => Promise<Conversation>, accept: (c: Conversation) => boolean) {
