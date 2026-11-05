@@ -1,6 +1,6 @@
 import {beforeAll,afterAll,expect,test} from 'bun:test';
 import {createHarness,until} from './shared-service-harness';
-import {follow} from '../../migration/contract';
+import {follow,apply} from '../../chat/src/contract';
 const live=process.env.NORI_SHARED_SERVICE_E2E==='1';const journey=live?test:test.skip;let h;
 const headers={'content-type':'application/json'};
 async function request(path,body,status=200){const res=await fetch(h.address+'/v1/'+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:JSON.stringify(body)});const value=await res.json();expect(res.status).toBe(status);return value}
@@ -32,7 +32,7 @@ journey('stop preserves partial text, cannot cancel another chat and events repl
  const ctl=new AbortController();const events=[];const target=(await snapshot(a.id)).position;
  const stream=follow(a.id,0,ctl.signal,event=>events.push(event),h.address).catch(error=>{if(!ctl.signal.aborted)throw error});
  try{await until(async()=>events,values=>values.at(-1)?.seq>=target,'complete replay frames')}finally{ctl.abort();await stream}
- expect(events.map(e=>e.seq)).toEqual(events.map((e,i)=>i+1));expect(events.at(-1).conversation.messages.at(-1).status).toBe('cancelled');expect(events.at(-1).conversation.id).toBe(a.id);expect(partial.position).toBeGreaterThan(1);
+ expect(events.map(e=>e.seq)).toEqual(events.map((e,i)=>i+1));const rebuilt=events.reduce(apply,{id:a.id,title:'',mode:'chat',messages:[],activeTurn:null,position:0});const saved=await snapshot(a.id);expect(rebuilt.messages).toEqual(saved.messages);expect(rebuilt.messages.at(-1).status).toBe('cancelled');expect(events.at(-1).conversation.id).toBe(a.id);expect(partial.position).toBeGreaterThan(1);
 },60000);
 journey('scoped upload bytes and assignment reach foreground CSV tool without cross-chat reads',async()=>{
  const [a,b]=await Promise.all([create(),create()]);const upload=crypto.randomUUID();
@@ -54,8 +54,10 @@ journey('hosted wake retries a foreign lease until interrupted streaming is dura
  const c=await create();const id=crypto.randomUUID();await message(c.id,'slow stream crash marker',id);
  const partial=await until(()=>snapshot(c.id),c=>c.messages.at(-1).text.length>5,'crash partial');const count=h.requests.filter(r=>r.stream&&r.messages.some(m=>m.content==='slow stream crash marker')).length;
  await h.stop('SIGKILL');await h.start();
+ // Text saved between the partial read and the kill is kept too; recovery itself must not change it.
+ const atKill=await snapshot(c.id);expect(atKill.messages.at(-1).text.startsWith(partial.messages.at(-1).text)).toBe(true);
  const process=await fetch(h.address+'/api/process',{method:'POST',headers,body:'{}'});expect(process.status).toBe(503);
- const recovered=await done(c.id);expect(recovered.messages.at(-1).status).toBe('failed');expect(recovered.messages.at(-1).text).toBe(partial.messages.at(-1).text);
+ const recovered=await done(c.id);expect(recovered.messages.at(-1).status).toBe('failed');expect(recovered.messages.at(-1).text).toBe(atKill.messages.at(-1).text);
  expect(h.requests.filter(r=>r.stream&&r.messages.some(m=>m.content==='slow stream crash marker')).length).toBe(count);
  await message(c.id,'slow stream crash marker',id);expect((await snapshot(c.id)).messages.filter(m=>m.role==='user')).toHaveLength(1);
 },60000);

@@ -1,5 +1,5 @@
 // Explicit offline HTTP fixture. No models, tools, credentials or durable storage.
-import { CONTRACT, PREFIX, type Conversation, type Event } from './contract.ts';
+import { CONTRACT, PREFIX, type Conversation, type Event, type Message } from './src/contract.ts';
 
 export function createFixture(delay = 80) {
   const conversations = new Map<string, Conversation>();
@@ -8,9 +8,11 @@ export function createFixture(delay = 80) {
   const receipts = new Map<string, { message: string; turn: string }>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
-  const publish = (c: Conversation, kind: Event['kind']) => {
+  const publish = (c: Conversation, kind: Event['kind'], changed: Message[]) => {
     c.position++;
-    const event: Event = { seq: c.position, kind, conversation: structuredClone(c) };
+    c.updatedAt = new Date().toISOString();
+    const { messages: _, ...header } = structuredClone(c);
+    const event: Event = { seq: c.position, kind, conversation: header, messages: structuredClone(changed) };
     events.get(c.id)!.push(event);
     for (const listener of listeners.get(c.id)!) listener(event);
   };
@@ -26,9 +28,9 @@ export function createFixture(delay = 80) {
     const path = url.pathname.slice(PREFIX.length);
     if (path === '/capabilities' && request.method === 'GET') return json({ contract: CONTRACT, service: 'nori', fixture: true, isolated: true, deterministic: true, persistence: 'process-memory', conversationModes: ['chat'] });
     if (path === '/conversations') {
-      if (request.method === 'GET') return json({ conversations: [...conversations.values()] });
+      if (request.method === 'GET') return json({ conversations: [...conversations.values()].map(({ messages: _, position: __, ...summary }) => summary).reverse() });
       if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
-      const c: Conversation = { id: crypto.randomUUID(), title: 'New conversation', mode: 'chat', messages: [], activeTurn: null, position: 0 };
+      const c: Conversation = { id: crypto.randomUUID(), title: 'New chat', mode: 'chat', messages: [], activeTurn: null, position: 0, updatedAt: new Date().toISOString() };
       conversations.set(c.id, c); events.set(c.id, []); listeners.set(c.id, new Set());
       return json(c, 201);
     }
@@ -37,6 +39,11 @@ export function createFixture(delay = 80) {
     if (!c) return json({ error: 'Not found' }, 404);
     const operation = match![2];
     if (!operation && request.method === 'GET') return json(c);
+    if (!operation && request.method === 'DELETE') {
+      if (c.activeTurn) return json({ error: 'A reply or action is still open. Stop it or wait for it to finish.' }, 409);
+      conversations.delete(c.id); events.delete(c.id); listeners.delete(c.id);
+      return json({ deleted: true });
+    }
     if (operation === 'events' && request.method === 'GET') {
       const after = Number(url.searchParams.get('after') ?? 0);
       if (!Number.isSafeInteger(after) || after < 0 || after > c.position) return json({ error: 'Invalid cursor' }, 400);
@@ -62,27 +69,29 @@ export function createFixture(delay = 80) {
     if (operation === 'cancel') {
       if (!body || typeof body.turnId !== 'string' || c.activeTurn !== body.turnId) return json({ error: 'Turn is not active here' }, 409);
       c.messages.at(-1)!.status = 'cancelled'; c.activeTurn = null;
-      publish(c, 'turn.cancelled'); return json(c);
+      publish(c, 'turn.cancelled', [c.messages.at(-1)!]); return json(c);
     }
     if (operation !== 'messages') return json({ error: 'Not found' }, 404);
     if (!body || typeof body.id !== 'string' || !/^[a-f0-9-]{36}$/.test(body.id) || typeof body.text !== 'string' || !body.text.trim() || body.text.length > 4000) return json({ error: 'Invalid message' }, 400);
     const key = `${c.id}:${body.id}`;
     const receipt = receipts.get(key);
     if (receipt) return receipt.message === body.text ? json({ turnId: receipt.turn, conversation: c }, 202) : json({ error: 'ID conflict' }, 409);
-    if (c.activeTurn) return json({ error: 'Conversation busy' }, 409);
+    if (c.activeTurn) return json({ error: 'A reply or action is still open. Stop it or wait for it to finish.' }, 409);
     const turn = crypto.randomUUID();
     receipts.set(key, { message: body.text, turn });
-    c.title = body.text.slice(0, 48); c.activeTurn = turn;
-    c.messages.push({ id: body.id, role: 'user', text: body.text, status: 'completed' });
+    if (c.title === 'New chat') c.title = body.text.slice(0, 48);
+    c.activeTurn = turn;
+    const question: Message = { id: body.id, role: 'user', text: body.text, status: 'completed' };
+    c.messages.push(question);
     const answer = { id: crypto.randomUUID(), role: 'assistant' as const, text: '', status: 'streaming' as 'streaming' | 'completed' };
     c.messages.push(answer);
     const words = `Fixture reply to “${body.text}”. This is a scripted response. No model or external tool was called.`.split(' ');
-    publish(c, 'reply.updated');
+    publish(c, 'input.accepted', [question, answer]);
     const next = () => {
       if (c.activeTurn !== turn) return;
       answer.text += (answer.text ? ' ' : '') + words.shift();
-      if (words.length) { publish(c, 'reply.updated'); later(next); }
-      else { answer.status = 'completed'; c.activeTurn = null; publish(c, 'turn.completed'); }
+      if (words.length) { publish(c, 'reply.updated', [answer]); later(next); }
+      else { answer.status = 'completed'; c.activeTurn = null; publish(c, 'turn.completed', [answer]); }
     };
     later(next);
     return json({ turnId: turn, conversation: c }, 202);

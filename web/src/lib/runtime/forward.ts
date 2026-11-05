@@ -107,8 +107,10 @@ export async function conversationRoute(request: Request, mode: Mode, segments: 
   }
   const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && operation === "events"))));
   const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel", "approvals"].includes(operation)));
-  if (!read && !write) return Response.json({ error: "Not found." }, { status: 404 });
+  const remove = request.method === "DELETE" && segments.length === 1 && id !== "assistant" && validID;
+  if (!read && !write && !remove) return Response.json({ error: "Not found." }, { status: 404 });
   if (!(await allowedCaller(request, mode, read ? sameOriginRead : sameOrigin))) return forbidden();
+  if (remove) return forward(request, mode, `v1/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }, READ_TIMEOUT_MS, type => type.includes("application/json"));
   const query = new URLSearchParams();
   if (operation === "events") {
     const incoming = new URL(request.url).searchParams;

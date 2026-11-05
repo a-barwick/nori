@@ -75,6 +75,7 @@ inference while health and cleanup remain available.
 | Configuration | Purpose |
 | --- | --- |
 | `OPENAI_API_KEY`, `JEV_API_KEY` | Required conversation provider credentials for both entrypoints |
+| `NORI_OWNER_NAME` | Optional. The person the independent chat's prompt says Nori works for; without it the prompt says "a personal assistant" |
 | `NORI_AGENT_MODEL` | Conversation model; default `gpt-6.1-sol`. It runs through OpenAI's platform API at a fixed endpoint, with low reasoning and the standard tier |
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
 | `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |

@@ -65,6 +65,12 @@ func FromEnv() (*Client, error) {
 	return &Client{project: project, database: env("NORI_SPEND_DATABASE", "nori-sandbox"), scope: scope, profile: profile}, nil
 }
 
+// Enabled reports whether this process runs under a development spend allowance.
+func Enabled() bool {
+	c, err := FromEnv()
+	return err != nil || c != nil
+}
+
 func (c *Client) Close() {
 	if c != nil && c.ledger != nil {
 		_ = c.ledger.Close()

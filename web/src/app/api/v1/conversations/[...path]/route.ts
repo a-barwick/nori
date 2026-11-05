@@ -7,3 +7,7 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
 export async function POST(request: Request, context: { params: Promise<{ path: string[] }> }) {
   return conversationRoute(request, conversationMode(request), (await context.params).path);
 }
+
+export async function DELETE(request: Request, context: { params: Promise<{ path: string[] }> }) {
+  return conversationRoute(request, conversationMode(request), (await context.params).path);
+}

@@ -398,6 +398,7 @@ func decodeOpenAIStream(res *http.Response, reply Reply, request ReplyRequest, s
 	var usage json.RawMessage
 	calls := map[int]*ToolCall{}
 	done := false
+	var stopped error
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -461,8 +462,14 @@ func decodeOpenAIStream(res *http.Response, reply Reply, request ReplyRequest, s
 				if request.Foreground {
 					visible = foregroundPartial(text)
 				}
-				if err := request.Stream(visible); err != nil {
-					return reply, err
+				if stopped == nil {
+					if err := request.Stream(visible); err != nil {
+						if !request.Drain {
+							return reply, err
+						}
+						// Keep reading without showing anything, so the provider's usage arrives and the cost is known.
+						stopped = err
+					}
 				}
 			}
 			for _, delta := range choice.Delta.Calls {
@@ -485,7 +492,7 @@ func decodeOpenAIStream(res *http.Response, reply Reply, request ReplyRequest, s
 		}
 	}
 	if scanner.Err() != nil || !done {
-		return reply, errors.New("model stream interrupted; request will not be repeated")
+		return reply, errors.Join(stopped, errors.New("model stream interrupted; request will not be repeated"))
 	}
 	ordered := []ToolCall{}
 	for i := 0; i < len(calls); i++ {
@@ -499,6 +506,9 @@ func decodeOpenAIStream(res *http.Response, reply Reply, request ReplyRequest, s
 	copyResponse := *res
 	copyResponse.Body = io.NopCloser(bytes.NewReader(body))
 	decoded, err := decodeOpenAIReply(&copyResponse, reply, true, span)
+	if stopped != nil {
+		return decoded, stopped
+	}
 	if err == nil && request.Foreground {
 		decoded.Text, decoded.Calls, err = decodeForeground(decoded.Text)
 	}

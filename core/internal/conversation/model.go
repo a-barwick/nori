@@ -70,6 +70,9 @@ type ReplyRequest struct {
 	// Tools are server-selected foreground read and approval schemas.
 	Tools      json.RawMessage
 	Foreground bool
+	// Drain keeps reading a stream after Stream returns an error, so a stopped
+	// reply still reports its cost. The caller's context must allow it to finish.
+	Drain bool
 	// CommandPlan independently plans dispatch/steer from user-authored context only.
 	CommandPlan bool
 	// NoDispatch disables every task command for introduction and notification-only turns.

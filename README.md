@@ -85,13 +85,12 @@ both clients, shared budgets, retained-data recovery and the selected providers.
 It does not deploy anything.
 
 Start isolated Firestore and Temporal emulators on loopback, then name their existing
-listeners explicitly. Recovery also needs a prebuilt compatible previous
-`nori-local` executable, not a copy of the current executable:
+listeners explicitly. Recovery builds the previous release's `nori-local` from git;
+set `NORI_RECOVERY_OLD_BINARY` only to use a different prebuilt executable:
 
 ```sh
 export FIRESTORE_EMULATOR_HOST=127.0.0.1:8095
 export TEMPORAL_ADDRESS=127.0.0.1:7245
-export NORI_RECOVERY_OLD_BINARY=/absolute/path/to/compatible/previous/nori-local
 make migration-doctor
 make migration-baseline
 make migration-integration

@@ -7,7 +7,6 @@ RUN bun install --frozen-lockfile
 COPY chat/package.json chat/bun.lock /app/chat/
 RUN cd /app/chat && bun install --frozen-lockfile
 COPY chat /app/chat
-COPY migration/contract.ts migration/fixture.ts /app/migration/
 COPY web .
 RUN cd /app/chat && bun --no-env-file run check && bun --no-env-file run build
 ARG NEXT_PUBLIC_SENTRY_DSN

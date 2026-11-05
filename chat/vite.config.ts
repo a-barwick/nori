@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import { createFixture } from '../migration/fixture.ts';
-import { PREFIX } from '../migration/contract.ts';
+import { createFixture } from './fixture.ts';
+import { PREFIX } from './src/contract.ts';
 
 // The fixture is an explicit offline mode. Normal development reaches the authenticated Next server.
 const offline = process.env.NORI_CHAT_FIXTURE === '1';
@@ -13,7 +13,7 @@ export default defineConfig({
   envDir: false,
   base: '/chat/',
   build: { outDir: '../web/public/chat', emptyOutDir: true },
-  server: { proxy: offline ? undefined : { '/api/v1': { target: web, rewrite: path => path.replace(/^\/api\/v1/, '/api/agent/v1') } } },
+  server: { proxy: offline ? undefined : { '/api/v1': { target: web } } },
   plugins: [svelte(), ...(offline ? [{
     name: 'offline-chat-fixture',
     configureServer(server: import('vite').ViteDevServer) {

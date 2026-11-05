@@ -3,9 +3,6 @@
 !web/**
 !chat/
 !chat/**
-!migration/
-!migration/contract.ts
-!migration/fixture.ts
 **/node_modules
 **/.next
 **/.env*
