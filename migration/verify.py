@@ -32,6 +32,20 @@ def source_hashes():
             for name in sorted(set(files)) if (ROOT / name).is_file()}
 
 
+def evidence_paths(mode, hashes, acceptance):
+    """Only changes to code exercised by a check invalidate its evidence."""
+    runtime = {name for name in hashes if name.startswith(("core/internal/", "core/cmd/")) or name in ("core/go.mod", "core/go.sum")}
+    if mode == "baseline":
+        return runtime | {s["file"] for s in PLAN["baseline_suites"]}
+    if mode == "browser":
+        return runtime | {name for name in hashes if name.startswith(("web/", "chat/"))} | {"migration/contract.ts"}
+    if mode == "provider":
+        return runtime | {"core/e2e/shared-service-live.test.js", "core/e2e/shared-service-harness.js", "migration/provider-evidence.py"}
+    if acceptance == ["shared-budget"]:
+        return runtime | {"migration/shared-budget.ts", "core/e2e/shared-service-harness.js"}
+    return runtime | {s["file"] for s in PLAN.get("integration_suites", [])} | {"core/e2e/shared-service-harness.js", "migration/contract.ts"}
+
+
 def endpoint(name):
     value = os.environ.get(name, "")
     match = re.fullmatch(r"127\.0\.0\.1:([0-9]{1,5})", value)
@@ -95,7 +109,9 @@ def main():
             covered = set()
             for path in args.evidence:
                 evidence = json.loads(path.read_text())
-                valid = evidence.get("status") == "passed" and evidence.get("source_hashes") == report["source_hashes"]
+                paths = evidence_paths(evidence.get("mode"), report["source_hashes"], evidence.get("acceptance"))
+                valid = evidence.get("status") == "passed" and all(
+                    evidence.get("source_hashes", {}).get(name) == report["source_hashes"].get(name) for name in paths)
                 valid = valid and evidence.get("plan_sha256") == report["plan_sha256"]
                 valid = valid and evidence.get("mode") in ("baseline", "integration", "browser", "provider")
                 valid = valid and bool(evidence.get("checks")) and all(check.get("status") == "passed" for check in evidence["checks"])

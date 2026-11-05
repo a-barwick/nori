@@ -1,5 +1,6 @@
 import {beforeAll,afterAll,expect,test} from 'bun:test';
 import {createHarness,until} from './shared-service-harness';
+import {follow} from '../../migration/contract';
 const live=process.env.NORI_SHARED_SERVICE_E2E==='1';const journey=live?test:test.skip;let h;
 const headers={'content-type':'application/json'};
 async function request(path,body,status=200){const res=await fetch(h.address+'/v1/'+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:JSON.stringify(body)});const value=await res.json();expect(res.status).toBe(status);return value}
@@ -28,9 +29,10 @@ journey('stop preserves partial text, cannot cancel another chat and events repl
  const partial=await until(()=>snapshot(a.id),c=>c.messages.at(-1).text.length>8,'partial text');
  await request(`conversations/${b.id}/cancel`,{turnId:input},404);
  const stopped=await request(`conversations/${a.id}/cancel`,{turnId:input});expect(stopped.messages.at(-1).status).toBe('cancelled');expect(stopped.messages.at(-1).text.length).toBeGreaterThan(0);await done(b.id);
- const ctl=new AbortController();const response=await fetch(`${h.address}/v1/conversations/${a.id}/events?after=0`,{signal:ctl.signal});const reader=response.body.getReader();let text='';const target=(await snapshot(a.id)).position;
- while(!text.includes(`"seq":${target},`)){const next=await reader.read();text+=new TextDecoder().decode(next.value)}ctl.abort();await reader.cancel().catch(()=>{});
- const events=text.split('\n').filter(x=>x.startsWith('data:')).map(x=>JSON.parse(x.slice(5)));expect(events.map(e=>e.seq)).toEqual(events.map((e,i)=>i+1));expect(events.at(-1).conversation.messages.at(-1).status).toBe('cancelled');expect(events.at(-1).conversation.id).toBe(a.id);expect(partial.position).toBeGreaterThan(1);
+ const ctl=new AbortController();const events=[];const target=(await snapshot(a.id)).position;
+ const stream=follow(a.id,0,ctl.signal,event=>events.push(event),h.address).catch(error=>{if(!ctl.signal.aborted)throw error});
+ try{await until(async()=>events,values=>values.at(-1)?.seq>=target,'complete replay frames')}finally{ctl.abort();await stream}
+ expect(events.map(e=>e.seq)).toEqual(events.map((e,i)=>i+1));expect(events.at(-1).conversation.messages.at(-1).status).toBe('cancelled');expect(events.at(-1).conversation.id).toBe(a.id);expect(partial.position).toBeGreaterThan(1);
 },60000);
 journey('scoped upload bytes and assignment reach foreground CSV tool without cross-chat reads',async()=>{
  const [a,b]=await Promise.all([create(),create()]);const upload=crypto.randomUUID();
