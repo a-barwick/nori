@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { createFixture } from './fixture';
-import { CONTRACT, PREFIX, follow, request, type Conversation, type Event } from './contract';
+import { createFixture } from '../chat/fixture';
+import { CONTRACT, PREFIX, apply, follow, request, type Conversation, type Event } from '../chat/src/contract';
 
 // Default: explicit offline fixture. An isolated real service can exercise the same HTTP contract.
 // Production and paid providers are not allowed in this deterministic suite.
@@ -62,7 +62,7 @@ test('repeated input IDs do not generate again; conflicting content is refused',
 });
 test('disconnect and cursor replay converge once to the final answer', async () => {
   const c = await create();
-  const first = watch(c.id, 0);
+  const first = watch(c.id, c.position);
   await send(c.id, 'reconnect this conversation');
   await until(() => snapshot(c.id), c => c.position > 3);
   await first.close();
@@ -76,7 +76,7 @@ test('disconnect and cursor replay converge once to the final answer', async () 
   const all = [...first.events, ...second.events];
   expect(all.map(e => e.seq)).toEqual(Array.from({ length: final.position }, (_, i) => i + 1));
   expect(all.filter(e => e.kind === 'turn.completed')).toHaveLength(1);
-  expect(second.events.at(-1)!.conversation).toEqual(final);
+  expect(all.reduce(apply, c)).toEqual(final);
 });
 test('targeted stop preserves partial text while the other conversation completes', async () => {
   const a = await create(), b = await create();

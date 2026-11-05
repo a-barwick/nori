@@ -119,4 +119,11 @@ func (s *composed) GetFile(ctx context.Context, key string) ([]byte, error) {
 	return s.artifacts.GetFile(ctx, key)
 }
 
+func (s *composed) DeleteFile(ctx context.Context, key string) error {
+	if !ValidFileKey(key) {
+		return ErrNotFound
+	}
+	return s.artifacts.DeleteFile(ctx, key)
+}
+
 func (s *composed) Close() error { return errors.Join(s.Database.Close(), s.artifacts.Close()) }

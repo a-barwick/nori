@@ -38,12 +38,27 @@ def evidence_paths(mode, hashes, acceptance):
     if mode == "baseline":
         return runtime | {name for name in hashes if name.startswith("core/e2e/") and "shared-service" not in name}
     if mode == "browser":
-        return runtime | {name for name in hashes if name.startswith(("web/", "chat/"))} | {"migration/contract.ts", "core/e2e/shared-service-harness.js"}
+        return runtime | {name for name in hashes if name.startswith(("web/", "chat/"))} | {"core/e2e/shared-service-harness.js"}
     if mode == "provider":
         return runtime | {"core/e2e/shared-service-live.test.js", "core/e2e/shared-service-harness.js", "migration/provider-evidence.py"}
     if acceptance == ["shared-budget"]:
         return runtime | {"migration/shared-budget.ts", "core/e2e/shared-service-harness.js"}
-    return runtime | {s["file"] for s in PLAN.get("integration_suites", [])} | {"core/e2e/shared-service-harness.js", "migration/contract.ts"}
+    return runtime | {s["file"] for s in PLAN.get("integration_suites", [])} | {"core/e2e/shared-service-harness.js", "chat/src/contract.ts", "chat/fixture.ts"}
+
+
+# The release before the shared service. Recovery upgrades from it and rolls back to it.
+PREVIOUS_RELEASE = "051960d"
+
+
+def previous_binary(directory):
+    """Build the previous release's nori-local from git, so recovery needs no hand-built executable."""
+    source = directory / "previous-release"
+    source.mkdir(parents=True, exist_ok=True)
+    archive = subprocess.run(["git", "archive", PREVIOUS_RELEASE, "core"], cwd=ROOT, capture_output=True, check=True).stdout
+    subprocess.run(["tar", "-x", "-C", str(source)], input=archive, check=True)
+    binary = source / "nori-local"
+    subprocess.run(["go", "build", "-o", str(binary), "./cmd/nori-local"], cwd=source / "core", env=environment(), check=True, timeout=600)
+    return str(binary)
 
 
 def endpoint(name):
@@ -182,8 +197,8 @@ def main():
             env = environment()
             env["FIRESTORE_EMULATOR_HOST"] = endpoint("FIRESTORE_EMULATOR_HOST")
             env["TEMPORAL_ADDRESS"] = endpoint("TEMPORAL_ADDRESS")
-            if args.mode == "integration" and os.environ.get("NORI_RECOVERY_OLD_BINARY"):
-                env["NORI_RECOVERY_OLD_BINARY"] = os.environ["NORI_RECOVERY_OLD_BINARY"]
+            if args.mode == "integration":
+                env["NORI_RECOVERY_OLD_BINARY"] = os.environ.get("NORI_RECOVERY_OLD_BINARY") or previous_binary(directory)
             for tool in ("bun", "go", "temporal"):
                 if not shutil.which(tool):
                     raise ValueError(f"Missing executable: {tool}")

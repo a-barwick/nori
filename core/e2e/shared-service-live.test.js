@@ -1,6 +1,6 @@
 import { beforeAll, afterAll, test, expect } from 'bun:test';
 import { createHarness, until } from './shared-service-harness';
-import { follow } from '../../migration/contract';
+import { follow } from '../../chat/src/contract';
 
 // Paid acceptance, only through infrastructure/spend/run.py with one logical chat ID.
 // App records stay on the emulator; the spend ledger stays on its real shared database.
@@ -67,7 +67,7 @@ journey('selected Sol streams a saved answer after reading its assigned CSV thro
     expect(final.messages.at(-1).text).toContain('42');
     expect(final.messages.at(-1).operations.some(op => op.name === 'upload_read' && op.outcome === 'completed')).toBe(true);
     await until(async () => events, rows => rows.some(e => e.kind === 'turn.completed'), 'streamed final');
-    expect(events.some(e => e.kind === 'reply.updated' && e.conversation.messages.at(-1)?.text?.length > 0)).toBe(true);
+    expect(events.some(e => e.kind === 'reply.updated' && e.messages.at(-1)?.text?.length > 0)).toBe(true);
     expect((await chat(c.id)).messages).toEqual(final.messages);
     firstPassed = true;
     console.log(JSON.stringify({ provider: 'openai', model: 'gpt-6.1-sol', streamed: true, tool: 'upload_read', answer: final.messages.at(-1).text }));

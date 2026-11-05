@@ -130,4 +130,11 @@ func (s *Store) GetFile(_ context.Context, key string) ([]byte, error) {
 	return state.ReadFile(file)
 }
 
+func (s *Store) DeleteFile(_ context.Context, key string) error {
+	if err := s.root.Remove(key); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) Close() error { return s.root.Close() }

@@ -20,6 +20,7 @@ Production uses the existing Cloud Run service configuration:
 | `NORI_RUNTIME_URL` | Existing Go runtime base URL |
 | `IAP_AUDIENCE` | Expected audience of Google's signed IAP assertion |
 | `NORI_APP_ORIGIN` | Exact browser origin used for same-origin POST verification |
+| `OWNER_EMAIL` | The only signed-in account allowed in. Without it, only local development on loopback is let in |
 
 No project API key is needed in the web image. Keep any local project configuration in the ignored repository-root `.env`, mode 600; use existing approved server stores in production. Never bake credentials into images.
 

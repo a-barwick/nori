@@ -7,11 +7,11 @@ import { OAuth2Client } from "google-auth-library";
  *   isOwner(headers)    identify(headers) is the owner
  *   sameOrigin(request) the browser request came from this app's own origin
  *
- * Nori has one owner, so the owner is a constant. Sign-in is Google IAP today. To use another provider, replace
+ * Nori has one owner, named by OWNER_EMAIL. Without it nobody outside local development is the owner. Sign-in is Google IAP today. To use another provider, replace
  * `providerIdentity` below: it must return an email only after checking the provider's signature, audience, issuer and
  * expiry, and must never trust an unsigned header.
  */
-const OWNER = "austinbarwickdavis@gmail.com";
+const OWNER = (process.env.OWNER_EMAIL ?? "").trim().toLowerCase();
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export type Identity = { email: string };
@@ -27,12 +27,14 @@ export function localDevelopment(headers: Headers) {
 
 /** The verified caller. Local development on loopback is the owner; otherwise the provider decides. */
 export async function identify(headers: Headers): Promise<Identity | null> {
-  if (localDevelopment(headers)) return { email: OWNER };
+  if (localDevelopment(headers)) return { email: OWNER || "local-owner" };
   return providerIdentity(headers);
 }
 
 export async function isOwner(headers: Headers): Promise<boolean> {
-  return (await identify(headers))?.email === OWNER;
+  if (localDevelopment(headers)) return true;
+  const email = (await identify(headers))?.email?.toLowerCase();
+  return !!OWNER && email === OWNER;
 }
 
 export function sameOrigin(request: Request) {

@@ -87,4 +87,12 @@ func (s *Store) GetFile(ctx context.Context, key string) ([]byte, error) {
 	return state.ReadFile(reader)
 }
 
+func (s *Store) DeleteFile(ctx context.Context, key string) error {
+	err := s.client.Bucket(s.bucket).Object("artifacts/" + key).Delete(ctx)
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return nil
+	}
+	return err
+}
+
 func (s *Store) Close() error { return s.client.Close() }

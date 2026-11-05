@@ -38,6 +38,8 @@ type Artifacts interface {
 	// PutFile saves a file once under a key from ValidFileKey, and returns ErrFileExists when the key is taken.
 	PutFile(ctx context.Context, key, mediaType string, data []byte) error
 	GetFile(ctx context.Context, key string) ([]byte, error)
+	// DeleteFile removes a file; a missing file is not an error.
+	DeleteFile(ctx context.Context, key string) error
 }
 
 // Store is the run-state surface the agent steps use.

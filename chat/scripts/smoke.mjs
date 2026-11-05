@@ -9,7 +9,7 @@ if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1' || !['/', '/c
 const response = await fetch(new URL('/api/v1/capabilities', target), { headers: { 'Sec-Fetch-Site': 'same-origin' }, redirect: 'error', signal: AbortSignal.timeout(15000) });
 assert.equal(response.status, 200);
 const capability = await response.json();
-assert.equal(capability.contract, 'nori-chat-1');
+assert.equal(capability.contract, 'nori-chat-2');
 assert.equal(capability.isolated, true, 'Browser smoke must not write to a production service');
 assert.equal(capability.deterministic, true, 'Browser smoke requires the unpaid deterministic provider');
 if (!process.env.CHAT_FIXTURE_URL) assert.equal(capability.fixture, false, 'Real browser verification cannot use an offline fixture');
@@ -82,12 +82,11 @@ try {
     await page.getByLabel('Message', { exact: true }).fill(`Complete ${name} ${crypto.randomUUID().slice(0, 8)}`);
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByRole('button', { name: 'Stop reply' }).waitFor();
-    await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
-    await page.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
+    // Dropping the connection mid-reply: the page reconnects on its own and shows the saved answer.
+    await page.reload();
     const final = await until(() => snapshot(page), c => !c.activeTurn);
     assert.equal(final.messages.at(-1).status, 'completed');
     assert.ok(final.messages.at(-1).text.length > 0);
-    await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
     await page.getByText(final.messages.at(-1).text, { exact: true }).waitFor();
     await page.reload();
     await page.getByText(final.messages.at(-1).text, { exact: true }).waitFor();
@@ -99,7 +98,7 @@ try {
     await page.getByText('Stopped', { exact: true }).waitFor();
     assert.equal(await page.getByRole('article').count(), 2);
     assert.deepEqual(await snapshot(page), stopped);
-    checks.push(`${name}: chat send, render, disconnect, replay, reload, conversation isolation, layout`);
+    checks.push(`${name}: chat send, render, reconnect, reload, conversation isolation, layout`);
     if (!capability.fixture && name === 'desktop') {
       await page.getByRole('button', { name: '＋ New conversation' }).click();
       await page.getByRole('heading', { name: 'Start a conversation' }).waitFor();
