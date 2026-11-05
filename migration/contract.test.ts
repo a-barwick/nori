@@ -2,8 +2,8 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { createFixture } from './fixture';
 import { CONTRACT, PREFIX, follow, request, type Conversation, type Event } from './contract';
 
-// Default: local fixture. A future isolated service can opt into this draft contract.
-// Neither mode certifies the full migration. No production or paid providers are allowed.
+// Default: explicit offline fixture. An isolated real service can exercise the same HTTP contract.
+// Production and paid providers are not allowed in this deterministic suite.
 const external = process.env.MIGRATION_CONTRACT_URL;
 if (external) {
   const url = new URL(external);
@@ -14,15 +14,16 @@ const server = fixture ? Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: fixt
 const base = external?.replace(/\/$/, '') ?? `http://127.0.0.1:${server!.port}`;
 const controllers: AbortController[] = [];
 beforeAll(async () => {
-  const capabilities = await request<{ contract: string; mode: string; deterministic: boolean }>('/capabilities', {}, base);
+  const capabilities = await request<{ contract: string; fixture: boolean; isolated: boolean; deterministic: boolean }>('/capabilities', {}, base);
   expect(capabilities.contract).toBe(CONTRACT);
-  expect(capabilities.mode).toBe(external ? 'isolated-test' : 'fixture');
+  expect(capabilities.fixture).toBe(!external);
+  expect(capabilities.isolated).toBe(true);
   expect(capabilities.deterministic).toBe(true);
 });
 afterAll(() => { for (const c of controllers) c.abort(); fixture?.close(); server?.stop(true); });
 const create = () => request<Conversation>('/conversations', { method: 'POST' }, base);
 const snapshot = (id: string) => request<Conversation>(`/conversations/${id}`, {}, base);
-const send = (id: string, message: string, messageID = crypto.randomUUID()) => request<{ turn_id: string }>(`/conversations/${id}/turns`, { method: 'POST', body: JSON.stringify({ id: messageID, message }) }, base);
+const send = (id: string, message: string, messageID = crypto.randomUUID()) => request<{ turnId: string }>(`/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify({ id: messageID, text: message }) }, base);
 async function until(read: () => Promise<Conversation>, accept: (c: Conversation) => boolean) {
   const end = Date.now() + 5000;
   while (Date.now() < end) { const c = await read(); if (accept(c)) return c; await Bun.sleep(10); }
@@ -36,12 +37,13 @@ function watch(id: string, after: number) {
 }
 
 test('test target identifies its contract, execution mode and persistence boundary', async () => {
-  const capabilities = await request<{ contract: string; mode: string; persistence: string }>('/capabilities', {}, base);
+  const capabilities = await request<{ contract: string; fixture: boolean; isolated: boolean; persistence: string }>('/capabilities', {}, base);
   expect(capabilities.contract).toBe(CONTRACT);
-  expect(capabilities.mode).toBe(external ? 'isolated-test' : 'fixture');
+  expect(capabilities.fixture).toBe(!external);
+  expect(capabilities.isolated).toBe(true);
   expect(capabilities.persistence).toBe(external ? 'durable' : 'process-memory');
 });
-test('two conversations stream independently and reload returns the same saved fixture reply', async () => {
+test('two conversations stream independently and reload returns the same saved reply', async () => {
   const a = await create(), b = await create();
   await Promise.all([send(a.id, 'alpha-private'), send(b.id, 'beta-private')]);
   const [one, two] = await Promise.all([until(() => snapshot(a.id), c => !c.activeTurn), until(() => snapshot(b.id), c => !c.activeTurn)]);
@@ -52,10 +54,10 @@ test('two conversations stream independently and reload returns the same saved f
 test('repeated input IDs do not generate again; conflicting content is refused', async () => {
   const c = await create(), id = crypto.randomUUID();
   const first = await send(c.id, 'once', id);
-  expect(await send(c.id, 'once', id)).toEqual(first);
+  expect((await send(c.id, 'once', id)).turnId).toBe(first.turnId);
   await expect(send(c.id, 'different', id)).rejects.toThrow('409');
   const finished = await until(() => snapshot(c.id), c => !c.activeTurn);
-  expect(await send(c.id, 'once', id)).toEqual(first);
+  expect((await send(c.id, 'once', id)).turnId).toBe(first.turnId);
   expect((await snapshot(c.id)).messages).toEqual(finished.messages);
 });
 test('disconnect and cursor replay converge once to the final answer', async () => {
@@ -80,9 +82,9 @@ test('targeted stop preserves partial text while the other conversation complete
   const a = await create(), b = await create();
   const [turnA, turnB] = await Promise.all([send(a.id, 'stop this answer'), send(b.id, 'keep this other answer running')]);
   await until(() => snapshot(a.id), c => c.messages.at(-1)!.text.length > 0);
-  const cancel = (id: string, turn: string) => request<Conversation>(`/conversations/${id}/cancel`, { method: 'POST', body: JSON.stringify({ turn_id: turn }) }, base);
-  await expect(cancel(a.id, turnB.turn_id)).rejects.toThrow('409');
-  const stopped = await cancel(a.id, turnA.turn_id);
+  const cancel = (id: string, turn: string) => request<Conversation>(`/conversations/${id}/cancel`, { method: 'POST', body: JSON.stringify({ turnId: turn }) }, base);
+  await expect(cancel(a.id, turnB.turnId)).rejects.toThrow('409');
+  const stopped = await cancel(a.id, turnA.turnId);
   expect(stopped.messages.at(-1)!.status).toBe('cancelled');
   expect(stopped.messages.at(-1)!.text.length).toBeGreaterThan(0);
   await until(() => snapshot(b.id), c => !c.activeTurn);

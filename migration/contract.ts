@@ -1,21 +1,24 @@
-// Draft test contract. No existing Go route implements this API.
-export const CONTRACT = 'nori-chat-draft-1';
-export const PREFIX = '/__migration/v1';
-export type Message = { id: string; role: 'user' | 'assistant'; text: string; status: 'streaming' | 'completed' | 'cancelled' };
-export type Conversation = { id: string; title: string; mode: 'chat'; messages: Message[]; activeTurn: string | null; position: number };
-export type Event = { seq: number; kind: 'reply.updated' | 'turn.completed' | 'turn.cancelled'; conversation: Conversation };
+// Shared HTTP contract implemented by the Go service and both web clients.
+export const CONTRACT = 'nori-chat-1';
+export const PREFIX = '/v1';
+export type Attachment = { id: string; name: string; media_type: string; size: number };
+export type Capabilities = { contract: string; service: string; fixture: boolean; isolated: boolean; deterministic?: boolean; persistence?: string; provider?: string; model?: string; conversationModes: string[] };
+export type Message = { id: string; role: 'user' | 'assistant'; text: string; status: 'streaming' | 'completed' | 'cancelled' | 'failed'; attachments?: Attachment[] };
+export type Conversation = { id: string; title: string; mode: 'chat' | 'assistant'; messages: Message[]; activeTurn: string | null; position: number };
+export type Event = { seq: number; kind: 'reply.updated' | 'turn.completed' | 'turn.cancelled' | 'turn.failed' | 'input.accepted' | 'approval.required' | 'tool.updated'; conversation: Conversation };
 
-export async function request<T>(path: string, options: RequestInit = {}, base = ''): Promise<T> {
+export async function request<T>(path: string, options: RequestInit = {}, base = '/api'): Promise<T> {
   const response = await fetch(`${base}${PREFIX}${path}`, {
     ...options, headers: { 'Content-Type': 'application/json', ...options.headers },
     redirect: 'error', signal: options.signal ?? AbortSignal.timeout(10000),
   });
-  if (!response.ok) throw new Error(`Request failed (${response.status})`);
-  return response.json();
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(`${data?.error || 'Request failed'} (${response.status})`);
+  return data as T;
 }
 
 // Full-text updates, not append-only deltas: replay cannot append the same token twice.
-export async function follow(id: string, after: number, signal: AbortSignal, receive: (event: Event) => void, base = '') {
+export async function follow(id: string, after: number, signal: AbortSignal, receive: (event: Event) => void, base = '/api') {
   const response = await fetch(`${base}${PREFIX}/conversations/${encodeURIComponent(id)}/events?after=${after}`, { signal, redirect: 'error' });
   if (!response.ok || !response.headers.get('content-type')?.startsWith('text/event-stream') || !response.body) throw new Error('Event stream unavailable');
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();

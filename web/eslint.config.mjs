@@ -11,6 +11,7 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "build/**",
+    "public/chat/**", // Generated Svelte bundle, checked in chat/ before build.
     "next-env.d.ts",
   ]),
 ]);

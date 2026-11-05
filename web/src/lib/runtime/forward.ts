@@ -95,3 +95,41 @@ export async function fileRoute(request: Request, mode: Mode, path: string) {
   if (!(await allowedCaller(request, mode, sameOriginRead))) return forbidden();
   return forward(request, mode, path, {}, READ_TIMEOUT_MS, (type) => /^(application\/json|application\/pdf|application\/octet-stream|image\/(png|jpeg|webp)|text\/csv|text\/plain)/.test(type));
 }
+
+/** Additive conversation API. Each route is allowlisted; caller headers never become runtime credentials. */
+export async function conversationRoute(request: Request, mode: Mode, segments: string[]) {
+  const [id, operation] = segments;
+  const validID = id === "assistant" || /^[a-f0-9-]{36}$/.test(id || "");
+  const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && operation === "events"))));
+  const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel", "approvals"].includes(operation)));
+  if (!read && !write) return Response.json({ error: "Not found." }, { status: 404 });
+  if (!(await allowedCaller(request, mode, read ? sameOriginRead : sameOrigin))) return forbidden();
+  const query = new URLSearchParams();
+  if (operation === "events") {
+    const incoming = new URL(request.url).searchParams;
+    const after = request.headers.get("last-event-id") || incoming.get("after");
+    if (after) query.set("after", after);
+  }
+  let body: string | undefined;
+  if (write) {
+    if (Number(request.headers.get("content-length") ?? 0) > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
+    try {
+      const value = await request.text();
+      if (new TextEncoder().encode(value).length > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
+      body = value ? JSON.stringify(JSON.parse(value)) : "{}";
+    } catch { return Response.json({ error: "Request body must be JSON." }, { status: 400 }); }
+  }
+  return forward(request, mode, `v1/conversations${segments.length ? "/" + segments.map(encodeURIComponent).join("/") : ""}${query.size ? `?${query}` : ""}`,
+    write ? { method: "POST", body, headers: { "Content-Type": "application/json" } } : {}, READ_TIMEOUT_MS,
+    type => type.includes("application/json") || (read && operation === "events" && type.startsWith("text/event-stream")));
+}
+
+export async function capabilitiesRoute(request: Request, mode: Mode) {
+  if (!(await allowedCaller(request, mode, sameOriginRead))) return forbidden();
+  return forward(request, mode, "v1/capabilities", {}, READ_TIMEOUT_MS, type => type.includes("application/json"));
+}
+
+/** The built chat and the assistant select the same local service during development. */
+export function conversationMode(request: Request): Mode {
+  return localDevelopment(request.headers) && process.env.NORI_LOCAL_AGENT_URL ? "local" : "hosted";
+}

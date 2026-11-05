@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { follow, request, type Conversation } from '../../migration/contract';
+  import { follow, request, type Conversation, type Capabilities, CONTRACT } from '../../migration/contract';
 
+  let capabilities = $state<Capabilities | null>(null);
   let chats = $state<{ id: string; title: string }[]>([]);
   let current = $state<Conversation | null>(null);
   let draft = $state('');
@@ -11,7 +12,10 @@
   let stream: AbortController | null = null;
   let generation = 0;
   let retry: { id: string; message: string; conversation: string } | null = null;
-  const list = async () => { chats = await request('/conversations'); };
+  const list = async () => {
+    const result = await request<{ conversations: Conversation[] }>('/conversations');
+    chats = result.conversations.filter(c => c.mode === 'chat');
+  };
   function disconnect() { generation++; stream?.abort(); stream = null; connected = false; }
   async function select(id: string) {
     disconnect();
@@ -21,12 +25,15 @@
       const snapshot = await request<Conversation>(`/conversations/${id}`);
       if (selected !== generation) return;
       current = snapshot;
-      localStorage.setItem('nori-prep-conversation', id);
+      localStorage.setItem('nori-chat-conversation', id);
       stream = new AbortController();
       const signal = stream.signal;
       connected = true;
       void follow(id, snapshot.position, signal, event => {
-        if (selected === generation) current = event.conversation;
+        if (selected === generation) {
+          current = event.conversation;
+          chats = chats.map(chat => chat.id === id ? { ...chat, title: event.conversation.title } : chat);
+        }
       }).catch(() => {
         if (!signal.aborted && selected === generation) { connected = false; error = 'Connection lost. Reconnect to recover the saved reply.'; }
       });
@@ -44,7 +51,7 @@
     const message = draft.trim();
     if (!retry || retry.message !== message || retry.conversation !== id) retry = { id: crypto.randomUUID(), message, conversation: id };
     try {
-      await request(`/conversations/${id}/turns`, { method: 'POST', body: JSON.stringify({ id: retry.id, message }) });
+      await request(`/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify({ id: retry.id, text: message }) });
       retry = null; draft = ''; await list();
       if (current?.id === id) await select(id);
     } catch (e) { error = `${String(e)}. Send again to retry the same message.`; }
@@ -53,14 +60,19 @@
   async function stop() {
     if (!current?.activeTurn) return;
     const id = current.id;
-    try { await request(`/conversations/${id}/cancel`, { method: 'POST', body: JSON.stringify({ turn_id: current.activeTurn }) }); }
+    try {
+      const saved = await request<Conversation>(`/conversations/${id}/cancel`, { method: 'POST', body: JSON.stringify({ turnId: current.activeTurn }) });
+      if (current?.id === id) current = saved;
+    }
     catch (e) { error = String(e); }
   }
   onMount(() => {
     void (async () => {
       try {
+        capabilities = await request<Capabilities>('/capabilities');
+        if (capabilities.contract !== CONTRACT) throw new Error('The service uses an incompatible chat contract.');
         await list();
-        const saved = localStorage.getItem('nori-prep-conversation');
+        const saved = localStorage.getItem('nori-chat-conversation');
         const id = chats.find(c => c.id === saved)?.id ?? chats[0]?.id;
         if (id) await select(id); else await create();
       } catch (e) { error = String(e); }
@@ -69,7 +81,7 @@
   });
 </script>
 
-<svelte:head><meta name="description" content="Local chat fixture for preparing Nori's shared service migration"></svelte:head>
+<svelte:head><meta name="description" content="Independent conversations with Nori"></svelte:head>
 
 <div class="shell">
   <aside>
@@ -80,22 +92,22 @@
         <button class:active={current?.id === chat.id} onclick={() => select(chat.id)} disabled={sending}>{chat.title}</button>
       {/each}
     </nav>
-    <p class="aside-note">Local preparation<br>No model connection</p>
+    <div class="aside-note"><a href="/">Open assistant</a><p>{capabilities?.fixture ? "Offline fixture · scripted replies" : "Independent conversations"}</p></div>
   </aside>
   <main>
     <header>
-      <div><h1>{current?.title ?? 'Chat'}</h1><p>Scripted fixture · resets when the server restarts</p></div>
+      <div><h1>{current?.title ?? 'Chat'}</h1><p>{capabilities?.fixture ? "Offline fixture · resets when the server restarts" : "Saved by Nori"}</p></div>
       <button onclick={() => connected ? disconnect() : current && select(current.id)} disabled={!current}>{connected ? 'Disconnect' : 'Reconnect'}</button>
     </header>
     <section class="messages" aria-label="Messages" aria-live="polite" aria-busy={!!current?.activeTurn}>
       {#if !current?.messages.length}
-        <div class="empty"><div class="mark">n</div><h2>Try a conversation</h2><p>Send a message, stop a reply, or reconnect.<br>Responses are scripted for testing.</p></div>
+        <div class="empty"><div class="mark">n</div><h2>Start a conversation</h2><p>{capabilities?.fixture ? "Responses are scripted for offline testing." : "What would you like to talk about?"}</p></div>
       {/if}
       {#each current?.messages ?? [] as message (message.id)}
         <article class:user={message.role === 'user'}>
-          <div class="role">{message.role === 'user' ? 'You' : 'Chat fixture'}</div>
+          <div class="role">{message.role === 'user' ? 'You' : 'Nori'}</div>
           <p>{message.text || 'Starting reply…'}</p>
-          {#if message.status !== 'completed'}<small>{message.status === 'cancelled' ? 'Stopped' : 'Responding…'}</small>{/if}
+          {#if message.status !== 'completed'}<small>{message.status === 'cancelled' ? 'Stopped' : message.status === 'failed' ? 'Reply interrupted' : 'Responding…'}</small>{/if}
         </article>
       {/each}
     </section>
@@ -106,7 +118,7 @@
         <textarea id="message" bind:value={draft} maxlength="4000" placeholder="Write a message…" rows="2" disabled={sending}></textarea>
         {#if current?.activeTurn}<button type="button" onclick={stop}>Stop reply</button>{:else}<button class="send" type="submit" disabled={!draft.trim() || sending || !connected}>Send</button>{/if}
       </form>
-      <p class="footnote">{connected ? 'Connected to local fixture' : 'Disconnected'} · No tools or external actions</p>
+      <p class="footnote">{connected ? (capabilities?.fixture ? 'Connected to offline fixture' : 'Connected to Nori') : 'Disconnected'}</p>
     </footer>
   </main>
 </div>
