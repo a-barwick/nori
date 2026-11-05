@@ -76,7 +76,7 @@ export async function readRoute(request: Request, mode: Mode, name: string) {
 }
 
 /** `POST /v1/uploads`. The whole file is read here first, so a dropped upload never reaches the service. */
-export async function uploadRoute(request: Request, mode: Mode) {
+export async function uploadRoute(request: Request, mode: Mode, path = "v1/uploads") {
   if (!(await allowedCaller(request, mode, sameOrigin))) return forbidden();
   if (Number(request.headers.get("content-length") ?? 0) > MAX_UPLOAD_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
   const incoming = new URL(request.url).searchParams;
@@ -86,7 +86,7 @@ export async function uploadRoute(request: Request, mode: Mode) {
     return Response.json({ error: "The upload was interrupted, so nothing was saved. Try again.", retryable: true }, { status: 400 });
   }
   if (body.byteLength > MAX_UPLOAD_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
-  return forward(request, mode, `v1/uploads?${query}`, { method: "POST", body, headers: { "Content-Type": request.headers.get("content-type") || "application/octet-stream" } },
+  return forward(request, mode, `${path}?${query}`, { method: "POST", body, headers: { "Content-Type": request.headers.get("content-type") || "application/octet-stream" } },
     UPLOAD_TIMEOUT_MS, (type) => type.includes("application/json"));
 }
 
@@ -100,6 +100,11 @@ export async function fileRoute(request: Request, mode: Mode, path: string) {
 export async function conversationRoute(request: Request, mode: Mode, segments: string[]) {
   const [id, operation] = segments;
   const validID = id === "assistant" || /^[a-f0-9-]{36}$/.test(id || "");
+  if (validID && operation === "uploads") {
+    const path = `v1/conversations/${encodeURIComponent(id)}/uploads`;
+    if (segments.length === 2 && request.method === "POST") return uploadRoute(request, mode, path);
+    if (segments.length === 3 && /^[a-f0-9-]{36}$/.test(segments[2]) && request.method === "GET") return fileRoute(request, mode, `${path}/${segments[2]}`);
+  }
   const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && operation === "events"))));
   const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel", "approvals"].includes(operation)));
   if (!read && !write) return Response.json({ error: "Not found." }, { status: 404 });

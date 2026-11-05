@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { follow, request, type Conversation, type Capabilities, CONTRACT } from '../../migration/contract';
+  import { follow, request, type Conversation, type Capabilities, type Attachment, CONTRACT } from '../../migration/contract';
 
   let capabilities = $state<Capabilities | null>(null);
   let chats = $state<{ id: string; title: string }[]>([]);
@@ -9,15 +9,19 @@
   let error = $state('');
   let connected = $state(false);
   let sending = $state(false);
+  let uploading = $state(false);
+  let files = $state<Attachment[]>([]);
+  let deciding = $state('');
   let stream: AbortController | null = null;
   let generation = 0;
-  let retry: { id: string; message: string; conversation: string } | null = null;
+  let retry: { id: string; message: string; conversation: string; attachments: string[] } | null = null;
   const list = async () => {
     const result = await request<{ conversations: Conversation[] }>('/conversations');
     chats = result.conversations.filter(c => c.mode === 'chat');
   };
   function disconnect() { generation++; stream?.abort(); stream = null; connected = false; }
   async function select(id: string) {
+    if (current?.id !== id) files = [];
     disconnect();
     const selected = generation;
     error = '';
@@ -30,7 +34,7 @@
       const signal = stream.signal;
       connected = true;
       void follow(id, snapshot.position, signal, event => {
-        if (selected === generation) {
+        if (selected === generation && event.conversation.position >= (current?.position ?? 0)) {
           current = event.conversation;
           chats = chats.map(chat => chat.id === id ? { ...chat, title: event.conversation.title } : chat);
         }
@@ -45,14 +49,15 @@
   }
   async function send(event: SubmitEvent) {
     event.preventDefault();
-    if (!current || current.activeTurn || sending || !draft.trim()) return;
+    if (!current || current.activeTurn || sending || uploading || !draft.trim()) return;
     sending = true; error = '';
     const id = current.id;
     const message = draft.trim();
-    if (!retry || retry.message !== message || retry.conversation !== id) retry = { id: crypto.randomUUID(), message, conversation: id };
+    const attachments = files.map(file => file.id);
+    if (!retry || retry.message !== message || retry.conversation !== id || JSON.stringify(retry.attachments) !== JSON.stringify(attachments)) retry = { id: crypto.randomUUID(), message, conversation: id, attachments };
     try {
-      await request(`/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify({ id: retry.id, text: message }) });
-      retry = null; draft = ''; await list();
+      await request(`/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify({ id: retry.id, text: message, ...(files.length ? { attachments: files.map(file => file.id) } : {}) }) });
+      retry = null; draft = ''; files = []; await list();
       if (current?.id === id) await select(id);
     } catch (e) { error = `${String(e)}. Send again to retry the same message.`; }
     finally { sending = false; }
@@ -62,9 +67,34 @@
     const id = current.id;
     try {
       const saved = await request<Conversation>(`/conversations/${id}/cancel`, { method: 'POST', body: JSON.stringify({ turnId: current.activeTurn }) });
-      if (current?.id === id) current = saved;
+      if (current?.id === id && saved.position >= current.position) current = saved;
     }
     catch (e) { error = String(e); }
+  }
+  async function attach(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0]; input.value = '';
+    if (!file || !current) return;
+    if (file.size > 10 * 1024 * 1024) { error = 'A file can be at most 10 MB.'; return; }
+    const id = current.id;
+    uploading = true; error = '';
+    try {
+      const query = new URLSearchParams({ id: crypto.randomUUID(), filename: file.name });
+      const response = await fetch(`/api/v1/conversations/${id}/uploads?${query}`, { method: 'POST', headers: { 'Content-Type': file.type || 'text/csv' }, body: file, redirect: 'error', signal: AbortSignal.timeout(30000) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `Upload failed (${response.status})`);
+      if (current?.id === id) files = [...files, result];
+    } catch (e) { error = String(e); }
+    finally { uploading = false; }
+  }
+  async function decide(questionId: string, decision: 'approve' | 'decline') {
+    if (!current || deciding) return;
+    const id = current.id; deciding = questionId; error = '';
+    try {
+      const saved = await request<Conversation>(`/conversations/${id}/approvals`, { method: 'POST', body: JSON.stringify({ questionId, decision }) });
+      if (current?.id === id && saved.position >= current.position) current = saved;
+    } catch (e) { error = String(e); }
+    finally { deciding = ''; }
   }
   onMount(() => {
     void (async () => {
@@ -106,17 +136,29 @@
       {#each current?.messages ?? [] as message (message.id)}
         <article class:user={message.role === 'user'}>
           <div class="role">{message.role === 'user' ? 'You' : 'Nori'}</div>
-          <p>{message.text || 'Starting reply…'}</p>
+          <p>{message.text || (message.operations?.length ? '' : 'Starting reply…')}</p>
+          {#if message.attachments?.length}<ul aria-label="Message attachments">{#each message.attachments as file}<li><a href={`/api/v1/conversations/${current?.id}/uploads/${file.id}`} target="_blank" rel="noreferrer">{file.name}</a></li>{/each}</ul>{/if}
+          {#each message.operations ?? [] as operation (operation.id)}
+            {#if operation.outcome === 'prepared' && operation.action}
+              <div class="approval" role="group" aria-label="Action approval">
+                <p>{operation.action.text}</p>
+                <button onclick={() => decide(operation.action!.question_id, 'approve')} disabled={!!deciding}>Approve this action</button>
+                <button onclick={() => decide(operation.action!.question_id, 'decline')} disabled={!!deciding}>Decline</button>
+              </div>
+            {:else}<small>{operation.name}: {operation.outcome}</small>{/if}
+          {/each}
           {#if message.status !== 'completed'}<small>{message.status === 'cancelled' ? 'Stopped' : message.status === 'failed' ? 'Reply interrupted' : 'Responding…'}</small>{/if}
         </article>
       {/each}
     </section>
     <footer>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
+      {#if files.length}<ul class="files" aria-label="Attached files">{#each files as file}<li>{file.name} <button aria-label={`Remove ${file.name}`} onclick={() => files = files.filter(f => f.id !== file.id)}>Remove</button></li>{/each}</ul>{/if}
+      {#if !capabilities?.fixture}<label class="attach">{uploading ? 'Uploading…' : 'Attach CSV'}<input aria-label="Attach CSV" type="file" accept=".csv,text/csv" onchange={attach} disabled={!current || uploading || sending || !!current.activeTurn} /></label>{/if}
       <form onsubmit={send}>
         <label class="sr-only" for="message">Message</label>
         <textarea id="message" bind:value={draft} maxlength="4000" placeholder="Write a message…" rows="2" disabled={sending}></textarea>
-        {#if current?.activeTurn}<button type="button" onclick={stop}>Stop reply</button>{:else}<button class="send" type="submit" disabled={!draft.trim() || sending || !connected}>Send</button>{/if}
+        {#if current?.activeTurn}<button type="button" onclick={stop}>Stop reply</button>{:else}<button class="send" type="submit" disabled={!draft.trim() || sending || uploading || !connected}>Send</button>{/if}
       </form>
       <p class="footnote">{connected ? (capabilities?.fixture ? 'Connected to offline fixture' : 'Connected to Nori') : 'Disconnected'}</p>
     </footer>
@@ -125,6 +167,7 @@
 
 <style>
   :global(*){box-sizing:border-box} :global(body){margin:0;background:#f8f7f4;color:#242a27;font:15px/1.5 system-ui,sans-serif} :global(button),:global(textarea){font:inherit} :global(button){cursor:pointer} :global(button:disabled){cursor:default;opacity:.45} :global(button:focus-visible),:global(textarea:focus-visible){outline:2px solid #4e7762;outline-offset:3px}
+  .attach{display:block;font-size:12px;margin:0 0 8px}.attach input{font-size:12px;margin-left:8px;max-width:240px}.approval{border:1px solid #a8b7a1;padding:12px;border-radius:8px;margin:8px 0}.approval button{margin-right:8px}.files{font-size:12px;padding-left:18px}.files button{font-size:11px}a{color:inherit}
   .shell{display:grid;grid-template-columns:250px minmax(0,1fr);min-height:100dvh} aside{background:#eeede7;border-right:1px solid #ddddd4;padding:28px 18px;display:flex;flex-direction:column;gap:24px}.brand{font-size:24px;font-weight:650;padding:0 10px}.brand span{font-weight:400;color:#656d65;margin-left:5px}.new,header button{background:transparent;border:1px solid #c9cec5;border-radius:8px;padding:9px 12px}nav{display:flex;flex-direction:column;gap:5px}nav button{border:0;background:transparent;text-align:left;border-radius:7px;padding:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}nav button.active{background:#dfe5dc}.aside-note{margin-top:auto;font-size:12px;color:#646c62;padding:10px}main{display:flex;flex-direction:column;min-width:0;max-height:100dvh}header{padding:23px 32px;border-bottom:1px solid #e0e2da;display:flex;gap:16px;justify-content:space-between;align-items:center}h1{font-size:16px;margin:0;font-weight:600;overflow-wrap:anywhere}header p{font-size:12px;color:#6b7169;margin:4px 0 0}header button{font-size:12px;flex-shrink:0}.messages{flex:1;overflow:auto;padding:30px max(24px,calc((100% - 760px)/2));min-height:200px}.empty{margin:8vh auto;text-align:center;color:#626d62}.mark{font-family:Georgia,serif;font-style:italic;font-size:48px;color:#456a50}.empty h2{font-size:24px;color:#303e31;font-weight:500;margin:14px 0}.empty p{font-size:14px}article{margin-bottom:25px;overflow-wrap:anywhere}article p{white-space:pre-wrap;margin:7px 0}.role{font-size:12px;font-weight:650;color:#657160}.user{background:#e9eee6;padding:16px 20px;border-radius:12px;margin-left:12%}small{color:#70766e}footer{padding:15px max(24px,calc((100% - 760px)/2)) 20px}form{display:flex;gap:12px;align-items:flex-end;border:1px solid #cbd3c7;background:#fff;border-radius:12px;padding:12px}textarea{flex:1;min-width:0;resize:vertical;max-height:180px;border:0;background:transparent;color:inherit}form button{border:0;border-radius:7px;padding:9px 15px;background:#e4e9df}.send{background:#365640;color:#fff}.footnote{font-size:11px;color:#70766e;text-align:center;margin:9px 0 0}.error{color:#963928;font-size:13px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
   @media(max-width:640px){.shell{grid-template-columns:1fr}aside{padding:14px;gap:12px;border-right:0;border-bottom:1px solid #ddd}.brand{font-size:20px}nav{max-height:105px;overflow:auto}.aside-note{display:none}main{max-height:none;min-height:65dvh}header{padding:16px;align-items:flex-start}.messages{padding:20px 16px;max-height:55dvh}footer{padding:12px 16px}.empty{margin:25px auto}.user{margin-left:5%}}
 </style>
