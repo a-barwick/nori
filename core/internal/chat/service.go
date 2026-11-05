@@ -549,8 +549,7 @@ func (s *Service) executeWrite(ctx context.Context, id, turn string, selected st
 					op.Result = result
 					if c.ActiveTurn != nil && *c.ActiveTurn == turn {
 						m.Status = "completed"
-						b, _ := json.Marshal(result)
-						m.Text = string(b)
+						m.Text = writeOutcomeText(selected.Name, outcome)
 						c.ActiveTurn = nil
 						c.Started = ""
 					}
@@ -647,4 +646,25 @@ func (s *Service) recoverCancelled(ctx context.Context, id, operation string) {
 			}
 		}
 	}
+}
+
+func writeOutcomeText(tool, outcome string) string {
+	switch outcome {
+	case agent.WriteConfirmed:
+		switch tool {
+		case "calendar_create":
+			return "The event was added to your calendar."
+		case "calendar_move":
+			return "The calendar event was moved."
+		case "email_send":
+			return "The email was sent."
+		}
+	case agent.WriteSubmitted:
+		return "The provider accepted the action. Nori could not verify its final state."
+	case agent.WriteUncertain:
+		return "Nori could not verify whether the action happened. It will not be repeated automatically."
+	case agent.WriteFailed:
+		return "The action failed. Check its recorded result for details."
+	}
+	return "Nori could not verify the action's outcome."
 }

@@ -46,7 +46,7 @@ journey('read-only calendar tool is shared and writes consume one exact approval
  await h.stop();await h.start();const saved=await snapshot(a.id);expect(saved.activeTurn).toBe(waiting.activeTurn);expect(saved.messages.at(-1).operations.at(-1).action.question_id).toBe(op.action.question_id);
  await request(`conversations/${c.id}/approvals`,{questionId:op.action.question_id,decision:'approve'},409);
  const attempts=await Promise.all([1,2].map(()=>fetch(`${h.address}/v1/conversations/${a.id}/approvals`,{method:'POST',headers,body:JSON.stringify({questionId:op.action.question_id,decision:'approve'})})));expect(attempts.map(r=>r.status).sort()).toEqual([200,409]);
- const final=await done(a.id);expect(final.messages.at(-1).operations.at(-1).outcome).toBe('confirmed');expect(h.sent).toHaveLength(1);
+ const final=await done(a.id);expect(final.messages.at(-1).operations.at(-1).outcome).toBe('confirmed');expect(final.messages.at(-1).text).toBe('The event was added to your calendar.');expect(h.sent).toHaveLength(1);
 },60000);
 journey('hosted wake retries a foreign lease until interrupted streaming is durably closed without replay',async()=>{
  const c=await create();const id=crypto.randomUUID();await message(c.id,'slow stream crash marker',id);
