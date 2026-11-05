@@ -42,9 +42,41 @@ journey('scoped upload bytes and assignment reach foreground CSV tool without cr
 },60000);
 journey('read-only calendar tool is shared and writes consume one exact approval across a restart',async()=>{
  const c=await create();await message(c.id,'Read my calendar');const read=await done(c.id);expect(read.messages.at(-1).operations[0].name).toBe('calendar_read');
- const a=await create();await message(a.id,'Create a calendar event');const waiting=await until(()=>snapshot(a.id),c=>c.messages.at(-1)?.operations?.at(-1)?.outcome==='prepared','approval');const op=waiting.messages.at(-1).operations.at(-1);expect(h.sent).toHaveLength(0);
+ const a=await create();await message(a.id,'Create a calendar event for approval race');const waiting=await until(()=>snapshot(a.id),c=>c.messages.at(-1)?.operations?.at(-1)?.outcome==='prepared','approval');const op=waiting.messages.at(-1).operations.at(-1);expect(h.sent).toHaveLength(0);
  await h.stop();await h.start();const saved=await snapshot(a.id);expect(saved.activeTurn).toBe(waiting.activeTurn);expect(saved.messages.at(-1).operations.at(-1).action.question_id).toBe(op.action.question_id);
  await request(`conversations/${c.id}/approvals`,{questionId:op.action.question_id,decision:'approve'},409);
  const attempts=await Promise.all([1,2].map(()=>fetch(`${h.address}/v1/conversations/${a.id}/approvals`,{method:'POST',headers,body:JSON.stringify({questionId:op.action.question_id,decision:'approve'})})));expect(attempts.map(r=>r.status).sort()).toEqual([200,409]);
  const final=await done(a.id);expect(final.messages.at(-1).operations.at(-1).outcome).toBe('confirmed');expect(h.sent).toHaveLength(1);
+},60000);
+journey('hosted wake retries a foreign lease until interrupted streaming is durably closed without replay',async()=>{
+ const c=await create();const id=crypto.randomUUID();await message(c.id,'slow stream crash marker',id);
+ const partial=await until(()=>snapshot(c.id),c=>c.messages.at(-1).text.length>5,'crash partial');const count=h.requests.filter(r=>r.stream&&r.messages.some(m=>m.content==='slow stream crash marker')).length;
+ await h.stop('SIGKILL');await h.start();
+ const process=await fetch(h.address+'/api/process',{method:'POST',headers,body:'{}'});expect(process.status).toBe(503);
+ const recovered=await done(c.id);expect(recovered.messages.at(-1).status).toBe('failed');expect(recovered.messages.at(-1).text).toBe(partial.messages.at(-1).text);
+ expect(h.requests.filter(r=>r.stream&&r.messages.some(m=>m.content==='slow stream crash marker')).length).toBe(count);
+ await message(c.id,'slow stream crash marker',id);expect((await snapshot(c.id)).messages.filter(m=>m.role==='user')).toHaveLength(1);
+},60000);
+journey('Stop then process death preserves an attempted write and recovers by provider read without sending twice',async()=>{
+ const c=await create();await message(c.id,'Create a calendar event for crash recovery');
+ const waiting=await until(()=>snapshot(c.id),c=>c.messages.at(-1)?.operations?.at(-1)?.outcome==='prepared','prepared write');const op=waiting.messages.at(-1).operations.at(-1);const sent=h.sent.length;h.holdWrites=true;
+ await request(`conversations/${c.id}/approvals`,{questionId:op.action.question_id,decision:'approve'});
+ await until(()=>h.sent.length,n=>n===sent+1,'provider attempted write');await request(`conversations/${c.id}/cancel`,{turnId:waiting.activeTurn});
+ await h.stop('SIGKILL');h.releaseWrites();await h.start();
+ await message(c.id,'Create a calendar event with another pending approval');
+ const newer=await until(()=>snapshot(c.id),c=>c.messages.at(-1)?.operations?.at(-1)?.outcome==='prepared','newer pending approval');
+ const cancelledTurn=c=>c.messages.find(m=>m.id===waiting.activeTurn+'-assistant');
+ const recovered=await until(()=>snapshot(c.id),c=>cancelledTurn(c).operations.at(-1).outcome==='confirmed','read-only write recovery',45000);
+ expect(recovered.activeTurn).toBe(newer.activeTurn);expect(cancelledTurn(recovered).status).toBe('cancelled');expect(cancelledTurn(recovered).operations.at(-1).action.digest).toBe(op.action.digest);expect(h.sent).toHaveLength(sent+1);
+ await request(`conversations/${c.id}/cancel`,{turnId:newer.activeTurn});
+},60000);
+
+journey('global tool pause fences chat tool admission while ordinary conversation and Stop remain available',async()=>{
+ const control=paused=>fetch(h.documents+'/system/control',{method:'PATCH',headers,body:JSON.stringify({fields:{paused:{booleanValue:paused}}})});
+ await control(true);
+ try{
+ const c=await create();await message(c.id,'ordinary conversation while paused');expect((await done(c.id)).messages.at(-1).status).toBe('completed');
+ await message(c.id,'Read my calendar');expect((await done(c.id)).messages.at(-1).status).toBe('failed');
+ const input=crypto.randomUUID();await message(c.id,'slow stream pause stop',input);await until(()=>snapshot(c.id),c=>c.messages.at(-1).text.length>5,'partial paused chat');expect((await request(`conversations/${c.id}/cancel`,{turnId:input})).messages.at(-1).status).toBe('cancelled');
+ }finally{await control(false)}
 },60000);

@@ -118,6 +118,10 @@ func (s *server) chatCancel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if err = s.wakeConversation(r.Context()); err != nil {
+		writeJSON(w, 503, map[string]any{"accepted": true, "conversation": c, "error": "Stop is saved; delivery unavailable."})
+		return
+	}
 	writeJSON(w, 200, c)
 }
 func (s *server) chatApproval(w http.ResponseWriter, r *http.Request) {

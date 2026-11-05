@@ -20,7 +20,7 @@ export async function createHarness(options={}) {
  const directory=options.directory??mkdtempSync(resolve(tmpdir(),'nori-shared-'));
  const database=options.database??`nori-shared-${crypto.randomUUID().slice(0,8)}`;
  const deployment=options.deployment??database;
- const requests=[],sent=[],events=new Map();let api,worker,apiLogs='';
+ const requests=[],sent=[],events=new Map();let api,worker,apiLogs='';let holdWrites=false;const heldWrites=[];
  const server=createServer(async(req,res)=>{try{
  const url=new URL(req.url,'http://local');
  if(url.pathname==='/__requests')return json(res,200,requests);
@@ -28,7 +28,7 @@ export async function createHarness(options={}) {
  if(url.pathname==='/jev')return json(res,503,{error:'deterministic classifier unavailable'});
  if(url.pathname==='/token')return json(res,200,{access_token:'isolated',token_type:'Bearer',expires_in:3600});
  if(url.pathname.startsWith('/calendar/')){
- if(req.method==='POST'){const value=await body(req);sent.push(value);events.set(value.id,value);return json(res,200,value)}
+ if(req.method==='POST'){const value=await body(req);sent.push(value);events.set(value.id,value);if(holdWrites){heldWrites.push(()=>json(res,200,value));return};return json(res,200,value)}
  if(/\/events\/[^/]+$/.test(url.pathname)){const value=events.get(url.pathname.split('/').at(-1));return json(res,value?200:404,value??{})}
  return json(res,200,{items:[]});
  }
@@ -50,7 +50,7 @@ export async function createHarness(options={}) {
  const meta=request.messages?.findLast(m=>String(m.content).startsWith('Assigned attachments'))?.content??'';
  const id=meta.match(/"id":"([a-f0-9-]+)"/)?.[1];actions=[{name:'upload_read',arguments:{upload_id:id??'00000000-0000-0000-0000-000000000000'}}];text='';
  }else if(/calendar read|read.*calendar/i.test(last)){actions=[{name:'calendar_read',arguments:{start:'2026-11-05T00:00:00Z',end:'2026-11-06T00:00:00Z'}}];text=''}
- else if(/create.*calendar|calendar.*create/i.test(last)){actions=[{name:'calendar_create',arguments:{title:'Scoped chat event',start:'2026-11-06T10:00:00-08:00',end:'2026-11-06T11:00:00-08:00',description:'Isolated shared service',private:'true'}}];text=''}
+ else if(/create.*calendar|calendar.*create/i.test(last)){actions=[{name:'calendar_create',arguments:{title:last.slice(0,120),start:'2026-11-06T10:00:00-08:00',end:'2026-11-06T11:00:00-08:00',description:'Isolated shared service',private:'true'}}];text=''}
  if(/slow|cancel|stop|long|stream/i.test(last)&&!actions.length)text='Streaming partial answer. '+('This is the retained text. '.repeat(80));
  }
  const content=request.response_format?JSON.stringify({actions,text}):text;
@@ -82,6 +82,6 @@ export async function createHarness(options={}) {
  }
  async function stopWorker(){if(worker&&worker.exitCode===null){worker.kill('SIGTERM');await worker.exited};worker=null}
  async function close(){await stop();await stopWorker();server.closeAllConnections();await new Promise(done=>server.close(done))}
- return {address,provider,database,documents,directory,env,requests,sent,events,start,stop,startWorker,stopWorker,close,get logs(){return apiLogs},get api(){return api},binary};
+ return {address,provider,database,documents,directory,env,requests,sent,events,start,stop,startWorker,stopWorker,close,set holdWrites(value){holdWrites=value},releaseWrites(){holdWrites=false;for(const send of heldWrites.splice(0))send()},get logs(){return apiLogs},get api(){return api},binary};
 }
-if(import.meta.main){const h=await createHarness({binary:process.env.NORI_SHARED_BINARY,database:process.env.NORI_SHARED_DATABASE,port:Number(process.env.NORI_SHARED_PORT)||undefined});if(process.env.NORI_SHARED_WORKER==='1')await h.startWorker();console.log(JSON.stringify({address:h.address,provider:h.provider,database:h.database,directory:h.directory,binary:h.binary}));process.on('SIGTERM',async()=>{await h.close();process.exit(0)});process.on('SIGINT',async()=>{await h.close();process.exit(0)})}
+if(import.meta.main){const h=await createHarness({directory:process.env.NORI_SHARED_DIRECTORY,binary:process.env.NORI_SHARED_BINARY,database:process.env.NORI_SHARED_DATABASE,port:Number(process.env.NORI_SHARED_PORT)||undefined});if(process.env.NORI_SHARED_WORKER==='1')await h.startWorker();console.log(JSON.stringify({address:h.address,provider:h.provider,database:h.database,directory:h.directory,binary:h.binary}));process.on('SIGTERM',async()=>{await h.close();process.exit(0)});process.on('SIGINT',async()=>{await h.close();process.exit(0)})}

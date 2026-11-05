@@ -75,6 +75,15 @@ func (s *Service) Accept(ctx context.Context, id, input, text string, attachment
 		if len(c.Messages) >= 64 || size > 96<<10 {
 			return "", fmt.Errorf("this chat reached its context limit; start a new chat")
 		}
+		if len(c.Messages) == 0 && c.Title == "New chat" {
+			title := []rune(text)
+			if len(title) > 48 {
+				title = title[:48]
+			}
+			if len(title) > 0 {
+				c.Title = string(title)
+			}
+		}
 		c.ActiveTurn = &input
 		c.Started = ""
 		c.LeaseUntil = time.Time{}
@@ -92,18 +101,19 @@ func (s *Service) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	for _, c := range chats {
-		if c.ActiveTurn == nil {
-			for _, m := range c.Messages {
-				for _, op := range m.Operations {
-					if op.Action != nil && op.Outcome == "attempted" && !op.LeaseUntil.After(time.Now()) {
-						s.recoverCancelled(ctx, c.ID, op.ID)
-					}
+		for _, m := range c.Messages {
+			for _, op := range m.Operations {
+				current := c.ActiveTurn != nil && m.ID == *c.ActiveTurn+"-assistant"
+				if !current && op.Action != nil && op.Outcome == "attempted" && !op.LeaseUntil.After(time.Now()) {
+					s.recoverCancelled(ctx, c.ID, op.ID)
 				}
 			}
-			continue
 		}
-		s.launch(ctx, c.ID, *c.ActiveTurn)
+		if c.ActiveTurn != nil {
+			s.launch(ctx, c.ID, *c.ActiveTurn)
+		}
 	}
 	return nil
 }
@@ -197,6 +207,9 @@ func (s *Service) finish(id, turn, status string) {
 		}
 		m := &c.Messages[len(c.Messages)-1]
 		m.Status = status
+		if status == "failed" && m.Text == "" {
+			m.Text = "This reply could not finish. Your message is saved."
+		}
 		c.ActiveTurn = nil
 		c.Started = ""
 		c.LeaseUntil = time.Time{}
@@ -257,13 +270,13 @@ func (s *Service) run(ctx context.Context, id, turn string) {
 				return "", state.ErrConversationBusy
 			}
 			if op.Action != nil && (op.Outcome == "approved" || op.Outcome == "attempted") {
-				if op.Outcome == "attempted" && c.LeaseUntil.After(time.Now()) {
+				if op.Outcome == "attempted" && op.LeaseUntil.After(time.Now()) {
 					return "", state.ErrConversationBusy
 				}
 				recoverWrite = op.Outcome == "attempted"
 				op.Outcome = "attempted"
 				op.Owner = s.owner
-				op.LeaseUntil = time.Now().Add(time.Minute)
+				op.LeaseUntil = time.Now().Add(30 * time.Second)
 				copy := *op
 				write = &copy
 			}
@@ -399,6 +412,12 @@ func (s *Service) run(ctx context.Context, id, turn string) {
 		}
 		op := state.ChatOperation{OperationRecord: state.OperationRecord{ID: uuid.NewString(), CallID: call.ID, Name: tc.Name, EffectClass: "read", Outcome: "attempted"}}
 		if agent.WriteEffect(tc.Name) != "" {
+			control, e := s.Store.Control(ctx)
+			if e != nil || control.Check() != nil {
+				s.finish(id, turn, "failed")
+				return
+			}
+			op.EffectClass = agent.WriteEffect(tc.Name)
 			prepared, e := s.Tools.PrepareWrite(ctx, tc.Name, args)
 			if e != nil {
 				s.finish(id, turn, "failed")
@@ -419,6 +438,7 @@ func (s *Service) run(ctx context.Context, id, turn string) {
 		}
 		c, err = s.update(ctx, id, turn, "tool.updated", func(m *state.ChatMessage) { m.Operations = append(m.Operations, op) })
 		if err != nil {
+			s.finish(id, turn, "failed")
 			return
 		}
 		if op.Outcome == "prepared" {
@@ -609,7 +629,7 @@ func (s *Service) recoverCancelled(ctx context.Context, id, operation string) {
 				op := &c.Messages[mi].Operations[oi]
 				if op.ID == operation && op.Outcome == "attempted" && op.Action != nil && !op.LeaseUntil.After(time.Now()) {
 					op.Owner = s.owner
-					op.LeaseUntil = time.Now().Add(time.Minute)
+					op.LeaseUntil = time.Now().Add(30 * time.Second)
 					return "tool.updated", nil
 				}
 			}

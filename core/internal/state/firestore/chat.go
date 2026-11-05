@@ -56,12 +56,40 @@ func (d *Database) UpdateChat(ctx context.Context, id string, change func(*state
 		if c.Messages == nil {
 			c.Messages = []state.ChatMessage{}
 		}
+		prior := map[string]string{}
+		for _, m := range c.Messages {
+			for _, op := range m.Operations {
+				prior[op.ID] = op.Outcome
+			}
+		}
 		kind, err := change(&c)
 		if err != nil {
 			return err
 		}
 		if kind == "" {
 			return nil
+		}
+		// Tool admission shares the global pause fence with background tasks.
+		startsTool := false
+		for _, m := range c.Messages {
+			for _, op := range m.Operations {
+				if op.Outcome == "attempted" && prior[op.ID] != "attempted" {
+					startsTool = true
+				}
+			}
+		}
+		if startsTool {
+			doc, e := tx.Get(d.control())
+			if e != nil {
+				return e
+			}
+			var control state.Control
+			if e = doc.DataTo(&control); e != nil {
+				return e
+			}
+			if e = control.Check(); e != nil {
+				return e
+			}
 		}
 		encoded, _ := json.Marshal(c)
 		if len(encoded) > 512<<10 {

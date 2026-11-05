@@ -127,6 +127,8 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 func writeError(w http.ResponseWriter, err error) {
 	status := 502
 	switch {
+	case errors.Is(err, state.ErrUploadType):
+		status = 415
 	case errors.Is(err, state.ErrPaused):
 		status = 403
 	case errors.Is(err, state.ErrNotFound):
