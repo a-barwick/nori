@@ -17,8 +17,8 @@
     {
       "issue": "https://linear.app/a-barwick/issue/AB-291",
       "suite": "8",
-      "status": "unresolved",
-      "summary": "Existing attachment fixture selects message IDs as upload IDs. Revision journeys also fail. No runtime or existing test assertions changed by preparation."
+      "status": "repaired",
+      "summary": "Repaired fixture selection of assigned uploads, exact-question assent and independent admission planning. All original assertions retained; 81 baseline tests pass."
     }
   ],
   "estimate_engineering_days": [
@@ -41,7 +41,7 @@
         1,
         2
       ],
-      "status": "planned",
+      "status": "implemented; final verification required",
       "acceptance": [
         "assistant-regression"
       ],
@@ -54,7 +54,7 @@
         2,
         4
       ],
-      "status": "planned",
+      "status": "implemented; final verification required",
       "acceptance": [
         "legacy-compatibility",
         "authorization"
@@ -68,7 +68,7 @@
         2,
         4
       ],
-      "status": "planned",
+      "status": "implemented; final verification required",
       "acceptance": [
         "conversation-isolation",
         "context-isolation",
@@ -83,7 +83,7 @@
         3,
         5
       ],
-      "status": "planned",
+      "status": "implemented; final verification required",
       "acceptance": [
         "streaming",
         "cancellation",
@@ -99,7 +99,7 @@
         1,
         2
       ],
-      "status": "planned",
+      "status": "implemented; final verification required",
       "acceptance": [
         "two-clients",
         "browser-journey"
@@ -113,7 +113,7 @@
         2,
         3
       ],
-      "status": "planned",
+      "status": "implemented; final verification required",
       "acceptance": [
         "restart",
         "migration-idempotence",
@@ -166,29 +166,29 @@
       "id": "assistant-regression",
       "verifier": "baseline",
       "assert": "All six existing unpaid baseline suites pass with zero skips. A new user conversational journey must also run through the real API before cutover.",
-      "remaining": "Add a bounded unpaid ordinary-conversation regression journey through the compatibility route."
+      "remaining": "Run all six registered suites against the final integrated code with zero skips."
     },
     {
       "id": "legacy-compatibility",
-      "verifier": null,
+      "verifier": "integration",
       "assert": "Old routes and old data resolve to the same assistant conversation; IDs and pending task questions are preserved.",
       "remaining": "Seed legacy records and exercise both route versions against the migrated service."
     },
     {
       "id": "authorization",
-      "verifier": null,
+      "verifier": "browser",
       "assert": "Unsigned identity, foreign conversation IDs and client-requested privilege escalation are refused.",
       "remaining": "Exercise the real proxy and service identity boundary. Loopback fixture checks are insufficient."
     },
     {
       "id": "conversation-isolation",
-      "verifier": null,
+      "verifier": "integration",
       "assert": "Concurrent conversations cannot read or cancel each other's messages, files, tasks, questions or events.",
       "remaining": "Run isolation cases against real scoped storage and tasks; fixture tests cover messages and cancellation only."
     },
     {
       "id": "context-isolation",
-      "verifier": null,
+      "verifier": "integration",
       "assert": "Captured provider inputs contain only permitted thread context and explicitly shared memory.",
       "remaining": "Capture deterministic provider requests from the migrated service."
     },
@@ -200,61 +200,61 @@
     },
     {
       "id": "streaming",
-      "verifier": null,
+      "verifier": "integration",
       "assert": "Ordered text updates recover after disconnect and converge to the saved final or interrupted answer without duplication.",
       "remaining": "Run the draft streaming journey against the real API, storage and proxy; include process death mid-stream."
     },
     {
       "id": "cancellation",
-      "verifier": null,
+      "verifier": "integration",
       "assert": "Stop affects only the specified turn, preserves partial text and records any external action already attempted.",
       "remaining": "Verify provider cancellation and external-action outcomes in the migrated runtime."
     },
     {
       "id": "duplicate-input",
-      "verifier": null,
+      "verifier": "integration",
       "assert": "A repeated message ID produces one accepted turn; conflicting content is refused.",
       "remaining": "Repeat the HTTP contract journey across service restarts with real storage."
     },
     {
       "id": "tool-approval",
-      "verifier": null,
+      "verifier": "integration",
       "assert": "Chat can read an assigned attachment and use a read-only tool; writes require the exact current approval.",
       "remaining": "Add deterministic tool-backed chat journeys and approval races."
     },
     {
       "id": "two-clients",
-      "verifier": null,
+      "verifier": "browser",
       "assert": "Nori runs background work while chat replies; unrelated actions and events stay isolated.",
       "remaining": "Exercise both clients against the same service instance."
     },
     {
       "id": "browser-journey",
-      "verifier": null,
+      "verifier": "browser",
       "assert": "Both real clients send, render, reload and cancel correctly at desktop and phone widths.",
       "remaining": "Replace fixture-only browser evidence with both authenticated clients and the real proxy."
     },
     {
       "id": "restart",
-      "verifier": null,
+      "verifier": "integration",
       "assert": "API and worker restarts preserve accepted work and waits without repeating external actions or unknown-cost inference.",
       "remaining": "Kill each process at acceptance, stream, approval and result-publication boundaries."
     },
     {
       "id": "migration-idempotence",
-      "verifier": null,
+      "verifier": "integration",
       "assert": "Repeated migration setup preserves record IDs, file hashes, task references and pending approvals.",
       "remaining": "Build an old-state fixture from supported record formats and compare before/after inventories."
     },
     {
       "id": "rollback",
-      "verifier": null,
+      "verifier": "integration",
       "assert": "The compatible previous release resumes the assistant after new chat writes, preserving chat data and schedules.",
       "remaining": "Rehearse upgrades and rollback on isolated data; do not restore old data over newer writes."
     },
     {
       "id": "provider-smoke",
-      "verifier": null,
+      "verifier": "core/e2e/shared-service-live.test.js",
       "assert": "Selected real providers stream and execute the representative authorized tool path within the development spend limits.",
       "remaining": "Run only through the spend wrapper with verified pricing and one stable logical chat ID."
     }
@@ -274,5 +274,31 @@
     "Model pickers",
     "Repository split",
     "Generic plugin framework"
+  ],
+  "integration_suites": [
+    {
+      "id": "service",
+      "file": "core/e2e/shared-service.test.js",
+      "flag": "NORI_SHARED_SERVICE_E2E",
+      "acceptance": [
+        "legacy-compatibility",
+        "conversation-isolation",
+        "context-isolation",
+        "streaming",
+        "cancellation",
+        "duplicate-input",
+        "tool-approval",
+        "restart"
+      ]
+    },
+    {
+      "id": "recovery",
+      "file": "migration/recovery.test.ts",
+      "flag": "NORI_SHARED_RECOVERY_E2E",
+      "acceptance": [
+        "migration-idempotence",
+        "rollback"
+      ]
+    }
   ]
 }

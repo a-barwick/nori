@@ -126,12 +126,16 @@ def main():
                 env = {**environment(), "CHAT_URL": args.url.rstrip("/") + "/chat/index.html", "CHAT_REPORT_DIR": str(directory / "browser")}
                 if os.environ.get("CHAT_BROWSER_EXECUTABLE"):
                     env["CHAT_BROWSER_EXECUTABLE"] = os.environ["CHAT_BROWSER_EXECUTABLE"]
+                auth = run(["node", "chat/scripts/proxy-auth.mjs"], {**env, "NORI_PROXY_URL": args.url.rstrip("/")}, directory / "proxy.log")
+                report["checks"].append(auth)
+                if auth["status"] != "passed":
+                    raise ValueError("Authenticated proxy verification failed")
                 result = run(["node", "chat/scripts/smoke.mjs"], env, directory / "browser.log")
                 if result["status"] == "passed":
                     browser = json.loads((directory / "browser/report.json").read_text())
                     if not browser.get("passed") or browser.get("fixture") is not False:
                         raise ValueError("Browser acceptance requires passing real-service evidence for both clients")
-                    report["acceptance"] = ["browser-journey"]
+                    report["acceptance"] = ["browser-journey", "two-clients", "authorization"]
             else:
                 result = run(["bun", "--no-env-file", "test", "migration/contract.test.ts"], {**environment(), "MIGRATION_CONTRACT_URL": args.url}, directory / "contract.log", tests=True)
             report["checks"].append(result)
@@ -162,6 +166,8 @@ def main():
             env = environment()
             env["FIRESTORE_EMULATOR_HOST"] = endpoint("FIRESTORE_EMULATOR_HOST")
             env["TEMPORAL_ADDRESS"] = endpoint("TEMPORAL_ADDRESS")
+            if args.mode == "integration" and os.environ.get("NORI_RECOVERY_OLD_BINARY"):
+                env["NORI_RECOVERY_OLD_BINARY"] = os.environ["NORI_RECOVERY_OLD_BINARY"]
             for tool in ("bun", "go", "temporal"):
                 if not shutil.which(tool):
                     raise ValueError(f"Missing executable: {tool}")
