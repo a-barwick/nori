@@ -59,8 +59,8 @@
           <tr><td>Infrastructure and releases</td><td><span class="mono">core/infrastructure/</span></td></tr>
           <tr><td>Live end-to-end tests</td><td><span class="mono">core/e2e/</span></td></tr>
           <tr><th colspan="2">Clients</th></tr>
-          <tr><td>The independent <a href="chat-client.html">Chat client</a> and its HTTP contract</td><td><span class="mono">chat/src/App.svelte, migration/contract.ts</span></td></tr>
-          <tr><td>Chat development proxy and packaged build</td><td><span class="mono">chat/vite.config.ts, web/Dockerfile</span></td></tr>
+          <tr><td>The independent <a href="chat-client.html">Chat client</a> and its HTTP contract</td><td><span class="mono">chat/src/App.svelte, chat/src/contract.ts</span></td></tr>
+          <tr><td>Chat development proxy, offline fixture and packaged build</td><td><span class="mono">chat/vite.config.ts, chat/fixture.ts, web/Dockerfile</span></td></tr>
           <tr><td>The assistant UI and task panel (<a href="web-client.html">Web client</a>, <a href="frontend.html">components</a>)</td><td><span class="mono">web/src/components/runtime/, web/src/components/chat/</span></td></tr>
           <tr><td>How the browser sends messages and follows the stream</td><td><span class="mono">web/src/lib/runtime/useRuntime.ts</span></td></tr>
           <tr><td>Routes between the browser and the service</td><td><span class="mono">web/src/app/api/, web/src/lib/runtime/forward.ts</span></td></tr>
@@ -84,6 +84,6 @@
     </ul>
   </div>
 
-<details class="sources"><summary>Sources</summary><p><code>core/internal/</code> · <code>core/cmd/</code> · <code>web/src/</code> · <code>chat/src/App.svelte</code> · <code>chat/vite.config.ts</code> · <code>web/Dockerfile</code> · <code>migration/</code> · <code>Makefile</code></p><p><a href="system.html">Service overview</a> · <a href="chat-client.html">Chat client</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/</code> · <code>core/cmd/</code> · <code>web/src/</code> · <code>chat/src/App.svelte</code> · <code>chat/src/contract.ts</code> · <code>chat/fixture.ts</code> · <code>chat/vite.config.ts</code> · <code>web/Dockerfile</code> · <code>migration/</code> · <code>Makefile</code></p><p><a href="system.html">Service overview</a> · <a href="chat-client.html">Chat client</a></p></details>
 </body>
 </html>

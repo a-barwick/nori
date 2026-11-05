@@ -7,6 +7,7 @@
    "status": "built",
    "code": [
     "chat/src/App.svelte",
+    "chat/src/contract.ts",
     "core/internal/api/chat.go",
     "core/internal/api/events.go",
     "core/internal/api/http.go",
@@ -17,7 +18,6 @@
     "core/internal/state/firestore/chat.go",
     "core/internal/state/firestore/events.go",
     "core/internal/state/notify.go",
-    "migration/contract.ts",
     "web/src/lib/runtime/auth.ts",
     "web/src/lib/runtime/forward.ts",
     "web/src/lib/runtime/useRuntime.ts"
@@ -33,13 +33,13 @@
      "id": "endpoints",
      "title": "Endpoints",
      "status": "built",
-     "words": 299
+     "words": 370
     },
     {
      "id": "the-event-stream",
      "title": "The event stream",
      "status": "built",
-     "words": 88
+     "words": 102
     },
     {
      "id": "shared-read-positions",
@@ -205,11 +205,13 @@
    "status": "built",
    "code": [
     "chat/src/App.svelte",
+    "chat/src/contract.ts",
     "chat/vite.config.ts",
     "core/internal/agent/foreground.go",
+    "core/internal/api/chat.go",
     "core/internal/chat/service.go",
+    "core/internal/state/firestore/chat.go",
     "core/internal/state/uploads.go",
-    "migration/contract.ts",
     "web/Dockerfile",
     "web/src/lib/runtime/forward.ts"
    ],
@@ -218,25 +220,25 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 101
+     "words": 111
     },
     {
      "id": "conversation-controls",
      "title": "Conversation controls",
      "status": "built",
-     "words": 93
+     "words": 140
     },
     {
      "id": "tools-and-decisions",
      "title": "Tools and decisions",
      "status": "built",
-     "words": 100
+     "words": 124
     },
     {
      "id": "saved-context",
      "title": "Saved context",
      "status": "built",
-     "words": 133
+     "words": 200
     }
    ]
   },
@@ -331,7 +333,9 @@
    "status": "built",
    "code": [
     "Makefile",
+    "chat/fixture.ts",
     "chat/src/App.svelte",
+    "chat/src/contract.ts",
     "chat/vite.config.ts",
     "core/cmd/",
     "core/internal/",
@@ -344,7 +348,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 724
+     "words": 727
     }
    ]
   },
@@ -508,6 +512,7 @@
    "status": "built",
    "code": [
     "chat/src/App.svelte",
+    "chat/src/contract.ts",
     "core/internal/agent/foreground.go",
     "core/internal/api/chat.go",
     "core/internal/app/app.go",
@@ -520,7 +525,6 @@
     "core/internal/state/firestore/chat.go",
     "core/internal/state/firestore/tasks.go",
     "core/internal/state/results.go",
-    "migration/contract.ts",
     "web/src/lib/runtime/auth.ts",
     "web/src/lib/runtime/forward.ts"
    ],
@@ -571,7 +575,7 @@
      "id": "shared-service-and-chat",
      "title": "Shared service and chat",
      "status": "built",
-     "words": 200
+     "words": 355
     },
     {
      "id": "runtime-and-infrastructure",
