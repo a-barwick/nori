@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"nori/internal/chat"
 	"nori/internal/conversation"
 	"nori/internal/httpjson"
 	"nori/internal/state"
@@ -19,6 +20,7 @@ import (
 // Deps is everything the routes call into.
 type Deps struct {
 	// Model is the outer conversation model reported by health checks.
+	Chats  *chat.Service
 	Model  string
 	Runner *conversation.Runner
 	Tasks  *conversation.Tasks
@@ -53,6 +55,18 @@ func Handler(deps Deps, local bool) http.Handler {
 	mux.HandleFunc("GET /healthz", health)
 	mux.HandleFunc("POST /healthz", health)
 	mux.HandleFunc("POST /api/healthz", health)
+	mux.HandleFunc("GET /v1/capabilities", s.capabilities)
+	if s.Chats != nil {
+		mux.HandleFunc("GET /v1/conversations", s.listChats)
+		mux.HandleFunc("POST /v1/conversations", s.createChat)
+		mux.HandleFunc("GET /v1/conversations/{conversation}", s.chatSnapshot)
+		mux.HandleFunc("POST /v1/conversations/{conversation}/messages", s.chatMessage)
+		mux.HandleFunc("POST /v1/conversations/{conversation}/cancel", s.chatCancel)
+		mux.HandleFunc("POST /v1/conversations/{conversation}/approvals", s.chatApproval)
+		mux.HandleFunc("GET /v1/conversations/{conversation}/events", s.chatEvents)
+		mux.HandleFunc("POST /v1/conversations/{conversation}/uploads", s.chatUpload)
+		mux.HandleFunc("GET /v1/conversations/{conversation}/uploads/{id}", s.chatReadUpload)
+	}
 	mux.HandleFunc("POST /api/session", s.session)
 	mux.HandleFunc("POST /api/turn", s.turn)
 	mux.HandleFunc("POST /api/process", s.process)
@@ -80,7 +94,7 @@ func Handler(deps Deps, local bool) http.Handler {
 				return
 			}
 		}
-		if r.Method == http.MethodPost && r.URL.Path != "/v1/uploads" && strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]) != "application/json" {
+		if r.Method == http.MethodPost && r.URL.Path != "/v1/uploads" && !(strings.HasPrefix(r.URL.Path, "/v1/conversations/") && strings.HasSuffix(r.URL.Path, "/uploads")) && strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]) != "application/json" {
 			writeJSON(w, 415, map[string]string{"error": "Content-Type must be application/json."})
 			return
 		}

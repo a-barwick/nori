@@ -14,6 +14,7 @@ import (
 	"nori/internal/agent"
 	"nori/internal/agent/openrouter"
 	"nori/internal/api"
+	"nori/internal/chat"
 	"nori/internal/conversation"
 	"nori/internal/dispatch"
 	"nori/internal/env"
@@ -26,6 +27,7 @@ import (
 )
 
 type App struct {
+	Chats      *chat.Service
 	Runner     *conversation.Runner
 	Tasks      *conversation.Tasks
 	Dispatcher *dispatch.Dispatcher
@@ -90,7 +92,16 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 		}
 		summarizer.Endpoint = address
 	}
-	runner := conversation.New(outer, conversation.NewJevClassifier(jevKey), summarizer, tasks)
+	classifier := conversation.NewJevClassifier(jevKey)
+	if address := os.Getenv("NORI_E2E_JEV_URL"); address != "" {
+		if os.Getenv("TEMPORAL_LOCAL") != "true" || !strings.HasPrefix(address, "http://127.0.0.1:") {
+			engine.Close()
+			store.Close()
+			return nil, fmt.Errorf("NORI_E2E_JEV_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
+		}
+		classifier.URL = address
+	}
+	runner := conversation.New(outer, classifier, summarizer, tasks)
 	checks, err := openProactive(store, runner, tasks, outer, waker)
 	if err != nil {
 		engine.Close()
@@ -104,7 +115,13 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 		store.Close()
 		return nil, err
 	}
-	return &App{Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, Proactive: checks, Schedules: later, engine: engine}, nil
+	tools := agent.New(store, summarizer, platform.Computer())
+	if checks.Calendar != nil {
+		tools.Capabilities.Calendar = *checks.Calendar
+	}
+	tools.Capabilities.Location = checks.Location
+	chats := chat.New(store, outer, tools, os.Getenv("NORI_E2E_OPENAI_URL") != "")
+	return &App{Chats: chats, Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, Proactive: checks, Schedules: later, engine: engine}, nil
 }
 
 // openSchedules runs what Austin asked for later. Notifications go to his connected account by email; without one
@@ -175,18 +192,20 @@ func openProactive(store state.ConversationStore, runner *conversation.Runner, t
 }
 
 func (a *App) Close() {
+	a.Chats.Close()
 	a.engine.Close()
 	a.Tasks.Store.Close()
 }
 
 // API returns what the HTTP routes call into.
 func (a *App) API() api.Deps {
-	return api.Deps{Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Proactive: a.Proactive}
+	return api.Deps{Chats: a.Chats, Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Proactive: a.Proactive}
 }
 
 func (a *App) Resume(ctx context.Context) error { return a.Dispatcher.Resume(ctx) }
 
-func (a *App) Process(ctx context.Context) error {
+func (a *App) Process(ctx context.Context) error { return a.process(ctx, true) }
+func (a *App) process(ctx context.Context, foreground bool) error {
 	// A paused worker cannot finish a queued Stop. Retry only accepted Stop
 	// targets here, including a timed-out cleanup from the submitting request.
 	var stopErr error
@@ -209,6 +228,12 @@ func (a *App) Process(ctx context.Context) error {
 			}
 		}
 	}
+	chatDone := make(chan error, 1)
+	if foreground {
+		go func() { chatDone <- a.Chats.Process(ctx) }()
+	} else {
+		chatDone <- nil
+	}
 	processErr := a.Runner.Process(ctx)
 	// Offers wait for an idle conversation, so they go out after the pass that published the latest reply.
 	var offerErr, scheduleErr error
@@ -227,17 +252,18 @@ func (a *App) Process(ctx context.Context) error {
 	delivery, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	reconcileErr := a.Dispatcher.Reconcile(delivery, dispatch.Commands|dispatch.Publications)
-	return errors.Join(stopErr, processErr, offerErr, scheduleErr, reconcileErr)
+	return errors.Join(<-chatDone, stopErr, processErr, offerErr, scheduleErr, reconcileErr)
 }
 
 // LocalLoop is tied to the application, so browser cancellation and reconnects
 // cannot cancel accepted work. The periodic check also recovers after restart.
 func (a *App) LocalLoop(ctx context.Context, notifications <-chan struct{}) {
+	go a.Chats.Loop(ctx)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
 		process, cancel := context.WithTimeout(ctx, 9*time.Minute)
-		if err := a.Process(process); err != nil && ctx.Err() == nil {
+		if err := a.process(process, false); err != nil && ctx.Err() == nil {
 			log.Printf("conversation processing will retry: %v", err)
 		}
 		cancel()
