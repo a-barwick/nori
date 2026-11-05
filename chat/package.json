@@ -1,0 +1,20 @@
+{
+  "name": "nori-chat-preparation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 3230 --strictPort",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "build": "vite build",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@types/node": "^22",
+    "playwright-core": "1.64.1",
+    "svelte": "5.57.3",
+    "svelte-check": "4.7.8",
+    "typescript": "^5",
+    "vite": "8.3.5"
+  }
+}

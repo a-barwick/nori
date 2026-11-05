@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "issue": "https://linear.app/a-barwick/issue/AB-284",
+  "objective": "One shared backend service for the existing Nori assistant and an independent chat client.",
+  "scope": "Preparation only. Runtime migration, production integration and deployment are not authorized by this preparation task.",
+  "repository": "Keep core/, web/, chat/ and migration/ in this repository. Extract a shared client package only when both real clients use it.",
+  "contract": "nori-chat-draft-1",
+  "phase_issues": {"baseline":"AB-290","boundary":"AB-285","isolation":"AB-286","execution":"AB-287","clients":"AB-288","cutover":"AB-289"},
+  "known_baseline_findings": [{"issue":"https://linear.app/a-barwick/issue/AB-291","suite":"8","status":"unresolved","summary":"Existing attachment fixture selects message IDs as upload IDs. Revision journeys also fail. No runtime or existing test assertions changed by preparation."}],
+  "estimate_engineering_days": [11, 20],
+  "constraints": [
+    "Preserve existing assistant record paths, IDs, tasks, pending questions, files and browser profiles.",
+    "Preserve current model roles, providers, budgets and instance limits.",
+    "Keep production authentication server-side. Conversation IDs and requested modes do not grant permissions.",
+    "Do not connect this fixture to models, production, credentials or external tools.",
+    "Fixture results prove client and verifier behavior only.",
+    "Do not enable CI/CD or deploy as part of preparation."
+  ],
+  "phases": [
+    {"id":"baseline","title":"Establish the regression baseline","days":[1,2],"status":"planned","acceptance":["assistant-regression"],"deliverable":"Run existing unpaid suites on isolated emulators and preserve per-suite evidence."},
+    {"id":"boundary","title":"Introduce the service boundary","days":[2,4],"status":"planned","acceptance":["legacy-compatibility","authorization"],"deliverable":"Map current records to a default assistant conversation without moving them. Retain old client routes."},
+    {"id":"isolation","title":"Scope independent conversations","days":[2,4],"status":"planned","acceptance":["conversation-isolation","context-isolation","shared-budget"],"deliverable":"Scope state, locks, files, events, pending questions and queued work by conversation. Personal memory sharing remains explicit."},
+    {"id":"execution","title":"Add foreground chat execution","days":[3,5],"status":"planned","acceptance":["streaming","cancellation","duplicate-input","tool-approval"],"deliverable":"Stream text, save interrupted replies, then add attachment reading and a read-only tool using shared execution."},
+    {"id":"clients","title":"Connect both clients","days":[1,2],"status":"planned","acceptance":["two-clients","browser-journey"],"deliverable":"Replace the chat fixture with the service adapter. Keep presentation in clients and behavior in the service."},
+    {"id":"cutover","title":"Rehearse upgrade and rollback","days":[2,3],"status":"planned","acceptance":["restart","migration-idempotence","rollback","provider-smoke"],"deliverable":"Use an additive compatibility release and a rehearsed rollback target. Do not cancel active user tasks to deploy."}
+  ],
+  "baseline_suites": [
+    {"id":"6","file":"core/e2e/milestone6.test.js","flag":"NORI_M6_E2E","covers":"Exact approvals, duplicate writes and restart around external effects"},
+    {"id":"7","file":"core/e2e/milestone7.test.js","flag":"NORI_M7_E2E","covers":"Subtask delivery, parent cancellation and recovery"},
+    {"id":"8","file":"core/e2e/milestone8.test.js","flag":"NORI_M8_E2E","covers":"Event replay, files, results and isolation of assigned uploads"},
+    {"id":"9","file":"core/e2e/milestone9.test.js","flag":"NORI_M9_E2E","covers":"Schedules, monitors and notification delivery"},
+    {"id":"10","file":"core/e2e/milestone10.test.js","flag":"NORI_M10_E2E","covers":"Explicit memory and context limits"},
+    {"id":"11","file":"core/e2e/milestone11.test.js","flag":"NORI_M11_E2E","covers":"Proactive calendar offers"}
+  ],
+  "acceptance": [
+    {"id":"assistant-regression","verifier":"baseline","assert":"All six existing unpaid baseline suites pass with zero skips. A new user conversational journey must also run through the real API before cutover.","remaining":"Add a bounded unpaid ordinary-conversation regression journey through the compatibility route."},
+    {"id":"legacy-compatibility","verifier":null,"assert":"Old routes and old data resolve to the same assistant conversation; IDs and pending task questions are preserved.","remaining":"Seed legacy records and exercise both route versions against the migrated service."},
+    {"id":"authorization","verifier":null,"assert":"Unsigned identity, foreign conversation IDs and client-requested privilege escalation are refused.","remaining":"Exercise the real proxy and service identity boundary. Loopback fixture checks are insufficient."},
+    {"id":"conversation-isolation","verifier":null,"assert":"Concurrent conversations cannot read or cancel each other's messages, files, tasks, questions or events.","remaining":"Run isolation cases against real scoped storage and tasks; fixture tests cover messages and cancellation only."},
+    {"id":"context-isolation","verifier":null,"assert":"Captured provider inputs contain only permitted thread context and explicitly shared memory.","remaining":"Capture deterministic provider requests from the migrated service."},
+    {"id":"shared-budget","verifier":null,"assert":"Concurrent conversations share existing daily and monthly limits; retries and new conversation IDs cannot reset allowances.","remaining":"Exercise actual spend admission and unknown-cost handling without paid calls."},
+    {"id":"streaming","verifier":null,"assert":"Ordered text updates recover after disconnect and converge to the saved final or interrupted answer without duplication.","remaining":"Run the draft streaming journey against the real API, storage and proxy; include process death mid-stream."},
+    {"id":"cancellation","verifier":null,"assert":"Stop affects only the specified turn, preserves partial text and records any external action already attempted.","remaining":"Verify provider cancellation and external-action outcomes in the migrated runtime."},
+    {"id":"duplicate-input","verifier":null,"assert":"A repeated message ID produces one accepted turn; conflicting content is refused.","remaining":"Repeat the HTTP contract journey across service restarts with real storage."},
+    {"id":"tool-approval","verifier":null,"assert":"Chat can read an assigned attachment and use a read-only tool; writes require the exact current approval.","remaining":"Add deterministic tool-backed chat journeys and approval races."},
+    {"id":"two-clients","verifier":null,"assert":"Nori runs background work while chat replies; unrelated actions and events stay isolated.","remaining":"Exercise both clients against the same service instance."},
+    {"id":"browser-journey","verifier":null,"assert":"Both real clients send, render, reload and cancel correctly at desktop and phone widths.","remaining":"Replace fixture-only browser evidence with both authenticated clients and the real proxy."},
+    {"id":"restart","verifier":null,"assert":"API and worker restarts preserve accepted work and waits without repeating external actions or unknown-cost inference.","remaining":"Kill each process at acceptance, stream, approval and result-publication boundaries."},
+    {"id":"migration-idempotence","verifier":null,"assert":"Repeated migration setup preserves record IDs, file hashes, task references and pending approvals.","remaining":"Build an old-state fixture from supported record formats and compare before/after inventories."},
+    {"id":"rollback","verifier":null,"assert":"The compatible previous release resumes the assistant after new chat writes, preserving chat data and schedules.","remaining":"Rehearse upgrades and rollback on isolated data; do not restore old data over newer writes."},
+    {"id":"provider-smoke","verifier":null,"assert":"Selected real providers stream and execute the representative authorized tool path within the development spend limits.","remaining":"Run only through the spend wrapper with verified pricing and one stable logical chat ID."}
+  ],
+  "cutover": [
+    "Keep legacy assistant paths and identifiers. Add conversation-scoped storage for new chats.",
+    "Test old and new client versions against the compatibility release.",
+    "Use a compatibility release as rollback target after new-format writes.",
+    "Disable the new chat entrypoint on rollback while preserving its stored data.",
+    "Wait for running tasks to finish under the existing deployment rules.",
+    "Production release requires a separate request and make deploy."
+  ],
+  "deferred": ["Public multiuser signup", "Native push and offline clients", "Conversation branching and regeneration", "Model pickers", "Repository split", "Generic plugin framework"]
+}
