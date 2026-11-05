@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { follow, request, type Conversation, type Capabilities, type Attachment, CONTRACT } from '../../migration/contract';
 
+  let messagesElement: HTMLElement;
+  let shownConversation: string | undefined;
   let capabilities = $state<Capabilities | null>(null);
   let chats = $state<{ id: string; title: string }[]>([]);
   let current = $state<Conversation | null>(null);
@@ -15,6 +17,14 @@
   let stream: AbortController | null = null;
   let generation = 0;
   let retry: { id: string; message: string; conversation: string; attachments: string[] } | null = null;
+  $effect.pre(() => {
+    const id = current?.id;
+    const position = current?.position;
+    if (!messagesElement || position === undefined) return;
+    const followBottom = id !== shownConversation || messagesElement.scrollHeight - messagesElement.scrollTop - messagesElement.clientHeight < 100;
+    shownConversation = id;
+    if (followBottom) void tick().then(() => messagesElement?.scrollTo({ top: messagesElement.scrollHeight }));
+  });
   const list = async () => {
     const result = await request<{ conversations: Conversation[] }>('/conversations');
     chats = result.conversations.filter(c => c.mode === 'chat');
@@ -119,7 +129,7 @@
     <button class="new" onclick={create} disabled={sending}>＋ New conversation</button>
     <nav aria-label="Conversations">
       {#each chats as chat}
-        <button class:active={current?.id === chat.id} onclick={() => select(chat.id)} disabled={sending}>{chat.title}</button>
+        <button data-conversation-id={chat.id} class:active={current?.id === chat.id} onclick={() => select(chat.id)} disabled={sending}>{chat.title}</button>
       {/each}
     </nav>
     <div class="aside-note"><a href="/">Open assistant</a><p>{capabilities?.fixture ? "Offline fixture · scripted replies" : "Independent conversations"}</p></div>
@@ -129,14 +139,14 @@
       <div><h1>{current?.title ?? 'Chat'}</h1><p>{capabilities?.fixture ? "Offline fixture · resets when the server restarts" : "Saved by Nori"}</p></div>
       <button onclick={() => connected ? disconnect() : current && select(current.id)} disabled={!current}>{connected ? 'Disconnect' : 'Reconnect'}</button>
     </header>
-    <section class="messages" aria-label="Messages" aria-live="polite" aria-busy={!!current?.activeTurn}>
-      {#if !current?.messages.length}
+    <section bind:this={messagesElement} class="messages" aria-label="Messages" aria-live="polite" aria-busy={!!current?.activeTurn}>
+      {#if !current?.messages?.length}
         <div class="empty"><div class="mark">n</div><h2>Start a conversation</h2><p>{capabilities?.fixture ? "Responses are scripted for offline testing." : "What would you like to talk about?"}</p></div>
       {/if}
       {#each current?.messages ?? [] as message (message.id)}
         <article class:user={message.role === 'user'}>
           <div class="role">{message.role === 'user' ? 'You' : 'Nori'}</div>
-          <p>{message.text || (message.operations?.length ? '' : 'Starting reply…')}</p>
+          {#if !message.operations?.some(operation => operation.outcome === 'prepared' && operation.action?.text === message.text)}<p>{message.text || (message.operations?.length ? '' : 'Starting reply…')}</p>{/if}
           {#if message.attachments?.length}<ul aria-label="Message attachments">{#each message.attachments as file}<li><a href={`/api/v1/conversations/${current?.id}/uploads/${file.id}`} target="_blank" rel="noreferrer">{file.name}</a></li>{/each}</ul>{/if}
           {#each message.operations ?? [] as operation (operation.id)}
             {#if operation.outcome === 'prepared' && operation.action}
@@ -168,6 +178,6 @@
 <style>
   :global(*){box-sizing:border-box} :global(body){margin:0;background:#f8f7f4;color:#242a27;font:15px/1.5 system-ui,sans-serif} :global(button),:global(textarea){font:inherit} :global(button){cursor:pointer} :global(button:disabled){cursor:default;opacity:.45} :global(button:focus-visible),:global(textarea:focus-visible){outline:2px solid #4e7762;outline-offset:3px}
   .attach{display:block;font-size:12px;margin:0 0 8px}.attach input{font-size:12px;margin-left:8px;max-width:240px}.approval{border:1px solid #a8b7a1;padding:12px;border-radius:8px;margin:8px 0}.approval button{margin-right:8px}.files{font-size:12px;padding-left:18px}.files button{font-size:11px}a{color:inherit}
-  .shell{display:grid;grid-template-columns:250px minmax(0,1fr);min-height:100dvh} aside{background:#eeede7;border-right:1px solid #ddddd4;padding:28px 18px;display:flex;flex-direction:column;gap:24px}.brand{font-size:24px;font-weight:650;padding:0 10px}.brand span{font-weight:400;color:#656d65;margin-left:5px}.new,header button{background:transparent;border:1px solid #c9cec5;border-radius:8px;padding:9px 12px}nav{display:flex;flex-direction:column;gap:5px}nav button{border:0;background:transparent;text-align:left;border-radius:7px;padding:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}nav button.active{background:#dfe5dc}.aside-note{margin-top:auto;font-size:12px;color:#646c62;padding:10px}main{display:flex;flex-direction:column;min-width:0;max-height:100dvh}header{padding:23px 32px;border-bottom:1px solid #e0e2da;display:flex;gap:16px;justify-content:space-between;align-items:center}h1{font-size:16px;margin:0;font-weight:600;overflow-wrap:anywhere}header p{font-size:12px;color:#6b7169;margin:4px 0 0}header button{font-size:12px;flex-shrink:0}.messages{flex:1;overflow:auto;padding:30px max(24px,calc((100% - 760px)/2));min-height:200px}.empty{margin:8vh auto;text-align:center;color:#626d62}.mark{font-family:Georgia,serif;font-style:italic;font-size:48px;color:#456a50}.empty h2{font-size:24px;color:#303e31;font-weight:500;margin:14px 0}.empty p{font-size:14px}article{margin-bottom:25px;overflow-wrap:anywhere}article p{white-space:pre-wrap;margin:7px 0}.role{font-size:12px;font-weight:650;color:#657160}.user{background:#e9eee6;padding:16px 20px;border-radius:12px;margin-left:12%}small{color:#70766e}footer{padding:15px max(24px,calc((100% - 760px)/2)) 20px}form{display:flex;gap:12px;align-items:flex-end;border:1px solid #cbd3c7;background:#fff;border-radius:12px;padding:12px}textarea{flex:1;min-width:0;resize:vertical;max-height:180px;border:0;background:transparent;color:inherit}form button{border:0;border-radius:7px;padding:9px 15px;background:#e4e9df}.send{background:#365640;color:#fff}.footnote{font-size:11px;color:#70766e;text-align:center;margin:9px 0 0}.error{color:#963928;font-size:13px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-  @media(max-width:640px){.shell{grid-template-columns:1fr}aside{padding:14px;gap:12px;border-right:0;border-bottom:1px solid #ddd}.brand{font-size:20px}nav{max-height:105px;overflow:auto}.aside-note{display:none}main{max-height:none;min-height:65dvh}header{padding:16px;align-items:flex-start}.messages{padding:20px 16px;max-height:55dvh}footer{padding:12px 16px}.empty{margin:25px auto}.user{margin-left:5%}}
+  .shell{display:grid;grid-template-columns:250px minmax(0,1fr);height:100dvh;min-height:100dvh} aside{min-height:0;background:#eeede7;border-right:1px solid #ddddd4;padding:28px 18px;display:flex;flex-direction:column;gap:24px}.brand{font-size:24px;font-weight:650;padding:0 10px}.brand span{font-weight:400;color:#656d65;margin-left:5px}.new,header button{background:transparent;border:1px solid #c9cec5;border-radius:8px;padding:9px 12px}nav{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:5px}nav button{flex-shrink:0;border:0;background:transparent;text-align:left;border-radius:7px;padding:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}nav button.active{background:#dfe5dc}.aside-note{margin-top:auto;font-size:12px;color:#646c62;padding:10px}main{display:flex;flex-direction:column;min-width:0;max-height:100dvh}header{padding:23px 32px;border-bottom:1px solid #e0e2da;display:flex;gap:16px;justify-content:space-between;align-items:center}h1{font-size:16px;margin:0;font-weight:600;overflow-wrap:anywhere}header p{font-size:12px;color:#6b7169;margin:4px 0 0}header button{font-size:12px;flex-shrink:0}.messages{flex:1;overflow:auto;padding:30px max(24px,calc((100% - 760px)/2));min-height:200px}.empty{margin:8vh auto;text-align:center;color:#626d62}.mark{font-family:Georgia,serif;font-style:italic;font-size:48px;color:#456a50}.empty h2{font-size:24px;color:#303e31;font-weight:500;margin:14px 0}.empty p{font-size:14px}article{margin-bottom:25px;overflow-wrap:anywhere}article p{white-space:pre-wrap;margin:7px 0}.role{font-size:12px;font-weight:650;color:#657160}.user{background:#e9eee6;padding:16px 20px;border-radius:12px;margin-left:12%}small{color:#70766e}footer{padding:15px max(24px,calc((100% - 760px)/2)) 20px}form{display:flex;gap:12px;align-items:flex-end;border:1px solid #cbd3c7;background:#fff;border-radius:12px;padding:12px}textarea{flex:1;min-width:0;resize:vertical;max-height:180px;border:0;background:transparent;color:inherit}form button{border:0;border-radius:7px;padding:9px 15px;background:#e4e9df}.send{background:#365640;color:#fff}.footnote{font-size:11px;color:#70766e;text-align:center;margin:9px 0 0}.error{color:#963928;font-size:13px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  @media(max-width:640px){.shell{height:auto;grid-template-columns:1fr}aside{padding:14px;gap:12px;border-right:0;border-bottom:1px solid #ddd}.brand{font-size:20px}nav{flex:none;max-height:105px;overflow:auto}.aside-note{display:none}main{max-height:none;min-height:65dvh}header{padding:16px;align-items:flex-start}.messages{padding:20px 16px;max-height:55dvh}footer{padding:12px 16px}.empty{margin:25px auto}.user{margin-left:5%}}
 </style>

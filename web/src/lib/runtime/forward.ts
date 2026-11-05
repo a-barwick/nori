@@ -29,7 +29,7 @@ function upstreamBase(request: Request, mode: Mode): URL | Response {
 async function forward(request: Request, mode: Mode, path: string, init: RequestInit, timeout: number, allowed: (type: string) => boolean) {
   const base = upstreamBase(request, mode);
   if (base instanceof Response) return base;
-  const label = path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file");
+  const label = path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file").replace(/^v1\/conversations\/[^/?]+/, "v1/conversations/item");
   try {
     const authorization: Record<string, string> = mode === "hosted" ? { Authorization: await runtimeAuthorization() } : {};
     const upstream = await fetch(new URL(path, base), {
