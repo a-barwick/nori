@@ -29,7 +29,7 @@ function upstreamBase(request: Request, mode: Mode): URL | Response {
 async function forward(request: Request, mode: Mode, path: string, init: RequestInit, timeout: number, allowed: (type: string) => boolean) {
   const base = upstreamBase(request, mode);
   if (base instanceof Response) return base;
-  const label = path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file");
+  const label = path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file").replace(/^v1\/conversations\/[^/?]+/, "v1/conversations/item");
   try {
     const authorization: Record<string, string> = mode === "hosted" ? { Authorization: await runtimeAuthorization() } : {};
     const upstream = await fetch(new URL(path, base), {
@@ -76,7 +76,7 @@ export async function readRoute(request: Request, mode: Mode, name: string) {
 }
 
 /** `POST /v1/uploads`. The whole file is read here first, so a dropped upload never reaches the service. */
-export async function uploadRoute(request: Request, mode: Mode) {
+export async function uploadRoute(request: Request, mode: Mode, path = "v1/uploads") {
   if (!(await allowedCaller(request, mode, sameOrigin))) return forbidden();
   if (Number(request.headers.get("content-length") ?? 0) > MAX_UPLOAD_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
   const incoming = new URL(request.url).searchParams;
@@ -86,7 +86,7 @@ export async function uploadRoute(request: Request, mode: Mode) {
     return Response.json({ error: "The upload was interrupted, so nothing was saved. Try again.", retryable: true }, { status: 400 });
   }
   if (body.byteLength > MAX_UPLOAD_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
-  return forward(request, mode, `v1/uploads?${query}`, { method: "POST", body, headers: { "Content-Type": request.headers.get("content-type") || "application/octet-stream" } },
+  return forward(request, mode, `${path}?${query}`, { method: "POST", body, headers: { "Content-Type": request.headers.get("content-type") || "application/octet-stream" } },
     UPLOAD_TIMEOUT_MS, (type) => type.includes("application/json"));
 }
 
@@ -94,4 +94,47 @@ export async function uploadRoute(request: Request, mode: Mode) {
 export async function fileRoute(request: Request, mode: Mode, path: string) {
   if (!(await allowedCaller(request, mode, sameOriginRead))) return forbidden();
   return forward(request, mode, path, {}, READ_TIMEOUT_MS, (type) => /^(application\/json|application\/pdf|application\/octet-stream|image\/(png|jpeg|webp)|text\/csv|text\/plain)/.test(type));
+}
+
+/** Additive conversation API. Each route is allowlisted; caller headers never become runtime credentials. */
+export async function conversationRoute(request: Request, mode: Mode, segments: string[]) {
+  const [id, operation] = segments;
+  const validID = id === "assistant" || /^[a-f0-9-]{36}$/.test(id || "");
+  if (validID && operation === "uploads") {
+    const path = `v1/conversations/${encodeURIComponent(id)}/uploads`;
+    if (segments.length === 2 && request.method === "POST") return uploadRoute(request, mode, path);
+    if (segments.length === 3 && /^[a-f0-9-]{36}$/.test(segments[2]) && request.method === "GET") return fileRoute(request, mode, `${path}/${segments[2]}`);
+  }
+  const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && operation === "events"))));
+  const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel", "approvals"].includes(operation)));
+  if (!read && !write) return Response.json({ error: "Not found." }, { status: 404 });
+  if (!(await allowedCaller(request, mode, read ? sameOriginRead : sameOrigin))) return forbidden();
+  const query = new URLSearchParams();
+  if (operation === "events") {
+    const incoming = new URL(request.url).searchParams;
+    const after = request.headers.get("last-event-id") || incoming.get("after");
+    if (after) query.set("after", after);
+  }
+  let body: string | undefined;
+  if (write) {
+    if (Number(request.headers.get("content-length") ?? 0) > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
+    try {
+      const value = await request.text();
+      if (new TextEncoder().encode(value).length > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
+      body = value ? JSON.stringify(JSON.parse(value)) : "{}";
+    } catch { return Response.json({ error: "Request body must be JSON." }, { status: 400 }); }
+  }
+  return forward(request, mode, `v1/conversations${segments.length ? "/" + segments.map(encodeURIComponent).join("/") : ""}${query.size ? `?${query}` : ""}`,
+    write ? { method: "POST", body, headers: { "Content-Type": "application/json" } } : {}, READ_TIMEOUT_MS,
+    type => type.includes("application/json") || (read && operation === "events" && type.startsWith("text/event-stream")));
+}
+
+export async function capabilitiesRoute(request: Request, mode: Mode) {
+  if (!(await allowedCaller(request, mode, sameOriginRead))) return forbidden();
+  return forward(request, mode, "v1/capabilities", {}, READ_TIMEOUT_MS, type => type.includes("application/json"));
+}
+
+/** The built chat and the assistant select the same local service during development. */
+export function conversationMode(request: Request): Mode {
+  return localDevelopment(request.headers) && process.env.NORI_LOCAL_AGENT_URL ? "local" : "hosted";
 }

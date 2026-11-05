@@ -117,6 +117,7 @@ type TaskStore interface {
 // Database is everything a document backend provides. A backend commits each operation atomically, applies the rules
 // in this package inside its transactions, and keeps its saved document layout unchanged.
 type Database interface {
+	ChatDatabase
 	TaskDatabase
 	ConversationDatabase
 	Close() error

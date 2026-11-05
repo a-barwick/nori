@@ -161,7 +161,7 @@ async function outerHandler(req, res) {
     if (outer.forceApprove) actions.push({ name: "approve", arguments: outer.forceApprove });
     else if (String(last).includes("task:")) actions.push({ name: "dispatch", arguments: { request: String(last) } });
     else if (decide) actions.push({ name: decide[1], arguments: { run_id: decide[2], question_id: decide[3] } });
-    content = JSON.stringify({ actions, text: actions.length ? "" : "Noted." });
+    content = JSON.stringify({ actions, text: actions.length ? "" : (outer.text ?? "Noted.") });
   } else {
     outer.eventContexts.push(text);
     // A task event's turn must have no way to approve.
@@ -537,8 +537,16 @@ journey("a chat approval comes through a user's turn and decides that exact ques
   scripts.chat = createThenFinish();
   const id = await dispatch("chat");
   const run = await awaiting(id);
-  await post("turn", { id: crypto.randomUUID(), message: `approve ${id} ${run.question.id}` }, 202);
+  // Chat assent is bound to the exact immediately preceding saved question.
+  outer.text = run.question.text;
+  await post("turn", { id: crypto.randomUUID(), message: "Show me the exact saved approval question." }, 202);
+  const shown = await until(session, (now) => !now.conversation.pending && !now.conversation.processing, "the approval question to be shown");
+  expect(shown.messages.at(-1).text).toBe(run.question.text);
+  outer.text = undefined;
+  outer.forceApprove = { run_id: id, question_id: run.question.id };
+  await post("turn", { id: crypto.randomUUID(), message: "yes" }, 202);
   const done = await finished(id);
+  outer.forceApprove = null;
   expect(done.status, done.error).toBe("completed");
   expect(google.writes).toHaveLength(1);
 }, 120_000);

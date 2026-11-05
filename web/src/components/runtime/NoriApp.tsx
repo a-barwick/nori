@@ -154,6 +154,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       onToggleActivity={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}
       actions={
       <>
+        <a href="/chat/index.html" className="text-meta text-ink-2 hover:underline">Independent chat</a>
         <IconButton label={debug ? "Hide debug info" : "Show debug info"} size={32} onClick={() => setDebug((on) => !on)}>
           <Bug size={16} strokeWidth={1.5} className={debug ? "text-accent-text" : undefined} />
         </IconButton>

@@ -65,6 +65,11 @@ type ReplyModel interface {
 // hold no per-call state.
 type ReplyRequest struct {
 	Messages []json.RawMessage
+	// Stream receives cumulative visible text; returning an error stops provider I/O.
+	Stream func(string) error
+	// Tools are server-selected foreground read and approval schemas.
+	Tools      json.RawMessage
+	Foreground bool
 	// CommandPlan independently plans dispatch/steer from user-authored context only.
 	CommandPlan bool
 	// NoDispatch disables every task command for introduction and notification-only turns.

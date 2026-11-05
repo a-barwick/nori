@@ -1,10 +1,15 @@
 # syntax=docker/dockerfile:1
 FROM oven/bun:1.4.3-debian AS build
-WORKDIR /app
+WORKDIR /app/web
 ENV NEXT_TELEMETRY_DISABLED=1
-COPY package.json bun.lock ./
+COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
-COPY . .
+COPY chat/package.json chat/bun.lock /app/chat/
+RUN cd /app/chat && bun install --frozen-lockfile
+COPY chat /app/chat
+COPY migration/contract.ts migration/fixture.ts /app/migration/
+COPY web .
+RUN cd /app/chat && bun --no-env-file run check && bun --no-env-file run build
 ARG NEXT_PUBLIC_SENTRY_DSN
 ARG NEXT_PUBLIC_SENTRY_ENVIRONMENT
 ARG NEXT_PUBLIC_SENTRY_RELEASE
@@ -24,9 +29,9 @@ ENV NODE_ENV=production \
     SENTRY_RELEASE=${SENTRY_RELEASE} \
     HOSTNAME=0.0.0.0 \
     PORT=8080
-COPY --from=build --chown=node:node /app/.next/standalone ./
-COPY --from=build --chown=node:node /app/.next/static ./.next/static
-COPY --from=build --chown=node:node /app/public ./public
+COPY --from=build --chown=node:node /app/web/.next/standalone ./
+COPY --from=build --chown=node:node /app/web/.next/static ./.next/static
+COPY --from=build --chown=node:node /app/web/public ./public
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

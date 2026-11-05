@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -122,6 +123,9 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		logRefusal(res)
 		return reply, providerHTTPError{res.StatusCode, fmt.Sprintf("model provider returned HTTP %d", res.StatusCode)}
 	}
+	if request.Stream != nil {
+		return decodeOpenAIStream(res, reply, request, span)
+	}
 	return decodeOpenAIReply(res, reply, request.NoDispatch, span)
 }
 
@@ -169,6 +173,13 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, control
 	body := map[string]any{
 		"model": m.name, "messages": input, "max_completion_tokens": outputLimit, "reasoning_effort": "low",
 		"service_tier": "default", "store": false, "prompt_cache_options": map[string]string{"mode": "explicit"},
+	}
+	if request.Stream != nil {
+		body["stream"] = true
+		body["stream_options"] = map[string]any{"include_usage": true}
+	}
+	if len(request.Tools) > 0 {
+		body["response_format"] = foregroundFormat(request.Tools)
 	}
 	if !request.NoDispatch {
 		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.ScheduleIDs, request.CommandPlan)
@@ -372,4 +383,214 @@ func openAIConversation(messages []json.RawMessage) ([]map[string]string, error)
 		input = append(input, map[string]string{"role": message.Role, "content": text})
 	}
 	return input, nil
+}
+
+// decodeOpenAIStream uses the same response validator and token pricing as the
+// ordinary adapter. A truncated stream retains partial text and unknown cost.
+func decodeOpenAIStream(res *http.Response, reply Reply, request ReplyRequest, span trace.Span) (Reply, error) {
+	scanner := bufio.NewScanner(io.LimitReader(res.Body, 2<<20))
+	scanner.Buffer(make([]byte, 4096), 256<<10)
+	text := ""
+	finish := ""
+	model := ""
+	tier := ""
+	id := ""
+	var usage json.RawMessage
+	calls := map[int]*ToolCall{}
+	done := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			done = true
+			break
+		}
+		var chunk struct {
+			ID      string          `json:"id"`
+			Model   string          `json:"model"`
+			Tier    string          `json:"service_tier"`
+			Usage   json.RawMessage `json:"usage"`
+			Choices []struct {
+				Finish *string `json:"finish_reason"`
+				Delta  struct {
+					Content string `json:"content"`
+					Calls   []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal([]byte(data), &chunk) != nil {
+			return reply, errors.New("model returned an unreadable stream")
+		}
+		if chunk.ID != "" {
+			id = chunk.ID
+		}
+		if chunk.Model != "" {
+			model = chunk.Model
+		}
+		if chunk.Tier != "" {
+			tier = chunk.Tier
+		}
+		if len(chunk.Usage) > 0 && string(chunk.Usage) != "null" {
+			usage = chunk.Usage
+		}
+		if len(chunk.Choices) > 1 {
+			return reply, errors.New("model returned multiple streamed choices")
+		}
+		for _, choice := range chunk.Choices {
+			if choice.Finish != nil {
+				finish = *choice.Finish
+			}
+			if choice.Delta.Content != "" {
+				text += choice.Delta.Content
+				reply.Text = text
+				if len(text) > 16384 {
+					return reply, errors.New("model reply exceeded limit")
+				}
+				visible := text
+				if request.Foreground {
+					visible = foregroundPartial(text)
+				}
+				if err := request.Stream(visible); err != nil {
+					return reply, err
+				}
+			}
+			for _, delta := range choice.Delta.Calls {
+				if delta.Index < 0 || delta.Index > 15 {
+					return reply, errors.New("too many tool calls")
+				}
+				call := calls[delta.Index]
+				if call == nil {
+					call = &ToolCall{}
+					calls[delta.Index] = call
+				}
+				call.ID += delta.ID
+				call.Type += delta.Type
+				call.Function.Name += delta.Function.Name
+				call.Function.Arguments += delta.Function.Arguments
+				if len(call.Function.Arguments) > 16384 {
+					return reply, errors.New("tool arguments exceeded limit")
+				}
+			}
+		}
+	}
+	if scanner.Err() != nil || !done {
+		return reply, errors.New("model stream interrupted; request will not be repeated")
+	}
+	ordered := []ToolCall{}
+	for i := 0; i < len(calls); i++ {
+		call := calls[i]
+		if call == nil {
+			return reply, errors.New("invalid tool sequence")
+		}
+		ordered = append(ordered, *call)
+	}
+	body, _ := json.Marshal(map[string]any{"id": id, "model": model, "service_tier": tier, "usage": usage, "choices": []any{map[string]any{"finish_reason": finish, "message": map[string]any{"role": "assistant", "content": text, "tool_calls": ordered}}}})
+	copyResponse := *res
+	copyResponse.Body = io.NopCloser(bytes.NewReader(body))
+	decoded, err := decodeOpenAIReply(&copyResponse, reply, true, span)
+	if err == nil && request.Foreground {
+		decoded.Text, decoded.Calls, err = decodeForeground(decoded.Text)
+	}
+	return decoded, err
+}
+
+func foregroundFormat(tools json.RawMessage) any {
+	var definitions []struct {
+		Function struct {
+			Name       string         `json:"name"`
+			Parameters map[string]any `json:"parameters"`
+		} `json:"function"`
+	}
+	_ = json.Unmarshal(tools, &definitions)
+	variants := []any{}
+	for _, tool := range definitions {
+		variants = append(variants, actionVariant(tool.Function.Name, "", tool.Function.Parameters))
+	}
+	return map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "chat_response", "strict": true, "schema": map[string]any{"type": "object", "properties": map[string]any{"actions": map[string]any{"type": "array", "maxItems": 1, "items": map[string]any{"anyOf": variants}}, "text": map[string]any{"type": "string", "maxLength": 16384}}, "required": []string{"actions", "text"}, "additionalProperties": false}}}
+}
+func decodeForeground(text string) (string, []ToolCall, error) {
+	var response struct {
+		Text    string `json:"text"`
+		Actions []struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		} `json:"actions"`
+	}
+	if json.Unmarshal([]byte(text), &response) != nil || len(response.Actions) > 1 {
+		return "", nil, errors.New("invalid foreground response")
+	}
+	calls := []ToolCall{}
+	for i, a := range response.Actions {
+		call := ToolCall{ID: fmt.Sprintf("action_%d", i), Type: "function"}
+		call.Function.Name = a.Name
+		call.Function.Arguments = string(a.Arguments)
+		calls = append(calls, call)
+	}
+	if response.Text == "" && len(calls) == 0 {
+		return "", nil, errors.New("empty foreground response")
+	}
+	return response.Text, calls, nil
+}
+
+// Extract only a completed JSON string prefix, never the action arguments.
+func foregroundPartial(text string) string {
+	depth := 0
+	inString := false
+	escaped := false
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		if ch == '{' || ch == '[' {
+			depth++
+		}
+		if ch == '}' || ch == ']' {
+			depth--
+		}
+		if ch != '"' {
+			continue
+		}
+		if depth == 1 && strings.HasPrefix(text[i:], `"text"`) {
+			rest := strings.TrimSpace(text[i+6:])
+			if !strings.HasPrefix(rest, ":") {
+				return ""
+			}
+			rest = strings.TrimSpace(rest[1:])
+			if !strings.HasPrefix(rest, `"`) {
+				return ""
+			}
+			for end := len(rest); end > 1; end-- {
+				candidate := rest[:end]
+				var value string
+				if json.Unmarshal([]byte(candidate), &value) == nil {
+					return value
+				}
+				if json.Unmarshal([]byte(candidate+`"`), &value) == nil {
+					return value
+				}
+			}
+			return ""
+		}
+		inString = true
+	}
+	return ""
 }

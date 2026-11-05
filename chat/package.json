@@ -1,9 +1,10 @@
 {
-  "name": "nori-chat-preparation",
+  "name": "nori-chat",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 3230 --strictPort",
+    "fixture": "NORI_CHAT_FIXTURE=1 vite --host 127.0.0.1 --port 3230 --strictPort",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "build": "vite build",
     "smoke": "node scripts/smoke.mjs"
