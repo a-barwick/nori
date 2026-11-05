@@ -9,52 +9,62 @@
 </head>
 <body>
 <h1>Service API</h1>
-<p class="lede">Clients send messages and task commands to the agent service over HTTP, and follow saved log events on a stream.</p>
+<p class="lede">Clients send messages to the agent service and restore saved state through snapshots and event streams.</p>
+<div class="card"><div class="flow">
+<div class="node"><b>Client</b><small>Sends “Total the parts in this CSV” with a message ID and assigned files.</small></div>
+<div class="arrow">↓ <span class="lbl">same-origin request</span></div>
+<div class="node"><b>Next.js server</b><small>Checks the owner, origin and route before adding server credentials.</small></div>
+<div class="arrow">↓ <span class="lbl">validated HTTP request</span></div>
+<div class="node outer"><b>Agent service</b><small>Saves input before accepting it and publishes recorded changes.</small></div>
+<div class="arrow">↓ <span class="lbl">snapshot or numbered event</span></div>
+<div class="node"><b>Client</b><small>Shows saved state and remembers the event position.</small></div>
+</div></div>
 <section><h2>Endpoints</h2>
-<div class="card"><table class="tall"><tr><th>Endpoint</th><th>What it does</th></tr>
-<tr><td><code>GET /v1/snapshot</code></td><td>Returns the conversation, tasks, results, shared read position and event log position.</td></tr>
-<tr><td><code>GET /v1/events</code></td><td>Streams saved log events after a position.</td></tr>
-<tr><td><code>POST /api/session</code></td><td>Returns the same snapshot for older callers.</td></tr>
-<tr><td><code>POST /api/turn</code></td><td>Sends a message with any attached file IDs. Returns 202 once it's saved.</td></tr>
-<tr><td><code>POST /api/command</code></td><td>Sends a task command, such as an answer or a continue.</td></tr>
-<tr><td><code>POST /api/input</code></td><td>Sends an explicit update to one task.</td></tr>
-<tr><td><code>POST /api/cancel</code></td><td>Requests Stop for one task.</td></tr>
-<tr><td><code>POST /api/trace</code></td><td>Reads the debug steps for one task.</td></tr>
-<tr><td><code>POST /api/artifact</code></td><td>Reads a saved screenshot.</td></tr>
-<tr><td><code>POST /v1/uploads</code>, <code>GET /v1/uploads/{id}</code></td><td>Saves one attached file, and reads it back.</td></tr>
-<tr><td><code>GET /v1/results/{id}</code>, <code>GET /v1/results/{id}/file</code></td><td>Reads a saved result, and its file.</td></tr>
-<tr><td><code>POST /api/seen</code></td><td>Records the newest reply shown in a client and returns the shared read position.</td></tr>
-<tr><td><code>POST /api/delivered</code></td><td>Records that a browser showed these results.</td></tr>
-<tr><td><code>POST /api/process</code></td><td>Cloud Tasks calls this to process saved messages. Clients don't call it.</td></tr>
-<tr><td><code>POST /api/resume</code></td><td>Redelivers saved commands and wakes tasks. Clients don't call it.</td></tr>
+<div class="card"><table class="tall"><tr><th>Conversation</th><th>Routes</th><th>Records</th></tr>
+<tr><td>Assistant</td><td>Existing message, task, snapshot and event routes.</td><td>Keep existing IDs, file references, tasks and pending questions.</td></tr>
+<tr><td>Independent chat</td><td>Conversation creation, messages, cancellation, approvals, files and events.</td><td>Separate chat records under the same owner.</td></tr>
 </table></div>
-<p>The web client calls through its Next.js server. See <a href="frontend.html#live-updates">Live updates</a>.</p>
+<p>A new conversation always has chat mode. Client-supplied identity or mode fields grant no permissions.</p>
+<details class="more"><summary>Route and payload reference</summary>
+<p>These are agent-service paths. The browser reaches them through its Next.js server.</p>
+<div class="card"><table class="tall"><tr><th>Route</th><th>Request or response</th></tr>
+<tr><td><code>GET /v1/capabilities</code></td><td>Returns the contract identifier <code>nori-chat-1</code> and execution-mode metadata.</td></tr>
+<tr><td><code>GET /v1/conversations</code></td><td>Returns <code>{conversations: [...]}</code> for saved chats.</td></tr>
+<tr><td><code>POST /v1/conversations</code></td><td>Accepts <code>{title?}</code> and returns the new chat.</td></tr>
+<tr><td><code>GET /v1/conversations/{id}</code></td><td>Returns a chat snapshot. Reserved ID <code>assistant</code> returns the existing assistant session.</td></tr>
+<tr><td><code>POST /v1/conversations/{id}/messages</code></td><td>Accepts <code>{id, text, attachments?: [uploadID]}</code>. Returns <code>{turnId, conversation}</code> with HTTP 202.</td></tr>
+<tr><td><code>POST /v1/conversations/{id}/cancel</code></td><td>Accepts <code>{turnId}</code>.</td></tr>
+<tr><td><code>POST /v1/conversations/{id}/approvals</code></td><td>Accepts <code>{questionId, decision}</code>, with <code>approve</code> or <code>decline</code>.</td></tr>
+<tr><td><code>GET /v1/conversations/{id}/events?after=N</code></td><td>Streams <code>{seq, kind, conversation}</code>.</td></tr>
+<tr><td><code>POST /v1/conversations/{id}/uploads?id=UUID&amp;filename=NAME</code></td><td>Accepts raw file bytes. <code>GET /v1/conversations/{id}/uploads/{uploadID}</code> reads them.</td></tr>
+<tr><td><code>POST /api/turn</code></td><td>Assistant input: <code>{id, message, attachments?}</code>. Returns HTTP 202 after saving and confirming wake delivery.</td></tr>
+<tr><td><code>GET /v1/snapshot</code>, <code>GET /v1/events</code></td><td>Assistant session and record-change stream. <code>POST /api/session</code> remains available.</td></tr>
+<tr><td><code>POST /api/command</code>, <code>/api/input</code>, <code>/api/cancel</code></td><td>Assistant task commands, updates and Stop.</td></tr>
+<tr><td><code>POST /v1/uploads</code>, <code>GET /v1/uploads/{id}</code></td><td>Assistant file upload and download.</td></tr>
+<tr><td><code>GET /v1/results/{id}</code>, <code>GET /v1/results/{id}/file</code></td><td>Saved results and file bytes.</td></tr>
+<tr><td><code>POST /api/seen</code>, <code>/api/delivered</code></td><td>Assistant read position and result-delivery reports.</td></tr>
+<tr><td><code>POST /api/trace</code>, <code>/api/artifact</code></td><td>Task debug steps and screenshots.</td></tr>
+<tr><td><code>POST /api/process</code>, <code>/api/resume</code></td><td>Internal processing and task delivery. Browser clients cannot call these through the proxy.</td></tr>
+</table></div>
+<p>Assistant messages continue through their existing route. New-chat message routes do not accept the reserved assistant ID.</p>
+</details>
 </section>
 <section><h2>The event stream</h2>
-<div class="card"><div class="flow">
-<div class="node"><b>Runtime</b><small>Saves “Check Saturday's weather in Tucson” and a numbered log event together.</small></div><div class="arrow">↓ <span class="lbl">log event number and record ID</span></div>
-<div class="node"><b>Event stream</b><small>Reads the record's current state and sends it.</small></div><div class="arrow">↓ <span class="lbl">message, task, result, conversation or read position</span></div>
-<div class="node"><b>Client</b><small>Merges the record by ID and remembers the last number.</small></div>
-</div></div>
-<div class="card"><table class="tall"><tr><th>Case</th><th>What happens</th></tr>
-<tr><td>A reconnect</td><td>The client sends its last number as <code>Last-Event-ID</code> or <code>after</code>. The agent service's host drops that header, so the web server passes it in the URL.</td></tr>
-<tr><td>A position it can't resume</td><td>Unusable, ahead of the log, or over 1,000 log events behind. The stream sends <code>reset</code>, and the client reads a new snapshot.</td></tr>
-<tr><td>A long stream</td><td>Ends after 150 seconds, inside the web service's 180-second limit, and the browser reconnects.</td></tr>
-<tr><td>Changes with no log event</td><td>Every 20 seconds, the stream also checks the conversation state and open tasks, and wakes processing for a saved message.</td></tr>
+<div class="card"><table class="tall"><tr><th>Stream</th><th>Saved event</th><th>Client behavior</th></tr>
+<tr><td>Assistant</td><td>Names a changed record and its event number.</td><td>Merges the record by ID. An unusable cursor triggers a reset and snapshot reload.</td></tr>
+<tr><td>Chat</td><td>Contains a full conversation snapshot and consecutive sequence number.</td><td>Replaces text instead of appending it. Reconnect loads a snapshot before following later events.</td></tr>
 </table></div>
+<p>Repeating a message ID does not create a second turn. Different text or attachments with that ID are rejected.</p>
+<p>Stopping a chat preserves partial text. Attempted external actions keep their recorded outcomes.</p>
 </section>
 <section><h2>Shared read positions</h2>
-<div class="card"><table class="tall"><tr><th>Case</th><th>What happens</th></tr>
-<tr><td>A reply is shown</td><td>The client sends its message ID. The service advances the saved read position and adds a log event in the same transaction.</td></tr>
-<tr><td>Another session connects</td><td>Its snapshot includes the shared mark. The event stream carries later changes.</td></tr>
-<tr><td>An older report arrives</td><td>The saved mark stays unchanged. Repeated reports add no event.</td></tr>
-</table></div>
-<p>Reading the Tucson weather reply in one web session clears its new-message count in another. See <a href="frontend.html#live-updates">Live updates</a> for viewport reporting.</p>
-<p>The mark also suppresses <a href="schedules.html#email-when-the-app-is-closed">closed-app emails</a>. Its event number lets clients discard older responses.</p>
+<ul class="pts">
+<li>The assistant client reports a reply only when it enters the visible conversation viewport.</li>
+<li>The service saves that read position and its event together. Older reports cannot move it backward.</li>
+<li>Other assistant sessions receive the mark. Independent chat does not report shared read positions.</li>
+</ul>
+<p>Reading the Tucson weather reply clears its count in another assistant session. See <a href="frontend.html#live-updates">Live updates</a>.</p>
 </section>
-<section class="designed"><h2>The protocol for many clients</h2>
-<p>Native clients, their sign-in, device registration, push and offline catch-up remain planned. See <a href="clients.html">Clients</a>.</p>
-</section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/conversation/session.go</code> · <code>core/internal/conversation/runner.go</code> · <code>core/internal/state/notify.go</code> · <code>core/internal/state/firestore/schedules.go</code> · <code>core/internal/state/events.go</code> · <code>core/internal/state/firestore/events.go</code> · <code>web/src/lib/runtime/forward.ts</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/chat.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/conversation/runner.go</code> · <code>core/internal/conversation/session.go</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/state/firestore/chat.go</code> · <code>core/internal/state/notify.go</code> · <code>core/internal/state/firestore/events.go</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>chat/src/App.svelte</code> · <code>migration/contract.ts</code></p></details>
 </body>
 </html>

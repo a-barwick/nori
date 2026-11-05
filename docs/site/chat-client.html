@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat client · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Chat client</h1>
+<p class="lede">Independent conversations stream replies through the same authenticated web server and agent service as the assistant.</p>
+<div class="card"><div class="flow">
+<div class="node"><b>Chat client</b><small>Sends “Total the parts in this CSV” with its assigned file ID.</small></div>
+<div class="arrow">↓ <span class="lbl">message through the Next.js server</span></div>
+<div class="node outer"><b>Foreground chat service</b><small>Saves the turn and sends this conversation's context to the outer model.</small></div>
+<div class="arrow">↓ <span class="lbl">requested CSV read</span></div>
+<div class="node"><b>CSV reader</b><small>Checks file assignment and returns rows as untrusted data.</small></div>
+<div class="arrow">↓ <span class="lbl">rows for the outer model's answer</span></div>
+<div class="node outer"><b>Foreground chat service</b><small>Saves text updates and the final answer.</small></div>
+<div class="arrow">↓ <span class="lbl">numbered conversation snapshots</span></div>
+<div class="node"><b>Chat client</b><small>Replaces displayed text and restores the saved reply after reload.</small></div>
+</div></div>
+<section><h2>Conversation controls</h2>
+<div class="card"><table class="tall"><tr><th>Control</th><th>Behavior</th></tr>
+<tr><td>New conversation</td><td>Creates a separate chat. The sidebar switches between saved chats.</td></tr>
+<tr><td>Send</td><td>Reuses the same message ID when retrying unchanged input after a failed request.</td></tr>
+<tr><td>Stop reply</td><td>Stops the selected turn and preserves its saved partial text.</td></tr>
+<tr><td>Reconnect</td><td>Loads the saved conversation and follows later events.</td></tr>
+<tr><td>Attach CSV</td><td>Uploads a file to this conversation and assigns it to the next message.</td></tr>
+</table></div>
+<p>The Svelte client is packaged with the web app. Both clients remain available while an assistant task waits or runs.</p>
+</section>
+<section><h2>Tools and decisions</h2>
+<div class="card"><table class="tall"><tr><th>Tool</th><th>Available behavior</th></tr>
+<tr><td>CSV reading</td><td>Reads assigned CSV files up to 64 KiB. Larger files require the assistant.</td></tr>
+<tr><td>Calendar reading</td><td>Reads the configured calendar through the shared tool implementation.</td></tr>
+<tr><td>Calendar changes and email</td><td>Shows the saved action with Approve this action and Decline buttons.</td></tr>
+<tr><td>Background tasks and computer</td><td>Use the assistant client for task dispatch, shell, browser, PDF or image analysis.</td></tr>
+</table></div>
+<p>An approval names one saved question. The service sends its saved action and records the provider outcome.</p>
+<p>Stop cannot undo an attempted write. Its outcome remains recorded even after the reply stops.</p>
+</section>
+<section><h2>Saved context</h2>
+<ul class="pts">
+<li>The model receives this chat's messages, assigned file metadata and recorded tool results.</li>
+<li>Assistant tasks, saved memories and other chats stay outside that context.</li>
+<li>The service rejects additional input at the chat's context limit. Start another conversation. Existing history remains saved.</li>
+</ul>
+<details class="more"><summary>Addresses and limits</summary>
+<div class="card"><table class="tall"><tr><th>Item</th><th>Value</th></tr>
+<tr><td>Packaged client</td><td><code>/chat/index.html</code></td></tr>
+<tr><td>Browser requests</td><td><code>/api/v1/conversations</code> through the same owner-protected Next.js server.</td></tr>
+<tr><td>Uploaded file</td><td>Up to 10 MiB. Foreground CSV reading has the lower 64 KiB limit.</td></tr>
+<tr><td>Chat context</td><td>Input is refused at 64 saved messages or above 96 KiB of message text and operation data.</td></tr>
+<tr><td>Tool result</td><td>Results above 16 KiB become an error record instead of entering the next model request.</td></tr>
+</table></div>
+<p>Run and verification commands are in the repository README. <a href="api.html">Service API</a> lists the conversation routes.</p>
+</details>
+</section>
+<details class="sources"><summary>Sources</summary><p><code>chat/src/App.svelte</code> · <code>chat/vite.config.ts</code> · <code>migration/contract.ts</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/agent/foreground.go</code> · <code>core/internal/state/uploads.go</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>web/Dockerfile</code></p></details>
+</body>
+</html>

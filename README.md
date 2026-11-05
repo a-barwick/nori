@@ -3,158 +3,151 @@
 Nori is a personal assistant you text. This repository holds the whole product:
 
 - [core](core/README.md): the Go agent service and its infrastructure.
-- [web](web/README.md): the Next.js desktop web interface.
+- [web](web/README.md): the assistant web interface and authenticated Next.js server.
+- [chat](chat/): the independent Svelte chat client, packaged by the web build.
 
 Design:
 
-- [Client contract](docs/client-contract.md): the protocol every client uses to talk to the agent service.
-- [Separation of concerns](docs/separation-of-concerns.md): what the service owns, what clients own.
+- [Clients](docs/site/clients.html): what each client and the service own.
+- [Service API](docs/site/api.html): assistant and independent-chat routes.
+- [Chat client](docs/site/chat-client.html): streaming, files, approvals and context limits.
 
 ## Run
 
-### Shared-service preparation
-
-[The migration plan](https://linear.app/a-barwick/issue/AB-284) tracks the proposed
-shared service and its acceptance criteria. `migration/plan.json` is the executable
-acceptance inventory. The runtime migration has not started.
+Run the following commands from the repository root. Install both clients' dependencies
+before `make chat-build` or `make check`:
 
 ```sh
-cd chat && bun install --frozen-lockfile && cd ..
-make chat-fixture          # local Svelte fixture on http://127.0.0.1:3230
-make migration-prep        # HTTP fixture journeys, verifier checks, type check and build
-make migration-readiness   # deliberately exits 2: migration behavior is not verified
+(cd web && bun install --frozen-lockfile)
+(cd chat && bun install --frozen-lockfile)
+make chat-build
 ```
 
-The fixture uses scripted replies and process-local memory. It can exercise separate
-conversations, streaming, targeted stop, request replay and reconnect. Reloading the
-browser retains its conversation while the fixture server runs. Restarting the server
-clears fixture data. It reads no project `.env`, calls no model and uses no existing
-Nori data. Its draft API is under `/__migration/v1`; it is not a production contract.
-The static build contains the client only. The fixture runs through the dev command.
+The assistant and independent chat use one Go service. Configure the existing main
+checkout's gitignored, mode-600 root `.env` with the names in [.env.example](.env.example).
+The app needs its existing Firestore database, Application Default Credentials and
+Temporal connection, namespace, task queue and worker configuration. Project and
+database names have no defaults. Starting the web and API does not start the separate
+inner task worker or computer. Use explicitly configured emulators for isolated data.
 
-With that fixture running, `cd chat && bun --no-env-file run smoke` checks send,
-stop, conversation switching, reconnect and reload, then captures desktop and phone
-screenshots. It uses `playwright-core` without a browser-test framework. Set
-`CHAT_BROWSER_EXECUTABLE` to an existing Chromium executable if the driver's default
-browser is unavailable. This command never downloads a browser or connects to Nori.
+Any development command that can call a model must run through the spend wrapper.
+Select the existing main configuration in place, including from a worktree:
 
-For the existing unpaid backend suites, start isolated Firestore and Temporal
-emulators on loopback, then provide their addresses explicitly:
+```sh
+NORI_MAIN_ENV=/absolute/path/to/main/.env
+NORI_FEATURE_CHAT=your-existing-logical-chat-id
+python3 core/infrastructure/spend/run.py \
+  --env "$NORI_MAIN_ENV" --task "$NORI_FEATURE_CHAT" --repository "$PWD" \
+  -- make dev NORI_ENV_FILE="$NORI_MAIN_ENV"
+```
+
+Reuse that logical chat ID for every paid command and retry. Do not copy credentials
+into a worktree. The wrapper's keys and reservations cover both conversation paths.
+Keep the selected models and providers in [AGENTS.md](AGENTS.md).
+
+With the guarded development stack running:
+
+| Client | Address |
+| --- | --- |
+| Assistant | `http://127.0.0.1:3210/` |
+| Independent chat | `http://127.0.0.1:3210/chat/index.html` |
+
+`make chat-build` packages chat into `web/public/chat/`. `make web-build` also runs
+that build first, and the web Dockerfile packages both clients. For Svelte hot reload,
+run `make chat` against the already guarded local stack and open
+`http://127.0.0.1:3230/chat/`. Set `NORI_WEB_PORT` consistently if changing the Next port.
+
+Chat saves separate conversations, streamed replies, assigned files and exact approval
+decisions. Its foreground reader accepts CSV files up to 64 KiB, although the upload
+limit is 10 MiB. It has a finite saved-context limit and does not include assistant
+history, tasks or memories. Use the assistant for background work, shell, browser,
+PDF or image analysis. See [Chat client](docs/site/chat-client.html).
+
+### Offline fixture and checks
+
+These commands use no project `.env` or paid model:
+
+```sh
+make chat-fixture     # scripted offline client at http://127.0.0.1:3230/chat/
+make migration-prep   # fixture HTTP journeys, verifier checks, Svelte check and build
+make check            # Go, Svelte, TypeScript, ESLint and documentation checks
+```
+
+The fixture is an explicit alternative to `make chat` on the same port. It stores
+conversations only while its process runs. Its results check the client and verifier,
+and cannot establish shared-service readiness.
+
+### Shared-service verification
+
+The shared service and both clients are implemented. `migration/plan.json` lists the
+acceptance criteria. The verifier requires current evidence for service behavior,
+both clients, shared budgets, retained-data recovery and the selected providers.
+It does not deploy anything.
+
+Start isolated Firestore and Temporal emulators on loopback, then name their existing
+listeners explicitly. Recovery also needs a prebuilt compatible previous
+`nori-local` executable, not a copy of the current executable:
 
 ```sh
 export FIRESTORE_EMULATOR_HOST=127.0.0.1:8095
 export TEMPORAL_ADDRESS=127.0.0.1:7245
+export NORI_RECOVERY_OLD_BINARY=/absolute/path/to/compatible/previous/nori-local
 make migration-doctor
-python3 migration/verify.py baseline --suite 8  # one representative suite
-make migration-baseline                      # all six registered unpaid suites
+make migration-baseline
+make migration-integration
 ```
 
-The runner requires reachable emulators, enables each suite explicitly, rejects skipped
-or empty runs, and passes only selected environment variables to child processes.
-Suites create their own isolated databases and task queues. Paid live suites are excluded.
-Each invocation writes a fresh report and logs under `.artifacts/migration/`, including
-the commit, dirty state, plan hash, selected suite and evidence boundary. A partial
-baseline or fixture pass never marks the migration ready. Future implementation must
-add real verifiers for every remaining criterion, including authenticated clients,
-provider cancellation, shared budgets, persistent isolation, upgrade and rollback.
+The baseline runs all six registered suites. Integration runs the shared-service and
+upgrade/rollback journeys. Both groups reject skipped or empty runs, create isolated
+databases and task queues, and exclude paid providers.
 
-The same HTTP journeys can later target an isolated service with
-`python3 migration/verify.py contract --url http://127.0.0.1:PORT`.
-This creates test conversations. Before any write, the target must report the draft
-contract, `mode: isolated-test` and `deterministic: true` from its capabilities route.
-The fixture identifies itself differently and cannot pass this service check.
-Production URLs, redirects, missing prerequisites and unsupported contracts fail.
-
-### Existing assistant
+For browser verification, start the deterministic service and worker from the repo root:
 
 ```sh
-make dev     # local conversation on http://127.0.0.1:3210, Go runner on :8080
-make check   # Go vet and gofmt, then TypeScript and ESLint
+NORI_SHARED_PORT=18080 NORI_SHARED_WORKER=1 \
+  bun --no-env-file core/e2e/shared-service-harness.js
 ```
 
-Install web's dependencies first with `cd web && bun install --frozen-lockfile`.
-The local runner reads `OPENAI_API_KEY`, `OPENROUTER_API_KEY` and `JEV_API_KEY` from the existing
-root `.env` by default. `NORI_ENV_FILE` selects an existing configuration file;
-`NORI_TASK_ENV_FILE` selects a separate existing task configuration when needed.
-Neither setting copies or moves credentials. Google Cloud access uses Application Default Credentials.
-Use `make dev NORI_ENV_FILE=/absolute/path/to/the/existing/.env` to select a different
-file or use a worktree without copying credentials. Keep the credential file
-gitignored and mode 600. Required names and optional model settings are in
-[.env.example](.env.example). The default conversation model is `gpt-6.1-sol`, low reasoning, through the
-OpenAI platform API at standard tier. Austin selected this for conversation, `jev-latest` for intent hints,
-and `openai/gpt-6.1-terra` through OpenRouter Responses for inner tasks. Agents must preserve these
-choices; the model policy in [AGENTS.md](AGENTS.md) also applies to overrides.
+In another terminal at the repo root, run the Next server against that service:
 
-Both Go entrypoints use the same durable conversation runner. Each message is
-saved to Firestore before acceptance; model processing continues independently
-of the browser. Local mode checks pending work at startup and uses an application
-loop to recover after restart. Hosted mode schedules a Cloud Tasks notification
-and processes it through a request-bound handler, so scale-to-zero does not
-require a resident worker for conversation.
+```sh
+NORI_LOCAL_AGENT_URL=http://127.0.0.1:18080 \
+  bun --no-env-file run --cwd web dev --port 3310
+```
 
-The first load of an empty conversation queues one introduction through that
-same inbox. Nori generates a short, warm greeting with the real outer model;
-the saved reply is reused on reload. The bootstrap instruction is internal and
-does not appear as a message Austin sent. The composer stays disabled until the
-greeting is saved and the system is ready. Inputs arriving from another client
-still join the normal ordered input flow. The UI shows connection and
-preparation status until a saved reply is available.
+Then verify both clients through Next. Use an existing Chromium executable:
 
-The runner gets a Jev hint, then calls the configured conversational model with
-recent conversation, native tool-call results, and task command tools.
-Classification remains advisory. Nearby messages are coalesced; new input can
-supersede an unfinished answer up to three times. The fourth attempt finishes
-its fixed input batch, leaving later messages for the next turn. The runner
-rechecks accepted input before dispatch and publication, and preserves already
-accepted actions when an answer is superseded.
+```sh
+CHAT_BROWSER_EXECUTABLE=/absolute/path/to/chromium \
+  python3 migration/verify.py browser --url http://127.0.0.1:3310
+python3 migration/verify.py contract --url http://127.0.0.1:18080
+```
 
-Dispatch reuses Firestore task acceptance and Temporal delivery. It returns task
-identity without waiting for execution. The existing worker executes tools and
-saves results. Several independent tasks can run concurrently, each with its own
-browser tab and Answer, Update, Continue, and Stop controls in Activity. Chat can
-target an existing task when the reference is unambiguous; unrelated conversation
-leaves tasks unchanged. Answers and budget continuations bind to the current
-question, and retries reuse command receipts. Paused task execution does not
-disable conversation.
+Browser verification checks owner authentication failures, same-origin requests,
+conversation isolation, desktop and phone interactions, attachments and exact approvals.
+The target must identify itself as an isolated deterministic service. Fixture and
+production targets cannot pass this acceptance check. Stop only the harness and Next
+processes started for this run when finished. Preserve their files and evidence.
 
-Task questions and results enter the durable conversation inbox. Notification-only
-turns cannot issue task commands. A newly accepted user message holds task-result
-publication until routing completes, so an in-flight result cannot ignore a
-pending correction. Task browser tabs share the retained profile's cookies and
-storage; they provide cooperative ownership, not security isolation.
+Each verifier invocation writes logs and a report under `.artifacts/migration/`.
+Readiness combines those reports with authorized shared-budget and provider evidence:
 
-`POST /api/turn` accepts `{ "id": "UUID", "message": "text" }` and returns HTTP
-202 with a session snapshot after durable acceptance and wake confirmation.
-Retry an interrupted request with the same UUID; different text with that UUID
-is rejected. `POST /api/session` restores saved history and pending state, and
-supports a `before` cursor for older messages. The UI shows conversation work
-and recorded model attempts, actions, and provider usage; task steps load on
-demand. Provider cost stays unknown when no price is supplied.
+```sh
+python3 migration/verify.py readiness \
+  --evidence /absolute/path/to/baseline/report.json \
+  --evidence /absolute/path/to/integration/report.json \
+  --evidence /absolute/path/to/browser/report.json \
+  --evidence /absolute/path/to/shared-budget/report.json \
+  --evidence /absolute/path/to/provider/report.json
+```
 
-Firestore holds the transcript, processing state, dispatch records, and traces.
-Model context uses bounded recent history, with truncation shown in the attempt
-trace. Browsing older messages does not expand model context; memory and
-compaction remain separate features. The Go listener and web preview bind to
-loopback. `NORI_PROJECT_ID` and `FIRESTORE_DATABASE_ID` have no defaults, so every
-process names its database; use explicit Firestore and Temporal emulator settings
-for an isolated local run.
+Reports must match the exercised source files and plan. A partial baseline or fixture
+pass cannot certify readiness. Real-ledger and provider checks require separate
+budget authorization and the same spend wrapper. Retain eligible provider evidence
+instead of repeating paid calls for a documentation change.
 
-Two live conversation E2E journeys cover the generated greeting, asynchronous
-acceptance, UUID replay/conflict handling, rapid follow-up ordering and
-hypothetical replies without task dispatch. Point `NORI_E2E_API_URL` at a running
-local Go API with a fresh isolated Firestore database, or `NORI_E2E_URL` at its
-local web proxy, then run `bun test core/e2e/conversation.test.js`. They use the
-selected real providers; do not point them at a saved personal conversation.
-The older durable-task suite still targets the retired direct-run route and
-does not validate this revision's conversation contract.
-
-`NORI_LOCAL_AGENT_URL` selects the local adapter only in development. Production
-keeps the owner-protected proxy and runtime IAM. `make core` starts the hosted
-entrypoint locally and additionally requires Cloud Tasks configuration; see
-[core setup](core/README.md). Hosted deployment uses the configured conversation
-queue and scoped caller IAM, with OpenRouter/Jev credentials supplied through
-native secret references. Follow [app operations](core/infrastructure/app/README.md)
-for the operator deployment procedure.
+Local verification does not update deployed services, worker images or infrastructure.
+Production deployment remains a separate action through `make deploy`.
 
 ## Durable tasks
 
