@@ -3,50 +3,49 @@
   {
    "page": "docs/site/api.html",
    "title": "Service API",
-   "summary": "Clients send messages and task commands to the agent service over HTTP, and follow saved log events on a stream.",
+   "summary": "Clients send messages to the agent service and restore saved state through snapshots and event streams.",
    "status": "built",
    "code": [
+    "chat/src/App.svelte",
+    "core/internal/api/chat.go",
     "core/internal/api/events.go",
     "core/internal/api/http.go",
     "core/internal/api/uploads.go",
+    "core/internal/chat/service.go",
     "core/internal/conversation/runner.go",
     "core/internal/conversation/session.go",
-    "core/internal/state/events.go",
+    "core/internal/state/firestore/chat.go",
     "core/internal/state/firestore/events.go",
-    "core/internal/state/firestore/schedules.go",
     "core/internal/state/notify.go",
-    "web/src/lib/runtime/forward.ts"
+    "migration/contract.ts",
+    "web/src/lib/runtime/auth.ts",
+    "web/src/lib/runtime/forward.ts",
+    "web/src/lib/runtime/useRuntime.ts"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 22
+     "words": 77
     },
     {
      "id": "endpoints",
      "title": "Endpoints",
      "status": "built",
-     "words": 209
+     "words": 299
     },
     {
      "id": "the-event-stream",
      "title": "The event stream",
      "status": "built",
-     "words": 156
+     "words": 88
     },
     {
      "id": "shared-read-positions",
      "title": "Shared read positions",
      "status": "built",
-     "words": 98
-    },
-    {
-     "id": "the-protocol-for-many-clients",
-     "title": "The protocol for many clients",
-     "status": "designed",
-     "words": 14
+     "words": 59
     }
    ]
   },
@@ -200,6 +199,48 @@
    ]
   },
   {
+   "page": "docs/site/chat-client.html",
+   "title": "Chat client",
+   "summary": "Independent conversations stream replies through the same authenticated web server and agent service as the assistant.",
+   "status": "built",
+   "code": [
+    "chat/src/App.svelte",
+    "chat/vite.config.ts",
+    "core/internal/agent/foreground.go",
+    "core/internal/chat/service.go",
+    "core/internal/state/uploads.go",
+    "migration/contract.ts",
+    "web/Dockerfile",
+    "web/src/lib/runtime/forward.ts"
+   ],
+   "sections": [
+    {
+     "id": "overview",
+     "title": "Overview",
+     "status": "built",
+     "words": 101
+    },
+    {
+     "id": "conversation-controls",
+     "title": "Conversation controls",
+     "status": "built",
+     "words": 93
+    },
+    {
+     "id": "tools-and-decisions",
+     "title": "Tools and decisions",
+     "status": "built",
+     "words": 100
+    },
+    {
+     "id": "saved-context",
+     "title": "Saved context",
+     "status": "built",
+     "words": 133
+    }
+   ]
+  },
+  {
    "page": "docs/site/classification.html",
    "title": "Classifying a message",
    "summary": "Jev, a classifier model, marks the intents in the current user messages. The outer model gets them as a hint.",
@@ -242,32 +283,44 @@
   {
    "page": "docs/site/clients.html",
    "title": "Clients",
-   "summary": "If two clients could disagree about something, the service owns it. A client only owns its own screen.",
+   "summary": "The assistant and independent chat clients share one agent service, which owns their saved state and execution.",
    "status": "built",
    "code": [
-    "core/internal/api/http.go",
-    "core/internal/state/parts.go",
-    "web/src/lib/hybrid.ts",
-    "web/src/lib/runtime/server.ts"
+    "chat/src/App.svelte",
+    "core/internal/app/app.go",
+    "core/internal/chat/service.go",
+    "core/internal/spend/client.go",
+    "core/internal/state/firestore/chat.go",
+    "core/internal/state/firestore/database.go",
+    "migration/plan.json",
+    "web/src/components/runtime/NoriApp.tsx",
+    "web/src/lib/runtime/auth.ts",
+    "web/src/lib/runtime/forward.ts"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 91
-    },
-    {
-     "id": "what-a-client-never-does",
-     "title": "What a client never does",
-     "status": "built",
-     "words": 43
+     "words": 89
     },
     {
      "id": "each-client",
      "title": "Each client",
      "status": "built",
-     "words": 212
+     "words": 71
+    },
+    {
+     "id": "what-the-service-owns",
+     "title": "What the service owns",
+     "status": "built",
+     "words": 98
+    },
+    {
+     "id": "conversation-boundaries",
+     "title": "Conversation boundaries",
+     "status": "built",
+     "words": 44
     }
    ]
   },
@@ -276,13 +329,22 @@
    "title": "Code map",
    "summary": "Where to look when you want to read or change something.",
    "status": "built",
-   "code": [],
+   "code": [
+    "Makefile",
+    "chat/src/App.svelte",
+    "chat/vite.config.ts",
+    "core/cmd/",
+    "core/internal/",
+    "migration/",
+    "web/Dockerfile",
+    "web/src/"
+   ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 634
+     "words": 724
     }
    ]
   },
@@ -445,13 +507,22 @@
    "summary": "What was decided, why, and what was turned down. All dates are 2026.",
    "status": "built",
    "code": [
+    "chat/src/App.svelte",
+    "core/internal/agent/foreground.go",
+    "core/internal/api/chat.go",
+    "core/internal/app/app.go",
+    "core/internal/chat/service.go",
     "core/internal/conversation/call.go",
     "core/internal/conversation/command_plan.go",
     "core/internal/conversation/commands.go",
     "core/internal/conversation/task_context.go",
     "core/internal/state/conversation.go",
+    "core/internal/state/firestore/chat.go",
     "core/internal/state/firestore/tasks.go",
-    "core/internal/state/results.go"
+    "core/internal/state/results.go",
+    "migration/contract.ts",
+    "web/src/lib/runtime/auth.ts",
+    "web/src/lib/runtime/forward.ts"
    ],
    "sections": [
     {
@@ -464,7 +535,7 @@
      "id": "the-loops",
      "title": "The loops",
      "status": "built",
-     "words": 290
+     "words": 292
     },
     {
      "id": "milestone-4-choices",
@@ -482,7 +553,7 @@
      "id": "approvals-and-writes",
      "title": "Approvals and writes",
      "status": "built",
-     "words": 962
+     "words": 965
     },
     {
      "id": "finishing-and-budgets",
@@ -494,7 +565,13 @@
      "id": "results-and-files",
      "title": "Results and files",
      "status": "built",
-     "words": 463
+     "words": 466
+    },
+    {
+     "id": "shared-service-and-chat",
+     "title": "Shared service and chat",
+     "status": "built",
+     "words": 200
     },
     {
      "id": "runtime-and-infrastructure",
@@ -512,7 +589,7 @@
      "id": "memory-and-context",
      "title": "Memory and context",
      "status": "built",
-     "words": 366
+     "words": 367
     },
     {
      "id": "models",
@@ -530,7 +607,7 @@
      "id": "clients",
      "title": "Clients",
      "status": "designed",
-     "words": 64
+     "words": 29
     },
     {
      "id": "planning",
@@ -596,10 +673,11 @@
   {
    "page": "docs/site/frontend.html",
    "title": "Web client architecture",
-   "summary": "The browser talks to a Next.js server, and that server talks to the agent service.",
+   "summary": "The assistant browser client talks to a Next.js server, which checks access before calling the agent service.",
    "status": "built",
    "code": [
     "Makefile",
+    "web/Dockerfile",
     "web/src/app/api/agent/[operation]/route.ts",
     "web/src/app/layout.tsx",
     "web/src/app/page.tsx",
@@ -619,13 +697,13 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 18
+     "words": 20
     },
     {
      "id": "request-path",
      "title": "Request path",
      "status": "built",
-     "words": 166
+     "words": 175
     },
     {
      "id": "sending-a-message",
@@ -637,7 +715,7 @@
      "id": "live-updates",
      "title": "Live updates",
      "status": "built",
-     "words": 527
+     "words": 500
     }
    ]
   },
@@ -1514,18 +1592,47 @@
   {
    "page": "docs/site/system.html",
    "title": "Service overview",
-   "summary": "Every box Nori runs on, and what each one is responsible for.",
+   "summary": "One agent service runs the assistant and independent chats, with saved state shared across its processes.",
    "status": "built",
    "code": [
-    "core/internal/conversation/call.go",
-    "core/internal/task/client.go"
+    "core/internal/app/app.go",
+    "core/internal/chat/service.go",
+    "core/internal/conversation/runner.go",
+    "core/internal/conversation/tasks.go",
+    "core/internal/platform/platform.go",
+    "core/internal/spend/client.go",
+    "core/internal/state/chat.go",
+    "core/internal/state/firestore/chat.go",
+    "core/internal/state/firestore/database.go",
+    "core/internal/task/client.go",
+    "core/internal/task/workflow.go",
+    "core/internal/taskworker/register.go",
+    "web/src/lib/runtime/forward.ts"
    ],
    "sections": [
     {
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 294
+     "words": 90
+    },
+    {
+     "id": "how-work-runs",
+     "title": "How work runs",
+     "status": "built",
+     "words": 105
+    },
+    {
+     "id": "what-stays-separate",
+     "title": "What stays separate",
+     "status": "built",
+     "words": 55
+    },
+    {
+     "id": "where-state-lives",
+     "title": "Where state lives",
+     "status": "built",
+     "words": 48
     }
    ]
   },

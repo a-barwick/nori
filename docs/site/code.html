@@ -10,9 +10,9 @@
 <body>
 <h1>Code map</h1>
 <p class="lede">Where to look when you want to read or change something.</p>
-<p>Go code is under <span class="mono">core/</span> and the web client is under <span class="mono">web/src/</span>.
+<p>Go code is under <span class="mono">core/</span>. The assistant client is under <span class="mono">web/src/</span>, and independent chat is under <span class="mono">chat/src/</span>.
   Dependencies run in one direction: entrypoints build an <span class="mono">app</span>, whose <span class="mono">api</span> routes call
-  <span class="mono">conversation</span>, which uses <span class="mono">state</span> and <span class="mono">dispatch</span>.</p>
+  <span class="mono">conversation</span> or <span class="mono">chat</span>, which use <span class="mono">state</span> and <span class="mono">dispatch</span>.</p>
 <p>Code reaches infrastructure through small contracts: <span class="mono">wake</span> sends wakes, <span class="mono">dispatch</span> delivers saved commands to
   Temporal through an orchestration contract, and <span class="mono">secret</span> reads credentials. Cloud Tasks, Temporal and Secret Manager are the adapters today.
   Only <span class="mono">task</span> and the worker code import Temporal.</p>
@@ -21,7 +21,10 @@
       <tr><th>If you're looking for</th><th>Look in</th></tr>
           <tr><th colspan="2">Agent service <span class="mono">core/</span></th></tr>
           <tr><td>HTTP endpoints and input validation</td><td><span class="mono">core/internal/api/</span></td></tr>
-          <tr><td>How a turn runs: leases, restarts, checkpoints</td><td><span class="mono">core/internal/conversation/runner.go, call.go</span></td></tr>
+          <tr><td>Foreground chat turns, streaming, approval and context limits</td><td><span class="mono">core/internal/chat/service.go</span></td></tr>
+          <tr><td>Independent chat HTTP routes</td><td><span class="mono">core/internal/api/chat.go</span></td></tr>
+          <tr><td>Chat snapshots, events and assigned uploads</td><td><span class="mono">core/internal/state/chat.go, state/firestore/chat.go</span></td></tr>
+          <tr><td>How an assistant turn runs: leases, restarts, checkpoints</td><td><span class="mono">core/internal/conversation/runner.go, call.go</span></td></tr>
           <tr><td>The outer model contract and its tools</td><td><span class="mono">core/internal/conversation/model.go</span></td></tr>
           <tr><td>The OpenAI adapter for the outer model</td><td><span class="mono">core/internal/conversation/openai.go</span></td></tr>
           <tr><td><a href="classification.html">Jev classification</a>: the contract, then the Jev adapter</td><td><span class="mono">core/internal/conversation/classifier.go, jev.go</span></td></tr>
@@ -55,12 +58,18 @@
           <tr><td>Credentials kept in Secret Manager</td><td><span class="mono">core/internal/secret/</span></td></tr>
           <tr><td>Infrastructure and releases</td><td><span class="mono">core/infrastructure/</span></td></tr>
           <tr><td>Live end-to-end tests</td><td><span class="mono">core/e2e/</span></td></tr>
-          <tr><th colspan="2">Clients <span class="mono">web/src/</span></th></tr>
-          <tr><td>The chat UI and task panel (<a href="web-client.html">Web client</a>, <a href="frontend.html">components</a>)</td><td><span class="mono">web/src/components/runtime/, web/src/components/chat/</span></td></tr>
+          <tr><th colspan="2">Clients</th></tr>
+          <tr><td>The independent <a href="chat-client.html">Chat client</a> and its HTTP contract</td><td><span class="mono">chat/src/App.svelte, migration/contract.ts</span></td></tr>
+          <tr><td>Chat development proxy and packaged build</td><td><span class="mono">chat/vite.config.ts, web/Dockerfile</span></td></tr>
+          <tr><td>The assistant UI and task panel (<a href="web-client.html">Web client</a>, <a href="frontend.html">components</a>)</td><td><span class="mono">web/src/components/runtime/, web/src/components/chat/</span></td></tr>
           <tr><td>How the browser sends messages and follows the stream</td><td><span class="mono">web/src/lib/runtime/useRuntime.ts</span></td></tr>
           <tr><td>Routes between the browser and the service</td><td><span class="mono">web/src/app/api/, web/src/lib/runtime/forward.ts</span></td></tr>
           <tr><td>Browser and server telemetry filters</td><td><span class="mono">web/src/lib/observability/</span></td></tr>
           <tr><td>Theme tokens (<a href="theme.html">Theme</a>)</td><td><span class="mono">web/src/app/globals.css</span></td></tr>
+          <tr><th colspan="2">Shared-service verification</th></tr>
+          <tr><td>Acceptance inventory, isolated runners and evidence checks</td><td><span class="mono">migration/plan.json, migration/verify.py</span></td></tr>
+          <tr><td>Service integration and retained-data recovery</td><td><span class="mono">core/e2e/shared-service.test.js, migration/recovery.test.ts</span></td></tr>
+          <tr><td>Both-client browser journeys and proxy access checks</td><td><span class="mono">chat/scripts/smoke.mjs, proxy-auth.mjs</span></td></tr>
     </table>
   </div>
   <div class="card">
@@ -75,5 +84,6 @@
     </ul>
   </div>
 
+<details class="sources"><summary>Sources</summary><p><code>core/internal/</code> · <code>core/cmd/</code> · <code>web/src/</code> · <code>chat/src/App.svelte</code> · <code>chat/vite.config.ts</code> · <code>web/Dockerfile</code> · <code>migration/</code> · <code>Makefile</code></p><p><a href="system.html">Service overview</a> · <a href="chat-client.html">Chat client</a></p></details>
 </body>
 </html>

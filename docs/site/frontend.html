@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>Web client architecture</h1>
-<p class="lede">The browser talks to a Next.js server, and that server talks to the agent service.</p>
+<p class="lede">The assistant browser client talks to a Next.js server, which checks access before calling the agent service.</p>
 <section><h2>Request path</h2>
 <div class="card"><div class="flow">
 <div class="node"><b>React client</b><small><code>NoriApp</code> and its components use <code>useRuntime</code> for requests and saved state.</small></div>
@@ -29,7 +29,7 @@
 <tr><td><code>delivered</code></td><td>Reports saved results referenced by loaded replies while the tab is visible.</td></tr>
 <tr><td><code>trace</code></td><td>Fetches task steps when a debug row is open, and when the task changes.</td></tr>
 </table></div>
-<p>The client never calls a model.</p>
+<p>The client never calls a model. The separate <a href="chat-client.html">Chat client</a> uses the same authenticated server.</p>
 </section>
 <section><h2>Sending a message</h2>
 <div class="card"><div class="flow">
@@ -85,14 +85,10 @@
 </ul>
 <h3>Components</h3>
 <p>The runtime hook owns requests and saved state. The thread owns scrolling, viewport reporting and new-message counts. See <a href="code.html">Code map</a> for other components.</p>
-<h3>Run and build</h3>
-<div class="card"><table class="tall"><tr><th>Command, from the repo root</th><th>What it does</th></tr>
-<tr><td><code>make dev</code></td><td>Runs the client on port 3210 with the local Go agent.</td></tr>
-<tr><td><code>make web</code></td><td>Runs only the client.</td></tr>
-<tr><td><code>make check</code></td><td>Runs the repo checks before a merge.</td></tr>
-</table></div>
-<p>The stack is Next.js 16, React 19, Tailwind 4 and Bun. Production runs the Docker image on Cloud Run with <code>NORI_RUNTIME_URL</code> and <code>IAP_AUDIENCE</code>. See <a href="deploy.html">Deployment</a>.</p>
+<h3>Builds</h3>
+<p>The root web build first builds the Svelte chat client into the web app's public files. The Docker image includes both clients.</p>
+<p>The assistant uses Next.js, React and Tailwind. See the repository README for guarded local commands, and <a href="deploy.html">Deployment</a> for hosting.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/components/chat/Thread.tsx</code> · <code>web/src/lib/types.ts</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/methods.ts</code> · <code>web/src/proxy.ts</code> · <code>web/src/app/page.tsx</code> · <code>web/src/app/layout.tsx</code> · <code>web/src/lib/observability/privacy.ts</code> · <code>web/src/app/api/agent/[operation]/route.ts</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/server.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>Makefile</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/components/chat/Thread.tsx</code> · <code>web/src/lib/types.ts</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/methods.ts</code> · <code>web/src/proxy.ts</code> · <code>web/src/app/page.tsx</code> · <code>web/src/app/layout.tsx</code> · <code>web/src/lib/observability/privacy.ts</code> · <code>web/src/app/api/agent/[operation]/route.ts</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/server.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>Makefile</code> · <code>web/Dockerfile</code></p></details>
 </body>
 </html>
