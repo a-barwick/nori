@@ -36,9 +36,9 @@ def evidence_paths(mode, hashes, acceptance):
     """Only changes to code exercised by a check invalidate its evidence."""
     runtime = {name for name in hashes if name.startswith(("core/internal/", "core/cmd/")) or name in ("core/go.mod", "core/go.sum")}
     if mode == "baseline":
-        return runtime | {s["file"] for s in PLAN["baseline_suites"]}
+        return runtime | {name for name in hashes if name.startswith("core/e2e/") and "shared-service" not in name}
     if mode == "browser":
-        return runtime | {name for name in hashes if name.startswith(("web/", "chat/"))} | {"migration/contract.ts"}
+        return runtime | {name for name in hashes if name.startswith(("web/", "chat/"))} | {"migration/contract.ts", "core/e2e/shared-service-harness.js"}
     if mode == "provider":
         return runtime | {"core/e2e/shared-service-live.test.js", "core/e2e/shared-service-harness.js", "migration/provider-evidence.py"}
     if acceptance == ["shared-budget"]:
