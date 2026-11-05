@@ -202,6 +202,40 @@ afterAll(async () => {
 
 const remember = (text, replaces = null, about = "Austin") => ({ name: "remember", arguments: { text, about, replaces } });
 
+journey("ordinary conversation survives retries and an API restart through the compatibility route", async () => {
+  outer.onUser = () => [];
+  outer.text = "Four.";
+  const before = await settled();
+  const innerBefore = terra.summaries.length;
+  const input = { id: crypto.randomUUID(), message: "What is two plus two? Just answer without starting work." };
+  await post("turn", input, 202);
+  const after = await settled();
+  const user = after.messages.find((message) => message.id === `${input.id}-user`);
+  expect(user.text).toBe(input.message);
+  const answer = after.messages.find((message) => message.role === "assistant" && message.turn_id === user.turn_id);
+  expect(answer.text).toBe("Four.");
+  expect(after.runs).toEqual(before.runs);
+  expect(after.dispatches).toEqual(before.dispatches);
+  expect(terra.summaries.length).toBe(innerBefore);
+  const calls = outer.calls;
+  const usage = after.usage;
+  await post("turn", input, 202);
+  const replay = await settled();
+  expect(replay.messages).toEqual(after.messages);
+  expect(replay.usage).toEqual(usage);
+  expect(outer.calls).toBe(calls);
+  await post("turn", { ...input, message: "Conflicting text." }, 409);
+  await stop(api);
+  await startAPI();
+  await post("turn", input, 202);
+  const reopened = await post("session");
+  expect(reopened.messages).toEqual(after.messages);
+  expect(reopened.runs).toEqual(before.runs);
+  expect(reopened.usage).toEqual(usage);
+  expect(outer.calls).toBe(calls);
+  outer.text = "Noted.";
+}, 120_000);
+
 journey("a saved memory reaches a fresh conversation", async () => {
   await clearMemories();
   outer.onUser = (last) => last.includes("Please remember") ? [remember("Austin likes his coffee decaf after lunch.")] : [];

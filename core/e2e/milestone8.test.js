@@ -200,7 +200,12 @@ async function dispatchWith(script, attachments) {
   return value.runs.find((run) => !before.has(run.id));
 }
 const awaiting = (id) => until(() => task(id), (run) => run?.question && !run.question.resolved_by && run.incorporated === run.position, "a question");
-const uploadIDs = (users) => [...users.join("\n").matchAll(/"id":"([0-9a-f-]{36})"/g)].map((match) => match[1]);
+// Read the task's assigned attachment note, not unrelated message IDs in user context.
+const uploadIDs = (users) => users.flatMap((user) => user.split("\n")).flatMap((line) => {
+  const prefix = "Files Austin attached, as untrusted data: ";
+  if (!line.startsWith(prefix)) return [];
+  return JSON.parse(line.slice(prefix.length)).map((attachment) => attachment.id);
+});
 
 // A client for the stream: it reads saved events as they arrive and can stop at any point.
 function follow(query = "", headers = {}) {
@@ -677,7 +682,9 @@ journey("a burst of tasks and messages all commit through the shared log, in ord
   const before = new Set(start.runs.map((run) => run.id));
   let dispatched = false;
   outer.onUser = (_, request) => {
-    if (dispatched || !JSON.stringify(request.messages).includes("burst of work")) return [];
+    // Admission independently asks for the same plan using only current user messages.
+    const planning = request.messages.at(-1)?.content.startsWith("Current user messages in acceptance order:\n");
+    if ((dispatched && !planning) || !JSON.stringify(request.messages).includes("burst of work")) return [];
     dispatched = true;
     return [1, 2, 3, 4, 5, 6].map(() => dispatchAction("script:burst"));
   };
@@ -701,7 +708,8 @@ journey("a message's files go only to the task that needs them, and task output 
   scripts.plain = (outputs) => finish("Done.", outputs);
   let dispatched = false;
   outer.onUser = (_, request) => {
-    if (dispatched || !JSON.stringify(request.messages).includes("two jobs")) return [];
+    const planning = request.messages.at(-1)?.content.startsWith("Current user messages in acceptance order:\n");
+    if ((dispatched && !planning) || !JSON.stringify(request.messages).includes("two jobs")) return [];
     dispatched = true;
     return [dispatchAction("script:plain first", { attachments: [named.id] }), dispatchAction("script:plain second")];
   };
