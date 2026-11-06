@@ -126,37 +126,37 @@
   "baseline_suites": [
     {
       "id": "6",
-      "file": "core/e2e/milestone6.test.js",
+      "file": "core/e2e/approvals.test.js",
       "flag": "NORI_M6_E2E",
       "covers": "Exact approvals, duplicate writes and restart around external effects"
     },
     {
       "id": "7",
-      "file": "core/e2e/milestone7.test.js",
+      "file": "core/e2e/subtasks.test.js",
       "flag": "NORI_M7_E2E",
       "covers": "Subtask delivery, parent cancellation and recovery"
     },
     {
       "id": "8",
-      "file": "core/e2e/milestone8.test.js",
+      "file": "core/e2e/files-and-results.test.js",
       "flag": "NORI_M8_E2E",
       "covers": "Event replay, files, results and isolation of assigned uploads"
     },
     {
       "id": "9",
-      "file": "core/e2e/milestone9.test.js",
+      "file": "core/e2e/schedules.test.js",
       "flag": "NORI_M9_E2E",
       "covers": "Schedules, monitors and notification delivery"
     },
     {
       "id": "10",
-      "file": "core/e2e/milestone10.test.js",
+      "file": "core/e2e/memory.test.js",
       "flag": "NORI_M10_E2E",
       "covers": "Explicit memory and context limits"
     },
     {
       "id": "11",
-      "file": "core/e2e/milestone11.test.js",
+      "file": "core/e2e/proactive-calendar.test.js",
       "flag": "NORI_M11_E2E",
       "covers": "Proactive calendar offers"
     }

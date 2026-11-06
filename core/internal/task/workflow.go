@@ -50,424 +50,473 @@ type Checkpoint struct {
 }
 
 func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.Run, err error) {
-	options := workflow.ActivityOptions{
-		StartToCloseTimeout: 240 * time.Second, HeartbeatTimeout: 10 * time.Second, WaitForCancellation: true,
-		RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
-	}
-	ctx = workflow.WithActivityOptions(ctx, options)
-	quick := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 20 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
-	})
-	// A sync only appends to the history and saves evidence, so a worker crash during delivery can safely repeat it.
-	syncing := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 20 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3},
-	})
-	stopCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 200 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
-	})
-	spending := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3},
-	})
-	c := resume
-	if c.Budget == 0 {
-		c.Budget = agent.BudgetUSD
-		if c.StartBudget > 0 {
-			c.Budget = c.StartBudget
-		}
-		c.Stopped = true
-	}
-	var a *Activities
-	signals := workflow.GetSignalChannel(ctx, Signal)
-	spend := func(w workflow.Context) { c.projectSpend(w, id) }
-	wait := func() error { var command state.Command; signals.Receive(ctx, &command); return ctx.Err() }
-	stop := func(w workflow.Context) error { return c.stopComputer(w, id) }
-	finish := func(w workflow.Context) error { return c.stopTask(w, id) }
-	boundary := func(e error) bool {
-		if superseded(e) {
-			return true
-		}
-		if applicationKind(e, "paused") {
-			err = wait()
-			return err == nil
-		}
-		return false
-	}
+	r := newTaskRun(ctx, id, resume)
 	continuing := false
 	defer func() {
 		if continuing {
 			return
 		}
-		cleanup, _ := workflow.NewDisconnectedContext(ctx)
-		cleanup = workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(stopCtx))
-		spend(workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(spending)))
-		if e := finish(cleanup); e != nil {
-			err = fmt.Errorf("computer stop could not be confirmed: %w", e)
-		}
-		if c.Stopped && result.Status != "" && len(c.ComputerRevisions) > 0 {
-			browser := BrowserCleanup{RunID: id, Scope: computerRun(Step{id, c.ComputerRevisions[0]})}
-			if e := workflow.ExecuteActivity(cleanup, a.CloseBrowser, browser).Get(cleanup, nil); e != nil {
-				workflow.GetLogger(ctx).Error("Task browser cleanup remains pending", "run_id", id)
-			}
+		if e := r.cleanup(); e != nil {
+			err = e
 		}
 	}()
-	publish := func(p RefPublication) error {
-		for {
-			e := workflow.ExecuteActivity(quick, a.PublishRef, p).Get(ctx, &result)
-			if !applicationKind(e, "routing_pending") {
-				return e
-			}
-			if e = wait(); e != nil {
-				return e
-			}
-		}
-	}
-	runLoop := func() {
-		for turns := 0; ; turns++ {
-			if turns >= 32 && !c.CostUnknown {
-				continuing = true
-				err = workflow.NewContinueAsNewError(ctx, WorkflowName, id, c)
-				return
-			}
-			var signal state.Command
-			for signals.ReceiveAsync(&signal) {
-			}
-			var synced HistorySync
-			err = workflow.ExecuteActivity(syncing, a.SyncHistory, HistoryInput{
-				Step: Step{id, c.Revision}, Ref: c.Ref, Position: c.Position, Question: c.Question, Action: c.Action,
-			}).Get(ctx, &synced)
-			if boundary(err) {
-				continue
-			}
-			if err != nil {
-				return
-			}
-			c.applySync(synced)
-			if synced.Grants > 0 {
-				spend(spending)
-			}
-			if c.CostUnknown {
-				err = state.ErrCostUnknown
-				return
-			}
-			// A decided write runs before the budget check, because it spends nothing.
-			err = c.settleAction(ctx, quick, id, synced)
-			if boundary(err) {
-				continue
-			}
-			if err != nil {
-				return
-			}
-			if c.Question == nil && c.Spent+c.Others >= c.Budget {
-				c.Question = &state.Question{
-					ID:   fmt.Sprintf("%s-budget-p%d", id, c.Position),
-					Kind: "budget",
-					Text: fmt.Sprintf("I reached this task’s $%.2f model allowance ($%.4f spent across %d model calls and %d tool attempts, plus $%.4f by its related tasks). "+
-						"The task is not finished. Request: %s\n\nReply continue to grant another $%.2f, or Stop to end the task.",
-						c.Budget, c.Spent, c.Models, c.Tools, c.Others, c.Request, agent.BudgetUSD),
-					Revision: c.Revision,
-				}
-				c.QuestionPublished = false
-			}
-			if c.Question != nil {
-				if err = stop(stopCtx); err != nil {
-					return
-				}
-				if !c.QuestionPublished {
-					err = workflow.ExecuteActivity(quick, a.Ask, QuestionProjection{Step: Step{id, c.Revision}, Question: *c.Question}).Get(ctx, nil)
-					if boundary(err) {
-						continue
-					}
-					if err != nil {
-						return
-					}
-					c.QuestionPublished = true
-				}
-				if err = wait(); err != nil {
-					return
-				}
-				continue
-			}
-			var model RefModelOutcome
-			model, err = c.callModel(ctx, quick, spending, id)
-			if boundary(err) {
-				continue
-			}
-			if err != nil {
-				return
-			}
-			if model.Invalid {
-				continue
-			}
-			// Account and retain every model response before checking newer instructions.
-			// Close each abandoned call explicitly to preserve the exact Responses prefix.
-			var current CurrentPosition
-			err = workflow.ExecuteActivity(quick, a.CurrentPosition, id).Get(ctx, &current)
-			if err != nil {
-				if boundary(err) {
-					for _, call := range model.Calls {
-						var ref string
-						e := workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
-							Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
-							Response: map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."},
-						}).Get(ctx, &ref)
-						if e != nil {
-							err = e
-							return
-						}
-						c.Ref = ref
-					}
-					continue
-				}
-				return
-			}
-			changed := current.Revision != c.Revision || current.Position != c.Position
-			revised := false
-			for _, call := range model.Calls {
-				if changed || revised {
-					var ref string
-					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
-						Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
-						Response: map[string]any{"skipped": true, "reason": "Accepted input changed before this call ran."},
-					}).Get(ctx, &ref)
-					if err != nil {
-						return
-					}
-					c.Ref = ref
-					continue
-				}
-				if call.Name == "request_input" || call.Name == "request_work" {
-					var q state.Question
-					err = workflow.ExecuteActivity(quick, a.InputRef, RefInput{Step: Step{id, c.Revision}, Ref: c.Ref, Index: call.Index, ReadOnly: c.ReadOnly}).Get(ctx, &q)
-					if err != nil {
-						return
-					}
-					q.ID = fmt.Sprintf("%s-question-m%d", id, c.Models)
-					if call.Name == "request_work" {
-						q.ID = fmt.Sprintf("%s-work-m%d", id, c.Models)
-					}
-					c.Question = &q
-					c.QuestionPublished = false
-					break
-				}
-				if call.Name == "complete" && len(c.Jobs) > 0 {
-					var ref string
-					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name, Response: map[string]any{"accepted": false, "reason": "A background job is still running. Call job_wait or job_stop before proposing completion.", "running_jobs": c.Jobs}}).Get(ctx, &ref)
-					if err != nil {
-						return
-					}
-					c.Ref = ref
-					break
-				}
-				if call.Name == "complete" {
-					c.Checks++
-					var check CompletionOutcome
-					err = workflow.ExecuteActivity(quick, a.CheckCompletion, CompletionInput{
-						Step: Step{id, c.Revision}, Ref: c.Ref, ID: fmt.Sprintf("%s-check-%d", id, c.Checks),
-						Position: c.Position, CorrectionAttempt: c.Corrections,
-					}).Get(ctx, &check)
-					if boundary(err) {
-						var ref string
-						err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
-							Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
-							Response: map[string]any{
-								"accepted": false,
-								"reason":   "Execution admission changed during completion checking. Reconcile before proposing again.",
-							},
-						}).Get(ctx, &ref)
-						if err != nil {
-							return
-						}
-						c.Ref = ref
-						revised = true
-						continue
-					}
-					if err != nil {
-						return
-					}
-					c.Ref = check.Ref
-					switch check.Action {
-					// New checks never return unverified; retained histories still replay it.
-					case "publish", "unverified", "partial":
-						if err = finish(stopCtx); err != nil {
-							return
-						}
-						status := state.RunCompleted
-						if check.Action != "publish" {
-							status = "failed"
-						}
-						err = publish(RefPublication{
-							Publication: Publication{Step: Step{id, c.Revision}, Status: status, Detail: check.Detail, StopConfirmed: true, Spent: c.Spent},
-							Ref:         c.Ref, Unverified: check.Action == "unverified",
-						})
-						if boundary(err) {
-							var ref string
-							err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
-								Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
-								Response: map[string]any{
-									"accepted": false,
-									"reason":   "Accepted instructions changed before publication. Reconcile them before proposing completion again.",
-								},
-							}).Get(ctx, &ref)
-							if err != nil {
-								return
-							}
-							c.Ref = ref
-							revised = true
-							break
-						}
-						return
-					case "ask":
-						c.Question = &state.Question{
-							ID: fmt.Sprintf("%s-completion-q%d", id, c.Checks), Kind: "input", Text: check.Detail, Revision: c.Revision,
-						}
-						c.QuestionPublished = false
-					case "correct":
-						c.Corrections++
-						c.ReadOnly = true
-					case "reconcile":
-						revised = true
-					default:
-						err = errors.New("completion check returned an invalid decision")
-						return
-					}
-					break
-				}
-				if call.Name == "job_wait" {
-					var ended bool
-					ended, err = c.awaitJob(ctx, wait, id, call)
-					if err != nil {
-						return
-					}
-					if !ended {
-						var ref string
-						err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name, Response: map[string]any{"waiting": false, "state": "running", "reason": "Austin's instructions changed while waiting. The job is still running; job_status, job_wait or job_stop can act on it."}}).Get(ctx, &ref)
-						if err != nil {
-							return
-						}
-						c.Ref = ref
-						revised = true
-						continue
-					}
-				}
-				c.Tools++
-				operation := fmt.Sprintf("%s-m%d-t%d", id, c.Models, c.Tools)
-				err = workflow.ExecuteActivity(quick, a.Project, Projection{Step: Step{id, c.Revision}, Kind: "tool", Text: call.Name}).Get(ctx, nil)
-				if boundary(err) {
-					revised = true
-					var ref string
-					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
-						Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
-						Response: map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."},
-					}).Get(ctx, &ref)
-					if err != nil {
-						return
-					}
-					c.Ref = ref
-					continue
-				}
-				if err != nil {
-					return
-				}
-				if agent.WriteEffect(call.Name) != "" {
-					var prepared ActionPrepared
-					err = workflow.ExecuteActivity(ctx, a.PrepareAction, RefToolInput{
-						Step: Step{id, c.Revision}, Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly || c.Inherited,
-					}).Get(ctx, &prepared)
-					if boundary(err) {
-						revised = true
-						var ref string
-						err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
-							Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
-							Response: map[string]any{"skipped": true, "outcome": "failed", "operation_id": operation, "evidence_ref": operation, "reason": "Execution admission changed before this write was prepared. Nothing was sent."},
-						}).Get(ctx, &ref)
-						if err != nil {
-							return
-						}
-						c.Ref = ref
-						continue
-					}
-					if err != nil {
-						return
-					}
-					c.Ref = prepared.Ref
-					if prepared.Question != nil {
-						c.Question, c.QuestionPublished = prepared.Question, false
-						c.Action = &PendingAction{Operation: operation, CallID: call.ID, Name: call.Name}
-					} else {
-						c.afterTool(prepared.RefToolOutcome, id)
-					}
-					revised = true
-					break
-				}
-				// A tool the worker runs itself never touches the computer, so it leaves nothing to stop.
-				if !agent.RuntimeTool(call.Name) {
-					if len(c.ComputerRevisions) == 0 || c.ComputerRevisions[len(c.ComputerRevisions)-1] != c.Revision {
-						c.ComputerRevisions = append(c.ComputerRevisions, c.Revision)
-					}
-					c.Stopped = false
-				}
-				c.JobsStarted = c.JobsStarted || call.Name == "job_start"
-				var output RefToolOutcome
-				err = workflow.ExecuteActivity(ctx, a.ToolRef, RefToolInput{
-					Step: Step{id, c.Revision}, Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly || c.Inherited,
-				}).Get(ctx, &output)
-				if boundary(err) {
-					revised = true
-					var ref string
-					err = workflow.ExecuteActivity(quick, a.AppendToolResult, AppendResult{
-						Step: Step{id, c.Revision}, Ref: c.Ref, CallID: call.ID, Name: call.Name,
-						Response: map[string]any{"outcome": "uncertain", "operation_id": operation, "replayed": false},
-					}).Get(ctx, &ref)
-					if err != nil {
-						return
-					}
-					c.Ref = ref
-					continue
-				}
-				if err != nil {
-					// A worker that died mid-call leaves a paid tool's cost open. Attempts are capped at 1.
-					var application *temporal.ApplicationError
-					if !errors.As(err, &application) {
-						switch call.Name {
-						case "screenshot_inspect", "upload_inspect":
-							c.CostUnknown = true
-						case "web_search":
-							c.Spent += agent.SearchCostUSD
-						}
-					}
-					return
-				}
-				c.Ref = output.Ref
-				c.trackJobs(output)
-				if output.Cost > 0 || output.CostUnknown {
-					c.Spent += output.Cost
-					c.CostUnknown = c.CostUnknown || output.CostUnknown
-					spend(spending)
-				}
-				if c.afterTool(output, id) {
-					revised = true
-				}
-			}
-		}
-	}
 	for {
-		runLoop()
+		continuing, err = r.run()
 		if continuing || err == nil {
-			return
+			return r.result, err
 		}
 		var failure, publishErr error
-		result, failure, publishErr = c.publishFailure(ctx, stopCtx, id, err, wait, result)
-		if superseded(publishErr) && !c.CostUnknown && ctx.Err() == nil {
-			err = nil
+		r.result, failure, publishErr = r.c.publishFailure(r.ctx, r.stopCtx, id, err, r.wait, r.result)
+		if superseded(publishErr) && !r.c.CostUnknown && r.ctx.Err() == nil {
 			continue
 		}
 		if publishErr != nil {
-			err = fmt.Errorf("%w; terminal persistence failed: %v", failure, publishErr)
-		} else {
-			err = failure
+			return r.result, fmt.Errorf("%w; terminal persistence failed: %v", failure, publishErr)
 		}
-		return
+		return r.result, failure
 	}
+}
+
+// taskRun is one execution of Workflow: the checkpoint it advances, the activity contexts it uses and the
+// result it publishes. Its methods issue activities in the same order the workflow always has, so replay holds.
+type taskRun struct {
+	id     string
+	c      Checkpoint
+	result state.Run
+	// ctx runs model and tool calls; quick runs bookkeeping; syncing may repeat a history sync;
+	// stopCtx allows for stopping the computer; spending projects spend.
+	ctx, quick, syncing, stopCtx, spending workflow.Context
+	signals                                workflow.ReceiveChannel
+}
+
+func newTaskRun(ctx workflow.Context, id string, resume Checkpoint) *taskRun {
+	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 240 * time.Second, HeartbeatTimeout: 10 * time.Second, WaitForCancellation: true,
+		RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
+	})
+	r := &taskRun{
+		id:  id,
+		c:   resume,
+		ctx: ctx,
+		quick: workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: 20 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
+		}),
+		// A sync only appends to the history and saves evidence, so a worker crash during delivery can safely repeat it.
+		syncing: workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: 20 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3},
+		}),
+		stopCtx: workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: 200 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
+		}),
+		spending: workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: 5 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3},
+		}),
+		signals: workflow.GetSignalChannel(ctx, Signal),
+	}
+	if r.c.Budget == 0 {
+		r.c.Budget = agent.BudgetUSD
+		if r.c.StartBudget > 0 {
+			r.c.Budget = r.c.StartBudget
+		}
+		r.c.Stopped = true
+	}
+	return r
+}
+
+func (r *taskRun) step() Step { return Step{r.id, r.c.Revision} }
+
+func (r *taskRun) spend() { r.c.projectSpend(r.spending, r.id) }
+
+// wait blocks until the next task command arrives.
+func (r *taskRun) wait() error {
+	var command state.Command
+	r.signals.Receive(r.ctx, &command)
+	return r.ctx.Err()
+}
+
+// boundary reports whether err only means the task's admission changed, so the step should be retried. A paused
+// task first waits for its next command, and a failed wait becomes the returned error.
+func (r *taskRun) boundary(err error) (bool, error) {
+	if superseded(err) {
+		return true, nil
+	}
+	if applicationKind(err, "paused") {
+		if err := r.wait(); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, err
+}
+
+// cleanup projects spend and stops the computer once the task ends rather than continuing as new.
+func (r *taskRun) cleanup() error {
+	var a *Activities
+	cleanup, _ := workflow.NewDisconnectedContext(r.ctx)
+	cleanup = workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(r.stopCtx))
+	r.c.projectSpend(workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(r.spending)), r.id)
+	var err error
+	if e := r.c.stopTask(cleanup, r.id); e != nil {
+		err = fmt.Errorf("computer stop could not be confirmed: %w", e)
+	}
+	if r.c.Stopped && r.result.Status != "" && len(r.c.ComputerRevisions) > 0 {
+		browser := BrowserCleanup{RunID: r.id, Scope: computerRun(Step{r.id, r.c.ComputerRevisions[0]})}
+		if e := workflow.ExecuteActivity(cleanup, a.CloseBrowser, browser).Get(cleanup, nil); e != nil {
+			workflow.GetLogger(r.ctx).Error("Task browser cleanup remains pending", "run_id", r.id)
+		}
+	}
+	return err
+}
+
+// publish publishes the task's end, waiting while routing is pending.
+func (r *taskRun) publish(p RefPublication) error {
+	var a *Activities
+	for {
+		e := workflow.ExecuteActivity(r.quick, a.PublishRef, p).Get(r.ctx, &r.result)
+		if !applicationKind(e, "routing_pending") {
+			return e
+		}
+		if e = r.wait(); e != nil {
+			return e
+		}
+	}
+}
+
+// run takes model turns until the task ends, fails or continues as new, which it reports as true.
+func (r *taskRun) run() (bool, error) {
+	for turns := 0; ; turns++ {
+		if turns >= 32 && !r.c.CostUnknown {
+			return true, workflow.NewContinueAsNewError(r.ctx, WorkflowName, r.id, r.c)
+		}
+		done, err := r.turn()
+		if done || err != nil {
+			return false, err
+		}
+	}
+}
+
+// turn syncs accepted input, settles any decided write, asks open questions and otherwise handles one model
+// response. It reports true when the task has been published.
+func (r *taskRun) turn() (bool, error) {
+	var a *Activities
+	c := &r.c
+	var signal state.Command
+	for r.signals.ReceiveAsync(&signal) {
+	}
+	var synced HistorySync
+	err := workflow.ExecuteActivity(r.syncing, a.SyncHistory, HistoryInput{
+		Step: r.step(), Ref: c.Ref, Position: c.Position, Question: c.Question, Action: c.Action,
+	}).Get(r.ctx, &synced)
+	if retry, err := r.boundary(err); retry || err != nil {
+		return false, err
+	}
+	c.applySync(synced)
+	if synced.Grants > 0 {
+		r.spend()
+	}
+	if c.CostUnknown {
+		return false, state.ErrCostUnknown
+	}
+	// A decided write runs before the budget check, because it spends nothing.
+	err = c.settleAction(r.ctx, r.quick, r.id, synced)
+	if retry, err := r.boundary(err); retry || err != nil {
+		return false, err
+	}
+	if c.Question == nil && c.Spent+c.Others >= c.Budget {
+		c.Question = r.budgetQuestion()
+		c.QuestionPublished = false
+	}
+	if c.Question != nil {
+		return false, r.ask()
+	}
+	model, err := c.callModel(r.ctx, r.quick, r.spending, r.id)
+	if retry, err := r.boundary(err); retry || err != nil {
+		return false, err
+	}
+	if model.Invalid {
+		return false, nil
+	}
+	// Account and retain every model response before checking newer instructions.
+	// Close each abandoned call explicitly to preserve the exact Responses prefix.
+	var current CurrentPosition
+	if err := workflow.ExecuteActivity(r.quick, a.CurrentPosition, r.id).Get(r.ctx, &current); err != nil {
+		retry, err := r.boundary(err)
+		if !retry {
+			return false, err
+		}
+		for _, call := range model.Calls {
+			if err := r.appendResult(call, map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."}); err != nil {
+				return false, err
+			}
+		}
+		return false, nil
+	}
+	changed := current.Revision != c.Revision || current.Position != c.Position
+	return r.handleCalls(model.Calls, changed)
+}
+
+func (r *taskRun) budgetQuestion() *state.Question {
+	c := &r.c
+	return &state.Question{
+		ID:   fmt.Sprintf("%s-budget-p%d", r.id, c.Position),
+		Kind: "budget",
+		Text: fmt.Sprintf("I reached this task’s $%.2f model allowance ($%.4f spent across %d model calls and %d tool attempts, plus $%.4f by its related tasks). "+
+			"The task is not finished. Request: %s\n\nReply continue to grant another $%.2f, or Stop to end the task.",
+			c.Budget, c.Spent, c.Models, c.Tools, c.Others, c.Request, agent.BudgetUSD),
+		Revision: c.Revision,
+	}
+}
+
+// ask stops the computer, publishes the open question once and waits for the next command.
+func (r *taskRun) ask() error {
+	var a *Activities
+	c := &r.c
+	if err := c.stopComputer(r.stopCtx, r.id); err != nil {
+		return err
+	}
+	if !c.QuestionPublished {
+		err := workflow.ExecuteActivity(r.quick, a.Ask, QuestionProjection{Step: r.step(), Question: *c.Question}).Get(r.ctx, nil)
+		if retry, err := r.boundary(err); retry || err != nil {
+			return err
+		}
+		c.QuestionPublished = true
+	}
+	return r.wait()
+}
+
+// callStep is what handling one model call leaves for the model's remaining calls.
+type callStep int
+
+const (
+	nextCall    callStep = iota // handle the next call
+	reviseCalls                 // close the remaining calls unrun: what they assumed has changed
+	endCalls                    // stop handling this response and take another turn
+	taskDone                    // the task has been published
+)
+
+// handleCalls runs a model response's calls in order. Once input has changed or a call has revised the
+// task's state, it closes each remaining call without running it.
+func (r *taskRun) handleCalls(calls []CallRef, changed bool) (bool, error) {
+	revised := false
+	for _, call := range calls {
+		if changed || revised {
+			if err := r.appendResult(call, map[string]any{"skipped": true, "reason": "Accepted input changed before this call ran."}); err != nil {
+				return false, err
+			}
+			continue
+		}
+		next, err := r.handleCall(call)
+		if err != nil {
+			return false, err
+		}
+		switch next {
+		case taskDone:
+			return true, nil
+		case endCalls:
+			return false, nil
+		case reviseCalls:
+			revised = true
+		}
+	}
+	return false, nil
+}
+
+func (r *taskRun) handleCall(call CallRef) (callStep, error) {
+	switch {
+	case call.Name == "request_input" || call.Name == "request_work":
+		return endCalls, r.requestInput(call)
+	case call.Name == "complete" && len(r.c.Jobs) > 0:
+		return endCalls, r.appendResult(call, map[string]any{"accepted": false, "reason": "A background job is still running. Call job_wait or job_stop before proposing completion.", "running_jobs": r.c.Jobs})
+	case call.Name == "complete":
+		return r.complete(call)
+	case call.Name == "job_wait":
+		ended, err := r.c.awaitJob(r.ctx, r.wait, r.id, call)
+		if err != nil {
+			return nextCall, err
+		}
+		if !ended {
+			return reviseCalls, r.appendResult(call, map[string]any{"waiting": false, "state": "running", "reason": "Austin's instructions changed while waiting. The job is still running; job_status, job_wait or job_stop can act on it."})
+		}
+	}
+	return r.runTool(call)
+}
+
+// appendResult closes a call with a result in place of running it, so the history keeps its exact prefix.
+func (r *taskRun) appendResult(call CallRef, response map[string]any) error {
+	var a *Activities
+	var ref string
+	err := workflow.ExecuteActivity(r.quick, a.AppendToolResult, AppendResult{
+		Step: r.step(), Ref: r.c.Ref, CallID: call.ID, Name: call.Name, Response: response,
+	}).Get(r.ctx, &ref)
+	if err != nil {
+		return err
+	}
+	r.c.Ref = ref
+	return nil
+}
+
+func (r *taskRun) requestInput(call CallRef) error {
+	var a *Activities
+	c := &r.c
+	var q state.Question
+	err := workflow.ExecuteActivity(r.quick, a.InputRef, RefInput{Step: r.step(), Ref: c.Ref, Index: call.Index, ReadOnly: c.ReadOnly}).Get(r.ctx, &q)
+	if err != nil {
+		return err
+	}
+	q.ID = fmt.Sprintf("%s-question-m%d", r.id, c.Models)
+	if call.Name == "request_work" {
+		q.ID = fmt.Sprintf("%s-work-m%d", r.id, c.Models)
+	}
+	c.Question = &q
+	c.QuestionPublished = false
+	return nil
+}
+
+// complete checks a proposed completion and publishes the task when the check allows it.
+func (r *taskRun) complete(call CallRef) (callStep, error) {
+	var a *Activities
+	c := &r.c
+	c.Checks++
+	var check CompletionOutcome
+	err := workflow.ExecuteActivity(r.quick, a.CheckCompletion, CompletionInput{
+		Step: r.step(), Ref: c.Ref, ID: fmt.Sprintf("%s-check-%d", r.id, c.Checks),
+		Position: c.Position, CorrectionAttempt: c.Corrections,
+	}).Get(r.ctx, &check)
+	retry, err := r.boundary(err)
+	if retry {
+		return reviseCalls, r.appendResult(call, map[string]any{
+			"accepted": false,
+			"reason":   "Execution admission changed during completion checking. Reconcile before proposing again.",
+		})
+	}
+	if err != nil {
+		return nextCall, err
+	}
+	c.Ref = check.Ref
+	switch check.Action {
+	// New checks never return unverified; retained histories still replay it.
+	case "publish", "unverified", "partial":
+		return r.publishCompletion(call, check)
+	case "ask":
+		c.Question = &state.Question{
+			ID: fmt.Sprintf("%s-completion-q%d", r.id, c.Checks), Kind: "input", Text: check.Detail, Revision: c.Revision,
+		}
+		c.QuestionPublished = false
+	case "correct":
+		c.Corrections++
+		c.ReadOnly = true
+	case "reconcile":
+	default:
+		return nextCall, errors.New("completion check returned an invalid decision")
+	}
+	return endCalls, nil
+}
+
+func (r *taskRun) publishCompletion(call CallRef, check CompletionOutcome) (callStep, error) {
+	c := &r.c
+	if err := c.stopTask(r.stopCtx, r.id); err != nil {
+		return nextCall, err
+	}
+	status := state.RunCompleted
+	if check.Action != "publish" {
+		status = "failed"
+	}
+	err := r.publish(RefPublication{
+		Publication: Publication{Step: r.step(), Status: status, Detail: check.Detail, StopConfirmed: true, Spent: c.Spent},
+		Ref:         c.Ref, Unverified: check.Action == "unverified",
+	})
+	retry, err := r.boundary(err)
+	if !retry {
+		return taskDone, err
+	}
+	return endCalls, r.appendResult(call, map[string]any{
+		"accepted": false,
+		"reason":   "Accepted instructions changed before publication. Reconcile them before proposing completion again.",
+	})
+}
+
+// runTool runs a tool call, or prepares it for a decision when it writes.
+func (r *taskRun) runTool(call CallRef) (callStep, error) {
+	var a *Activities
+	c := &r.c
+	c.Tools++
+	operation := fmt.Sprintf("%s-m%d-t%d", r.id, c.Models, c.Tools)
+	err := workflow.ExecuteActivity(r.quick, a.Project, Projection{Step: r.step(), Kind: "tool", Text: call.Name}).Get(r.ctx, nil)
+	retry, err := r.boundary(err)
+	if retry {
+		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."})
+	}
+	if err != nil {
+		return nextCall, err
+	}
+	if agent.WriteEffect(call.Name) != "" {
+		return r.prepareWrite(call, operation)
+	}
+	// A tool the worker runs itself never touches the computer, so it leaves nothing to stop.
+	if !agent.RuntimeTool(call.Name) {
+		if len(c.ComputerRevisions) == 0 || c.ComputerRevisions[len(c.ComputerRevisions)-1] != c.Revision {
+			c.ComputerRevisions = append(c.ComputerRevisions, c.Revision)
+		}
+		c.Stopped = false
+	}
+	c.JobsStarted = c.JobsStarted || call.Name == "job_start"
+	var output RefToolOutcome
+	err = workflow.ExecuteActivity(r.ctx, a.ToolRef, RefToolInput{
+		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly || c.Inherited,
+	}).Get(r.ctx, &output)
+	retry, err = r.boundary(err)
+	if retry {
+		return reviseCalls, r.appendResult(call, map[string]any{"outcome": "uncertain", "operation_id": operation, "replayed": false})
+	}
+	if err != nil {
+		// A worker that died mid-call leaves a paid tool's cost open. Attempts are capped at 1.
+		var application *temporal.ApplicationError
+		if !errors.As(err, &application) {
+			switch call.Name {
+			case "screenshot_inspect", "upload_inspect":
+				c.CostUnknown = true
+			case "web_search":
+				c.Spent += agent.SearchCostUSD
+			}
+		}
+		return nextCall, err
+	}
+	c.Ref = output.Ref
+	c.trackJobs(output)
+	if output.Cost > 0 || output.CostUnknown {
+		c.Spent += output.Cost
+		c.CostUnknown = c.CostUnknown || output.CostUnknown
+		r.spend()
+	}
+	if c.afterTool(output, r.id) {
+		return reviseCalls, nil
+	}
+	return nextCall, nil
+}
+
+// prepareWrite saves a write and the question that asks for its approval. A write that needs no approval ends here.
+func (r *taskRun) prepareWrite(call CallRef, operation string) (callStep, error) {
+	var a *Activities
+	c := &r.c
+	var prepared ActionPrepared
+	err := workflow.ExecuteActivity(r.ctx, a.PrepareAction, RefToolInput{
+		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly || c.Inherited,
+	}).Get(r.ctx, &prepared)
+	retry, err := r.boundary(err)
+	if retry {
+		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "outcome": "failed", "operation_id": operation, "evidence_ref": operation, "reason": "Execution admission changed before this write was prepared. Nothing was sent."})
+	}
+	if err != nil {
+		return nextCall, err
+	}
+	c.Ref = prepared.Ref
+	if prepared.Question != nil {
+		c.Question, c.QuestionPublished = prepared.Question, false
+		c.Action = &PendingAction{Operation: operation, CallID: call.ID, Name: call.Name}
+	} else {
+		c.afterTool(prepared.RefToolOutcome, r.id)
+	}
+	return endCalls, nil
 }
 
 func (c *Checkpoint) projectSpend(w workflow.Context, id string) {

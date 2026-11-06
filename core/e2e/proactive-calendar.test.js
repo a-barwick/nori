@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 
 // Unpaid: the proactive calendar check through the real API, Firestore emulator and Temporal, with a scripted outer
 // model, a loopback Google Calendar and a loopback Routes API, on the real clock.
-// NORI_M11_E2E=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8095 TEMPORAL_ADDRESS=127.0.0.1:7245 bun test core/e2e/milestone11.test.js
+// NORI_M11_E2E=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8095 TEMPORAL_ADDRESS=127.0.0.1:7245 bun test core/e2e/proactive-calendar.test.js
 const live = process.env.NORI_M11_E2E === "1";
 const journey = (name, run, timeout = 120_000) => (live ? test : test.skip)(name, run, timeout);
 const core = resolve(import.meta.dir, "..");

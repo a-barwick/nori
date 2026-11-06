@@ -268,7 +268,7 @@ func stopTaskJobs(ctx context.Context, config computer.Provider, id string) erro
 
 // runtimeTool runs a tool that needs no computer. It keeps the same operation
 // record as a computer tool and is never repeated automatically.
-func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.OperationRecord, recovering bool, persist func(string, map[string]any, error) (map[string]any, error)) (map[string]any, error) {
+func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.OperationRecord, recovering bool, persist persistFunc) (map[string]any, error) {
 	if recovering {
 		// The earlier attempt may have been billed and its cost was not returned.
 		return persist("failed", map[string]any{"cost_unknown": agent.PaidRead(in.Call.Name), "cost_usd": recoveredCost(in.Call.Name)}, errors.New("the worker stopped before this read finished; it was not repeated"))

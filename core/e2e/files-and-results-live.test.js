@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 // with the right answer and no question it didn't expect.
 //
 // Local, through core/infrastructure/spend/run.py: NORI_M8_LIVE=1 NORI_STATE_EMULATOR_HOST=... TEMPORAL_ADDRESS=...
-//   NORI_ENV_FILE=... NORI_M8_GUEST_URL=http://127.0.0.1:8097 bun test core/e2e/milestone8-live.test.js
+//   NORI_ENV_FILE=... NORI_M8_GUEST_URL=http://127.0.0.1:8097 bun test core/e2e/files-and-results-live.test.js
 // Production: NORI_M8_LIVE=1 NORI_M8_TARGET=production NORI_M8_RUNTIME_URL=<invoke root> NORI_M8_FIRESTORE=<documents URL>
 // NORI_M8_ONLY=060,064 picks scenarios.
 const live = process.env.NORI_M8_LIVE === "1";
@@ -17,7 +17,7 @@ const production = process.env.NORI_M8_TARGET === "production";
 const only = process.env.NORI_M8_ONLY?.split(",");
 const scenario = (id, name, run) => (live && (!only || only.includes(id)) ? test : test.skip)(`${id} ${name}`, () => run(id), 900_000);
 const core = resolve(import.meta.dir, "..");
-const fixtures = resolve(import.meta.dir, "fixtures/m8");
+const fixtures = resolve(import.meta.dir, "fixtures/files-and-results");
 const unique = crypto.randomUUID().slice(0, 8);
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 const database = `nori-m8-live-${unique}`;

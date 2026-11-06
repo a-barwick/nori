@@ -106,30 +106,9 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			return nil
 		}
 		seen[id] = true
-		snapshot, err := t.Store.Reconcile(ctx, id)
+		record, err := t.contextRecord(ctx, id)
 		if err != nil {
 			return err
-		}
-		run := snapshot.Run
-		record := &TaskContextRecord{ID: run.ID, ParentID: run.ParentID, Subtasks: run.Subtasks, SubtaskSpent: run.SubtaskSpent, Request: run.Request, Status: run.Status, Waiting: run.Waiting, Progress: run.Progress,
-			Revision: run.Revision, Position: run.Position, Incorporated: run.Incorporated, CancelRequested: run.CancelRequested,
-			Holds: append([]state.TaskHold{}, run.Holds...), Spent: run.Spent, Budget: run.Budget, Error: run.Error, Result: run.Result,
-			Commands: []TaskContextCommand{}}
-		if run.Question != nil {
-			question := *run.Question
-			record.Question = &question
-			// The current question already supplies the waiting text.
-			record.Waiting = ""
-		}
-		for _, command := range snapshot.Commands {
-			record.Commands = append(record.Commands, TaskContextCommand{ID: command.ID, Kind: command.Kind, Text: command.Text,
-				QuestionID: command.QuestionID, Position: command.Position, Revision: command.Revision,
-				SourceInputIDs: command.SourceInputIDs, Accepted: true, Applied: command.Position <= run.Incorporated})
-		}
-		if len(run.OperationRefs) > 0 {
-			if record.Actions, err = t.actionRecords(ctx, run.ID); err != nil {
-				return err
-			}
 		}
 		*destination = append(*destination, record)
 		records = append(records, record)
@@ -198,9 +177,46 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			CreatedAt: item.CreatedAt, CheckedAt: item.CheckedAt, ReportedAt: item.ReportedAt, DeliveredAt: item.DeliveredAt,
 		})
 	}
-	fits := func() bool { data, err := json.Marshal(result); return err == nil && len(data) <= taskContextLimit }
+	err = fitTaskContext(&result, records)
+	return result, err
+}
+
+// contextRecord reads one task and its accepted commands for the outer loop's context.
+func (t *Tasks) contextRecord(ctx context.Context, id string) (*TaskContextRecord, error) {
+	snapshot, err := t.Store.Reconcile(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	run := snapshot.Run
+	record := &TaskContextRecord{ID: run.ID, ParentID: run.ParentID, Subtasks: run.Subtasks, SubtaskSpent: run.SubtaskSpent, Request: run.Request, Status: run.Status, Waiting: run.Waiting, Progress: run.Progress,
+		Revision: run.Revision, Position: run.Position, Incorporated: run.Incorporated, CancelRequested: run.CancelRequested,
+		Holds: append([]state.TaskHold{}, run.Holds...), Spent: run.Spent, Budget: run.Budget, Error: run.Error, Result: run.Result,
+		Commands: []TaskContextCommand{}}
+	if run.Question != nil {
+		question := *run.Question
+		record.Question = &question
+		// The current question already supplies the waiting text.
+		record.Waiting = ""
+	}
+	for _, command := range snapshot.Commands {
+		record.Commands = append(record.Commands, TaskContextCommand{ID: command.ID, Kind: command.Kind, Text: command.Text,
+			QuestionID: command.QuestionID, Position: command.Position, Revision: command.Revision,
+			SourceInputIDs: command.SourceInputIDs, Accepted: true, Applied: command.Position <= run.Incorporated})
+	}
+	if len(run.OperationRefs) > 0 {
+		if record.Actions, err = t.actionRecords(ctx, run.ID); err != nil {
+			return nil, err
+		}
+	}
+	return record, nil
+}
+
+// fitTaskContext shortens the context until it fits taskContextLimit: first old commands and task text, then
+// whole commands, and an open approval's exact action only as a last resort.
+func fitTaskContext(result *TaskContext, records []*TaskContextRecord) error {
+	fits := func() bool { data, err := json.Marshal(*result); return err == nil && len(data) <= taskContextLimit }
 	if fits() {
-		return result, nil
+		return nil
 	}
 	result.Truncated = true
 	// Prefer the newest commands when the complete histories cannot fit.
@@ -212,36 +228,10 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 	}
 	for _, limit := range []int{8192, 4096, 2048, 1024, 512, 256, 64, 0} {
 		if fits() {
-			return result, nil
+			return nil
 		}
 		for _, record := range records {
-			trimContextText(&record.Request, limit, &record.TextTruncated)
-			trimContextText(&record.Waiting, limit, &record.TextTruncated)
-			trimContextText(&record.Progress, limit, &record.TextTruncated)
-			trimContextText(&record.Error, limit, &record.TextTruncated)
-			trimContextText(&record.Result, limit, &record.TextTruncated)
-			if record.Outcome != nil {
-				for i := range record.Outcome.Unmet {
-					trimContextText(&record.Outcome.Unmet[i], limit, &record.Outcome.Shortened)
-				}
-				for i := range record.Outcome.Evidence {
-					trimContextText(&record.Outcome.Evidence[i].Result, limit, &record.Outcome.Shortened)
-				}
-			}
-			for i := range record.Actions {
-				trimContextText(&record.Actions[i].Result, limit, &record.TextTruncated)
-				trimContextText(&record.Actions[i].Text, limit, &record.TextTruncated)
-			}
-			if record.Question != nil && (record.Question.Kind != "approval" || record.Question.ResolvedBy != "") {
-				trimContextText(&record.Question.Text, limit, &record.QuestionTextTruncated)
-				record.TextTruncated = record.TextTruncated || record.QuestionTextTruncated
-			}
-			for i := range record.Holds {
-				trimContextText(&record.Holds[i].Question, limit, &record.TextTruncated)
-			}
-			for i := range record.Commands {
-				trimContextText(&record.Commands[i].Text, limit, &record.Commands[i].TextTruncated)
-			}
+			trimRecordText(record, limit)
 		}
 	}
 	for !fits() {
@@ -261,7 +251,7 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 	// command history first; only shorten approval questions as a last resort.
 	for _, limit := range []int{8192, 4096, 2048, 1024, 512, 256, 64, 0} {
 		if fits() {
-			return result, nil
+			return nil
 		}
 		for _, record := range records {
 			if record.Question != nil && record.Question.Kind == "approval" && record.Question.ResolvedBy == "" {
@@ -271,9 +261,9 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 		}
 	}
 	if !fits() {
-		return result, fmt.Errorf("task identities and current questions exceed the 12 KiB context limit")
+		return fmt.Errorf("task identities and current questions exceed the 12 KiB context limit")
 	}
-	return result, nil
+	return nil
 }
 
 func (t *Tasks) actionRecords(ctx context.Context, id string) ([]ActionRecord, error) {
@@ -310,4 +300,35 @@ func trimContextText(text *string, limit int, truncated *bool) {
 		limit--
 	}
 	*text, *truncated = (*text)[:limit], true
+}
+
+// trimRecordText shortens a record's text to limit bytes, except an open approval's exact action.
+func trimRecordText(record *TaskContextRecord, limit int) {
+	trimContextText(&record.Request, limit, &record.TextTruncated)
+	trimContextText(&record.Waiting, limit, &record.TextTruncated)
+	trimContextText(&record.Progress, limit, &record.TextTruncated)
+	trimContextText(&record.Error, limit, &record.TextTruncated)
+	trimContextText(&record.Result, limit, &record.TextTruncated)
+	if record.Outcome != nil {
+		for i := range record.Outcome.Unmet {
+			trimContextText(&record.Outcome.Unmet[i], limit, &record.Outcome.Shortened)
+		}
+		for i := range record.Outcome.Evidence {
+			trimContextText(&record.Outcome.Evidence[i].Result, limit, &record.Outcome.Shortened)
+		}
+	}
+	for i := range record.Actions {
+		trimContextText(&record.Actions[i].Result, limit, &record.TextTruncated)
+		trimContextText(&record.Actions[i].Text, limit, &record.TextTruncated)
+	}
+	if record.Question != nil && (record.Question.Kind != "approval" || record.Question.ResolvedBy != "") {
+		trimContextText(&record.Question.Text, limit, &record.QuestionTextTruncated)
+		record.TextTruncated = record.TextTruncated || record.QuestionTextTruncated
+	}
+	for i := range record.Holds {
+		trimContextText(&record.Holds[i].Question, limit, &record.TextTruncated)
+	}
+	for i := range record.Commands {
+		trimContextText(&record.Commands[i].Text, limit, &record.Commands[i].TextTruncated)
+	}
 }

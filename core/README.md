@@ -177,11 +177,11 @@ for hypothetical work. Use a fresh isolated database and run from the repo root:
 real models. The older durable-task suite targets the retired direct-run route
 and is not validation of this revision's conversation contract.
 
-The Milestone 3 journeys cover concurrent browser tasks, screenshot retrieval,
+The browser-task journeys cover concurrent browser tasks, screenshot retrieval,
 answer replay/staleness, targeted Stop, and a detailed trip correction during a
 real model request. Start the local API, Temporal worker and browser computer
 against a fresh isolated database, then run from the repo root:
-`NORI_M3_E2E_API_URL=http://127.0.0.1:PORT bun test core/e2e/milestone3.test.js`.
+`NORI_M3_E2E_API_URL=http://127.0.0.1:PORT bun test core/e2e/browser-tasks.test.js`.
 Use `NORI_M3_E2E_URL` for the local web proxy instead. This separate opt-in suite
 uses real providers, rejects preexisting tasks, and stops only tasks it creates.
 

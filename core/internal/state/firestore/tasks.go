@@ -271,37 +271,13 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			return err
 		}
 		now := time.Now().UTC()
-		existing, err := d.runResults(tx, req.RunID)
+		in, err := d.publishReads(tx, req.RunID, run)
 		if err != nil {
 			return err
 		}
-		var prior *state.Result
-		if run.Revises != "" {
-			if prior, err = d.readResult(tx, run.Revises); err != nil {
-				return err
-			}
-		}
-		var parent state.Run
-		if run.ParentID != "" {
-			if parent, err = decodeRun(tx.Get(d.runs().Doc(run.ParentID))); err != nil {
-				return err
-			}
-		}
-		// A parent that ends for any reason ends its subtasks, so this covers failure and recovery as well as Stop.
-		children := map[string]state.Run{}
-		for _, id := range state.RunningSubtasks(run) {
-			if children[id], err = decodeRun(tx.Get(d.runs().Doc(id))); err != nil {
-				return err
-			}
-		}
-		var schedule *state.Schedule
-		if run.Schedule != "" {
-			if schedule, err = d.readSchedule(tx, run.Schedule); err != nil {
-				return err
-			}
-		}
+		parent, schedule := in.parent, in.schedule
 		finished, event := state.FinishRun(run, admitted, now)
-		published, conflict := state.PublishResults(finished, admitted, existing, prior, now)
+		published, conflict := state.PublishResults(finished, admitted, in.existing, in.prior, now)
 		if conflict != "" {
 			finished.Result = conflict + "\n\n" + finished.Result
 			event.Text = finished.Result
@@ -355,20 +331,8 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 				return err
 			}
 		}
-		for id, child := range children {
-			stopped, stop, changed := state.StopSubtask(child, req.RunID+":ended", now)
-			if !changed {
-				continue
-			}
-			if err = tx.Set(d.runs().Doc(id), stopped); err != nil {
-				return err
-			}
-			if err = log.add(state.EventTask, id); err != nil {
-				return err
-			}
-			if err = tx.Create(d.commands().Doc(stop.ID), stop); err != nil {
-				return err
-			}
+		if err = d.stopSubtasks(tx, log, in.children, req.RunID, now); err != nil {
+			return err
 		}
 		if run.ParentID != "" {
 			if err = tx.Set(d.runs().Doc(run.ParentID), parent); err != nil {
@@ -394,6 +358,66 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 		err = state.ErrRoutingPending
 	}
 	return run, err
+}
+
+// publishInputs is what publishing a task reads. A Firestore transaction must finish its reads before it writes.
+type publishInputs struct {
+	existing []state.Result
+	prior    *state.Result
+	parent   state.Run
+	children map[string]state.Run
+	schedule *state.Schedule
+}
+
+func (d *Database) publishReads(tx *firestore.Transaction, runID string, run state.Run) (publishInputs, error) {
+	var in publishInputs
+	var err error
+	if in.existing, err = d.runResults(tx, runID); err != nil {
+		return in, err
+	}
+	if run.Revises != "" {
+		if in.prior, err = d.readResult(tx, run.Revises); err != nil {
+			return in, err
+		}
+	}
+	if run.ParentID != "" {
+		if in.parent, err = decodeRun(tx.Get(d.runs().Doc(run.ParentID))); err != nil {
+			return in, err
+		}
+	}
+	// A parent that ends for any reason ends its subtasks, so this covers failure and recovery as well as Stop.
+	in.children = map[string]state.Run{}
+	for _, id := range state.RunningSubtasks(run) {
+		if in.children[id], err = decodeRun(tx.Get(d.runs().Doc(id))); err != nil {
+			return in, err
+		}
+	}
+	if run.Schedule != "" {
+		if in.schedule, err = d.readSchedule(tx, run.Schedule); err != nil {
+			return in, err
+		}
+	}
+	return in, nil
+}
+
+// stopSubtasks stops the running subtasks of a task that ended.
+func (d *Database) stopSubtasks(tx *firestore.Transaction, log *eventLog, children map[string]state.Run, runID string, now time.Time) error {
+	for id, child := range children {
+		stopped, stop, changed := state.StopSubtask(child, runID+":ended", now)
+		if !changed {
+			continue
+		}
+		if err := tx.Set(d.runs().Doc(id), stopped); err != nil {
+			return err
+		}
+		if err := log.add(state.EventTask, id); err != nil {
+			return err
+		}
+		if err := tx.Create(d.commands().Doc(stop.ID), stop); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // OperationRevisions identifies only scopes that were durably admitted, including attempts whose worker died before

@@ -125,18 +125,6 @@ func ValidateConfiguration() error {
 	return err
 }
 
-func Validate(ctx context.Context) error {
-	c, err := FromEnv()
-	if err != nil || c == nil {
-		return err
-	}
-	defer c.Close()
-	if err = c.open(ctx); err != nil {
-		return err
-	}
-	return c.validate(ctx)
-}
-
 // CIContextStart isolates a synthetic run's context without deleting retained
 // conversations. Retrying a scope keeps the same starting point and allowance.
 func CIContextStart(ctx context.Context) (time.Time, error) {

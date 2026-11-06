@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 
 // Unpaid: schedules, monitors and closed-app email through the real API, Firestore emulator and Temporal, with a
 // scripted outer model, a scripted task model and a loopback Gmail. Due times are moved by editing next_at.
-// NORI_M9_E2E=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8095 TEMPORAL_ADDRESS=127.0.0.1:7245 bun test core/e2e/milestone9.test.js
+// NORI_M9_E2E=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8095 TEMPORAL_ADDRESS=127.0.0.1:7245 bun test core/e2e/schedules.test.js
 const live = process.env.NORI_M9_E2E === "1";
 const journey = (name, run, timeout = 120_000) => (live ? test : test.skip)(name, run, timeout);
 const core = resolve(import.meta.dir, "..");

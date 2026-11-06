@@ -32,6 +32,9 @@ func toolEffect(name string) string {
 	return "unknown"
 }
 
+// persistFunc saves a tool's outcome and output as the operation's result, even after the request was interrupted.
+type persistFunc func(outcome string, output map[string]any, cause error) (map[string]any, error)
+
 // durableTool records authority and outcomes independently of best-effort debug
 // traces. Retrying an activity is never a substitute for an operation receipt.
 func (a *Activities) durableTool(parent context.Context, in ToolInput) (result map[string]any, err error) {
@@ -54,41 +57,13 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	if err != nil {
 		return nil, classified(err)
 	}
-
-	var recovering *state.OperationRecord
-	for _, saved := range records {
-		if saved.ID != in.OperationID {
-			continue
-		}
-		if saved.Revision != in.Revision || (saved.CallID != "" && saved.CallID != in.Call.ID) || (saved.Name != "" && saved.Name != in.Call.Name) {
-			return nil, classified(errors.New("operation recovery identity conflict"))
-		}
-		if saved.ResultRef != "" {
-			blocks, e := evidence.ReadHistory(ctx, in.RunID, saved.ResultRef)
-			if e != nil {
-				return nil, classified(e)
-			}
-			if len(blocks) != 1 {
-				return nil, classified(errors.New("invalid operation result reference"))
-			}
-			if e = json.Unmarshal(blocks[0], &result); e != nil {
-				return nil, classified(e)
-			}
-			return result, nil
-		}
-		copy := saved
-		recovering = &copy
-		break
+	recovering, saved, err := a.savedOperation(ctx, in, records)
+	if err != nil || saved != nil {
+		return saved, err
 	}
 	if recovering == nil {
-		for _, saved := range records {
-			if effect != "read" && effect != "control" && unresolvedWrite(saved) {
-				return map[string]any{
-					"operation_id": saved.ID, "outcome": "uncertain", "effect_class": saved.EffectClass,
-					"error": fmt.Sprintf("An earlier %s call failed or has no known result and may have changed something, so no further "+
-						"tool was admitted. Ask Austin with request_input. The runtime names the command in your question, and his answer lets later commands run.", saved.Name),
-				}, nil
-			}
+		if blocked := unresolvedWriteBlock(effect, records); blocked != nil {
+			return blocked, nil
 		}
 		if err = a.Store.Admit(ctx, in.RunID, in.Revision, in.OperationID); err != nil {
 			return nil, classified(err)
@@ -113,7 +88,6 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	}
 	a.recordStep(in.RunID, trace)
 	defer func() { trace.Result = traceJSON(result); finishStep(&trace, err); a.recordStep(in.RunID, trace) }()
-	// Persist even if the request context was interrupted after tool execution.
 	persist := func(outcome string, output map[string]any, cause error) (map[string]any, error) {
 		if output == nil {
 			output = map[string]any{}
@@ -154,44 +128,99 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		return a.runtimeTool(ctx, in, &op, recovering != nil, persist)
 	}
 	if recovering != nil {
-		inspect, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-		defer stop()
-		// Recover by inspection only: a stopped guest remains stopped, and an
-		// unknown/pending write is never submitted again.
-		c, attachErr := computer.Attach(observability.SuppressErrorCapture(inspect), a.Agent.Computer, computerRun(in.Step))
-		if attachErr == nil {
-			defer c.Close()
-			c.SetTaskID(in.RunID)
-			receiptIDs := []string{in.OperationID}
-			if op.Attempt > 1 {
-				receiptIDs = []string{fmt.Sprintf("%s-a%d", in.OperationID, op.Attempt)}
-			} else if op.Attempt == 0 && effect == "read" {
-				receiptIDs = []string{in.OperationID + "-a2", in.OperationID}
+		return a.recoverComputerTool(ctx, in, op, effect, persist)
+	}
+	return a.computerTool(ctx, in, &op, effect, persist)
+}
+
+// savedOperation finds this call's operation record. When the record already has a result, it returns that result,
+// so the call is never run twice.
+func (a *Activities) savedOperation(ctx context.Context, in ToolInput, records []state.OperationRecord) (*state.OperationRecord, map[string]any, error) {
+	for _, saved := range records {
+		if saved.ID != in.OperationID {
+			continue
+		}
+		if saved.Revision != in.Revision || (saved.CallID != "" && saved.CallID != in.Call.ID) || (saved.Name != "" && saved.Name != in.Call.Name) {
+			return nil, nil, classified(errors.New("operation recovery identity conflict"))
+		}
+		if saved.ResultRef == "" {
+			return &saved, nil, nil
+		}
+		blocks, err := a.Store.ReadHistory(ctx, in.RunID, saved.ResultRef)
+		if err != nil {
+			return nil, nil, classified(err)
+		}
+		if len(blocks) != 1 {
+			return nil, nil, classified(errors.New("invalid operation result reference"))
+		}
+		var result map[string]any
+		if err = json.Unmarshal(blocks[0], &result); err != nil {
+			return nil, nil, classified(err)
+		}
+		return nil, result, nil
+	}
+	return nil, nil, nil
+}
+
+// unresolvedWriteBlock refuses any tool that could change something while an earlier write has no known result.
+func unresolvedWriteBlock(effect string, records []state.OperationRecord) map[string]any {
+	if effect == "read" || effect == "control" {
+		return nil
+	}
+	for _, saved := range records {
+		if unresolvedWrite(saved) {
+			return map[string]any{
+				"operation_id": saved.ID, "outcome": "uncertain", "effect_class": saved.EffectClass,
+				"error": fmt.Sprintf("An earlier %s call failed or has no known result and may have changed something, so no further "+
+					"tool was admitted. Ask Austin with request_input. The runtime names the command in your question, and his answer lets later commands run.", saved.Name),
 			}
-			for _, receiptID := range receiptIDs {
-				receipt, readErr := c.Operation(inspect, receiptID)
-				if readErr != nil {
-					var rpc *computer.RPCError
-					if errors.As(readErr, &rpc) && rpc.Status == 404 {
-						continue
-					}
-					break
-				}
-				if receipt.Status != "completed" {
-					break
-				}
-				output, outcome, recovered := a.savedToolReceipt(inspect, in, receipt)
-				if recovered {
-					return persist(outcome, output, nil)
+		}
+	}
+	return nil
+}
+
+// recoverComputerTool recovers an interrupted computer call by inspection only: a stopped guest remains stopped,
+// and an unknown or pending write is never submitted again.
+func (a *Activities) recoverComputerTool(ctx context.Context, in ToolInput, op state.OperationRecord, effect string, persist persistFunc) (map[string]any, error) {
+	inspect, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer stop()
+	c, attachErr := computer.Attach(observability.SuppressErrorCapture(inspect), a.Agent.Computer, computerRun(in.Step))
+	if attachErr == nil {
+		defer c.Close()
+		c.SetTaskID(in.RunID)
+		receiptIDs := []string{in.OperationID}
+		if op.Attempt > 1 {
+			receiptIDs = []string{fmt.Sprintf("%s-a%d", in.OperationID, op.Attempt)}
+		} else if op.Attempt == 0 && effect == "read" {
+			receiptIDs = []string{in.OperationID + "-a2", in.OperationID}
+		}
+		for _, receiptID := range receiptIDs {
+			receipt, readErr := c.Operation(inspect, receiptID)
+			if readErr != nil {
+				var rpc *computer.RPCError
+				if errors.As(readErr, &rpc) && rpc.Status == 404 {
+					continue
 				}
 				break
 			}
+			if receipt.Status != "completed" {
+				break
+			}
+			output, outcome, recovered := a.savedToolReceipt(inspect, in, receipt)
+			if recovered {
+				return persist(outcome, output, nil)
+			}
+			break
 		}
-		return map[string]any{
-			"operation_id": op.ID, "outcome": "uncertain", "effect_class": op.EffectClass,
-			"error": "The saved guest receipt does not establish this operation's result. Ask Austin; this operation was not repeated.",
-		}, nil
 	}
+	return map[string]any{
+		"operation_id": op.ID, "outcome": "uncertain", "effect_class": op.EffectClass,
+		"error": "The saved guest receipt does not establish this operation's result. Ask Austin; this operation was not repeated.",
+	}, nil
+}
+
+// computerTool runs a call on the task's computer. Only an allowlisted read is attempted a second time.
+func (a *Activities) computerTool(ctx context.Context, in ToolInput, op *state.OperationRecord, effect string, persist persistFunc) (map[string]any, error) {
 	// Only starting a job or a one-shot tool may start the computer. A job can't be
 	// running on a stopped computer, so asking about one doesn't start it.
 	connect := computer.Open
@@ -235,7 +264,7 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		}
 		// Save the receipt identity before dispatch so a crash during a read
 		// retry can inspect the second receipt without repeating either attempt.
-		if err = evidence.PutOperation(ctx, in.RunID, op); err != nil {
+		if err = a.Store.PutOperation(ctx, in.RunID, *op); err != nil {
 			return nil, classified(err)
 		}
 		c.SetOperation(receiptID)
@@ -252,29 +281,7 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		if effect == "read" && ctx.Err() != nil {
 			cancelErr := c.CancelRead(inspect, receiptID)
 			stop()
-			outcome := "skipped"
-			if cancelErr != nil {
-				outcome = "uncertain"
-			}
-			output, saveErr := persist(outcome, nil, callErr)
-			if saveErr != nil {
-				return nil, saveErr
-			}
-			observability.Event(context.WithoutCancel(ctx), "task.operation.interrupted",
-				attribute.String("nori.operation.id", op.ID), attribute.Bool("nori.operation.stop_confirmed", cancelErr == nil))
-			if cancelErr != nil {
-				return output, nil
-			}
-			check, finish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			current, e := a.Store.GetRun(check, in.RunID)
-			finish()
-			if e == nil && current.CancelRequested {
-				return nil, classified(state.ErrCancelled)
-			}
-			if e == nil && current.Revision != in.Revision {
-				return nil, classified(state.ErrSuperseded)
-			}
-			return nil, a.ioError(in.Step, callErr)
+			return a.interruptedRead(ctx, in, op, cancelErr, callErr, persist)
 		}
 		stop()
 
@@ -304,6 +311,34 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		return persist(outcome, nil, callErr)
 	}
 	return nil, classified(errors.New("read attempts exhausted"))
+}
+
+// interruptedRead saves a read whose request ended, then reports whether a stop, a correction or the
+// interruption itself ended it. cancelErr is the result of cancelling the read on the computer.
+func (a *Activities) interruptedRead(ctx context.Context, in ToolInput, op *state.OperationRecord, cancelErr, callErr error, persist persistFunc) (map[string]any, error) {
+	outcome := "skipped"
+	if cancelErr != nil {
+		outcome = "uncertain"
+	}
+	output, saveErr := persist(outcome, nil, callErr)
+	if saveErr != nil {
+		return nil, saveErr
+	}
+	observability.Event(context.WithoutCancel(ctx), "task.operation.interrupted",
+		attribute.String("nori.operation.id", op.ID), attribute.Bool("nori.operation.stop_confirmed", cancelErr == nil))
+	if cancelErr != nil {
+		return output, nil
+	}
+	check, finish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	current, e := a.Store.GetRun(check, in.RunID)
+	finish()
+	if e == nil && current.CancelRequested {
+		return nil, classified(state.ErrCancelled)
+	}
+	if e == nil && current.Revision != in.Revision {
+		return nil, classified(state.ErrSuperseded)
+	}
+	return nil, a.ioError(in.Step, callErr)
 }
 
 // savedToolReceipt projects retained output without issuing another guest tool.

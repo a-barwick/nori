@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 // Unpaid: memory and the outer context budget through the real API, Firestore emulator and Temporal, with scripted
-// models. NORI_M10_E2E=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8095 TEMPORAL_ADDRESS=127.0.0.1:7245 bun test core/e2e/milestone10.test.js
+// models. NORI_M10_E2E=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8095 TEMPORAL_ADDRESS=127.0.0.1:7245 bun test core/e2e/memory.test.js
 const live = process.env.NORI_M10_E2E === "1";
 const journey = live ? test : test.skip;
 const core = resolve(import.meta.dir, "..");

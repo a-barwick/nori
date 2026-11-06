@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 // Unpaid: the real workflow, Firestore emulator and Temporal, with a scripted model and a fake Google.
-// NORI_M6_E2E=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8095 TEMPORAL_ADDRESS=127.0.0.1:7245 bun test core/e2e/milestone6.test.js
+// NORI_M6_E2E=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8095 TEMPORAL_ADDRESS=127.0.0.1:7245 bun test core/e2e/approvals.test.js
 const live = process.env.NORI_M6_E2E === "1";
 const journey = live ? test : test.skip;
 const core = resolve(import.meta.dir, "..");
