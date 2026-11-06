@@ -1,6 +1,7 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -154,7 +155,9 @@ func (a *Activities) history(ctx context.Context, id, ref string) ([]transcript.
 	var messages []transcript.Message
 	for _, block := range blocks {
 		var chunk []transcript.Message
-		if e = json.Unmarshal(block, &chunk); e != nil {
+		decoder := json.NewDecoder(bytes.NewReader(block))
+		decoder.DisallowUnknownFields()
+		if e = decoder.Decode(&chunk); e != nil {
 			return nil, errors.New("task transcript block is invalid")
 		}
 		messages = append(messages, chunk...)

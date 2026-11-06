@@ -235,7 +235,7 @@ def worker_vars(c, build, image):
     services[build] = image
     targets.setdefault(build, target)
     return {"worker_images": images("google_cloud_run_v2_worker_pool", "worker"), "request_worker_images": services, "request_worker_targets": targets,
-            "scalable_build_ids": outputs["scalable_build_ids"], "spend_alert": outputs["spend_alert_config"],
+            "scalable_build_ids": outputs["scalable_build_ids"],
             "observability": outputs["observability_config"], "runtime_invoke_root": c["runtime_url"]}
 
 
@@ -525,47 +525,9 @@ def unlock(args):
     log("Abandoned lock removed. Resume make deploy or run make deploy-rollback.")
 
 
-def smoke(_args):
-    """Send one real browser task through production. It costs model money and appears in Austin's conversation."""
-    init_terraform()
-    c = ops.config()
-    refuse_open_work(c)
-    base = c["runtime_url"].rstrip("/") + "/api/"
-    def call(operation, body):
-        for attempt in range(20):  # The runtime may be starting from zero.
-            try:
-                return ops.api("POST", base + operation, body)
-            except RuntimeError as error:
-                if not re.search(r"HTTP (429|503)$", str(error)) or attempt == 19:
-                    raise
-                time.sleep(3)
-    session = call("session", {})
-    require(not session.get("paused"), "Nori is paused; run make unpause first")
-    before = {r.get("id") for r in session.get("runs", [])}
-    input_id = str(uuid.uuid4())
-    call("turn", {"id": input_id, "message": "Start exactly one task: navigate to https://example.org using the browser, capture a screenshot, then finish with a short "
-                  "description. Do not ask questions, run shell commands, fill forms, or start other tasks. Include this identifier in the task request: nori-smoke-" + input_id})
-    log("Message sent; waiting for the task")
-    end = time.monotonic() + 600
-    while time.monotonic() < end:
-        session = call("session", {})
-        failed = [t for t in session.get("traces", []) if input_id in t.get("input_ids", []) and t.get("status") == "error"]
-        require(not failed, "Nori failed before starting the task: " + str(failed[0].get("error")) if failed else "")
-        new = [r for r in session.get("runs", []) if r.get("id") not in before]
-        if new and new[0].get("status") in TERMINAL:
-            require(new[0]["status"] == "completed", f"The task ended as {new[0]['status']}")
-            steps = call("trace", {"run_id": new[0]["id"]}).get("steps", [])
-            names = {s.get("name") for s in steps if s.get("status") == "completed"}
-            require({"browser_navigate", "browser_screenshot"} <= names, "The task finished without using the browser")
-            log(f"Passed: task {new[0]['id']} browsed and took a screenshot. Run make pause when you are done.")
-            return
-        time.sleep(3)
-    raise RuntimeError("The task did not finish within 10 minutes")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    commands = {"deploy": deploy, "check": check, "status": status, "rollback": manual_rollback, "unlock": unlock, "smoke": smoke}
+    commands = {"deploy": deploy, "check": check, "status": status, "rollback": manual_rollback, "unlock": unlock}
     parser.add_argument("command", choices=commands)
     parser.add_argument("--lock-generation", help="Observed generation of an abandoned lock, for unlock only")
     args = parser.parse_args()

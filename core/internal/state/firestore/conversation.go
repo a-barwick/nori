@@ -22,7 +22,6 @@ func (d *Database) ConversationStatus(ctx context.Context) (state.ConversationCo
 	if err = doc.DataTo(&c); err != nil {
 		return c, nil, err
 	}
-	c.Normalize()
 	if c.Active == "" {
 		return c, nil, nil
 	}
@@ -32,7 +31,6 @@ func (d *Database) ConversationStatus(ctx context.Context) (state.ConversationCo
 	}
 	var t state.ConversationTurn
 	err = doc.DataTo(&t)
-	t.Normalize()
 	return c, &t, err
 }
 
@@ -170,7 +168,6 @@ func (d *Database) AcquireConversation(ctx context.Context, owner, turnID string
 			if err = doc.DataTo(&t); err != nil {
 				return err
 			}
-			t.Normalize()
 		} else {
 			inputs, err := d.inputBatch(tx, c.Consumed)
 			if err != nil {
@@ -217,7 +214,6 @@ func (d *Database) CheckConversation(ctx context.Context, f state.ConversationFe
 	if err = doc.DataTo(&c); err != nil {
 		return false, err
 	}
-	c.Normalize()
 	if err = state.CheckOwned(c, f, time.Now()); err != nil {
 		return false, err
 	}

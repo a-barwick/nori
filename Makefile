@@ -1,4 +1,4 @@
-.PHONY: dev web web-build web-start core local-web local-core check deploy deploy-check deploy-status deploy-rollback deploy-unlock pause unpause smoke
+.PHONY: dev web web-build web-start core local-web local-core check deploy deploy-check deploy-status deploy-rollback deploy-unlock pause unpause
 
 NORI_ENV_FILE ?= $(abspath .env)
 NORI_TASK_ENV_FILE ?= $(NORI_ENV_FILE)
@@ -34,9 +34,6 @@ check:
 # Production operations. See core/infrastructure/README.md.
 deploy deploy-check deploy-status deploy-rollback deploy-unlock:
 	python3 core/infrastructure/release/deploy.py $(patsubst deploy-%,%,$@)
-
-smoke:
-	python3 core/infrastructure/release/deploy.py smoke
 
 pause unpause:
 	cd core && NORI_TF_BACKEND=gcs python3 infrastructure/app/ops.py $@

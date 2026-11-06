@@ -55,7 +55,6 @@ it takes.
 | `make deploy-check` | Read-only rehearsal: local check, real Terraform plan, open work, runtime health |
 | `make deploy` | Checks, builds, pauses, deploys, registers and switches to the new worker, verifies, and stays paused |
 | `make unpause` | Opens Nori for use. Nothing runs on new code before this |
-| `make smoke` | Sends one real browser task through production, about 7¢, into Austin's conversation. Run it only when asked |
 | `make pause` | Closes admission and stops paid compute |
 | `make deploy-status` | Shows paused state, Current worker, and the last deploy |
 | `make deploy-rollback` | Restores the previous release after an interrupted deploy |
