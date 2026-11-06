@@ -67,8 +67,13 @@ func (s *Slice) Quiet(ctx context.Context, w Worker, d *dispatch.Dispatcher) (bo
 	if !s.Bounded {
 		return false, nil
 	}
+	return s.settled(ctx, w, d, s.IdleWindow)
+}
+
+// settled checks both running activities and the workflow steps between them.
+func (s *Slice) settled(ctx context.Context, w Worker, d *dispatch.Dispatcher, quietWindow time.Duration) (bool, error) {
 	ids, active, quiet := w.Activity()
-	if active != 0 || quiet < s.IdleWindow {
+	if active != 0 || quiet < quietWindow {
 		return false, nil
 	}
 	pending, err := d.Runnable(ctx, s.Build, ids)
@@ -117,11 +122,13 @@ const (
 // Loop reconciles while a worker polls: every tick it delivers saved commands
 // and wakes, every 30 seconds it also repairs closed executions. This process
 // never opens admission or resumes a paused task on its own. It returns nil when
-// ctx ends, admission pauses, control becomes unreadable, or a bounded slice has
-// no work left.
+// ctx ends, control becomes unreadable, or a bounded slice has no work left.
+// On pause, an unfenced poller first settles admitted bookkeeping to a durable
+// wait or end. Admission guards prevent new execution while it does so.
 func (s *Slice) Loop(ctx context.Context, w Worker, d *dispatch.Dispatcher, steps dispatch.Steps) error {
 	log.Printf("worker_slice slice=%s build=%s phase=polling poll_window=%s", s.ID, s.Build, s.PollWindow)
 	lastRepair := time.Now()
+	pausing := false
 	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 	for {
@@ -155,8 +162,23 @@ func (s *Slice) Loop(ctx context.Context, w Worker, d *dispatch.Dispatcher, step
 			return nil
 		}
 		if err = control.Check(); err != nil {
-			log.Print("execution paused; worker exiting without cancelling durable tasks")
-			return nil
+			// Request-bound workers retain their work for resume behind the native
+			// queue fence. An unfenced poller can first finish admitted bookkeeping.
+			if s.Bounded {
+				log.Print("execution paused; worker exiting without cancelling durable tasks")
+				return nil
+			}
+			if !pausing {
+				log.Print("execution paused; settling admitted work before stopping polling")
+				pausing = true
+			}
+			settled, err := s.settled(ctx, w, d, 0)
+			if err != nil {
+				return err
+			}
+			if settled {
+				return nil
+			}
 		}
 	}
 }
