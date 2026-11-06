@@ -215,6 +215,8 @@
     "core/internal/agent/foreground.go",
     "core/internal/api/chat.go",
     "core/internal/chat/service.go",
+    "core/internal/prompts/calendar-time.txt",
+    "core/internal/prompts/chat.txt",
     "core/internal/state/firestore/chat.go",
     "core/internal/state/uploads.go",
     "web/src/components/chat/Parts.tsx",
@@ -249,7 +251,7 @@
      "id": "saved-context",
      "title": "Saved context",
      "status": "built",
-     "words": 209
+     "words": 220
     }
    ]
   },
@@ -344,6 +346,7 @@
    "summary": "Where to look when you want to read or change something.",
    "status": "built",
    "code": [
+    ".env.example",
     "Makefile",
     "core/cmd/",
     "core/internal/",
@@ -360,7 +363,7 @@
      "id": "overview",
      "title": "Overview",
      "status": "built",
-     "words": 724
+     "words": 746
     }
    ]
   },
