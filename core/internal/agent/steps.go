@@ -480,7 +480,7 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 		span.End()
 	}()
 	return s.Model.Respond(ctx, Request{
-		Instructions:    taskInstructions + s.catalogInstruction(),
+		Instructions:    taskInstructions + "\n" + CalendarTimeInstructions + "For a missing or ambiguous time zone, use request_input before proposing a write.\n" + s.catalogInstruction(),
 		Messages:        messages,
 		Tools:           s.selectTools(taskTools(wait, work), messages),
 		MaxOutputTokens: modelOutputTokenLimit,
