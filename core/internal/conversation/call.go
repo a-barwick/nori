@@ -372,8 +372,8 @@ type historyView struct {
 	Truncated bool
 }
 
-// legacyBytes bounds the task records replayed between turns.
-const legacyBytes = 4 << 10
+// recordBytes bounds the task records and other visible messages outside turns that are replayed with history.
+const recordBytes = 4 << 10
 
 func buildMessages(t *state.ConversationTurn, visible []Message, view historyView, next string) []json.RawMessage {
 	messages := []json.RawMessage{modelMessage(map[string]string{"role": "system", "content": Instructions})}
@@ -389,7 +389,7 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 	if view.Summary != nil {
 		since = view.Summary.Through
 	}
-	legacy := []Message{}
+	records := []Message{}
 	size := 0
 	for i := len(visible) - 1; i >= 0; i-- {
 		m := visible[i]
@@ -403,31 +403,31 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 			m.Text = "[Task " + m.RunID + " record; background, not a new request]\n" + m.Text
 		}
 		p := modelMessage(map[string]string{"role": m.Role, "content": m.Text})
-		if size+len(p) > legacyBytes {
+		if size+len(p) > recordBytes {
 			truncated = true
 			break
 		}
 		size += len(p)
-		legacy = append(legacy, m)
+		records = append(records, m)
 	}
 	// Merge older visible records around complete protocol blocks. Appending all
-	// legacy records after history makes old conversation look like new input.
-	legacyIndex := len(legacy) - 1
-	appendLegacy := func() {
-		m := legacy[legacyIndex]
+	// records after history makes old conversation look like new input.
+	recordIndex := len(records) - 1
+	appendRecord := func() {
+		m := records[recordIndex]
 		messages = append(messages, modelMessage(map[string]string{"role": m.Role, "content": m.Text}))
-		legacyIndex--
+		recordIndex--
 	}
 	for _, turn := range history {
-		for legacyIndex >= 0 && !legacy[legacyIndex].CreatedAt.After(turn.StartedAt) {
-			appendLegacy()
+		for recordIndex >= 0 && !records[recordIndex].CreatedAt.After(turn.StartedAt) {
+			appendRecord()
 		}
 		for _, p := range turn.Protocol {
 			messages = append(messages, json.RawMessage(p))
 		}
 	}
-	for legacyIndex >= 0 {
-		appendLegacy()
+	for recordIndex >= 0 {
+		appendRecord()
 	}
 	t.Attempt.ContextTruncated = truncated
 	t.Attempt.ContextTurns = len(history)

@@ -241,8 +241,15 @@ func (s *Service) Process(ctx context.Context) error {
 func (s *Service) Loop(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	last := ""
 	for {
-		_ = s.Tick(ctx)
+		// Log a failure once, not every second it persists.
+		if err := s.Tick(ctx); err != nil && ctx.Err() == nil && err.Error() != last {
+			last = err.Error()
+			log.Printf("chat recovery tick failed: %v", err)
+		} else if err == nil {
+			last = ""
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -278,7 +285,7 @@ func (s *Service) update(ctx context.Context, id, turn, kind string, f func(*sta
 func (s *Service) finish(id, turn, status string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _ = s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
+	_, err := s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
 		if !s.owns(c, turn) {
 			return "", nil
 		}
@@ -292,6 +299,9 @@ func (s *Service) finish(id, turn, status string) {
 		c.LeaseUntil = time.Time{}
 		return "turn." + status, nil
 	})
+	if err != nil {
+		log.Printf("chat %s: saving the %s status of turn %s failed: %v", id, status, turn, err)
+	}
 }
 
 func (s *Service) Cancel(ctx context.Context, id, turn string) (state.Chat, error) {
@@ -541,7 +551,9 @@ func (s *Service) call(ctx context.Context, id, turn string, call conversation.T
 		return "", false
 	}
 	if op.Outcome == "prepared" {
-		_, _ = s.update(ctx, id, turn, "approval.required", func(m *state.ChatMessage) { m.Text = op.Action.Text })
+		if _, err := s.update(ctx, id, turn, "approval.required", func(m *state.ChatMessage) { m.Text = op.Action.Text }); err != nil {
+			log.Printf("chat %s: saving the approval request for %s failed: %v", id, op.ID, err)
+		}
 		return "", false
 	}
 	if op.Result == nil {
@@ -630,7 +642,7 @@ func (s *Service) executeWrite(ctx context.Context, id, turn string, selected st
 	result = boundedResult(result)
 	save, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _ = s.Store.UpdateChat(save, id, func(c *state.Chat) (string, error) {
+	_, err := s.Store.UpdateChat(save, id, func(c *state.Chat) (string, error) {
 		for mi := range c.Messages {
 			m := &c.Messages[mi]
 			for oi := range m.Operations {
@@ -651,6 +663,9 @@ func (s *Service) executeWrite(ctx context.Context, id, turn string, selected st
 		}
 		return "", nil
 	})
+	if err != nil {
+		log.Printf("chat %s: saving the outcome of write %s failed; it stays attempted until its lease ends and is then checked again: %v", id, selected.ID, err)
+	}
 }
 
 func boundedResult(result map[string]any) map[string]any {

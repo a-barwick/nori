@@ -282,7 +282,7 @@ storageJourney("real Firestore preserves exact task evidence, refuses foreign/ta
     const control = await fetch(`${base}/system/control`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: { paused: { booleanValue: false } } }) });
     expect(control.ok).toBe(true);
     const env = Object.fromEntries(["PATH", "HOME", "TMPDIR", "GOPATH", "GOCACHE", "GOROOT", "SSL_CERT_FILE", "SSL_CERT_DIR"].filter((key) => process.env[key]).map((key) => [key, process.env[key]]));
-    const run = spawnSync("go", ["run", "./e2e/milestone4-storage"], {
+    const run = spawnSync("go", ["run", "./e2e/evidence-storage"], {
       cwd: resolve(import.meta.dir, ".."), env: { ...env, FIRESTORE_EMULATOR_HOST: host, NORI_M4_STORAGE_PROJECT: project, NORI_M4_STORAGE_DATABASE: database, TEMPORAL_LOCAL: "true", NORI_LOCAL_ARTIFACT_DIR: artifacts,
         NORI_M4_STORAGE_TEMPORAL_ADDRESS: process.env.NORI_M4_STORAGE_TEMPORAL_ADDRESS || "" },
       encoding: "utf8", timeout: 90_000,

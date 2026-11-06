@@ -11,6 +11,17 @@ class RequestError extends Error {
   constructor(message: string, readonly status: number, readonly details?: TaskCommandResponse) { super(message); }
 }
 
+function apiPath(agentMode: boolean, path: string) {
+  return `${agentMode ? "/api/agent" : "/api"}/${path}`;
+}
+
+/** Reads a JSON response, and throws a RequestError carrying the body when the status failed. */
+async function readJSON<T>(response: Response, failure = "Request failed"): Promise<T> {
+  const data = await response.json().catch(() => ({ error: "Nori returned an unreadable response." }));
+  if (!response.ok) throw new RequestError(data.error || `${failure} (${response.status}).`, response.status, data);
+  return data as T;
+}
+
 async function post<T>(operation: string, payload: object, signal?: AbortSignal, agentMode = false, span?: Span): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (span) {
@@ -20,21 +31,17 @@ async function post<T>(operation: string, payload: object, signal?: AbortSignal,
       headers.traceparent = `00-${context.traceId}-${context.spanId}-${context.traceFlags & 1 ? "01" : "00"}`;
     }
   }
-  const response = await fetch(`${agentMode ? "/api/agent" : "/api"}/${operation}`, {
+  const response = await fetch(apiPath(agentMode, operation), {
     method: "POST", headers, body: JSON.stringify(payload), cache: "no-store", signal,
   });
-  const data = await response.json().catch(() => ({ error: "Nori returned an unreadable response." }));
-  if (!response.ok) throw new RequestError(data.error || `Request failed (${response.status}).`, response.status, data);
-  return data as T;
+  return readJSON<T>(response);
 }
 
 /** `GET /api/v1/snapshot`: the state to start from, and the event log position to follow the stream from. */
 async function snapshot(before: string | undefined, signal: AbortSignal | undefined, agentMode: boolean): Promise<Session> {
   const query = before ? `?before=${encodeURIComponent(before)}` : "";
-  const response = await fetch(`${agentMode ? "/api/agent" : "/api"}/v1/snapshot${query}`, { cache: "no-store", signal });
-  const data = await response.json().catch(() => ({ error: "Nori returned an unreadable response." }));
-  if (!response.ok) throw new RequestError(data.error || `Request failed (${response.status}).`, response.status, data);
-  return data as Session;
+  const response = await fetch(apiPath(agentMode, `v1/snapshot${query}`), { cache: "no-store", signal });
+  return readJSON<Session>(response);
 }
 
 // With nothing running, a visible tab drops its stream after this long, so an open tab doesn't hold the service awake.
@@ -46,12 +53,10 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_FILES = 10;
 async function uploadFile(item: DraftFile, agentMode: boolean): Promise<Attachment> {
   const query = new URLSearchParams({ id: item.id, filename: item.name });
-  const response = await fetch(`${agentMode ? "/api/agent" : "/api"}/v1/uploads?${query}`, {
+  const response = await fetch(apiPath(agentMode, `v1/uploads?${query}`), {
     method: "POST", body: item.file, cache: "no-store", headers: { "Content-Type": item.file.type || "application/octet-stream" },
   });
-  const data = await response.json().catch(() => ({ error: "Nori returned an unreadable response." }));
-  if (!response.ok) throw new Error(data.error || `Upload failed (${response.status}).`);
-  return data as Attachment;
+  return readJSON<Attachment>(response, "Upload failed");
 }
 type ReplyTiming = { started: number; span: Span; timer: ReturnType<typeof setTimeout> };
 const STORAGE_KEY = "nori-pending-turns-v1";
@@ -384,7 +389,7 @@ export function useRuntime(agentMode = false) {
       wasConversationBusy.current = now;
     };
     const open = () => {
-      source = new EventSource(`${agentMode ? "/api/agent" : "/api"}/v1/events?after=${position.current}`);
+      source = new EventSource(apiPath(agentMode, `v1/events?after=${position.current}`));
       const listen = <T,>(kind: string, apply: (value: T) => void) => source.addEventListener(kind, (event) => {
         const message = event as MessageEvent<string>;
         apply(JSON.parse(message.data) as T);

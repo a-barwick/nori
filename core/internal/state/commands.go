@@ -169,178 +169,230 @@ type PreparedCommands struct {
 // Prepare validates the whole batch in order against its evolving in-memory runs. It writes nothing, so a later
 // rejection cannot partly accept a batch.
 func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time, traceContext map[string]string) (PreparedCommands, error) {
-	prior, runs, exists := b.Prior, b.Runs, b.Exists
-	opened := map[string]bool{}
-	cascaded := []CommandReceipt{}
-	prepared := PreparedCommands{
-		Receipts: make([]CommandReceipt, 0, len(commands)), Accepted: []Command{}, ReadyEvents: []TaskEvent{}, Changed: map[string]bool{},
+	p := commandPrep{
+		runs: b.Runs, exists: b.Exists, opened: map[string]bool{}, now: now, traceContext: traceContext,
+		prepared: PreparedCommands{
+			Receipts: make([]CommandReceipt, 0, len(commands)), Accepted: []Command{}, ReadyEvents: []TaskEvent{}, Changed: map[string]bool{},
+		},
 	}
-	for _, original := range commands {
-		cmd := original
-		run := runs[cmd.RunID]
+	for _, cmd := range commands {
+		run := p.runs[cmd.RunID]
 		if run.Question != nil {
 			copy := *run.Question
 			run.Question = &copy
 		}
-		if old := prior[cmd.ID]; old != nil {
+		if old := b.Prior[cmd.ID]; old != nil {
 			if !SameCommand(*old, cmd) {
-				return prepared, ErrDuplicate
+				return p.prepared, ErrDuplicate
 			}
-			prepared.Receipts = append(prepared.Receipts, CommandReceipt{Command: *old, Run: run})
+			p.prepared.Receipts = append(p.prepared.Receipts, CommandReceipt{Command: *old, Run: run})
 			continue
 		}
 		if cmd.Interrupt && cmd.Kind != CommandSteer {
-			return prepared, fmt.Errorf("%w: only steer can request interruption", ErrCommandInvalid)
+			return p.prepared, fmt.Errorf("%w: only steer can request interruption", ErrCommandInvalid)
 		}
 		if cmd.Kind == CommandHold {
-			if !exists[cmd.RunID] {
-				return prepared, ErrNotFound
+			if err := p.hold(cmd, run); err != nil {
+				return p.prepared, err
 			}
-			holdBytes := len(cmd.Text)
-			for _, existing := range run.Holds {
-				holdBytes += len(existing.Question)
-			}
-			if strings.TrimSpace(cmd.Text) == "" || len(run.Holds) >= MaxTaskHolds || holdBytes > MaxTaskHoldBytes {
-				return prepared, fmt.Errorf("%w: held question is empty or task hold limit reached", ErrCommandInvalid)
-			}
-			hold := TaskHold{
-				ID: cmd.ID, TaskID: cmd.RunID, Question: cmd.Text, SourceInputIDs: cmd.SourceInputIDs, Status: "pending", CreatedAt: now,
-			}
-			if run.Status != RunRunning {
-				hold.Status = "ready"
-				run.EventSequence++
-				prepared.ReadyEvents = append(prepared.ReadyEvents, TaskEvent{
-					ID: "hold-" + cmd.ID, RunID: run.ID, Kind: "held_ready", Sequence: run.EventSequence, Revision: run.Revision,
-					Text: run.Result, Reason: run.Error, Holds: []TaskHold{hold}, CreatedAt: now,
-				})
-			}
-			run.Holds = append(append([]TaskHold{}, run.Holds...), hold)
-			cmd.Position, cmd.Revision, cmd.CreatedAt, cmd.Delivered = run.Position, run.Revision, now, true
-			runs[run.ID], prepared.Changed[run.ID] = run, true
-			prepared.Accepted = append(prepared.Accepted, cmd)
-			prepared.Receipts = append(prepared.Receipts, CommandReceipt{Command: cmd, Run: run})
 			continue
 		}
 		if err := control.Check(); err != nil && cmd.Kind != CommandStop {
-			return prepared, err
+			return p.prepared, err
 		}
-		if exists[cmd.RunID] {
+		if p.exists[cmd.RunID] {
 			if run.Status != RunRunning {
-				return prepared, ErrBusy
+				return p.prepared, ErrBusy
 			}
 			if cmd.Kind == CommandStart {
-				return prepared, ErrDuplicate
+				return p.prepared, ErrDuplicate
 			}
 			if run.CancelRequested && cmd.Kind != CommandStop {
-				return prepared, ErrCancelled
+				return p.prepared, ErrCancelled
 			}
 		} else {
-			if cmd.Kind != CommandStart {
-				return prepared, ErrNotFound
+			var err error
+			if run, err = p.start(cmd); err != nil {
+				return p.prepared, err
 			}
-			if strings.TrimSpace(cmd.Text) == "" {
-				return prepared, fmt.Errorf("%w: start needs a task request", ErrCommandInvalid)
-			}
-			run = Run{
-				ID: cmd.RunID, Request: cmd.Text, Status: RunRunning, Temporal: true, ProtocolVersion: TaskProtocolVersion,
-				WorkflowVersion: TaskWorkflowVersion, StartedAt: now, Budget: TaskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
-				TraceContext: traceContext, OriginTraceContext: traceContext, Revises: cmd.Revises,
-			}
-			if cmd.Offer != "" {
-				if cmd.ParentID != "" {
-					return prepared, fmt.Errorf("%w: an offer's task can't be a subtask", ErrCommandInvalid)
-				}
-				run.Offer, run.ReadOnly, run.Budget = cmd.Offer, true, ProactivePrepBudgetUSD
-			}
-			if cmd.Schedule != "" {
-				if cmd.ParentID != "" || cmd.Offer != "" {
-					return prepared, fmt.Errorf("%w: a scheduled task can't be a subtask or an offer's task", ErrCommandInvalid)
-				}
-				run.Schedule, run.Quiet, run.ReadOnly = cmd.Schedule, cmd.Quiet, cmd.Quiet
-			}
-			if cmd.ParentID != "" {
-				parent, question, err := linkSubtask(runs[cmd.ParentID], exists[cmd.ParentID], cmd, opened)
-				if err != nil {
-					return prepared, err
-				}
-				run.ParentID, run.ReadOnly, run.Budget = parent.ID, question.ReadOnly, parent.Budget
-				runs[parent.ID], prepared.Changed[parent.ID] = parent, true
-			}
-			exists[cmd.RunID] = true
 		}
 		if run.Position >= MaxTaskCommands && cmd.Kind != CommandStop {
-			return prepared, fmt.Errorf("%w: task input limit reached (32 accepted commands)", ErrCommandInvalid)
+			return p.prepared, fmt.Errorf("%w: task input limit reached (32 accepted commands)", ErrCommandInvalid)
 		}
 		run.Uploads = MergeAttachments(run.Uploads, cmd.Attachments)
-		switch cmd.Kind {
-		case CommandStart, CommandSteer:
-			if strings.TrimSpace(cmd.Text) == "" {
-				return prepared, fmt.Errorf("%w: task instruction is empty", ErrCommandInvalid)
-			}
-			run.Revision++
-			if cmd.Kind == CommandSteer && cmd.Interrupt {
-				run.InterruptRevision = run.Revision
-			}
-			run.Question, run.Waiting, run.PublicationPending = nil, "", false
-		case CommandAnswer, CommandContinue, CommandApprove, CommandDecline:
-			kind := "input"
-			if run.Question != nil && run.Question.Kind == QuestionWork && cmd.Kind == CommandAnswer {
-				kind = QuestionWork
-			}
-			switch cmd.Kind {
-			case CommandContinue:
-				kind = "budget"
-			case CommandApprove, CommandDecline:
-				kind = "approval"
-			}
-			if run.Question == nil || run.Question.ResolvedBy != "" || cmd.QuestionID == "" || run.Question.ID != cmd.QuestionID ||
-				run.Question.Revision != run.Revision || run.Question.Kind != kind {
-				return prepared, ErrQuestionStale
-			}
-			if cmd.Kind == CommandAnswer && strings.TrimSpace(cmd.Text) == "" {
-				return prepared, fmt.Errorf("%w: answer is empty", ErrCommandInvalid)
-			}
-			run.Question.ResolvedBy = cmd.ID
-			if cmd.Kind == CommandContinue {
-				if run.ParentID == "" {
-					run.Budget += TaskBudgetUSD
-				} else if owner, known := runs[run.ParentID]; known {
-					grantBudget(&owner)
-					run.Budget = owner.Budget
-					runs[owner.ID], prepared.Changed[owner.ID] = owner, true
-				}
-			}
-		case CommandStop:
-			run.Revision++
-			run.CancelRequested = true
-			run.Question, run.Waiting, run.PublicationPending = nil, "", false
-		default:
-			return prepared, fmt.Errorf("%w: unknown command kind", ErrCommandInvalid)
+		if err := p.apply(&run, cmd); err != nil {
+			return p.prepared, err
 		}
 		if cmd.Kind == CommandStop || cmd.Kind == CommandSteer {
-			for _, id := range RunningSubtasks(run) {
-				child, stop, changed := StopSubtask(runs[id], cmd.ID, now)
-				if !changed {
-					continue
-				}
-				runs[id], prepared.Changed[id] = child, true
-				prepared.Accepted = append(prepared.Accepted, stop)
-				cascaded = append(cascaded, CommandReceipt{Command: stop, Run: child})
-			}
+			p.stopSubtasks(run, cmd.ID)
 		}
 		run.Position++
 		run.TraceContext = PreferTraceContext(run.TraceContext, traceContext)
 		cmd.Position, cmd.Revision, cmd.CreatedAt, cmd.Delivered = run.Position, run.Revision, now, false
-		runs[run.ID], prepared.Changed[run.ID] = run, true
-		prepared.Accepted = append(prepared.Accepted, cmd)
-		prepared.Receipts = append(prepared.Receipts, CommandReceipt{Command: cmd, Run: run})
+		p.accept(run, cmd)
 	}
 	// A cascaded Stop follows the receipts for the batch itself, which callers match by index.
-	prepared.Receipts = append(prepared.Receipts, cascaded...)
-	for i := range prepared.Receipts {
-		prepared.Receipts[i].Run = runs[prepared.Receipts[i].Command.RunID]
+	p.prepared.Receipts = append(p.prepared.Receipts, p.cascaded...)
+	for i := range p.prepared.Receipts {
+		p.prepared.Receipts[i].Run = p.runs[p.prepared.Receipts[i].Command.RunID]
 	}
-	return prepared, nil
+	return p.prepared, nil
+}
+
+// commandPrep is the in-memory state Prepare evolves as it validates a batch.
+type commandPrep struct {
+	runs         map[string]Run
+	exists       map[string]bool
+	opened       map[string]bool
+	now          time.Time
+	traceContext map[string]string
+	prepared     PreparedCommands
+	cascaded     []CommandReceipt
+}
+
+func (p *commandPrep) change(run Run) {
+	p.runs[run.ID], p.prepared.Changed[run.ID] = run, true
+}
+
+func (p *commandPrep) accept(run Run, cmd Command) {
+	p.change(run)
+	p.prepared.Accepted = append(p.prepared.Accepted, cmd)
+	p.prepared.Receipts = append(p.prepared.Receipts, CommandReceipt{Command: cmd, Run: run})
+}
+
+// hold registers a question to raise when the task ends. On a task that already ended it is ready at once.
+func (p *commandPrep) hold(cmd Command, run Run) error {
+	if !p.exists[cmd.RunID] {
+		return ErrNotFound
+	}
+	holdBytes := len(cmd.Text)
+	for _, existing := range run.Holds {
+		holdBytes += len(existing.Question)
+	}
+	if strings.TrimSpace(cmd.Text) == "" || len(run.Holds) >= MaxTaskHolds || holdBytes > MaxTaskHoldBytes {
+		return fmt.Errorf("%w: held question is empty or task hold limit reached", ErrCommandInvalid)
+	}
+	hold := TaskHold{
+		ID: cmd.ID, TaskID: cmd.RunID, Question: cmd.Text, SourceInputIDs: cmd.SourceInputIDs, Status: "pending", CreatedAt: p.now,
+	}
+	if run.Status != RunRunning {
+		hold.Status = "ready"
+		run.EventSequence++
+		p.prepared.ReadyEvents = append(p.prepared.ReadyEvents, TaskEvent{
+			ID: "hold-" + cmd.ID, RunID: run.ID, Kind: "held_ready", Sequence: run.EventSequence, Revision: run.Revision,
+			Text: run.Result, Reason: run.Error, Holds: []TaskHold{hold}, CreatedAt: p.now,
+		})
+	}
+	run.Holds = append(append([]TaskHold{}, run.Holds...), hold)
+	cmd.Position, cmd.Revision, cmd.CreatedAt, cmd.Delivered = run.Position, run.Revision, p.now, true
+	p.accept(run, cmd)
+	return nil
+}
+
+// start creates the task a start command names, as an offer's task, a scheduled task or a subtask.
+func (p *commandPrep) start(cmd Command) (Run, error) {
+	if cmd.Kind != CommandStart {
+		return Run{}, ErrNotFound
+	}
+	if strings.TrimSpace(cmd.Text) == "" {
+		return Run{}, fmt.Errorf("%w: start needs a task request", ErrCommandInvalid)
+	}
+	run := Run{
+		ID: cmd.RunID, Request: cmd.Text, Status: RunRunning, Temporal: true, ProtocolVersion: TaskProtocolVersion,
+		WorkflowVersion: TaskWorkflowVersion, StartedAt: p.now, Budget: TaskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
+		TraceContext: p.traceContext, OriginTraceContext: p.traceContext, Revises: cmd.Revises,
+	}
+	if cmd.Offer != "" {
+		if cmd.ParentID != "" {
+			return Run{}, fmt.Errorf("%w: an offer's task can't be a subtask", ErrCommandInvalid)
+		}
+		run.Offer, run.ReadOnly, run.Budget = cmd.Offer, true, ProactivePrepBudgetUSD
+	}
+	if cmd.Schedule != "" {
+		if cmd.ParentID != "" || cmd.Offer != "" {
+			return Run{}, fmt.Errorf("%w: a scheduled task can't be a subtask or an offer's task", ErrCommandInvalid)
+		}
+		run.Schedule, run.Quiet, run.ReadOnly = cmd.Schedule, cmd.Quiet, cmd.Quiet
+	}
+	if cmd.ParentID != "" {
+		parent, question, err := linkSubtask(p.runs[cmd.ParentID], p.exists[cmd.ParentID], cmd, p.opened)
+		if err != nil {
+			return Run{}, err
+		}
+		run.ParentID, run.ReadOnly, run.Budget = parent.ID, question.ReadOnly, parent.Budget
+		p.change(parent)
+	}
+	p.exists[cmd.RunID] = true
+	return run, nil
+}
+
+// apply changes the task's revision, question or cancellation as the command asks.
+func (p *commandPrep) apply(run *Run, cmd Command) error {
+	switch cmd.Kind {
+	case CommandStart, CommandSteer:
+		if strings.TrimSpace(cmd.Text) == "" {
+			return fmt.Errorf("%w: task instruction is empty", ErrCommandInvalid)
+		}
+		run.Revision++
+		if cmd.Kind == CommandSteer && cmd.Interrupt {
+			run.InterruptRevision = run.Revision
+		}
+		run.Question, run.Waiting, run.PublicationPending = nil, "", false
+	case CommandAnswer, CommandContinue, CommandApprove, CommandDecline:
+		return p.resolve(run, cmd)
+	case CommandStop:
+		run.Revision++
+		run.CancelRequested = true
+		run.Question, run.Waiting, run.PublicationPending = nil, "", false
+	default:
+		return fmt.Errorf("%w: unknown command kind", ErrCommandInvalid)
+	}
+	return nil
+}
+
+// resolve answers the task's open question. Continue also grants budget, to the parent when the task is a subtask.
+func (p *commandPrep) resolve(run *Run, cmd Command) error {
+	kind := "input"
+	if run.Question != nil && run.Question.Kind == QuestionWork && cmd.Kind == CommandAnswer {
+		kind = QuestionWork
+	}
+	switch cmd.Kind {
+	case CommandContinue:
+		kind = "budget"
+	case CommandApprove, CommandDecline:
+		kind = "approval"
+	}
+	if run.Question == nil || run.Question.ResolvedBy != "" || cmd.QuestionID == "" || run.Question.ID != cmd.QuestionID ||
+		run.Question.Revision != run.Revision || run.Question.Kind != kind {
+		return ErrQuestionStale
+	}
+	if cmd.Kind == CommandAnswer && strings.TrimSpace(cmd.Text) == "" {
+		return fmt.Errorf("%w: answer is empty", ErrCommandInvalid)
+	}
+	run.Question.ResolvedBy = cmd.ID
+	if cmd.Kind == CommandContinue {
+		if run.ParentID == "" {
+			run.Budget += TaskBudgetUSD
+		} else if owner, known := p.runs[run.ParentID]; known {
+			grantBudget(&owner)
+			run.Budget = owner.Budget
+			p.change(owner)
+		}
+	}
+	return nil
+}
+
+// stopSubtasks cascades a stop or steer to the task's running subtasks.
+func (p *commandPrep) stopSubtasks(run Run, commandID string) {
+	for _, id := range RunningSubtasks(run) {
+		child, stop, changed := StopSubtask(p.runs[id], commandID, p.now)
+		if !changed {
+			continue
+		}
+		p.change(child)
+		p.prepared.Accepted = append(p.prepared.Accepted, stop)
+		p.cascaded = append(p.cascaded, CommandReceipt{Command: stop, Run: child})
+	}
 }
 
 // PreferTraceContext keeps the trace parent that later activity spans should hang from. It prefers the latest sampled

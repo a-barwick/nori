@@ -816,7 +816,7 @@
    "summary": "Each outer reply sees saved memories, a summary of older turns and the newest turns, within a fixed size.",
    "status": "built",
    "code": [
-    "core/e2e/milestone10-live.test.js",
+    "core/e2e/memory-live.test.js",
     "core/internal/agent/catalog.go",
     "core/internal/agent/memory.go",
     "core/internal/agent/steps.go",

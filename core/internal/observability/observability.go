@@ -278,11 +278,6 @@ func Shutdown(stop func(context.Context) error) {
 	_ = stop(ctx)
 }
 
-// RecordError records an uncategorized failure without the error text.
-func RecordError(ctx context.Context, err error, attrs ...attribute.KeyValue) {
-	RecordErrorCategory(ctx, "operation", err, attrs...)
-}
-
 type suppressErrorCaptureKey struct{}
 
 // SuppressErrorCapture leaves span status and logs intact when the caller

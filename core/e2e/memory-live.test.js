@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 // each. The same scenarios and pass criteria run locally and in production.
 //
 // Local, through core/infrastructure/spend/run.py: NORI_M10_LIVE=1 NORI_STATE_EMULATOR_HOST=... TEMPORAL_ADDRESS=...
-//   bun test core/e2e/milestone10-live.test.js
+//   bun test core/e2e/memory-live.test.js
 // Production: NORI_M10_LIVE=1 NORI_M10_TARGET=production NORI_M10_RUNTIME_URL=<invoke root> NORI_M10_FIRESTORE=<documents URL>
 // NORI_M10_ONLY=086,budget picks scenarios.
 //

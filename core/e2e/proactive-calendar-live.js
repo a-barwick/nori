@@ -2,7 +2,7 @@
 // the Routes API. Each step is one part of a scenario, because the overnight ones wait for real clock times.
 //
 // NORI_M11_RUNTIME_URL=<invoke root> NORI_M11_FIRESTORE=<documents URL> NORI_ENV_FILE=<root .env>
-//   bun core/e2e/milestone11-live.js <step>
+//   bun core/e2e/proactive-calendar-live.js <step>
 // Steps: 111 112 113 115 110-setup 110-check 110-accept 114-setup 114-check cleanup. Scenario 116 runs only locally: production has one real token to break.
 //
 // Events it creates are titled "Nori test" and deleted by the cleanup step. Memories it seeds are deleted by ID.
