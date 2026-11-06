@@ -228,12 +228,10 @@ def worker_vars(c, build, image):
     targets = {key: {k: v for k, v in value.items() if v is not None} for key, value in outputs["request_worker_targets"].items()}
     require(set(targets) == set(services), "Terraform worker outputs are incomplete; refresh the state first")
     # A new worker keeps the Current worker's model. Only Austin changes models.
-    plain = lambda value: {k: v for k, v in value.items() if k not in {"spend_scope", "spend_profile"}}
-    target = plain(targets[current_worker()])
-    target["jev_completion"] = False  # New workers finish tasks without Jev; retained builds keep their own target.
+    target = dict(targets[current_worker()])
     target["capabilities"] = capability_secrets_ready()
     require(target["deployment_name"] == ops.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Current worker target is not production")
-    require(services.get(build, image) == image and plain(targets.get(build, target)) == target, "This build already exists with a different image or target")
+    require(services.get(build, image) == image and targets.get(build, target) == target, "This build already exists with a different image or target")
     services[build] = image
     targets.setdefault(build, target)
     return {"worker_images": images("google_cloud_run_v2_worker_pool", "worker"), "request_worker_images": services, "request_worker_targets": targets,

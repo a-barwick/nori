@@ -11,8 +11,7 @@ service accounts.
 Storage sits behind contracts. `internal/state` holds the records, the
 `ConversationStore` interface and the write rules; `internal/state/firestore`
 implements its documents, and `internal/state/gcs` or `internal/state/localfs`
-stores screenshot bytes. `internal/spend` holds the budget rules and a ledger
-contract with its own Firestore adapter. Only `internal/platform` names a
+stores screenshot bytes. `internal/usage` calculates reported model costs. Only `internal/platform` names a
 backend: `platform.OpenStore` returns a `state.ConversationStore`.
 
 ## Local development
@@ -63,14 +62,10 @@ diagnostics report export failures and rate-limit drops without recursively
 sending them through the failed exporter. Browser latency requires a completed
 attempt; failures and timeouts are separate outcomes.
 
-Sandbox deployments use `nori-sandbox-openrouter-api-key` and the existing
-feature lease issued by `infrastructure/spend/run.py` for the same logical chat.
-Pass that scope as `sandbox_spend_scope` to Terraform and set new worker targets
-to `spend_profile = "feature"`; retained workers keep their original closed lease.
-Use `run.py --sandbox` to publish the same key and supply its version. Operator deployment and
-admission require its numeric `NORI_SPEND_KEY_SECRET_VERSION`; never restore a
-CI secret or substitute the production model key. Closing the lease stops
-inference while health and cleanup remain available.
+Sandbox deployments use their existing sandbox provider secrets, separate from
+production credentials. New background tasks record `NORI_TASK_BUDGET_USD`
+(default $1) at acceptance and finish incomplete at that ceiling, without a
+budget question. Unknown costs are reported without failing successful work.
 
 `internal/settings` reads every setting once at startup; the root `.env.example` describes each one.
 
@@ -83,10 +78,10 @@ inference while health and cleanup remain available.
 | `FIRESTORE_EMULATOR_HOST`, `TEMPORAL_LOCAL` | Explicit local Firestore endpoint and local Temporal mode; absent/false uses configured services |
 | `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and the API base URL that wakes POST to at `/api/process`. Production passes the native Agent Runtime invoke root, which ends in `/api`. Any `https` host is accepted, or loopback `http` when `TEMPORAL_LOCAL=true` |
 | `NORI_WORKER_SERVICES`, `NORI_WORKER_WAKE_QUEUE`, `CLOUD_TASKS_EMULATOR_HOST` | Optional request-driven workers: JSON map of immutable build to service root URL, the Cloud Tasks queue that wakes them (OIDC, same caller), and a loopback Cloud Tasks emulator for local runs. Without `NORI_WORKER_SERVICES`, workers poll on their own |
-| `OPENROUTER_API_KEY` | Inner worker credential; development uses the spend wrapper's scoped key |
+| `OPENROUTER_API_KEY` | Inner worker credential from the project `.env` |
 | `MODEL_NAME` | Inner worker model; default `openai/gpt-6.1-terra` through OpenRouter Responses |
 | `ARTIFACT_BUCKET` | Private screenshot bucket |
-| `NORI_STATE_EMULATOR_HOST` | App-data Firestore emulator on a loopback address; refused when `FIRESTORE_EMULATOR_HOST` is also set. The shared spend ledger stays on its real database |
+| `NORI_STATE_EMULATOR_HOST` | App-data Firestore emulator on a loopback address; refused when `FIRESTORE_EMULATOR_HOST` is also set. |
 | `NORI_LOCAL_ARTIFACT_DIR` | Absolute private folder for screenshots instead of the bucket. Needs a loopback Firestore emulator and `TEMPORAL_LOCAL=true` |
 | `COMPUTER_ZONE`, `COMPUTER_INSTANCE` | Existing retained computer |
 | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | Shared API/worker connection and task queue |
@@ -153,7 +148,7 @@ different queue, workflow engine or secret store means writing one adapter.
 | `POST /api/turn` | `{id: UUID,message}`; saves input and confirms wake scheduling before HTTP 202, without waiting for a model answer |
 | `POST /api/process` | Internal queue handler; drains conversation and repairs task delivery, returning retryable HTTP 503 while work cannot finish |
 | `POST /api/trace` | `{run_id: task-UUID}`; recorded task steps loaded on demand |
-| `POST /api/input` | `{id: new-UUID,run_id: task-UUID,message}`; ordered correction, answer, or explicit `continue` |
+| `POST /api/input` | `{id: new-UUID,run_id: task-UUID,message}`; ordered correction or answer |
 | `POST /api/cancel` | `{id: task-UUID}`; records Stop and its delivery intent |
 | `POST /api/resume` | `{}`; repairs delivery and wakes retained workflows after operator admission is resumed |
 | `POST /api/artifact` | `{run_id,artifact_id}`; private PNG bytes |
@@ -183,7 +178,7 @@ position; final publication also waits for accepted chat input to be routed.
 Durable `system/control.paused` gates work; old `expires_at` fields are ignored.
 Missing or paused control rejects new task execution.
 
-A durable task can wait for input, budget approval, or project resume without a
+A durable task can wait for input or project resume without a
 wall-clock task deadline. It survives normal worker shutdown and project pause.
 Model requests and tool execution keep per-call limits. Interrupted or uncertain
 tool operations can fail the task rather than risk replaying a side effect. Stop requires an

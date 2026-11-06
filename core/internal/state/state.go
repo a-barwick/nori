@@ -23,8 +23,6 @@ var ErrBusy = errors.New("task is not open")
 var ErrDuplicate = errors.New("run ID already exists")
 var ErrPaused = errors.New("task execution is paused")
 var ErrNotFound = errors.New("not found")
-var ErrCostUnknown = errors.New("Model cost is unknown for a provider request; task stopped before further model calls. " +
-	"Recorded spend includes only known costs.")
 
 type Control struct {
 	Paused bool `json:"paused" firestore:"paused"`

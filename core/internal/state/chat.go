@@ -74,22 +74,12 @@ const ChatEventReplayLimit = 500
 
 var (
 	ErrChatFull        = errors.New("This chat reached its length limit. Start a new chat.")
-	ErrApprovalPending = errors.New("Approve or decline the pending action first.")
 	ErrMessageConflict = errors.New("That message ID was already used for different content.")
 	ErrChatBusy        = errors.New("A reply or action is still open. Stop it or wait for it to finish.")
 )
 
 func (c Chat) Header() ChatHeader {
 	return ChatHeader{ID: c.ID, Title: c.Title, Mode: c.Mode, ActiveTurn: c.ActiveTurn, Position: c.Position, UpdatedAt: c.UpdatedAt}
-}
-
-// WaitingForApproval reports whether the open turn is paused on a prepared write.
-func (c Chat) WaitingForApproval() bool {
-	if c.ActiveTurn == nil || len(c.Messages) == 0 {
-		return false
-	}
-	ops := c.Messages[len(c.Messages)-1].Operations
-	return len(ops) > 0 && ops[len(ops)-1].Outcome == "prepared"
 }
 
 // NeedsAttention is true while a turn is open or an attempted write has no recorded outcome.

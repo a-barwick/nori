@@ -2,7 +2,6 @@
 """Thin operator commands for the native GCP resources; no resident controller."""
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -51,66 +50,6 @@ def remaining(limit):
     if limit <= 0:
         raise TimeoutError("Operator operation deadline exceeded")
     return limit
-
-
-def spend_status():
-    scope = os.environ.get("NORI_SPEND_SCOPE", "")
-    if not re.fullmatch(r"[a-f0-9]{64}", scope):
-        raise RuntimeError("Sandbox requires its feature spend-scope SHA256")
-    spec = importlib.util.spec_from_file_location("nori_spend_keys", ROOT.parent / "spend/keys.py")
-    keys = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(keys)
-    keys.cloud_api = api
-    value = keys.status(scope)
-    if (value.get("scope") != scope or value.get("profile") != "feature" or
-            not 0 < value.get("limit_usd", 0) <= 1 or value.get("ready") is not True or
-            (os.environ.get("NORI_SPEND_KEY_SECRET_VERSION") and str(value.get("secret_version")) != os.environ["NORI_SPEND_KEY_SECRET_VERSION"])):
-        raise RuntimeError("Feature spend scope is not ready within its bounded allowance")
-    return value
-
-
-def verify_spend_binding(c):
-    """Bind new work to the guarded candidate/current worker, with old work idle."""
-    spend_status()
-    version = os.environ.get("NORI_SPEND_KEY_SECRET_VERSION", "")
-    if not version.isdigit() or int(version) < 1:
-        raise RuntimeError("Sandbox admission requires a numeric sandbox OpenRouter-key secret version")
-    runtime = api("GET", f"https://{REGION}-aiplatform.googleapis.com/v1beta1/" + c["runtime_name"])
-    spec = runtime.get("spec", {})
-    deployment = spec.get("deploymentSpec", {})
-    env = {entry["name"]: entry.get("value") for entry in deployment.get("env", [])}
-    secrets = {entry["name"]: entry.get("secretRef", {}) for entry in deployment.get("secretEnv", [])}
-    if (spec.get("serviceAccount") != "nori-sandbox-runtime@" + PROJECT + ".iam.gserviceaccount.com" or
-            env.get("NORI_SPEND_SCOPE") != os.environ.get("NORI_SPEND_SCOPE") or
-            env.get("NORI_SPEND_PROFILE") != "feature" or
-            secrets.get("OPENAI_API_KEY") != {"secret": "nori-sandbox-openai-api-key", "version": "latest"} or
-            secrets.get("OPENROUTER_API_KEY") != {"secret": "nori-sandbox-openrouter-api-key", "version": version}):
-        raise RuntimeError("Sandbox runtime is not bound to the current feature spend lease")
-    if "OPENAI_API_KEY" in env or "OPENROUTER_API_KEY" in env or "OPENROUTER_MANAGEMENT_KEY" in env or "OPENROUTER_MANAGEMENT_KEY" in secrets:
-        raise RuntimeError("Sandbox provider credentials must use their selected secret references")
-    # Firestore terminal status can precede Temporal completion. Refuse that
-    # gap rather than wake any workflow pinned to an older unguarded binary.
-    running = temporal_command("workflow", "list", '--query=ExecutionStatus = "Running" AND TaskQueue = "' + TASK_QUEUE + '"')
-    if not isinstance(running, list) or running:
-        raise RuntimeError("Sandbox has open Temporal task workflows; keep admission closed until they settle or receive a reviewed targeted Stop")
-    build = c.get("expected_worker_build")
-    if not build:
-        routing = temporal("describe", "--name=" + DEPLOYMENT).get("routingConfig", {})
-        if routing.get("rampingVersionPercentage", 0):
-            raise RuntimeError("Sandbox cannot admit work during a worker version ramp")
-        build = routing.get("currentVersionBuildID") or routing.get("currentDeploymentVersion", {}).get("buildId")
-    services = production_workers(temporal_config())
-    if build not in services:
-        raise RuntimeError("Sandbox candidate/current worker binding is unknown")
-    name = services[build].removeprefix("https://").split("-8273801370.")[0]
-    service = api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-west1/services/" + name)
-    template = service.get("template", {})
-    values = {entry["name"]: entry for entry in template.get("containers", [{}])[0].get("env", [])}
-    if (template.get("serviceAccount") != spec.get("serviceAccount") or
-            values.get("NORI_SPEND_PROFILE", {}).get("value") != "feature" or
-            values.get("NORI_SPEND_SCOPE", {}).get("value") != env.get("NORI_SPEND_SCOPE") or
-            "OPENROUTER_API_KEY" in values or "OPENROUTER_MANAGEMENT_KEY" in values):
-        raise RuntimeError("Sandbox candidate/current worker is not bound to the current feature spend lease")
 
 
 def command(args, **kwargs):
@@ -424,8 +363,6 @@ def temporal_pause(t=None):
 
 
 def temporal_unpause():
-    if ENVIRONMENT == "sandbox":
-        spend_status()
     t = temporal_config()
     compatible_builds(t)
     # Keep all retained/candidate queues fenced while pending wakes are prepared.
@@ -530,8 +467,6 @@ def clear_deadline():
 
 
 def unpause(c):
-    if ENVIRONMENT == "sandbox":
-        verify_spend_binding(c)
     verify_no_deadline()
     # Fence delivery before changing admission; accepted pending wakes remain
     # durable until routing is verified and the production queue is resumed.
@@ -678,19 +613,11 @@ def main():
         secret_env.update(proactive_secret_env())
         deployment = {**runtime_settings(), "env": list(env.values()), "secretEnv": list(secret_env.values())}
         if ENVIRONMENT == "sandbox":
-            spend_status()
-            version = os.environ.get("NORI_SPEND_KEY_SECRET_VERSION", "")
-            if not version.isdigit() or int(version) < 1:
-                raise RuntimeError("Sandbox deployment requires its sandbox OpenRouter-key secret version")
-            for key, value in {"NORI_SPEND_SCOPE": os.environ["NORI_SPEND_SCOPE"], "NORI_SPEND_PROFILE": "feature", "NORI_ENVIRONMENT": "sandbox"}.items():
-                env[key] = {"name": key, "value": value}
-            # Replace the inherited production key with this run's bounded
-            # native OpenRouter key; the management credential stays in the operator launcher.
+            env["NORI_ENVIRONMENT"] = {"name": "NORI_ENVIRONMENT", "value": "sandbox"}
             env.pop("OPENROUTER_API_KEY", None)
-            for key in ("NORI_SPEND_TOKEN", "NORI_SPEND_URL", "OPENROUTER_MANAGEMENT_KEY"):
-                env.pop(key, None)
-                secret_env.pop(key, None)
-            secret_env["OPENROUTER_API_KEY"] = {"name": "OPENROUTER_API_KEY", "secretRef": {"secret": "nori-sandbox-openrouter-api-key", "version": version}}
+            env.pop("OPENROUTER_MANAGEMENT_KEY", None)
+            secret_env.pop("OPENROUTER_MANAGEMENT_KEY", None)
+            secret_env["OPENROUTER_API_KEY"] = {"name": "OPENROUTER_API_KEY", "secretRef": {"secret": "nori-sandbox-openrouter-api-key", "version": "latest"}}
             deployment.update(env=list(env.values()), secretEnv=list(secret_env.values()))
         patch_runtime(c, args.value, deployment)
         print("Runtime image, environment and capacity settings updated and verified.")

@@ -21,8 +21,9 @@ import (
 
 // Config selects the Firestore database one process uses.
 type Config struct {
-	Project  string
-	Database string
+	Project       string
+	Database      string
+	TaskBudgetUSD float64
 	// EmulatorAddress sends this client to a Firestore emulator on a loopback address, without credentials. It is
 	// separate from FIRESTORE_EMULATOR_HOST, which the Firestore SDK reads for every client in the process.
 	EmulatorAddress string
@@ -30,7 +31,8 @@ type Config struct {
 
 // Database implements state.Database on Firestore.
 type Database struct {
-	db *firestore.Client
+	db            *firestore.Client
+	taskBudgetUSD float64
 }
 
 var _ state.Database = (*Database)(nil)
@@ -49,7 +51,7 @@ func Open(ctx context.Context, cfg Config) (*Database, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Database{db: db}, nil
+	return &Database{db: db, taskBudgetUSD: cfg.TaskBudgetUSD}, nil
 }
 
 // IsLoopback reports whether address is a host:port on this machine.

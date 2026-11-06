@@ -65,7 +65,7 @@ func failureCleared(call transcript.ToolCall, output map[string]any) string {
 	return ""
 }
 
-// clearable reports an unresolved operation that the user's answer can release. A write that needs approval stays
+// clearable reports an unresolved operation that the user's answer can release. A prepared write stays
 // unresolved, because the provider decides what happened to it, and so does a record with no saved result.
 func clearable(op state.OperationRecord) bool {
 	return unresolvedWrite(op) && agent.WriteEffect(op.Name) == "" && op.Name != "request_work" && op.ResultRef != "" &&

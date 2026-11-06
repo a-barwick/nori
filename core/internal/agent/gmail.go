@@ -69,7 +69,7 @@ func (s *Service) prepareEmail(ctx context.Context, to, subject, body string) (P
 		return PreparedWrite{Result: map[string]any{"already_done": true, "message_id": found.ID, "to": address.Address, "subject": subject, "account": config.Account, "read_back": true}}, nil
 	}
 	return PreparedWrite{
-		Text: "Send this email?\nFrom: " + config.Account + "\nTo: " + address.Address + "\nSubject: " + subject + "\n\n" + body,
+		Text: "Email\nFrom: " + config.Account + "\nTo: " + address.Address + "\nSubject: " + subject + "\n\n" + body,
 		Spec: spec,
 	}, nil
 }
@@ -135,7 +135,7 @@ func (s *Service) sendEmail(ctx context.Context, spec map[string]string) (string
 	output := map[string]any{"provider_status": fmt.Sprint(status), "message_id": sent.ID, "to": spec["to"], "subject": spec["subject"], "account": config.Account, "read_back": false}
 	if message, read, err := s.readSent(ctx, client, sent.ID); err == nil && read == http.StatusOK {
 		if message.header(actionHeader) != spec["action_id"] {
-			output["reason"] = "The provider's sent message doesn't match the approved one."
+			output["reason"] = "The provider's sent message doesn't match the requested one."
 			return WriteUncertain, output
 		}
 		output["read_back"], output["labels"] = true, message.LabelIDs

@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"nori/internal/agent"
 	"nori/internal/prompts"
-	"nori/internal/spend"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
@@ -46,21 +45,13 @@ type SummaryModel interface {
 // compactionPause is how long compaction waits after a failure before trying again on a later turn.
 const compactionPause = 10 * time.Minute
 
-// contextStart is when the outer model's view of the conversation begins: a fresh context an operator started, or the
-// start of a CI run.
+// contextStart is the start of a fresh conversation context selected by the user.
 func (r *Runner) contextStart(ctx context.Context) (time.Time, error) {
-	start, err := spend.CIContextStart(ctx)
-	if err != nil {
-		return time.Time{}, err
-	}
 	control, _, err := r.tasks.Store.ConversationStatus(ctx)
 	if err != nil {
 		return time.Time{}, err
 	}
-	if control.ContextFrom.After(start) {
-		start = control.ContextFrom
-	}
-	return start, nil
+	return control.ContextFrom, nil
 }
 
 // compact folds the turns that no longer fit the recent window into the summary. It runs only while no user message

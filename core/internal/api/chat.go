@@ -86,7 +86,7 @@ func (s *server) chatSnapshot(w http.ResponseWriter, r *http.Request) {
 // repairWake queues processing for a turn that should be running but may have
 // lost its wake. Duplicate wakes are harmless: only the turn's lease runs work.
 func (s *server) repairWake(ctx context.Context, c state.Chat) {
-	if c.ActiveTurn == nil || c.WaitingForApproval() {
+	if c.ActiveTurn == nil {
 		return
 	}
 	if err := s.wakeConversation(ctx); err != nil {
@@ -156,31 +156,6 @@ func (s *server) chatCancel(w http.ResponseWriter, r *http.Request) {
 	if err = s.wakeConversation(r.Context()); err != nil {
 		writeJSON(w, 503, map[string]any{"accepted": true, "conversation": c, "error": "Stop is saved; delivery unavailable."})
 		return
-	}
-	writeJSON(w, 200, c)
-}
-func (s *server) chatApproval(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		QuestionID string `json:"questionId"`
-		Decision   string `json:"decision"`
-	}
-	if !decode(w, r, &body) {
-		return
-	}
-	if !validID(body.QuestionID) || (body.Decision != "approve" && body.Decision != "decline") {
-		writeJSON(w, 400, map[string]string{"error": "An exact questionId and approve or decline are required."})
-		return
-	}
-	c, err := s.Chats.Approve(r.Context(), r.PathValue("conversation"), body.QuestionID, body.Decision)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if body.Decision == "approve" {
-		if err = s.wakeConversation(r.Context()); err != nil {
-			writeJSON(w, 503, map[string]any{"error": "Approval saved; delivery unavailable.", "accepted": true})
-			return
-		}
 	}
 	writeJSON(w, 200, c)
 }

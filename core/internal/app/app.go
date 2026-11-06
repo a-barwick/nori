@@ -19,7 +19,6 @@ import (
 	"nori/internal/proactive"
 	"nori/internal/schedules"
 	"nori/internal/settings"
-	"nori/internal/spend"
 	"nori/internal/state"
 	"nori/internal/wake"
 )
@@ -39,9 +38,6 @@ type App struct {
 // Open uses the same durable outer loop in local and hosted entrypoints. waker is
 // how this process wakes itself and its workers.
 func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, error) {
-	if err := spend.ValidateConfiguration(); err != nil {
-		return nil, err
-	}
 	jevKey, err := settings.Required("JEV_API_KEY", cfg.Models.JevKey)
 	if err != nil {
 		return nil, err

@@ -57,14 +57,7 @@ type ConversationAction struct {
 	Command   Command   `json:"command" firestore:"command"`
 }
 
-// ConversationApproval identifies the saved action shown by an exact approval prompt.
-type ConversationApproval struct {
-	TaskID     string `firestore:"task_id"`
-	QuestionID string `firestore:"question_id"`
-}
-
 type ConversationAttempt struct {
-	Approval *ConversationApproval `firestore:"approval,omitempty"`
 	// ShowResults are saved results the outer model chose to show in its reply.
 	ShowResults      []string             `firestore:"show_results,omitempty"`
 	StructuredReply  bool                 `firestore:"structured_reply,omitempty"`
@@ -426,9 +419,6 @@ func CompleteTurn(c ConversationControl, t ConversationTurn, text string, now ti
 	c.Owner = ""
 	c.LeaseUntil = time.Time{}
 	message := Message{ID: AssistantMessageID(t.ID), Role: "assistant", Text: text, Parts: TextParts(text), CreatedAt: now, TurnID: t.ID}
-	if t.Attempt.Approval != nil && t.Attempt.Status != "error" && text == t.Attempt.Text {
-		message.Parts = []Part{{Type: PartApprovalText, Text: text, Fallback: text}}
-	}
 	return c, t, message
 }
 

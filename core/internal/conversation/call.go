@@ -74,7 +74,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		)
 		if callErr != nil && !errors.Is(ctx.Err(), context.Canceled) && !errors.Is(callErr, state.ErrConversationStale) {
 			observability.RecordErrorCategory(ctx, "conversation.attempt", callErr)
-		} else if t.Attempt.Status == "error" && !budgetDenied(t.Attempt) {
+		} else if t.Attempt.Status == "error" {
 			span.SetStatus(codes.Error, "conversation reply failed")
 		}
 		span.End()
@@ -229,8 +229,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		reply, modelErr = r.planUserCommands(callCtx, t, reply, request, view, visible, taskContext, inputID)
 		outerMS = time.Since(outerStarted).Milliseconds()
 	}
-	return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view,
-		chatApproval(t.Inputs, visible, view.Turns, taskContext), shownApproval(reply.Text, taskContext))
+	return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view)
 }
 
 func (r *Runner) modelFailureText(ctx context.Context, inputs []state.ConversationInput, modelErr error) string {
@@ -272,12 +271,6 @@ func (r *Runner) modelFailureText(ctx context.Context, inputs []state.Conversati
 					heading = "Task " + id + ": a response to its question was already accepted."
 				} else {
 					heading = "Task " + id + " needs your input. Use its Answer control to respond."
-					if question.Kind == "budget" {
-						heading = "Task " + id + " is waiting for budget permission. Use its Continue control if you want to grant another budget."
-					}
-					if question.Kind == "approval" {
-						heading = "Task " + id + " is waiting for your approval. Nothing has run yet."
-					}
 					output = question.Text
 				}
 			}
@@ -442,7 +435,7 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 
 func (r *Runner) finishCall(
 	ctx, callCtx context.Context, f state.ConversationFence, t *state.ConversationTurn, reply Reply, modelErr error, noDispatch bool,
-	view historyView, approval, shown *state.ConversationApproval,
+	view historyView,
 ) error {
 	if modelErr != nil {
 		if callCtx.Err() != nil {
@@ -486,13 +479,6 @@ func (r *Runner) finishCall(
 			err = fmt.Errorf("a work request's turn can only settle that request")
 		}
 		failure := "The model returned invalid tool calls. No task commands were accepted."
-		if len(reply.Calls) != 1 {
-			approval = nil
-		}
-		if err == nil && !approvalAllowed(commands, approval) {
-			err = fmt.Errorf("an approval needs a standalone reply to the exact saved question")
-			failure = "Nothing was approved. Use the task's Approve button, or ask me to show its exact approval question and reply with just yes."
-		}
 		if err != nil {
 			attemptEnd(&t.Attempt, "error", failure)
 			t.Attempt.ProtocolInvalid = true
@@ -500,7 +486,6 @@ func (r *Runner) finishCall(
 		} else {
 			t.Attempt.Reply = string(reply.Message)
 			t.Attempt.Text = reply.Text
-			t.Attempt.Approval = shown
 			// Only a turn carrying the user's own message can show a result or hand files to a task. Task output reaches
 			// the model too, and it mustn't be able to get a file into another task.
 			fromUser := slices.ContainsFunc(t.Inputs, func(input state.ConversationInput) bool { return input.IsUser() })
@@ -614,16 +599,6 @@ func (r *Runner) startHint(
 		})
 	}
 	return hintReady, nil
-}
-
-// An admission denial ends the turn without sending a model request.
-func budgetDenied(attempt state.ConversationAttempt) bool {
-	for _, usage := range attempt.Usage {
-		if usage.Provider == "outer" && usage.RequestStatus == "denied" {
-			return true
-		}
-	}
-	return false
 }
 
 type historyResult struct {

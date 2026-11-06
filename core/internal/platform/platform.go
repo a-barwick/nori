@@ -3,7 +3,7 @@
 // startup instead of reaching a deployed project.
 //
 // This is the only production code that names a storage backend. Everything
-// else depends on the contracts in internal/state and internal/spend.
+// else depends on the contracts in internal/state.
 package platform
 
 import (
@@ -53,14 +53,13 @@ func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig) (s
 			_ = local.Close()
 		}
 	}
-	// An app-only emulator endpoint keeps development spend enforcement on its real shared database.
-	// FIRESTORE_EMULATOR_HOST still supports unpaid tests.
+	// App-specific and process-wide emulator settings must not disagree.
 	emulator := s.Store.StateEmulator
 	if emulator != "" && (!statefirestore.IsLoopback(emulator) || s.Store.FirestoreEmulator != "") {
 		closeLocal()
 		return nil, fmt.Errorf("NORI_STATE_EMULATOR_HOST requires loopback and no FIRESTORE_EMULATOR_HOST")
 	}
-	documents, err := statefirestore.Open(ctx, statefirestore.Config{Project: cfg.Project, Database: cfg.Database, EmulatorAddress: emulator})
+	documents, err := statefirestore.Open(ctx, statefirestore.Config{Project: cfg.Project, Database: cfg.Database, EmulatorAddress: emulator, TaskBudgetUSD: s.TaskBudgetUSD})
 	if err != nil {
 		closeLocal()
 		return nil, err

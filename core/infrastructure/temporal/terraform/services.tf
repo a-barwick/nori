@@ -20,21 +20,10 @@ variable "request_worker_targets" {
     firestore_database  = optional(string, "nori-poc")
     # Retained binaries keep their original provider; new builds opt into Terra.
     model_name = optional(string, "gemini-3.8-flash")
-    # New completion-capable builds need Jev; retained builds keep their env.
-    jev_completion = optional(bool, false)
     # Search and calendar credentials; retained builds keep their env.
     capabilities = optional(bool, false)
-    # Per-build references preserve the allowance of retained workers on retry.
-    spend_scope   = optional(string)
-    spend_profile = optional(string, "ci") # Retained CI-era leases keep their original profile.
   }))
   default = {}
-  validation {
-    condition = alltrue([for target in values(var.request_worker_targets) :
-      target.spend_scope == null || (var.environment == "sandbox" && contains(["ci", "feature"], target.spend_profile) && can(regex("^[a-f0-9]{64}$", target.spend_scope)))
-    ])
-    error_message = "Spend binding must use the feature scope SHA256 on a sandbox build."
-  }
   validation {
     condition     = toset(keys(var.request_worker_targets)) == toset(keys(var.request_worker_images))
     error_message = "Every request-worker image must have exactly one retained routing target."
@@ -205,10 +194,6 @@ resource "google_cloud_run_v2_service" "worker" {
           NORI_WORKER_WAKE_QUEUE   = google_cloud_tasks_queue.worker[var.request_worker_targets[each.key].wake_queue_name].id
           NORI_WORKER_POLL_WINDOW  = "${var.request_worker_targets[each.key].poll_window_seconds}s"
           NORI_WORKER_IDLE_WINDOW  = "15s"
-          }, var.request_worker_targets[each.key].spend_scope == null ? {} : {
-          NORI_SPEND_SCOPE   = var.request_worker_targets[each.key].spend_scope
-          NORI_SPEND_PROFILE = var.request_worker_targets[each.key].spend_profile
-          NORI_ENVIRONMENT   = "sandbox"
         })
         content {
           name  = env.key
@@ -221,7 +206,7 @@ resource "google_cloud_run_v2_service" "worker" {
           name = "OPENROUTER_API_KEY"
           value_source {
             secret_key_ref {
-              secret  = local.production && var.request_worker_targets[each.key].firestore_database == "nori-poc" && var.request_worker_targets[each.key].spend_scope == null ? "nori-openrouter-api-key" : "nori-sandbox-openrouter-api-key"
+              secret  = local.production && var.request_worker_targets[each.key].firestore_database == "nori-poc" ? "nori-openrouter-api-key" : "nori-sandbox-openrouter-api-key"
               version = "latest"
             }
           }
@@ -243,18 +228,6 @@ resource "google_cloud_run_v2_service" "worker" {
           value_source {
             secret_key_ref {
               secret  = env.value
-              version = "latest"
-            }
-          }
-        }
-      }
-      dynamic "env" {
-        for_each = var.request_worker_targets[each.key].jev_completion ? [1] : []
-        content {
-          name = "JEV_API_KEY"
-          value_source {
-            secret_key_ref {
-              secret  = "nori-jev-api-key"
               version = "latest"
             }
           }

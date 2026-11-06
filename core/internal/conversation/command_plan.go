@@ -163,7 +163,7 @@ func (r *Runner) commandPlanMessages(ctx context.Context, t *state.ConversationT
 			questionKind := ""
 			if q := task.Question; q != nil && q.ResolvedBy == "" && q.Revision == task.Revision {
 				switch q.Kind {
-				case "input", "budget", "approval", state.QuestionWork:
+				case "input", state.QuestionWork:
 					questionKind = q.Kind
 				}
 			}

@@ -55,7 +55,7 @@ type TaskEvidenceStore interface {
 	ReadHistory(ctx context.Context, runID, ref string) ([][]byte, error)
 	PutOperation(ctx context.Context, runID string, op OperationRecord) error
 	Operations(ctx context.Context, runID string) ([]OperationRecord, error)
-	// WriteOperations lists only the writes that needed approval, without reading the task's other operations.
+	// WriteOperations lists saved writes, without reading the task's other operations.
 	WriteOperations(ctx context.Context, runID string) ([]OperationRecord, error)
 	PutCompletionCheck(ctx context.Context, runID string, check CompletionCheck) error
 	// ReadTaskSourceInputs resolves the exact retained user inputs a task's commands cite, instead of relying on the
@@ -87,9 +87,9 @@ type TaskDatabase interface {
 	Incorporate(ctx context.Context, req IncorporateRequest) error
 	Guard(ctx context.Context, runID string, revision int64) (Run, error)
 	Admit(ctx context.Context, runID string, revision int64, operation string) error
-	// UseApproval moves a prepared write to attempted, in one transaction that also checks the task's revision and
-	// the saved approve command. ErrApprovalUsed means an earlier attempt already took it, so it must not send.
-	UseApproval(ctx context.Context, runID string, revision int64, operation, commandID string) (OperationRecord, error)
+	// ClaimWrite moves a ready write to attempted, in one transaction that also checks the task's revision and
+	// cancellation. ErrWriteClaimed means an earlier attempt already took it, so it must not send.
+	ClaimWrite(ctx context.Context, runID string, revision int64, operation string) (OperationRecord, error)
 	Project(ctx context.Context, req ProjectRequest) error
 	// SetProgress replaces the task's latest progress line. Unlike Project it adds no event, so polling a long job
 	// can't grow the task's saved record.

@@ -27,7 +27,7 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 		if err != nil {
 			return err
 		}
-		prepared, err := batch.Prepare(commands, control, time.Now().UTC(), traceContext)
+		prepared, err := batch.Prepare(commands, control, time.Now().UTC(), traceContext, d.taskBudgetUSD)
 		receipts = prepared.Receipts
 		if err != nil {
 			return err

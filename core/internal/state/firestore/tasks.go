@@ -123,7 +123,7 @@ func (d *Database) Admit(ctx context.Context, runID string, revision int64, oper
 	})
 }
 
-func (d *Database) UseApproval(ctx context.Context, runID string, revision int64, operation, commandID string) (state.OperationRecord, error) {
+func (d *Database) ClaimWrite(ctx context.Context, runID string, revision int64, operation string) (state.OperationRecord, error) {
 	var used state.OperationRecord
 	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		if _, err := d.guard(tx, runID, revision); err != nil {
@@ -138,20 +138,11 @@ func (d *Database) UseApproval(ctx context.Context, runID string, revision int64
 		if err = doc.DataTo(&op); err != nil {
 			return err
 		}
-		command, err := tx.Get(d.commands().Doc(commandID))
-		if err != nil {
-			return err
+		if op.Outcome != "ready" || op.Action == nil {
+			return state.ErrWriteClaimed
 		}
-		var cmd state.Command
-		if err = command.DataTo(&cmd); err != nil {
-			return err
-		}
-		if cmd.RunID != runID {
-			return state.ErrQuestionStale
-		}
-		if used, err = state.UseApproval(op, cmd); err != nil {
-			return err
-		}
+		used = op
+		used.Outcome, used.Attempt = "attempted", 1
 		return tx.Set(ref, map[string]any{"outcome": used.Outcome, "attempt": used.Attempt, "action": used.Action}, firestore.MergeAll)
 	})
 	return used, err

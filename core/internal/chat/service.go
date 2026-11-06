@@ -17,7 +17,6 @@ import (
 	"nori/internal/agent"
 	"nori/internal/conversation"
 	"nori/internal/prompts"
-	"nori/internal/spend"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
@@ -29,8 +28,6 @@ const (
 	turnLease    = 10 * time.Second
 	writeLease   = 30 * time.Second
 	maxSteps     = 8
-	// A stopped reply keeps reading under a spend allowance so its cost becomes known.
-	drainLimit = 3 * time.Minute
 )
 
 type run struct {
@@ -39,18 +36,16 @@ type run struct {
 }
 
 type Service struct {
-	Store state.ConversationStore
-	Model conversation.ReplyModel
-	Tools *agent.Service
-	// Drain lets a stopped reply finish reading its provider stream so the spend ledger learns its cost.
-	Drain   bool
+	Store   state.ConversationStore
+	Model   conversation.ReplyModel
+	Tools   *agent.Service
 	owner   string
 	mu      sync.Mutex
 	running map[string]run
 }
 
 func New(store state.ConversationStore, model conversation.ReplyModel, tools *agent.Service) *Service {
-	return &Service{Store: store, Model: model, Tools: tools, Drain: spend.Enabled(), owner: uuid.NewString(), running: map[string]run{}}
+	return &Service{Store: store, Model: model, Tools: tools, owner: uuid.NewString(), running: map[string]run{}}
 }
 
 func (s *Service) Create(ctx context.Context, title string) (state.Chat, error) {
@@ -93,9 +88,6 @@ func (s *Service) Accept(ctx context.Context, id, input, text string, attachment
 				}
 				return "", nil
 			}
-		}
-		if c.WaitingForApproval() {
-			return "", state.ErrApprovalPending
 		}
 		if c.ActiveTurn != nil {
 			return "", state.ErrChatBusy
@@ -146,8 +138,8 @@ func (s *Service) Tick(ctx context.Context) error {
 				}
 			}
 		}
-		// A turn waiting for approval has nothing to run until the decision.
-		if c.ActiveTurn != nil && !c.WaitingForApproval() {
+		// An open turn needs a worker.
+		if c.ActiveTurn != nil {
 			s.launch(ctx, c.ID, *c.ActiveTurn)
 		}
 	}
@@ -202,7 +194,7 @@ func (s *Service) Process(ctx context.Context) error {
 				return err
 			}
 			for _, c := range chats {
-				if c.ActiveTurn != nil && !c.WaitingForApproval() {
+				if c.ActiveTurn != nil {
 					return state.ErrConversationBusy
 				}
 				for _, m := range c.Messages {
@@ -309,8 +301,8 @@ func (s *Service) Cancel(ctx context.Context, id, turn string) (state.Chat, erro
 		c.LeaseUntil = time.Time{}
 		for i := range m.Operations {
 			op := &m.Operations[i]
-			if op.Outcome == "prepared" || op.Outcome == "approved" {
-				op.Outcome = "declined"
+			if op.Outcome == "ready" {
+				op.Outcome = "voided"
 			}
 		}
 		return "turn.cancelled", nil
@@ -321,7 +313,7 @@ func (s *Service) Cancel(ctx context.Context, id, turn string) (state.Chat, erro
 	return c, err
 }
 
-// claim takes the turn's lease. It returns the approved write to run, if any.
+// claim takes the turn's lease. It returns the prepared write to run, if any.
 func (s *Service) claim(ctx context.Context, id, turn string) (c state.Chat, write *state.ChatOperation, recovering bool, err error) {
 	c, err = s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
 		if c.ActiveTurn == nil || *c.ActiveTurn != turn {
@@ -330,10 +322,7 @@ func (s *Service) claim(ctx context.Context, id, turn string) (c state.Chat, wri
 		m := &c.Messages[len(c.Messages)-1]
 		if len(m.Operations) > 0 {
 			op := &m.Operations[len(m.Operations)-1]
-			if op.Outcome == "prepared" {
-				return "", state.ErrConversationBusy
-			}
-			if op.Action != nil && (op.Outcome == "approved" || op.Outcome == "attempted") {
+			if op.Action != nil && (op.Outcome == "ready" || op.Outcome == "attempted") {
 				if op.Outcome == "attempted" && op.LeaseUntil.After(time.Now()) {
 					return "", state.ErrConversationBusy
 				}
@@ -455,14 +444,8 @@ func history(c state.Chat, turn string) []json.RawMessage {
 // respond makes one model call. Streamed text is saved at most every persistEvery;
 // the final text is saved by the caller.
 func (s *Service) respond(ctx context.Context, id, turn string, messages []json.RawMessage) (conversation.Reply, error) {
-	call := ctx
-	if s.Drain {
-		var cancel context.CancelFunc
-		call, cancel = context.WithTimeout(context.WithoutCancel(ctx), drainLimit)
-		defer cancel()
-	}
 	saved := time.Time{}
-	request := conversation.ReplyRequest{Messages: messages, NoDispatch: true, Foreground: true, Drain: s.Drain, Tools: toolSchemas(), Stream: func(text string) error {
+	request := conversation.ReplyRequest{Messages: messages, NoDispatch: true, Foreground: true, Tools: toolSchemas(), Stream: func(text string) error {
 		if time.Since(saved) < persistEvery {
 			return ctx.Err()
 		}
@@ -483,7 +466,7 @@ func (s *Service) respond(ctx context.Context, id, turn string, messages []json.
 		u.InputID = turn
 		return s.Store.RecordUsage(callctx, u)
 	}
-	reply, err := s.Model.Respond(call, request)
+	reply, err := s.Model.Respond(ctx, request)
 	if reply.Usage.ID != "" && reply.Usage.RequestStatus != "not_sent" {
 		// The final usage must outlive a cancellation, including unknown costs.
 		save, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -495,7 +478,7 @@ func (s *Service) respond(ctx context.Context, id, turn string, messages []json.
 }
 
 // call runs one tool request. It returns the evidence for the next model step, or
-// false when the turn ended or now waits for approval.
+// false when the turn ended.
 func (s *Service) call(ctx context.Context, id, turn string, call conversation.ToolCall) (string, bool) {
 	var args map[string]any
 	if json.Unmarshal([]byte(call.Function.Arguments), &args) != nil || !allowedTool(call.Function.Name) {
@@ -526,8 +509,8 @@ func (s *Service) call(ctx context.Context, id, turn string, call conversation.T
 			op.Result = prepared.Result
 			op.Outcome = "completed"
 		} else {
-			op.Outcome = "prepared"
-			op.Action = &state.Action{Digest: prepared.Digest, Text: prepared.Text, Spec: prepared.Spec, QuestionID: uuid.NewString()}
+			op.Outcome = "ready"
+			op.Action = &state.Action{Digest: prepared.Digest, Text: prepared.Text, Spec: prepared.Spec}
 		}
 	}
 	c, err := s.update(ctx, id, turn, "tool.updated", func(m *state.ChatMessage) { m.Operations = append(m.Operations, op) })
@@ -535,9 +518,10 @@ func (s *Service) call(ctx context.Context, id, turn string, call conversation.T
 		s.finish(id, turn, "failed")
 		return "", false
 	}
-	if op.Outcome == "prepared" {
-		if _, err := s.update(ctx, id, turn, "approval.required", func(m *state.ChatMessage) { m.Text = op.Action.Text }); err != nil {
-			log.Printf("chat %s: saving the approval request for %s failed: %v", id, op.ID, err)
+	if op.Outcome == "ready" {
+		_, selected, recovering, claimErr := s.claim(ctx, id, turn)
+		if claimErr == nil && selected != nil {
+			s.executeWrite(ctx, id, turn, *selected, recovering)
 		}
 		return "", false
 	}
@@ -579,39 +563,6 @@ func (s *Service) read(ctx context.Context, c state.Chat, id, name string, args 
 
 func allowedTool(name string) bool {
 	return name == "upload_read" || name == "calendar_read" || agent.WriteEffect(name) != ""
-}
-
-// Approve consumes the exact saved question atomically using the same rule as
-// task writes. The model never supplies the action after approval.
-func (s *Service) Approve(ctx context.Context, id, question, decision string) (state.Chat, error) {
-	return s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
-		if !c.WaitingForApproval() {
-			return "", state.ErrQuestionStale
-		}
-		m := &c.Messages[len(c.Messages)-1]
-		op := &m.Operations[len(m.Operations)-1]
-		if op.Action == nil || op.Action.QuestionID != question {
-			return "", state.ErrQuestionStale
-		}
-		if decision == "decline" {
-			op.Outcome = "declined"
-			m.Status = "completed"
-			m.Text = "The action was declined."
-			c.ActiveTurn = nil
-			c.Started = ""
-			c.LeaseUntil = time.Time{}
-			return "turn.completed", nil
-		}
-		used, err := state.UseApproval(op.OperationRecord, state.Command{ID: uuid.NewString(), Kind: state.CommandApprove, QuestionID: question})
-		if err != nil {
-			return "", err
-		}
-		op.OperationRecord = used
-		op.Outcome = "approved"
-		c.Started = ""
-		c.LeaseUntil = time.Time{}
-		return "tool.updated", nil
-	})
 }
 
 func (s *Service) executeWrite(ctx context.Context, id, turn string, selected state.ChatOperation, recovering bool) {

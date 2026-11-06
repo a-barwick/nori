@@ -16,7 +16,7 @@ function chatInAddress(id?: string) {
 
 /**
  * Independent chats: separate conversations with their own saved history, streamed replies,
- * CSV files and exact approvals. They share the Go service with the assistant but not its history.
+ * CSV files and requested actions. They share the Go service with the assistant but not its history.
  */
 export function useChat() {
   const [chats, setChats] = useState<Summary[]>([]);
@@ -193,9 +193,8 @@ export function useChat() {
     }
   }
 
-  const waiting = !!current?.activeTurn && current.messages.at(-1)?.operations?.at(-1)?.outcome === "prepared";
   return {
-    chats, current, open, draft, setDraft, files, error, connected, sending, waiting,
+    chats, current, open, draft, setDraft, files, error, connected, sending,
     refresh, select, startNew, close, send, stop, remove, attach, retryFile: upload,
     removeFile: (id: string) => setFiles((rows) => rows.filter((file) => file.id !== id)),
   };

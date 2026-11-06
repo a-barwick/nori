@@ -1,1 +1,1 @@
-Propose a new time for one event, using the event_id calendar_read returned for an event marked writable. Runs only after the user approves the exact move. Leave end empty to keep the event's length. Must be the only call in its batch.
+Move an event when the user requested that change, using the event_id calendar_read returned for an event marked writable. Ask if the event or new time is ambiguous. Leave end empty to keep the event's length. Must be the only call in its batch.

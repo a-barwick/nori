@@ -16,8 +16,8 @@ var ErrRoutingPending = errors.New("accepted user input is awaiting conversation
 var ErrCommandInvalid = errors.New("invalid task command")
 var ErrQuestionStale = errors.New("question is no longer current")
 
-// ErrApprovalUsed means this write already left prepared, so an earlier attempt may have sent it.
-var ErrApprovalUsed = errors.New("approval was already used")
+// ErrWriteClaimed means this write already left ready, so an earlier attempt may have sent it.
+var ErrWriteClaimed = errors.New("write was already claimed")
 
 // Every new task records these versions. No current code branches on them, and saved tasks with lower or missing
 // values are read as stored. Earlier releases do branch on them, so a release rolled back after unpause still needs
@@ -63,7 +63,7 @@ type Run struct {
 	Incorporated      int64 `json:"incorporated,omitempty" firestore:"incorporated,omitempty"`
 	InterruptRevision int64 `json:"interrupt_revision,omitempty" firestore:"interrupt_revision,omitempty"`
 
-	// Model cost in USD from reported token usage. Budget grows only by the user's explicit continue.
+	// Model cost in USD from reported token usage. Budget is the configured ceiling recorded when the task starts.
 	Spent       float64 `json:"spent_usd,omitempty" firestore:"spent_usd,omitempty"`
 	Budget      float64 `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
 	CostUnknown bool    `json:"cost_unknown,omitempty" firestore:"cost_unknown,omitempty"`
@@ -214,7 +214,7 @@ func ProjectionEvent(kind, text string, now time.Time) (waiting string, event Ev
 // task already holds this question.
 func QuestionEvent(run Run, revision int64, question Question, now time.Time) (event TaskEvent, replay bool, err error) {
 	if question.ID == "" || question.Text == "" || question.Revision != revision ||
-		(question.Kind != "input" && question.Kind != "budget" && question.Kind != "approval" && question.Kind != QuestionWork) {
+		(question.Kind != "input" && question.Kind != QuestionWork) {
 		return TaskEvent{}, false, fmt.Errorf("invalid task question")
 	}
 	if run.Question != nil && run.Question.ID == question.ID {
@@ -254,7 +254,7 @@ type PublishRequest struct {
 // GatesOnRouting reports whether publication must wait for pending user input to be routed. A stop, an unknown cost
 // and an explicit bypass publish immediately.
 func (p PublishRequest) GatesOnRouting() bool {
-	return !(p.Status == RunCancelled || p.CostUnknown || p.BypassRouting)
+	return !(p.Status == RunCancelled || p.BypassRouting)
 }
 
 // AdmitPublication fences a publish against the stored run. It returns proceed=false for a task that already ended,

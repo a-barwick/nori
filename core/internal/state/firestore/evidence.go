@@ -198,14 +198,7 @@ func (d *Database) PutCompletionCheck(ctx context.Context, runID string, check s
 			if err := doc.DataTo(&saved); err != nil {
 				return err
 			}
-			write, err := state.PlanCompletionCheck(saved, check)
-			if err != nil {
-				return err
-			}
-			if write == state.CompletionFinalize {
-				return tx.Set(ref, check)
-			}
-			return nil
+			return state.CheckCompletionIdentity(saved, check)
 		}
 		if !notFound(err) {
 			return err

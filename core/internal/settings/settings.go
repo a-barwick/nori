@@ -5,7 +5,9 @@ package settings
 
 import (
 	"fmt"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -26,6 +28,8 @@ type Settings struct {
 	SearchKey, RoutesKey string
 	// TimeZone is the IANA zone for dates, schedules and calendar checks.
 	TimeZone string
+	// TaskBudgetUSD is recorded as the spending ceiling when a background task starts.
+	TaskBudgetUSD float64
 	// QuietHours hold back notification emails, as HH:MM-HH:MM.
 	QuietHours string
 	// AppURL is the web app that notification emails link to. NotifyEmail is their recipient: empty means the
@@ -33,7 +37,6 @@ type Settings struct {
 	AppURL, NotifyEmail string
 	// EnvFile is the configuration file Load read.
 	EnvFile       string
-	Spend         Spend
 	Observability Observability
 }
 
@@ -50,8 +53,8 @@ type Store struct {
 	Project, Database string
 	// ArtifactBucket is the Cloud Storage bucket for file bytes.
 	ArtifactBucket string
-	// StateEmulator points app data at a loopback Firestore emulator while spend uses the real database.
-	// FirestoreEmulator points the whole process at one, for unpaid tests.
+	// StateEmulator points app data at a loopback Firestore emulator.
+	// FirestoreEmulator points the whole process at one for local development.
 	StateEmulator, FirestoreEmulator string
 	// LocalArtifactDir keeps file bytes in a local directory, for development.
 	LocalArtifactDir string
@@ -94,13 +97,6 @@ type Calendar struct {
 	Account, WriteID string
 }
 
-type Spend struct {
-	// Scope and Profile select a development spend allowance. Database holds the shared budget.
-	Scope, Profile, Database string
-	// Environment is "sandbox" for a sandbox deployment, which must run under an allowance.
-	Environment string
-}
-
 type Observability struct {
 	SentryDSN, SentryEnvironment, SentryRelease string
 	// SampleRate and the hourly limits stay text: an invalid value falls back to its default.
@@ -135,11 +131,18 @@ func Load() (Settings, error) {
 	}
 	s := FromEnvironment()
 	s.EnvFile = file
+	if math.IsNaN(s.TaskBudgetUSD) || math.IsInf(s.TaskBudgetUSD, 0) || s.TaskBudgetUSD <= 0 {
+		return Settings{}, fmt.Errorf("NORI_TASK_BUDGET_USD must be a positive dollar amount")
+	}
 	return s, nil
 }
 
 // FromEnvironment reads the settings from the process environment alone, for a process that loads no file.
 func FromEnvironment() Settings {
+	taskBudget, err := strconv.ParseFloat(get("NORI_TASK_BUDGET_USD", "1"), 64)
+	if err != nil {
+		taskBudget = math.NaN()
+	}
 	store := Store{
 		Project: os.Getenv("NORI_PROJECT_ID"), Database: os.Getenv("FIRESTORE_DATABASE_ID"), ArtifactBucket: os.Getenv("ARTIFACT_BUCKET"),
 		StateEmulator: os.Getenv("NORI_STATE_EMULATOR_HOST"), FirestoreEmulator: os.Getenv("FIRESTORE_EMULATOR_HOST"),
@@ -178,12 +181,9 @@ func FromEnvironment() Settings {
 			WriteID: os.Getenv("GOOGLE_CALENDAR_WRITE_ID"),
 		},
 		SearchKey: os.Getenv("BRAVE_SEARCH_API_KEY"), RoutesKey: os.Getenv("GOOGLE_ROUTES_API_KEY"),
-		TimeZone: get("NORI_TIMEZONE", "America/Los_Angeles"), QuietHours: get("NORI_QUIET_HOURS", "22:00-07:00"),
+		TaskBudgetUSD: taskBudget,
+		TimeZone:      get("NORI_TIMEZONE", "America/Los_Angeles"), QuietHours: get("NORI_QUIET_HOURS", "22:00-07:00"),
 		AppURL: os.Getenv("NORI_APP_URL"), NotifyEmail: os.Getenv("NORI_NOTIFY_EMAIL"),
-		Spend: Spend{
-			Scope: os.Getenv("NORI_SPEND_SCOPE"), Profile: os.Getenv("NORI_SPEND_PROFILE"), Database: get("NORI_SPEND_DATABASE", "nori-sandbox"),
-			Environment: os.Getenv("NORI_ENVIRONMENT"),
-		},
 		Observability: Observability{
 			SentryDSN: strings.TrimSpace(os.Getenv("SENTRY_DSN")), SentryEnvironment: os.Getenv("SENTRY_ENVIRONMENT"), SentryRelease: os.Getenv("SENTRY_RELEASE"),
 			SampleRate: os.Getenv("SENTRY_TRACES_SAMPLE_RATE"), ErrorsPerHour: os.Getenv("NORI_SENTRY_ERRORS_PER_HOUR"),

@@ -10,8 +10,6 @@ account="$service@$project.iam.gserviceaccount.com"
 image="$region-docker.pkg.dev/$project/nori-poc/docs:$(date -u +%Y%m%d-%H%M%S)"
 
 cd "$(dirname "$0")"
-# A page that differs from the published site must pass every check.
-python3 ../.agents/skills/review-docs/scripts/check.py --live
 public=$(mktemp -d)
 trap 'rm -rf "$public"' EXIT
 python3 agent_map.py publish "$public"

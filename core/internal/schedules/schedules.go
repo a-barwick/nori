@@ -48,9 +48,6 @@ func (s *Service) location() *time.Location {
 }
 
 func (s *Service) now() time.Time {
-	if s.Clock.Now != nil {
-		return s.Clock.Now().In(s.location())
-	}
 	return time.Now().In(s.location())
 }
 

@@ -3,14 +3,14 @@ export const CONTRACT = 'nori-chat-2';
 export const PREFIX = '/v1';
 export type Attachment = { id: string; name: string; media_type: string; size: number };
 export type Capabilities = { contract: string; service: string; persistence?: string; provider?: string; model?: string; conversationModes: string[] };
-export type Operation = { id: string; call_id: string; name: string; effect_class: string; outcome: string; action?: { digest: string; text: string; question_id: string; approved_by?: string; spec: Record<string, string> }; result?: Record<string, unknown> };
+export type Operation = { id: string; call_id: string; name: string; effect_class: string; outcome: string; action?: { digest: string; text: string; spec: Record<string, string> }; result?: Record<string, unknown> };
 export type Message = { id: string; role: 'user' | 'assistant'; text: string; status: 'streaming' | 'completed' | 'cancelled' | 'failed'; attachments?: Attachment[]; operations?: Operation[] };
 export type Conversation = { id: string; title: string; mode: 'chat' | 'assistant'; messages: Message[]; activeTurn: string | null; position: number; updatedAt?: string };
 export type Header = Omit<Conversation, 'messages'>;
 export type Summary = { id: string; title: string; mode: 'chat' | 'assistant'; activeTurn: string | null; updatedAt: string };
 // An event carries the conversation's header and only the messages that update added or changed.
 // `reset` means the client is too far behind to replay and should reload the snapshot.
-export type Event = { seq: number; kind: 'reply.updated' | 'turn.completed' | 'turn.cancelled' | 'turn.failed' | 'input.accepted' | 'approval.required' | 'tool.updated' | 'reset'; conversation: Header; messages: Message[] };
+export type Event = { seq: number; kind: 'reply.updated' | 'turn.completed' | 'turn.cancelled' | 'turn.failed' | 'input.accepted' | 'tool.updated' | 'reset'; conversation: Header; messages: Message[] };
 
 /** The stream can't continue from this position; reload the snapshot. */
 export class StreamReset extends Error {}
