@@ -172,22 +172,6 @@ batch and later input stays queued. Native tool-call/result history survives
 restart. Context is bounded to recent history and traces report truncation;
 older transcript pages remain available separately.
 
-The live conversation E2E suite now checks this async contract, a single saved
-introduction, UUID replay/conflict handling, ordered follow-ups and no dispatch
-for hypothetical work. Use a fresh isolated database and run from the repo root:
-`NORI_E2E_API_URL=http://127.0.0.1:PORT bun test core/e2e/conversation.test.js`.
-`NORI_E2E_URL` instead selects the local web proxy. These calls use the selected
-real models. The older durable-task suite targets the retired direct-run route
-and is not validation of this revision's conversation contract.
-
-The browser-task journeys cover concurrent browser tasks, screenshot retrieval,
-answer replay/staleness, targeted Stop, and a detailed trip correction during a
-real model request. Start the local API, Temporal worker and browser computer
-against a fresh isolated database, then run from the repo root:
-`NORI_M3_E2E_API_URL=http://127.0.0.1:PORT bun test core/e2e/browser-tasks.test.js`.
-Use `NORI_M3_E2E_URL` for the local web proxy instead. This separate opt-in suite
-uses real providers, rejects preexisting tasks, and stops only tasks it creates.
-
 A Firestore transaction admits a whole command batch atomically, including
 commands for independent concurrent tasks. Repeating an identical command UUID
 returns its recorded acceptance; reusing that ID with different content is

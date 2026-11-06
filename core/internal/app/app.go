@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"nori/internal/agent"
@@ -74,33 +73,9 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, e
 	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
 	model := cfg.Models.Outer
 	outer := conversation.NewOpenAIModel(key, model)
-	if address := cfg.Test.OpenAIURL; address != "" {
-		if !cfg.Temporal.Local || !strings.HasPrefix(address, "http://127.0.0.1:") {
-			engine.Close()
-			store.Close()
-			return nil, fmt.Errorf("NORI_E2E_OPENAI_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
-		}
-		outer.URL = address
-	}
 	// The conversation summary is written by the inner task model, through the same OpenRouter key the task worker uses.
 	summarizer := openrouter.New(summaryKey, "openai/gpt-6.1-terra")
-	if address := cfg.Test.ModelURL; address != "" {
-		if !cfg.Temporal.Local || !strings.HasPrefix(address, "http://127.0.0.1:") {
-			engine.Close()
-			store.Close()
-			return nil, fmt.Errorf("NORI_E2E_MODEL_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
-		}
-		summarizer.Endpoint = address
-	}
 	classifier := conversation.NewJevClassifier(jevKey)
-	if address := cfg.Test.JevURL; address != "" {
-		if !cfg.Temporal.Local || !strings.HasPrefix(address, "http://127.0.0.1:") {
-			engine.Close()
-			store.Close()
-			return nil, fmt.Errorf("NORI_E2E_JEV_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
-		}
-		classifier.URL = address
-	}
 	runner := conversation.New(outer, classifier, summarizer, tasks)
 	checks, err := openProactive(cfg, store, runner, tasks, outer, waker)
 	if err != nil {
@@ -108,7 +83,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, e
 		store.Close()
 		return nil, err
 	}
-	runner.Clock = conversation.Clock{Location: checks.Location, Now: checks.Now}
+	runner.Clock = conversation.Clock{Location: checks.Location}
 	later, err := openSchedules(cfg, store, tasks, waker, runner.Clock, checks.Calendar)
 	if err != nil {
 		engine.Close()
@@ -120,7 +95,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, e
 		tools.Capabilities.Calendar = *checks.Calendar
 	}
 	tools.Capabilities.Location = checks.Location
-	chats := chat.New(store, outer, tools, cfg.Test.OpenAIURL != "")
+	chats := chat.New(store, outer, tools)
 	return &App{Chats: chats, Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, Proactive: checks, Schedules: later, engine: engine}, nil
 }
 
@@ -146,45 +121,16 @@ func openProactive(cfg settings.Settings, store state.ConversationStore, runner 
 		return nil, fmt.Errorf("NORI_TIMEZONE must be an IANA time zone")
 	}
 	s := &proactive.Service{Store: store, Runner: runner, Tasks: tasks, Model: model, Waker: waker, Location: location}
-	local := cfg.Temporal.Local
-	loopback := func(name, address string) (string, error) {
-		if address != "" && (!local || !strings.HasPrefix(address, "http://127.0.0.1:")) {
-			return "", fmt.Errorf("%s requires TEMPORAL_LOCAL=true and a 127.0.0.1 address", name)
-		}
-		return address, nil
-	}
-	google, err := loopback("NORI_E2E_GOOGLE_URL", cfg.Test.GoogleURL)
-	if err != nil {
-		return nil, err
-	}
-	routes, err := loopback("NORI_E2E_ROUTES_URL", cfg.Test.RoutesURL)
-	if err != nil {
-		return nil, err
-	}
-	if value := cfg.Test.Now; value != "" {
-		at, err := time.Parse(time.RFC3339, value)
-		if err != nil || !local {
-			return nil, fmt.Errorf("NORI_E2E_NOW requires TEMPORAL_LOCAL=true and an RFC 3339 time")
-		}
-		offset := time.Until(at)
-		s.Now = func() time.Time { return time.Now().Add(offset) }
-	}
 	calendar := agent.CalendarConfig{
 		ClientID: cfg.Calendar.ClientID, ClientSecret: cfg.Calendar.ClientSecret,
 		RefreshToken: cfg.Calendar.RefreshToken, Account: cfg.Calendar.Account,
 		WriteCalendar: cfg.Calendar.WriteID,
-	}
-	if google != "" {
-		calendar.APIBase, calendar.TokenURL = google, google+"/token"
 	}
 	if calendar.ClientID != "" && calendar.ClientSecret != "" && calendar.RefreshToken != "" {
 		s.Calendar = &calendar
 	}
 	if key := cfg.RoutesKey; key != "" {
 		router := proactive.NewRoutesAPI(key)
-		if routes != "" {
-			router.URL = routes
-		}
 		s.Router = router
 	}
 	return s, nil

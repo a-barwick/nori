@@ -42,10 +42,9 @@ var GoogleScopes = []string{
 
 // CalendarConfig is the one account the user connected. The refresh token stays in
 // this process: it never reaches the computer, the model or a saved result.
-// WriteCalendar is the one calendar writes go to. APIBase and TokenURL point a local
-// test stack at a loopback provider, and are empty everywhere else.
+// WriteCalendar is the one calendar writes go to.
 type CalendarConfig struct {
-	ClientID, ClientSecret, RefreshToken, Account, WriteCalendar, APIBase, TokenURL string
+	ClientID, ClientSecret, RefreshToken, Account, WriteCalendar string
 }
 
 func (c CalendarConfig) target() string {
@@ -56,17 +55,11 @@ func (c CalendarConfig) target() string {
 }
 
 func (c CalendarConfig) calendarURL() string {
-	if c.APIBase != "" {
-		return c.APIBase + "/calendar/v3"
-	}
 	return calendarAPI
 }
 
 func (c CalendarConfig) client(ctx context.Context) *http.Client {
 	config := CalendarOAuth(c.ClientID, c.ClientSecret, "")
-	if c.TokenURL != "" {
-		config.Endpoint.TokenURL = c.TokenURL
-	}
 	return config.Client(ctx, &oauth2.Token{RefreshToken: c.RefreshToken})
 }
 

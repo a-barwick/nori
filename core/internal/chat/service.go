@@ -39,10 +39,9 @@ type run struct {
 }
 
 type Service struct {
-	Store    state.ConversationStore
-	Model    conversation.ReplyModel
-	Tools    *agent.Service
-	Isolated bool
+	Store state.ConversationStore
+	Model conversation.ReplyModel
+	Tools *agent.Service
 	// Drain lets a stopped reply finish reading its provider stream so the spend ledger learns its cost.
 	Drain   bool
 	owner   string
@@ -50,8 +49,8 @@ type Service struct {
 	running map[string]run
 }
 
-func New(store state.ConversationStore, model conversation.ReplyModel, tools *agent.Service, isolated bool) *Service {
-	return &Service{Store: store, Model: model, Tools: tools, Isolated: isolated, Drain: spend.Enabled(), owner: uuid.NewString(), running: map[string]run{}}
+func New(store state.ConversationStore, model conversation.ReplyModel, tools *agent.Service) *Service {
+	return &Service{Store: store, Model: model, Tools: tools, Drain: spend.Enabled(), owner: uuid.NewString(), running: map[string]run{}}
 }
 
 func (s *Service) Create(ctx context.Context, title string) (state.Chat, error) {

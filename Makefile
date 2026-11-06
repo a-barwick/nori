@@ -1,22 +1,5 @@
 .PHONY: dev web web-build web-start core local-web local-core check deploy deploy-check deploy-status deploy-rollback deploy-unlock pause unpause smoke
 
-# The migration checks use deterministic local providers.
-.PHONY: migration-prep migration-doctor migration-baseline migration-integration migration-readiness
-migration-prep:
-	python3 migration/verify.py prep
-
-migration-doctor:
-	python3 migration/verify.py doctor
-
-migration-baseline:
-	python3 migration/verify.py baseline
-
-migration-integration:
-	python3 migration/verify.py integration
-
-migration-readiness:
-	python3 migration/verify.py readiness
-
 NORI_ENV_FILE ?= $(abspath .env)
 NORI_TASK_ENV_FILE ?= $(NORI_ENV_FILE)
 NORI_LOCAL_AGENT_URL ?= http://127.0.0.1:8080

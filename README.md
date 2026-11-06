@@ -51,91 +51,6 @@ limit is 10 MiB. It has a finite saved-context limit and does not include assist
 history, tasks or memories. Use the assistant for background work, shell, browser,
 PDF or image analysis. See [Chats](docs/site/chat-client.html).
 
-### Offline fixture and checks
-
-These commands use no project `.env` or paid model:
-
-```sh
-make migration-prep   # fixture HTTP journeys and verifier checks
-make check            # Go, TypeScript, ESLint and documentation checks
-```
-
-The offline fixture in `migration/fixture.ts` stores conversations only while its
-process runs. Its results check the chat contract and verifier, and cannot establish
-shared-service readiness.
-
-### Shared-service verification
-
-The shared service, the assistant and its Chats tab are implemented. `migration/plan.json`
-lists the acceptance criteria. The verifier requires current evidence for service behavior,
-the web app, shared budgets, retained-data recovery and the selected providers.
-It does not deploy anything.
-
-Start isolated Firestore and Temporal emulators on loopback, then name their existing
-listeners explicitly. Recovery builds the previous release's `nori-local` from git;
-set `NORI_RECOVERY_OLD_BINARY` only to use a different prebuilt executable:
-
-```sh
-export FIRESTORE_EMULATOR_HOST=127.0.0.1:8095
-export TEMPORAL_ADDRESS=127.0.0.1:7245
-make migration-doctor
-make migration-baseline
-make migration-integration
-```
-
-The baseline runs all six registered suites. Integration runs the shared-service and
-upgrade/rollback journeys. Both groups reject skipped or empty runs, create isolated
-databases and task queues, and exclude paid providers.
-
-For browser verification, start the deterministic service and worker from the repo root:
-
-```sh
-NORI_SHARED_PORT=18080 NORI_SHARED_WORKER=1 \
-  bun --no-env-file core/e2e/shared-service-harness.js
-```
-
-In another terminal at the repo root, run the Next server against that service:
-
-```sh
-NORI_LOCAL_AGENT_URL=http://127.0.0.1:18080 \
-  bun --no-env-file run --cwd web dev --port 3310
-```
-
-Then verify the assistant and its Chats tab through Next. Install the browser driver once
-with `(cd migration && bun install --frozen-lockfile)` and use an existing Chromium executable:
-
-```sh
-NORI_BROWSER_EXECUTABLE=/absolute/path/to/chromium \
-  python3 migration/verify.py browser --url http://127.0.0.1:3310
-python3 migration/verify.py contract --url http://127.0.0.1:18080
-```
-
-Browser verification checks owner authentication failures, same-origin requests,
-conversation isolation, desktop and phone interactions, attachments and exact approvals.
-The target must identify itself as an isolated deterministic service. Fixture and
-production targets cannot pass this acceptance check. Stop only the harness and Next
-processes started for this run when finished. Preserve their files and evidence.
-
-Each verifier invocation writes logs and a report under `.artifacts/migration/`.
-Readiness combines those reports with authorized shared-budget and provider evidence:
-
-```sh
-python3 migration/verify.py readiness \
-  --evidence /absolute/path/to/baseline/report.json \
-  --evidence /absolute/path/to/integration/report.json \
-  --evidence /absolute/path/to/browser/report.json \
-  --evidence /absolute/path/to/shared-budget/report.json \
-  --evidence /absolute/path/to/provider/report.json
-```
-
-Reports must match the exercised source files and plan. A partial baseline or fixture
-pass cannot certify readiness. Real-ledger and provider checks require separate
-budget authorization and the same spend wrapper. Retain eligible provider evidence
-instead of repeating paid calls for a documentation change.
-
-Local verification does not update deployed services, worker images or infrastructure.
-Production deployment remains a separate action through `make deploy`.
-
 ## Durable tasks
 
 The deployed task API uses Temporal Cloud. Tasks can wait across worker shutdown
@@ -192,10 +107,6 @@ output; OpenRouter reports cost. Missing or incompatible usage keeps the full
 reservation. Pricing checked October 31, 2026 against the
 [Sol model reference](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
 Jev remains on its existing direct adapter and does not block budget readiness.
-
-Run `python3 core/infrastructure/spend/e2e.py` for two no-cost native-key lifecycle
-journeys covering retry/cleanup and feature progress grants. External cloud and
-OpenRouter APIs are simulated; these checks do not establish live inference.
 
 Local commands receive these controls through the wrapper. Arbitrary calls made
 with existing shared keys are not intercepted. OpenRouter native key limits apply to other

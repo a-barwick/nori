@@ -19,8 +19,7 @@ import (
 const ChatContract = "nori-chat-2"
 
 func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
-	isolated := s.Chats != nil && s.Chats.Isolated
-	writeJSON(w, 200, map[string]any{"contract": ChatContract, "service": "nori", "fixture": false, "isolated": isolated, "deterministic": isolated, "persistence": "durable", "provider": "openai", "model": s.Model, "conversationModes": []string{"assistant", "chat"}})
+	writeJSON(w, 200, map[string]any{"contract": ChatContract, "service": "nori", "persistence": "durable", "provider": "openai", "model": s.Model, "conversationModes": []string{"assistant", "chat"}})
 }
 func (s *server) listChats(w http.ResponseWriter, r *http.Request) {
 	chats, err := s.Chats.List(r.Context())

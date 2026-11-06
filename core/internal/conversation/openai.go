@@ -34,12 +34,10 @@ type OpenAIModel struct {
 	name   string
 	key    string
 	Client *http.Client
-	// URL is openAIChatURL. Only a local test stack sets a loopback one.
-	URL string
 }
 
 func NewOpenAIModel(key, name string) *OpenAIModel {
-	return &OpenAIModel{name: name, key: key, Client: &http.Client{Timeout: 75 * time.Second}, URL: openAIChatURL}
+	return &OpenAIModel{name: name, key: key, Client: &http.Client{Timeout: 75 * time.Second}}
 }
 
 func (m *OpenAIModel) Name() string { return m.name }
@@ -90,7 +88,7 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	if reservation != nil {
 		defer func() { err = errors.Join(err, reservation.Settle(ctx, reply.Usage.CostUSD, "", nil)) }()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.URL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIChatURL, bytes.NewReader(body))
 	if err != nil {
 		return reply, fmt.Errorf("invalid model request")
 	}
