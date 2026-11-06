@@ -1,6 +1,0 @@
-interface:
-  display_name: "Verification Monitor"
-  short_description: "Bound verification with independent stop decisions"
-  default_prompt: "Use $verification-monitor: create one monitor chat and exchange checkpoints with it before each post-implementation verification cycle."
-policy:
-  allow_implicit_invocation: false

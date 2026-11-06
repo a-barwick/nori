@@ -324,9 +324,7 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		}
 		if e == nil {
 			span.SetAttributes(attribute.String("nori.reply.status", t.Attempt.Status), attribute.Bool("nori.output.present", text != ""))
-			if t.Attempt.Status == "error" && budgetDenied(t.Attempt) {
-				observability.Event(ctx, "conversation.denied")
-			} else if t.Attempt.Status == "error" {
+			if t.Attempt.Status == "error" {
 				span.SetStatus(codes.Error, "conversation reply failed")
 				observability.Event(ctx, "conversation.failed")
 			} else {

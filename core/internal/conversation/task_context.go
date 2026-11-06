@@ -209,7 +209,7 @@ func (t *Tasks) contextRecord(ctx context.Context, id string) (*TaskContextRecor
 }
 
 // fitTaskContext shortens the context until it fits taskContextLimit: first old commands and task text, then
-// whole commands, and an open approval's exact action only as a last resort.
+// then whole commands.
 func fitTaskContext(result *TaskContext, records []*TaskContextRecord) error {
 	fits := func() bool { data, err := json.Marshal(*result); return err == nil && len(data) <= taskContextLimit }
 	if fits() {
@@ -243,19 +243,6 @@ func fitTaskContext(result *TaskContext, records []*TaskContextRecord) error {
 		}
 		longest.Commands = longest.Commands[1:]
 		longest.CommandHistoryTruncated = true
-	}
-	// An open approval must show the exact action. Sacrifice old task text and
-	// command history first; only shorten approval questions as a last resort.
-	for _, limit := range []int{8192, 4096, 2048, 1024, 512, 256, 64, 0} {
-		if fits() {
-			return nil
-		}
-		for _, record := range records {
-			if record.Question != nil && record.Question.Kind == "approval" && record.Question.ResolvedBy == "" {
-				trimContextText(&record.Question.Text, limit, &record.QuestionTextTruncated)
-				record.TextTruncated = record.TextTruncated || record.QuestionTextTruncated
-			}
-		}
 	}
 	if !fits() {
 		return fmt.Errorf("task identities and current questions exceed the 12 KiB context limit")
@@ -299,7 +286,7 @@ func trimContextText(text *string, limit int, truncated *bool) {
 	*text, *truncated = (*text)[:limit], true
 }
 
-// trimRecordText shortens a record's text to limit bytes, except an open approval's exact action.
+// trimRecordText shortens a record's text to limit bytes.
 func trimRecordText(record *TaskContextRecord, limit int) {
 	trimContextText(&record.Request, limit, &record.TextTruncated)
 	trimContextText(&record.Waiting, limit, &record.TextTruncated)
@@ -318,7 +305,7 @@ func trimRecordText(record *TaskContextRecord, limit int) {
 		trimContextText(&record.Actions[i].Result, limit, &record.TextTruncated)
 		trimContextText(&record.Actions[i].Text, limit, &record.TextTruncated)
 	}
-	if record.Question != nil && (record.Question.Kind != "approval" || record.Question.ResolvedBy != "") {
+	if record.Question != nil {
 		trimContextText(&record.Question.Text, limit, &record.QuestionTextTruncated)
 		record.TextTruncated = record.TextTruncated || record.QuestionTextTruncated
 	}

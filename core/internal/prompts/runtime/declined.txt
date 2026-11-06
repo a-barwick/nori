@@ -1,1 +1,0 @@
-The user declined this action, so nothing was sent. Don't propose it again.

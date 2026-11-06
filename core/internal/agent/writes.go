@@ -88,7 +88,7 @@ func (s *Service) PrepareWrite(ctx context.Context, name string, args map[string
 // and reports what happened.
 func (s *Service) SendWrite(ctx context.Context, name string, spec map[string]string) (string, map[string]any) {
 	if s.targetChanged(spec) {
-		return WriteFailed, map[string]any{"applied": false, "reason": "The connected account or write calendar changed after the approval, so this was not sent."}
+		return WriteFailed, map[string]any{"applied": false, "reason": "The connected account or write calendar changed after the action was prepared, so this was not sent."}
 	}
 	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
 	defer cancel()

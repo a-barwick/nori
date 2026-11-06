@@ -178,10 +178,6 @@ func taskTools(wait, work bool) []transcript.Tool {
 	return tools
 }
 
-// BudgetUSD is the model spend a task may use before it pauses for the user's
-// explicit continue; each continue grants this amount again.
-const BudgetUSD = state.TaskBudgetUSD
-
 // ValidateCalls checks a whole tool batch before any call runs, so a batch
 // is either executed in order or rejected without effects.
 func ValidateCalls(calls []transcript.ToolCall, wait, work bool) error {

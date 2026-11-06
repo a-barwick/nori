@@ -392,7 +392,7 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 		if current.CancelRequested && p.StopConfirmed {
 			p.Status, p.Detail, p.Text, p.Revision = "cancelled", prompts.Runtime("stopped", nil), "", current.Revision
 			p.BypassRouting = true
-		} else if p.CostUnknown || !p.StopConfirmed || p.Revision == 0 {
+		} else if !p.StopConfirmed || p.Revision == 0 {
 			p.Revision = current.Revision
 		}
 	}

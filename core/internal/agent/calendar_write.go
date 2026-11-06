@@ -150,7 +150,7 @@ func (s *Service) prepareEvent(ctx context.Context, title, start, end, descripti
 			return PreparedWrite{}, fmt.Errorf("the calendar returned HTTP %d", status)
 		}
 		return PreparedWrite{
-			Text: "Add this event?\nAccount: " + config.Account + "\nCalendar: " + calendar + "\nTitle: " + title +
+			Text: "Create event\nAccount: " + config.Account + "\nCalendar: " + calendar + "\nTitle: " + title +
 				"\nStart: " + s.when(from) + "\nEnd: " + s.when(to) + note + "\nNo one is invited or notified.",
 			Spec: map[string]string{"account": config.Account, "calendar_id": config.target(), "event_id": id, "calendar": calendar, "title": title, "start": from.Format(time.RFC3339), "end": to.Format(time.RFC3339), "description": description, "visibility": visibility},
 		}, nil
@@ -196,7 +196,7 @@ func (s *Service) checkEvent(ctx context.Context, spec map[string]string, sent s
 			event.Description == spec["description"] && sameVisibility(event.Visibility, spec["visibility"]) {
 			return WriteConfirmed, output
 		}
-		output["reason"] = "An event with this ID exists, but it doesn't match the approved action."
+		output["reason"] = "An event with this ID exists, but it doesn't match the requested action."
 		return WriteUncertain, output
 	case err == nil && (status == http.StatusNotFound || (status == http.StatusOK && event.Status == "cancelled")):
 		if sent != "" {
@@ -256,7 +256,7 @@ func (s *Service) prepareMove(ctx context.Context, id, start, end string) (Prepa
 		return PreparedWrite{Result: output}, nil
 	}
 	return PreparedWrite{
-		Text: "Move this event?\nAccount: " + config.Account + "\nCalendar: " + calendar + "\nTitle: " + event.Summary +
+		Text: "Move event\nAccount: " + config.Account + "\nCalendar: " + calendar + "\nTitle: " + event.Summary +
 			"\nFrom: " + s.when(oldStart) + " to " + s.when(oldEnd) + "\nTo: " + s.when(from) + " to " + s.when(to) +
 			"\nThis changes the calendar only. No one is notified.",
 		Spec: map[string]string{"account": config.Account, "calendar_id": config.target(), "event_id": id, "calendar": calendar, "title": event.Summary, "etag": event.ETag,
@@ -307,6 +307,6 @@ func (s *Service) checkMove(ctx context.Context, spec map[string]string, sent st
 		output["applied"], output["reason"] = false, "The event is still at its old time, so this move didn't happen."
 		return WriteFailed, output
 	}
-	output["reason"] = "The event is at a time that matches neither the old time nor the approved one."
+	output["reason"] = "The event is at a time that matches neither the old time nor the requested one."
 	return WriteUncertain, output
 }

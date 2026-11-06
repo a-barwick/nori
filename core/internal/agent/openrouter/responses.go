@@ -1,6 +1,6 @@
 // Package openrouter is the task model adapter for OpenRouter's Responses API. It holds
 // every provider-specific detail: the endpoint, credentials, request and response formats,
-// price ceilings, spend reservation and error text.
+// price ceilings and error text.
 package openrouter
 
 import (
@@ -15,9 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"nori/internal/agent"
-	"nori/internal/spend"
 	"nori/internal/transcript"
 )
 
@@ -77,14 +75,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			"type": "function", "name": tool.Name, "description": tool.Description, "strict": true, "parameters": parameters,
 		})
 	}
-	control, limit, err := spend.Prepare(ctx, provider, req.MaxOutputTokens)
-	if err != nil {
-		return out, err
-	}
-	defer control.Close()
 	fields := map[string]any{
 		"model": c.ModelName, "input": input, "instructions": req.Instructions,
-		"tools": tools, "max_output_tokens": limit, "store": false,
+		"tools": tools, "max_output_tokens": req.MaxOutputTokens, "store": false,
 		"include":  []string{"reasoning.encrypted_content"},
 		"provider": routing(),
 	}
@@ -101,19 +94,6 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
 	httpReq.Header.Set("Content-Type", "application/json")
-	reservation, err := control.Reserve(ctx, provider, c.ModelName, len(body), limit, uuid.NewString())
-	if err != nil {
-		return out, err
-	}
-	if reservation != nil {
-		defer func() {
-			var cost *float64
-			if out.CostKnown {
-				cost = &out.Cost
-			}
-			err = errors.Join(err, reservation.Settle(ctx, cost, "", nil))
-		}()
-	}
 	// Once handed to HTTP, a transport failure cannot prove it was not billed.
 	out.NotSent = false
 	res, err := c.HTTP.Do(httpReq)
@@ -155,10 +135,6 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			out.Cost = *u.Cost
 			out.CostKnown = true
 		}
-	}
-	// Keep billed usage even when the generation is incomplete or unusable.
-	if !out.CostKnown {
-		return out, errors.New("task model reported no cost; budget cannot be enforced")
 	}
 	if response.Status != "completed" {
 		return out, errors.New("task model response incomplete; no tools executed")

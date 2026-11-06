@@ -106,7 +106,7 @@ export async function conversationRoute(request: Request, mode: Mode, segments: 
     if (segments.length === 3 && /^[a-f0-9-]{36}$/.test(segments[2]) && request.method === "GET") return fileRoute(request, mode, `${path}/${segments[2]}`);
   }
   const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && operation === "events"))));
-  const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel", "approvals"].includes(operation)));
+  const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel"].includes(operation)));
   const remove = request.method === "DELETE" && segments.length === 1 && id !== "assistant" && validID;
   if (!read && !write && !remove) return Response.json({ error: "Not found." }, { status: 404 });
   if (!(await allowedCaller(request, mode, read ? sameOriginRead : sameOrigin))) return forbidden();

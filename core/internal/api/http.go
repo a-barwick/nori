@@ -63,7 +63,6 @@ func Handler(deps Deps, local bool) http.Handler {
 		mux.HandleFunc("DELETE /v1/conversations/{conversation}", s.deleteChat)
 		mux.HandleFunc("POST /v1/conversations/{conversation}/messages", s.chatMessage)
 		mux.HandleFunc("POST /v1/conversations/{conversation}/cancel", s.chatCancel)
-		mux.HandleFunc("POST /v1/conversations/{conversation}/approvals", s.chatApproval)
 		mux.HandleFunc("GET /v1/conversations/{conversation}/events", s.chatEvents)
 		mux.HandleFunc("POST /v1/conversations/{conversation}/uploads", s.chatUpload)
 		mux.HandleFunc("GET /v1/conversations/{conversation}/uploads/{id}", s.chatReadUpload)
@@ -138,7 +137,7 @@ func writeError(w http.ResponseWriter, err error) {
 		status = 400
 	case errors.Is(err, state.ErrBusy), errors.Is(err, state.ErrDuplicate), errors.Is(err, state.ErrQuestionStale),
 		errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrCancelled), errors.Is(err, state.ErrConversationBusy),
-		errors.Is(err, state.ErrConversationConflict), errors.Is(err, state.ErrChatFull), errors.Is(err, state.ErrApprovalPending),
+		errors.Is(err, state.ErrConversationConflict), errors.Is(err, state.ErrChatFull),
 		errors.Is(err, state.ErrMessageConflict), errors.Is(err, state.ErrChatBusy):
 		status = 409
 	}

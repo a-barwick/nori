@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"reflect"
 	"sort"
 	"strings"
@@ -30,8 +29,7 @@ type OperationRecord struct {
 	Revision    int64    `json:"revision" firestore:"revision"`
 	Attempt     int      `json:"attempt" firestore:"attempt"`
 	ArtifactIDs []string `json:"artifact_ids" firestore:"artifact_ids"`
-	// Action is set for a write that needs approval. The runtime sends what it holds, so model output after the
-	// approval can't change what runs.
+	// Action holds the exact write the runtime will send.
 	Action *Action `json:"action,omitempty" firestore:"action,omitempty"`
 	// Cleared says why a failed or uncertain operation no longer blocks later ones. The outcome and result stay as saved.
 	Cleared string `json:"cleared,omitempty" firestore:"cleared,omitempty"`
@@ -47,28 +45,11 @@ const (
 	ClearedAnswered = "answered"
 )
 
-// Action is the exact write the user was shown. Digest covers the tool, account and Spec.
+// Action is the requested write. Digest covers the tool, account and Spec.
 type Action struct {
-	Digest     string            `json:"digest" firestore:"digest"`
-	Text       string            `json:"text" firestore:"text"`
-	QuestionID string            `json:"question_id,omitempty" firestore:"question_id,omitempty"`
-	ApprovedBy string            `json:"approved_by,omitempty" firestore:"approved_by,omitempty"`
-	Spec       map[string]string `json:"spec" firestore:"spec"`
-}
-
-// UseApproval moves a prepared write to attempted, once, for the approve command that names its question. The
-// caller checks the task's revision in the same transaction.
-func UseApproval(op OperationRecord, cmd Command) (OperationRecord, error) {
-	if op.Outcome != "prepared" || op.Action == nil {
-		return op, ErrApprovalUsed
-	}
-	if cmd.Kind != CommandApprove || cmd.QuestionID == "" || cmd.QuestionID != op.Action.QuestionID {
-		return op, ErrQuestionStale
-	}
-	action := *op.Action
-	action.ApprovedBy = cmd.ID
-	op.Action, op.Outcome, op.Attempt = &action, "attempted", 1
-	return op, nil
+	Digest string            `json:"digest" firestore:"digest"`
+	Text   string            `json:"text" firestore:"text"`
+	Spec   map[string]string `json:"spec" firestore:"spec"`
 }
 
 type CompletionProposal struct {
@@ -78,15 +59,10 @@ type CompletionProposal struct {
 }
 
 type CompletionCheck struct {
-	ID                string             `json:"id" firestore:"id"`
-	Revision          int64              `json:"revision" firestore:"revision"`
-	Position          int64              `json:"position" firestore:"position"`
-	Proposal          CompletionProposal `json:"proposal" firestore:"proposal"`
-	RecordFailures    []string           `json:"record_failures" firestore:"record_failures"`
-	JevChoice         string             `json:"jev_choice" firestore:"jev_choice"`
-	JevScore          float64            `json:"jev_score" firestore:"jev_score"`
-	JevAvailable      bool               `json:"jev_available" firestore:"jev_available"`
-	CorrectionAttempt int                `json:"correction_attempt" firestore:"correction_attempt"`
+	ID       string             `json:"id" firestore:"id"`
+	Revision int64              `json:"revision" firestore:"revision"`
+	Position int64              `json:"position" firestore:"position"`
+	Proposal CompletionProposal `json:"proposal" firestore:"proposal"`
 }
 
 // ValidEvidenceID reports whether id is safe to use as a task, operation or input identifier.
@@ -139,7 +115,7 @@ func validOperation(op OperationRecord) bool {
 		return false
 	}
 	switch op.Outcome {
-	case "pending", "confirmed", "failed", "uncertain", "skipped", "prepared", "attempted", "submitted", "declined", "voided":
+	case "pending", "confirmed", "failed", "uncertain", "skipped", "ready", "attempted", "submitted", "voided":
 		return true
 	default:
 		return false
@@ -195,19 +171,19 @@ type SavedOperation struct {
 // The caller validates the transition and commits this event with the operation.
 func LateWriteEvent(run Run, saved *SavedOperation, op OperationRecord, now time.Time) (TaskEvent, bool) {
 	if run.Status == RunRunning || saved == nil || saved.Record.Outcome == op.Outcome ||
-		op.Action == nil || op.Action.ApprovedBy == "" || op.ResultRef == "" {
+		op.Action == nil || op.Attempt == 0 || op.ResultRef == "" {
 		return TaskEvent{}, false
 	}
 	var text string
 	switch op.Outcome {
 	case "confirmed":
-		text = "The provider confirmed this approved write."
+		text = "The provider confirmed this requested write."
 	case "submitted":
-		text = "The provider accepted this approved write, but a follow-up read did not complete."
+		text = "The provider accepted this requested write, but a follow-up read did not complete."
 	case "failed":
-		text = "The provider refused this approved write or a later read showed it did not happen."
+		text = "The provider refused this requested write or a later read showed it did not happen."
 	case "uncertain":
-		text = "This approved write may have happened; its outcome could not be confirmed."
+		text = "This requested write may have happened; its outcome could not be confirmed."
 	default:
 		return TaskEvent{}, false
 	}
@@ -247,7 +223,7 @@ func PlanOperation(saved *SavedOperation, op OperationRecord) (OperationWrite, e
 		return OperationWrite{Noop: true}, nil
 	}
 	if old.CallID != op.CallID || old.Name != op.Name || old.EffectClass != op.EffectClass || op.Attempt < old.Attempt ||
-		(old.Outcome != "pending" && old.Outcome != "prepared" && old.Attempt != op.Attempt) {
+		(old.Outcome != "pending" && old.Outcome != "ready" && old.Attempt != op.Attempt) {
 		return OperationWrite{}, errors.New("operation evidence identity conflict")
 	}
 	if old.Action != nil && (op.Action == nil || old.Action.Digest != op.Action.Digest) {
@@ -276,8 +252,8 @@ func outcomeMayFollow(old, next string) bool {
 	switch old {
 	case "pending":
 		return true
-	case "prepared":
-		return next == "attempted" || next == "declined" || next == "voided" || next == "failed"
+	case "ready":
+		return next == "attempted" || next == "voided" || next == "failed"
 	case "attempted":
 		return next == "submitted" || next == "confirmed" || next == "failed" || next == "uncertain"
 	case "submitted":
@@ -304,13 +280,9 @@ func ReadOperation(op OperationRecord, evidenceRecorded bool, documentID string)
 // ValidateCompletionCheck checks a completion check write and returns the form to save.
 func ValidateCompletionCheck(runID string, check CompletionCheck) (CompletionCheck, error) {
 	if !ValidEvidenceID(runID) || !ValidEvidenceID(check.ID) || check.Revision < 0 || check.Position < 0 ||
-		check.CorrectionAttempt < 0 || check.CorrectionAttempt > 64 || !boundedEvidenceText(check.Proposal.Evidence) ||
-		!boundedEvidenceText(check.Proposal.Unmet) || !boundedEvidenceText(check.RecordFailures) ||
-		math.IsNaN(check.JevScore) || math.IsInf(check.JevScore, 0) || check.JevScore < 0 || check.JevScore > 1 {
+		!boundedEvidenceText(check.Proposal.Evidence) ||
+		!boundedEvidenceText(check.Proposal.Unmet) {
 		return check, errors.New("invalid task completion check")
-	}
-	if check.JevAvailable && check.JevChoice != "yes" && check.JevChoice != "partly" && check.JevChoice != "no" {
-		return check, errors.New("invalid completion choice")
 	}
 	if err := evidenceSize(check); err != nil {
 		return check, err
@@ -325,37 +297,15 @@ func normalizeCompletionCheck(check CompletionCheck) CompletionCheck {
 	if len(check.Proposal.Unmet) == 0 {
 		check.Proposal.Unmet = nil
 	}
-	if len(check.RecordFailures) == 0 {
-		check.RecordFailures = nil
-	}
 	return check
 }
 
-// CompletionWrite says how a completion check is saved over an existing one.
-type CompletionWrite int
-
-const (
-	// CompletionNoop means the exact check was already saved.
-	CompletionNoop CompletionWrite = iota
-	// CompletionFinalize replaces a check that had no verification result with the same check plus its result.
-	CompletionFinalize
-)
-
-// PlanCompletionCheck decides whether check may replace the saved check with the same ID. A proposal is never
-// replaced; only the verification result can be added once.
-func PlanCompletionCheck(saved, check CompletionCheck) (CompletionWrite, error) {
-	saved = normalizeCompletionCheck(saved)
-	if reflect.DeepEqual(saved, check) {
-		return CompletionNoop, nil
+// CheckCompletionIdentity ensures a retried save does not replace a different result.
+func CheckCompletionIdentity(saved, check CompletionCheck) error {
+	if reflect.DeepEqual(normalizeCompletionCheck(saved), check) {
+		return nil
 	}
-	if !saved.JevAvailable && saved.JevChoice == "" {
-		final := saved
-		final.JevAvailable, final.JevChoice, final.JevScore = check.JevAvailable, check.JevChoice, check.JevScore
-		if reflect.DeepEqual(final, check) {
-			return CompletionFinalize, nil
-		}
-	}
-	return CompletionNoop, errors.New("completion check identity conflict")
+	return errors.New("completion check identity conflict")
 }
 
 // SourceInputIDs lists the conversation inputs that a task's commands cite, without repeats.
@@ -431,7 +381,7 @@ const (
 )
 
 // LastProposal returns the completion check that describes how the task ended: the latest by revision, position and
-// then ID. A rejected proposal didn't end the task, so its claims describe nothing and ok is false.
+// then ID.
 func LastProposal(checks []CompletionCheck) (last CompletionCheck, ok bool) {
 	found := false
 	for _, check := range checks {
@@ -442,7 +392,7 @@ func LastProposal(checks []CompletionCheck) (last CompletionCheck, ok bool) {
 			last, found = check, true
 		}
 	}
-	if !found || len(last.RecordFailures) > 0 {
+	if !found {
 		return CompletionCheck{}, false
 	}
 	return last, true

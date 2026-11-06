@@ -15,7 +15,6 @@ import (
 	"nori/internal/observability"
 	"nori/internal/platform"
 	"nori/internal/settings"
-	"nori/internal/spend"
 	"nori/internal/wake"
 	"nori/internal/workerservice"
 )
@@ -30,9 +29,6 @@ func main() {
 	defer stop()
 	stopTelemetry := observability.Init(ctx, "nori-worker", s)
 	defer observability.Shutdown(stopTelemetry)
-	if err := spend.ValidateConfiguration(); err != nil {
-		observability.Fatal(err)
-	}
 	// Both modes run tools, so an incomplete computer setting stops the process here.
 	if err := platform.CheckComputer(s); err != nil {
 		observability.Fatal(err)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -86,7 +85,7 @@ func safeCommandName(kind state.CommandKind) string {
 	switch kind {
 	case "start":
 		return "dispatch"
-	case "steer", "answer", "continue", "stop", "hold":
+	case "steer", "answer", "stop", "hold":
 		return string(kind)
 	default:
 		return "unknown"
@@ -112,8 +111,6 @@ func (t *Tasks) Update(ctx context.Context, id, runID, message string) (state.Ru
 		switch {
 		case question.Kind == "input" || question.Kind == state.QuestionWork:
 			command.Kind, command.QuestionID = "answer", question.ID
-		case question.Kind == "budget" && strings.EqualFold(strings.TrimSpace(message), "continue"):
-			command.Kind, command.QuestionID = "continue", question.ID
 		}
 	}
 	run, err := t.Store.Accept(ctx, command)

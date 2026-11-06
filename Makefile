@@ -30,8 +30,6 @@ core:
 check:
 	$(MAKE) -C core check
 	cd web && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src
-	python3 .agents/skills/review-docs/scripts/check.py --changed
-	python3 docs/agent_map.py check
 
 # Production operations. See core/infrastructure/README.md.
 deploy deploy-check deploy-status deploy-rollback deploy-unlock:

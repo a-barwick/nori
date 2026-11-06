@@ -90,7 +90,7 @@ func (s *server) schedule(w http.ResponseWriter, r *http.Request) {
 }
 
 // offer records Accept or Dismiss on a delivered offer. Accept also sends the user's yes as an ordinary message, so
-// any work starts on the normal path and any calendar change still asks for approval.
+// any work starts on the normal task path.
 func (s *server) offer(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID       string `json:"id"`

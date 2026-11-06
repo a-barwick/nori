@@ -29,7 +29,6 @@ type HistoryInput struct {
 type HistorySync struct {
 	Ref                string
 	Revision, Position int64
-	Grants             int
 	QuestionResolved   bool
 	Request            string
 	// Others, Budget and CostUnknown are the family's shared accounting: what its other tasks have spent, its budget,
@@ -38,12 +37,7 @@ type HistorySync struct {
 	CostUnknown    bool
 	// Subtask and ReadOnly are fixed when the task is accepted.
 	Subtask, ReadOnly bool
-	// Decision is the approve or decline command for the pending write. A later
-	// instruction overrides an approval. ActionClosed is the outcome when an
-	// instruction ended the write here, so its call already has a result.
-	Decision     state.CommandKind
-	DecisionID   string
-	ActionClosed string
+	ActionClosed      string
 }
 type CurrentPosition struct{ Revision, Position int64 }
 
@@ -104,8 +98,7 @@ type AppendResult struct {
 }
 type RefPublication struct {
 	Publication
-	Ref        string
-	Unverified bool
+	Ref string
 }
 
 func (a *Activities) evidence() (state.TaskEvidenceStore, error) {
@@ -246,11 +239,8 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 			if action != nil {
 				closed := map[string]any{"voided": true, "operation_id": action.Operation, "reason": prompts.Runtime("write-voided", nil)}
 				out.ActionClosed = "voided"
-				if out.Decision == state.CommandDecline {
-					closed, out.ActionClosed = map[string]any{"declined": true, "operation_id": action.Operation, "reason": declinedReason}, "declined"
-				}
 				messages = append(messages, transcript.ToolResultMessage(action.CallID, action.Name, closed))
-				action, out.Decision, out.DecisionID = nil, "", ""
+				action = nil
 			}
 			if q != nil && q.CallID != "" {
 				superseded := map[string]any{"superseded": true, "reason": prompts.Runtime("superseded", nil)}
@@ -299,20 +289,6 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 				messages = append(messages, transcript.ToolResultMessage(q.CallID, questionTool(q), result))
 				q = nil
 				out.QuestionResolved = true
-			}
-		case state.CommandApprove, state.CommandDecline:
-			if q != nil && q.ID == cmd.QuestionID && q.Kind == "approval" {
-				q = nil
-				out.QuestionResolved = true
-				out.Decision, out.DecisionID = cmd.Kind, cmd.ID
-			}
-		case state.CommandContinue:
-			if q != nil && q.ID == cmd.QuestionID && q.Kind == "budget" {
-				out.Grants++
-				q = nil
-				out.QuestionResolved = true
-				messages = append(messages, transcript.UserText(
-					prompts.Runtime("budget-granted", map[string]any{"Budget": agent.BudgetUSD})))
 			}
 		}
 		out.Position = cmd.Position
@@ -503,15 +479,12 @@ func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run sta
 		}
 		in.Text, _ = call.Args["answer"].(string)
 		proposed := proposal(call)
-		in.Answer = &state.ResultDraft{Checked: in.Status == state.RunCompleted && !in.Unverified, Evidence: proposed.Evidence, Unmet: proposed.Unmet}
+		in.Answer = &state.ResultDraft{Checked: in.Status == state.RunCompleted, Evidence: proposed.Evidence, Unmet: proposed.Unmet}
 		if ops, e := a.Store.Operations(ctx, in.RunID); e == nil {
 			in.Answer.Artifacts, in.Answer.Cited = citedOutputs(ops, proposed.Evidence)
 		}
 	}
-	if in.Unverified {
-		in.Text += "\n\nCompletion verification was unavailable; this answer is unverified."
-	}
-	if in.Status != "completed" && !in.Unverified && in.Text != "" && in.Detail != "" {
+	if in.Status != "completed" && in.Text != "" && in.Detail != "" {
 		in.Text += "\n\n" + in.Detail
 	}
 	run, e := a.Publish(ctx, in.Publication)

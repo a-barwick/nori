@@ -9,7 +9,6 @@ import (
 	"nori/internal/secret"
 	"nori/internal/secret/secretmanager"
 	"nori/internal/settings"
-	"nori/internal/spend"
 	"nori/internal/state"
 	"nori/internal/task"
 	"nori/internal/wake"
@@ -74,9 +73,7 @@ func Dispatcher(s settings.Settings, store state.ConversationStore, engine dispa
 	}
 }
 
-// Configure hands the packages that keep process-wide state their settings: the Temporal connection and the spend
-// allowance. Every process calls it once, right after settings.Load.
+// Configure sets the Temporal connection once at process startup.
 func Configure(s settings.Settings) {
 	task.Configure(s.Temporal)
-	spend.Configure(s)
 }

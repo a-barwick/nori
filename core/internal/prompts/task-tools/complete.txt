@@ -1,1 +1,1 @@
-Propose a final answer for verification. Must be the only call in its batch.
+Finish with the answer, supporting results, and any unmet requirements. Must be the only call in its batch.
