@@ -1260,7 +1260,9 @@
     "core/internal/api/uploads.go",
     "core/internal/computerd/files.go",
     "core/internal/conversation/call.go",
+    "core/internal/conversation/runner.go",
     "core/internal/state/artifacts.go",
+    "core/internal/state/firestore/conversation.go",
     "core/internal/state/firestore/results.go",
     "core/internal/state/firestore/tasks.go",
     "core/internal/state/gcs/gcs.go",
@@ -1285,7 +1287,7 @@
      "id": "finding-it-later",
      "title": "Finding it later",
      "status": "built",
-     "words": 94
+     "words": 119
     },
     {
      "id": "files-the-user-attaches",
