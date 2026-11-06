@@ -146,6 +146,13 @@ func (c *Checkpoint) awaitJob(ctx workflow.Context, wait func() error, id string
 // JobWaitRef polls one job for at most one slice. It reports an end state the
 // workflow then records through the ordinary job_wait operation.
 func (a *Activities) JobWaitRef(parent context.Context, in JobWaitInput) (out JobWaitOutcome, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(parent)
+		if scopeErr != nil {
+			return JobWaitOutcome{}, scopeErr
+		}
+		return scoped.JobWaitRef(parent, in)
+	}
 	messages, err := a.history(parent, in.RunID, in.Ref)
 	if err != nil {
 		return out, classified(err)
@@ -244,6 +251,13 @@ func jobProgress(status map[string]any) string {
 
 // StopJobs ends every job this task owns. A stopped computer has no running jobs.
 func (a *Activities) StopJobs(ctx context.Context, id string) (err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		return scoped.StopJobs(ctx, id)
+	}
 	ctx, span := startActivity(ctx, "task.stop_jobs", "CHAIN", a.activityRun(ctx, id), 0)
 	defer func() { recordActivityFailure(ctx, err, "task.stop_jobs"); span.End() }()
 	return classified(stopTaskJobs(observability.SuppressErrorCapture(ctx), a.Agent.Computer, id))

@@ -53,37 +53,40 @@ func Dial(ctx context.Context, secrets secret.Lookup) (client.Client, error) {
 	return client.DialContext(ctx, options)
 }
 
-func WorkflowID(id string) string { return dispatch.WorkflowID(id) }
+func (e *Engine) workflowID(id string) string { return dispatch.WorkflowID(e.UserID, id) }
 
 // Engine runs the dispatch contract on a Temporal client.
-type Engine struct{ c client.Client }
+type Engine struct {
+	c      client.Client
+	UserID string
+}
 
 var _ dispatch.Orchestrator = (*Engine)(nil)
 
-func NewEngine(c client.Client) *Engine { return &Engine{c: c} }
+func NewEngine(c client.Client, userID string) *Engine { return &Engine{c: c, UserID: userID} }
 
 // Close closes the Temporal client the Engine was built on.
 func (e *Engine) Close() { e.c.Close() }
 
 func (e *Engine) Signal(ctx context.Context, runID string, cmd state.Command) error {
-	return noExecution(e.c.SignalWorkflow(ctx, WorkflowID(runID), "", Signal, cmd))
+	return noExecution(e.c.SignalWorkflow(ctx, e.workflowID(runID), "", Signal, cmd))
 }
 
 func (e *Engine) SignalOrStart(ctx context.Context, cmd state.Command) error {
 	options := client.StartWorkflowOptions{
-		ID: WorkflowID(cmd.RunID), TaskQueue: Queue(), WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+		ID: e.workflowID(cmd.RunID), TaskQueue: Queue(), WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 	}
 	// An offer's prep task starts below the default budget. Budgets only move up later, so it is set here.
 	start := Checkpoint{}
 	if cmd.Offer != "" {
 		start.StartBudget = state.ProactivePrepBudgetUSD
 	}
-	_, err := e.c.SignalWithStartWorkflow(ctx, WorkflowID(cmd.RunID), Signal, cmd, options, WorkflowName, cmd.RunID, start)
+	_, err := e.c.SignalWithStartWorkflow(ctx, e.workflowID(cmd.RunID), Signal, cmd, options, WorkflowName, cmd.RunID, start)
 	return err
 }
 
 func (e *Engine) Inspect(ctx context.Context, runID string) (dispatch.Execution, error) {
-	d, err := e.c.DescribeWorkflowExecution(ctx, WorkflowID(runID), "")
+	d, err := e.c.DescribeWorkflowExecution(ctx, e.workflowID(runID), "")
 	if err = noExecution(err); err != nil {
 		return dispatch.Execution{}, err
 	}

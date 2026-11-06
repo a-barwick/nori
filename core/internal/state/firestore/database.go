@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"nori/internal/state"
+	"nori/internal/users"
 )
 
 // Config selects the Firestore database one process uses.
@@ -33,6 +34,7 @@ type Config struct {
 type Database struct {
 	db            *firestore.Client
 	taskBudgetUSD float64
+	user          users.User
 }
 
 var _ state.Database = (*Database)(nil)
@@ -63,7 +65,22 @@ func IsLoopback(address string) bool {
 
 func (d *Database) Close() error { return d.db.Close() }
 
-func (d *Database) root() *firestore.DocumentRef       { return d.db.Collection("owners").Doc(state.Owner) }
+// ForUser returns an immutable scope. Every document operation uses this receiver's user.
+// The returned scope borrows the client; only its owner closes it.
+func (d *Database) ForUser(user users.User) (*Database, error) {
+	if err := user.Validate(); err != nil {
+		return nil, err
+	}
+	scoped := *d
+	scoped.user = user
+	return &scoped, nil
+}
+func (d *Database) root() *firestore.DocumentRef {
+	if !users.ValidID(d.user.ID) {
+		panic("document store requires a user scope")
+	}
+	return d.db.Collection("owners").Doc(d.user.DataOwner())
+}
 func (d *Database) runs() *firestore.CollectionRef     { return d.root().Collection("runs") }
 func (d *Database) messages() *firestore.CollectionRef { return d.root().Collection("messages") }
 func (d *Database) commands() *firestore.CollectionRef { return d.root().Collection("task_commands") }

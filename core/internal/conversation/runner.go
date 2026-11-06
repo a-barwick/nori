@@ -81,6 +81,7 @@ type Session struct {
 	ReadPosition state.NotifySeenMark `json:"read_position"`
 }
 type Runner struct {
+	UserFacts  string
 	model      ReplyModel
 	classifier IntentClassifier
 	// summarizer writes the conversation summary. compactAfter pauses compaction after a failure.

@@ -527,15 +527,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
         value = google_storage_bucket.artifacts.name
       }
 
-      env {
-        name  = "COMPUTER_ZONE"
-        value = local.zone
-      }
 
-      env {
-        name  = "COMPUTER_INSTANCE"
-        value = google_compute_instance.computer.name
-      }
 
       env {
         name  = "MODEL_NAME"

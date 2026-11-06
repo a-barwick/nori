@@ -16,16 +16,16 @@ import (
 func register(ctx context.Context, s settings.Settings, cfg config) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	store, err := platform.OpenStore(ctx, s)
+	directory, err := platform.OpenUsers(ctx, s)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
-	control, err := store.Control(ctx)
+	defer directory.Close()
+	paused, err := directory.Paused(ctx)
 	if err != nil {
 		return err
 	}
-	if !control.Paused {
+	if !paused {
 		return fmt.Errorf("registration requires paused execution admission")
 	}
 	c, err := task.Dial(ctx, platform.Secrets())

@@ -1,11 +1,12 @@
-import { isOwner, sameOrigin } from "./auth";
+import { resolveUser, userPath, sameOrigin } from "./auth";
 import { runtimeAuthorization } from "./credentials";
 import { isRuntimeMethod } from "./methods";
 import { reportUpstreamFailure, reportUpstreamRejection, rejectionHeaders, upstreamTraceHeaders } from "@/lib/observability/upstream";
 
 export async function runtimeRequest(request: Request, method: string) {
   if (!isRuntimeMethod(method)) return Response.json({ error: "Not found." }, { status: 404 });
-  if (!sameOrigin(request) || !(await isOwner(request.headers))) {
+  const user = await resolveUser(request.headers, false);
+  if (!sameOrigin(request) || !user) {
     return Response.json({ error: "Forbidden." }, { status: 403 });
   }
   const configured = process.env.NORI_RUNTIME_URL;
@@ -15,7 +16,7 @@ export async function runtimeRequest(request: Request, method: string) {
   let target: URL;
   try {
     // Append deliberately: native Agent Runtime's invoke root already ends in /api/.
-    target = new URL(`${configured.replace(/\/+$/, "")}/api/${method}`);
+    target = new URL(`${configured.replace(/\/+$/, "")}/${userPath(user.id, `api/${method}`)}`);
     if (target.protocol !== "https:" || target.username || target.password || target.search || target.hash) throw new Error();
   } catch {
     return Response.json({ error: "Nori's runtime URL is invalid." }, { status: 503 });

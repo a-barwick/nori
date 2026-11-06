@@ -3,8 +3,6 @@ locals {
     BRAVE_SEARCH_API_KEY          = "nori-brave-search-api-key"
     GOOGLE_CALENDAR_CLIENT_ID     = "nori-google-calendar-client-id"
     GOOGLE_CALENDAR_CLIENT_SECRET = "nori-google-calendar-client-secret"
-    GOOGLE_CALENDAR_REFRESH_TOKEN = "nori-google-calendar-refresh-token"
-    GOOGLE_CALENDAR_ACCOUNT       = "nori-google-calendar-account"
   }
 }
 

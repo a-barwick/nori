@@ -1,17 +1,9 @@
+import { runtimeAuthorization } from "./credentials";
 import { OAuth2Client } from "google-auth-library";
 
-/*
- * Who is calling, and where from. Everything else in the web app uses these three functions:
- *
- *   identify(headers)   the verified caller, or null
- *   isOwner(headers)    identify(headers) is the owner
- *   sameOrigin(request) the browser request came from this app's own origin
- *
- * Nori has one owner, named by OWNER_EMAIL. Without it nobody outside local development is the owner. Sign-in is Google IAP today. To use another provider, replace
- * `providerIdentity` below: it must return an email only after checking the provider's signature, audience, issuer and
- * expiry, and must never trust an unsigned header.
- */
-const OWNER = (process.env.OWNER_EMAIL ?? "").trim().toLowerCase();
+// Provider verification returns an email; the trusted API maps it to a provisioned user.
+// Local development selects an email explicitly, without weakening hosted sign-in.
+const LOCAL_EMAIL = (process.env.NORI_LOCAL_EMAIL?.trim() || process.env.OWNER_EMAIL?.trim() || "").toLowerCase();
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export type Identity = { email: string };
@@ -25,17 +17,41 @@ export function localDevelopment(headers: Headers) {
   }
 }
 
-/** The verified caller. Local development on loopback is the owner; otherwise the provider decides. */
+/** The verified caller. Local development on loopback uses the configured email; otherwise the provider decides. */
 export async function identify(headers: Headers): Promise<Identity | null> {
-  if (localDevelopment(headers)) return { email: OWNER || "local-owner" };
+  if (localDevelopment(headers)) return LOCAL_EMAIL ? { email: LOCAL_EMAIL } : null;
   return providerIdentity(headers);
 }
 
-export async function isOwner(headers: Headers): Promise<boolean> {
-  if (localDevelopment(headers)) return true;
-  const email = (await identify(headers))?.email?.toLowerCase();
-  return !!OWNER && email === OWNER;
+export type UserIdentity = Identity & { id: string };
+
+/** This server supplies both the verified email and its own runtime credentials. */
+export async function resolveUser(headers: Headers, local = localDevelopment(headers) && !!process.env.NORI_LOCAL_AGENT_URL): Promise<UserIdentity | null> {
+  const identity = await identify(headers);
+  if (!identity) return null;
+  const configured = local ? process.env.NORI_LOCAL_AGENT_URL : process.env.NORI_RUNTIME_URL;
+  if (!configured) return null;
+  try {
+    const base = new URL(configured.endsWith("/") ? configured : `${configured}/`);
+    if (base.username || base.password || base.search || base.hash) return null;
+    if (local ? base.protocol !== "http:" || !LOOPBACK.has(base.hostname) || base.pathname !== "/" : base.protocol !== "https:") return null;
+    const authorization: Record<string, string> = local ? {} : { Authorization: await runtimeAuthorization() };
+    const response = await fetch(new URL("api/users/resolve", base), {
+      method: "POST", headers: { "Content-Type": "application/json", ...authorization },
+      body: JSON.stringify({ email: identity.email }), cache: "no-store", redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return null;
+    const value = await response.json();
+    if (typeof value.id !== "string" || !(value.id === "owner" || /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.id))) return null;
+    return { ...identity, id: value.id };
+  } catch { return null; }
 }
+
+export async function isUser(headers: Headers): Promise<boolean> { return !!(await resolveUser(headers)); }
+
+// The ID is resolved here, never copied from a browser header, URL or body.
+export function userPath(id: string, path: string) { return `users/${encodeURIComponent(id)}/${path}`; }
 
 export function sameOrigin(request: Request) {
   const origin = request.headers.get("origin");

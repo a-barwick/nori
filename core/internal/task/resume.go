@@ -26,7 +26,7 @@ func (e *Engine) PendingWork(ctx context.Context) ([]string, error) {
 		}
 		for _, item := range page.GetExecutions() {
 			id := item.GetExecution().GetWorkflowId()
-			runID, ok := dispatch.RunID(id)
+			runID, ok := dispatch.RunID(e.UserID, id)
 			if !ok || item.GetType().GetName() != WorkflowName {
 				continue
 			}

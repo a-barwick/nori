@@ -1,4 +1,4 @@
-import { isOwner, localDevelopment, sameOrigin, sameOriginRead } from "./auth";
+import { resolveUser, userPath, localDevelopment, sameOrigin, sameOriginRead } from "./auth";
 import { isRuntimeRead } from "./methods";
 import { runtimeAuthorization } from "./credentials";
 import { reportUpstreamFailure, upstreamTraceHeaders } from "@/lib/observability/upstream";
@@ -29,10 +29,12 @@ function upstreamBase(request: Request, mode: Mode): URL | Response {
 async function forward(request: Request, mode: Mode, path: string, init: RequestInit, timeout: number, allowed: (type: string) => boolean) {
   const base = upstreamBase(request, mode);
   if (base instanceof Response) return base;
+  const user = await resolveUser(request.headers, mode === "local");
+  if (!user) return forbidden();
   const label = path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file").replace(/^v1\/conversations\/[^/?]+/, "v1/conversations/item");
   try {
     const authorization: Record<string, string> = mode === "hosted" ? { Authorization: await runtimeAuthorization() } : {};
-    const upstream = await fetch(new URL(path, base), {
+    const upstream = await fetch(new URL(userPath(user.id, path), base), {
       ...init, headers: { ...(init.headers as Record<string, string>), ...authorization, ...upstreamTraceHeaders(request) },
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]), redirect: "error", cache: "no-store",
     });
@@ -56,7 +58,7 @@ async function forward(request: Request, mode: Mode, path: string, init: Request
 
 async function allowedCaller(request: Request, mode: Mode, sameSite: (request: Request) => boolean) {
   if (!sameSite(request)) return false;
-  return mode === "local" ? localDevelopment(request.headers) : isOwner(request.headers);
+  return mode !== "local" || localDevelopment(request.headers);
 }
 
 const forbidden = () => Response.json({ error: "Forbidden." }, { status: 403 });

@@ -69,7 +69,7 @@
 <li>If the computer restarts or stops, the job is killed and reported as lost, never as finished.</li>
 </ul>
 <p><code>screenshot_inspect</code> sends one saved image and one question to the task model in a separate call with no tools. Only the text answer joins the task's history, so text inside an image can't call a tool. The cost counts against the task's budget.</p>
-<p><code>nori-connect-calendar</code> saves one Google refresh token in <code>.env</code> and Secret Manager, for calendar and email. The token stays on the worker. <code>calendar_read</code> covers the primary calendar and up to 9 others selected in Google Calendar.</p>
+<p><code>nori-connect-calendar --user &lt;id&gt;</code> saves that user's Google refresh token and account in their users-table row, for calendar and email. The token stays server-side. <code>calendar_read</code> covers the primary calendar and up to 9 others selected in Google Calendar.</p>
 <p>If the account isn't connected or Google refuses the token, the calendar or email tool returns <code>available: false</code> and the task says so. An OAuth app in Google's testing state loses its refresh token after 7 days.</p>
 <p>Each search charges the task's budget $0.005, Brave's listed price on Oct 31, 2026.</p>
 </details>

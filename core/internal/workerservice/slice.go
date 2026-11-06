@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"nori/internal/dispatch"
+	"nori/internal/state"
 	"nori/internal/wake"
 )
 
@@ -63,7 +64,7 @@ func (s *Slice) Paused(ctx context.Context) error {
 
 // Quiet reports whether a bounded slice can end: nothing has run for the idle
 // window and the engine has no more work for this build.
-func (s *Slice) Quiet(ctx context.Context, w Worker, d *dispatch.Dispatcher) (bool, error) {
+func (s *Slice) Quiet(ctx context.Context, w Worker, d Dispatch) (bool, error) {
 	if !s.Bounded {
 		return false, nil
 	}
@@ -71,7 +72,7 @@ func (s *Slice) Quiet(ctx context.Context, w Worker, d *dispatch.Dispatcher) (bo
 }
 
 // settled checks both running activities and the workflow steps between them.
-func (s *Slice) settled(ctx context.Context, w Worker, d *dispatch.Dispatcher, quietWindow time.Duration) (bool, error) {
+func (s *Slice) settled(ctx context.Context, w Worker, d Dispatch, quietWindow time.Duration) (bool, error) {
 	ids, active, quiet := w.Activity()
 	if active != 0 || quiet < quietWindow {
 		return false, nil
@@ -84,7 +85,7 @@ func (s *Slice) settled(ctx context.Context, w Worker, d *dispatch.Dispatcher, q
 // joined with any handoff failure. A bounded slice then hands off: while paused
 // it retains every execution it saw; otherwise it wakes whatever the engine
 // still has runnable for this build.
-func (s *Slice) Finish(w Worker, d *dispatch.Dispatcher, result error) error {
+func (s *Slice) Finish(w Worker, d Dispatch, result error) error {
 	_, active, _ := w.Activity()
 	log.Printf("worker_slice slice=%s build=%s phase=draining active=%d", s.ID, s.Build, active)
 	w.Stop()
@@ -94,7 +95,7 @@ func (s *Slice) Finish(w Worker, d *dispatch.Dispatcher, result error) error {
 	}
 	check, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	control, err := d.Store.Control(check)
+	control, err := d.Control(check)
 	if err != nil {
 		return errors.Join(result, err)
 	}
@@ -125,7 +126,7 @@ const (
 // ctx ends, control becomes unreadable, or a bounded slice has no work left.
 // On pause, an unfenced poller first settles admitted bookkeeping to a durable
 // wait or end. Admission guards prevent new execution while it does so.
-func (s *Slice) Loop(ctx context.Context, w Worker, d *dispatch.Dispatcher, steps dispatch.Steps) error {
+func (s *Slice) Loop(ctx context.Context, w Worker, d Dispatch, steps dispatch.Steps) error {
 	log.Printf("worker_slice slice=%s build=%s phase=polling poll_window=%s", s.ID, s.Build, s.PollWindow)
 	lastRepair := time.Now()
 	pausing := false
@@ -156,7 +157,7 @@ func (s *Slice) Loop(ctx context.Context, w Worker, d *dispatch.Dispatcher, step
 			return nil
 		case <-ticker.C:
 		}
-		control, err := d.Store.Control(ctx)
+		control, err := d.Control(ctx)
 		if err != nil {
 			log.Print("control unavailable; worker exiting")
 			return nil
@@ -181,4 +182,11 @@ func (s *Slice) Loop(ctx context.Context, w Worker, d *dispatch.Dispatcher, step
 			}
 		}
 	}
+}
+
+// Dispatch reconciles every user's tasks while a shared worker polls the queue.
+type Dispatch interface {
+	Control(context.Context) (state.Control, error)
+	Reconcile(context.Context, dispatch.Steps) error
+	Runnable(context.Context, string, []string) ([]string, error)
 }

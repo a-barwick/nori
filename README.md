@@ -27,6 +27,11 @@ Temporal connection, namespace, task queue and worker configuration. Project and
 database names have no defaults. Starting the web and API does not start the separate
 inner task worker or computer. Use explicitly configured emulators for isolated data.
 
+Provision the sign-in email in the users table before starting the app, and set
+`NORI_LOCAL_EMAIL` for loopback development. Existing installations must import the
+current user's settings before deploying this version; [user setup](core/README.md#users)
+includes the migration command. Retained records stay at their existing paths.
+
 Start with the existing main checkout's configuration, including from a worktree:
 
 ```sh

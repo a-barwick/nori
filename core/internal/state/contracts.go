@@ -7,7 +7,9 @@ import (
 
 // The contracts are layered by what a caller needs. Agent steps use Store, task activities use TaskStore, and
 // conversation processing and the HTTP API use ConversationStore. A backend implements Database for documents and
-// ArtifactStore for artifact bytes; Compose joins them.
+// ArtifactStore for artifact bytes; Compose joins them. Every data method takes its user through an immutable
+// receiver scope opened with platform.OpenStore(ctx, settings, user). There is no default user or mutable
+// current-user setting. Detached cleanup contexts keep that same scope. Control is the global operator pause.
 
 // RunStore reads and updates task records.
 type RunStore interface {

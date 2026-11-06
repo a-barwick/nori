@@ -30,7 +30,7 @@ output "environment" {
 }
 
 output "computer_instance" {
-  value = local.worker_env.COMPUTER_INSTANCE
+  value = local.production ? "nori-computer" : "nori-sandbox-computer"
 }
 
 output "temporal_deployment" {

@@ -26,7 +26,7 @@ type Settings struct {
 	// SearchKey is the Brave Search key and RoutesKey the Google Routes key. Without one, that tool reports itself
 	// unavailable.
 	SearchKey, RoutesKey string
-	// TimeZone is the IANA zone for dates, schedules and calendar checks.
+	// TimeZone, NotifyEmail, Computer and the calendar connection are filled from the user row, never the environment.
 	TimeZone string
 	// TaskBudgetUSD is recorded as the spending ceiling when a background task starts.
 	TaskBudgetUSD float64
@@ -181,7 +181,7 @@ func FromEnvironment() Settings {
 			Outer: get("NORI_AGENT_MODEL", "gpt-6.1-sol"), Inner: get("MODEL_NAME", "openai/gpt-6.1-terra"),
 		},
 		Store:    store,
-		Computer: Computer{LocalURL: os.Getenv("NORI_LOCAL_COMPUTER_URL"), Zone: os.Getenv("COMPUTER_ZONE"), Instance: os.Getenv("COMPUTER_INSTANCE")},
+		Computer: Computer{},
 		Temporal: temporal,
 		Wake: Wake{
 			ConversationQueue: os.Getenv("NORI_WAKE_QUEUE"), RuntimeURL: os.Getenv("NORI_RUNTIME_URL"), Caller: os.Getenv("NORI_WAKE_SERVICE_ACCOUNT"),
@@ -190,13 +190,11 @@ func FromEnvironment() Settings {
 		Worker: Worker{PollWindow: get("NORI_WORKER_POLL_WINDOW", "240s"), IdleWindow: get("NORI_WORKER_IDLE_WINDOW", "15s")},
 		Calendar: Calendar{
 			ClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
-			RefreshToken: os.Getenv("GOOGLE_CALENDAR_REFRESH_TOKEN"), Account: get("GOOGLE_CALENDAR_ACCOUNT", "the connected Google account"),
-			WriteID: os.Getenv("GOOGLE_CALENDAR_WRITE_ID"),
 		},
 		SearchKey: os.Getenv("BRAVE_SEARCH_API_KEY"), RoutesKey: os.Getenv("GOOGLE_ROUTES_API_KEY"),
 		TaskBudgetUSD: taskBudget,
-		TimeZone:      get("NORI_TIMEZONE", "America/Los_Angeles"), QuietHours: get("NORI_QUIET_HOURS", "22:00-07:00"),
-		AppURL: os.Getenv("NORI_APP_URL"), NotifyEmail: os.Getenv("NORI_NOTIFY_EMAIL"),
+		QuietHours:    get("NORI_QUIET_HOURS", "22:00-07:00"),
+		AppURL:        os.Getenv("NORI_APP_URL"),
 		Observability: Observability{
 			SentryDSN: strings.TrimSpace(os.Getenv("SENTRY_DSN")), SentryEnvironment: os.Getenv("SENTRY_ENVIRONMENT"), SentryRelease: os.Getenv("SENTRY_RELEASE"),
 			SampleRate: os.Getenv("SENTRY_TRACES_SAMPLE_RATE"), ErrorsPerHour: os.Getenv("NORI_SENTRY_ERRORS_PER_HOUR"),

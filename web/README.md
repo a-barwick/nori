@@ -9,7 +9,7 @@ bun install --frozen-lockfile
 bun --env-file=../.env run dev --port 3210
 ```
 
-The local preview binds to loopback. Without a configured runtime, it shows a connection notice and disables Send. It does not substitute demo messages, task results, or screenshots. Real task execution requires the project to be resumed; previewing the frontend does not authorize resuming the computer or worker.
+The local preview binds to loopback. A configured runtime and a provisioned user are required to enter the app. It does not substitute demo messages, task results, or screenshots. Real task execution requires the project to be resumed; previewing the frontend does not authorize resuming the computer or worker.
 
 ## Runtime configuration
 
@@ -20,7 +20,7 @@ Production uses the existing Cloud Run service configuration:
 | `NORI_RUNTIME_URL` | Existing Go runtime base URL |
 | `IAP_AUDIENCE` | Expected audience of Google's signed IAP assertion |
 | `NORI_APP_ORIGIN` | Exact browser origin used for same-origin POST verification |
-| `OWNER_EMAIL` | The only signed-in account allowed in. Without it, only local development on loopback is let in |
+| `NORI_LOCAL_EMAIL` | Loopback development identity; must match a users-table email. `OWNER_EMAIL` remains a local fallback |
 
 No project API key is needed in the web image. Keep any local project configuration in the ignored repository-root `.env`, mode 600; use existing approved server stores in production. Never bake credentials into images.
 
@@ -28,8 +28,8 @@ No project API key is needed in the web image. Keep any local project configurat
 
 - The onigiri stays visible on desktop and mobile, responds to typing and task state, and opens Activity. The header also reports connection and execution status.
 - The composer and connection notices reserve their own space, including for multiline drafts. Saved structured replies use document cards with Copy, Open document, and Download.
-- The signed IAP assertion and exact owner email are verified before private routes are served. Unsigned identity headers are never trusted. `src/lib/runtime/auth.ts` is the only file that knows about IAP, so another sign-in provider replaces one function there.
-- `/api/<operation>` proxies each operation in `src/lib/runtime/methods.ts` (`session`, `status`, `turn`, `input`, `cancel`, `command`, `artifact` and `trace`) to the runtime with server credentials. Browser credentials are not forwarded. `src/lib/runtime/credentials.ts` produces those credentials, so a runtime outside GCP replaces one function there.
+- The signed IAP assertion is verified, then the verified email resolves to a user row before private routes are served. Unsigned identity headers are never trusted. `src/lib/runtime/auth.ts` is the only file that knows about IAP, so another sign-in provider replaces one function there.
+- `/api/<operation>` proxies each operation in `src/lib/runtime/methods.ts` (`session`, `status`, `turn`, `input`, `cancel`, `command`, `artifact` and `trace`) to the runtime with server credentials. The server prefixes upstream routes with the resolved user ID. Browser credentials and user-ID headers are not forwarded. `src/lib/runtime/credentials.ts` produces those credentials, so a runtime outside GCP replaces one function there.
 - The conversation uses the current message bubbles, avatar/presence, document layout and reading view. Long saved replies can be opened and downloaded, with Back to chat preserving the conversation position.
 - The activity panel shows real task events, shell/browser output, statuses, and protected screenshots. Stop requests cancellation and waits for runtime confirmation.
 - History refreshes only while a task is active, the tab is visible, and task execution is resumed. The client calls `/api/status` every 2 seconds and fetches the session when its version changes, when the call fails, or when it reports idle. If `status` is missing or fails three times in a row, it fetches the session every 2 seconds. Errors suspend automatic refresh until manual reconnection.

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"nori/internal/agent"
-	"nori/internal/platform"
 	"nori/internal/settings"
 )
 
@@ -16,7 +15,6 @@ import (
 type config struct {
 	build, deployment      string
 	pollWindow, idleWindow time.Duration
-	capabilities           agent.Capabilities
 }
 
 // capabilities reads the credentials of the optional tools. A missing credential
@@ -24,7 +22,7 @@ type config struct {
 func capabilities(s settings.Settings) (agent.Capabilities, error) {
 	location, err := time.LoadLocation(s.TimeZone)
 	if err != nil {
-		return agent.Capabilities{}, fmt.Errorf("NORI_TIMEZONE must be an IANA time zone")
+		return agent.Capabilities{}, fmt.Errorf("user time zone must be an IANA time zone")
 	}
 	return agent.Capabilities{
 		SearchKey: s.SearchKey, Location: location,
@@ -44,9 +42,6 @@ func loadConfig(s settings.Settings) (config, error) {
 		}
 	}
 	if err := s.Temporal.Validate(); err != nil {
-		return config{}, err
-	}
-	if err := platform.CheckComputer(s); err != nil {
 		return config{}, err
 	}
 	if s.Port != "" {
@@ -72,12 +67,8 @@ func loadConfig(s settings.Settings) (config, error) {
 	if err != nil || idleWindow <= 0 {
 		return config{}, fmt.Errorf("NORI_WORKER_IDLE_WINDOW must be positive")
 	}
-	caps, err := capabilities(s)
-	if err != nil {
-		return config{}, err
-	}
 	return config{
 		build: s.Temporal.BuildID, deployment: cmp.Or(s.Temporal.DeploymentName, "nori-task"),
-		pollWindow: pollWindow, idleWindow: idleWindow, capabilities: caps,
+		pollWindow: pollWindow, idleWindow: idleWindow,
 	}, nil
 }
