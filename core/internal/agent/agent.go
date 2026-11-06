@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"nori/internal/computer"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
@@ -94,7 +95,7 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 		return map[string]any{
 			"run_id":      run,
 			"artifact_id": id,
-			"description": "Private browser screenshot saved for the user. Call screenshot_inspect with this artifact_id to read it.",
+			"description": prompts.Runtime("screenshot-saved", nil),
 		}, nil
 	default:
 		return nil, errors.New("unknown tool")

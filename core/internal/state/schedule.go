@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"nori/internal/prompts"
 )
 
 // A schedule is something the user asked Nori to do later: a reminder, a task to run at a time, or a monitor that checks
@@ -624,27 +626,11 @@ func MonitorOutcome(result string) (alert, stop bool) {
 
 // ScheduledRequest is the task request a scheduled task or monitor occurrence starts with.
 func ScheduledRequest(s Schedule, fire ScheduleFire, location *time.Location) string {
-	lines := []string{
-		fmt.Sprintf("Scheduled work the user asked for earlier, running now (%s). Do it with current information, as of now, "+
-			"not anything from when they asked.", fire.At.In(location).Format("Monday, January 2, 2006 at 3:04 PM MST")),
-		"Their request: " + s.Text,
-	}
-	if s.Kind == ScheduleMonitor {
-		lines = append(lines,
-			"This is one check of a monitor. Don't buy, book, send, change or contact anyone: only look.",
-			"Start your result with exactly one line saying what happened, then a short report:",
-			MonitorNothing+" when nothing they asked to hear about happened. The user won't see it.",
-			MonitorAlert+" when you found something they asked to hear about.",
-			MonitorAlertStop+" when you found it and their stopping point has been reached.",
-			MonitorStop+" when their stopping point has been reached and there's nothing new to tell them.")
-		if len(s.Reported) > 0 {
-			lines = append(lines, "Already reported to the user, so it's not new unless something changed: "+strings.Join(s.Reported, " | "))
-		}
-		if s.Rule.Ends != "" {
-			lines = append(lines, "The monitor ends after "+s.Rule.Ends+".")
-		}
-	}
-	return strings.Join(lines, "\n")
+	return prompts.Runtime("scheduled-request", map[string]any{
+		"At": fire.At.In(location).Format("Monday, January 2, 2006 at 3:04 PM MST"), "Text": s.Text, "Monitor": s.Kind == ScheduleMonitor,
+		"Nothing": MonitorNothing, "Alert": MonitorAlert, "AlertStop": MonitorAlertStop, "Stop": MonitorStop,
+		"Reported": strings.Join(s.Reported, " | "), "Ends": s.Rule.Ends,
+	})
 }
 
 // ReportedLine is how a monitor alert is remembered: its first lines after the marker, bounded.

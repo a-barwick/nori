@@ -1,0 +1,1 @@
+Read-only preparation for a suggestion Nori hasn't shown the user yet. Don't change anything and don't ask the user anything.

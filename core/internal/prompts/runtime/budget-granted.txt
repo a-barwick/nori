@@ -1,0 +1,1 @@
+The user approved another ${{printf "%.2f" .Budget}} of model spend. Continue the task.

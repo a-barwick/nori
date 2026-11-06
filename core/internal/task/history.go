@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"go.temporal.io/sdk/activity"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.temporal.io/sdk/activity"
 	"nori/internal/agent"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
@@ -234,7 +234,7 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 		switch cmd.Kind {
 		case state.CommandStart, state.CommandSteer:
 			if action != nil {
-				closed := map[string]any{"voided": true, "operation_id": action.Operation, "reason": "The user changed the task instructions, so nothing was sent. Propose again if the write is still needed."}
+				closed := map[string]any{"voided": true, "operation_id": action.Operation, "reason": prompts.Runtime("write-voided", nil)}
 				out.ActionClosed = "voided"
 				if out.Decision == state.CommandDecline {
 					closed, out.ActionClosed = map[string]any{"declined": true, "operation_id": action.Operation, "reason": declinedReason}, "declined"
@@ -243,9 +243,9 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 				action, out.Decision, out.DecisionID = nil, "", ""
 			}
 			if q != nil && q.CallID != "" {
-				superseded := map[string]any{"superseded": true, "reason": "The user changed the task instructions."}
+				superseded := map[string]any{"superseded": true, "reason": prompts.Runtime("superseded", nil)}
 				if q.Kind == state.QuestionWork {
-					superseded["reason"] = "The user changed the task instructions, so this request is closed and any subtask started for it was stopped. Ask again if the work is still needed."
+					superseded["reason"] = prompts.Runtime("request-closed", nil)
 				}
 				messages = append(messages, transcript.ToolResultMessage(q.CallID, questionTool(q), superseded))
 			}
@@ -302,7 +302,7 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 				q = nil
 				out.QuestionResolved = true
 				messages = append(messages, transcript.UserText(
-					fmt.Sprintf("The user approved another $%.2f of model spend. Continue the task.", agent.BudgetUSD)))
+					prompts.Runtime("budget-granted", map[string]any{"Budget": agent.BudgetUSD})))
 			}
 		}
 		out.Position = cmd.Position
@@ -385,7 +385,7 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	if in.ReadOnly && toolEffect(call.Name) != "read" {
 		result = map[string]any{
 			"outcome":      "needs_input",
-			"error":        "Completion correction permits reads only. Ask the user before further writes or shell execution.",
+			"error":        prompts.Runtime("reads-only", nil),
 			"effect_class": "read",
 			"operation_id": in.OperationID,
 		}

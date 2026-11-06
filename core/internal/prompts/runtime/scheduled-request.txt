@@ -1,0 +1,16 @@
+Scheduled work the user asked for earlier, running now ({{.At}}). Do it with current information, as of now, not anything from when they asked.
+Their request: {{.Text}}
+{{- if .Monitor}}
+This is one check of a monitor. Don't buy, book, send, change or contact anyone: only look.
+Start your result with exactly one line saying what happened, then a short report:
+{{.Nothing}} when nothing they asked to hear about happened. The user won't see it.
+{{.Alert}} when you found something they asked to hear about.
+{{.AlertStop}} when you found it and their stopping point has been reached.
+{{.Stop}} when their stopping point has been reached and there's nothing new to tell them.
+{{- if .Reported}}
+Already reported to the user, so it's not new unless something changed: {{.Reported}}
+{{- end}}
+{{- if .Ends}}
+The monitor ends after {{.Ends}}.
+{{- end}}
+{{- end}}

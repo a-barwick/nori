@@ -1,0 +1,1 @@
+An earlier {{.Tool}} call failed or has no known result and may have changed something, so no further tool was admitted. Ask the user with request_input. The runtime names the command in your question, and their answer lets later commands run.

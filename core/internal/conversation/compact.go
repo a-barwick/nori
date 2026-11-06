@@ -28,7 +28,7 @@ var summaryTool = transcript.Tool{
 			Type: transcript.TypeObject, Required: []string{"kind", "quote", "input_id", "note"},
 			Properties: map[string]*transcript.Schema{
 				"kind":     {Type: transcript.TypeString, Enum: state.SummaryKinds},
-				"quote":    {Type: transcript.TypeString, Description: "The user's exact words."},
+				"quote":    {Type: transcript.TypeString, Description: prompts.Runtime("summary-quote", nil)},
 				"input_id": {Type: transcript.TypeString, Description: "The input_id of the message the quote comes from."},
 				"note":     {Type: transcript.TypeString, Description: "Short context, such as what an approval applied to. Empty when none."},
 			},

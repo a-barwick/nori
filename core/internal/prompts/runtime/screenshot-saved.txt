@@ -1,0 +1,1 @@
+Private browser screenshot saved for the user. Call screenshot_inspect with this artifact_id to read it.

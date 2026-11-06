@@ -1,0 +1,1 @@
+The user's instructions changed while waiting. The job is still running; job_status, job_wait or job_stop can act on it.

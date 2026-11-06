@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sort"
 	"time"
+
+	"nori/internal/prompts"
 )
 
 var ErrSuperseded = errors.New("task revision changed; reconcile accepted input")
@@ -288,7 +290,7 @@ func FinishRun(run Run, req PublishRequest, now time.Time) (Run, TaskEvent) {
 	status, detail, text := req.Status, req.Detail, req.Text
 	if run.CancelRequested && status != RunFailed {
 		if status != RunCancelled || detail == "" {
-			detail = "Stopped by the user."
+			detail = prompts.Runtime("stopped", nil)
 		}
 		status, text = RunCancelled, ""
 	}

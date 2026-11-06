@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
+	"nori/internal/prompts"
 )
 
 // A write has three steps. Prepare validates it and reads the provider, so the user
@@ -184,7 +185,7 @@ func refusal(status int) map[string]any {
 	case http.StatusForbidden:
 		output["available"], output["reason"] = false, "The connected account hasn't granted this. "+calendarConnectHint
 	case http.StatusPreconditionFailed:
-		output["reason"] = "The event changed after the user saw it. Read it again and propose the move again."
+		output["reason"] = prompts.Runtime("event-changed", nil)
 	default:
 		output["reason"] = "The provider refused this request."
 	}

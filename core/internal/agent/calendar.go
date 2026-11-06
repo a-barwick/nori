@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"nori/internal/prompts"
 )
 
 const (
@@ -24,10 +25,11 @@ const (
 	maxCalendarEvents = 100
 	maxEventText      = 300
 	// A longer result would risk the saved history's block limit, so the latest events are dropped first.
-	maxCalendarResult   = 32 << 10
-	maxCalendarSpan     = 31 * 24 * time.Hour
-	calendarConnectHint = "The user needs to run nori-connect-calendar."
+	maxCalendarResult = 32 << 10
+	maxCalendarSpan   = 31 * 24 * time.Hour
 )
+
+var calendarConnectHint = prompts.Runtime("calendar-connect", nil)
 
 // GoogleScopes are what the connected account grants: reading and changing calendar
 // events, sending mail, and reading a sent message's headers to confirm it.

@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"nori/internal/conversation"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/wake"
 )
@@ -122,9 +123,7 @@ func (s *Service) message(schedule state.Schedule, fire state.ScheduleFire, loca
 	if schedule.Kind != state.ScheduleReminder {
 		text := fmt.Sprintf("I didn't run your scheduled task at %s, because %s. It was: %s\n\nI can run it once now if you'd like.",
 			due, missedReason, clip(schedule.Text, 300))
-		note := "Missed schedule notice: the scheduled task " + schedule.ID + " the user set up earlier didn't run at " + due +
-			" because " + missedReason + ". Nothing ran. If they ask for it now, use change_schedule run_now once; don't " +
-			"run it more than once for missed times."
+		note := prompts.Runtime("schedule-missed", map[string]any{"ID": schedule.ID, "Due": due, "Reason": missedReason})
 		return state.ScheduleMessage{Note: note, Text: text, Protocol: protocol(note, text)}
 	}
 	text := schedule.Text
@@ -134,8 +133,7 @@ func (s *Service) message(schedule state.Schedule, fire state.ScheduleFire, loca
 			text += fmt.Sprintf(" It also covers %d later time(s) that passed meanwhile.", fire.Missed)
 		}
 	}
-	note := "Scheduled reminder: the user set up reminder " + schedule.ID + " earlier, and it was delivered now. It is their own " +
-		"earlier request, not a new message, and asks for nothing more unless they reply."
+	note := prompts.Runtime("schedule-reminder", map[string]any{"ID": schedule.ID})
 	return state.ScheduleMessage{Note: note, Text: text, Protocol: protocol(note, text), Urgent: true}
 }
 

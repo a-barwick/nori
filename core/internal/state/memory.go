@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"nori/internal/prompts"
 )
 
 // Memory is one thing the user asked Nori to remember. It is a preference or fact, never permission: nothing reads it
@@ -75,7 +77,7 @@ func PlanMemoryChanges(saved []Memory, changes []MemoryChange) bool {
 		case len(c.About) > MaxMemoryAbout:
 			c.Error = fmt.Sprintf("who a memory is about can be at most %d bytes", MaxMemoryAbout)
 		case total-len(old.Text)+len(c.Text) > MemoryBytes:
-			c.Error = "memory is full; ask the user which saved memory to forget"
+			c.Error = prompts.Runtime("memory-full", nil)
 		default:
 			total += len(c.Text) - len(old.Text)
 			byID[c.ID] = Memory{ID: c.ID, Text: c.Text}

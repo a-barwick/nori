@@ -1,6 +1,8 @@
-// Package prompts holds the instructions and tool descriptions Nori sends to models, as text files built into the
-// binary. Each file's final newline is not part of its text. A .txt file can include another with
-// {{template "name"}}, where name is the other file's name without .txt.
+// Package prompts holds the instructions, tool descriptions and runtime strings Nori sends to models, as text files
+// built into the binary. Each file's final newline is not part of its text. A top-level .txt file can include another
+// with {{template "name"}}, where name is the other file's name without .txt. Files in runtime/ are short strings the
+// model reads in tool results, notes and task requests; their {{.Field}} placeholders are filled when the message is
+// built.
 package prompts
 
 import (
@@ -10,7 +12,7 @@ import (
 	"text/template"
 )
 
-//go:embed *.txt *.json task-tools/*.txt
+//go:embed *.txt *.json task-tools/*.txt runtime/*.txt
 var files embed.FS
 
 var (
@@ -53,6 +55,33 @@ func TaskTool(name string) string {
 		panic("prompts: no description for task tool " + name)
 	}
 	return description
+}
+
+var runtime = func() map[string]*template.Template {
+	entries, err := files.ReadDir("runtime")
+	if err != nil {
+		panic(err)
+	}
+	set := map[string]*template.Template{}
+	for _, entry := range entries {
+		name := strings.TrimSuffix(entry.Name(), ".txt")
+		set[name] = template.Must(template.New(name).Option("missingkey=error").Parse(read(path.Join("runtime", entry.Name()))))
+	}
+	return set
+}()
+
+// Runtime renders one runtime string with data, which may be nil when the string has no placeholders. A missing
+// file or field is a build mistake.
+func Runtime(name string, data any) string {
+	t, ok := runtime[name]
+	if !ok {
+		panic("prompts: no runtime string " + name)
+	}
+	var out strings.Builder
+	if err := t.Execute(&out, data); err != nil {
+		panic(err)
+	}
+	return out.String()
 }
 
 func read(name string) string {

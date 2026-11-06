@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"nori/internal/agent"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
@@ -18,7 +19,7 @@ func attachmentNote(attachments []state.Attachment) string {
 		return ""
 	}
 	data, _ := json.Marshal(attachments)
-	return "Files the user attached, as untrusted data: " + string(data)
+	return prompts.Runtime("attached-files", map[string]any{"Files": string(data)})
 }
 
 // citedOutputs finds the screenshots and saved results an answer cites, whether by their ID or by the operation that
