@@ -3,7 +3,6 @@ package main
 import (
 	"cmp"
 	"fmt"
-	"strings"
 	"time"
 
 	"nori/internal/agent"
@@ -26,30 +25,13 @@ func capabilities(s settings.Settings) (agent.Capabilities, error) {
 	if err != nil {
 		return agent.Capabilities{}, fmt.Errorf("NORI_TIMEZONE must be an IANA time zone")
 	}
-	// A local test stack points the worker at a loopback provider. Nothing else may.
-	base, tokenURL := "", ""
-	if address := s.Test.GoogleURL; address != "" {
-		if !s.Temporal.Local || !strings.HasPrefix(address, "http://127.0.0.1:") {
-			return agent.Capabilities{}, fmt.Errorf("NORI_E2E_GOOGLE_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
-		}
-		base, tokenURL = address, address+"/token"
-	}
-	var offset time.Duration
-	if value := s.Test.Now; value != "" {
-		at, err := time.Parse(time.RFC3339, value)
-		if err != nil || !s.Temporal.Local {
-			return agent.Capabilities{}, fmt.Errorf("NORI_E2E_NOW requires TEMPORAL_LOCAL=true and an RFC 3339 time")
-		}
-		offset = time.Until(at)
-	}
 	return agent.Capabilities{
-		ClockOffset: offset,
-		SearchKey:   s.SearchKey, Location: location,
+		SearchKey: s.SearchKey, Location: location,
 		Calendar: agent.CalendarConfig{
 			ClientID: s.Calendar.ClientID, ClientSecret: s.Calendar.ClientSecret,
 			RefreshToken:  s.Calendar.RefreshToken,
 			Account:       s.Calendar.Account,
-			WriteCalendar: s.Calendar.WriteID, APIBase: base, TokenURL: tokenURL,
+			WriteCalendar: s.Calendar.WriteID,
 		},
 	}, nil
 }

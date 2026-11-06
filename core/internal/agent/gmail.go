@@ -26,9 +26,6 @@ const (
 )
 
 func (c CalendarConfig) gmailURL() string {
-	if c.APIBase != "" {
-		return c.APIBase + "/gmail/v1"
-	}
 	return gmailAPI
 }
 

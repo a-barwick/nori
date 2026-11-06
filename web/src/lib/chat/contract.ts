@@ -1,8 +1,8 @@
-// HTTP contract between the Go service, Nori's Chats tab and the offline fixture.
+// HTTP contract between the Go service and Nori's Chats tab.
 export const CONTRACT = 'nori-chat-2';
 export const PREFIX = '/v1';
 export type Attachment = { id: string; name: string; media_type: string; size: number };
-export type Capabilities = { contract: string; service: string; fixture: boolean; isolated: boolean; deterministic?: boolean; persistence?: string; provider?: string; model?: string; conversationModes: string[] };
+export type Capabilities = { contract: string; service: string; persistence?: string; provider?: string; model?: string; conversationModes: string[] };
 export type Operation = { id: string; call_id: string; name: string; effect_class: string; outcome: string; action?: { digest: string; text: string; question_id: string; approved_by?: string; spec: Record<string, string> }; result?: Record<string, unknown> };
 export type Message = { id: string; role: 'user' | 'assistant'; text: string; status: 'streaming' | 'completed' | 'cancelled' | 'failed'; attachments?: Attachment[]; operations?: Operation[] };
 export type Conversation = { id: string; title: string; mode: 'chat' | 'assistant'; messages: Message[]; activeTurn: string | null; position: number; updatedAt?: string };

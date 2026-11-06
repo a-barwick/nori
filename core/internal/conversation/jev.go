@@ -27,11 +27,10 @@ const (
 type JevClassifier struct {
 	key    string
 	Client *http.Client
-	URL    string
 }
 
 func NewJevClassifier(key string) *JevClassifier {
-	return &JevClassifier{key: key, URL: jevURL, Client: &http.Client{Timeout: 10 * time.Second}}
+	return &JevClassifier{key: key, Client: &http.Client{Timeout: 10 * time.Second}}
 }
 
 func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (classification Classification, err error) {
@@ -114,7 +113,7 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 	if err != nil {
 		return classification, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, jevURL, bytes.NewReader(body))
 	if err != nil {
 		return classification, err
 	}

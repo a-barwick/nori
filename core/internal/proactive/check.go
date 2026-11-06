@@ -35,14 +35,9 @@ type Service struct {
 	Calendar *agent.CalendarConfig
 	Router   Router
 	Location *time.Location
-	// Now is time.Now, moved only by a local test stack.
-	Now func() time.Time
 }
 
 func (s *Service) now() time.Time {
-	if s.Now != nil {
-		return s.Now().In(s.Location)
-	}
 	return time.Now().In(s.Location)
 }
 

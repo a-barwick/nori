@@ -15,15 +15,10 @@ import (
 // "tomorrow at ten" into a schedule.
 type Clock struct {
 	Location *time.Location
-	// Now is time.Now, moved only by a local test stack.
-	Now func() time.Time
 }
 
 func (c Clock) now() time.Time {
 	location := c.location()
-	if c.Now != nil {
-		return c.Now().In(location)
-	}
 	return time.Now().In(location)
 }
 

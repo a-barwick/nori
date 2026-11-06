@@ -35,7 +35,6 @@ type Settings struct {
 	EnvFile       string
 	Spend         Spend
 	Observability Observability
-	Test          Test
 }
 
 type Models struct {
@@ -113,13 +112,6 @@ type Observability struct {
 	CaptureContent bool
 	// Credentials are values redacted from anything exported.
 	Credentials []string
-}
-
-// Test settings point a local test stack at loopback fakes. Each requires Temporal.Local.
-type Test struct {
-	OpenAIURL, ModelURL, JevURL, GoogleURL, RoutesURL string
-	// Now is an RFC 3339 time the clock starts from.
-	Now string
 }
 
 // Load reads NORI_ENV_FILE (default ../.env), then NORI_TASK_ENV_FILE when it names a separate task configuration,
@@ -201,10 +193,6 @@ func FromEnvironment() Settings {
 			ArizeSpace: os.Getenv("ARIZE_SPACE_ID"), ArizeKey: os.Getenv("ARIZE_API_KEY"),
 			ArizeEndpoint: get("ARIZE_OTLP_ENDPOINT", "https://otlp.arize.com/v1/traces"), ArizeCertificate: os.Getenv("ARIZE_OTLP_CERTIFICATE"),
 			CaptureContent: os.Getenv("NORI_ARIZE_CAPTURE_CONTENT") == "true", Credentials: credentials,
-		},
-		Test: Test{
-			OpenAIURL: os.Getenv("NORI_E2E_OPENAI_URL"), ModelURL: os.Getenv("NORI_E2E_MODEL_URL"), JevURL: os.Getenv("NORI_E2E_JEV_URL"),
-			GoogleURL: os.Getenv("NORI_E2E_GOOGLE_URL"), RoutesURL: os.Getenv("NORI_E2E_ROUTES_URL"), Now: os.Getenv("NORI_E2E_NOW"),
 		},
 	}
 }
