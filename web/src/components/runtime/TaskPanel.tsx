@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Globe, List, Terminal, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, Globe, List, MessageCircle, Terminal, X } from "lucide-react";
 import { Medallion } from "@/components/mark/NoriMark";
 import { DebugBlock } from "@/components/dev/DebugBlock";
 import { Button, IconButton, SectionHeader } from "@/components/ui/primitives";
@@ -142,10 +142,17 @@ function Screenshot({
   );
 }
 
+export type PanelTab = "activity" | "chats";
+
 export function TaskPanel({
+  tab, onTab, chats,
   session, selected, pending, loading, error, unavailable, onSelect, onRefresh, onClose,
   artifactEndpoint = "/api/artifact", commands, drafts, onDraft, onCommand, onRetryCommand, onDismissCommand, debug = false, agentMode = false,
 }: {
+  tab: PanelTab;
+  onTab: (tab: PanelTab) => void;
+  /** The Chats tab's content. */
+  chats: ReactNode;
   debug?: boolean;
   agentMode?: boolean;
   session?: Session;
@@ -266,11 +273,17 @@ export function TaskPanel({
           <span aria-hidden className={cn("size-2 rounded-full", error || unavailable || !session ? "bg-ink-3" : "bg-accent-signal", activeCount > 0 && "pulse-dot")} />
           {connection}
         </p>
-        <div className="mt-6 mb-3 flex w-full items-center gap-2 rounded-full bg-fill-1 px-3 py-2">
-          <List size={17} strokeWidth={1.5} /><h3 className="text-meta font-medium">Activity</h3>
+        <div role="tablist" aria-label="Panel" className="mt-6 mb-3 grid w-full grid-cols-2 gap-1 rounded-full bg-fill-1 p-1">
+          {([["activity", "Activity", List], ["chats", "Chats", MessageCircle]] as const).map(([id, name, Icon]) => (
+            <button key={id} type="button" role="tab" id={`panel-tab-${id}`} aria-selected={tab === id} aria-controls="panel-content" onClick={() => onTab(id)}
+              className={cn("flex items-center justify-center gap-2 rounded-full px-3 py-1.5 text-meta font-medium", tab === id ? "bg-surface text-ink shadow-pill" : "text-ink-2 hover:text-ink")}>
+              <Icon size={16} strokeWidth={1.5} aria-hidden />{name}
+            </button>
+          ))}
         </div>
       </header>
-      <div className="scrollbar-quiet -mx-4 min-h-0 flex-1 overflow-y-auto px-4 pb-6">
+      <div id="panel-content" role="tabpanel" aria-labelledby={`panel-tab-${tab}`} className="scrollbar-quiet -mx-4 min-h-0 flex-1 overflow-y-auto px-4 pb-6">
+        {tab === "chats" ? chats : <>
         {!runs.length ? <p className="px-2 py-5 text-meta text-ink-3">{pending ? "Sending your message to Nori…" : "Activity and screenshots from your tasks appear here."}</p> : (
           <section aria-label="Tasks" className="space-y-2">
             {visibleTasks.map((run) => {
@@ -328,6 +341,7 @@ export function TaskPanel({
         </details>}
         <Schedules schedules={session?.schedules ?? []} agentMode={agentMode} onChanged={onRefresh} />
         <Button size="sm" variant="quiet" onClick={onRefresh} disabled={loading} className="mt-4 w-full">{loading ? "Loading…" : "Refresh history"}</Button>
+        </>}
       </div>
     </div>
   );

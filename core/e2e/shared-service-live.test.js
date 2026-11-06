@@ -1,6 +1,6 @@
 import { beforeAll, afterAll, test, expect } from 'bun:test';
 import { createHarness, until } from './shared-service-harness';
-import { follow } from '../../chat/src/contract';
+import { follow } from '../../web/src/lib/chat/contract';
 
 // Paid acceptance, only through infrastructure/spend/run.py with one logical chat ID.
 // App records stay on the emulator; the spend ledger stays on its real shared database.

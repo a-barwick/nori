@@ -3,16 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MotionConfig } from "motion/react";
 import { Dialog, Tooltip } from "radix-ui";
-import { Activity, Bug, RefreshCw } from "lucide-react";
+import { Activity, ArrowLeft, Bug, RefreshCw, Trash2 } from "lucide-react";
 import { Thread } from "@/components/chat/Thread";
 import { NovaShell } from "@/components/nova/NovaShell";
 import { IconButton } from "@/components/ui/primitives";
+import { chatThread } from "@/lib/chat/thread";
+import { useChat } from "@/lib/chat/useChat";
 import { useHydrated, useWide } from "@/lib/hooks";
 import { useRuntime } from "@/lib/runtime/useRuntime";
 import type { Message, Part, Thread as Conversation, ThreadItem } from "@/lib/types";
+import { ChatList } from "./ChatList";
 import { DocumentViewer } from "./DocumentViewer";
 import { RuntimeComposer } from "./RuntimeComposer";
-import { TaskPanel } from "./TaskPanel";
+import { TaskPanel, type PanelTab } from "./TaskPanel";
 
 /** Where a file part's bytes are. A link part already has its address. */
 function partURL(part: Part, api: string) {
@@ -46,6 +49,9 @@ export function NoriApp({ agentMode = false }: { agentMode?: boolean }) {
 
 function RuntimeChat({ agentMode }: { agentMode: boolean }) {
   const runtime = useRuntime(agentMode);
+  const chat = useChat();
+  // A chat restored from the address opens with its list showing. This renders only after hydration.
+  const [tab, setTab] = useState<PanelTab>(() => new URL(window.location.href).searchParams.has("chat") ? "chats" : "activity");
   const [debug, setDebug] = useState(false);
   const {
     session: liveSession,
@@ -104,6 +110,9 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
     return { id: "runtime", title: "Nori", kind: "main", createdAt: items[0]?.at ?? 0, items };
   }, [session?.messages, session?.runs, session?.dispatches, session?.traces, pending, debug, agentMode]);
 
+  const openChat = chat.current;
+  const chatConversation = useMemo(() => chatThread(openChat), [openChat]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === ".") {
@@ -117,6 +126,11 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
 
   const panel = (
     <TaskPanel
+      tab={tab}
+      onTab={(next) => { setTab(next); if (next === "chats") void chat.refresh(); }}
+      chats={<ChatList chats={chat.chats} openId={chat.open ? chat.current?.id : undefined}
+        onOpen={(id) => { void chat.select(id); if (!wide) setOverlayOpen(false); }}
+        onNew={() => { chat.startNew(); if (!wide) setOverlayOpen(false); }} />}
       session={session}
       selected={selected}
       pending={pending.length > 0}
@@ -154,7 +168,6 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       onToggleActivity={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}
       actions={
       <>
-        <a href="/chat/index.html" className="text-meta text-ink-2 hover:underline">Independent chat</a>
         <IconButton label={debug ? "Hide debug info" : "Show debug info"} size={32} onClick={() => setDebug((on) => !on)}>
           <Bug size={16} strokeWidth={1.5} className={debug ? "text-accent-text" : undefined} />
         </IconButton>
@@ -167,7 +180,43 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       </>
     }>
     <div className="nova-live-body flex min-h-0 flex-1 overflow-clip text-ink">
-      <main className="relative flex min-w-0 flex-1 flex-col overflow-clip" aria-label="Chat">
+      {chat.open ? <main className="relative flex min-w-0 flex-1 flex-col overflow-clip" aria-label="Chat">
+        <div className="flex shrink-0 items-center gap-2 border-b border-hairline px-4 py-2">
+          <IconButton label="Back to Nori" size={32} onClick={chat.close}><ArrowLeft size={16} strokeWidth={1.5} /></IconButton>
+          <h1 className="min-w-0 flex-1 truncate text-row-title font-medium text-ink">{chat.current?.title ?? "New chat"}</h1>
+          {chat.current && <IconButton label="Delete chat" size={32} disabled={!!chat.current.activeTurn} onClick={() => void chat.remove()}><Trash2 size={16} strokeWidth={1.5} /></IconButton>}
+        </div>
+        <div className="min-h-0 flex-1">
+          <Thread
+            key={chat.current?.id ?? "new"}
+            conversation={chatConversation}
+            onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
+            status={chat.current?.activeTurn ? chat.waiting ? "Waiting for your approval" : "Responding…" : undefined}
+            onUnread={onUnread}
+            presence={false}
+            emptyMessage="What would you like to talk about?"
+          />
+        </div>
+        {(chat.error || !chat.connected) && (
+          <div className="nova-runtime-notice w-full shrink-0 self-center px-6 pb-3">
+            <div role={chat.error ? "alert" : "status"} className="rounded-tile bg-surface p-3 text-meta text-ink-2 shadow-pill">{chat.error || "Reconnecting…"}</div>
+          </div>
+        )}
+        <RuntimeComposer
+          accept=".csv,text/csv"
+          draft={chat.draft}
+          setDraft={chat.setDraft}
+          disabled={chat.sending || chat.waiting}
+          onSend={() => void chat.send()}
+          onStop={chat.current?.activeTurn && !chat.waiting ? () => void chat.stop() : undefined}
+          files={chat.files}
+          onAttach={chat.attach}
+          onRetryFile={(file) => void chat.retryFile(file)}
+          onRemoveFile={chat.removeFile}
+          unread={unread.count}
+          onJump={unread.jump}
+        />
+      </main> : <main className="relative flex min-w-0 flex-1 flex-col overflow-clip" aria-label="Chat">
         <div className="min-h-0 flex-1">
           <Thread
             conversation={conversation}
@@ -230,7 +279,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
           unread={unread.count}
           onJump={unread.jump}
         />
-      </main>
+      </main>}
       {wide && dockOpen && (
         <aside
           aria-label="Agent panel"

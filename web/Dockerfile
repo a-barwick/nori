@@ -4,11 +4,7 @@ WORKDIR /app/web
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
-COPY chat/package.json chat/bun.lock /app/chat/
-RUN cd /app/chat && bun install --frozen-lockfile
-COPY chat /app/chat
 COPY web .
-RUN cd /app/chat && bun --no-env-file run check && bun --no-env-file run build
 ARG NEXT_PUBLIC_SENTRY_DSN
 ARG NEXT_PUBLIC_SENTRY_ENVIRONMENT
 ARG NEXT_PUBLIC_SENTRY_RELEASE

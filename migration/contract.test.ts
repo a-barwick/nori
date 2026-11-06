@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { createFixture } from '../chat/fixture';
-import { CONTRACT, PREFIX, apply, follow, request, type Conversation, type Event } from '../chat/src/contract';
+import { createFixture } from './fixture';
+import { CONTRACT, PREFIX, apply, follow, request, type Conversation, type Event } from '../web/src/lib/chat/contract';
 
 // Default: explicit offline fixture. An isolated real service can exercise the same HTTP contract.
 // Production and paid providers are not allowed in this deterministic suite.

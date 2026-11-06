@@ -1,9 +1,9 @@
 {
   "version": 1,
   "issue": "https://linear.app/a-barwick/issue/AB-284",
-  "objective": "One shared backend service for the existing Nori assistant and an independent chat client.",
+  "objective": "One shared backend service for the Nori assistant and its independent chats, which the web app shows in a Chats tab.",
   "scope": "Complete the shared-service migration locally, including compatibility, isolated integration and recovery verification. Production deployment requires a separate request.",
-  "repository": "Keep core/, web/, chat/ and migration/ in this repository. Extract a shared client package only when both real clients use it.",
+  "repository": "Keep core/, web/ and migration/ in this repository. The web app is the only client; its Chats tab replaced the separate Svelte chat client.",
   "contract": "nori-chat-1",
   "phase_issues": {
     "baseline": "AB-290",
@@ -94,7 +94,7 @@
     },
     {
       "id": "clients",
-      "title": "Connect both clients",
+      "title": "Connect the assistant and Chats tab",
       "days": [
         1,
         2
@@ -104,7 +104,7 @@
         "two-clients",
         "browser-journey"
       ],
-      "deliverable": "Replace the chat fixture with the service adapter. Keep presentation in clients and behavior in the service."
+      "deliverable": "Show independent chats in the web app's Chats tab against the service. Keep presentation in the web app and behavior in the service."
     },
     {
       "id": "cutover",
@@ -225,14 +225,14 @@
     {
       "id": "two-clients",
       "verifier": "browser",
-      "assert": "Nori runs background work while chat replies; unrelated actions and events stay isolated.",
-      "remaining": "Exercise both clients against the same service instance."
+      "assert": "Nori runs background work while a chat in its Chats tab replies; unrelated actions and events stay isolated.",
+      "remaining": "Exercise the assistant and the Chats tab against the same service instance."
     },
     {
       "id": "browser-journey",
       "verifier": "browser",
-      "assert": "Both real clients send, render, reload and cancel correctly at desktop and phone widths.",
-      "remaining": "Replace fixture-only browser evidence with both authenticated clients and the real proxy."
+      "assert": "The assistant and the Chats tab send, render, reload and cancel correctly at desktop and phone widths.",
+      "remaining": "Run the browser verifier through the authenticated web app and the real proxy."
     },
     {
       "id": "restart",

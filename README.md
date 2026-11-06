@@ -3,24 +3,21 @@
 Nori is a personal assistant you text. This repository holds the whole product:
 
 - [core](core/README.md): the Go agent service and its infrastructure.
-- [web](web/README.md): the assistant web interface and authenticated Next.js server.
-- [chat](chat/): the independent Svelte chat client, packaged by the web build.
+- [web](web/README.md): the assistant web interface, its Chats tab and the authenticated Next.js server.
 
 Design:
 
 - [Clients](docs/site/clients.html): what each client and the service own.
 - [Service API](docs/site/api.html): assistant and independent-chat routes.
-- [Chat client](docs/site/chat-client.html): streaming, files, approvals and context limits.
+- [Chats](docs/site/chat-client.html): streaming, files, approvals and context limits.
 
 ## Run
 
-Run the following commands from the repository root. Install both clients' dependencies
-before `make chat-build` or `make check`:
+Run the following commands from the repository root. Install the web dependencies
+before `make check`:
 
 ```sh
 (cd web && bun install --frozen-lockfile)
-(cd chat && bun install --frozen-lockfile)
-make chat-build
 ```
 
 The assistant and independent chat use one Go service. Configure the existing main
@@ -45,43 +42,33 @@ Reuse that logical chat ID for every paid command and retry. Do not copy credent
 into a worktree. The wrapper's keys and reservations cover both conversation paths.
 Keep the selected models and providers in [AGENTS.md](AGENTS.md).
 
-With the guarded development stack running:
+With the guarded development stack running, open `http://127.0.0.1:3210/`. Independent
+chats are in the side panel's Chats tab, next to Activity.
 
-| Client | Address |
-| --- | --- |
-| Assistant | `http://127.0.0.1:3210/` |
-| Independent chat | `http://127.0.0.1:3210/chat/index.html` |
-
-`make chat-build` packages chat into `web/public/chat/`. `make web-build` also runs
-that build first, and the web Dockerfile packages both clients. For Svelte hot reload,
-run `make chat` against the already guarded local stack and open
-`http://127.0.0.1:3230/chat/`. Set `NORI_WEB_PORT` consistently if changing the Next port.
-
-Chat saves separate conversations, streamed replies, assigned files and exact approval
+Each chat saves a separate conversation, streamed replies, assigned files and exact approval
 decisions. Its foreground reader accepts CSV files up to 64 KiB, although the upload
 limit is 10 MiB. It has a finite saved-context limit and does not include assistant
 history, tasks or memories. Use the assistant for background work, shell, browser,
-PDF or image analysis. See [Chat client](docs/site/chat-client.html).
+PDF or image analysis. See [Chats](docs/site/chat-client.html).
 
 ### Offline fixture and checks
 
 These commands use no project `.env` or paid model:
 
 ```sh
-make chat-fixture     # scripted offline client at http://127.0.0.1:3230/chat/
-make migration-prep   # fixture HTTP journeys, verifier checks, Svelte check and build
-make check            # Go, Svelte, TypeScript, ESLint and documentation checks
+make migration-prep   # fixture HTTP journeys and verifier checks
+make check            # Go, TypeScript, ESLint and documentation checks
 ```
 
-The fixture is an explicit alternative to `make chat` on the same port. It stores
-conversations only while its process runs. Its results check the client and verifier,
-and cannot establish shared-service readiness.
+The offline fixture in `migration/fixture.ts` stores conversations only while its
+process runs. Its results check the chat contract and verifier, and cannot establish
+shared-service readiness.
 
 ### Shared-service verification
 
-The shared service and both clients are implemented. `migration/plan.json` lists the
-acceptance criteria. The verifier requires current evidence for service behavior,
-both clients, shared budgets, retained-data recovery and the selected providers.
+The shared service, the assistant and its Chats tab are implemented. `migration/plan.json`
+lists the acceptance criteria. The verifier requires current evidence for service behavior,
+the web app, shared budgets, retained-data recovery and the selected providers.
 It does not deploy anything.
 
 Start isolated Firestore and Temporal emulators on loopback, then name their existing
@@ -114,10 +101,11 @@ NORI_LOCAL_AGENT_URL=http://127.0.0.1:18080 \
   bun --no-env-file run --cwd web dev --port 3310
 ```
 
-Then verify both clients through Next. Use an existing Chromium executable:
+Then verify the assistant and its Chats tab through Next. Install the browser driver once
+with `(cd migration && bun install --frozen-lockfile)` and use an existing Chromium executable:
 
 ```sh
-CHAT_BROWSER_EXECUTABLE=/absolute/path/to/chromium \
+NORI_BROWSER_EXECUTABLE=/absolute/path/to/chromium \
   python3 migration/verify.py browser --url http://127.0.0.1:3310
 python3 migration/verify.py contract --url http://127.0.0.1:18080
 ```
