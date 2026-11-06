@@ -13,24 +13,22 @@ const (
 	RoleModel Role = "model"
 )
 
-// Message is one turn of a transcript. Parts are listed before Role because that is
-// the order of the saved JSON (see wire.go).
+// Message is one turn of a transcript.
 type Message struct {
 	Parts []Part `json:"parts,omitempty"`
 	Role  Role   `json:"role,omitempty"`
 }
 
-// Part is one element of a message. A part holds one kind of content. When a decoded
-// part carries several, wire.go decides which one wins; Nori never writes that.
+// Part is one element of a message, holding one kind of content.
 type Part struct {
 	// Text is visible text from the user or the model.
-	Text string
+	Text string `json:"text,omitempty"`
 	// ToolCall is a call the model asked Nori to run.
-	ToolCall *ToolCall
+	ToolCall *ToolCall `json:"tool_call,omitempty"`
 	// ToolResult answers an earlier ToolCall.
-	ToolResult *ToolResult
+	ToolResult *ToolResult `json:"tool_result,omitempty"`
 	// Provider is the model provider's own record of a model turn.
-	Provider *ProviderState
+	Provider *ProviderState `json:"provider,omitempty"`
 }
 
 // ToolCall is a request from the model to run one named tool.
@@ -52,8 +50,8 @@ type ToolResult struct {
 // looks inside Data. Format names the adapter that wrote it, such as
 // "nori.responses", so another adapter can tell it is not its own.
 type ProviderState struct {
-	Format string
-	Data   []byte
+	Format string `json:"format"`
+	Data   []byte `json:"data"`
 }
 
 // UserText returns a user message holding one text part.

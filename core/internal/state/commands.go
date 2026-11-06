@@ -296,8 +296,8 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 		return Run{}, fmt.Errorf("%w: start needs a task request", ErrCommandInvalid)
 	}
 	run := Run{
-		ID: cmd.RunID, Request: cmd.Text, Status: RunRunning, Temporal: true, ProtocolVersion: TaskProtocolVersion,
-		WorkflowVersion: TaskWorkflowVersion, StartedAt: p.now, Budget: p.taskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
+		ID: cmd.RunID, Request: cmd.Text, Status: RunRunning,
+		StartedAt: p.now, Budget: p.taskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
 		TraceContext: p.traceContext, OriginTraceContext: p.traceContext, Revises: cmd.Revises,
 	}
 	if cmd.Offer != "" {

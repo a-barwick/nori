@@ -123,14 +123,13 @@ func documents[T any](iter *firestore.DocumentIterator) ([]T, error) {
 func (d *Database) readConversation(tx *firestore.Transaction) (state.ConversationControl, error) {
 	doc, err := tx.Get(d.conversation())
 	if notFound(err) {
-		return state.NewConversationControl(), nil
+		return state.ConversationControl{}, nil
 	}
 	var c state.ConversationControl
 	if err != nil {
 		return c, err
 	}
 	err = doc.DataTo(&c)
-	c.Normalize()
 	return c, err
 }
 

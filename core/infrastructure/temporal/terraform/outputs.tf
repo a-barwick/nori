@@ -25,11 +25,6 @@ output "scalable_build_ids" {
   value = var.scalable_build_ids
 }
 
-output "spend_alert_config" {
-  description = "Public billing-monitor settings and secret references retained during application releases."
-  value       = var.spend_alert
-}
-
 output "environment" {
   value = var.environment
 }

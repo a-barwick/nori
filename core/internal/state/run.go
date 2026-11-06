@@ -19,14 +19,6 @@ var ErrQuestionStale = errors.New("question is no longer current")
 // ErrWriteClaimed means this write already left ready, so an earlier attempt may have sent it.
 var ErrWriteClaimed = errors.New("write was already claimed")
 
-// Every new task records these versions. No current code branches on them, and saved tasks with lower or missing
-// values are read as stored. Earlier releases do branch on them, so a release rolled back after unpause still needs
-// them.
-const (
-	TaskProtocolVersion = 2
-	TaskWorkflowVersion = 3
-)
-
 type RunStatus string
 
 const (
@@ -104,13 +96,6 @@ type Run struct {
 	// W3C trace parents for the latest sampled command and for the original acceptance. Never sent over JSON.
 	TraceContext       map[string]string `json:"-" firestore:"trace_context,omitempty"`
 	OriginTraceContext map[string]string `json:"-" firestore:"origin_trace_context,omitempty"`
-
-	// Kept so saved tasks round-trip unchanged. New tasks record WorkflowVersion, ProtocolVersion and Temporal; none
-	// sets Deadline, and nothing reads any of them to choose behavior.
-	WorkflowVersion int       `json:"workflow_version,omitempty" firestore:"workflow_version,omitempty"`
-	ProtocolVersion int       `json:"protocol_version,omitempty" firestore:"protocol_version,omitempty"`
-	Temporal        bool      `json:"temporal,omitempty" firestore:"temporal,omitempty"`
-	Deadline        time.Time `json:"deadline" firestore:"deadline"`
 }
 
 type Question struct {
