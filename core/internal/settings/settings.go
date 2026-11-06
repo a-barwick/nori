@@ -211,11 +211,16 @@ func FromEnvironment() Settings {
 	}
 }
 
-// Required returns a setting's value, or an error naming its variable when it is empty.
+// MissingError names a required setting that is empty. It carries no value, so a process may print it.
+type MissingError struct{ Name string }
+
+func (e *MissingError) Error() string { return e.Name + " must be configured" }
+
+// Required returns a setting's value, or a MissingError naming its variable when it is empty.
 func Required(name, value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", fmt.Errorf("%s must be configured", name)
+		return "", &MissingError{Name: name}
 	}
 	return value, nil
 }

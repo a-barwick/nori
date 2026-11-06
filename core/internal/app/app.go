@@ -43,16 +43,18 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, e
 	if err := spend.ValidateConfiguration(); err != nil {
 		return nil, err
 	}
-	key, jevKey := cfg.Models.OpenAIKey, cfg.Models.JevKey
-	if strings.TrimSpace(jevKey) == "" {
-		return nil, fmt.Errorf("JEV_API_KEY must be configured in the selected project environment")
+	jevKey, err := settings.Required("JEV_API_KEY", cfg.Models.JevKey)
+	if err != nil {
+		return nil, err
 	}
-	if strings.TrimSpace(key) == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY must be configured in the selected project environment")
+	key, err := settings.Required("OPENAI_API_KEY", cfg.Models.OpenAIKey)
+	if err != nil {
+		return nil, err
 	}
-	summaryKey := cfg.Models.OpenRouterKey
-	if strings.TrimSpace(summaryKey) == "" {
-		return nil, fmt.Errorf("OPENROUTER_API_KEY must be configured for conversation summaries")
+	// The conversation summary uses the task worker's OpenRouter key.
+	summaryKey, err := settings.Required("OPENROUTER_API_KEY", cfg.Models.OpenRouterKey)
+	if err != nil {
+		return nil, err
 	}
 	store, err := platform.OpenStore(ctx, cfg)
 	if err != nil {

@@ -403,7 +403,13 @@ func Fatal(err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	Flush(ctx)
-	fmt.Fprintln(os.Stderr, "nori: startup or process failure (details withheld)")
+	// A missing setting is named: the error holds a variable name and no value.
+	var missing *settings.MissingError
+	if errors.As(err, &missing) {
+		fmt.Fprintln(os.Stderr, "nori: startup stopped: "+missing.Error())
+	} else {
+		fmt.Fprintln(os.Stderr, "nori: startup or process failure (details withheld)")
+	}
 	os.Exit(1)
 }
 
