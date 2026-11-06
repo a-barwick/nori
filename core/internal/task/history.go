@@ -195,6 +195,16 @@ func lastCall(messages []transcript.Message, index int) (transcript.ToolCall, er
 func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out HistorySync, err error) {
 	ctx, span := startActivity(ctx, "task.history.sync", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.sync"); span.End() }()
+	// A saved result may settle during pause, but its parent must not consume
+	// the delivery until resume. Completion/publication of an admitted reply
+	// uses separate activities and remains allowed.
+	control, e := a.Store.Control(ctx)
+	if e != nil {
+		return out, classified(e)
+	}
+	if e = control.Check(); e != nil {
+		return out, classified(e)
+	}
 	snap, e := a.Reconcile(ctx, in.RunID)
 	if e != nil {
 		return out, e
