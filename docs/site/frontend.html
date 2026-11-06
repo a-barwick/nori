@@ -26,10 +26,10 @@
 <tr><td><code>command</code></td><td>Sends <code>steer</code>, <code>answer</code>, <code>continue</code> or <code>stop</code> for one task.</td></tr>
 <tr><td><code>artifact</code></td><td>Fetches a screenshot as PNG bytes.</td></tr>
 <tr><td><code>seen</code></td><td>Reports a reply shown in the conversation viewport.</td></tr>
-<tr><td><code>delivered</code></td><td>Reports saved results referenced by loaded replies while the tab is visible.</td></tr>
+<tr><td><code>delivered</code></td><td>Reports saved results from replies shown in the visible conversation viewport.</td></tr>
 <tr><td><code>trace</code></td><td>Fetches task steps when a debug row is open, and when the task changes.</td></tr>
 </table></div>
-<p>The client never calls a model. The separate <a href="chat-client.html">Chat client</a> uses the same authenticated server.</p>
+<p>The client never calls a model. Independent conversations open in the <a href="chat-client.html">Chats tab</a>.</p>
 </section>
 <section><h2>Sending a message</h2>
 <div class="card"><div class="flow">
@@ -51,16 +51,16 @@
 <section><h2>Live updates</h2>
 <div class="card"><table class="tall"><tr><th>Situation</th><th>Client behavior</th></tr>
 <tr><td>The tab is visible</td><td>Follows the event stream and merges each record by ID.</td></tr>
-<tr><td>A reply enters the viewport</td><td>A visible tab reports it as read. Failed reports retry while the tab is visible and online.</td></tr>
-<tr><td>A reply stays below the viewport</td><td>Loading it does not advance the shared read position.</td></tr>
-<tr><td>Another session reads a reply</td><td>The shared position clears new-message counts through that reply. The local scroll position stays unchanged.</td></tr>
+<tr><td>A reply enters the viewport</td><td>A visible tab reports it as read and acknowledges its saved results. Failed reports retry while visible and online.</td></tr>
+<tr><td>A reply stays below the viewport</td><td>Loading it alone neither delivers its results nor advances the shared read position.</td></tr>
+<tr><td>Another session reads a reply</td><td>The shared position clears new-message counts through that reply. Local scrolling and result delivery stay unchanged.</td></tr>
 <tr><td>A turn ends</td><td>Reads one snapshot for its traces.</td></tr>
 <tr><td>Nothing has run for 5 minutes</td><td>Closes the stream, so an open tab doesn't hold the service awake. It reopens on focus or on a new message.</td></tr>
 <tr><td>The tab is hidden</td><td>Closes the stream, then reads one snapshot when the tab is visible again.</td></tr>
 <tr><td>The stream sends <code>reset</code></td><td>Reads a snapshot until one succeeds, then follows from its position.</td></tr>
 <tr><td>A response isn't a stream</td><td>Reopens from the last log event, after up to 30 seconds. After 3 failures it says updates are reconnecting.</td></tr>
 </table></div>
-<p>Reading the weather reply in another session clears its count in the first. The <a href="api.html#shared-read-positions">service owns the shared position</a>.</p>
+<p>Reading the weather reply clears its count in another session. Its <a href="results.html">results</a> count as delivered when a visible session shows that reply.</p>
 </section>
 <details class="more"><summary>Merging, sign-in, telemetry, components and builds</summary>
 <h3>How snapshots merge</h3>
@@ -86,9 +86,8 @@
 <h3>Components</h3>
 <p>The runtime hook owns requests and saved state. The thread owns scrolling, viewport reporting and new-message counts. See <a href="code.html">Code map</a> for other components.</p>
 <h3>Builds</h3>
-<p>The root web build first builds the Svelte chat client into the web app's public files. The Docker image includes both clients.</p>
 <p>The assistant uses Next.js, React and Tailwind. See the repository README for guarded local commands, and <a href="deploy.html">Deployment</a> for hosting.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/components/chat/Thread.tsx</code> · <code>web/src/lib/types.ts</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/methods.ts</code> · <code>web/src/proxy.ts</code> · <code>web/src/app/page.tsx</code> · <code>web/src/app/layout.tsx</code> · <code>web/src/lib/observability/privacy.ts</code> · <code>web/src/app/api/agent/[operation]/route.ts</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/server.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>Makefile</code> · <code>web/Dockerfile</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/tasks.go</code> · <code>core/internal/api/events.go</code> · <code>web/src/components/runtime/TaskPanel.tsx</code> · <code>web/src/components/dev/DebugBlock.tsx</code> · <code>web/src/lib/runtime/credentials.ts</code></p><p><code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/components/chat/Thread.tsx</code> · <code>web/src/lib/types.ts</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/methods.ts</code> · <code>web/src/proxy.ts</code> · <code>web/src/app/page.tsx</code> · <code>web/src/app/layout.tsx</code> · <code>web/src/lib/observability/privacy.ts</code> · <code>web/src/app/api/agent/[operation]/route.ts</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/server.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>Makefile</code> · <code>web/Dockerfile</code></p></details>
 </body>
 </html>

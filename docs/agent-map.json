@@ -681,14 +681,19 @@
    "status": "built",
    "code": [
     "Makefile",
+    "core/internal/api/events.go",
+    "core/internal/api/tasks.go",
     "web/Dockerfile",
     "web/src/app/api/agent/[operation]/route.ts",
     "web/src/app/layout.tsx",
     "web/src/app/page.tsx",
     "web/src/components/chat/Thread.tsx",
+    "web/src/components/dev/DebugBlock.tsx",
     "web/src/components/runtime/NoriApp.tsx",
+    "web/src/components/runtime/TaskPanel.tsx",
     "web/src/lib/observability/privacy.ts",
     "web/src/lib/runtime/auth.ts",
+    "web/src/lib/runtime/credentials.ts",
     "web/src/lib/runtime/forward.ts",
     "web/src/lib/runtime/methods.ts",
     "web/src/lib/runtime/server.ts",
@@ -707,7 +712,7 @@
      "id": "request-path",
      "title": "Request path",
      "status": "built",
-     "words": 175
+     "words": 172
     },
     {
      "id": "sending-a-message",
@@ -719,7 +724,7 @@
      "id": "live-updates",
      "title": "Live updates",
      "status": "built",
-     "words": 500
+     "words": 488
     }
    ]
   },
