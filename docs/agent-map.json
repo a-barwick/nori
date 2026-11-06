@@ -131,6 +131,7 @@
    "summary": "Nori counts model spending and uses four controls to pause or stop work.",
    "status": "built",
    "code": [
+    "core/cmd/nori-worker/run.go",
     "core/internal/agent/openrouter/responses.go",
     "core/internal/agent/steps.go",
     "core/internal/computerd/server.go",
@@ -142,7 +143,8 @@
     "core/internal/task/activities.go",
     "core/internal/task/history.go",
     "core/internal/task/jobs.go",
-    "core/internal/task/workflow.go"
+    "core/internal/task/workflow.go",
+    "core/internal/workerservice/slice.go"
    ],
    "sections": [
     {
@@ -155,7 +157,7 @@
      "id": "four-controls",
      "title": "Four controls",
      "status": "built",
-     "words": 83
+     "words": 95
     },
     {
      "id": "operating-rules",
