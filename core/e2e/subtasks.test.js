@@ -598,7 +598,11 @@ journey("a pause can't lose a result, and Stop still works during one", async ()
   const id = await dispatch("pauseparent");
   const sub = await child(id);
   await until(() => task(sub), terminal, "subtask to end during the pause");
-  await delay(1_000);
+  await until(() => worker.exitCode, (code) => code !== null, "paused worker to settle and exit");
+  expect(worker.exitCode).toBe(0);
+  expect((await task(sub)).status).toBe("completed");
+  expect(counts.pausechild).toBe(1);
+  expect(counts.pauseparent).toBe(1);
   const parked = await task(id);
   expect(parked.status).toBe("running");
   // The result is saved and waits for the resume.
@@ -610,6 +614,8 @@ journey("a pause can't lose a result, and Stop still works during one", async ()
   const done = await finished(id);
   expect(done.status, done.error).toBe("completed");
   expect(done.result).toContain("during the pause");
+  expect(counts.pausechild).toBe(1);
+  expect(counts.pauseparent).toBe(2);
 
   // Stop during a pause reaches the subtask, without starting any work.
   scripts.pausestop = asks();
