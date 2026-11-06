@@ -1,0 +1,1 @@
+Completion correction permits reads only. Ask the user before further writes or shell execution.

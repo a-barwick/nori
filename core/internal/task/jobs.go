@@ -118,7 +118,7 @@ func (c *Checkpoint) stopTask(w workflow.Context, id string) error {
 	return nil
 }
 
-// awaitJob returns true once the job has ended and false when Austin's instructions
+// awaitJob returns true once the job has ended and false when the user's instructions
 // changed. No model call runs while it waits.
 func (c *Checkpoint) awaitJob(ctx workflow.Context, wait func() error, id string, call CallRef) (bool, error) {
 	var a *Activities

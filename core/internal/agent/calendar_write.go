@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"nori/internal/prompts"
 )
 
 const (
@@ -226,7 +228,7 @@ func (s *Service) prepareMove(ctx context.Context, id, start, end string) (Prepa
 	}
 	for _, attendee := range event.Attendees {
 		if !attendee.Self {
-			return PreparedWrite{Result: map[string]any{"applied": false, "available": false, "reason": "This event has other attendees, and moving it would change their copies. Tell Austin to move it himself."}}, nil
+			return PreparedWrite{Result: map[string]any{"applied": false, "available": false, "reason": prompts.Runtime("calendar-attendees", nil)}}, nil
 		}
 	}
 	oldStart, oldEnd, err := parseEventTimes(event.Start.DateTime, event.End.DateTime)

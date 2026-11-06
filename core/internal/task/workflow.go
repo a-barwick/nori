@@ -8,6 +8,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"nori/internal/agent"
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -335,7 +336,7 @@ func (r *taskRun) handleCall(call CallRef) (callStep, error) {
 			return nextCall, err
 		}
 		if !ended {
-			return reviseCalls, r.appendResult(call, map[string]any{"waiting": false, "state": "running", "reason": "Austin's instructions changed while waiting. The job is still running; job_status, job_wait or job_stop can act on it."})
+			return reviseCalls, r.appendResult(call, map[string]any{"waiting": false, "state": "running", "reason": prompts.Runtime("job-still-running", nil)})
 		}
 	}
 	return r.runTool(call)

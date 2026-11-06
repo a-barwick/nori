@@ -220,7 +220,7 @@ func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision i
 		if len(eventTraceContext) == 0 {
 			eventTraceContext = run.TraceContext
 		}
-		// An offer's prep task waits quietly: the offer is how Austin hears about it.
+		// An offer's prep task waits quietly: the offer is how the user hears about it.
 		if run.Offer == "" {
 			inserted, err := d.appendTaskEvent(tx, event, eventTraceContext)
 			if err != nil || !inserted {
@@ -300,7 +300,7 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			var waiting bool
 			parent, result, waiting = state.SettleSubtask(parent, run, finished, now)
 			// A waiting parent receives this outcome with no model call. Holds still need their answer, and a subtask
-			// that outlived its parent's wait may have done something Austin has to hear about.
+			// that outlived its parent's wait may have done something the user has to hear about.
 			announce = len(event.Holds) > 0 || (!waiting && len(finished.OperationRefs) > 0)
 		}
 		if announce {

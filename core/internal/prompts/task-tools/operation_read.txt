@@ -1,0 +1,1 @@
+Read the full saved output of an earlier tool call in this task by its operation_id, when your context shows it as omitted.

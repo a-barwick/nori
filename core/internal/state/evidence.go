@@ -43,7 +43,7 @@ const (
 	ClearedDidNotRun = "did_not_run"
 	// ClearedReadOnly is a shell command the task declared would only read.
 	ClearedReadOnly = "read_only"
-	// ClearedAnswered is an operation named in a question Austin answered.
+	// ClearedAnswered is an operation named in a question the user answered.
 	ClearedAnswered = "answered"
 )
 

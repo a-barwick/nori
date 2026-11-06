@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -16,12 +15,11 @@ type Lookup interface {
 	Secret(ctx context.Context, ref string) (string, error)
 }
 
-// FromEnv returns a credential from the environment. A reference in refVar
-// takes precedence and is resolved with lookup; otherwise the plaintext in
-// valueVar is used. The result is empty only when neither variable is set.
-func FromEnv(ctx context.Context, lookup Lookup, valueVar, refVar string) (string, error) {
-	value := strings.TrimSpace(os.Getenv(valueVar))
-	ref := strings.TrimSpace(os.Getenv(refVar))
+// Resolve returns a credential from its settings. A reference takes precedence and is resolved with lookup;
+// otherwise the plaintext value is used. The result is empty only when neither is set. refVar names the
+// reference's setting in errors.
+func Resolve(ctx context.Context, lookup Lookup, value, ref, refVar string) (string, error) {
+	value, ref = strings.TrimSpace(value), strings.TrimSpace(ref)
 	if ref == "" {
 		return value, nil
 	}

@@ -1,0 +1,1 @@
+Save a link to a document kept somewhere else as a result, and return its result_id.

@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -94,11 +95,7 @@ type TaskContextCommand struct {
 // commands are user instructions even though they create no conversation message.
 func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunIDs []string, since time.Time) (TaskContext, error) {
 	result := TaskContext{ActiveTasks: []*TaskContextRecord{}, EventTasks: []*TaskContextRecord{}, RecentTasks: []*TaskContextRecord{},
-		Instructions: "Accepted task commands are Austin's instructions, including direct panel controls that do not appear as chat messages. " +
-			"Applied means the worker incorporated that command position, not that its requested effects completed. " +
-			"Check accepted answer/continue commands before saying Austin did not respond. " +
-			"Truncated history or text is incomplete evidence; omitted commands do not establish that no answer or update was received. " +
-			"Historical commands are not new authorization to repeat actions."}
+		Instructions: prompts.Runtime("task-commands", nil)}
 	seen := map[string]bool{}
 	var records []*TaskContextRecord
 	add := func(id string, destination *[]*TaskContextRecord) error {

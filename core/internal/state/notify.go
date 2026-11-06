@@ -7,9 +7,9 @@ import (
 	"unicode/utf8"
 )
 
-// A notification is how a message reaches Austin when the web app is closed. The service decides whether to interrupt
-// him: a message a visible browser already showed sends nothing, quiet hours hold the rest back, and a daily cap bounds
-// them. A reminder he set for a time is urgent and goes out at that time.
+// A notification is how a message reaches the user when the web app is closed. The service decides whether to interrupt
+// them: a message a visible browser already showed sends nothing, quiet hours hold the rest back, and a daily cap bounds
+// them. A reminder they set for a time is urgent and goes out at that time.
 
 // Notification statuses. Sending is claimed by one process; seen means a browser showed the message first.
 const (
@@ -141,8 +141,8 @@ func DecideNotification(n Notification, seen NotifySeenMark, quiet QuietHours, d
 	return NotifySend, time.Time{}, ""
 }
 
-// Notifies reports whether a published turn's reply should reach Austin when the app is closed: it answers task
-// events, not a message of his and not the introduction.
+// Notifies reports whether a published turn's reply should reach the user when the app is closed: it answers task
+// events, not a message of theirs and not the introduction.
 func Notifies(t ConversationTurn) bool {
 	events := false
 	for _, in := range t.Inputs {

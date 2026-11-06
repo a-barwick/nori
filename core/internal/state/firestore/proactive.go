@@ -182,7 +182,7 @@ func (d *Database) GetOffer(ctx context.Context, id string) (state.Offer, error)
 
 // DeliverOffer publishes a due offer as its own finished turn, only while the conversation is idle, so it never cuts
 // into a reply. Past its conflict or the day's cap, it is skipped instead. note is what the outer model later sees
-// about the offer, text is what Austin sees, and protocol is the turn's saved model history.
+// about the offer, text is what the user sees, and protocol is the turn's saved model history.
 func (d *Database) DeliverOffer(ctx context.Context, id, day, note, text string, protocol []string, now time.Time) (state.Offer, error) {
 	var offer state.Offer
 	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
@@ -241,7 +241,7 @@ func (d *Database) DeliverOffer(ctx context.Context, id, day, note, text string,
 	return offer, err
 }
 
-// DecideOffer records Austin's accept or dismiss and updates the card on the offer's message.
+// DecideOffer records the user's accept or dismiss and updates the card on the offer's message.
 func (d *Database) DecideOffer(ctx context.Context, id, decision string) (state.Offer, error) {
 	var offer state.Offer
 	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {

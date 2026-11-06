@@ -13,6 +13,7 @@ import (
 	"nori/internal/agent"
 	"nori/internal/computer"
 	"nori/internal/observability"
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -171,8 +172,7 @@ func unresolvedWriteBlock(effect string, records []state.OperationRecord) map[st
 		if unresolvedWrite(saved) {
 			return map[string]any{
 				"operation_id": saved.ID, "outcome": "uncertain", "effect_class": saved.EffectClass,
-				"error": fmt.Sprintf("An earlier %s call failed or has no known result and may have changed something, so no further "+
-					"tool was admitted. Ask Austin with request_input. The runtime names the command in your question, and his answer lets later commands run.", saved.Name),
+				"error": prompts.Runtime("write-uncertain", map[string]any{"Tool": saved.Name}),
 			}
 		}
 	}
@@ -215,7 +215,7 @@ func (a *Activities) recoverComputerTool(ctx context.Context, in ToolInput, op s
 	}
 	return map[string]any{
 		"operation_id": op.ID, "outcome": "uncertain", "effect_class": op.EffectClass,
-		"error": "The saved guest receipt does not establish this operation's result. Ask Austin; this operation was not repeated.",
+		"error": prompts.Runtime("receipt-unknown", nil),
 	}, nil
 }
 
@@ -360,7 +360,7 @@ func (a *Activities) savedToolReceipt(ctx context.Context, in ToolInput, receipt
 		}
 		return map[string]any{
 			"run_id": in.RunID, "artifact_id": id,
-			"description": "Private browser screenshot saved for Austin. Call screenshot_inspect with this artifact_id to read it.",
+			"description": prompts.Runtime("screenshot-saved", nil),
 		}, "confirmed", true
 	}
 	var output map[string]any

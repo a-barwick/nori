@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -81,8 +80,8 @@ func (e *Engine) WorkerBuild(ctx context.Context, id string) (string, error) {
 }
 
 func deploymentName() string {
-	if name := os.Getenv("TEMPORAL_DEPLOYMENT_NAME"); name != "" {
-		return name
+	if configured.DeploymentName != "" {
+		return configured.DeploymentName
 	}
 	return "nori-task"
 }

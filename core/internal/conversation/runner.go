@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/observability"
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -87,7 +88,7 @@ type Runner struct {
 	compactAfter time.Time
 	tasks        *Tasks
 	process      sync.Mutex
-	// Clock is Austin's time zone and the time, for schedules.
+	// Clock is the user's time zone and the time, for schedules.
 	Clock Clock
 }
 
@@ -480,8 +481,6 @@ func buildProtocol(t *state.ConversationTurn, text string) {
 	}
 }
 
-const introductionPrompt = `This is the first load of a new conversation. Introduce yourself as Nori in a short, friendly greeting. Be cheery, helpful, and warm, with a natural invitation to chat or ask for help. Do not invent personal knowledge or claim work has been done. If an actual user message follows this instruction, briefly introduce yourself and answer that message instead of giving a separate greeting. Do not dispatch a task just to introduce yourself.`
-
 func (r *Runner) EnsureIntroduction(ctx context.Context) error {
-	return r.tasks.Store.EnsureConversationIntroduction(ctx, introductionPrompt)
+	return r.tasks.Store.EnsureConversationIntroduction(ctx, prompts.Introduction)
 }

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"nori/internal/prompts"
 )
 
 // Reuse the runtime's command schemas in one strict action-list response.
@@ -15,7 +17,7 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs, schedul
 			Parameters        map[string]any
 		} `json:"function"`
 	}
-	_ = json.Unmarshal([]byte(taskTools), &tools)
+	_ = json.Unmarshal([]byte(prompts.ConversationTools), &tools)
 	variants := []any{}
 	restricted := len(requests) > 0
 	asking, questions := []string{}, []string{}

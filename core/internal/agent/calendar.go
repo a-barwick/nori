@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"nori/internal/prompts"
 )
 
 const (
@@ -24,18 +25,11 @@ const (
 	maxCalendarEvents = 100
 	maxEventText      = 300
 	// A longer result would risk the saved history's block limit, so the latest events are dropped first.
-	maxCalendarResult   = 32 << 10
-	maxCalendarSpan     = 31 * 24 * time.Hour
-	calendarConnectHint = "Austin needs to run nori-connect-calendar."
+	maxCalendarResult = 32 << 10
+	maxCalendarSpan   = 31 * 24 * time.Hour
 )
 
-// CalendarTimeInstructions keeps timezone clarification consistent across both
-// conversations and task workers. Timestamp validation cannot infer user intent.
-const CalendarTimeInstructions = "Preserve the time zone the user explicitly specifies for the requested time. " +
-	"If a follow-up supplies a new clock time without a zone and an earlier explicit zone could still apply, ask which zone " +
-	"the new time means before proposing calendar_create or calendar_move. Do not silently carry the earlier zone forward or reset it to local time. " +
-	"For example, after a London-time hold, 'move it to next Friday' followed by '2pm' needs a London-or-local clarification. " +
-	"A date-only change keeps the established clock time and zone unless the user says otherwise. Convert the resolved time only once. "
+var calendarConnectHint = prompts.Runtime("calendar-connect", nil)
 
 // GoogleScopes are what the connected account grants: reading and changing calendar
 // events, sending mail, and reading a sent message's headers to confirm it.
@@ -46,7 +40,7 @@ var GoogleScopes = []string{
 	"https://www.googleapis.com/auth/gmail.metadata",
 }
 
-// CalendarConfig is the one account Austin connected. The refresh token stays in
+// CalendarConfig is the one account the user connected. The refresh token stays in
 // this process: it never reaches the computer, the model or a saved result.
 // WriteCalendar is the one calendar writes go to. APIBase and TokenURL point a local
 // test stack at a loopback provider, and are empty everywhere else.
@@ -121,7 +115,7 @@ func calendarGet(ctx context.Context, client *http.Client, address string, out a
 
 var errCalendarDisconnected = errors.New("calendar connection is no longer accepted")
 
-// calendarRead returns events from every calendar Austin has selected, named with
+// calendarRead returns events from every calendar the user has selected, named with
 // the connected account. Attendees and descriptions stay out of the model's input.
 func (s *Service) calendarRead(ctx context.Context, start, end string) (map[string]any, error) {
 	config := s.Capabilities.Calendar

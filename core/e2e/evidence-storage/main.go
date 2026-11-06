@@ -15,6 +15,7 @@ import (
 	"cloud.google.com/go/firestore"
 	"github.com/google/uuid"
 	"nori/internal/platform"
+	"nori/internal/settings"
 	"nori/internal/state"
 )
 
@@ -26,13 +27,15 @@ func main() {
 }
 
 func run() error {
+	// Like every entrypoint, hand spend and Temporal their settings before any model call.
+	platform.Configure(settings.FromEnvironment())
 	host, project, database := os.Getenv("FIRESTORE_EMULATOR_HOST"), os.Getenv("NORI_M4_STORAGE_PROJECT"), os.Getenv("NORI_M4_STORAGE_DATABASE")
 	if !regexp.MustCompile(`^127\.0\.0\.1:\d+$`).MatchString(host) || !regexp.MustCompile(`^nori-m4-storage-[a-f0-9]{12}$`).MatchString(project) || !regexp.MustCompile(`^m4-storage-[a-f0-9]{12}$`).MatchString(database) {
 		return errors.New("storage fixture requires a unique isolated loopback emulator database")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	store, err := platform.OpenStoreWith(ctx, platform.StoreConfig{Project: project, Database: database, ArtifactBucket: "unused-storage-fixture"})
+	store, err := platform.OpenStoreWith(ctx, settings.FromEnvironment(), platform.StoreConfig{Project: project, Database: database, ArtifactBucket: "unused-storage-fixture"})
 	if err != nil {
 		return err
 	}
@@ -153,7 +156,7 @@ func run() error {
 	if err = os.Setenv("NORI_STATE_EMULATOR_HOST", host); err != nil {
 		return err
 	}
-	reopened, err := platform.OpenStoreWith(ctx, platform.StoreConfig{Project: project, Database: database, ArtifactBucket: "unused-storage-fixture"})
+	reopened, err := platform.OpenStoreWith(ctx, settings.FromEnvironment(), platform.StoreConfig{Project: project, Database: database, ArtifactBucket: "unused-storage-fixture"})
 	_ = os.Unsetenv("NORI_STATE_EMULATOR_HOST")
 	_ = os.Setenv("FIRESTORE_EMULATOR_HOST", host)
 	if err != nil {

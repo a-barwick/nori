@@ -23,7 +23,7 @@ type Message struct {
 // Part is one element of a message. A part holds one kind of content. When a decoded
 // part carries several, wire.go decides which one wins; Nori never writes that.
 type Part struct {
-	// Text is visible text from Austin or the model.
+	// Text is visible text from the user or the model.
 	Text string
 	// ToolCall is a call the model asked Nori to run.
 	ToolCall *ToolCall

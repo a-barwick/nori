@@ -186,7 +186,7 @@ type ProactiveDatabase interface {
 	DecideOffer(ctx context.Context, id, decision string) (Offer, error)
 }
 
-// ScheduleDatabase holds the schedules Austin asked for and the notifications that reach him when the app is closed.
+// ScheduleDatabase holds the schedules the user asked for and the notifications that reach them when the app is closed.
 type ScheduleDatabase interface {
 	Schedules(ctx context.Context) ([]Schedule, error)
 	// ChangeScheduleNow applies a pause, resume or cancel from a client control. ErrScheduleState means the schedule

@@ -383,7 +383,7 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 			return err
 		}
 		c, completed, message := state.CompleteTurn(c, t, text, now)
-		// A reply to something other than Austin's own message, such as a task's result or question, reaches him even
+		// A reply to something other than the user's own message, such as a task's result or question, reaches them even
 		// when the app is closed.
 		if state.Notifies(t) {
 			notification := state.NotificationFor(message, false)

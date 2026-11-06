@@ -1,0 +1,1 @@
+Durably pause this task when the user must clarify or supply information. Include the observed failure or missing prerequisite so the question is self-contained. Use one question; do not combine with other tools.

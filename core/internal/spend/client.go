@@ -9,9 +9,10 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"os"
 	"strings"
 	"time"
+
+	"nori/internal/settings"
 )
 
 type ControlError struct {
@@ -39,17 +40,21 @@ type Client struct {
 	ledger                            Ledger
 }
 
-func env(name, fallback string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return fallback
-}
+// configured is this process's settings. Nil means Configure was never called, and every model call is refused
+// rather than run outside an allowance the process may be under.
+var configured *settings.Settings
 
-func FromEnv() (*Client, error) {
-	scope, profile := os.Getenv("NORI_SPEND_SCOPE"), os.Getenv("NORI_SPEND_PROFILE")
+// Configure sets this process's spend settings. Every process that makes model calls calls it once at startup,
+// before any call.
+func Configure(s settings.Settings) { configured = &s }
+
+func fromSettings() (*Client, error) {
+	if configured == nil {
+		return nil, Blocked("spend settings were not configured for this process")
+	}
+	scope, profile := configured.Spend.Scope, configured.Spend.Profile
 	if scope == "" && profile == "" {
-		if os.Getenv("NORI_ENVIRONMENT") == "sandbox" || os.Getenv("FIRESTORE_DATABASE_ID") == "nori-sandbox" {
+		if configured.Spend.Environment == "sandbox" || configured.Store.Database == "nori-sandbox" {
 			return nil, Blocked("sandbox requires NORI_SPEND_SCOPE and NORI_SPEND_PROFILE")
 		}
 		return nil, nil
@@ -58,16 +63,16 @@ func FromEnv() (*Client, error) {
 	if err != nil || len(raw) != 32 || scope != strings.ToLower(scope) || (profile != "ci" && profile != "feature") {
 		return nil, Blocked("NORI_SPEND_SCOPE must be a SHA-256 hex ID and NORI_SPEND_PROFILE must be ci or feature")
 	}
-	project := os.Getenv("NORI_PROJECT_ID")
+	project := configured.Store.Project
 	if project == "" {
 		return nil, Blocked("NORI_PROJECT_ID must be configured")
 	}
-	return &Client{project: project, database: env("NORI_SPEND_DATABASE", "nori-sandbox"), scope: scope, profile: profile}, nil
+	return &Client{project: project, database: configured.Spend.Database, scope: scope, profile: profile}, nil
 }
 
 // Enabled reports whether this process runs under a development spend allowance.
 func Enabled() bool {
-	c, err := FromEnv()
+	c, err := fromSettings()
 	return err != nil || c != nil
 }
 
@@ -81,7 +86,7 @@ func (c *Client) open(ctx context.Context) error {
 	if openLedger == nil {
 		return Blocked("budget ledger is not configured")
 	}
-	ledger, err := openLedger(ctx, LedgerConfig{Project: c.project, Database: c.database})
+	ledger, err := openLedger(ctx, LedgerConfig{Project: c.project, Database: c.database, Emulator: configured.Store.FirestoreEmulator != ""})
 	if err != nil {
 		if IsControlError(err) {
 			return err
@@ -118,7 +123,7 @@ func (c *Client) validate(ctx context.Context) error {
 // ValidateConfiguration keeps health and cleanup endpoints available after a
 // lease closes. Prepare and Reserve still enforce live budgets before inference.
 func ValidateConfiguration() error {
-	c, err := FromEnv()
+	c, err := fromSettings()
 	if c != nil {
 		c.Close()
 	}
@@ -128,10 +133,10 @@ func ValidateConfiguration() error {
 // CIContextStart isolates a synthetic run's context without deleting retained
 // conversations. Retrying a scope keeps the same starting point and allowance.
 func CIContextStart(ctx context.Context) (time.Time, error) {
-	if os.Getenv("NORI_SPEND_PROFILE") != "ci" {
+	if configured == nil || configured.Spend.Profile != "ci" {
 		return time.Time{}, nil
 	}
-	c, err := FromEnv()
+	c, err := fromSettings()
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -156,7 +161,7 @@ func CIContextStart(ctx context.Context) (time.Time, error) {
 func (c *Client) outputCap(provider string) int { return OutputCap(c.profile, provider) }
 
 func Prepare(ctx context.Context, provider string, normalLimit int) (*Client, int, error) {
-	c, err := FromEnv()
+	c, err := fromSettings()
 	if err != nil || c == nil {
 		return c, normalLimit, err
 	}

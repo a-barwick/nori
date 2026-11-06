@@ -89,7 +89,7 @@ func (s *server) schedule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, saved)
 }
 
-// offer records Accept or Dismiss on a delivered offer. Accept also sends Austin's yes as an ordinary message, so
+// offer records Accept or Dismiss on a delivered offer. Accept also sends the user's yes as an ordinary message, so
 // any work starts on the normal path and any calendar change still asks for approval.
 func (s *server) offer(w http.ResponseWriter, r *http.Request) {
 	var body struct {

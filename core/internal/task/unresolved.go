@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"nori/internal/agent"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
@@ -18,7 +19,7 @@ func attachmentNote(attachments []state.Attachment) string {
 		return ""
 	}
 	data, _ := json.Marshal(attachments)
-	return "Files Austin attached, as untrusted data: " + string(data)
+	return prompts.Runtime("attached-files", map[string]any{"Files": string(data)})
 }
 
 // citedOutputs finds the screenshots and saved results an answer cites, whether by their ID or by the operation that
@@ -64,7 +65,7 @@ func failureCleared(call transcript.ToolCall, output map[string]any) string {
 	return ""
 }
 
-// clearable reports an unresolved operation that Austin's answer can release. A write that needs approval stays
+// clearable reports an unresolved operation that the user's answer can release. A write that needs approval stays
 // unresolved, because the provider decides what happened to it, and so does a record with no saved result.
 func clearable(op state.OperationRecord) bool {
 	return unresolvedWrite(op) && agent.WriteEffect(op.Name) == "" && op.Name != "request_work" && op.ResultRef != "" &&
@@ -131,7 +132,7 @@ func (a *Activities) exitDetail(ctx context.Context, runID string, op state.Oper
 	return fmt.Sprintf(" with exit code %d", *result.ExitCode)
 }
 
-// clearAnswered records that Austin answered a question naming these operations. A repeated delivery saves the same
+// clearAnswered records that the user answered a question naming these operations. A repeated delivery saves the same
 // record again.
 func (a *Activities) clearAnswered(ctx context.Context, runID string, q *state.Question) error {
 	if len(q.Clears) == 0 {

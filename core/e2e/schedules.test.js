@@ -262,7 +262,7 @@ journey("a monitor stays quiet until it finds something, alerts once and stops, 
   await makeDue(saved.id);
   const [quiet] = await until(() => scheduledRuns(saved.id), (runs) => runs.length === 1 && runs[0].status === "completed", "the quiet check");
   expect(quiet).toMatchObject({ quiet: true, read_only: true });
-  expect(JSON.stringify(inner.requests.at(-1).input)).toContain("NOTHING_NEW when nothing he asked to hear about happened");
+  expect(JSON.stringify(inner.requests.at(-1).input)).toContain("NOTHING_NEW when nothing they asked to hear about happened");
   await delay(3000);
   expect((await inputs()).length).toBe(before);
   expect(await schedule("monitor")).toMatchObject({ status: "active", runs: "1" });

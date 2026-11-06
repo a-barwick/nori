@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"os"
 
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
@@ -13,15 +12,17 @@ import (
 	cloudrunid "go.temporal.io/sdk/contrib/gcp/cloudrun/id"
 	"nori/internal/dispatch"
 	"nori/internal/secret"
+	"nori/internal/settings"
 	"nori/internal/state"
 )
 
-func Queue() string {
-	if v := os.Getenv("TEMPORAL_TASK_QUEUE"); v != "" {
-		return v
-	}
-	return "nori-tasks"
-}
+var configured settings.Temporal
+
+// Configure sets the Temporal settings this process uses. Every process that dials Temporal calls it once at startup.
+func Configure(s settings.Temporal) { configured = s }
+
+// Queue is the task queue workflows and workers use.
+func Queue() string { return configured.TaskQueue }
 
 // Dial connects to Temporal. Outside local mode it needs the Temporal Cloud API
 // key, from TEMPORAL_API_KEY or from the secret named by
@@ -30,13 +31,13 @@ func Queue() string {
 // configuration or Terraform state. Workers may continue using their platform's
 // native TEMPORAL_API_KEY secret injection. Local mode never calls secrets.
 func Dial(ctx context.Context, secrets secret.Lookup) (client.Client, error) {
-	address, namespace := os.Getenv("TEMPORAL_ADDRESS"), os.Getenv("TEMPORAL_NAMESPACE")
+	address, namespace := configured.Address, configured.Namespace
 	if address == "" || namespace == "" {
 		return nil, errors.New("TEMPORAL_ADDRESS and TEMPORAL_NAMESPACE are required")
 	}
 	options := client.Options{HostPort: address, Namespace: namespace}
-	if os.Getenv("TEMPORAL_LOCAL") != "true" {
-		key, err := secret.FromEnv(ctx, secrets, "TEMPORAL_API_KEY", "TEMPORAL_API_KEY_SECRET_VERSION")
+	if !configured.Local {
+		key, err := secret.Resolve(ctx, secrets, configured.APIKey, configured.APIKeySecret, "TEMPORAL_API_KEY_SECRET_VERSION")
 		if err != nil {
 			return nil, err
 		}
@@ -46,7 +47,7 @@ func Dial(ctx context.Context, secrets secret.Lookup) (client.Client, error) {
 		options.ConnectionOptions.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
 		options.Credentials = client.NewAPIKeyStaticCredentials(key)
 	}
-	if os.Getenv("TEMPORAL_CLOUD_RUN_ID") == "true" {
+	if configured.CloudRunID {
 		options.Plugins = append(options.Plugins, cloudrunid.NewCloudRunIDPlugin())
 	}
 	return client.DialContext(ctx, options)

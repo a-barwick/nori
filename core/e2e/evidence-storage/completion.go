@@ -18,6 +18,7 @@ import (
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
 	"nori/internal/observability"
+	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/task"
 	"nori/internal/transcript"
@@ -80,7 +81,7 @@ func completionBoundaries(ctx context.Context, store state.ConversationStore, id
 			return nil, err
 		}
 	}
-	shutdown := observability.Init(ctx, "nori-m4-unpaid-boundary")
+	shutdown := observability.Init(ctx, "nori-m4-unpaid-boundary", settings.FromEnvironment())
 	flushed := false
 	defer func() {
 		if !flushed {
