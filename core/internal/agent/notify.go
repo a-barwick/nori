@@ -12,11 +12,11 @@ import (
 	"unicode/utf8"
 )
 
-// NotifyMailer emails Austin a notification from his own connected account. It is the runtime's own message to him,
-// not an email a task asked to send, so it needs no approval and goes only to his address.
+// NotifyMailer emails the user a notification from their own connected account. It is the runtime's own message to them,
+// not an email a task asked to send, so it needs no approval and goes only to their address.
 type NotifyMailer struct {
 	Config CalendarConfig
-	// To is his address. When empty it's read once from the account's Gmail profile.
+	// To is their address. When empty it's read once from the account's Gmail profile.
 	To string
 
 	mu      sync.Mutex

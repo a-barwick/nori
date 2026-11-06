@@ -6,7 +6,6 @@ package firestore
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -23,7 +22,7 @@ var _ spend.Ledger = (*Ledger)(nil)
 // Open connects to the shared budget database. It refuses to run against an emulator: the shared budget is real
 // money, and app data uses NORI_STATE_EMULATOR_HOST instead.
 func Open(ctx context.Context, cfg spend.LedgerConfig) (*Ledger, error) {
-	if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
+	if cfg.Emulator {
 		return nil, spend.Blocked("shared budget cannot use an emulator; use NORI_STATE_EMULATOR_HOST for app data")
 	}
 	store, err := firestore.NewClientWithDatabase(ctx, cfg.Project, cfg.Database)

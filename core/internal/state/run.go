@@ -41,7 +41,7 @@ type Run struct {
 	ID      string `json:"id" firestore:"id"`
 	Request string `json:"request,omitempty" firestore:"request,omitempty"`
 
-	// Lifecycle. Waiting and Question describe what the task needs from Austin; Result or Error ends it. Progress is the
+	// Lifecycle. Waiting and Question describe what the task needs from the user; Result or Error ends it. Progress is the
 	// latest line from a long job the task is watching; it is replaced in place, so it never grows the saved task.
 	Status          RunStatus  `json:"status" firestore:"status"`
 	CancelRequested bool       `json:"cancel_requested" firestore:"cancel_requested"`
@@ -61,7 +61,7 @@ type Run struct {
 	Incorporated      int64 `json:"incorporated,omitempty" firestore:"incorporated,omitempty"`
 	InterruptRevision int64 `json:"interrupt_revision,omitempty" firestore:"interrupt_revision,omitempty"`
 
-	// Model cost in USD from reported token usage. Budget grows only by Austin's explicit continue.
+	// Model cost in USD from reported token usage. Budget grows only by the user's explicit continue.
 	Spent       float64 `json:"spent_usd,omitempty" firestore:"spent_usd,omitempty"`
 	Budget      float64 `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
 	CostUnknown bool    `json:"cost_unknown,omitempty" firestore:"cost_unknown,omitempty"`
@@ -74,7 +74,7 @@ type Run struct {
 	// conversation; the offer shows its answer when it's delivered.
 	Offer string `json:"offer,omitempty" firestore:"offer,omitempty"`
 	// Schedule names the schedule that started this task. A Quiet one is a monitor check: it can only read, and its
-	// outcome reaches the conversation only when it found what Austin asked to hear about.
+	// outcome reaches the conversation only when it found what the user asked to hear about.
 	Schedule string `json:"schedule,omitempty" firestore:"schedule,omitempty"`
 	Quiet    bool   `json:"quiet,omitempty" firestore:"quiet,omitempty"`
 	// Uploads are the files this task was given, and the only ones it can read.
@@ -236,7 +236,7 @@ type PublishRequest struct {
 	RunID    string
 	Revision int64
 	Status   RunStatus
-	// Detail is the failure or stop reason. Text is the result shown to Austin.
+	// Detail is the failure or stop reason. Text is the result shown to the user.
 	Detail string
 	Text   string
 	// CostUnknown marks the task as having an unpriced provider request.
@@ -288,7 +288,7 @@ func FinishRun(run Run, req PublishRequest, now time.Time) (Run, TaskEvent) {
 	status, detail, text := req.Status, req.Detail, req.Text
 	if run.CancelRequested && status != RunFailed {
 		if status != RunCancelled || detail == "" {
-			detail = "Stopped by Austin."
+			detail = "Stopped by the user."
 		}
 		status, text = RunCancelled, ""
 	}

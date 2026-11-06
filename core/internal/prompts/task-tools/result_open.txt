@@ -1,0 +1,1 @@
+Copy a saved file into this task's folder on the computer and return its path, so a revision can start from it.

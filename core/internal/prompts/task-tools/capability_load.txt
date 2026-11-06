@@ -1,0 +1,1 @@
+Load the tools of catalog capabilities marked load first, by their names. They're available from your next step until the task ends. The result says each one's account and whether it's available.

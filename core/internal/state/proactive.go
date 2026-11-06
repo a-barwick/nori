@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// A proactive offer starts from a scheduled calendar check, with no request from Austin. It may only offer: the
+// A proactive offer starts from a scheduled calendar check, with no request from the user. It may only offer: the
 // runtime saves what it found, plans when to say it, and publishes it as its own finished turn. Nothing it says grants
 // permission for anything.
 
@@ -203,7 +203,7 @@ func DeliveryOutcome(o Offer, day ProactiveDay, now time.Time) (deliver bool, sk
 }
 
 // OfferTurn is the finished turn and message an offer becomes. It goes into the conversation history like any reply,
-// so the outer model sees it when Austin answers.
+// so the outer model sees it when the user answers.
 func OfferTurn(c ConversationControl, o Offer, note, text string, now time.Time) (ConversationControl, ConversationInput, ConversationTurn, Message) {
 	c.Received++
 	input := ConversationInput{ID: OfferInputID(o.ID), Text: note, Position: c.Received, CreatedAt: now, Offer: o.ID}
@@ -222,7 +222,7 @@ func OfferTurn(c ConversationControl, o Offer, note, text string, now time.Time)
 	return c, input, t, message
 }
 
-// DecideOffer records Austin's accept or dismiss on a delivered offer. Deciding again the same way changes nothing.
+// DecideOffer records the user's accept or dismiss on a delivered offer. Deciding again the same way changes nothing.
 func DecideOffer(o Offer, decision string, now time.Time) (Offer, bool, error) {
 	if decision != OfferAccepted && decision != OfferDismissed {
 		return o, false, fmt.Errorf("%w: decision must be accepted or dismissed", ErrCommandInvalid)

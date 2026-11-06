@@ -9,7 +9,7 @@ import (
 
 // Capabilities holds what this worker was configured with. A missing credential
 // makes a capability unavailable; it never removes the tool, so the model can tell
-// Austin the capability is unavailable rather than appear not to have chosen it.
+// the user the capability is unavailable rather than appear not to have chosen it.
 type Capabilities struct {
 	SearchKey string
 	Calendar  CalendarConfig
@@ -40,11 +40,11 @@ func (s *Service) Catalog() []Capability {
 	return []Capability{
 		{Name: "Web search", Tools: "web_search", Account: "public web", Availability: search, OnFailure: "report that the search failed; retry only if useful", Verify: "the results are the evidence", Default: true},
 		{Name: "Browser", Tools: "browser_navigate, browser_screenshot, screenshot_inspect", Account: "the computer's browser", Availability: "available", OnFailure: "report the page or image as unread", Verify: "the page text or screenshot_inspect answer is the evidence", Default: true},
-		{Name: "Attached files", Tools: "upload_open, upload_inspect", Account: "files Austin attached to this task", Availability: "available", OnFailure: "say the file couldn't be read; never guess what it says", Verify: "the shell output or upload_inspect answer is the evidence"},
+		{Name: "Attached files", Tools: "upload_open, upload_inspect", Account: "files the user attached to this task", Availability: "available", OnFailure: "say the file couldn't be read; never guess what it says", Verify: "the shell output or upload_inspect answer is the evidence"},
 		{Name: "Saved results", Tools: "result_save, result_link, results_find, result_read, result_open", Account: "Nori's saved results", Availability: "available", OnFailure: "say the result couldn't be saved or read", Verify: "the returned result_id is the evidence", Default: true},
 		{Name: "Memory and conversation", Tools: "memory_read, conversation_find, operation_read", Account: "Nori's saved memory, conversation and this task's tool outputs", Availability: "available", OnFailure: "say it couldn't be read; never guess what it says", Verify: "the returned memory, message or operation is the evidence", Default: true},
 		{Name: "Shell", Tools: "shell, job_start, job_status, job_wait, job_stop", Account: "the computer", Availability: "available", OnFailure: "report the observed exit code or job state; never repeat a write automatically", Verify: "use the job's end state and exit code, and read back what the command changed", Default: true},
-		{Name: "Google Calendar read", Tools: "calendar_read", Account: account, Availability: calendar, OnFailure: "tell Austin it needs connecting; never guess events", Verify: "the result names the account and range it read"},
+		{Name: "Google Calendar read", Tools: "calendar_read", Account: account, Availability: calendar, OnFailure: "tell the user it needs connecting; never guess events", Verify: "the result names the account and range it read"},
 		{Name: "Google Calendar write", Tools: "calendar_create, calendar_move", Account: account, Availability: calendar, OnFailure: "report the outcome; never repeat a write automatically", Verify: "the result carries the provider's status, the event ID and a read of the event"},
 		{Name: "Email send", Tools: "email_send", Account: account, Availability: calendar, OnFailure: "report the outcome; never repeat a send automatically", Verify: "the result carries the provider's status, the message ID and a read of the sent message"},
 	}

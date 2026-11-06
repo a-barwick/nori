@@ -1,7 +1,6 @@
 package observability
 
 import (
-	"os"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -9,14 +8,16 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// Init sets these from the process's settings.
+var (
+	sessionEnvironment = "development"
+	captureContent     bool
+	credentials        []string
+)
+
 // SessionID groups this single-owner application's AI spans without an email.
 func SessionID() string {
-	return "nori-" + firstNonempty(os.Getenv("SENTRY_ENVIRONMENT"), "development") + "-conversation"
-}
-
-var credentialNames = [...]string{
-	"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY",
-	"SENTRY_AUTH_TOKEN", "ARIZE_API_KEY",
+	return "nori-" + sessionEnvironment + "-conversation"
 }
 
 var contentPatterns = []*regexp.Regexp{
@@ -34,7 +35,7 @@ var contentPatterns = []*regexp.Regexp{
 // text. Redaction is best effort, not a guarantee that all personal data is
 // removed; callers must never supply tool arguments or screenshots here.
 func ContentAttribute(key, value string) (attribute.KeyValue, bool) {
-	if os.Getenv("NORI_ARIZE_CAPTURE_CONTENT") != "true" || (key != "input.value" && key != "output.value") {
+	if !captureContent || (key != "input.value" && key != "output.value") {
 		return attribute.KeyValue{}, false
 	}
 	return attribute.String(key, redactText(value, 2048)), true
@@ -46,8 +47,8 @@ func redactText(value string, limit int) string {
 		value = value[:8192]
 	}
 	value = strings.ToValidUTF8(value, "")
-	for _, name := range credentialNames {
-		if secret := os.Getenv(name); len(secret) >= 8 {
+	for _, secret := range credentials {
+		if len(secret) >= 8 {
 			value = strings.ReplaceAll(value, secret, "[redacted]")
 		}
 	}

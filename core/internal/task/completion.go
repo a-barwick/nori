@@ -197,7 +197,7 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 		out.Detail = "The task's records could not be checked: " + strings.Join(check.RecordFailures, " ") + " " +
 			"This task attempted a write or an action with unknown effects. " +
 			"Please clarify what remains; Nori will not repeat that action automatically."
-		feedback["instruction"] = "Ask Austin before further action; never repeat an attempted write automatically."
+		feedback["instruction"] = "Ask the user before further action; never repeat an attempted write automatically."
 	} else if in.CorrectionAttempt >= 2 {
 		out.Action = "partial"
 		out.Detail = "Incomplete: the task's records still failed their checks after two read-only corrections. " +

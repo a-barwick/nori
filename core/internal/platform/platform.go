@@ -9,12 +9,11 @@ package platform
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"nori/internal/computer"
 	"nori/internal/computer/gce"
 	"nori/internal/computer/local"
-	"nori/internal/env"
+	"nori/internal/settings"
 	"nori/internal/state"
 	statefirestore "nori/internal/state/firestore"
 	"nori/internal/state/gcs"
@@ -29,23 +28,23 @@ type StoreConfig struct {
 	ArtifactBucket string
 }
 
-// OpenStore opens the durable store selected by this process's environment.
-func OpenStore(ctx context.Context) (state.ConversationStore, error) {
-	project, err := env.Required("NORI_PROJECT_ID")
+// OpenStore opens the durable store selected by this process's settings.
+func OpenStore(ctx context.Context, s settings.Settings) (state.ConversationStore, error) {
+	project, err := settings.Required("NORI_PROJECT_ID", s.Store.Project)
 	if err != nil {
 		return nil, err
 	}
-	database, err := env.Required("FIRESTORE_DATABASE_ID")
+	database, err := settings.Required("FIRESTORE_DATABASE_ID", s.Store.Database)
 	if err != nil {
 		return nil, err
 	}
-	return OpenStoreWith(ctx, StoreConfig{Project: project, Database: database, ArtifactBucket: os.Getenv("ARTIFACT_BUCKET")})
+	return OpenStoreWith(ctx, s, StoreConfig{Project: project, Database: database, ArtifactBucket: s.Store.ArtifactBucket})
 }
 
 // OpenStoreWith opens documents in Firestore and artifact bytes in a local directory or Cloud Storage. The emulator
-// and local-artifact environment guards apply to every process.
-func OpenStoreWith(ctx context.Context, cfg StoreConfig) (state.ConversationStore, error) {
-	local, err := openLocalArtifacts()
+// and local-artifact guards in s apply to every process.
+func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig) (state.ConversationStore, error) {
+	local, err := openLocalArtifacts(s)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +55,8 @@ func OpenStoreWith(ctx context.Context, cfg StoreConfig) (state.ConversationStor
 	}
 	// An app-only emulator endpoint keeps development spend enforcement on its real shared database.
 	// FIRESTORE_EMULATOR_HOST still supports unpaid tests.
-	emulator := os.Getenv("NORI_STATE_EMULATOR_HOST")
-	if emulator != "" && (!statefirestore.IsLoopback(emulator) || os.Getenv("FIRESTORE_EMULATOR_HOST") != "") {
+	emulator := s.Store.StateEmulator
+	if emulator != "" && (!statefirestore.IsLoopback(emulator) || s.Store.FirestoreEmulator != "") {
 		closeLocal()
 		return nil, fmt.Errorf("NORI_STATE_EMULATOR_HOST requires loopback and no FIRESTORE_EMULATOR_HOST")
 	}
@@ -79,16 +78,16 @@ func OpenStoreWith(ctx context.Context, cfg StoreConfig) (state.ConversationStor
 
 // openLocalArtifacts opens the development artifact directory when NORI_LOCAL_ARTIFACT_DIR is set. It returns nil
 // when it is not set. The directory is allowed only with a loopback Firestore emulator and local Temporal.
-func openLocalArtifacts() (state.ArtifactStore, error) {
-	directory := os.Getenv("NORI_LOCAL_ARTIFACT_DIR")
+func openLocalArtifacts(s settings.Settings) (state.ArtifactStore, error) {
+	directory := s.Store.LocalArtifactDir
 	if directory == "" {
 		return nil, nil
 	}
-	address := os.Getenv("NORI_STATE_EMULATOR_HOST")
+	address := s.Store.StateEmulator
 	if address == "" {
-		address = os.Getenv("FIRESTORE_EMULATOR_HOST")
+		address = s.Store.FirestoreEmulator
 	}
-	if !statefirestore.IsLoopback(address) || os.Getenv("TEMPORAL_LOCAL") != "true" {
+	if !statefirestore.IsLoopback(address) || !s.Temporal.Local {
 		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR requires a loopback Firestore emulator and TEMPORAL_LOCAL=true")
 	}
 	store, err := localfs.Open(directory)
@@ -103,26 +102,26 @@ func openLocalArtifacts() (state.ArtifactStore, error) {
 // Engine instance named by NORI_PROJECT_ID, COMPUTER_ZONE and COMPUTER_INSTANCE,
 // none of which has a default. Connecting validates the choice, so a process that
 // never uses the computer does not need one configured.
-func Computer() computer.Provider {
-	if address := os.Getenv("NORI_LOCAL_COMPUTER_URL"); address != "" {
+func Computer(s settings.Settings) computer.Provider {
+	if address := s.Computer.LocalURL; address != "" {
 		return computer.Traced(local.New(address))
 	}
 	return computer.Traced(gce.New(gce.Config{
-		Project:  os.Getenv("NORI_PROJECT_ID"),
-		Zone:     os.Getenv("COMPUTER_ZONE"),
-		Instance: os.Getenv("COMPUTER_INSTANCE"),
+		Project:  s.Store.Project,
+		Zone:     s.Computer.Zone,
+		Instance: s.Computer.Instance,
 	}))
 }
 
 // CheckComputer fails when the computer settings that Computer reads are incomplete: a local URL, or a project,
 // zone and instance. A process that runs tools calls it at startup, so a bad configuration stops the process
 // instead of failing every task. Computer stays lazy, so other processes need no computer settings.
-func CheckComputer() error {
-	if os.Getenv("NORI_LOCAL_COMPUTER_URL") != "" {
+func CheckComputer(s settings.Settings) error {
+	if s.Computer.LocalURL != "" {
 		return nil
 	}
-	for _, name := range []string{"NORI_PROJECT_ID", "COMPUTER_ZONE", "COMPUTER_INSTANCE"} {
-		if _, err := env.Required(name); err != nil {
+	for _, setting := range [][2]string{{"NORI_PROJECT_ID", s.Store.Project}, {"COMPUTER_ZONE", s.Computer.Zone}, {"COMPUTER_INSTANCE", s.Computer.Instance}} {
+		if _, err := settings.Required(setting[0], setting[1]); err != nil {
 			return fmt.Errorf("computer is not configured: %w", err)
 		}
 	}

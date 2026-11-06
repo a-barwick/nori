@@ -44,6 +44,8 @@ var ErrInvalidRecord = errors.New("spend record is invalid")
 type LedgerConfig struct {
 	Project  string
 	Database string
+	// Emulator is true when the process points Firestore at an emulator, which the shared budget refuses.
+	Emulator bool
 }
 
 // LedgerOpener connects to a ledger. A backend registers its opener once at process start with RegisterLedger.

@@ -19,7 +19,7 @@ const (
 	// A write's attempts cover workers that die. Each later attempt only reads the provider.
 	maxActionAttempts = 3
 	saveTimeout       = 10 * time.Second
-	declinedReason    = "Austin declined this action, so nothing was sent. Don't propose it again."
+	declinedReason    = "The user declined this action, so nothing was sent. Don't propose it again."
 )
 
 // PendingAction is a write's place in the workflow. Command is the approve command once
@@ -178,7 +178,7 @@ func (a *Activities) PrepareAction(parent context.Context, in RefToolInput) (out
 	if in.ReadOnly {
 		out.RefToolOutcome, err = a.writeResult(ctx, in.Step, in.Ref, call, map[string]any{
 			"outcome": "needs_input", "operation_id": in.OperationID, "effect_class": "read",
-			"error": "Completion correction permits reads only. Ask Austin before further writes or shell execution.",
+			"error": "Completion correction permits reads only. Ask the user before further writes or shell execution.",
 		})
 		return out, err
 	}
@@ -230,7 +230,7 @@ func (a *Activities) PrepareAction(parent context.Context, in RefToolInput) (out
 	}
 	for _, earlier := range ops {
 		if earlier.Outcome == "declined" && earlier.Action != nil && earlier.Action.Digest == prepared.Digest {
-			return finish(agent.WriteFailed, map[string]any{"applied": false, "reason": "Austin declined this exact action. Don't propose it again."})
+			return finish(agent.WriteFailed, map[string]any{"applied": false, "reason": "The user declined this exact action. Don't propose it again."})
 		}
 	}
 	question := state.Question{ID: fmt.Sprintf("%s-%s", in.OperationID, prepared.Digest[:12]), Kind: "approval", Text: prepared.Text, Revision: in.Revision}

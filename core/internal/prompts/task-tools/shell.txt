@@ -1,0 +1,1 @@
+Run a shell command on the user's persistent computer. Work under /workspace. Command exits after at most 45 seconds. Set read_only to true when the command only reads or computes and changes no files or anything remote, so a failure doesn't stop later commands.

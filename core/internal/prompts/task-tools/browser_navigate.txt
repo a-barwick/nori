@@ -1,0 +1,1 @@
+Navigate the persistent Chromium browser to an HTTP or HTTPS URL and read page title and visible text.

@@ -14,6 +14,7 @@ import (
 
 	"nori/internal/computerd"
 	"nori/internal/observability"
+	"nori/internal/settings"
 )
 
 func main() {
@@ -29,7 +30,7 @@ func main() {
 	if *proxy {
 		service = "nori-computer-host"
 	}
-	stopTelemetry := observability.Init(ctx, service)
+	stopTelemetry := observability.Init(ctx, service, settings.FromEnvironment().Observability)
 	defer observability.Shutdown(stopTelemetry)
 	idleStop := make(chan struct{})
 	var handler http.Handler

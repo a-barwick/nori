@@ -7,24 +7,26 @@ import (
 	"time"
 
 	"nori/internal/dispatch"
-	"nori/internal/env"
 	"nori/internal/observability"
 	"nori/internal/platform"
+	"nori/internal/settings"
 )
 
 func main() {
-	if e := env.Load(); e != nil {
+	s, e := settings.Load()
+	if e != nil {
 		log.Fatal(e)
 	}
+	platform.Configure(s)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	stopTelemetry := observability.Init(ctx, "nori-deliver")
+	stopTelemetry := observability.Init(ctx, "nori-deliver", s.Observability)
 	defer observability.Shutdown(stopTelemetry)
-	waker, e := platform.Waker(ctx, false)
+	waker, e := platform.Waker(ctx, s, false)
 	if e != nil {
 		observability.Fatal(e)
 	}
-	store, e := platform.OpenStore(ctx)
+	store, e := platform.OpenStore(ctx, s)
 	if e != nil {
 		observability.Fatal(e)
 	}
@@ -41,7 +43,7 @@ func main() {
 		observability.Fatal(e)
 	}
 	defer engine.Close()
-	dispatcher := platform.Dispatcher(store, engine, waker)
+	dispatcher := platform.Dispatcher(s, store, engine, waker)
 	// Repair first, and deliver nothing if it fails.
 	if e = dispatcher.Reconcile(ctx, dispatch.RepairClosed); e != nil {
 		observability.Fatal(e)

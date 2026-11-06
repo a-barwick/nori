@@ -11,7 +11,7 @@ import (
 	"nori/internal/state"
 )
 
-// Clock is Austin's time zone and the current time, which the outer model needs to resolve "in 20 minutes" or
+// Clock is the user's time zone and the current time, which the outer model needs to resolve "in 20 minutes" or
 // "tomorrow at ten" into a schedule.
 type Clock struct {
 	Location *time.Location

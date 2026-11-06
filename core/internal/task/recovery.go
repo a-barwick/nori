@@ -84,7 +84,7 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 		}
 		if run.CancelRequested && stopErr == nil {
 			status = "cancelled"
-			detail = "Cancelled by Austin."
+			detail = "Cancelled by the user."
 		}
 		if stopErr != nil {
 			status = "failed"
@@ -198,7 +198,7 @@ func StopPaused(ctx context.Context, store state.TaskStore, config computer.Prov
 		return run, err
 	}
 	run, err = store.Publish(ctx, state.PublishRequest{
-		RunID: id, Revision: run.Revision, Status: state.RunCancelled, Detail: "Stopped by Austin." + attemptedWrites(ctx, store, id), CostUnknown: run.CostUnknown, BypassRouting: true,
+		RunID: id, Revision: run.Revision, Status: state.RunCancelled, Detail: "Stopped by the user." + attemptedWrites(ctx, store, id), CostUnknown: run.CostUnknown, BypassRouting: true,
 	})
 	if err != nil {
 		return run, err

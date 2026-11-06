@@ -389,7 +389,7 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 		// Terminal cleanup cannot resume execution. Stop and unknown-cost facts
 		// apply to the whole task, including a correction accepted during cleanup.
 		if current.CancelRequested && p.StopConfirmed {
-			p.Status, p.Detail, p.Text, p.Revision = "cancelled", "Stopped by Austin.", "", current.Revision
+			p.Status, p.Detail, p.Text, p.Revision = "cancelled", "Stopped by the user.", "", current.Revision
 			p.BypassRouting = true
 		} else if p.CostUnknown || !p.StopConfirmed || p.Revision == 0 {
 			p.Revision = current.Revision

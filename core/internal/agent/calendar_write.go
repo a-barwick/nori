@@ -226,7 +226,7 @@ func (s *Service) prepareMove(ctx context.Context, id, start, end string) (Prepa
 	}
 	for _, attendee := range event.Attendees {
 		if !attendee.Self {
-			return PreparedWrite{Result: map[string]any{"applied": false, "available": false, "reason": "This event has other attendees, and moving it would change their copies. Tell Austin to move it himself."}}, nil
+			return PreparedWrite{Result: map[string]any{"applied": false, "available": false, "reason": "This event has other attendees, and moving it would change their copies. Tell the user to move it themselves."}}, nil
 		}
 	}
 	oldStart, oldEnd, err := parseEventTimes(event.Start.DateTime, event.End.DateTime)

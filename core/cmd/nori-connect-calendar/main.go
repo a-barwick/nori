@@ -1,4 +1,4 @@
-// Command nori-connect-calendar connects Austin's Google account for calendar and
+// Command nori-connect-calendar connects the user's Google account for calendar and
 // email tools. It opens one Google consent screen, then saves the refresh token and
 // account name in the existing .env and in Secret Manager, so the deployed worker gets
 // the same connection. It never prints the token.
@@ -6,6 +6,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -24,7 +25,7 @@ import (
 
 	"golang.org/x/oauth2"
 	"nori/internal/agent"
-	"nori/internal/env"
+	"nori/internal/settings"
 )
 
 func main() {
@@ -34,11 +35,12 @@ func main() {
 }
 
 func run() error {
-	if err := env.Load(); err != nil {
+	s, err := settings.Load()
+	if err != nil {
 		return err
 	}
-	file := env.Get("NORI_ENV_FILE", "../.env")
-	id, secret := os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET")
+	file := s.EnvFile
+	id, secret := s.Calendar.ClientID, s.Calendar.ClientSecret
 	if id == "" || secret == "" {
 		return fmt.Errorf("GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET must be set in %s", file)
 	}
@@ -98,14 +100,13 @@ func run() error {
 		return err
 	}
 	fmt.Printf("Connected %s. Saved in %s.\n", account, file)
-	return saveSecrets(ctx, map[string]string{"nori-google-calendar-refresh-token": token.RefreshToken, "nori-google-calendar-account": account})
+	return saveSecrets(ctx, cmp.Or(s.Store.Project, "bot-111549"), map[string]string{"nori-google-calendar-refresh-token": token.RefreshToken, "nori-google-calendar-account": account})
 }
 
 // saveSecrets adds new versions with the caller's gcloud login. The value goes over
 // stdin, so it never appears in a process listing. A running worker keeps the old
 // version until its next start.
-func saveSecrets(ctx context.Context, values map[string]string) error {
-	project := env.Get("NORI_PROJECT_ID", "bot-111549")
+func saveSecrets(ctx context.Context, project string, values map[string]string) error {
 	for name, value := range values {
 		command := exec.CommandContext(ctx, "gcloud", "secrets", "versions", "add", name, "--project", project, "--data-file=-")
 		command.Stdin = strings.NewReader(value)

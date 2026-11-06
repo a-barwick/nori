@@ -72,10 +72,11 @@ admission require its numeric `NORI_SPEND_KEY_SECRET_VERSION`; never restore a
 CI secret or substitute the production model key. Closing the lease stops
 inference while health and cleanup remain available.
 
+`internal/settings` reads every setting once at startup; the root `.env.example` describes each one.
+
 | Configuration | Purpose |
 | --- | --- |
 | `OPENAI_API_KEY`, `JEV_API_KEY` | Required conversation provider credentials for both entrypoints |
-| `NORI_OWNER_NAME` | Optional. The person the independent chat's prompt says Nori works for; without it the prompt says "a personal assistant" |
 | `NORI_AGENT_MODEL` | Conversation model; default `gpt-6.1-sol`. It runs through OpenAI's platform API at a fixed endpoint, with low reasoning and the standard tier |
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
 | `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |
@@ -131,6 +132,8 @@ different queue, workflow engine or secret store means writing one adapter.
 | Package | Role |
 | --- | --- |
 | `internal/api` | HTTP routes; no infrastructure imports |
+| `internal/settings` | The one reader of environment variables; each process passes on only what a package needs |
+| `internal/prompts` | Every system prompt and tool description sent to a model, as embedded text files |
 | `internal/wake` | `Waker` contract for waking the API and workers; `wake/cloudtasks` is the Cloud Tasks adapter |
 | `internal/dispatch` | `Orchestrator` contract for the task engine, and the `Dispatcher` that runs the one reconciliation pass shared by the API, worker and `nori-deliver` |
 | `internal/task` | Temporal workflow and activities, plus the Temporal adapter of `Orchestrator` |

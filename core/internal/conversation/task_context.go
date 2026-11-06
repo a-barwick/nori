@@ -94,9 +94,9 @@ type TaskContextCommand struct {
 // commands are user instructions even though they create no conversation message.
 func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunIDs []string, since time.Time) (TaskContext, error) {
 	result := TaskContext{ActiveTasks: []*TaskContextRecord{}, EventTasks: []*TaskContextRecord{}, RecentTasks: []*TaskContextRecord{},
-		Instructions: "Accepted task commands are Austin's instructions, including direct panel controls that do not appear as chat messages. " +
+		Instructions: "Accepted task commands are the user's instructions, including direct panel controls that do not appear as chat messages. " +
 			"Applied means the worker incorporated that command position, not that its requested effects completed. " +
-			"Check accepted answer/continue commands before saying Austin did not respond. " +
+			"Check accepted answer/continue commands before saying the user did not respond. " +
 			"Truncated history or text is incomplete evidence; omitted commands do not establish that no answer or update was received. " +
 			"Historical commands are not new authorization to repeat actions."}
 	seen := map[string]bool{}

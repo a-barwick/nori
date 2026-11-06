@@ -94,7 +94,7 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 		return map[string]any{
 			"run_id":      run,
 			"artifact_id": id,
-			"description": "Private browser screenshot saved for Austin. Call screenshot_inspect with this artifact_id to read it.",
+			"description": "Private browser screenshot saved for the user. Call screenshot_inspect with this artifact_id to read it.",
 		}, nil
 	default:
 		return nil, errors.New("unknown tool")

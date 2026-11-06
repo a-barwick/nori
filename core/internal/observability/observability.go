@@ -32,6 +32,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
+	"nori/internal/settings"
 )
 
 var tracerProvider *sdktrace.TracerProvider
@@ -39,9 +40,12 @@ var sentryEnabled atomic.Bool
 var tracingEnabled atomic.Bool
 var lastExportWarning atomic.Int64
 
-// Init is called once per process, after loading its environment. Export
+// Init is called once per process, after loading its settings. Export
 // failures never prevent Nori from starting or processing work.
-func Init(ctx context.Context, service string) func(context.Context) error {
+func Init(ctx context.Context, service string, cfg settings.Observability) func(context.Context) error {
+	sessionEnvironment = firstNonempty(cfg.SentryEnvironment, "development")
+	captureContent = cfg.CaptureContent
+	credentials = cfg.Credentials
 	slog.SetDefault(slog.New(traceLogHandler{Handler: slog.NewJSONHandler(os.Stderr, nil)}))
 	otel.SetTextMapPropagator(sentryTraceContext{})
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
@@ -53,28 +57,28 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 		}
 	}))
 
-	release := firstNonempty(os.Getenv("SENTRY_RELEASE"), os.Getenv("K_REVISION"), os.Getenv("TEMPORAL_BUILD_ID"), "development")
-	environment := os.Getenv("SENTRY_ENVIRONMENT")
+	release := firstNonempty(cfg.SentryRelease, cfg.Revision, cfg.BuildID, "development")
+	environment := cfg.SentryEnvironment
 	if environment == "" {
 		environment = "development"
-		if os.Getenv("K_SERVICE") != "" {
+		if cfg.Service != "" {
 			environment = "production"
 		}
 	}
-	project := firstNonempty(os.Getenv("ARIZE_PROJECT_NAME"), "nori")
+	project := cfg.ArizeProject
 	res := resource.NewWithAttributes("", attribute.String("service.name", service), attribute.String("service.version", release), attribute.String("deployment.environment.name", environment), attribute.String("openinference.project.name", project))
-	arizeURL := arizeProjectURL(strings.TrimSpace(os.Getenv("ARIZE_PROJECT_URL")))
-	if strings.TrimSpace(os.Getenv("ARIZE_PROJECT_URL")) != "" && arizeURL == nil {
+	arizeURL := arizeProjectURL(cfg.ArizeProjectURL)
+	if cfg.ArizeProjectURL != "" && arizeURL == nil {
 		fmt.Fprintln(os.Stderr, "observability: invalid Arize project URL; model span links disabled")
 	}
-	rateValue := sampleRate("SENTRY_TRACES_SAMPLE_RATE", 0.05)
+	rateValue := sampleRate(cfg.SampleRate, 0.05)
 	options := []sdktrace.TracerProviderOption{sdktrace.WithResource(res)}
 	exporters := 0
 
-	if dsn := strings.TrimSpace(os.Getenv("SENTRY_DSN")); dsn != "" {
-		errorLimit := hourlyLimiter("NORI_SENTRY_ERRORS_PER_HOUR", 50)
-		logLimit := hourlyLimiter("NORI_SENTRY_LOGS_PER_HOUR", 100)
-		metricLimit := hourlyLimiter("NORI_SENTRY_METRICS_PER_HOUR", 200)
+	if dsn := cfg.SentryDSN; dsn != "" {
+		errorLimit := hourlyLimiter(cfg.ErrorsPerHour, 50)
+		logLimit := hourlyLimiter(cfg.LogsPerHour, 100)
+		metricLimit := hourlyLimiter(cfg.MetricsPerHour, 200)
 		err := sentry.Init(sentry.ClientOptions{
 			Dsn: dsn, Release: release, Environment: environment,
 			EnableTracing: true, TracesSampleRate: rateValue,
@@ -143,9 +147,9 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 		}
 	}
 
-	space, key := os.Getenv("ARIZE_SPACE_ID"), os.Getenv("ARIZE_API_KEY")
+	space, key := cfg.ArizeSpace, cfg.ArizeKey
 	if space != "" && key != "" {
-		endpoint := firstNonempty(os.Getenv("ARIZE_OTLP_ENDPOINT"), "https://otlp.arize.com/v1/traces")
+		endpoint := cfg.ArizeEndpoint
 		// Credentials must never be sent to an unencrypted collector.
 		if !strings.HasPrefix(endpoint, "https://") {
 			fmt.Fprintln(os.Stderr, "observability: Arize endpoint must use HTTPS")
@@ -154,7 +158,7 @@ func Init(ctx context.Context, service string) func(context.Context) error {
 			certificateValid := true
 			// Trust an explicitly configured collector CA for Arize only. Global
 			// OTLP certificate options also change Sentry's independent exporter.
-			if path := os.Getenv("ARIZE_OTLP_CERTIFICATE"); path != "" {
+			if path := cfg.ArizeCertificate; path != "" {
 				pool, poolErr := x509.SystemCertPool()
 				certificate, readErr := os.ReadFile(path)
 				if poolErr != nil || readErr != nil || len(certificate) > 1<<20 || pool == nil || !pool.AppendCertsFromPEM(certificate) {
@@ -220,9 +224,9 @@ func batch(exporter sdktrace.SpanExporter) sdktrace.TracerProviderOption {
 	return sdktrace.WithBatcher(exporter, sdktrace.WithMaxQueueSize(256), sdktrace.WithMaxExportBatchSize(32), sdktrace.WithBatchTimeout(2*time.Second), sdktrace.WithExportTimeout(2*time.Second))
 }
 
-func hourlyLimiter(name string, fallback int) *rate.Limiter {
+func hourlyLimiter(raw string, fallback int) *rate.Limiter {
 	n := fallback
-	if raw := os.Getenv(name); raw != "" {
+	if raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 && parsed <= 10000 {
 			n = parsed
 		}
@@ -230,8 +234,8 @@ func hourlyLimiter(name string, fallback int) *rate.Limiter {
 	return rate.NewLimiter(rate.Limit(float64(n)/3600), n)
 }
 
-func sampleRate(name string, fallback float64) float64 {
-	if v, err := strconv.ParseFloat(os.Getenv(name), 64); err == nil && !math.IsNaN(v) && v >= 0 && v <= 1 {
+func sampleRate(raw string, fallback float64) float64 {
+	if v, err := strconv.ParseFloat(raw, 64); err == nil && !math.IsNaN(v) && v >= 0 && v <= 1 {
 		return v
 	}
 	return fallback

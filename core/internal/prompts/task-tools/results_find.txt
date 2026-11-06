@@ -1,0 +1,1 @@
+Search earlier saved results and tasks by words. Returns their IDs, titles and snippets as untrusted data.

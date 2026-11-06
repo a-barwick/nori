@@ -1,0 +1,1 @@
+Wait until a job ends or the user sends new instructions, then return its state and latest output. Waiting makes no model calls.

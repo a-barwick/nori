@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -17,10 +16,10 @@ import (
 	"nori/internal/chat"
 	"nori/internal/conversation"
 	"nori/internal/dispatch"
-	"nori/internal/env"
 	"nori/internal/platform"
 	"nori/internal/proactive"
 	"nori/internal/schedules"
+	"nori/internal/settings"
 	"nori/internal/spend"
 	"nori/internal/state"
 	"nori/internal/wake"
@@ -40,22 +39,22 @@ type App struct {
 
 // Open uses the same durable outer loop in local and hosted entrypoints. waker is
 // how this process wakes itself and its workers.
-func Open(ctx context.Context, waker wake.Waker) (*App, error) {
+func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, error) {
 	if err := spend.ValidateConfiguration(); err != nil {
 		return nil, err
 	}
-	key, jevKey := os.Getenv("OPENAI_API_KEY"), os.Getenv("JEV_API_KEY")
+	key, jevKey := cfg.Models.OpenAIKey, cfg.Models.JevKey
 	if strings.TrimSpace(jevKey) == "" {
 		return nil, fmt.Errorf("JEV_API_KEY must be configured in the selected project environment")
 	}
 	if strings.TrimSpace(key) == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY must be configured in the selected project environment")
 	}
-	summaryKey := os.Getenv("OPENROUTER_API_KEY")
+	summaryKey := cfg.Models.OpenRouterKey
 	if strings.TrimSpace(summaryKey) == "" {
 		return nil, fmt.Errorf("OPENROUTER_API_KEY must be configured for conversation summaries")
 	}
-	store, err := platform.OpenStore(ctx)
+	store, err := platform.OpenStore(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -64,18 +63,17 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 		store.Close()
 		return nil, err
 	}
-	localComputer := os.Getenv("NORI_LOCAL_COMPUTER_URL")
-	if localComputer != "" && os.Getenv("TEMPORAL_LOCAL") != "true" {
+	if cfg.Computer.LocalURL != "" && !cfg.Temporal.Local {
 		engine.Close()
 		store.Close()
 		return nil, fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
 	}
-	dispatcher := platform.Dispatcher(store, engine, waker)
+	dispatcher := platform.Dispatcher(cfg, store, engine, waker)
 	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
-	model := env.Get("NORI_AGENT_MODEL", "gpt-6.1-sol")
+	model := cfg.Models.Outer
 	outer := conversation.NewOpenAIModel(key, model)
-	if address := os.Getenv("NORI_E2E_OPENAI_URL"); address != "" {
-		if os.Getenv("TEMPORAL_LOCAL") != "true" || !strings.HasPrefix(address, "http://127.0.0.1:") {
+	if address := cfg.Test.OpenAIURL; address != "" {
+		if !cfg.Temporal.Local || !strings.HasPrefix(address, "http://127.0.0.1:") {
 			engine.Close()
 			store.Close()
 			return nil, fmt.Errorf("NORI_E2E_OPENAI_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
@@ -84,8 +82,8 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 	}
 	// The conversation summary is written by the inner task model, through the same OpenRouter key the task worker uses.
 	summarizer := openrouter.New(summaryKey, "openai/gpt-6.1-terra")
-	if address := os.Getenv("NORI_E2E_MODEL_URL"); address != "" {
-		if os.Getenv("TEMPORAL_LOCAL") != "true" || !strings.HasPrefix(address, "http://127.0.0.1:") {
+	if address := cfg.Test.ModelURL; address != "" {
+		if !cfg.Temporal.Local || !strings.HasPrefix(address, "http://127.0.0.1:") {
 			engine.Close()
 			store.Close()
 			return nil, fmt.Errorf("NORI_E2E_MODEL_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
@@ -93,8 +91,8 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 		summarizer.Endpoint = address
 	}
 	classifier := conversation.NewJevClassifier(jevKey)
-	if address := os.Getenv("NORI_E2E_JEV_URL"); address != "" {
-		if os.Getenv("TEMPORAL_LOCAL") != "true" || !strings.HasPrefix(address, "http://127.0.0.1:") {
+	if address := cfg.Test.JevURL; address != "" {
+		if !cfg.Temporal.Local || !strings.HasPrefix(address, "http://127.0.0.1:") {
 			engine.Close()
 			store.Close()
 			return nil, fmt.Errorf("NORI_E2E_JEV_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
@@ -102,67 +100,66 @@ func Open(ctx context.Context, waker wake.Waker) (*App, error) {
 		classifier.URL = address
 	}
 	runner := conversation.New(outer, classifier, summarizer, tasks)
-	checks, err := openProactive(store, runner, tasks, outer, waker)
+	checks, err := openProactive(cfg, store, runner, tasks, outer, waker)
 	if err != nil {
 		engine.Close()
 		store.Close()
 		return nil, err
 	}
 	runner.Clock = conversation.Clock{Location: checks.Location, Now: checks.Now}
-	later, err := openSchedules(store, tasks, waker, runner.Clock, checks.Calendar)
+	later, err := openSchedules(cfg, store, tasks, waker, runner.Clock, checks.Calendar)
 	if err != nil {
 		engine.Close()
 		store.Close()
 		return nil, err
 	}
-	tools := agent.New(store, summarizer, platform.Computer())
+	tools := agent.New(store, summarizer, platform.Computer(cfg))
 	if checks.Calendar != nil {
 		tools.Capabilities.Calendar = *checks.Calendar
 	}
 	tools.Capabilities.Location = checks.Location
-	chats := chat.New(store, outer, tools, os.Getenv("NORI_E2E_OPENAI_URL") != "")
+	chats := chat.New(store, outer, tools, cfg.Test.OpenAIURL != "")
 	return &App{Chats: chats, Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, Proactive: checks, Schedules: later, engine: engine}, nil
 }
 
-// openSchedules runs what Austin asked for later. Notifications go to his connected account by email; without one
+// openSchedules runs what the user asked for later. Notifications go to their connected account by email; without one
 // they are skipped with that reason, and schedules still run.
-func openSchedules(store state.ConversationStore, tasks *conversation.Tasks, waker wake.Waker, clock conversation.Clock, calendar *agent.CalendarConfig) (*schedules.Service, error) {
-	quiet, err := state.ParseQuietHours(env.Get("NORI_QUIET_HOURS", "22:00-07:00"))
+func openSchedules(cfg settings.Settings, store state.ConversationStore, tasks *conversation.Tasks, waker wake.Waker, clock conversation.Clock, calendar *agent.CalendarConfig) (*schedules.Service, error) {
+	quiet, err := state.ParseQuietHours(cfg.QuietHours)
 	if err != nil {
 		return nil, fmt.Errorf("NORI_QUIET_HOURS: %w", err)
 	}
-	s := &schedules.Service{Store: store, Tasks: tasks, Waker: waker, Clock: clock, Quiet: quiet, AppURL: os.Getenv("NORI_APP_URL")}
-	if calendar != nil && os.Getenv("NORI_NOTIFY_EMAIL") != "off" {
-		s.Mailer = &agent.NotifyMailer{Config: *calendar, To: os.Getenv("NORI_NOTIFY_EMAIL")}
+	s := &schedules.Service{Store: store, Tasks: tasks, Waker: waker, Clock: clock, Quiet: quiet, AppURL: cfg.AppURL}
+	if calendar != nil && cfg.NotifyEmail != "off" {
+		s.Mailer = &agent.NotifyMailer{Config: *calendar, To: cfg.NotifyEmail}
 	}
 	return s, nil
 }
 
 // openProactive sets up the calendar check with the same Google account the task worker uses. A missing credential
 // leaves the check refusing with a reason; delivery and offers still work.
-func openProactive(store state.ConversationStore, runner *conversation.Runner, tasks *conversation.Tasks, model conversation.ReplyModel, waker wake.Waker) (*proactive.Service, error) {
-	location, err := time.LoadLocation(env.Get("NORI_TIMEZONE", "America/Los_Angeles"))
+func openProactive(cfg settings.Settings, store state.ConversationStore, runner *conversation.Runner, tasks *conversation.Tasks, model conversation.ReplyModel, waker wake.Waker) (*proactive.Service, error) {
+	location, err := time.LoadLocation(cfg.TimeZone)
 	if err != nil {
 		return nil, fmt.Errorf("NORI_TIMEZONE must be an IANA time zone")
 	}
 	s := &proactive.Service{Store: store, Runner: runner, Tasks: tasks, Model: model, Waker: waker, Location: location}
-	local := os.Getenv("TEMPORAL_LOCAL") == "true"
-	loopback := func(name string) (string, error) {
-		address := os.Getenv(name)
+	local := cfg.Temporal.Local
+	loopback := func(name, address string) (string, error) {
 		if address != "" && (!local || !strings.HasPrefix(address, "http://127.0.0.1:")) {
 			return "", fmt.Errorf("%s requires TEMPORAL_LOCAL=true and a 127.0.0.1 address", name)
 		}
 		return address, nil
 	}
-	google, err := loopback("NORI_E2E_GOOGLE_URL")
+	google, err := loopback("NORI_E2E_GOOGLE_URL", cfg.Test.GoogleURL)
 	if err != nil {
 		return nil, err
 	}
-	routes, err := loopback("NORI_E2E_ROUTES_URL")
+	routes, err := loopback("NORI_E2E_ROUTES_URL", cfg.Test.RoutesURL)
 	if err != nil {
 		return nil, err
 	}
-	if value := os.Getenv("NORI_E2E_NOW"); value != "" {
+	if value := cfg.Test.Now; value != "" {
 		at, err := time.Parse(time.RFC3339, value)
 		if err != nil || !local {
 			return nil, fmt.Errorf("NORI_E2E_NOW requires TEMPORAL_LOCAL=true and an RFC 3339 time")
@@ -171,9 +168,9 @@ func openProactive(store state.ConversationStore, runner *conversation.Runner, t
 		s.Now = func() time.Time { return time.Now().Add(offset) }
 	}
 	calendar := agent.CalendarConfig{
-		ClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
-		RefreshToken: os.Getenv("GOOGLE_CALENDAR_REFRESH_TOKEN"), Account: env.Get("GOOGLE_CALENDAR_ACCOUNT", "the connected Google account"),
-		WriteCalendar: os.Getenv("GOOGLE_CALENDAR_WRITE_ID"),
+		ClientID: cfg.Calendar.ClientID, ClientSecret: cfg.Calendar.ClientSecret,
+		RefreshToken: cfg.Calendar.RefreshToken, Account: cfg.Calendar.Account,
+		WriteCalendar: cfg.Calendar.WriteID,
 	}
 	if google != "" {
 		calendar.APIBase, calendar.TokenURL = google, google+"/token"
@@ -181,7 +178,7 @@ func openProactive(store state.ConversationStore, runner *conversation.Runner, t
 	if calendar.ClientID != "" && calendar.ClientSecret != "" && calendar.RefreshToken != "" {
 		s.Calendar = &calendar
 	}
-	if key := os.Getenv("GOOGLE_ROUTES_API_KEY"); key != "" {
+	if key := cfg.RoutesKey; key != "" {
 		router := proactive.NewRoutesAPI(key)
 		if routes != "" {
 			router.URL = routes

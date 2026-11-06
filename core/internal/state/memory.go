@@ -7,14 +7,14 @@ import (
 	"unicode/utf8"
 )
 
-// Memory is one thing Austin asked Nori to remember. It is a preference or fact, never permission: nothing reads it
+// Memory is one thing the user asked Nori to remember. It is a preference or fact, never permission: nothing reads it
 // when deciding whether an action is approved.
 type Memory struct {
 	ID   string `json:"id" firestore:"id"`
 	Text string `json:"text" firestore:"text"`
-	// About names who the memory is about: Austin, or another person he named.
+	// About names who the memory is about: the user, or another person they named.
 	About string `json:"about" firestore:"about"`
-	// SourceInputID and SourceText are the message that asked for it, in Austin's words.
+	// SourceInputID and SourceText are the message that asked for it, in the user's words.
 	SourceInputID string    `json:"source_input_id" firestore:"source_input_id"`
 	SourceText    string    `json:"source_text" firestore:"source_text"`
 	CreatedAt     time.Time `json:"created_at" firestore:"created_at"`
@@ -43,7 +43,7 @@ const (
 	MaxMemoryText  = 300
 	MaxMemoryAbout = 80
 	MemoryBytes    = 4 << 10
-	// MemorySourceBytes bounds the copy of Austin's message kept with a memory.
+	// MemorySourceBytes bounds the copy of the user's message kept with a memory.
 	MemorySourceBytes = 1 << 10
 )
 
@@ -75,7 +75,7 @@ func PlanMemoryChanges(saved []Memory, changes []MemoryChange) bool {
 		case len(c.About) > MaxMemoryAbout:
 			c.Error = fmt.Sprintf("who a memory is about can be at most %d bytes", MaxMemoryAbout)
 		case total-len(old.Text)+len(c.Text) > MemoryBytes:
-			c.Error = "memory is full; ask Austin which saved memory to forget"
+			c.Error = "memory is full; ask the user which saved memory to forget"
 		default:
 			total += len(c.Text) - len(old.Text)
 			byID[c.ID] = Memory{ID: c.ID, Text: c.Text}
@@ -89,7 +89,7 @@ func PlanMemoryChanges(saved []Memory, changes []MemoryChange) bool {
 func ApplyMemoryChange(c MemoryChange, existing *Memory, source ConversationInput, now time.Time) Memory {
 	m := Memory{ID: c.ID, Text: c.Text, About: c.About, SourceInputID: source.ID, SourceText: BoundedSource(source.Text), CreatedAt: now, UpdatedAt: now}
 	if m.About == "" {
-		m.About = "Austin"
+		m.About = "the user"
 	}
 	if existing != nil {
 		m.CreatedAt = existing.CreatedAt
@@ -97,7 +97,7 @@ func ApplyMemoryChange(c MemoryChange, existing *Memory, source ConversationInpu
 	return m
 }
 
-// BoundedSource is the copy of Austin's message kept with something saved from it.
+// BoundedSource is the copy of the user's message kept with something saved from it.
 func BoundedSource(text string) string {
 	if len(text) <= MemorySourceBytes {
 		return text

@@ -1,0 +1,86 @@
+// Package prompts holds the instructions and tool descriptions Nori sends to models, as text files built into the
+// binary. Each file's final newline is not part of its text. A .txt file can include another with
+// {{template "name"}}, where name is the other file's name without .txt.
+package prompts
+
+import (
+	"embed"
+	"path"
+	"strings"
+	"text/template"
+)
+
+//go:embed *.txt *.json task-tools/*.txt
+var files embed.FS
+
+var (
+	// CalendarTime tells a model how to read and write calendar times. The conversation and chat prompts include it.
+	CalendarTime = render("calendar-time")
+	// Conversation is the outer loop's system prompt, and ConversationTools its task commands as a JSON tool list.
+	Conversation      = render("conversation")
+	ConversationTools = read("conversation-tools.json")
+	// Introduction asks the outer model to greet the user in a new conversation.
+	Introduction = render("introduction")
+	// Compaction tells the summary model what to keep from older turns.
+	Compaction = render("compaction")
+	// CommandPlan asks an independent model which task commands the current messages request.
+	CommandPlan = render("command-plan")
+	// TaskWorker is the inner loop's system prompt.
+	TaskWorker = render("task-worker")
+	// ProactivePlan writes the offer for a calendar conflict the scheduled check found.
+	ProactivePlan = render("proactive-plan")
+	// Chat is the independent chat's system prompt.
+	Chat = render("chat")
+
+	taskTools = func() map[string]string {
+		entries, err := files.ReadDir("task-tools")
+		if err != nil {
+			panic(err)
+		}
+		tools := map[string]string{}
+		for _, entry := range entries {
+			tools[strings.TrimSuffix(entry.Name(), ".txt")] = read(path.Join("task-tools", entry.Name()))
+		}
+		return tools
+	}()
+)
+
+// TaskTool returns the description of one task worker tool. Every tool the worker offers has a file, so a missing
+// one is a build mistake.
+func TaskTool(name string) string {
+	description, ok := taskTools[name]
+	if !ok {
+		panic("prompts: no description for task tool " + name)
+	}
+	return description
+}
+
+func read(name string) string {
+	data, err := files.ReadFile(name)
+	if err != nil {
+		panic(err)
+	}
+	return strings.TrimSuffix(string(data), "\n")
+}
+
+var templates = func() *template.Template {
+	set := template.New("")
+	entries, err := files.ReadDir(".")
+	if err != nil {
+		panic(err)
+	}
+	for _, entry := range entries {
+		if name, ok := strings.CutSuffix(entry.Name(), ".txt"); ok {
+			template.Must(set.New(name).Parse(read(entry.Name())))
+		}
+	}
+	return set
+}()
+
+func render(name string) string {
+	var out strings.Builder
+	if err := templates.ExecuteTemplate(&out, name, nil); err != nil {
+		panic(err)
+	}
+	return out.String()
+}

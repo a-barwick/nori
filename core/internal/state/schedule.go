@@ -9,9 +9,9 @@ import (
 	"unicode/utf8"
 )
 
-// A schedule is something Austin asked Nori to do later: a reminder, a task to run at a time, or a monitor that checks
-// something on a cadence and speaks only when it finds what he asked about. Austin's request is what authorizes it, so
-// it runs with no new message. Times are kept as a local rule in Austin's time zone, so 8 a.m. stays 8 a.m. across a
+// A schedule is something the user asked Nori to do later: a reminder, a task to run at a time, or a monitor that checks
+// something on a cadence and speaks only when it finds what they asked about. The user's request is what authorizes it, so
+// it runs with no new message. Times are kept as a local rule in the user's time zone, so 8 a.m. stays 8 a.m. across a
 // daylight saving change.
 
 // Schedule kinds.
@@ -21,7 +21,7 @@ const (
 	ScheduleMonitor  = "monitor"
 )
 
-// Schedule statuses. Finished means it has no occurrence left; cancelled means Austin stopped it.
+// Schedule statuses. Finished means it has no occurrence left; cancelled means the user stopped it.
 const (
 	ScheduleActive    = "active"
 	SchedulePaused    = "paused"
@@ -92,7 +92,7 @@ type ScheduleRule struct {
 type MissedRun struct {
 	At     time.Time `json:"at" firestore:"at"`
 	Reason string    `json:"reason" firestore:"reason"`
-	// Handled is set once Austin ran it with run_now, or a later occurrence ran.
+	// Handled is set once the user ran it with run_now, or a later occurrence ran.
 	Handled bool `json:"handled,omitempty" firestore:"handled,omitempty"`
 }
 
@@ -103,10 +103,10 @@ type Schedule struct {
 	Rule     ScheduleRule `json:"rule" firestore:"rule"`
 	TimeZone string       `json:"time_zone" firestore:"time_zone"`
 	Status   string       `json:"status" firestore:"status"`
-	// NextAt is the next regular occurrence. SnoozeAt is a one-time extra one that Austin asked for.
+	// NextAt is the next regular occurrence. SnoozeAt is a one-time extra one that the user asked for.
 	NextAt   *time.Time `json:"next_at,omitempty" firestore:"next_at,omitempty"`
 	SnoozeAt *time.Time `json:"snooze_at,omitempty" firestore:"snooze_at,omitempty"`
-	// RunNowAt asks for one run as soon as possible, outside the rule. It is when Austin asked.
+	// RunNowAt asks for one run as soon as possible, outside the rule. It is when the user asked.
 	RunNowAt *time.Time `json:"run_now_at,omitempty" firestore:"run_now_at,omitempty"`
 	// Skips are local dates on which the rule doesn't run.
 	Skips []string `json:"skips,omitempty" firestore:"skips,omitempty"`
@@ -115,11 +115,11 @@ type Schedule struct {
 	LastRunAt *time.Time  `json:"last_run_at,omitempty" firestore:"last_run_at,omitempty"`
 	LastRunID string      `json:"last_run_id,omitempty" firestore:"last_run_id,omitempty"`
 	Missed    []MissedRun `json:"missed,omitempty" firestore:"missed,omitempty"`
-	// Reported is what a monitor already told Austin, newest last, so it doesn't tell him twice.
+	// Reported is what a monitor already told the user, newest last, so it doesn't tell them twice.
 	Reported []string `json:"reported,omitempty" firestore:"reported,omitempty"`
 	// ArmedFor is the time of the latest timed wake asked for.
 	ArmedFor *time.Time `json:"-" firestore:"armed_for,omitempty"`
-	// SourceInputID and SourceText are the message that asked for it, in Austin's words.
+	// SourceInputID and SourceText are the message that asked for it, in the user's words.
 	SourceInputID string    `json:"source_input_id" firestore:"source_input_id"`
 	SourceText    string    `json:"source_text" firestore:"source_text"`
 	CreatedAt     time.Time `json:"created_at" firestore:"created_at"`
@@ -178,7 +178,7 @@ type ScheduleChangeRequest struct {
 	Change string `json:"change,omitempty" firestore:"change,omitempty"`
 	Date   string `json:"date,omitempty" firestore:"date,omitempty"`
 	Until  string `json:"until,omitempty" firestore:"until,omitempty"`
-	// TimeZone is Austin's time zone when the change was asked for. A new schedule keeps it.
+	// TimeZone is the user's time zone when the change was asked for. A new schedule keeps it.
 	TimeZone string `json:"time_zone,omitempty" firestore:"time_zone,omitempty"`
 	// Error says why the change was refused. A turn with any refused change applies none of them.
 	Error string `json:"error,omitempty" firestore:"error,omitempty"`
@@ -491,7 +491,7 @@ func ChangeSchedule(s Schedule, c ScheduleChangeRequest, location *time.Location
 		s.Status = SchedulePaused
 	case ChangeResume:
 		s.Status = ScheduleActive
-		// Occurrences that passed while paused were Austin's choice, not missed runs.
+		// Occurrences that passed while paused were the user's choice, not missed runs.
 		if s.NextAt != nil && !s.NextAt.After(now) {
 			s = advance(s, location, now)
 		}
@@ -531,7 +531,7 @@ type ScheduleFire struct {
 	// Late is set when the occurrence ran later than ScheduleGrace. Missed counts the regular occurrences it covers.
 	Late   bool
 	Missed int
-	// Run is false for a task occurrence that was missed: Austin decides whether it runs.
+	// Run is false for a task occurrence that was missed: the user decides whether it runs.
 	Run bool
 	// Key names this occurrence, for the IDs of the message or task it makes.
 	Key string
@@ -578,7 +578,7 @@ func FireSchedule(s Schedule, now time.Time, reason string) (Schedule, ScheduleF
 	}
 	fire.Late = now.Sub(at) > ScheduleGrace
 	if fire.Late && s.Kind == ScheduleTask {
-		// A late task doesn't run on its own: the world it was meant to look at has moved on. Austin is told and
+		// A late task doesn't run on its own: the world it was meant to look at has moved on. The user is told and
 		// decides with run_now.
 		fire.Run = false
 		s.Missed = append(s.Missed, MissedRun{At: at, Reason: reason})
@@ -599,7 +599,7 @@ func FireSchedule(s Schedule, now time.Time, reason string) (Schedule, ScheduleF
 	return s, fire, true
 }
 
-// Monitor results start with one of these lines, which decide whether Austin hears about it.
+// Monitor results start with one of these lines, which decide whether the user hears about it.
 const (
 	MonitorNothing   = "NOTHING_NEW"
 	MonitorAlert     = "ALERT"
@@ -625,20 +625,20 @@ func MonitorOutcome(result string) (alert, stop bool) {
 // ScheduledRequest is the task request a scheduled task or monitor occurrence starts with.
 func ScheduledRequest(s Schedule, fire ScheduleFire, location *time.Location) string {
 	lines := []string{
-		fmt.Sprintf("Scheduled work Austin asked for earlier, running now (%s). Do it with current information, as of now, "+
-			"not anything from when he asked.", fire.At.In(location).Format("Monday, January 2, 2006 at 3:04 PM MST")),
-		"His request: " + s.Text,
+		fmt.Sprintf("Scheduled work the user asked for earlier, running now (%s). Do it with current information, as of now, "+
+			"not anything from when they asked.", fire.At.In(location).Format("Monday, January 2, 2006 at 3:04 PM MST")),
+		"Their request: " + s.Text,
 	}
 	if s.Kind == ScheduleMonitor {
 		lines = append(lines,
 			"This is one check of a monitor. Don't buy, book, send, change or contact anyone: only look.",
 			"Start your result with exactly one line saying what happened, then a short report:",
-			MonitorNothing+" when nothing he asked to hear about happened. Austin won't see it.",
-			MonitorAlert+" when you found something he asked to hear about.",
-			MonitorAlertStop+" when you found it and his stopping point has been reached.",
-			MonitorStop+" when his stopping point has been reached and there's nothing new to tell him.")
+			MonitorNothing+" when nothing they asked to hear about happened. The user won't see it.",
+			MonitorAlert+" when you found something they asked to hear about.",
+			MonitorAlertStop+" when you found it and their stopping point has been reached.",
+			MonitorStop+" when their stopping point has been reached and there's nothing new to tell them.")
 		if len(s.Reported) > 0 {
-			lines = append(lines, "Already reported to Austin, so it's not new unless something changed: "+strings.Join(s.Reported, " | "))
+			lines = append(lines, "Already reported to the user, so it's not new unless something changed: "+strings.Join(s.Reported, " | "))
 		}
 		if s.Rule.Ends != "" {
 			lines = append(lines, "The monitor ends after "+s.Rule.Ends+".")
@@ -678,8 +678,8 @@ func ApplyMonitorResult(s Schedule, result string, now time.Time) Schedule {
 }
 
 // ScheduleMessage is the message a reminder, or a missed task's notice, publishes. Note is what the outer model later
-// sees about it, Text what Austin sees, and Protocol the turn's saved model history. Urgent notifications go out at the
-// time Austin set, even in quiet hours.
+// sees about it, Text what the user sees, and Protocol the turn's saved model history. Urgent notifications go out at the
+// time the user set, even in quiet hours.
 type ScheduleMessage struct {
 	Note, Text string
 	Protocol   []string

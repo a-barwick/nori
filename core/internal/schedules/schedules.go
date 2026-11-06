@@ -1,6 +1,6 @@
-// Package schedules runs what Austin asked Nori to do later. Each conversation pass fires the occurrences that are due:
+// Package schedules runs what the user asked Nori to do later. Each conversation pass fires the occurrences that are due:
 // a reminder becomes its own finished turn, and a scheduled task or monitor check starts a task. Timed wakes bring the
-// API up at the next due time, and any later wake catches up. Messages Austin hasn't seen reach him by email.
+// API up at the next due time, and any later wake catches up. Messages the user hasn't seen reach them by email.
 package schedules
 
 import (
@@ -22,7 +22,7 @@ import (
 // missedReason is all Nori can say about an occurrence that ran late: nothing ran it on time.
 const missedReason = "Nori wasn't running at that time"
 
-// Mailer sends one notification to Austin.
+// Mailer sends one notification to the user.
 type Mailer interface {
 	Send(ctx context.Context, subject, body string) error
 }
@@ -122,8 +122,8 @@ func (s *Service) message(schedule state.Schedule, fire state.ScheduleFire, loca
 	if schedule.Kind != state.ScheduleReminder {
 		text := fmt.Sprintf("I didn't run your scheduled task at %s, because %s. It was: %s\n\nI can run it once now if you'd like.",
 			due, missedReason, clip(schedule.Text, 300))
-		note := "Missed schedule notice: the scheduled task " + schedule.ID + " Austin set up earlier didn't run at " + due +
-			" because " + missedReason + ". Nothing ran. If he asks for it now, use change_schedule run_now once; don't " +
+		note := "Missed schedule notice: the scheduled task " + schedule.ID + " the user set up earlier didn't run at " + due +
+			" because " + missedReason + ". Nothing ran. If they ask for it now, use change_schedule run_now once; don't " +
 			"run it more than once for missed times."
 		return state.ScheduleMessage{Note: note, Text: text, Protocol: protocol(note, text)}
 	}
@@ -134,8 +134,8 @@ func (s *Service) message(schedule state.Schedule, fire state.ScheduleFire, loca
 			text += fmt.Sprintf(" It also covers %d later time(s) that passed meanwhile.", fire.Missed)
 		}
 	}
-	note := "Scheduled reminder: Austin set up reminder " + schedule.ID + " earlier, and it was delivered now. It is his own " +
-		"earlier request, not a new message, and asks for nothing more unless he replies."
+	note := "Scheduled reminder: the user set up reminder " + schedule.ID + " earlier, and it was delivered now. It is their own " +
+		"earlier request, not a new message, and asks for nothing more unless they reply."
 	return state.ScheduleMessage{Note: note, Text: text, Protocol: protocol(note, text), Urgent: true}
 }
 

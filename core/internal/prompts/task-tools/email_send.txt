@@ -1,0 +1,1 @@
+Propose one plain-text email from the user's account to one recipient. Runs only after they approve the exact message. Must be the only call in its batch.

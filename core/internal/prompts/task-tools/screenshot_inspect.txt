@@ -1,0 +1,1 @@
+Ask one question about a screenshot this task saved. Returns what a separate read of the image observed.

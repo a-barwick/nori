@@ -234,7 +234,7 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 		switch cmd.Kind {
 		case state.CommandStart, state.CommandSteer:
 			if action != nil {
-				closed := map[string]any{"voided": true, "operation_id": action.Operation, "reason": "Austin changed the task instructions, so nothing was sent. Propose again if the write is still needed."}
+				closed := map[string]any{"voided": true, "operation_id": action.Operation, "reason": "The user changed the task instructions, so nothing was sent. Propose again if the write is still needed."}
 				out.ActionClosed = "voided"
 				if out.Decision == state.CommandDecline {
 					closed, out.ActionClosed = map[string]any{"declined": true, "operation_id": action.Operation, "reason": declinedReason}, "declined"
@@ -243,9 +243,9 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 				action, out.Decision, out.DecisionID = nil, "", ""
 			}
 			if q != nil && q.CallID != "" {
-				superseded := map[string]any{"superseded": true, "reason": "Austin changed the task instructions."}
+				superseded := map[string]any{"superseded": true, "reason": "The user changed the task instructions."}
 				if q.Kind == state.QuestionWork {
-					superseded["reason"] = "Austin changed the task instructions, so this request is closed and any subtask started for it was stopped. Ask again if the work is still needed."
+					superseded["reason"] = "The user changed the task instructions, so this request is closed and any subtask started for it was stopped. Ask again if the work is still needed."
 				}
 				messages = append(messages, transcript.ToolResultMessage(q.CallID, questionTool(q), superseded))
 			}
@@ -302,7 +302,7 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 				q = nil
 				out.QuestionResolved = true
 				messages = append(messages, transcript.UserText(
-					fmt.Sprintf("Austin approved another $%.2f of model spend. Continue the task.", agent.BudgetUSD)))
+					fmt.Sprintf("The user approved another $%.2f of model spend. Continue the task.", agent.BudgetUSD)))
 			}
 		}
 		out.Position = cmd.Position
@@ -385,7 +385,7 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	if in.ReadOnly && toolEffect(call.Name) != "read" {
 		result = map[string]any{
 			"outcome":      "needs_input",
-			"error":        "Completion correction permits reads only. Ask Austin before further writes or shell execution.",
+			"error":        "Completion correction permits reads only. Ask the user before further writes or shell execution.",
 			"effect_class": "read",
 			"operation_id": in.OperationID,
 		}

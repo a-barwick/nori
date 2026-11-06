@@ -1,0 +1,1 @@
+Start a shell command on the computer as a background job that may run for up to 60 minutes. Returns a job_id. The job keeps running across corrections and questions, and stops when the task ends.

@@ -301,7 +301,7 @@ journey("a long conversation stays within budget and an early correction survive
     const items = [...prompt.previous_summary.items];
     for (const turn of prompt.turns) {
       for (const message of turn.messages) {
-        if (message.from === "Austin" && message.text.includes("never before 10am")) {
+        if (message.from === "user" && message.text.includes("never before 10am")) {
           correctionID = message.input_id;
           items.push({ kind: "correction", quote: "never book anything before 10am", input_id: message.input_id, note: "replaces the 9am rule" });
           // A paraphrase falls back to Austin's whole message; a quote from a stranger is dropped.
