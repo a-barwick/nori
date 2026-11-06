@@ -42,7 +42,8 @@ var lastExportWarning atomic.Int64
 
 // Init is called once per process, after loading its settings. Export
 // failures never prevent Nori from starting or processing work.
-func Init(ctx context.Context, service string, cfg settings.Observability) func(context.Context) error {
+func Init(ctx context.Context, service string, s settings.Settings) func(context.Context) error {
+	cfg := s.Observability
 	sessionEnvironment = firstNonempty(cfg.SentryEnvironment, "development")
 	captureContent = cfg.CaptureContent
 	credentials = cfg.Credentials
@@ -57,7 +58,7 @@ func Init(ctx context.Context, service string, cfg settings.Observability) func(
 		}
 	}))
 
-	release := firstNonempty(cfg.SentryRelease, cfg.Revision, cfg.BuildID, "development")
+	release := firstNonempty(cfg.SentryRelease, cfg.Revision, s.Temporal.BuildID, "development")
 	environment := cfg.SentryEnvironment
 	if environment == "" {
 		environment = "development"

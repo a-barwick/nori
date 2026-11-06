@@ -12,7 +12,7 @@ import (
 )
 
 // config is the worker's release identity, polling windows and capabilities. It is
-// read per run, so a missing release surfaces on the request that needs it.
+// checked per run from the startup settings, so a missing release fails the request that needs it.
 type config struct {
 	build, deployment      string
 	pollWindow, idleWindow time.Duration

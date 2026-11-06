@@ -26,7 +26,7 @@ func main() {
 	platform.Configure(s)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	stopTelemetry := observability.Init(ctx, "nori-api", s.Observability)
+	stopTelemetry := observability.Init(ctx, "nori-api", s)
 	defer observability.Shutdown(stopTelemetry)
 	waker, err := platform.Waker(ctx, s, true)
 	if err != nil {

@@ -40,19 +40,21 @@ type Client struct {
 	ledger                            Ledger
 }
 
-var (
-	configured settings.Spend
-	emulator   bool
-)
+// configured is this process's settings. Nil means Configure was never called, and every model call is refused
+// rather than run outside an allowance the process may be under.
+var configured *settings.Settings
 
-// Configure sets this process's spend settings. emulator is true when Firestore points at an emulator. Every process
-// that makes model calls calls it once at startup, before any call.
-func Configure(s settings.Spend, firestoreEmulator bool) { configured, emulator = s, firestoreEmulator }
+// Configure sets this process's spend settings. Every process that makes model calls calls it once at startup,
+// before any call.
+func Configure(s settings.Settings) { configured = &s }
 
 func fromSettings() (*Client, error) {
-	scope, profile := configured.Scope, configured.Profile
+	if configured == nil {
+		return nil, Blocked("spend settings were not configured for this process")
+	}
+	scope, profile := configured.Spend.Scope, configured.Spend.Profile
 	if scope == "" && profile == "" {
-		if configured.Environment == "sandbox" || configured.StoreDatabase == "nori-sandbox" {
+		if configured.Spend.Environment == "sandbox" || configured.Store.Database == "nori-sandbox" {
 			return nil, Blocked("sandbox requires NORI_SPEND_SCOPE and NORI_SPEND_PROFILE")
 		}
 		return nil, nil
@@ -61,11 +63,11 @@ func fromSettings() (*Client, error) {
 	if err != nil || len(raw) != 32 || scope != strings.ToLower(scope) || (profile != "ci" && profile != "feature") {
 		return nil, Blocked("NORI_SPEND_SCOPE must be a SHA-256 hex ID and NORI_SPEND_PROFILE must be ci or feature")
 	}
-	project := configured.Project
+	project := configured.Store.Project
 	if project == "" {
 		return nil, Blocked("NORI_PROJECT_ID must be configured")
 	}
-	return &Client{project: project, database: configured.Database, scope: scope, profile: profile}, nil
+	return &Client{project: project, database: configured.Spend.Database, scope: scope, profile: profile}, nil
 }
 
 // Enabled reports whether this process runs under a development spend allowance.
@@ -84,7 +86,7 @@ func (c *Client) open(ctx context.Context) error {
 	if openLedger == nil {
 		return Blocked("budget ledger is not configured")
 	}
-	ledger, err := openLedger(ctx, LedgerConfig{Project: c.project, Database: c.database, Emulator: emulator})
+	ledger, err := openLedger(ctx, LedgerConfig{Project: c.project, Database: c.database, Emulator: configured.Store.FirestoreEmulator != ""})
 	if err != nil {
 		if IsControlError(err) {
 			return err
@@ -131,7 +133,7 @@ func ValidateConfiguration() error {
 // CIContextStart isolates a synthetic run's context without deleting retained
 // conversations. Retrying a scope keeps the same starting point and allowance.
 func CIContextStart(ctx context.Context) (time.Time, error) {
-	if configured.Profile != "ci" {
+	if configured == nil || configured.Spend.Profile != "ci" {
 		return time.Time{}, nil
 	}
 	c, err := fromSettings()

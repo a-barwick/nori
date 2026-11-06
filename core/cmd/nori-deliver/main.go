@@ -20,7 +20,7 @@ func main() {
 	platform.Configure(s)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	stopTelemetry := observability.Init(ctx, "nori-deliver", s.Observability)
+	stopTelemetry := observability.Init(ctx, "nori-deliver", s)
 	defer observability.Shutdown(stopTelemetry)
 	waker, e := platform.Waker(ctx, s, false)
 	if e != nil {

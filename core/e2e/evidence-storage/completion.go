@@ -81,7 +81,7 @@ func completionBoundaries(ctx context.Context, store state.ConversationStore, id
 			return nil, err
 		}
 	}
-	shutdown := observability.Init(ctx, "nori-m4-unpaid-boundary", settings.FromEnvironment().Observability)
+	shutdown := observability.Init(ctx, "nori-m4-unpaid-boundary", settings.FromEnvironment())
 	flushed := false
 	defer func() {
 		if !flushed {

@@ -57,7 +57,7 @@ func TaskTool(name string) string {
 	return description
 }
 
-var runtime = func() map[string]*template.Template {
+var runtimeStrings = func() map[string]*template.Template {
 	entries, err := files.ReadDir("runtime")
 	if err != nil {
 		panic(err)
@@ -73,7 +73,7 @@ var runtime = func() map[string]*template.Template {
 // Runtime renders one runtime string with data, which may be nil when the string has no placeholders. A missing
 // file or field is a build mistake.
 func Runtime(name string, data any) string {
-	t, ok := runtime[name]
+	t, ok := runtimeStrings[name]
 	if !ok {
 		panic("prompts: no runtime string " + name)
 	}

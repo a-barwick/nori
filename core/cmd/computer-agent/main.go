@@ -30,7 +30,7 @@ func main() {
 	if *proxy {
 		service = "nori-computer-host"
 	}
-	stopTelemetry := observability.Init(ctx, service, settings.FromEnvironment().Observability)
+	stopTelemetry := observability.Init(ctx, service, settings.FromEnvironment())
 	defer observability.Shutdown(stopTelemetry)
 	idleStop := make(chan struct{})
 	var handler http.Handler

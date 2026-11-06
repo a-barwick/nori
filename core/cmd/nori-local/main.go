@@ -27,7 +27,7 @@ func main() {
 	platform.Configure(s)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	stopTelemetry := observability.Init(ctx, "nori-local", s.Observability)
+	stopTelemetry := observability.Init(ctx, "nori-local", s)
 	defer observability.Shutdown(stopTelemetry)
 	// The conversation wakes its own loop; only worker wakes can leave the process.
 	workers, err := platform.Waker(ctx, s, false)

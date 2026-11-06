@@ -78,5 +78,5 @@ func Dispatcher(s settings.Settings, store state.ConversationStore, engine dispa
 // allowance. Every process calls it once, right after settings.Load.
 func Configure(s settings.Settings) {
 	task.Configure(s.Temporal)
-	spend.Configure(s.Spend, s.Store.FirestoreEmulator != "")
+	spend.Configure(s)
 }

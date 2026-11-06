@@ -100,16 +100,14 @@ type Spend struct {
 	Scope, Profile, Database string
 	// Environment is "sandbox" for a sandbox deployment, which must run under an allowance.
 	Environment string
-	// Project and StoreDatabase are the store's, for the ledger and the sandbox check.
-	Project, StoreDatabase string
 }
 
 type Observability struct {
 	SentryDSN, SentryEnvironment, SentryRelease string
 	// SampleRate and the hourly limits stay text: an invalid value falls back to its default.
 	SampleRate, ErrorsPerHour, LogsPerHour, MetricsPerHour string
-	// Revision and Service are set by Cloud Run. BuildID is the Temporal worker build.
-	Revision, Service, BuildID                                                           string
+	// Revision and Service are set by Cloud Run.
+	Revision, Service                                                                    string
 	ArizeProject, ArizeProjectURL, ArizeSpace, ArizeKey, ArizeEndpoint, ArizeCertificate string
 	// CaptureContent sends redacted prompt and reply text to Arize.
 	CaptureContent bool
@@ -192,13 +190,13 @@ func FromEnvironment() Settings {
 		AppURL: os.Getenv("NORI_APP_URL"), NotifyEmail: os.Getenv("NORI_NOTIFY_EMAIL"),
 		Spend: Spend{
 			Scope: os.Getenv("NORI_SPEND_SCOPE"), Profile: os.Getenv("NORI_SPEND_PROFILE"), Database: get("NORI_SPEND_DATABASE", "nori-sandbox"),
-			Environment: os.Getenv("NORI_ENVIRONMENT"), Project: store.Project, StoreDatabase: store.Database,
+			Environment: os.Getenv("NORI_ENVIRONMENT"),
 		},
 		Observability: Observability{
 			SentryDSN: strings.TrimSpace(os.Getenv("SENTRY_DSN")), SentryEnvironment: os.Getenv("SENTRY_ENVIRONMENT"), SentryRelease: os.Getenv("SENTRY_RELEASE"),
 			SampleRate: os.Getenv("SENTRY_TRACES_SAMPLE_RATE"), ErrorsPerHour: os.Getenv("NORI_SENTRY_ERRORS_PER_HOUR"),
 			LogsPerHour: os.Getenv("NORI_SENTRY_LOGS_PER_HOUR"), MetricsPerHour: os.Getenv("NORI_SENTRY_METRICS_PER_HOUR"),
-			Revision: os.Getenv("K_REVISION"), Service: os.Getenv("K_SERVICE"), BuildID: temporal.BuildID,
+			Revision: os.Getenv("K_REVISION"), Service: os.Getenv("K_SERVICE"),
 			ArizeProject: get("ARIZE_PROJECT_NAME", "nori"), ArizeProjectURL: strings.TrimSpace(os.Getenv("ARIZE_PROJECT_URL")),
 			ArizeSpace: os.Getenv("ARIZE_SPACE_ID"), ArizeKey: os.Getenv("ARIZE_API_KEY"),
 			ArizeEndpoint: get("ARIZE_OTLP_ENDPOINT", "https://otlp.arize.com/v1/traces"), ArizeCertificate: os.Getenv("ARIZE_OTLP_CERTIFICATE"),
