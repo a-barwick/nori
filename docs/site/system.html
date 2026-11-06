@@ -11,7 +11,7 @@
 <h1>Service overview</h1>
 <p class="lede">One agent service runs the assistant and independent chats, with saved state shared across its processes.</p>
 <div class="card"><div class="flow">
-<div class="node"><b>Browser clients</b><small>The assistant and chat client send messages through the same Next.js server.</small></div>
+<div class="node"><b>Browser clients</b><small>The assistant and its Chats tab send messages through the same Next.js server.</small></div>
 <div class="arrow">↓ <span class="lbl">owner-checked HTTP requests</span></div>
 <div class="node outer"><b>Go agent service</b><small>Saves inputs and runs conversation turns.</small></div>
 <div class="arrow">↓ <span class="lbl">accepted conversation work</span></div>
@@ -46,7 +46,7 @@
 <tr><td>Temporal</td><td>Task execution progress and durable waits.</td></tr>
 <tr><td>File storage</td><td>Uploaded bytes, screenshots and saved result files.</td></tr>
 </table></div>
-<p><a href="records.html">Records and delivery</a> covers task records. <a href="chat-client.html">Chat client</a> covers foreground limits and controls.</p>
+<p><a href="records.html">Records and delivery</a> covers task records. <a href="chat-client.html">Chats</a> covers foreground limits and controls.</p>
 </section>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/app/app.go</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/conversation/runner.go</code> · <code>core/internal/conversation/tasks.go</code> · <code>core/internal/task/client.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/taskworker/register.go</code> · <code>core/internal/state/chat.go</code> · <code>core/internal/state/firestore/chat.go</code> · <code>core/internal/state/firestore/database.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/spend/client.go</code> · <code>web/src/lib/runtime/forward.ts</code></p></details>
 </body>
