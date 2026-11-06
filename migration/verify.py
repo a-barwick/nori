@@ -117,6 +117,7 @@ def main():
               "scope": "Isolated local verification; no production deployment", "suite": args.suite,
               "acceptance": []}
     report["source_hashes"] = source_hashes()
+    temporal_namespace = None
     try:
         report["commit"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
         report["dirty"] = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
@@ -200,6 +201,18 @@ def main():
             for tool in ("bun", "go", "temporal"):
                 if not shutil.which(tool):
                     raise ValueError(f"Missing executable: {tool}")
+            # A run owns its namespace, not the server or anybody else's work.
+            # Fresh namespaces bound deployment counts even on a long-lived dev server.
+            namespace = "nori-verify-" + uuid.uuid4().hex
+            try:
+                subprocess.run(["temporal", "--address", env["TEMPORAL_ADDRESS"], "--namespace", namespace,
+                                "operator", "namespace", "create"], env=environment(), check=True,
+                               capture_output=True, text=True, timeout=30)
+            except subprocess.CalledProcessError as error:
+                raise ValueError(error.stderr.strip() or str(error)) from error
+            temporal_namespace = (env["TEMPORAL_ADDRESS"], namespace)
+            env["TEMPORAL_NAMESPACE"] = namespace
+            report["temporal_namespace"] = namespace
             suites = PLAN["baseline_suites"] if args.mode == "baseline" else PLAN.get("integration_suites", [])
             if not suites:
                 raise ValueError("No integration suites are registered")
@@ -219,6 +232,18 @@ def main():
                 report["acceptance"] = ["assistant-regression"] if report["full_baseline"] else sorted({a for s in suites for a in s.get("acceptance", [])})
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         report["reason"] = str(error)
+    finally:
+        if temporal_namespace:
+            address, namespace = temporal_namespace
+            cleanup = run(["temporal", "--address", address, "--namespace", namespace,
+                           "operator", "namespace", "delete", "--yes"],
+                          environment(), directory / "temporal-cleanup.log", timeout=60)
+            cleanup["id"] = "temporal-cleanup"
+            report["checks"].append(cleanup)
+            if cleanup["status"] != "passed":
+                report["status"] = "failed"
+                message = "Could not remove this run's Temporal namespace"
+                report["reason"] = f"{report['reason']}; {message}" if report.get("reason") else message
     path = directory / "report.json"
     path.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))

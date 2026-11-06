@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -6,18 +6,14 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 // Unpaid: memory and the outer context budget through the real API, Firestore emulator and Temporal, with scripted
-// models. NORI_M10_E2E=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8095 TEMPORAL_ADDRESS=127.0.0.1:7245 bun test core/e2e/memory.test.js
+// models. Run through the verifier so its temporary Temporal namespace is cleaned up:
+// FIRESTORE_EMULATOR_HOST=127.0.0.1:8095 TEMPORAL_ADDRESS=127.0.0.1:7245 python3 migration/verify.py baseline --suite 10
 const live = process.env.NORI_M10_E2E === "1";
 const journey = live ? test : test.skip;
 const core = resolve(import.meta.dir, "..");
-const unique = crypto.randomUUID().slice(0, 8);
 const emulator = process.env.FIRESTORE_EMULATOR_HOST;
 const temporalAddress = process.env.TEMPORAL_ADDRESS;
-const database = `nori-m10-${unique}`;
-const deployment = `nori-m10-${unique}`;
-const build = `m10-${unique}`;
-const documents = `http://${emulator}/v1/projects/bot-111549/databases/${database}/documents`;
-const owner = `${documents}/owners/austinbarwickdavis@gmail.com`;
+let database, deployment, build, documents, owner;
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 let directory, address, api, worker, env;
 const servers = [];
@@ -102,7 +98,7 @@ function serve(handler) {
   });
 }
 function cli(...args) {
-  const result = spawnSync("temporal", ["--address", temporalAddress, "--namespace", "default", "--output", "json", ...args], { encoding: "utf8", timeout: 20_000 });
+  const result = spawnSync("temporal", ["--address", temporalAddress, "--namespace", process.env.TEMPORAL_NAMESPACE ?? "default", "--output", "json", ...args], { encoding: "utf8", timeout: 20_000 });
   if (result.status !== 0) throw new Error(`Temporal ${args.slice(0, 2).join(" ")} failed: ${result.stderr}`);
   return result.stdout.trim() ? JSON.parse(result.stdout) : {};
 }
@@ -115,7 +111,9 @@ function start(name) {
 }
 async function stop(child, signal = "SIGTERM") {
   if (child && child.exitCode === null && child.signalCode === null) child.kill(signal);
-  if (child) await child.exited;
+  if (!child) return;
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
+  try { await child.exited; } finally { clearTimeout(timeout); }
 }
 async function startAPI() {
   api = start("nori-local");
@@ -177,12 +175,28 @@ beforeAll(async () => {
   const port = 20000 + Math.floor(Math.random() * 20000);
   address = `http://127.0.0.1:${port}`;
   env = {
-    PATH: process.env.PATH, HOME: process.env.HOME, NORI_ENV_FILE: resolve(directory, "empty.env"), NORI_PROJECT_ID: "bot-111549", FIRESTORE_DATABASE_ID: database,
-    FIRESTORE_EMULATOR_HOST: emulator, NORI_LOCAL_ARTIFACT_DIR: resolve(directory, "artifacts"), PORT: String(port), TEMPORAL_ADDRESS: temporalAddress, TEMPORAL_NAMESPACE: "default", TEMPORAL_LOCAL: "true",
-    TEMPORAL_TASK_QUEUE: deployment, TEMPORAL_DEPLOYMENT_NAME: deployment, TEMPORAL_BUILD_ID: build, COMPUTER_ZONE: "invalid-e2e-zone", COMPUTER_INSTANCE: "no-computer-e2e", NORI_EXECUTION_MODE: "temporal",
+    PATH: process.env.PATH, HOME: process.env.HOME, NORI_ENV_FILE: resolve(directory, "empty.env"), NORI_PROJECT_ID: "bot-111549",
+    FIRESTORE_EMULATOR_HOST: emulator, NORI_LOCAL_ARTIFACT_DIR: resolve(directory, "artifacts"), PORT: String(port), TEMPORAL_ADDRESS: temporalAddress, TEMPORAL_NAMESPACE: process.env.TEMPORAL_NAMESPACE ?? "default", TEMPORAL_LOCAL: "true",
+    COMPUTER_ZONE: "invalid-e2e-zone", COMPUTER_INSTANCE: "no-computer-e2e", NORI_EXECUTION_MODE: "temporal",
     OPENAI_API_KEY: "fake", JEV_API_KEY: "fake", OPENROUTER_API_KEY: "fake", NORI_E2E_MODEL_URL: modelURL, NORI_E2E_OPENAI_URL: outerURL,
     NORI_E2E_GOOGLE_URL: googleURL, GOOGLE_CALENDAR_CLIENT_ID: "fake", GOOGLE_CALENDAR_CLIENT_SECRET: "fake", GOOGLE_CALENDAR_REFRESH_TOKEN: "fake", GOOGLE_CALENDAR_ACCOUNT: "owner@example.test",
   };
+}, 300_000);
+
+beforeEach(async () => {
+  if (!live) return;
+  // Stop each test's runtime before resetting its fakes. A published reply does
+  // not mean background compaction has finished.
+  Object.assign(outer, { calls: 0, requests: [], text: "Noted.", onUser: null, afterReply: null });
+  Object.assign(terra, { summaries: [], summarize: (prompt) => ({ items: prompt.previous_summary.items, gist: "" }) });
+  google.sent = [];
+  for (const name of Object.keys(scripts)) delete scripts[name];
+  const unique = crypto.randomUUID().slice(0, 8);
+  database = deployment = `nori-m10-${unique}`;
+  build = `m10-${unique}`;
+  documents = `http://${emulator}/v1/projects/bot-111549/databases/${database}/documents`;
+  owner = `${documents}/owners/austinbarwickdavis@gmail.com`;
+  Object.assign(env, { FIRESTORE_DATABASE_ID: database, TEMPORAL_TASK_QUEUE: deployment, TEMPORAL_DEPLOYMENT_NAME: deployment, TEMPORAL_BUILD_ID: build });
   const control = await fetch(`${documents}/system/control`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: { paused: { booleanValue: false } } }) });
   if (!control.ok) throw new Error("control document could not be set");
   await startAPI();
@@ -192,13 +206,20 @@ beforeAll(async () => {
   await settled();
 }, 300_000);
 
+afterEach(async () => {
+  if (!live) return;
+  await Promise.all([stop(worker), stop(api)]);
+  if (database) await fetch(`http://${emulator}/emulator/v1/projects/bot-111549/databases/${database}/documents`, { method: "DELETE", signal: AbortSignal.timeout(5_000) });
+}, 15_000);
+
 afterAll(async () => {
   if (!live) return;
-  await stop(worker);
-  await stop(api);
-  for (const server of servers) server.close();
-  await fetch(`http://${emulator}/emulator/v1/projects/bot-111549/databases/${database}/documents`, { method: "DELETE" }).catch(() => {});
-});
+  await Promise.all([stop(worker), stop(api)]);
+  await Promise.all(servers.map((server) => {
+    server.closeAllConnections();
+    return new Promise((done) => server.close(done));
+  }));
+}, 15_000);
 
 const remember = (text, replaces = null, about = "Austin") => ({ name: "remember", arguments: { text, about, replaces } });
 
@@ -314,7 +335,18 @@ journey("a long conversation stays within budget and an early correction survive
   };
   await say("Book my meetings no earlier than 9am.");
   await say("Correction: never before 10am. That replaces the 9am rule — never book anything before 10am.");
-  for (let i = 0; i < 38; i++) await say(`Planning question number ${i}: what should I think about next?`);
+  for (let i = 0; i < 38; i++) {
+    await say(`Planning question number ${i}: what should I think about next?`);
+    if (i === 6) {
+      // Nine long turns trigger compaction. Let its saved summary catch up
+      // before another input cancels it; reply publication happens earlier.
+      await until(async () => {
+        const response = await fetch(`${owner}/conversation/summary`);
+        if (!response.ok) return null;
+        return (await response.json()).fields;
+      }, (fields) => fields?.through?.timestampValue, "the first persisted summary");
+    }
+  }
   const traces = (await snapshot()).traces.filter((trace) => trace.status === "completed");
   const sizes = traces.map((trace) => trace.context_bytes);
   console.log(`context bytes, newest first: ${sizes.join(" ")}`);
