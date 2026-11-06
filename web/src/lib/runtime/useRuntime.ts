@@ -144,7 +144,9 @@ export function useRuntime(agentMode = false) {
   const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string>();
   const [visible, setVisible] = useState(true);
-  const [shownMessageID, setShownMessageID] = useState("");
+  const [shownMessageIDs, setShownMessageIDs] = useState<Set<string>>(() => new Set());
+  const shownMessageID = session?.messages.findLast((message) => message.role === "assistant" && shownMessageIDs.has(message.id))?.id ?? "";
+  const [deliveryRetry, setDeliveryRetry] = useState(0);
   const [readRetry, setReadRetry] = useState(0);
   const controllers = useRef(new Set<AbortController>());
   const submissions = useRef(new Set<string>());
@@ -306,7 +308,7 @@ export function useRuntime(agentMode = false) {
       .finally(() => { currentControllers.delete(controller); if (!controller.signal.aborted) setLoading(false); });
     const reconnect = () => {
       setVisible(!document.hidden);
-      if (!document.hidden) setStreamAwake(true);
+      if (!document.hidden) { setStreamAwake(true); setDeliveryRetry((attempt) => attempt + 1); }
       if (!document.hidden) void refresh().then((data) => {
         setError("");
         for (const item of pendingRef.current) if (!acknowledged(data, item.id)) void submit(item);
@@ -334,23 +336,37 @@ export function useRuntime(agentMode = false) {
     return () => clearTimeout(timer);
   }, [busy, streamAwake]);
 
-  // A browser that shows a reply reports its results as delivered. Only a visible tab counts.
+  // Remember every reply exposed in this tab, independently of the shared read position. Reading a newer
+  // reply (here or elsewhere) does not prove that an older reply's results were shown.
+  const markShown = useCallback((ids: string[]) => {
+    if (document.hidden) return;
+    setShownMessageIDs((current) => ids.every((id) => current.has(id)) ? current : new Set([...current, ...ids]));
+  }, []);
+
   const reported = useRef(new Set<string>());
   useEffect(() => {
-    if (!session || !visible) return;
-    const shown = new Set(session.messages.flatMap((message) => message.result_ids ?? []));
-    const ids = (session.results ?? []).filter((result) => shown.has(result.id) && !result.delivered_at && !reported.current.has(result.id)).map((result) => result.id);
+    if (!session || !visible || document.hidden || !navigator.onLine) return;
+    const reports = reported.current;
+    const shown = new Set(session.messages.filter((message) => message.role === "assistant" && shownMessageIDs.has(message.id)).flatMap((message) => message.result_ids ?? []));
+    const ids = (session.results ?? []).filter((result) => shown.has(result.id) && !result.delivered_at && !reports.has(result.id)).map((result) => result.id);
     if (!ids.length) return;
-    for (const id of ids) reported.current.add(id);
-    void post("delivered", { ids }, undefined, agentMode).catch(() => { for (const id of ids) reported.current.delete(id); });
-  }, [session, visible, agentMode]);
+    const controller = new AbortController();
+    let delivered = false;
+    let timer: ReturnType<typeof setTimeout>;
+    for (const id of ids) reports.add(id);
+    void post("delivered", { ids }, controller.signal, agentMode).then(() => {
+      delivered = true;
+    }).catch(() => {
+      if (!controller.signal.aborted) timer = setTimeout(() => setDeliveryRetry((attempt) => attempt + 1), 5000);
+    });
+    return () => {
+      controller.abort(); clearTimeout(timer);
+      if (!delivered) for (const id of ids) reports.delete(id);
+    };
+  }, [session, shownMessageIDs, visible, agentMode, deliveryRetry]);
 
-  // Thread reports replies that entered its viewport. Keep the newest one pending across failed requests; retries
-  // use the same message and the service's mark only moves forward.
-  const markRead = useCallback((id: string) => {
-    const messages = session?.messages ?? [];
-    setShownMessageID((current) => messages.findIndex((message) => message.id === id) > messages.findIndex((message) => message.id === current) ? id : current);
-  }, [session?.messages]);
+  // The newest exposed reply advances the shared read position. Retries use the same message and the service's
+  // mark only moves forward, including when another session has already read beyond this tab.
   useEffect(() => {
     if (!visible || document.hidden || !navigator.onLine || !shownMessageID) return;
     const messages = session?.messages ?? [];
@@ -517,5 +533,5 @@ export function useRuntime(agentMode = false) {
     removeFile: (id: string) => setDraftFiles((current) => current.filter((file) => file.id !== id)), error: error || streamError, loading, loadingOlder, pending, selectedId, setSelectedId,
     activeTasks, selected, tasksUnavailable, busy, conversationBusy, taskCommands, taskDrafts,
     setTaskDraft: (id: string, text: string) => setTaskDrafts((current) => ({ ...current, [id]: text })),
-    refreshHistory, loadOlder, send, retry: submit, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand, markRead };
+    refreshHistory, loadOlder, send, retry: submit, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand, markShown };
 }

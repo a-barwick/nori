@@ -112,10 +112,10 @@ export function Thread({
   hasOlder = false,
   loadingOlder = false,
   onLoadOlder,
-  onRead,
+  onShown,
   readPosition,
 }: {
-  onRead?: (messageID: string) => void;
+  onShown?: (messageIDs: string[]) => void;
   readPosition?: ReadPosition;
   hasOlder?: boolean;
   loadingOlder?: boolean;
@@ -162,25 +162,25 @@ export function Thread({
   // state while hidden, then report only what is still visible when the tab is shown again.
   useEffect(() => {
     const root = scroller.current;
-    if (!root || !onRead) return;
-    const shown = new Set<string>();
+    if (!root || !onShown) return;
+    const shown = new Set<Element>();
     const report = () => {
       if (document.hidden) return;
-      const newest = items.findLast((item) => item.sender === "nori" && shown.has(item.id));
-      if (newest) onRead(newest.id);
+      const ids = new Set([...shown].map((node) => (node as HTMLElement).dataset.itemId));
+      const replies = items.filter((item) => item.sender === "nori" && ids.has(item.id));
+      if (replies.length) onShown(replies.map((item) => item.id));
     };
     const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) {
-        const id = (entry.target as HTMLElement).dataset.itemId!;
-        if (entry.isIntersecting && entry.intersectionRect.height > 0) shown.add(id);
-        else shown.delete(id);
+        if (entry.isIntersecting && entry.intersectionRect.height > 0) shown.add(entry.target);
+        else shown.delete(entry.target);
       }
       report();
     }, { root, rootMargin: `${presence ? -104 : -56}px 0px 0px 0px` });
     root.querySelectorAll<HTMLElement>("[data-item-id]").forEach((node) => observer.observe(node));
     document.addEventListener("visibilitychange", report);
     return () => { observer.disconnect(); document.removeEventListener("visibilitychange", report); };
-  }, [items, onRead, presence]);
+  }, [items, onShown, presence]);
 
 
   useLayoutEffect(() => {
