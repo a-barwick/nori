@@ -1,6 +1,6 @@
 import {beforeAll,afterAll,expect,test} from 'bun:test';
 import {createHarness,until} from './shared-service-harness';
-import {follow,apply} from '../../chat/src/contract';
+import {follow,apply} from '../../web/src/lib/chat/contract';
 const live=process.env.NORI_SHARED_SERVICE_E2E==='1';const journey=live?test:test.skip;let h;
 const headers={'content-type':'application/json'};
 async function request(path,body,status=200){const res=await fetch(h.address+'/v1/'+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:JSON.stringify(body)});const value=await res.json();expect(res.status).toBe(status);return value}

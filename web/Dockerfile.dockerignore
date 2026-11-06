@@ -1,8 +1,6 @@
 **
 !web/
 !web/**
-!chat/
-!chat/**
 **/node_modules
 **/.next
 **/.env*
@@ -12,4 +10,3 @@
 **/coverage
 **/*.log
 **/*.tsbuildinfo
-web/public/chat

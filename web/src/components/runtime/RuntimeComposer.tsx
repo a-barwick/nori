@@ -1,13 +1,15 @@
 "use client";
 
 import { useLayoutEffect, useRef } from "react";
-import { ArrowDown, ArrowUp, Paperclip, RotateCw, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Paperclip, RotateCw, Square, X } from "lucide-react";
 import type { DraftFile } from "@/lib/types";
 
 const ACCEPT = "image/png,image/jpeg,image/webp,application/pdf,text/csv,.csv";
 
 /** Chat composer: text, plus images, PDFs and CSV files. Each file uploads when it's picked. */
 export function RuntimeComposer({
+  accept = ACCEPT,
+  onStop,
   draft,
   setDraft,
   disabled,
@@ -19,6 +21,10 @@ export function RuntimeComposer({
   onRetryFile,
   onRemoveFile,
 }: {
+  /** File types the picker offers. */
+  accept?: string;
+  /** While a reply streams, the send button stops it instead. */
+  onStop?: () => void;
   draft: string;
   setDraft: (draft: string) => void;
   disabled: boolean;
@@ -89,7 +95,7 @@ export function RuntimeComposer({
               type="file"
               multiple
               hidden
-              accept={ACCEPT}
+              accept={accept}
               aria-label="Choose files to attach"
               onChange={(e) => {
                 onAttach([...(e.target.files ?? [])]);
@@ -126,14 +132,25 @@ export function RuntimeComposer({
               aria-label="Message Nori"
               className="scrollbar-quiet max-h-[196px] min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1 text-input text-ink transition-[height] duration-150 ease-out placeholder:text-ink-3 focus-visible:outline-none disabled:opacity-60"
             />
-            <button
-              type="submit"
-              aria-label="Send"
-              disabled={!canSend}
-              className="grid size-8 shrink-0 place-items-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:opacity-40"
-            >
-              <ArrowUp size={18} strokeWidth={2} />
-            </button>
+            {onStop ? (
+              <button
+                type="button"
+                aria-label="Stop reply"
+                onClick={onStop}
+                className="nova-send grid size-8 shrink-0 place-items-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover"
+              >
+                <Square size={14} strokeWidth={2} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                aria-label="Send"
+                disabled={!canSend}
+                className="nova-send grid size-8 shrink-0 place-items-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:opacity-40"
+              >
+                <ArrowUp size={18} strokeWidth={2} />
+              </button>
+            )}
           </div>
         </form>
       </div>

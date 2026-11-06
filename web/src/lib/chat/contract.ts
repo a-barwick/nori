@@ -1,4 +1,4 @@
-// HTTP contract between the Go service, the chat client and the offline fixture.
+// HTTP contract between the Go service, Nori's Chats tab and the offline fixture.
 export const CONTRACT = 'nori-chat-2';
 export const PREFIX = '/v1';
 export type Attachment = { id: string; name: string; media_type: string; size: number };

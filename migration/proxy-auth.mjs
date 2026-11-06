@@ -64,7 +64,7 @@ try {
   checks.push('authenticated same-origin create and read reach real service');
   passed = true;
 } finally {
-  const directory = resolve(import.meta.dirname, '../../.artifacts/migration/proxy', new Date().toISOString().replaceAll(':', '-'));
+  const directory = resolve(import.meta.dirname, '../.artifacts/migration/proxy', new Date().toISOString().replaceAll(':', '-'));
   await mkdir(directory, { recursive: true });
   await writeFile(resolve(directory, 'report.json'), JSON.stringify({ passed, target: target.origin, capabilities, checks }, null, 2));
   console.log(`Proxy evidence: ${directory}`);

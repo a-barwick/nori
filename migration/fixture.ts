@@ -1,5 +1,5 @@
 // Explicit offline HTTP fixture. No models, tools, credentials or durable storage.
-import { CONTRACT, PREFIX, type Conversation, type Event, type Message } from './src/contract.ts';
+import { CONTRACT, PREFIX, type Conversation, type Event, type Message } from '../web/src/lib/chat/contract.ts';
 
 export function createFixture(delay = 80) {
   const conversations = new Map<string, Conversation>();

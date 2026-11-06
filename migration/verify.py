@@ -26,7 +26,7 @@ def environment():
 def source_hashes():
     # Include new implementation files, but never ignored credentials, build output or evidence.
     files = subprocess.check_output(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "core", "web", "chat", "migration", "Makefile", "scripts"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "core", "web", "migration", "Makefile", "scripts"],
         cwd=ROOT, text=True).splitlines()
     return {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
             for name in sorted(set(files)) if (ROOT / name).is_file()}
@@ -38,12 +38,12 @@ def evidence_paths(mode, hashes, acceptance):
     if mode == "baseline":
         return runtime | {name for name in hashes if name.startswith("core/e2e/") and "shared-service" not in name}
     if mode == "browser":
-        return runtime | {name for name in hashes if name.startswith(("web/", "chat/"))} | {"core/e2e/shared-service-harness.js"}
+        return runtime | {name for name in hashes if name.startswith("web/")} | {"core/e2e/shared-service-harness.js", "migration/browser.mjs", "migration/proxy-auth.mjs"}
     if mode == "provider":
         return runtime | {"core/e2e/shared-service-live.test.js", "core/e2e/shared-service-harness.js", "migration/provider-evidence.py"}
     if acceptance == ["shared-budget"]:
         return runtime | {"migration/shared-budget.ts", "core/e2e/shared-service-harness.js"}
-    return runtime | {s["file"] for s in PLAN.get("integration_suites", [])} | {"core/e2e/shared-service-harness.js", "chat/src/contract.ts", "chat/fixture.ts"}
+    return runtime | {s["file"] for s in PLAN.get("integration_suites", [])} | {"core/e2e/shared-service-harness.js", "web/src/lib/chat/contract.ts", "migration/fixture.ts"}
 
 
 # The release before the shared service. Recovery upgrades from it and rolls back to it.
@@ -154,18 +154,18 @@ def main():
             if target.scheme != "http" or target.hostname != "127.0.0.1" or target.path not in ("", "/") or target.query or target.fragment or target.username or target.password:
                 raise ValueError("Target must be a loopback HTTP origin")
             if args.mode == "browser":
-                env = {**environment(), "CHAT_URL": args.url.rstrip("/") + "/chat/index.html", "CHAT_REPORT_DIR": str(directory / "browser")}
-                if os.environ.get("CHAT_BROWSER_EXECUTABLE"):
-                    env["CHAT_BROWSER_EXECUTABLE"] = os.environ["CHAT_BROWSER_EXECUTABLE"]
-                auth = run(["node", "chat/scripts/proxy-auth.mjs"], {**env, "NORI_PROXY_URL": args.url.rstrip("/")}, directory / "proxy.log")
+                env = {**environment(), "NORI_BROWSER_URL": args.url.rstrip("/") + "/", "NORI_BROWSER_REPORT_DIR": str(directory / "browser")}
+                if os.environ.get("NORI_BROWSER_EXECUTABLE"):
+                    env["NORI_BROWSER_EXECUTABLE"] = os.environ["NORI_BROWSER_EXECUTABLE"]
+                auth = run(["node", "migration/proxy-auth.mjs"], {**env, "NORI_PROXY_URL": args.url.rstrip("/")}, directory / "proxy.log")
                 report["checks"].append(auth)
                 if auth["status"] != "passed":
                     raise ValueError("Authenticated proxy verification failed")
-                result = run(["node", "chat/scripts/smoke.mjs"], env, directory / "browser.log")
+                result = run(["node", "migration/browser.mjs"], env, directory / "browser.log")
                 if result["status"] == "passed":
                     browser = json.loads((directory / "browser/report.json").read_text())
                     if not browser.get("passed") or browser.get("fixture") is not False:
-                        raise ValueError("Browser acceptance requires passing real-service evidence for both clients")
+                        raise ValueError("Browser acceptance requires passing real-service evidence for Nori and its Chats tab")
                     report["acceptance"] = ["browser-journey", "two-clients", "authorization"]
             else:
                 result = run(["bun", "--no-env-file", "test", "migration/contract.test.ts"], {**environment(), "MIGRATION_CONTRACT_URL": args.url}, directory / "contract.log", tests=True)
@@ -184,8 +184,6 @@ def main():
                     raise ValueError("A baseline suite is missing")
             commands = [
                 (["bun", "--no-env-file", "test", "migration/contract.test.ts", "migration/verifier.test.ts"], True),
-                (["bun", "--no-env-file", "run", "--cwd", "chat", "check"], False),
-                (["bun", "--no-env-file", "run", "--cwd", "chat", "build"], False),
             ]
             for index, (command, tests) in enumerate(commands):
                 result = run(command, environment(), directory / f"prep-{index}.log", tests=tests)

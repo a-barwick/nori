@@ -502,7 +502,7 @@ button.nova-assistant-name:hover { background: var(--fill-1); }
 .nova-runtime-notice { max-width: 920px; padding-left: 40px; padding-right: 40px; }
 .nova-composer > div { max-width: 920px; padding-left: 40px; padding-right: 40px; }
 .nova-composer form { border-radius: 16px; box-shadow: 0 3px 16px #26085a06; padding: 14px; }
-.nova-composer button[type=submit] { border-radius: 10px; width: 36px; height: 36px; }
+.nova-composer .nova-send { border-radius: 10px; width: 36px; height: 36px; }
 .nova-message > div { line-height: 1.6; }
 .nova-message > div.bg-bubble { padding-left: 0; }
 .nova-document { border: 1px solid var(--hairline); border-radius: 17px; padding: 20px 24px; background: var(--bg-surface); }

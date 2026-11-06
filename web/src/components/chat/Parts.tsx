@@ -77,11 +77,41 @@ function OfferPart({ part }: { part: Part }) {
   );
 }
 
+/** A chat action waiting for an exact decision. The service saves it and streams the change. */
+function ApprovalPart({ part }: { part: Part }) {
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const decide = async (decision: "approve" | "decline") => {
+    setSending(true);
+    setError("");
+    try {
+      const response = await fetch(part.url!, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ questionId: part.id, decision }), cache: "no-store", redirect: "error" });
+      if (!response.ok) throw new Error();
+    } catch {
+      setError("That didn't save. Try again.");
+      setSending(false);
+    }
+  };
+  return (
+    <div role="group" aria-label="Action approval" className="flex flex-col gap-2 rounded-tile bg-surface p-3 shadow-pill">
+      <p className="whitespace-pre-wrap break-words text-body">{part.text}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="primary" disabled={sending} onClick={() => void decide("approve")}>Approve</Button>
+        <Button size="sm" variant="quiet" disabled={sending} onClick={() => void decide("decline")}>Decline</Button>
+        {error && <span role="alert" className="text-caption">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
 /** One non-text part. A type this client doesn't know shows the fallback text the service sent with it. */
 function PartView({ part }: { part: Part }) {
   if (part.type === "link" && part.url && /^https?:\/\//.test(part.url)) return <a href={part.url} target="_blank" rel="noreferrer noopener" className="break-words text-meta underline">{part.name ?? part.url}</a>;
   if (["attachment", "artifact", "image"].includes(part.type) && part.url) return <FilePart part={part} />;
   if (part.type === "offer" && part.id && part.url) return <OfferPart part={part} />;
+  if (part.type === "approval" && part.id && part.url) return <ApprovalPart part={part} />;
+  if (part.type === "action") return <details className="text-caption text-ink-3"><summary className="cursor-pointer">{part.name}</summary><p className="mt-1 whitespace-pre-wrap break-words">{part.text}</p></details>;
+  if (part.type === "note") return <p className="text-caption text-ink-3">{part.text}</p>;
   return part.fallback ? <p className="text-body">{part.fallback}</p> : null;
 }
 
