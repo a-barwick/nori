@@ -59,11 +59,11 @@
 <tr><td>Chat context</td><td>Input is refused at 64 saved messages or above 96 KiB of message text and operation data.</td></tr>
 <tr><td>Tool result</td><td>Results above 16 KiB become an error record instead of entering the next model request.</td></tr>
 <tr><td>Event stream</td><td>The service ends each stream after 150 seconds, and the web client resumes from its last event. A client more than 500 events behind reloads the chat.</td></tr>
-<tr><td>Owner name</td><td>The agent service's optional <code>NORI_OWNER_NAME</code> names the person in the chat's instructions.</td></tr>
+<tr><td>Instructions</td><td>The chat's system prompt is built from <code>core/internal/prompts/chat.txt</code> and the shared calendar-time text. It calls the person chatting the user and names no one.</td></tr>
 </table></div>
 <p>Run and verification commands are in the repository README. <a href="api.html">Service API</a> lists the conversation routes.</p>
 </details>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>web/src/lib/chat/useChat.ts</code> · <code>web/src/lib/chat/contract.ts</code> · <code>web/src/lib/chat/thread.ts</code> · <code>web/src/components/runtime/ChatList.tsx</code> · <code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/components/runtime/RuntimeComposer.tsx</code> · <code>web/src/components/chat/Parts.tsx</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/api/chat.go</code> · <code>core/internal/state/firestore/chat.go</code> · <code>core/internal/agent/foreground.go</code> · <code>core/internal/state/uploads.go</code> · <code>web/src/lib/runtime/forward.ts</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/src/lib/chat/useChat.ts</code> · <code>web/src/lib/chat/contract.ts</code> · <code>web/src/lib/chat/thread.ts</code> · <code>web/src/components/runtime/ChatList.tsx</code> · <code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/components/runtime/RuntimeComposer.tsx</code> · <code>web/src/components/chat/Parts.tsx</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/prompts/chat.txt</code> · <code>core/internal/prompts/calendar-time.txt</code> · <code>core/internal/api/chat.go</code> · <code>core/internal/state/firestore/chat.go</code> · <code>core/internal/agent/foreground.go</code> · <code>core/internal/state/uploads.go</code> · <code>web/src/lib/runtime/forward.ts</code></p></details>
 </body>
 </html>
