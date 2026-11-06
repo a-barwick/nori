@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"time"
 
@@ -19,11 +18,7 @@ import (
 
 // run is one worker lifetime. A bounded run belongs to one wake request and ends
 // when its build has no work left; an unbounded run polls until ctx ends.
-func run(ctx context.Context, s settings.Settings, waker wake.Waker, sliceID string, known []string, bounded bool) (result error) {
-	cfg, err := loadConfig(s, bounded, waker)
-	if err != nil {
-		return err
-	}
+func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker, sliceID string, known []string, bounded bool) (result error) {
 	slice := &workerservice.Slice{
 		ID: sliceID, Build: cfg.build, Known: known, Bounded: bounded,
 		PollWindow: cfg.pollWindow, IdleWindow: cfg.idleWindow, Waker: waker,
@@ -48,13 +43,7 @@ func run(ctx context.Context, s settings.Settings, waker wake.Waker, sliceID str
 	}
 	defer c.Close()
 	key := s.Models.OpenRouterKey
-	if key == "" {
-		return fmt.Errorf("OPENROUTER_API_KEY must be configured for the task worker")
-	}
 	local := s.Temporal.Local
-	if s.Computer.LocalURL != "" && !local {
-		return fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
-	}
 	// A hosted worker wakes the conversation after saving a task event, and
 	// retries that wake on its own tick. A local worker leaves both to the API.
 	steps := dispatch.Commands | dispatch.Publications

@@ -1,0 +1,1 @@
+use the job's end state and exit code, and read back what the command changed

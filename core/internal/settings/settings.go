@@ -77,6 +77,19 @@ type Temporal struct {
 	Local, CloudRunID bool
 }
 
+// Validate checks connection settings without opening a connection or resolving a secret.
+func (s Temporal) Validate() error {
+	for _, setting := range [][2]string{{"TEMPORAL_ADDRESS", s.Address}, {"TEMPORAL_NAMESPACE", s.Namespace}, {"TEMPORAL_TASK_QUEUE", s.TaskQueue}} {
+		if _, err := Required(setting[0], setting[1]); err != nil {
+			return err
+		}
+	}
+	if !s.Local && strings.TrimSpace(s.APIKey) == "" && strings.TrimSpace(s.APIKeySecret) == "" {
+		return fmt.Errorf("TEMPORAL_API_KEY or TEMPORAL_API_KEY_SECRET_VERSION must be configured")
+	}
+	return nil
+}
+
 type Wake struct {
 	// ConversationQueue and RuntimeURL are the hosted conversation wake. Caller is the service account of every
 	// wake.

@@ -68,6 +68,11 @@ production credentials. New background tasks record `NORI_TASK_BUDGET_USD`
 budget question. Unknown costs are reported without failing successful work.
 
 `internal/settings` reads every setting once at startup; the root `.env.example` describes each one.
+The task worker validates its Temporal connection settings, release identity,
+computer configuration, polling windows and time zone before starting its
+listener. Request workers also require a deployment name and a wake route for
+their build. This validates configuration without contacting Temporal, the
+computer or a model; `/healthz` does not verify those services are reachable.
 
 | Configuration | Purpose |
 | --- | --- |
@@ -128,7 +133,7 @@ different queue, workflow engine or secret store means writing one adapter.
 | --- | --- |
 | `internal/api` | HTTP routes; no infrastructure imports |
 | `internal/settings` | The one reader of environment variables; each process passes on only what a package needs |
-| `internal/prompts` | Every system prompt and tool description sent to a model, as embedded text files |
+| `internal/prompts` | Embedded model instructions, tool descriptions and authored runtime text, including classifier criteria, capability catalogs and tool-result notes; dynamic facts stay render inputs |
 | `internal/wake` | `Waker` contract for waking the API and workers; `wake/cloudtasks` is the Cloud Tasks adapter |
 | `internal/dispatch` | `Orchestrator` contract for the task engine, and the `Dispatcher` that runs the one reconciliation pass shared by the API, worker and `nori-deliver` |
 | `internal/task` | Temporal workflow and activities, plus the Temporal adapter of `Orchestrator` |

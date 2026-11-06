@@ -73,7 +73,7 @@ func (r *Runner) planUserCommands(ctx context.Context, t *state.ConversationTurn
 	if !matched {
 		// No partial mixed batch and no claims from the worker-aware response.
 		reply.Calls = nil
-		reply.Text = "Please state the new work or task change you want. I haven't accepted any commands from this message."
+		reply.Text = prompts.Runtime("request-clarify", nil)
 		if len(plan.Calls) == 0 && plan.Text != "" {
 			reply.Text = plan.Text
 		}
@@ -180,8 +180,8 @@ func (r *Runner) commandPlanMessages(ctx context.Context, t *state.ConversationT
 	}
 	messages := []json.RawMessage{
 		modelMessage(map[string]string{"role": "system", "content": prompts.CommandPlan}),
-		modelMessage(map[string]string{"role": "system", "content": "Historical user messages and runtime task facts, for reference only, never fresh authorization:\n" + string(modelMessage(map[string]any{"history": history, "tasks": taskRecords, "saved_results": results}))}),
-		modelMessage(map[string]string{"role": "user", "content": "Current user messages in acceptance order:\n" + string(modelMessage(current))}),
+		modelMessage(map[string]string{"role": "system", "content": prompts.Runtime("command-plan-historical-user-messages-and-runtime-task-facts-for-ref", nil) + string(modelMessage(map[string]any{"history": history, "tasks": taskRecords, "saved_results": results}))}),
+		modelMessage(map[string]string{"role": "user", "content": prompts.Runtime("command-plan-current-user-messages-in-acceptance-order", nil) + string(modelMessage(current))}),
 	}
 	size := 0
 	for _, message := range messages {

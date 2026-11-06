@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -38,16 +39,16 @@ const (
 )
 
 var intentDescriptions = map[Intent]string{
-	Converse:     "Conversation, discussion, or unclassifiable input. Discussion alone does not request work.",
-	Ask:          "Ask a question; answering may or may not require independent work.",
-	RequestWork:  "Ask Nori to do independent work.",
-	Steer:        "Change instructions for existing work.",
-	ProvideInput: "Supply information or answer a question from existing work.",
-	Decide:       "Give an approval or another requested decision.",
-	Inspect:      "Ask about existing work or its outcome.",
-	Control:      "Ask to stop or otherwise control existing work.",
-	UpdateMemory: "Explicitly request a persistent memory change.",
-	Mixed:        "The message combines multiple distinct intents; one label would omit part of it.",
+	Converse:     prompts.Runtime("intent-converse", nil),
+	Ask:          prompts.Runtime("intent-ask", nil),
+	RequestWork:  prompts.Runtime("intent-request-work", nil),
+	Steer:        prompts.Runtime("intent-steer", nil),
+	ProvideInput: prompts.Runtime("intent-provide-input", nil),
+	Decide:       prompts.Runtime("intent-decide", nil),
+	Inspect:      prompts.Runtime("intent-inspect", nil),
+	Control:      prompts.Runtime("intent-control", nil),
+	UpdateMemory: prompts.Runtime("intent-update-memory", nil),
+	Mixed:        prompts.Runtime("intent-mixed", nil),
 }
 
 type Classification struct {

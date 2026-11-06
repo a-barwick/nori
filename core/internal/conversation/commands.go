@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -202,16 +203,16 @@ func acceptedCommandText(actions []state.ConversationAction) string {
 	}
 	parts := []string{}
 	if n := counts["start"]; n == 1 {
-		parts = append(parts, "I've accepted your task. I'll let you know when it needs your input or has a result.")
+		parts = append(parts, prompts.Runtime("task-accepted", nil))
 	} else if n > 1 {
-		parts = append(parts, fmt.Sprintf("I've accepted your %d tasks. I'll let you know when they need your input or have results.", n))
+		parts = append(parts, prompts.Runtime("tasks-accepted", map[string]any{"Count": n}))
 	}
 	for _, item := range []struct{ kind, text string }{
-		{"subtask", "I've started separate work that a task asked for. It'll pick up from the result."},
-		{"steer", "I've saved your task updates."},
-		{"answer", "I've saved your answer."},
-		{"hold", "I've saved your question to answer when the task has an outcome."},
-		{"stop", "I've requested that the task work stop. I'll confirm when it has stopped."},
+		{"subtask", prompts.Runtime("subtask-accepted", nil)},
+		{"steer", prompts.Runtime("steer-accepted", nil)},
+		{"answer", prompts.Runtime("answer-accepted", nil)},
+		{"hold", prompts.Runtime("hold-accepted", nil)},
+		{"stop", prompts.Runtime("stop-accepted", nil)},
 	} {
 		if counts[item.kind] > 0 {
 			parts = append(parts, item.text)

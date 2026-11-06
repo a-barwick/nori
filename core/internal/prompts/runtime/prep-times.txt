@@ -1,0 +1,4 @@
+
+
+Times that looked open when I read your calendar at {{.Time}}. It may have changed since, and I'll check again before changing anything:
+{{.Result}}

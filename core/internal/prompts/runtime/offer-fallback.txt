@@ -1,0 +1,1 @@
+From my {{.Check}}: {{.FirstTitle}} ends at {{.FirstEnd}}, and {{.SecondTitle}} starts at {{.SecondStart}}. The drive between them takes about {{.Drive}} minutes, and there are {{.Gap}} minutes between them. Want me to look for another time for one of them?

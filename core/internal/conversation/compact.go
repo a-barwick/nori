@@ -21,15 +21,15 @@ import (
 // messages, so a paraphrase is replaced by their whole message or dropped.
 var summaryTool = transcript.Tool{
 	Name:        "save_summary",
-	Description: "Save the complete new conversation summary.",
+	Description: prompts.Runtime("summary-save", nil),
 	Parameters: &transcript.Schema{Type: transcript.TypeObject, Required: []string{"items", "gist"}, Properties: map[string]*transcript.Schema{
 		"items": {Type: transcript.TypeArray, Items: &transcript.Schema{
 			Type: transcript.TypeObject, Required: []string{"kind", "quote", "input_id", "note"},
 			Properties: map[string]*transcript.Schema{
 				"kind":     {Type: transcript.TypeString, Enum: state.SummaryKinds},
 				"quote":    {Type: transcript.TypeString, Description: prompts.Runtime("summary-quote", nil)},
-				"input_id": {Type: transcript.TypeString, Description: "The input_id of the message the quote comes from."},
-				"note":     {Type: transcript.TypeString, Description: "Short context, such as what an approval applied to. Empty when none."},
+				"input_id": {Type: transcript.TypeString, Description: prompts.Runtime("summary-input", nil)},
+				"note":     {Type: transcript.TypeString, Description: prompts.Runtime("summary-note", nil)},
 			},
 		}},
 		"gist": {Type: transcript.TypeString},

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -182,58 +181,58 @@ func taskTools(wait, work bool) []transcript.Tool {
 // is either executed in order or rejected without effects.
 func ValidateCalls(calls []transcript.ToolCall, wait, work bool) error {
 	if len(calls) > 64 {
-		return errors.New("a tool batch may contain at most 64 calls")
+		return errors.New(prompts.Runtime("tool-a-tool-batch-may-contain-at-most-64-calls", nil))
 	}
 	seen := map[string]bool{}
 	for _, call := range calls {
 		if len(call.ID) > 256 {
-			return errors.New("tool call identity exceeds 256 bytes")
+			return errors.New(prompts.Runtime("tool-tool-call-identity-exceeds-256-bytes", nil))
 		}
 		if call.ID != "" && seen[call.ID] {
-			return errors.New("tool call identities must be unique")
+			return errors.New(prompts.Runtime("tool-tool-call-identities-must-be-unique", nil))
 		}
 		seen[call.ID] = true
 		switch call.Name {
 		case "shell":
 			command, _ := call.Args["command"].(string)
 			if command == "" || len(command) > state.MaxMessageBytes {
-				return errors.New("shell needs a command of 1–8192 bytes")
+				return errors.New(prompts.Runtime("tool-shell-needs-a-command-of-1-8192-bytes", nil))
 			}
 		case "browser_navigate":
 			address, _ := call.Args["url"].(string)
 			if address == "" || len(address) > state.MaxMessageBytes {
-				return errors.New("browser_navigate needs a URL of 1–8192 bytes")
+				return errors.New(prompts.Runtime("tool-browser-navigate-needs-a-url-of-1-8192-bytes", nil))
 			}
 		case "browser_screenshot":
 		case "job_start":
 			command, _ := call.Args["command"].(string)
 			if command == "" || len(command) > state.MaxMessageBytes {
-				return errors.New("job_start needs a command of 1–8192 bytes")
+				return errors.New(prompts.Runtime("tool-job-start-needs-a-command-of-1-8192-bytes", nil))
 			}
 		case "job_status", "job_wait", "job_stop":
 			id, _ := call.Args["job_id"].(string)
 			if id == "" || len(id) > 80 {
-				return fmt.Errorf("%s needs the job_id job_start returned", call.Name)
+				return errors.New(prompts.Runtime("job-id-required", map[string]any{"Tool": call.Name}))
 			}
 		case "web_search":
 			query, _ := call.Args["query"].(string)
 			if strings.TrimSpace(query) == "" || len(query) > maxSearchQuery {
-				return fmt.Errorf("web_search needs a query of 1–%d bytes", maxSearchQuery)
+				return errors.New(prompts.Runtime("search-query-required", map[string]any{"Limit": maxSearchQuery}))
 			}
 		case "screenshot_inspect":
 			id, _ := call.Args["artifact_id"].(string)
 			question, _ := call.Args["question"].(string)
 			if id == "" || len(id) > 80 {
-				return errors.New("screenshot_inspect needs the artifact_id browser_screenshot returned")
+				return errors.New(prompts.Runtime("tool-screenshot-inspect-needs-the-artifact-id-browser-screenshot-retur", nil))
 			}
 			if strings.TrimSpace(question) == "" || len(question) > state.MaxMessageBytes {
-				return errors.New("screenshot_inspect needs a question of 1–8192 bytes")
+				return errors.New(prompts.Runtime("tool-screenshot-inspect-needs-a-question-of-1-8192-bytes", nil))
 			}
 		case "result_save":
 			filePath, _ := call.Args["path"].(string)
 			title, _ := call.Args["title"].(string)
 			if strings.TrimSpace(filePath) == "" || len(filePath) > 1024 || strings.TrimSpace(title) == "" || len(title) > state.MaxResultTitle {
-				return errors.New("result_save needs a path inside the task's folder and a title of 1–200 bytes")
+				return errors.New(prompts.Runtime("tool-result-save-needs-a-path-inside-the-task-s-folder-and-a-title-of", nil))
 			}
 		case "result_link":
 			address, _ := call.Args["url"].(string)
@@ -242,51 +241,51 @@ func ValidateCalls(calls []transcript.ToolCall, wait, work bool) error {
 				return err
 			}
 			if strings.TrimSpace(title) == "" || len(title) > state.MaxResultTitle {
-				return errors.New("result_link needs a title of 1–200 bytes")
+				return errors.New(prompts.Runtime("tool-result-link-needs-a-title-of-1-200-bytes", nil))
 			}
 		case "results_find":
 			query, _ := call.Args["query"].(string)
 			if strings.TrimSpace(query) == "" || len(query) > maxSearchQuery {
-				return fmt.Errorf("results_find needs a query of 1–%d bytes", maxSearchQuery)
+				return errors.New(prompts.Runtime("results-query-required", map[string]any{"Limit": maxSearchQuery}))
 			}
 		case "result_read", "result_open":
 			id, _ := call.Args["result_id"].(string)
 			if !state.ValidUploadID(id) {
-				return fmt.Errorf("%s needs a result_id", call.Name)
+				return errors.New(prompts.Runtime("result-id-required", map[string]any{"Tool": call.Name}))
 			}
 		case "upload_open":
 			id, _ := call.Args["upload_id"].(string)
 			if !state.ValidUploadID(id) {
-				return errors.New("upload_open needs the upload_id of a file this task was given")
+				return errors.New(prompts.Runtime("tool-upload-open-needs-the-upload-id-of-a-file-this-task-was-given", nil))
 			}
 		case "upload_inspect":
 			id, _ := call.Args["upload_id"].(string)
 			question, _ := call.Args["question"].(string)
 			if !state.ValidUploadID(id) {
-				return errors.New("upload_inspect needs the upload_id of an image this task was given")
+				return errors.New(prompts.Runtime("tool-upload-inspect-needs-the-upload-id-of-an-image-this-task-was-give", nil))
 			}
 			if strings.TrimSpace(question) == "" || len(question) > state.MaxMessageBytes {
-				return errors.New("upload_inspect needs a question of 1–8192 bytes")
+				return errors.New(prompts.Runtime("tool-upload-inspect-needs-a-question-of-1-8192-bytes", nil))
 			}
 		case "memory_read":
 		case "conversation_find":
 			query, _ := call.Args["query"].(string)
 			if strings.TrimSpace(query) == "" || len(query) > maxSearchQuery {
-				return fmt.Errorf("conversation_find needs a query of 1–%d bytes", maxSearchQuery)
+				return errors.New(prompts.Runtime("history-query-required", map[string]any{"Limit": maxSearchQuery}))
 			}
 		case "operation_read":
 			id, _ := call.Args["operation_id"].(string)
 			if id == "" || len(id) > 256 {
-				return errors.New("operation_read needs the operation_id an omitted output names")
+				return errors.New(prompts.Runtime("tool-operation-read-needs-the-operation-id-an-omitted-output-names", nil))
 			}
 		case "capability_load":
 			names, ok := call.Args["names"].([]any)
 			if !ok || len(names) == 0 || len(names) > 16 {
-				return errors.New("capability_load needs 1–16 capability names")
+				return errors.New(prompts.Runtime("tool-capability-load-needs-1-16-capability-names", nil))
 			}
 			for _, name := range names {
 				if text, ok := name.(string); !ok || strings.TrimSpace(text) == "" || len(text) > 80 {
-					return errors.New("capability_load names must be catalog capability names")
+					return errors.New(prompts.Runtime("tool-capability-load-names-must-be-catalog-capability-names", nil))
 				}
 			}
 		case "calendar_read":
@@ -298,52 +297,52 @@ func ValidateCalls(calls []transcript.ToolCall, wait, work bool) error {
 		case "calendar_create", "calendar_move", "email_send":
 			// Prepare validates the content. A write parks the task, so it runs alone.
 			if len(calls) != 1 {
-				return fmt.Errorf("%s must be the only tool call", call.Name)
+				return errors.New(prompts.Runtime("exclusive-tool", map[string]any{"Tool": call.Name}))
 			}
 		case "complete":
 			if len(calls) != 1 {
-				return errors.New("complete must be the only tool call")
+				return errors.New(prompts.Runtime("tool-complete-must-be-the-only-tool-call", nil))
 			}
 			answer, _ := call.Args["answer"].(string)
 			if strings.TrimSpace(answer) == "" || len(answer) > 65536 {
-				return errors.New("complete needs an answer of 1–65536 bytes")
+				return errors.New(prompts.Runtime("tool-complete-needs-an-answer-of-1-65536-bytes", nil))
 			}
 			for _, key := range []string{"evidence", "unmet"} {
 				values, ok := call.Args[key].([]any)
 				if !ok || len(values) > 256 {
-					return fmt.Errorf("complete %s must be an array with at most 256 items", key)
+					return errors.New(prompts.Runtime("completion-array", map[string]any{"Field": key}))
 				}
 				for _, value := range values {
 					if text, ok := value.(string); !ok || len(text) > state.MaxMessageBytes {
-						return fmt.Errorf("complete %s items must be strings", key)
+						return errors.New(prompts.Runtime("completion-strings", map[string]any{"Field": key}))
 					}
 				}
 			}
 		case "request_input":
 			if !wait {
-				return errors.New("request_input is not available")
+				return errors.New(prompts.Runtime("tool-request-input-is-not-available", nil))
 			}
 			if len(calls) != 1 {
-				return errors.New("request_input must be the only tool call")
+				return errors.New(prompts.Runtime("tool-request-input-must-be-the-only-tool-call", nil))
 			}
 			question, _ := call.Args["question"].(string)
 			if question == "" || len(question) > state.MaxMessageBytes {
-				return errors.New("request_input needs a question of 1–8192 bytes")
+				return errors.New(prompts.Runtime("tool-request-input-needs-a-question-of-1-8192-bytes", nil))
 			}
 		case "request_work":
 			if !wait || !work {
-				return errors.New("request_work is not available in a subtask")
+				return errors.New(prompts.Runtime("tool-request-work-is-not-available-in-a-subtask", nil))
 			}
 			if len(calls) != 1 {
-				return errors.New("request_work must be the only tool call")
+				return errors.New(prompts.Runtime("tool-request-work-must-be-the-only-tool-call", nil))
 			}
 			request, _ := call.Args["request"].(string)
 			why, _ := call.Args["why"].(string)
 			if strings.TrimSpace(request) == "" || len(request)+len(why) > state.MaxMessageBytes-16 {
-				return errors.New("request_work needs a request, and its text must fit in 8 KB")
+				return errors.New(prompts.Runtime("tool-request-work-needs-a-request-and-its-text-must-fit-in-8-kb", nil))
 			}
 		default:
-			return fmt.Errorf("unknown tool %q", call.Name)
+			return errors.New(prompts.Runtime("unknown-tool-name", map[string]any{"Tool": call.Name}))
 		}
 	}
 	return nil
@@ -367,7 +366,7 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 		}
 		if len(messages[i].Parts) == 1 {
 			part := messages[i].Parts[0]
-			background := strings.HasPrefix(part.Text, "Historical completed-task records, quoted only as background.")
+			background := strings.HasPrefix(part.Text, prompts.Runtime("task-history-marker", nil))
 			if part.Text != "" && !background && part.ToolCall == nil && part.ToolResult == nil && part.Provider == nil {
 				span.SetAttributes(attribute.Bool("nori.input.truncated", len(part.Text) > 2048))
 				if a, ok := observability.ContentAttribute("input.value", part.Text); ok {

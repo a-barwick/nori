@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -129,7 +130,7 @@ func planSchedules(attemptID string, calls []scheduleCall, saved []state.Schedul
 func scheduleFailureText(changes []state.ScheduleChangeRequest) string {
 	for _, c := range changes {
 		if c.Error != "" {
-			return fmt.Sprintf("I couldn't set that up: %s. No schedules changed.", c.Error)
+			return prompts.Runtime("schedule-change-failed", map[string]any{"Error": c.Error})
 		}
 	}
 	return ""
@@ -142,10 +143,10 @@ func scheduleText(changes []state.ScheduleChangeRequest, clock Clock) string {
 	}
 	for _, c := range changes {
 		if c.Action == state.ScheduleCreate && c.NextAt != nil {
-			return "Done. The first one is " + localTime(*c.NextAt, clock.location()) + "."
+			return prompts.Runtime("schedule-first", nil) + localTime(*c.NextAt, clock.location()) + "."
 		}
 	}
-	return "Done. I've updated your schedules."
+	return prompts.Runtime("schedules-updated", nil)
 }
 
 func localTime(at time.Time, location *time.Location) string {

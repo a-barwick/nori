@@ -1,0 +1,2 @@
+
+A read-only task looked for other times first: {{.Run}}. Its times come from an earlier calendar read and may be out of date, so read the calendar again before suggesting one.

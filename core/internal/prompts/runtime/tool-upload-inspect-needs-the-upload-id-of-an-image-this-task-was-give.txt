@@ -1,0 +1,1 @@
+upload_inspect needs the upload_id of an image this task was given

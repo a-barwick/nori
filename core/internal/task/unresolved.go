@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -97,9 +96,9 @@ func (a *Activities) nameUnresolved(ctx context.Context, runID string, messages 
 		if name == "" {
 			name = op.Name
 		}
-		line := fmt.Sprintf("The command `%s` has no known result and may have changed something.", clip(name, failedCommandLimit))
+		line := prompts.Runtime("command-unknown", map[string]any{"Command": clip(name, failedCommandLimit)})
 		if op.Outcome == "failed" {
-			line = fmt.Sprintf("The command `%s` failed%s and may have changed something.", clip(name, failedCommandLimit), a.exitDetail(ctx, runID, op))
+			line = prompts.Runtime("command-failed", map[string]any{"Command": clip(name, failedCommandLimit), "ExitDetail": a.exitDetail(ctx, runID, op)})
 		}
 		lines = append(lines, line)
 		if clearable(op) {
@@ -110,7 +109,7 @@ func (a *Activities) nameUnresolved(ctx context.Context, runID string, messages 
 		return "", nil, nil
 	}
 	if len(clears) > 0 {
-		lines = append(lines, "Later commands in this task can't run until you answer.")
+		lines = append(lines, prompts.Runtime("commands-await-answer", nil))
 	}
 	return strings.Join(lines, "\n"), clears, nil
 }
@@ -129,7 +128,7 @@ func (a *Activities) exitDetail(ctx context.Context, runID string, op state.Oper
 	if json.Unmarshal(blocks[0], &result) != nil || result.ExitCode == nil {
 		return ""
 	}
-	return fmt.Sprintf(" with exit code %d", *result.ExitCode)
+	return prompts.Runtime("command-exit", map[string]any{"Code": *result.ExitCode})
 }
 
 // clearAnswered records that the user answered a question naming these operations. A repeated delivery saves the same

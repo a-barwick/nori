@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"nori/internal/prompts"
 )
 
 const (
@@ -49,10 +51,10 @@ func (m sentMessage) header(name string) string {
 func (s *Service) prepareEmail(ctx context.Context, to, subject, body string) (PreparedWrite, error) {
 	address, err := mail.ParseAddress(to)
 	if err != nil || strings.ContainsAny(to, ",;") {
-		return PreparedWrite{}, errors.New("email_send needs one recipient address")
+		return PreparedWrite{}, errors.New(prompts.Runtime("tool-email-send-needs-one-recipient-address", nil))
 	}
 	if subject == "" || len(subject) > maxEmailSubject || strings.ContainsAny(subject, "\r\n") || body == "" || len(body) > maxEmailBody {
-		return PreparedWrite{}, errors.New("email_send needs a one-line subject of 1–512 bytes and a body of 1–8192 bytes")
+		return PreparedWrite{}, errors.New(prompts.Runtime("tool-email-send-needs-a-one-line-subject-of-1-512-bytes-and-a-body-of", nil))
 	}
 	config := s.Capabilities.Calendar
 	sum := sha256.Sum256([]byte(strings.Join([]string{config.Account, address.Address, subject, body}, "\n")))
@@ -69,7 +71,7 @@ func (s *Service) prepareEmail(ctx context.Context, to, subject, body string) (P
 		return PreparedWrite{Result: map[string]any{"already_done": true, "message_id": found.ID, "to": address.Address, "subject": subject, "account": config.Account, "read_back": true}}, nil
 	}
 	return PreparedWrite{
-		Text: "Email\nFrom: " + config.Account + "\nTo: " + address.Address + "\nSubject: " + subject + "\n\n" + body,
+		Text: prompts.Runtime("email-preview", map[string]any{"Account": config.Account, "To": address.Address, "Subject": subject, "Body": body}),
 		Spec: spec,
 	}, nil
 }
@@ -135,7 +137,7 @@ func (s *Service) sendEmail(ctx context.Context, spec map[string]string) (string
 	output := map[string]any{"provider_status": fmt.Sprint(status), "message_id": sent.ID, "to": spec["to"], "subject": spec["subject"], "account": config.Account, "read_back": false}
 	if message, read, err := s.readSent(ctx, client, sent.ID); err == nil && read == http.StatusOK {
 		if message.header(actionHeader) != spec["action_id"] {
-			output["reason"] = "The provider's sent message doesn't match the requested one."
+			output["reason"] = prompts.Runtime("sent-message-mismatch", nil)
 			return WriteUncertain, output
 		}
 		output["read_back"], output["labels"] = true, message.LabelIDs
@@ -148,13 +150,13 @@ func (s *Service) sendEmail(ctx context.Context, spec map[string]string) (string
 func (s *Service) checkEmail(ctx context.Context, spec map[string]string) (string, map[string]any) {
 	found, complete, status, err := s.findSent(ctx, spec["action_id"])
 	if err != nil || status != http.StatusOK {
-		return WriteUncertain, map[string]any{"to": spec["to"], "reason": "The sent mail couldn't be read, so this email may or may not have gone out."}
+		return WriteUncertain, map[string]any{"to": spec["to"], "reason": prompts.Runtime("gmail-the-sent-mail-couldn-t-be-read-so-this-email-may-or-may", nil)}
 	}
 	if found == nil && complete {
-		return WriteFailed, map[string]any{"applied": false, "to": spec["to"], "reason": "The email isn't in the sent mail, so it wasn't sent."}
+		return WriteFailed, map[string]any{"applied": false, "to": spec["to"], "reason": prompts.Runtime("gmail-the-email-isn-t-in-the-sent-mail-so-it-wasn-t-sent", nil)}
 	}
 	if found == nil {
-		return WriteUncertain, map[string]any{"to": spec["to"], "reason": "The email isn't in the latest sent mail, but older mail wasn't checked, so it may have gone out."}
+		return WriteUncertain, map[string]any{"to": spec["to"], "reason": prompts.Runtime("gmail-the-email-isn-t-in-the-latest-sent-mail-but-older-mail", nil)}
 	}
 	return WriteConfirmed, map[string]any{"message_id": found.ID, "to": spec["to"], "subject": spec["subject"], "account": s.Capabilities.Calendar.Account, "read_back": true}
 }

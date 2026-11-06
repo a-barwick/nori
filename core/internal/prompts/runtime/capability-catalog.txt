@@ -1,0 +1,2 @@
+ Today is {{.Date}} in {{.Zone}}. Capabilities on this worker. Those marked load first have no tools until you call capability_load with their names, alone or with other reads:{{range .Capabilities}}
+- {{.Name}} ({{.Tools}}; {{if .Default}}always loaded{{else}}load first{{end}}): account {{.Account}}; {{.Availability}}; on failure, {{.OnFailure}}; to confirm, {{.Verify}}.{{end}}

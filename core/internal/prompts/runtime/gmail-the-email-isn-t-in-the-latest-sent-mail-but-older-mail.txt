@@ -1,0 +1,1 @@
+The email isn't in the latest sent mail, but older mail wasn't checked, so it may have gone out.

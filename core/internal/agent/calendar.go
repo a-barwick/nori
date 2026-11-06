@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+
 	"nori/internal/prompts"
 )
 
@@ -83,7 +84,7 @@ type calendarEntry struct {
 func calendarGet(ctx context.Context, client *http.Client, address string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return errors.New("calendar request could not be built")
+		return errors.New(prompts.Runtime("tool-calendar-request-could-not-be-built", nil))
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -91,7 +92,7 @@ func calendarGet(ctx context.Context, client *http.Client, address string, out a
 		if errors.As(err, &retrieve) {
 			return errCalendarDisconnected
 		}
-		return errors.New("calendar request failed before a response arrived")
+		return errors.New(prompts.Runtime("tool-calendar-request-failed-before-a-response-arrived", nil))
 	}
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusUnauthorized {
@@ -101,19 +102,19 @@ func calendarGet(ctx context.Context, client *http.Client, address string, out a
 		return fmt.Errorf("calendar returned HTTP %d", res.StatusCode)
 	}
 	if json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(out) != nil {
-		return errors.New("calendar returned an unreadable response")
+		return errors.New(prompts.Runtime("tool-calendar-returned-an-unreadable-response", nil))
 	}
 	return nil
 }
 
-var errCalendarDisconnected = errors.New("calendar connection is no longer accepted")
+var errCalendarDisconnected = errors.New(prompts.Runtime("tool-calendar-connection-is-no-longer-accepted", nil))
 
 // calendarRead returns events from every calendar the user has selected, named with
 // the connected account. Attendees and descriptions stay out of the model's input.
 func (s *Service) calendarRead(ctx context.Context, start, end string) (map[string]any, error) {
 	config := s.Capabilities.Calendar
 	if !config.connected() {
-		return map[string]any{"available": false, "reason": "Google Calendar is not connected. " + calendarConnectHint}, nil
+		return map[string]any{"available": false, "reason": prompts.Runtime("calendar-google-calendar-is-not-connected", nil) + calendarConnectHint}, nil
 	}
 	from, to, err := calendarRange(start, end)
 	if err != nil {
@@ -124,7 +125,7 @@ func (s *Service) calendarRead(ctx context.Context, start, end string) (map[stri
 	result, err := readCalendars(ctx, config, config.client(ctx), from, to, s.now())
 	if errors.Is(err, errCalendarDisconnected) {
 		// An app in Google's testing state loses its refresh token after 7 days.
-		return map[string]any{"available": false, "reason": "The Google Calendar connection has expired. " + calendarConnectHint}, nil
+		return map[string]any{"available": false, "reason": prompts.Runtime("calendar-the-google-calendar-connection-has-expired", nil) + calendarConnectHint}, nil
 	}
 	return result, err
 }
@@ -132,14 +133,14 @@ func (s *Service) calendarRead(ctx context.Context, start, end string) (map[stri
 func calendarRange(start, end string) (time.Time, time.Time, error) {
 	from, err := time.Parse(time.RFC3339, start)
 	if err != nil {
-		return from, from, errors.New("calendar_read start must be RFC 3339 with a time zone offset")
+		return from, from, errors.New(prompts.Runtime("tool-calendar-read-start-must-be-rfc-3339-with-a-time-zone-offset", nil))
 	}
 	to, err := time.Parse(time.RFC3339, end)
 	if err != nil {
-		return from, to, errors.New("calendar_read end must be RFC 3339 with a time zone offset")
+		return from, to, errors.New(prompts.Runtime("tool-calendar-read-end-must-be-rfc-3339-with-a-time-zone-offset", nil))
 	}
 	if !to.After(from) || to.Sub(from) > maxCalendarSpan {
-		return from, to, errors.New("calendar_read needs an end after start, at most 31 days later")
+		return from, to, errors.New(prompts.Runtime("tool-calendar-read-needs-an-end-after-start-at-most-31-days-later", nil))
 	}
 	return from, to, nil
 }
@@ -168,7 +169,7 @@ type CalendarRead struct {
 // any task, with the same account and limits as calendar_read.
 func ReadCalendarEvents(ctx context.Context, config CalendarConfig, from, to time.Time) (CalendarRead, error) {
 	if !config.connected() {
-		return CalendarRead{}, errors.New("Google Calendar is not connected")
+		return CalendarRead{}, errors.New(prompts.Runtime("tool-google-calendar-is-not-connected", nil))
 	}
 	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
 	defer cancel()

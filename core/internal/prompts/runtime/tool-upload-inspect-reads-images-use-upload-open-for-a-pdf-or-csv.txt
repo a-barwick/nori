@@ -1,0 +1,1 @@
+upload_inspect reads images. Use upload_open for a PDF or CSV

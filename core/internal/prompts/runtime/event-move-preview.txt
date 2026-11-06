@@ -1,0 +1,7 @@
+Move event
+Account: {{.Account}}
+Calendar: {{.Calendar}}
+Title: {{.Title}}
+From: {{.OldStart}} to {{.OldEnd}}
+To: {{.Start}} to {{.End}}
+This changes the calendar only. No one is notified.

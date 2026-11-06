@@ -117,6 +117,12 @@ func Computer(s settings.Settings) computer.Provider {
 // instead of failing every task. Computer stays lazy, so other processes need no computer settings.
 func CheckComputer(s settings.Settings) error {
 	if s.Computer.LocalURL != "" {
+		if !s.Temporal.Local {
+			return fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
+		}
+		if err := local.Validate(s.Computer.LocalURL); err != nil {
+			return fmt.Errorf("NORI_LOCAL_COMPUTER_URL: %w", err)
+		}
 		return nil
 	}
 	for _, setting := range [][2]string{{"NORI_PROJECT_ID", s.Store.Project}, {"COMPUTER_ZONE", s.Computer.Zone}, {"COMPUTER_INSTANCE", s.Computer.Instance}} {

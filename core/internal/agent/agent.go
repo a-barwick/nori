@@ -76,7 +76,7 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 		if errors.Is(e, computer.ErrBrowserRestarted) {
 			return map[string]any{
 				"page_available": false,
-				"reason":         "Browser restarted; navigate to the task's URL again before taking a screenshot.",
+				"reason":         prompts.Runtime("agent-browser-restarted-navigate-to-the-task-s-url-again-befo", nil),
 			}, nil
 		}
 		if e != nil {
@@ -98,6 +98,6 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 			"description": prompts.Runtime("screenshot-saved", nil),
 		}, nil
 	default:
-		return nil, errors.New("unknown tool")
+		return nil, errors.New(prompts.Runtime("tool-unknown-tool", nil))
 	}
 }

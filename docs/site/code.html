@@ -42,7 +42,7 @@
           <tr><td>Delivery from Firestore to Temporal through the orchestration contract. The relay, called the dispatcher in code, runs one reconciliation pass shared by the API, the worker and <code>nori-deliver</code></td><td><span class="mono">core/internal/dispatch/dispatcher.go</span></td></tr>
           <tr><td>The Temporal side of that contract</td><td><span class="mono">core/internal/task/client.go, worker_wake.go, resume.go</span></td></tr>
           <tr><td>Recovery of closed tasks</td><td><span class="mono">core/internal/task/recovery.go</span></td></tr>
-          <tr><td>Every prompt, tool description and runtime string sent to a model, as text files</td><td><span class="mono">core/internal/prompts/</span></td></tr>
+          <tr><td>Model instructions, tool descriptions and authored runtime text, including classifier criteria, capability catalogs and tool-result notes. Dynamic facts are render inputs.</td><td><span class="mono">core/internal/prompts/</span></td></tr>
           <tr><td>The inner model step and task tools</td><td><span class="mono">core/internal/agent/steps.go, agent.go</span></td></tr>
           <tr><td>The model contract and the OpenRouter adapter (<a href="transcript.html">Task transcript</a>)</td><td><span class="mono">core/internal/agent/model.go, agent/openrouter/</span></td></tr>
           <tr><td>Transcript types and their saved form</td><td><span class="mono">core/internal/transcript/</span></td></tr>
@@ -55,7 +55,7 @@
           <tr><td>Wakes for the API and workers, and their Cloud Tasks adapter</td><td><span class="mono">core/internal/wake/, wake/cloudtasks/</span></td></tr>
           <tr><td>Worker lifetime: request-bound slices, the Temporal worker and registration</td><td><span class="mono">core/internal/workerservice/, taskworker/, cmd/nori-worker/</span></td></tr>
           <tr><td>Traces and error reporting (<a href="observability.html">Observability</a>)</td><td><span class="mono">core/internal/observability/</span></td></tr>
-          <tr><td>Settings read once at startup, how each process is assembled, and its HTTP server</td><td><span class="mono">core/internal/settings/, platform/, app/, httpserver/, .env.example</span></td></tr>
+          <tr><td>Settings read at startup and passed to each process. The task worker checks required settings, polling windows and time zone before listening; its health endpoint does not check provider reachability.</td><td><span class="mono">core/internal/settings/, platform/, app/, cmd/nori-worker/, httpserver/, .env.example</span></td></tr>
           <tr><td>Credentials kept in Secret Manager</td><td><span class="mono">core/internal/secret/</span></td></tr>
           <tr><td>Infrastructure and releases</td><td><span class="mono">core/infrastructure/</span></td></tr>
           <tr><td>Live end-to-end tests</td><td><span class="mono">core/e2e/</span></td></tr>

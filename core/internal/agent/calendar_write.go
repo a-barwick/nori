@@ -50,14 +50,14 @@ func (s *Service) eventURL(id string) string {
 func parseEventTimes(start, end string) (time.Time, time.Time, error) {
 	from, err := time.Parse(time.RFC3339, start)
 	if err != nil {
-		return from, from, errors.New("start must be RFC 3339 with a time zone offset")
+		return from, from, errors.New(prompts.Runtime("tool-start-must-be-rfc-3339-with-a-time-zone-offset", nil))
 	}
 	to, err := time.Parse(time.RFC3339, end)
 	if err != nil {
-		return from, to, errors.New("end must be RFC 3339 with a time zone offset")
+		return from, to, errors.New(prompts.Runtime("tool-end-must-be-rfc-3339-with-a-time-zone-offset", nil))
 	}
 	if !to.After(from) || to.Sub(from) > maxCalendarSpan {
-		return from, to, errors.New("end must be after start, at most 31 days later")
+		return from, to, errors.New(prompts.Runtime("tool-end-must-be-after-start-at-most-31-days-later", nil))
 	}
 	return from, to, nil
 }
@@ -110,14 +110,14 @@ func eventOutput(event savedEvent, account, calendar string) map[string]any {
 
 func (s *Service) prepareEvent(ctx context.Context, title, start, end, description string, private bool) (PreparedWrite, error) {
 	if title == "" || len(title) > maxEventTitle || len(description) > maxEventDescription {
-		return PreparedWrite{}, errors.New("calendar_create needs a title of 1–512 bytes and a description within 2048 bytes")
+		return PreparedWrite{}, errors.New(prompts.Runtime("tool-calendar-create-needs-a-title-of-1-512-bytes-and-a-description-wi", nil))
 	}
 	from, to, err := parseEventTimes(start, end)
 	if err != nil {
 		return PreparedWrite{}, err
 	}
 	if !from.After(time.Now()) {
-		return PreparedWrite{}, errors.New("the start time has passed")
+		return PreparedWrite{}, errors.New(prompts.Runtime("tool-the-start-time-has-passed", nil))
 	}
 	config := s.Capabilities.Calendar
 	client := config.client(ctx)
@@ -125,10 +125,10 @@ func (s *Service) prepareEvent(ctx context.Context, title, start, end, descripti
 	// The ID comes from the action, so a repeat, even from another task, finds the first event.
 	visibility, note := "default", ""
 	if private {
-		visibility, note = "private", "\nVisibility: private"
+		visibility, note = "private", prompts.Runtime("event-private", nil)
 	}
 	if description != "" {
-		note += "\nNote: " + description
+		note += prompts.Runtime("event-note", nil) + description
 	}
 	seed := strings.Join([]string{config.Account, config.target(), title, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), description, visibility}, "\n")
 	for try := 0; try < maxEventIDTries; try++ {
@@ -150,18 +150,17 @@ func (s *Service) prepareEvent(ctx context.Context, title, start, end, descripti
 			return PreparedWrite{}, fmt.Errorf("the calendar returned HTTP %d", status)
 		}
 		return PreparedWrite{
-			Text: "Create event\nAccount: " + config.Account + "\nCalendar: " + calendar + "\nTitle: " + title +
-				"\nStart: " + s.when(from) + "\nEnd: " + s.when(to) + note + "\nNo one is invited or notified.",
+			Text: prompts.Runtime("event-create-preview", map[string]any{"Account": config.Account, "Calendar": calendar, "Title": title, "Start": s.when(from), "End": s.when(to), "Note": note}),
 			Spec: map[string]string{"account": config.Account, "calendar_id": config.target(), "event_id": id, "calendar": calendar, "title": title, "start": from.Format(time.RFC3339), "end": to.Format(time.RFC3339), "description": description, "visibility": visibility},
 		}, nil
 	}
-	return PreparedWrite{}, errors.New("this event was added and deleted too many times")
+	return PreparedWrite{}, errors.New(prompts.Runtime("tool-this-event-was-added-and-deleted-too-many-times", nil))
 }
 
 func (s *Service) sendEvent(ctx context.Context, spec map[string]string) (string, map[string]any) {
 	from, err := time.Parse(time.RFC3339, spec["start"])
 	if err != nil || !from.After(time.Now()) {
-		return WriteFailed, map[string]any{"applied": false, "reason": "The start time has passed, so this was not sent."}
+		return WriteFailed, map[string]any{"applied": false, "reason": prompts.Runtime("calendar-write-the-start-time-has-passed-so-this-was-not-sent", nil)}
 	}
 	body := map[string]any{"id": spec["event_id"], "summary": spec["title"], "visibility": spec["visibility"],
 		"start": map[string]string{"dateTime": spec["start"]}, "end": map[string]string{"dateTime": spec["end"]}}
@@ -196,23 +195,23 @@ func (s *Service) checkEvent(ctx context.Context, spec map[string]string, sent s
 			event.Description == spec["description"] && sameVisibility(event.Visibility, spec["visibility"]) {
 			return WriteConfirmed, output
 		}
-		output["reason"] = "An event with this ID exists, but it doesn't match the requested action."
+		output["reason"] = prompts.Runtime("event-id-mismatch", nil)
 		return WriteUncertain, output
 	case err == nil && (status == http.StatusNotFound || (status == http.StatusOK && event.Status == "cancelled")):
 		if sent != "" {
-			return WriteUncertain, map[string]any{"provider_status": sent, "reason": "The provider accepted the write, but the event can't be found."}
+			return WriteUncertain, map[string]any{"provider_status": sent, "reason": prompts.Runtime("calendar-write-the-provider-accepted-the-write-but-the-event-can-t-be", nil)}
 		}
-		return WriteFailed, map[string]any{"applied": false, "event_id": spec["event_id"], "reason": "The event isn't on the calendar, so this write didn't happen."}
+		return WriteFailed, map[string]any{"applied": false, "event_id": spec["event_id"], "reason": prompts.Runtime("calendar-write-the-event-isn-t-on-the-calendar-so-this-write-didn-t-ha", nil)}
 	}
 	if sent != "" {
 		return WriteSubmitted, map[string]any{"provider_status": sent, "event_id": spec["event_id"], "read_back": false, "account": config.Account, "calendar": spec["calendar"]}
 	}
-	return WriteUncertain, map[string]any{"event_id": spec["event_id"], "reason": "The calendar couldn't be read, so this write may or may not have happened."}
+	return WriteUncertain, map[string]any{"event_id": spec["event_id"], "reason": prompts.Runtime("calendar-write-the-calendar-couldn-t-be-read-so-this-write-may-or-may", nil)}
 }
 
 func (s *Service) prepareMove(ctx context.Context, id, start, end string) (PreparedWrite, error) {
 	if id == "" || len(id) > 1024 {
-		return PreparedWrite{}, errors.New("calendar_move needs the event_id calendar_read returned")
+		return PreparedWrite{}, errors.New(prompts.Runtime("tool-calendar-move-needs-the-event-id-calendar-read-returned", nil))
 	}
 	config := s.Capabilities.Calendar
 	var event savedEvent
@@ -221,10 +220,10 @@ func (s *Service) prepareMove(ctx context.Context, id, start, end string) (Prepa
 		return PreparedWrite{}, err
 	}
 	if status != http.StatusOK || event.Status == "cancelled" {
-		return PreparedWrite{}, fmt.Errorf("no such event on the write calendar (HTTP %d); read the calendar again", status)
+		return PreparedWrite{}, errors.New(prompts.Runtime("event-missing-read-again", map[string]any{"Status": status}))
 	}
 	if event.Start.DateTime == "" {
-		return PreparedWrite{}, errors.New("all-day events can't be moved yet")
+		return PreparedWrite{}, errors.New(prompts.Runtime("tool-all-day-events-can-t-be-moved-yet", nil))
 	}
 	for _, attendee := range event.Attendees {
 		if !attendee.Self {
@@ -233,11 +232,11 @@ func (s *Service) prepareMove(ctx context.Context, id, start, end string) (Prepa
 	}
 	oldStart, oldEnd, err := parseEventTimes(event.Start.DateTime, event.End.DateTime)
 	if err != nil {
-		return PreparedWrite{}, errors.New("the saved event has unreadable times")
+		return PreparedWrite{}, errors.New(prompts.Runtime("tool-the-saved-event-has-unreadable-times", nil))
 	}
 	from, err := time.Parse(time.RFC3339, start)
 	if err != nil {
-		return PreparedWrite{}, errors.New("start must be RFC 3339 with a time zone offset")
+		return PreparedWrite{}, errors.New(prompts.Runtime("tool-start-must-be-rfc-3339-with-a-time-zone-offset", nil))
 	}
 	// The event keeps its length unless the call asks for another.
 	to := from.Add(oldEnd.Sub(oldStart))
@@ -247,7 +246,7 @@ func (s *Service) prepareMove(ctx context.Context, id, start, end string) (Prepa
 		}
 	}
 	if !from.After(time.Now()) {
-		return PreparedWrite{}, errors.New("the start time has passed")
+		return PreparedWrite{}, errors.New(prompts.Runtime("tool-the-start-time-has-passed", nil))
 	}
 	calendar := s.calendarName(ctx)
 	if from.Equal(oldStart) && to.Equal(oldEnd) {
@@ -256,9 +255,7 @@ func (s *Service) prepareMove(ctx context.Context, id, start, end string) (Prepa
 		return PreparedWrite{Result: output}, nil
 	}
 	return PreparedWrite{
-		Text: "Move event\nAccount: " + config.Account + "\nCalendar: " + calendar + "\nTitle: " + event.Summary +
-			"\nFrom: " + s.when(oldStart) + " to " + s.when(oldEnd) + "\nTo: " + s.when(from) + " to " + s.when(to) +
-			"\nThis changes the calendar only. No one is notified.",
+		Text: prompts.Runtime("event-move-preview", map[string]any{"Account": config.Account, "Calendar": calendar, "Title": event.Summary, "OldStart": s.when(oldStart), "OldEnd": s.when(oldEnd), "Start": s.when(from), "End": s.when(to)}),
 		Spec: map[string]string{"account": config.Account, "calendar_id": config.target(), "event_id": id, "calendar": calendar, "title": event.Summary, "etag": event.ETag,
 			"old_start": oldStart.Format(time.RFC3339), "old_end": oldEnd.Format(time.RFC3339), "start": from.Format(time.RFC3339), "end": to.Format(time.RFC3339)},
 	}, nil
@@ -267,7 +264,7 @@ func (s *Service) prepareMove(ctx context.Context, id, start, end string) (Prepa
 func (s *Service) sendMove(ctx context.Context, spec map[string]string) (string, map[string]any) {
 	from, err := time.Parse(time.RFC3339, spec["start"])
 	if err != nil || !from.After(time.Now()) {
-		return WriteFailed, map[string]any{"applied": false, "reason": "The start time has passed, so this was not sent."}
+		return WriteFailed, map[string]any{"applied": false, "reason": prompts.Runtime("calendar-write-the-start-time-has-passed-so-this-was-not-sent", nil)}
 	}
 	config := s.Capabilities.Calendar
 	body := map[string]any{"start": map[string]string{"dateTime": spec["start"]}, "end": map[string]string{"dateTime": spec["end"]}}
@@ -291,7 +288,7 @@ func (s *Service) checkMove(ctx context.Context, spec map[string]string, sent st
 		if sent != "" {
 			return WriteSubmitted, map[string]any{"provider_status": sent, "event_id": spec["event_id"], "read_back": false, "account": config.Account, "calendar": spec["calendar"]}
 		}
-		return WriteUncertain, map[string]any{"event_id": spec["event_id"], "reason": "The calendar couldn't be read, so this move may or may not have happened."}
+		return WriteUncertain, map[string]any{"event_id": spec["event_id"], "reason": prompts.Runtime("calendar-write-the-calendar-couldn-t-be-read-so-this-move-may-or-may-n", nil)}
 	}
 	output := eventOutput(event, config.Account, spec["calendar"])
 	if sent != "" {
@@ -299,14 +296,14 @@ func (s *Service) checkMove(ctx context.Context, spec map[string]string, sent st
 	}
 	switch {
 	case event.Status == "cancelled":
-		output["reason"] = "The event was deleted, so this move can't be confirmed."
+		output["reason"] = prompts.Runtime("event-move-deleted", nil)
 		return WriteUncertain, output
 	case sameInstant(event.Start.DateTime, spec["start"]) && sameInstant(event.End.DateTime, spec["end"]):
 		return WriteConfirmed, output
 	case sent == "" && sameInstant(event.Start.DateTime, spec["old_start"]) && sameInstant(event.End.DateTime, spec["old_end"]):
-		output["applied"], output["reason"] = false, "The event is still at its old time, so this move didn't happen."
+		output["applied"], output["reason"] = false, prompts.Runtime("event-move-not-applied", nil)
 		return WriteFailed, output
 	}
-	output["reason"] = "The event is at a time that matches neither the old time nor the requested one."
+	output["reason"] = prompts.Runtime("event-move-mismatch", nil)
 	return WriteUncertain, output
 }
