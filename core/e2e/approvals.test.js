@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -10,16 +10,11 @@ import { resolve } from "node:path";
 const live = process.env.NORI_M6_E2E === "1";
 const journey = live ? test : test.skip;
 const core = resolve(import.meta.dir, "..");
-const unique = crypto.randomUUID().slice(0, 8);
 const emulator = process.env.FIRESTORE_EMULATOR_HOST;
 const temporalAddress = process.env.TEMPORAL_ADDRESS;
-const database = `nori-m6-${unique}`;
-const deployment = `nori-m6-${unique}`;
-const build = `m6-${unique}`;
 const account = "owner@example.test";
-const documents = `http://${emulator}/v1/projects/bot-111549/databases/${database}/documents`;
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
-let directory, address, api, worker, env;
+let directory, address, api, worker, env, database, deployment, build, documents;
 const servers = [];
 
 async function until(read, accept, label, timeout = 45_000) {
@@ -216,7 +211,12 @@ async function dispatch(script) {
   const before = new Set((await session()).runs.map((run) => run.id));
   await post("turn", { id: crypto.randomUUID(), message: `task: script:${script}` }, 202);
   const value = await until(session, (now) => now.runs.some((run) => !before.has(run.id)), "dispatch");
-  return value.runs.find((run) => !before.has(run.id)).id;
+  const run = value.runs.find((run) => !before.has(run.id));
+  expect([...run.request.matchAll(/script:(\w+)/g)].map((match) => match[1])).toEqual([script]);
+  // A saved dispatch can precede publication of its outer turn. Do not let the next
+  // message or a fixture override supersede that still-running attempt.
+  await until(session, (now) => !now.conversation.pending && !now.conversation.processing && !now.conversation.routing_blocked, "dispatch turn to settle");
+  return run.id;
 }
 const awaiting = (id, kind = "approval") => until(() => task(id), (run) => run?.question?.kind === kind && !run.question.resolved_by && run.incorporated === run.position, `${kind} question`);
 const command = (kind, id, question, text) => post("command", { id: crypto.randomUUID(), run_id: id, kind, question_id: question?.id, text }, 202);
@@ -242,12 +242,29 @@ beforeAll(async () => {
   const port = 20000 + Math.floor(Math.random() * 20000);
   address = `http://127.0.0.1:${port}`;
   env = {
-    PATH: process.env.PATH, HOME: process.env.HOME, NORI_ENV_FILE: resolve(directory, "empty.env"), NORI_PROJECT_ID: "bot-111549", FIRESTORE_DATABASE_ID: database,
+    PATH: process.env.PATH, HOME: process.env.HOME, NORI_ENV_FILE: resolve(directory, "empty.env"), NORI_PROJECT_ID: "bot-111549",
     FIRESTORE_EMULATOR_HOST: emulator, NORI_LOCAL_ARTIFACT_DIR: resolve(directory, "artifacts"), PORT: String(port), TEMPORAL_ADDRESS: temporalAddress, TEMPORAL_NAMESPACE: "default", TEMPORAL_LOCAL: "true",
-    TEMPORAL_TASK_QUEUE: deployment, TEMPORAL_DEPLOYMENT_NAME: deployment, TEMPORAL_BUILD_ID: build, COMPUTER_ZONE: "invalid-e2e-zone", COMPUTER_INSTANCE: "no-computer-e2e", NORI_EXECUTION_MODE: "temporal",
+    COMPUTER_ZONE: "invalid-e2e-zone", COMPUTER_INSTANCE: "no-computer-e2e", NORI_EXECUTION_MODE: "temporal",
     OPENAI_API_KEY: "fake", JEV_API_KEY: "fake", OPENROUTER_API_KEY: "fake", NORI_E2E_GOOGLE_URL: googleURL, NORI_E2E_MODEL_URL: modelURL, NORI_E2E_OPENAI_URL: outerURL,
     GOOGLE_CALENDAR_CLIENT_ID: "fake", GOOGLE_CALENDAR_CLIENT_SECRET: "fake", GOOGLE_CALENDAR_REFRESH_TOKEN: "fake", GOOGLE_CALENDAR_ACCOUNT: account,
   };
+}, 300_000);
+
+beforeEach(async () => {
+  if (!live) return;
+  resetGoogle();
+  for (const name of Object.keys(scripts)) delete scripts[name];
+  Object.assign(inner, { calls: 0, lastOutputs: [] });
+  Object.assign(outer, { eventContexts: [], forceApprove: null, text: undefined });
+  // A rejected outer turn is consumed but intentionally remains unrouted. Waiting
+  // for idle cannot isolate journeys: the next user turn replays those inputs.
+  // Keep each journey's records and Temporal work separate, including after failure.
+  const unique = crypto.randomUUID().slice(0, 8);
+  database = `nori-m6-${unique}`;
+  deployment = `nori-m6-${unique}`;
+  build = `m6-${unique}`;
+  documents = `http://${emulator}/v1/projects/bot-111549/databases/${database}/documents`;
+  Object.assign(env, { FIRESTORE_DATABASE_ID: database, TEMPORAL_TASK_QUEUE: deployment, TEMPORAL_DEPLOYMENT_NAME: deployment, TEMPORAL_BUILD_ID: build });
   const control = await fetch(`${documents}/system/control`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: { paused: { booleanValue: false } } }) });
   if (!control.ok) throw new Error("control document could not be set");
   api = start("nori-local");
@@ -256,16 +273,21 @@ beforeAll(async () => {
   cli("worker", "deployment", "set-current-version", "--deployment-name", deployment, "--build-id", build, "--yes");
 }, 300_000);
 
+afterEach(async () => {
+  if (!live) return;
+  await stop(worker);
+  await stop(api);
+  resetGoogle();
+  if (database) await fetch(`http://${emulator}/emulator/v1/projects/bot-111549/databases/${database}/documents`, { method: "DELETE" });
+});
+
 afterAll(async () => {
   if (!live) return;
   await stop(worker);
   await stop(api);
   for (const server of servers) server.close();
-  for (const go of google.release.splice(0)) go();
-  await fetch(`http://${emulator}/emulator/v1/projects/bot-111549/databases/${database}/documents`, { method: "DELETE" }).catch(() => {});
   if (directory) rmSync(directory, { recursive: true, force: true });
 });
-beforeEach(() => { if (live) resetGoogle(); });
 
 journey("an approved create runs once, reports its evidence, and no model call runs while parked", async () => {
   scripts.create = createThenFinish();
@@ -496,7 +518,9 @@ journey("an unrelated message can't carry a chat approval, whatever the model re
   const run = await awaiting(id);
   outer.forceApprove = { run_id: id, question_id: run.question.id };
   await post("turn", { id: crypto.randomUUID(), message: "what's the weather like" }, 202);
-  await until(session, (now) => !now.conversation.pending && !now.conversation.processing, "turn to settle");
+  const settled = await until(session, (now) => !now.conversation.pending && !now.conversation.processing, "turn to settle");
+  // The rejected attempt is idle, but its user input will replay on the next turn.
+  expect(settled.conversation.routing_blocked).toBe(true);
   outer.forceApprove = null;
   const current = await task(id);
   expect(current.question?.resolved_by).toBeUndefined();
@@ -506,11 +530,17 @@ journey("an unrelated message can't carry a chat approval, whatever the model re
 }, 120_000);
 
 journey("a sent email beyond the checked window is uncertain, never reported as not sent", async () => {
+  const initial = await session();
+  expect(initial.runs).toHaveLength(0);
+  expect(initial.messages.filter((message) => message.role === "user")).toHaveLength(0);
+  expect(initial.conversation.routing_blocked).toBe(false);
   google.fault.dropBeforeCommit = true;
   for (let i = 0; i < 10; i++) google.mail.push({ id: `old${i}`, labelIds: ["SENT"], payload: { headers: [{ name: "X-Nori-Action", value: `old${i}` }] } });
   scripts.window = (outputs) => outputs.length ? finish(`Outcome: ${outputs.at(-1).outcome}`, outputs, outputs.at(-1).outcome === "uncertain" ? ["Unknown."] : []) : { name: "email_send", args: { to: "sam@example.test", subject: "Window", body: "Hello" } };
   const id = await dispatch("window");
-  await command("approve", id, (await awaiting(id)).question);
+  const proposed = await awaiting(id);
+  expect(writes(await operations(id)).map((op) => op.name)).toEqual(["email_send"]);
+  await command("approve", id, proposed.question);
   const asked = await awaiting(id, "input");
   expect(writes(await operations(id))[0].outcome).toBe("uncertain");
   await command("answer", id, asked.question, "Leave it.");
