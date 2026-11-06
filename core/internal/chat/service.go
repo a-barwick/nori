@@ -184,6 +184,8 @@ func (s *Service) Process(ctx context.Context) error {
 	}
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
+	scan := time.NewTicker(time.Second)
+	defer scan.Stop()
 	for {
 		s.mu.Lock()
 		n := len(s.running)
@@ -210,26 +212,10 @@ func (s *Service) Process(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-func (s *Service) Loop(ctx context.Context) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	last := ""
-	for {
-		// Log a failure once, not every second it persists.
-		if err := s.Tick(ctx); err != nil && ctx.Err() == nil && err.Error() != last {
-			last = err.Error()
-			log.Printf("chat recovery tick failed: %v", err)
-		} else if err == nil {
-			last = ""
-		}
-		select {
-		case <-ctx.Done():
-			return
+		case <-scan.C:
+			if err := s.Tick(ctx); err != nil {
+				return err
+			}
 		case <-ticker.C:
 		}
 	}
@@ -445,6 +431,7 @@ func history(c state.Chat, turn string) []json.RawMessage {
 // the final text is saved by the caller.
 func (s *Service) respond(ctx context.Context, id, turn string, messages []json.RawMessage) (conversation.Reply, error) {
 	saved := time.Time{}
+	messages = append(append([]json.RawMessage{}, messages...), raw("system", "User details (data): "+s.Tools.UserFacts))
 	request := conversation.ReplyRequest{Messages: messages, NoDispatch: true, Foreground: true, Tools: toolSchemas(), Stream: func(text string) error {
 		if time.Since(saved) < persistEvery {
 			return ctx.Err()

@@ -5,14 +5,14 @@ The Go API owns durable conversation and task admission in Firestore. Both
 model, and advisory Jev hints. Temporal owns inner task execution; a separate Go
 worker calls OpenRouter Responses and the retained Firecracker computer. Screenshots
 live in a private GCS bucket. The browser uses a same-origin Next.js proxy and
-owner authentication; hosted runtime IAM admits the web and queue caller
+verified sign-in; hosted runtime IAM admits the web and queue caller
 service accounts.
 
 Storage sits behind contracts. `internal/state` holds the records, the
 `ConversationStore` interface and the write rules; `internal/state/firestore`
 implements its documents, and `internal/state/gcs` or `internal/state/localfs`
 stores screenshot bytes. `internal/usage` calculates reported model costs. Only `internal/platform` names a
-backend: `platform.OpenStore` returns a `state.ConversationStore`.
+backend: `platform.OpenStore(ctx, settings, user)` returns an immutable user-scoped `state.ConversationStore`. Every data operation keeps that scope, including detached cleanup and spend recording. The operator pause remains global.
 
 ## Local development
 
@@ -28,6 +28,48 @@ variables. Keep it gitignored and mode 600. `NORI_ENV_FILE` selects an existing
 file; `NORI_TASK_ENV_FILE` can select distinct existing task configuration.
 Credentials are used in place. Required names are in
 [`.env.example`](../.env.example).
+
+## Users
+
+The `users` collection holds the sign-in email, display name, time zone, notification
+email, calendar connection and computer for each user. Sign-in verifies Google IAP,
+then the web server resolves that email through `/api/users/resolve` using its own
+credentials. It prefixes upstream routes with `/users/<id>/`; browser-supplied IDs
+never select a user. Loopback development uses `NORI_LOCAL_EMAIL` (or the existing
+`OWNER_EMAIL` as a local fallback) and requires a matching row.
+
+From `core/`, provision a user in the configured database:
+
+```sh
+go run ./cmd/nori-user --email user@example.com --name 'User' --timezone America/Los_Angeles
+# Optional computer flags: --computer-instance, --computer-zone, --local-computer-url.
+# Connect calendar and email tools for the returned ID:
+go run ./cmd/nori-connect-calendar --user <id>
+```
+
+Before deploying this version over the single-user service, import its existing
+settings from the main checkout's root `.env`:
+
+```sh
+NORI_ENV_FILE=/absolute/path/to/main/.env go run ./cmd/nori-user --import-legacy --name Austin
+```
+
+This creates `users/owner`, verifies the saved row, then removes the old per-user
+settings from that file while keeping it mode 600. It refuses an existing row with
+different values. It reads the selected database and env file, so use an explicitly
+configured emulator for local experiments. An empty legacy computer setting stays
+empty; if the deployed computer was configured only in infrastructure, populate its
+zone and instance using the command's computer flags during import.
+
+The `owner` row maps to the existing owner document path, unprefixed files and
+`nori-task-<task>` executions. Nothing is moved or rewritten. Other users get separate
+document roots, `users/<id>/` file prefixes and `nori-task-<user>:<task>` executions.
+IDs can repeat across users without exposing records. Old conversation wakes resolve
+only to `owner`; new wakes include the user. Schedules, calendar checks and worker
+reconciliation enumerate rows; each operation uses one immutable scope. API processing
+passes and task activities read the current row, so changes apply on the next pass or
+activity without mutating work already in flight. Calendar tokens never enter API
+responses or model prompts.
 
 ## Observability
 
@@ -69,8 +111,8 @@ budget question. Unknown costs are reported without failing successful work.
 
 `internal/settings` reads every setting once at startup; the root `.env.example` describes each one.
 The task worker validates its Temporal connection settings, release identity,
-computer configuration, polling windows and time zone before starting its
-listener. Request workers also require a deployment name and a wake route for
+and polling windows before starting its listener. User time zones and tool
+connections are read from rows when processing work. Request workers also require a deployment name and a wake route for
 their build. This validates configuration without contacting Temporal, the
 computer or a model; `/healthz` does not verify those services are reachable.
 
@@ -81,14 +123,14 @@ computer or a model; `/healthz` does not verify those services are reachable.
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
 | `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |
 | `FIRESTORE_EMULATOR_HOST`, `TEMPORAL_LOCAL` | Explicit local Firestore endpoint and local Temporal mode; absent/false uses configured services |
-| `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and the API base URL that wakes POST to at `/api/process`. Production passes the native Agent Runtime invoke root, which ends in `/api`. Any `https` host is accepted, or loopback `http` when `TEMPORAL_LOCAL=true` |
+| `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and the API base URL that wakes POST to at `/users/<id>/api/process`. Production passes the native Agent Runtime invoke root, which ends in `/api`. Any `https` host is accepted, or loopback `http` when `TEMPORAL_LOCAL=true` |
 | `NORI_WORKER_SERVICES`, `NORI_WORKER_WAKE_QUEUE`, `CLOUD_TASKS_EMULATOR_HOST` | Optional request-driven workers: JSON map of immutable build to service root URL, the Cloud Tasks queue that wakes them (OIDC, same caller), and a loopback Cloud Tasks emulator for local runs. Without `NORI_WORKER_SERVICES`, workers poll on their own |
 | `OPENROUTER_API_KEY` | Inner worker credential from the project `.env` |
 | `MODEL_NAME` | Inner worker model; default `openai/gpt-6.1-terra` through OpenRouter Responses |
 | `ARTIFACT_BUCKET` | Private screenshot bucket |
 | `NORI_STATE_EMULATOR_HOST` | App-data Firestore emulator on a loopback address; refused when `FIRESTORE_EMULATOR_HOST` is also set. |
 | `NORI_LOCAL_ARTIFACT_DIR` | Absolute private folder for screenshots instead of the bucket. Needs a loopback Firestore emulator and `TEMPORAL_LOCAL=true` |
-| `COMPUTER_ZONE`, `COMPUTER_INSTANCE` | Existing retained computer |
+| User row `computer` | Existing retained computer, or a loopback development URL |
 | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | Shared API/worker connection and task queue |
 | `TEMPORAL_API_KEY` | TLS connection key loaded from the selected env file |
 | `TEMPORAL_API_KEY_SECRET_VERSION` | Existing deployed alternative: ADC reads a Secret Manager version |

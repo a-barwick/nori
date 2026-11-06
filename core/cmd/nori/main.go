@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"nori/internal/api"
 	"nori/internal/app"
 	"nori/internal/httpserver"
 	"nori/internal/observability"
@@ -32,15 +31,15 @@ func main() {
 	if err != nil {
 		observability.Fatal(err)
 	}
-	nori, err := app.Open(ctx, waker, s)
+	nori, err := app.OpenService(ctx, waker, s)
 	if err != nil {
 		observability.Fatal(err)
 	}
 	defer nori.Close()
 	// Only request-bound /api/process performs outer work in hosted mode. Cloud
 	// Tasks owns retry delivery across scale-to-zero and process termination.
-	server := httpserver.New(ctx, net.JoinHostPort(s.BindHost, cmp.Or(s.Port, "8080")), api.Handler(nori.API(), false))
-	log.Printf("Nori durable conversation listening on %s model=%s", server.Addr, nori.Model)
+	server := httpserver.New(ctx, net.JoinHostPort(s.BindHost, cmp.Or(s.Port, "8080")), nori.Handler(false))
+	log.Printf("Nori durable conversation listening on %s model=%s", server.Addr, s.Models.Outer)
 	if err := httpserver.Listen(ctx, server, 25*time.Second); err != nil {
 		observability.RecordErrorCategory(ctx, "http.listen", err)
 		observability.Shutdown(stopTelemetry)

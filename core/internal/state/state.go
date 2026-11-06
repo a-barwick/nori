@@ -17,8 +17,6 @@ import (
 // MaxMessageBytes bounds user instructions and individual tool arguments.
 const MaxMessageBytes = 8192
 
-const Owner = "austinbarwickdavis@gmail.com"
-
 var ErrBusy = errors.New("task is not open")
 var ErrDuplicate = errors.New("run ID already exists")
 var ErrPaused = errors.New("task execution is paused")

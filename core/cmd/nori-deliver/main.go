@@ -10,6 +10,8 @@ import (
 	"nori/internal/observability"
 	"nori/internal/platform"
 	"nori/internal/settings"
+	"nori/internal/users"
+	"nori/internal/wake"
 )
 
 func main() {
@@ -26,30 +28,44 @@ func main() {
 	if e != nil {
 		observability.Fatal(e)
 	}
-	store, e := platform.OpenStore(ctx, s)
+	directory, e := platform.OpenUsers(ctx, s)
 	if e != nil {
 		observability.Fatal(e)
+	}
+	defer directory.Close()
+	rows, e := directory.List(ctx)
+	if e != nil {
+		observability.Fatal(e)
+	}
+	for _, row := range rows {
+		if e = deliver(ctx, s, waker, row); e != nil {
+			observability.Fatal(e)
+		}
+	}
+	log.Print("pending command delivery acknowledged")
+}
+func deliver(ctx context.Context, s settings.Settings, waker wake.Waker, row users.User) error {
+	s = platform.ForUser(s, row)
+	store, e := platform.OpenStore(ctx, s, row)
+	if e != nil {
+		return e
 	}
 	defer store.Close()
 	control, e := store.Control(ctx)
 	if e != nil {
-		observability.Fatal(e)
+		return e
 	}
 	if e = control.Check(); e != nil {
-		observability.Fatal(e)
+		return e
 	}
-	engine, e := platform.Engine(ctx)
+	engine, e := platform.Engine(ctx, row.ID)
 	if e != nil {
-		observability.Fatal(e)
+		return e
 	}
 	defer engine.Close()
-	dispatcher := platform.Dispatcher(s, store, engine, waker)
-	// Repair first, and deliver nothing if it fails.
+	dispatcher := platform.Dispatcher(s, store, engine, waker, row.ID)
 	if e = dispatcher.Reconcile(ctx, dispatch.RepairClosed); e != nil {
-		observability.Fatal(e)
+		return e
 	}
-	if e = dispatcher.Reconcile(ctx, dispatch.Commands); e != nil {
-		observability.Fatal(e)
-	}
-	log.Print("pending command delivery acknowledged")
+	return dispatcher.Reconcile(ctx, dispatch.Commands)
 }

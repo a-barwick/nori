@@ -32,7 +32,7 @@ REGISTRY = "us-central1-docker.pkg.dev/bot-111549/nori-poc"
 STATE_BUCKET = "bot-111549-nori-ci-state"
 LOCK = "nori/deploy.lock"
 TERMINAL = {"completed", "cancelled", "failed"}
-CAPABILITY_SECRETS = ("nori-brave-search-api-key", "nori-google-calendar-client-id", "nori-google-calendar-client-secret", "nori-google-calendar-refresh-token", "nori-google-calendar-account")
+CAPABILITY_SECRETS = ("nori-brave-search-api-key", "nori-google-calendar-client-id", "nori-google-calendar-client-secret")
 # Steps a rollback undoes. Images and the new worker service stay for the retry.
 UNDONE_BY_ROLLBACK = {"computer", "runtime", "web", "register", "current", "verify"}
 
@@ -104,7 +104,26 @@ def release_lock(generation):
 
 def refuse_open_work(c):
     """Never interrupt running work; preserve failed, already-attempted input."""
-    root = ops.firestore(c, "owners/" + quote(OWNER, safe=""))
+    # New rows own separate data roots; the original path remains readable
+    # even before provisioning, so retained work is never hidden from this guard.
+    owners = {OWNER}
+    cursor = ""
+    while True:
+        query = {"pageSize": "300"}
+        if cursor:
+            query["pageToken"] = cursor
+        page = ops.api("GET", ops.firestore(c, "users") + "?" + urlencode(query), allow404=True) or {}
+        for doc in page.get("documents", []):
+            user_id = doc["name"].rsplit("/", 1)[-1]
+            owners.add(OWNER if user_id == "owner" else user_id)
+        cursor = page.get("nextPageToken", "")
+        if not cursor:
+            break
+    for owner in sorted(owners):
+        refuse_user_work(c, ops.firestore(c, "owners/" + quote(owner, safe="")))
+
+
+def refuse_user_work(c, root):
     control = ops.api("GET", root + "/conversation/control", allow404=True)
     if control:
         f = control.get("fields", {})

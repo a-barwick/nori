@@ -39,6 +39,7 @@ const (
 // accepting a command, the conversation wake handler, the worker loop and
 // nori-deliver. Callers choose Steps; the order below never changes.
 type Dispatcher struct {
+	UserID   string
 	Store    state.ConversationStore
 	Engine   Orchestrator
 	Waker    wake.Waker
@@ -305,7 +306,7 @@ func (d *Dispatcher) wakeWorker(ctx context.Context, runID string) error {
 	if err != nil {
 		return err
 	}
-	return d.Waker.WakeWorker(ctx, build, WorkflowID(runID))
+	return d.Waker.WakeWorker(ctx, build, WorkflowID(d.UserID, runID))
 }
 
 // Runnable inspects the engine, not the UI's question/status projection. In
@@ -324,22 +325,22 @@ func (d *Dispatcher) Runnable(ctx context.Context, build string, known []string)
 		return nil, err
 	}
 	for _, run := range runs {
-		cleanupIDs[WorkflowID(run.ID)] = true
+		cleanupIDs[WorkflowID(d.UserID, run.ID)] = true
 	}
 	cleanup, err := d.Store.CleanupTasks(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, run := range cleanup {
-		cleanupIDs[WorkflowID(run.ID)] = true
+		cleanupIDs[WorkflowID(d.UserID, run.ID)] = true
 	}
 	for _, run := range append(runs, cleanup...) {
-		ids[WorkflowID(run.ID)] = true
+		ids[WorkflowID(d.UserID, run.ID)] = true
 	}
 	for id := range ids {
-		runID, ok := RunID(id)
+		runID, ok := RunID(d.UserID, id)
 		if !ok {
-			return nil, fmt.Errorf("unexpected task workflow identity")
+			continue // Another user is handled by its own dispatcher.
 		}
 		execution, err := d.Engine.Inspect(ctx, runID)
 		if errors.Is(err, ErrNoExecution) {

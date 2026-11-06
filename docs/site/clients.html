@@ -16,11 +16,11 @@
 <div class="node"><b>Chats tab</b><small>Shows separate chats and their streamed replies.</small></div>
 </div>
 <div class="arrow">↓ <span class="lbl">messages, file uploads and user decisions</span></div>
-<div class="node"><b>Next.js server</b><small>Checks the same owner and origin for both.</small></div>
+<div class="node"><b>Next.js server</b><small>Resolves verified sign-in to a user and checks the origin for both.</small></div>
 <div class="arrow">↓ <span class="lbl">HTTP requests with server credentials</span></div>
 <div class="node outer"><b>Agent service</b><small>Runs turns, saves outcomes and enforces tool approvals.</small></div>
 <div class="arrow">↓ <span class="lbl">saved messages, tasks and conversation changes</span></div>
-<div class="node"><b>Firestore</b><small>Keeps assistant records and separate chat records under the same owner.</small></div>
+<div class="node"><b>Firestore</b><small>Keeps assistant records and separate chat records under that user.</small></div>
 </div></div>
 <section><h2>Each client</h2>
 <div class="card"><table class="tall"><tr><th>Client</th><th>Behavior</th><th>Pages</th></tr>
@@ -43,7 +43,7 @@
 <ul class="pts">
 <li>Chat messages, events, attachments and approvals belong to one conversation.</li>
 <li>New chats exclude assistant tasks, saved memories and other chats from model context.</li>
-<li>The assistant and chats use the same owner authentication, configured providers and development spending controls.</li>
+<li>The assistant and chats use the same verified sign-in, user scope and configured providers.</li>
 </ul>
 <p><a href="api.html">Service API</a> describes the routes and replay behavior.</p>
 </section>

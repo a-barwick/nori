@@ -32,7 +32,7 @@ func (m *NotifyMailer) recipient(ctx context.Context) (string, error) {
 	if m.To != "" {
 		address, err := mail.ParseAddress(m.To)
 		if err != nil {
-			return "", errors.New("NORI_NOTIFY_EMAIL must be one email address")
+			return "", errors.New("user notification email must be one email address")
 		}
 		m.address = address.Address
 		return m.address, nil

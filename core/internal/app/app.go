@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"nori/internal/agent"
@@ -20,6 +19,7 @@ import (
 	"nori/internal/schedules"
 	"nori/internal/settings"
 	"nori/internal/state"
+	"nori/internal/users"
 	"nori/internal/wake"
 )
 
@@ -37,7 +37,9 @@ type App struct {
 
 // Open uses the same durable outer loop in local and hosted entrypoints. waker is
 // how this process wakes itself and its workers.
-func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, error) {
+func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user users.User) (*App, error) {
+	cfg = platform.ForUser(cfg, user)
+	waker = wake.ForUser(waker, user.ID)
 	jevKey, err := settings.Required("JEV_API_KEY", cfg.Models.JevKey)
 	if err != nil {
 		return nil, err
@@ -51,11 +53,11 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, e
 	if err != nil {
 		return nil, err
 	}
-	store, err := platform.OpenStore(ctx, cfg)
+	store, err := platform.OpenStore(ctx, cfg, user)
 	if err != nil {
 		return nil, err
 	}
-	engine, err := platform.Engine(ctx)
+	engine, err := platform.Engine(ctx, user.ID)
 	if err != nil {
 		store.Close()
 		return nil, err
@@ -63,9 +65,9 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, e
 	if cfg.Computer.LocalURL != "" && !cfg.Temporal.Local {
 		engine.Close()
 		store.Close()
-		return nil, fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
+		return nil, fmt.Errorf("user computer local URL requires TEMPORAL_LOCAL=true")
 	}
-	dispatcher := platform.Dispatcher(cfg, store, engine, waker)
+	dispatcher := platform.Dispatcher(cfg, store, engine, waker, user.ID)
 	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
 	model := cfg.Models.Outer
 	outer := conversation.NewOpenAIModel(key, model)
@@ -73,6 +75,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, e
 	summarizer := openrouter.New(summaryKey, "openai/gpt-6.1-terra")
 	classifier := conversation.NewJevClassifier(jevKey)
 	runner := conversation.New(outer, classifier, summarizer, tasks)
+	runner.UserFacts = user.Facts()
 	checks, err := openProactive(cfg, store, runner, tasks, outer, waker)
 	if err != nil {
 		engine.Close()
@@ -87,6 +90,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*App, e
 		return nil, err
 	}
 	tools := agent.New(store, summarizer, platform.Computer(cfg))
+	tools.UserFacts = user.Facts()
 	if checks.Calendar != nil {
 		tools.Capabilities.Calendar = *checks.Calendar
 	}
@@ -114,7 +118,7 @@ func openSchedules(cfg settings.Settings, store state.ConversationStore, tasks *
 func openProactive(cfg settings.Settings, store state.ConversationStore, runner *conversation.Runner, tasks *conversation.Tasks, model conversation.ReplyModel, waker wake.Waker) (*proactive.Service, error) {
 	location, err := time.LoadLocation(cfg.TimeZone)
 	if err != nil {
-		return nil, fmt.Errorf("NORI_TIMEZONE must be an IANA time zone")
+		return nil, fmt.Errorf("user time zone must be an IANA time zone")
 	}
 	s := &proactive.Service{Store: store, Runner: runner, Tasks: tasks, Model: model, Waker: waker, Location: location}
 	calendar := agent.CalendarConfig{
@@ -194,27 +198,6 @@ func (a *App) process(ctx context.Context, foreground bool) error {
 	defer cancel()
 	reconcileErr := a.Dispatcher.Reconcile(delivery, dispatch.Commands|dispatch.Publications)
 	return errors.Join(<-chatDone, stopErr, processErr, offerErr, scheduleErr, reconcileErr)
-}
-
-// LocalLoop is tied to the application, so browser cancellation and reconnects
-// cannot cancel accepted work. The periodic check also recovers after restart.
-func (a *App) LocalLoop(ctx context.Context, notifications <-chan struct{}) {
-	go a.Chats.Loop(ctx)
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	for {
-		process, cancel := context.WithTimeout(ctx, 9*time.Minute)
-		if err := a.process(process, false); err != nil && ctx.Err() == nil {
-			log.Printf("conversation processing will retry: %v", err)
-		}
-		cancel()
-		select {
-		case <-ctx.Done():
-			return
-		case <-notifications:
-		case <-ticker.C:
-		}
-	}
 }
 
 var _ api.Operations = (*App)(nil)

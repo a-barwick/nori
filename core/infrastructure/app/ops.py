@@ -491,12 +491,10 @@ ROUTES_SECRET = "nori-google-routes-api-key"
 CALENDAR_SECRETS = {
     "GOOGLE_CALENDAR_CLIENT_ID": "nori-google-calendar-client-id",
     "GOOGLE_CALENDAR_CLIENT_SECRET": "nori-google-calendar-client-secret",
-    "GOOGLE_CALENDAR_REFRESH_TOKEN": "nori-google-calendar-refresh-token",
-    "GOOGLE_CALENDAR_ACCOUNT": "nori-google-calendar-account",
 }
 PROACTIVE_JOB = "nori-proactive-check"
-# The check's local time zone. deploy-runtime gives it to the runtime as NORI_TIMEZONE, and the Scheduler job runs in it.
-TIMEZONE = "America/Los_Angeles"
+# Check each user's half-day slot in their own time zone.
+TIMEZONE = "UTC"
 
 
 def secret_enabled(secret):
@@ -541,7 +539,7 @@ def proactive_setup(c):
     caller = c["conversation_wake_service_account"]
     gcloud("iam", "service-accounts", "add-iam-policy-binding", caller, "--member=" + f"serviceAccount:service-{NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com",
            "--role=roles/iam.serviceAccountTokenCreator", "--condition=None", "--format=none")
-    job = ["--location=" + REGION, "--schedule=0 0,12 * * *", "--time-zone=" + TIMEZONE, "--uri=" + c["runtime_url"].rstrip("/") + "/api/proactive",
+    job = ["--location=" + REGION, "--schedule=0 * * * *", "--time-zone=" + TIMEZONE, "--uri=" + c["runtime_url"].rstrip("/") + "/api/proactive",
            "--http-method=POST", "--headers=Content-Type=application/json", "--message-body={}", "--oauth-service-account-email=" + caller,
            "--oauth-token-scope=https://www.googleapis.com/auth/cloud-platform", "--attempt-deadline=300s", "--max-retry-attempts=2", "--min-backoff=120s"]
     try:
@@ -597,7 +595,6 @@ def main():
             "NORI_WAKE_SERVICE_ACCOUNT": c["conversation_wake_service_account"],
             "NORI_RUNTIME_URL": c["runtime_url"],
             "NORI_EXECUTION_MODE": "temporal",
-            "NORI_TIMEZONE": TIMEZONE,
             # Notification emails link here.
             "NORI_APP_URL": c["web_url"],
             "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",

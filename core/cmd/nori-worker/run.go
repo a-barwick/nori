@@ -5,13 +5,12 @@ import (
 	"log"
 	"time"
 
-	"nori/internal/agent"
-	"nori/internal/agent/openrouter"
 	"nori/internal/dispatch"
 	"nori/internal/platform"
 	"nori/internal/settings"
 	"nori/internal/task"
 	"nori/internal/taskworker"
+	"nori/internal/users"
 	"nori/internal/wake"
 	"nori/internal/workerservice"
 )
@@ -25,16 +24,16 @@ func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker,
 	}
 	ctx, cancel := slice.Poll(ctx)
 	defer cancel()
-	store, err := platform.OpenStore(ctx, s)
+	directory, err := platform.OpenUsers(ctx, s)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
-	control, err := store.Control(ctx)
+	defer directory.Close()
+	paused, err := directory.Paused(ctx)
 	if err != nil {
 		return err
 	}
-	if err = control.Check(); err != nil {
+	if paused {
 		return slice.Paused(ctx)
 	}
 	c, err := task.Dial(ctx, platform.Secrets())
@@ -42,34 +41,27 @@ func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker,
 		return err
 	}
 	defer c.Close()
-	key := s.Models.OpenRouterKey
-	local := s.Temporal.Local
-	// A hosted worker wakes the conversation after saving a task event, and
-	// retries that wake on its own tick. A local worker leaves both to the API.
+	group := &userWorkers{directory: directory, cfg: s, client: c, waker: waker, entries: map[users.User]*userWorker{}}
+	defer group.Close()
+	activities := &task.Activities{Resolve: group.Activity}
 	steps := dispatch.Commands | dispatch.Publications
-	model := openrouter.New(key, s.Models.Inner)
-	service := agent.New(store, model, platform.Computer(s))
-	service.Capabilities = cfg.capabilities
-	activities := &task.Activities{Agent: service, Store: store}
-	if !local {
-		activities.Notify = waker.WakeConversation
+	if !s.Temporal.Local {
 		steps |= dispatch.ConversationWake
 	}
 	stopTimeout := 25 * time.Second
 	if bounded {
 		stopTimeout = 5 * time.Minute
 	}
-	dispatcher := platform.Dispatcher(s, store, task.NewEngine(c), waker)
 	worker, err := taskworker.Start(c, taskworker.Options{Deployment: cfg.deployment, Build: cfg.build, StopTimeout: stopTimeout}, activities, known...)
 	if err != nil {
 		return err
 	}
-	defer func() { result = slice.Finish(worker, dispatcher, result) }()
-	if err = dispatcher.Reconcile(ctx, dispatch.RepairClosed); err != nil {
+	defer func() { result = slice.Finish(worker, group, result) }()
+	if err = group.Reconcile(ctx, dispatch.RepairClosed); err != nil {
 		if bounded {
 			return err
 		}
 		log.Printf("worker reconciliation: %v", err)
 	}
-	return slice.Loop(ctx, worker, dispatcher, steps)
+	return slice.Loop(ctx, worker, group, steps)
 }

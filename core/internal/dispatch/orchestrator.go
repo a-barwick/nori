@@ -12,7 +12,9 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/google/uuid"
 	"nori/internal/state"
+	"nori/internal/users"
 )
 
 // ErrNoExecution means the engine has no execution for the task.
@@ -62,9 +64,28 @@ const workflowPrefix = "nori-task-"
 
 // WorkflowID is the engine-facing identity of a task. Wake requests carry it,
 // so it is part of the wire contract with workers.
-func WorkflowID(runID string) string { return workflowPrefix + runID }
+func WorkflowID(userID, runID string) string {
+	if userID == users.LegacyID {
+		return workflowPrefix + runID
+	}
+	return workflowPrefix + userID + ":" + runID
+}
 
-// RunID returns the task for a workflow ID, or false for a foreign identity.
-func RunID(workflowID string) (string, bool) {
-	return strings.TrimPrefix(workflowID, workflowPrefix), strings.HasPrefix(workflowID, workflowPrefix)
+// WorkflowUser recognizes both retained legacy executions and explicitly scoped ones.
+func WorkflowUser(id string) (userID, runID string, ok bool) {
+	if !strings.HasPrefix(id, workflowPrefix) {
+		return "", "", false
+	}
+	tail := strings.TrimPrefix(id, workflowPrefix)
+	userID, runID, scoped := strings.Cut(tail, ":")
+	if !scoped {
+		userID, runID = users.LegacyID, tail
+	}
+	parsed, err := uuid.Parse(runID)
+	return userID, runID, users.ValidID(userID) && err == nil && parsed.String() == runID
+}
+
+func RunID(userID, id string) (string, bool) {
+	owner, run, ok := WorkflowUser(id)
+	return run, ok && owner == userID
 }

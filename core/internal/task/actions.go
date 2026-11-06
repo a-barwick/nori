@@ -141,6 +141,13 @@ func (a *Activities) writeResult(ctx context.Context, in Step, ref string, call 
 
 // PrepareAction saves the requested write before execution. Already-applied or refused actions end here.
 func (a *Activities) PrepareAction(parent context.Context, in RefToolInput) (out ActionPrepared, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(parent)
+		if scopeErr != nil {
+			return ActionPrepared{}, scopeErr
+		}
+		return scoped.PrepareAction(parent, in)
+	}
 	ctx, done, run, err := a.bounded(parent, in.Step, false)
 	if err != nil {
 		return out, err
@@ -222,6 +229,13 @@ func (a *Activities) PrepareAction(parent context.Context, in RefToolInput) (out
 
 // RunAction claims and sends a requested write once. Later attempts only read the provider.
 func (a *Activities) RunAction(parent context.Context, in ActionInput) (out RefToolOutcome, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(parent)
+		if scopeErr != nil {
+			return RefToolOutcome{}, scopeErr
+		}
+		return scoped.RunAction(parent, in)
+	}
 	stopHeartbeat := historyHeartbeat(parent)
 	defer stopHeartbeat()
 	ctx, span := startActivity(parent, "task.action.run", "TOOL", a.activityRun(parent, in.RunID), in.Revision)
@@ -287,6 +301,13 @@ func (a *Activities) resultOnce(ctx context.Context, in ActionInput, messages []
 
 // CloseAction ends a superseded write that was never sent.
 func (a *Activities) CloseAction(ctx context.Context, in ActionInput) error {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		return scoped.CloseAction(ctx, in)
+	}
 	ops, err := a.Store.Operations(ctx, in.RunID)
 	if err != nil {
 		return classified(err)

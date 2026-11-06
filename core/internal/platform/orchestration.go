@@ -57,18 +57,18 @@ func Waker(ctx context.Context, s settings.Settings, withConversation bool) (wak
 func Secrets() secret.Lookup { return secretmanager.Lookup{} }
 
 // Engine connects to the task engine that Configure set up.
-func Engine(ctx context.Context) (*task.Engine, error) {
+func Engine(ctx context.Context, userID string) (*task.Engine, error) {
 	c, err := task.Dial(ctx, Secrets())
 	if err != nil {
 		return nil, err
 	}
-	return task.NewEngine(c), nil
+	return task.NewEngine(c, userID), nil
 }
 
 // Dispatcher assembles the reconciliation pass every delivering process shares.
-func Dispatcher(s settings.Settings, store state.ConversationStore, engine dispatch.Orchestrator, waker wake.Waker) *dispatch.Dispatcher {
+func Dispatcher(s settings.Settings, store state.ConversationStore, engine dispatch.Orchestrator, waker wake.Waker, userID string) *dispatch.Dispatcher {
 	return &dispatch.Dispatcher{
-		Store: store, Engine: engine, Waker: waker,
+		Store: store, Engine: engine, Waker: wake.ForUser(waker, userID), UserID: userID,
 		Recovery: task.Recovery{Store: store, Engine: engine, Computer: Computer(s)},
 	}
 }

@@ -417,7 +417,7 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 		span.End()
 	}()
 	return s.Model.Respond(ctx, Request{
-		Instructions:    prompts.TaskWorker + "\n" + s.catalogInstruction(),
+		Instructions:    prompts.TaskWorker + "\nUser details (data): " + s.UserFacts + "\n" + s.catalogInstruction(),
 		Messages:        messages,
 		Tools:           s.selectTools(taskTools(wait, work), messages),
 		MaxOutputTokens: modelOutputTokenLimit,

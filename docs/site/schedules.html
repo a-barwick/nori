@@ -35,7 +35,7 @@
 <ul class="pts">
 <li>An occurrence more than 30 minutes late covers every time that passed, so it runs once.</li>
 <li>A late reminder is still delivered, with a line saying when it was due.</li>
-<li>A late task doesn't run. The runtime posts a notice, and the task runs once if the user asks.</li><li>If Cloud Tasks never calls the runtime at the due time, the runtime's twice-daily <a href="proactive.html">calendar check</a> runs any due schedules, so none waits more than 12 hours.</li>
+<li>A late task doesn't run. The runtime posts a notice, and the task runs once if the user asks.</li><li>If Cloud Tasks never calls the runtime at the due time, the runtime's hourly <a href="proactive.html">calendar check</a> runs any due schedules, providing an hourly recovery pass.</li>
 </ul></section>
 <section><h2>Email when the app is closed</h2>
 <p>Reminders, and replies to task results and task questions, wait 90 seconds for an open tab to show them. A visible tab reports the newest reply it shows, and then no email goes out.</p>
@@ -49,7 +49,7 @@
 <tr><td>Open schedules</td><td>30 at most</td></tr>
 <tr><td>Monitor result</td><td>A check whose result doesn't say whether it found anything counts as an alert, so the user sees it.</td></tr>
 <tr><td>Quiet hours</td><td><code>NORI_QUIET_HOURS</code>, such as <code>22:00-07:00</code></td></tr>
-<tr><td>Recipient</td><td><code>NORI_NOTIFY_EMAIL</code>, or the connected account's own address</td></tr>
+<tr><td>Recipient</td><td>The user row's notification email, or its connected account's own address</td></tr>
 <tr><td>Link in emails</td><td><code>NORI_APP_URL</code>, which the deploy sets to the web client's address</td></tr>
 </table>
 <p>Calendar offers come from a separate check that runs twice a day. They aren't schedules, and they aren't emailed. See <a href="proactive.html">Calendar offers</a>.</p>

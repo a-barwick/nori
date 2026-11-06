@@ -1,4 +1,4 @@
-import { localDevelopment, sameOrigin } from "@/lib/runtime/auth";
+import { localDevelopment, sameOrigin, resolveUser, userPath } from "@/lib/runtime/auth";
 import { isRuntimeMethod } from "@/lib/runtime/methods";
 import { reportUpstreamFailure, upstreamTraceHeaders } from "@/lib/observability/upstream";
 
@@ -17,6 +17,8 @@ export async function POST(request: Request, context: { params: Promise<{ operat
   } catch {
     return Response.json({ error: "NORI_LOCAL_AGENT_URL must be a loopback HTTP origin." }, { status: 503 });
   }
+  const user = await resolveUser(request.headers, true);
+  if (!user) return Response.json({ error: "Forbidden." }, { status: 403 });
   let body: string;
   try {
     body = JSON.stringify(await request.json());
@@ -25,7 +27,7 @@ export async function POST(request: Request, context: { params: Promise<{ operat
     return Response.json({ error: "Send a JSON object." }, { status: 400 });
   }
   try {
-    const response = await fetch(new URL(`/api/${operation}`, base), {
+    const response = await fetch(new URL(userPath(user.id, `api/${operation}`), base), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...upstreamTraceHeaders(request) },
       body,

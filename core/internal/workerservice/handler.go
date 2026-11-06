@@ -36,7 +36,7 @@ func Handler(process context.Context, run RunFunc) http.Handler {
 			return
 		}
 		for _, id := range body.WorkflowIDs {
-			if _, ok := dispatch.RunID(id); !ok || len(id) > 256 {
+			if _, _, ok := dispatch.WorkflowUser(id); !ok || len(id) > 256 {
 				http.Error(w, "invalid task identity", http.StatusBadRequest)
 				return
 			}

@@ -13,7 +13,7 @@
 <div class="card"><div class="flow">
 <div class="node"><b>Client</b><small>Sends “Total the parts in this CSV” with a message ID and assigned files.</small></div>
 <div class="arrow">↓ <span class="lbl">same-origin request</span></div>
-<div class="node"><b>Next.js server</b><small>Checks the owner, origin and route before adding server credentials.</small></div>
+<div class="node"><b>Next.js server</b><small>Resolves the verified email to a user, then adds the user ID and server credentials.</small></div>
 <div class="arrow">↓ <span class="lbl">validated HTTP request</span></div>
 <div class="node outer"><b>Agent service</b><small>Saves input before accepting it and publishes recorded changes.</small></div>
 <div class="arrow">↓ <span class="lbl">snapshot or numbered event</span></div>
@@ -22,11 +22,11 @@
 <section><h2>Endpoints</h2>
 <div class="card"><table class="tall"><tr><th>Conversation</th><th>Routes</th><th>Records</th></tr>
 <tr><td>Assistant</td><td>Existing message, task, snapshot and event routes.</td><td>Keep existing IDs, file references, tasks and pending questions.</td></tr>
-<tr><td>Independent chat</td><td>Conversation creation, deletion, messages, cancellation, approvals, files and events.</td><td>Separate chat records under the same owner.</td></tr>
+<tr><td>Independent chat</td><td>Conversation creation, deletion, messages, cancellation, approvals, files and events.</td><td>Separate chat records under the selected user.</td></tr>
 </table></div>
 <p>A new conversation always has chat mode. Client-supplied identity or mode fields grant no permissions.</p>
 <details class="more"><summary>Route and payload reference</summary>
-<p>These are agent-service paths. The browser reaches them through its Next.js server.</p>
+<p>These are the user-scoped agent-service paths. The Next.js server resolves the verified email through <code>POST /api/users/resolve</code>, then prefixes these paths with <code>/users/&lt;id&gt;/</code> using its own credentials. Browser headers, JSON and query parameters never choose the user. Files and event cursors share the same user scope.</p>
 <div class="card"><table class="tall"><tr><th>Route</th><th>Request or response</th></tr>
 <tr><td><code>GET /v1/capabilities</code></td><td>Returns the contract identifier <code>nori-chat-2</code> and execution-mode metadata.</td></tr>
 <tr><td><code>GET /v1/conversations</code></td><td>Returns <code>{conversations: [{id, title, mode, activeTurn, updatedAt}]}</code>, newest first, without messages.</td></tr>

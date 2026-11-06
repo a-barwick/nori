@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -19,6 +18,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"nori/internal/agent"
 	"nori/internal/computer"
+	"nori/internal/dispatch"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -26,8 +26,10 @@ import (
 )
 
 type Activities struct {
-	Agent *agent.Service
-	Store state.TaskStore
+	// Resolve selects a row from the durable workflow identity before any activity runs.
+	Resolve func(context.Context) (*Activities, error)
+	Agent   *agent.Service
+	Store   state.TaskStore
 	// Notify schedules existing outer processing after a durable task event.
 	Notify func(context.Context) error
 }
@@ -97,6 +99,13 @@ func classified(err error) error {
 	return temporal.NewNonRetryableApplicationError(err.Error(), kind, err)
 }
 func (a *Activities) Context(ctx context.Context, id string) ([]transcript.Message, error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		return scoped.Context(ctx, id)
+	}
 	session, e := a.Store.Session(ctx)
 	if e != nil {
 		return nil, classified(e)
@@ -139,6 +148,13 @@ func (a *Activities) Context(ctx context.Context, id string) ([]transcript.Messa
 	return []transcript.Message{transcript.UserText(background)}, nil
 }
 func (a *Activities) Reconcile(ctx context.Context, id string) (state.TaskSnapshot, error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return state.TaskSnapshot{}, scopeErr
+		}
+		return scoped.Reconcile(ctx, id)
+	}
 	snap, e := a.Store.Reconcile(ctx, id)
 	if e != nil {
 		return snap, classified(e)
@@ -209,6 +225,13 @@ func (a *Activities) ioError(step Step, err error) error {
 	return classified(err)
 }
 func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return ModelOutcome{}, scopeErr
+		}
+		return scoped.Model(ctx, in)
+	}
 	ctx, done, run, e := a.bounded(ctx, in.Step, in.Interruptible)
 	if e != nil {
 		return ModelOutcome{}, e
@@ -293,16 +316,21 @@ func traceText(text string) string {
 }
 func computerRun(step Step) string { return fmt.Sprintf("%s-r%d", step.RunID, step.Revision) }
 func (a *Activities) Stop(ctx context.Context, ids []string) (err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		return scoped.Stop(ctx, ids)
+	}
 	// The workflow ID identifies the task without changing historical activity
 	// inputs. Recovery calls outside a workflow retain their existing context.
 	id := ""
 	if activity.IsActivity(ctx) {
 		workflowID := activity.GetInfo(ctx).WorkflowExecution.ID
-		if strings.HasPrefix(workflowID, "nori-task-") {
-			candidate := strings.TrimPrefix(workflowID, "nori-task-")
-			if _, parseErr := uuid.Parse(candidate); parseErr == nil {
-				id = candidate
-			}
+		_, candidate, ok := dispatch.WorkflowUser(workflowID)
+		if ok {
+			id = candidate
 		}
 	}
 	run := state.Run{ID: id}
@@ -359,6 +387,13 @@ func (a *Activities) notify(ctx context.Context) {
 	}
 }
 func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		return scoped.Ask(ctx, p)
+	}
 	ctx, span := startActivity(ctx, "task.question", "CHAIN", a.activityRun(ctx, p.RunID), p.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.question"); span.End() }()
 	if err := a.Store.ProjectQuestion(ctx, p.RunID, p.Revision, p.Question); err != nil {
@@ -368,6 +403,13 @@ func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) 
 	return nil
 }
 func (a *Activities) Publish(ctx context.Context, p Publication) (result state.Run, resultErr error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return state.Run{}, scopeErr
+		}
+		return scoped.Publish(ctx, p)
+	}
 	run := a.activityRun(ctx, p.RunID)
 	ctx, span := startActivity(ctx, "task.publish", "CHAIN", run, p.Revision)
 	defer func() {
@@ -425,9 +467,23 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 	return r, classified(err)
 }
 func (a *Activities) Project(ctx context.Context, p Projection) error {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		return scoped.Project(ctx, p)
+	}
 	return classified(a.Store.Project(ctx, state.ProjectRequest{RunID: p.RunID, Revision: p.Revision, Kind: p.Kind, Text: p.Text}))
 }
 func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) (err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		return scoped.CloseBrowser(ctx, in)
+	}
 	run := a.activityRun(ctx, in.RunID)
 	ctx, span := startActivity(ctx, "task.browser_cleanup", "CHAIN", run, run.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.browser_cleanup"); span.End() }()
@@ -449,5 +505,12 @@ func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) (err e
 // Spend is unguarded: cost already incurred is recorded even if a correction
 // superseded the revision that spent it.
 func (a *Activities) Spend(ctx context.Context, s Spending) error {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		return scoped.Spend(ctx, s)
+	}
 	return a.Store.Spend(ctx, state.SpendUpdate{RunID: s.RunID, Spent: s.Spent, Budget: s.Budget, CostUnknown: s.CostUnknown})
 }

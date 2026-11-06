@@ -37,6 +37,13 @@ func proposal(call transcript.ToolCall) state.CompletionProposal {
 // CheckCompletion preserves instruction ordering and reports unresolved operations without
 // sending the model through a correction loop or asking the user to repair bookkeeping.
 func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (out CompletionOutcome, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return CompletionOutcome{}, scopeErr
+		}
+		return scoped.CheckCompletion(ctx, in)
+	}
 	ctx, span := startActivity(ctx, "task.completion.check", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.completion.check"); span.End() }()
 	out.Ref = in.Ref

@@ -9,6 +9,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"nori/internal/computer"
 	"nori/internal/computer/gce"
@@ -18,6 +19,7 @@ import (
 	statefirestore "nori/internal/state/firestore"
 	"nori/internal/state/gcs"
 	"nori/internal/state/localfs"
+	"nori/internal/users"
 )
 
 // StoreConfig selects the durable store a process opens.
@@ -29,7 +31,7 @@ type StoreConfig struct {
 }
 
 // OpenStore opens the durable store selected by this process's settings.
-func OpenStore(ctx context.Context, s settings.Settings) (state.ConversationStore, error) {
+func OpenStore(ctx context.Context, s settings.Settings, user users.User) (state.ConversationStore, error) {
 	project, err := settings.Required("NORI_PROJECT_ID", s.Store.Project)
 	if err != nil {
 		return nil, err
@@ -38,13 +40,16 @@ func OpenStore(ctx context.Context, s settings.Settings) (state.ConversationStor
 	if err != nil {
 		return nil, err
 	}
-	return OpenStoreWith(ctx, s, StoreConfig{Project: project, Database: database, ArtifactBucket: s.Store.ArtifactBucket})
+	return OpenStoreWith(ctx, s, StoreConfig{Project: project, Database: database, ArtifactBucket: s.Store.ArtifactBucket}, user)
 }
 
 // OpenStoreWith opens documents in Firestore and artifact bytes in a local directory or Cloud Storage. The emulator
 // and local-artifact guards in s apply to every process.
-func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig) (state.ConversationStore, error) {
-	local, err := openLocalArtifacts(s)
+func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig, user users.User) (state.ConversationStore, error) {
+	if err := user.Validate(); err != nil {
+		return nil, err
+	}
+	local, err := openLocalArtifacts(s, user)
 	if err != nil {
 		return nil, err
 	}
@@ -64,10 +69,15 @@ func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig) (s
 		closeLocal()
 		return nil, err
 	}
+	documents, err = documents.ForUser(user)
+	if err != nil {
+		closeLocal()
+		return nil, err
+	}
 	if local != nil {
 		return state.Compose(documents, local), nil
 	}
-	objects, err := gcs.Open(ctx, cfg.ArtifactBucket)
+	objects, err := gcs.Open(ctx, cfg.ArtifactBucket, user)
 	if err != nil {
 		_ = documents.Close()
 		return nil, err
@@ -77,7 +87,7 @@ func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig) (s
 
 // openLocalArtifacts opens the development artifact directory when NORI_LOCAL_ARTIFACT_DIR is set. It returns nil
 // when it is not set. The directory is allowed only with a loopback Firestore emulator and local Temporal.
-func openLocalArtifacts(s settings.Settings) (state.ArtifactStore, error) {
+func openLocalArtifacts(s settings.Settings, user users.User) (state.ArtifactStore, error) {
 	directory := s.Store.LocalArtifactDir
 	if directory == "" {
 		return nil, nil
@@ -89,17 +99,16 @@ func openLocalArtifacts(s settings.Settings) (state.ArtifactStore, error) {
 	if !statefirestore.IsLoopback(address) || !s.Temporal.Local {
 		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR requires a loopback Firestore emulator and TEMPORAL_LOCAL=true")
 	}
-	store, err := localfs.Open(directory)
+	store, err := localfs.Open(filepath.Join(directory, user.FilePrefix()))
 	if err != nil {
 		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR %w", err)
 	}
 	return store, nil
 }
 
-// Computer returns the provider for this process's computer. NORI_LOCAL_COMPUTER_URL
-// selects a loopback development computer. Otherwise the computer is a Compute
-// Engine instance named by NORI_PROJECT_ID, COMPUTER_ZONE and COMPUTER_INSTANCE,
-// none of which has a default. Connecting validates the choice, so a process that
+// Computer returns the provider for the selected user. A local URL selects a
+// loopback development computer; otherwise the row names a Compute Engine
+// instance in NORI_PROJECT_ID. There is no default computer. Connecting validates the choice, so a process that
 // never uses the computer does not need one configured.
 func Computer(s settings.Settings) computer.Provider {
 	if address := s.Computer.LocalURL; address != "" {
@@ -118,14 +127,14 @@ func Computer(s settings.Settings) computer.Provider {
 func CheckComputer(s settings.Settings) error {
 	if s.Computer.LocalURL != "" {
 		if !s.Temporal.Local {
-			return fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
+			return fmt.Errorf("user computer local URL requires TEMPORAL_LOCAL=true")
 		}
 		if err := local.Validate(s.Computer.LocalURL); err != nil {
-			return fmt.Errorf("NORI_LOCAL_COMPUTER_URL: %w", err)
+			return fmt.Errorf("user computer local URL: %w", err)
 		}
 		return nil
 	}
-	for _, setting := range [][2]string{{"NORI_PROJECT_ID", s.Store.Project}, {"COMPUTER_ZONE", s.Computer.Zone}, {"COMPUTER_INSTANCE", s.Computer.Instance}} {
+	for _, setting := range [][2]string{{"NORI_PROJECT_ID", s.Store.Project}, {"user computer zone", s.Computer.Zone}, {"user computer instance", s.Computer.Instance}} {
 		if _, err := settings.Required(setting[0], setting[1]); err != nil {
 			return fmt.Errorf("computer is not configured: %w", err)
 		}
