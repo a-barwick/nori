@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/csv"
 	"errors"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"strings"
 )
@@ -11,16 +12,16 @@ import (
 // worker resolve assignment before reading bytes; file text grants no authority.
 func ReadAttachedCSV(a state.Attachment, data []byte) (map[string]any, error) {
 	if a.MediaType != "text/csv" {
-		return nil, errors.New("Foreground reading currently supports CSV attachments; use Nori's assistant for PDF or image analysis")
+		return nil, errors.New(prompts.Runtime("tool-foreground-reading-currently-supports-csv-attachments-use-nori-s", nil))
 	}
 	if len(data) > 64<<10 {
-		return nil, errors.New("CSV is too large for foreground reading; use Nori's assistant")
+		return nil, errors.New(prompts.Runtime("tool-csv-is-too-large-for-foreground-reading-use-nori-s-assistant", nil))
 	}
 	reader := csv.NewReader(strings.NewReader(string(data)))
 	reader.FieldsPerRecord = -1
 	rows, err := reader.ReadAll()
 	if err != nil {
-		return nil, errors.New("the attached CSV could not be parsed")
+		return nil, errors.New(prompts.Runtime("tool-the-attached-csv-could-not-be-parsed", nil))
 	}
 	records := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {

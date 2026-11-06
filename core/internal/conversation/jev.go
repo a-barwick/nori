@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/observability"
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -96,14 +97,10 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 			continue
 		}
 		questions[string(intent)] = map[string]any{
-			"type": "choice",
-			"instructions": "Independently check whether the CURRENT input batch contains this intent. " +
-				"Read its messages in their supplied order; later messages can correct earlier ones. Several intents may be present. " +
-				"Use conversation only to resolve references. " +
-				"Classify the underlying request independently of available tools, access or requested reply format. " +
-				"This is advisory, never a route or permission. Intent: " + description,
+			"type":         "choice",
+			"instructions": prompts.Runtime("classify-intent", map[string]any{"Intent": description}),
 			"criteria": map[string]string{
-				"present": "The current input batch contains this intent.", "absent": "The current input batch does not contain this intent.",
+				"present": prompts.Runtime("intent-present", nil), "absent": prompts.Runtime("intent-absent", nil),
 			},
 		}
 	}

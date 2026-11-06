@@ -1,0 +1,1 @@
+Tool result exceeded foreground context limit; outcome is recorded separately.

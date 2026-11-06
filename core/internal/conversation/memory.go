@@ -119,7 +119,7 @@ func planMemory(attemptID string, calls []memoryCall, saved []state.Memory) ([]s
 func memoryFailureText(changes []state.MemoryChange) string {
 	for _, c := range changes {
 		if c.Error != "" {
-			return fmt.Sprintf("I couldn't change what I remember: %s. Nothing in saved memory changed.", c.Error)
+			return prompts.Runtime("memory-change-failed", map[string]any{"Error": c.Error})
 		}
 	}
 	return ""
@@ -130,5 +130,5 @@ func memoryText(changes []state.MemoryChange) string {
 	if len(changes) == 0 {
 		return ""
 	}
-	return "Done. I've updated what I remember."
+	return prompts.Runtime("memory-changed", nil)
 }

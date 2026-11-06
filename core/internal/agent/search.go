@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"regexp"
 	"time"
+
+	"nori/internal/prompts"
 )
 
 // SearchCostUSD is Brave's listed Search API price of $5.00 per 1,000 requests
@@ -33,21 +35,21 @@ var snippetTags = regexp.MustCompile(`<[^>]*>`)
 // that a completion check can cite. It is never repeated automatically.
 func (s *Service) webSearch(ctx context.Context, query string) (map[string]any, error) {
 	if s.Capabilities.SearchKey == "" {
-		return map[string]any{"available": false, "reason": "Web search has no API key configured on this worker."}, nil
+		return map[string]any{"available": false, "reason": prompts.Runtime("search-web-search-has-no-api-key-configured-on-this-worker", nil)}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, searchTimeout)
 	defer cancel()
 	address := braveSearchURL + "?" + url.Values{"q": {query}, "count": {fmt.Sprint(searchResults)}, "text_decorations": {"false"}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return nil, errors.New("web search request could not be built")
+		return nil, errors.New(prompts.Runtime("tool-web-search-request-could-not-be-built", nil))
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Subscription-Token", s.Capabilities.SearchKey)
 	res, err := s.HTTP.Do(req)
 	if err != nil {
 		// A dropped response may already have been billed.
-		return map[string]any{"cost_usd": SearchCostUSD}, errors.New("web search request failed before a response arrived")
+		return map[string]any{"cost_usd": SearchCostUSD}, errors.New(prompts.Runtime("tool-web-search-request-failed-before-a-response-arrived", nil))
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
@@ -65,7 +67,7 @@ func (s *Service) webSearch(ctx context.Context, query string) (map[string]any, 
 		} `json:"web"`
 	}
 	if json.NewDecoder(io.LimitReader(res.Body, searchBodyBytes)).Decode(&body) != nil {
-		return map[string]any{"cost_usd": SearchCostUSD}, errors.New("web search returned an unreadable response")
+		return map[string]any{"cost_usd": SearchCostUSD}, errors.New(prompts.Runtime("tool-web-search-returned-an-unreadable-response", nil))
 	}
 	results := []map[string]any{}
 	for _, item := range body.Web.Results {

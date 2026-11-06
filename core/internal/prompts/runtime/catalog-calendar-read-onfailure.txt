@@ -1,0 +1,1 @@
+tell the user it needs connecting; never guess events

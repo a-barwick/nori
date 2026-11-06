@@ -24,24 +24,24 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
+	cfg, e := loadConfig(s)
+	if e != nil {
+		log.Fatal(e)
+	}
 	platform.Configure(s)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	stopTelemetry := observability.Init(ctx, "nori-worker", s)
 	defer observability.Shutdown(stopTelemetry)
-	// Both modes run tools, so an incomplete computer setting stops the process here.
-	if err := platform.CheckComputer(s); err != nil {
-		observability.Fatal(err)
-	}
 	// Hosted workers also wake the conversation when a task event is saved.
 	waker, err := platform.Waker(ctx, s, !s.Temporal.Local)
 	if err != nil {
 		observability.Fatal(err)
 	}
 	if s.Port != "" {
-		err = serveSlices(ctx, s, waker)
+		err = serveSlices(ctx, s, cfg, waker)
 	} else {
-		err = run(ctx, s, waker, "local", nil, false)
+		err = run(ctx, s, cfg, waker, "local", nil, false)
 		if err != nil {
 			observability.RecordErrorCategory(ctx, "worker.lifecycle", err)
 		}
@@ -54,19 +54,16 @@ func main() {
 
 // serveSlices serves wake requests: each /run request is one bounded slice, and a
 // registration request only registers a fresh worker deployment version.
-func serveSlices(ctx context.Context, s settings.Settings, waker wake.Waker) error {
-	if err := checkSlice(s); err != nil {
-		return err
-	}
+func serveSlices(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker) error {
 	addr := ":" + s.Port
 	if s.Temporal.Local {
 		addr = "127.0.0.1:" + s.Port
 	}
 	server := httpserver.New(ctx, addr, workerservice.Handler(ctx, func(ctx context.Context, id string, ids []string, registration bool) error {
 		if registration {
-			return register(ctx, s)
+			return register(ctx, s, cfg)
 		}
-		return run(ctx, s, waker, id, ids, true)
+		return run(ctx, s, cfg, waker, id, ids, true)
 	}))
 	server.WriteTimeout = 11 * time.Minute
 	if err := httpserver.Listen(ctx, server, 5*time.Minute); err != nil {

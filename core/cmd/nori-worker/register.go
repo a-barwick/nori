@@ -13,13 +13,9 @@ import (
 
 // register creates a fresh worker deployment version without running any task.
 // It needs paused admission so that no execution can reach the new version.
-func register(ctx context.Context, s settings.Settings) error {
+func register(ctx context.Context, s settings.Settings, cfg config) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	build, deployment := s.Temporal.BuildID, s.Temporal.DeploymentName
-	if build == "" || deployment == "" {
-		return fmt.Errorf("registration requires an immutable build and deployment")
-	}
 	store, err := platform.OpenStore(ctx, s)
 	if err != nil {
 		return err
@@ -37,5 +33,5 @@ func register(ctx context.Context, s settings.Settings) error {
 		return err
 	}
 	defer c.Close()
-	return taskworker.Register(ctx, c, deployment, build)
+	return taskworker.Register(ctx, c, cfg.deployment, cfg.build)
 }

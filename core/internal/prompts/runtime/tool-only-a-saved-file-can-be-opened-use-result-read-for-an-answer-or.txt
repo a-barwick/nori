@@ -1,0 +1,1 @@
+only a saved file can be opened. Use result_read for an answer or a link

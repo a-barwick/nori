@@ -259,8 +259,7 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 				messages = append(messages, transcript.UserText(note))
 			}
 			if cmd.Revises != "" {
-				messages = append(messages, transcript.UserText("This task revises saved result "+cmd.Revises+". Read it with result_read, and with result_open if it's a file. "+
-					"Your answer or first saved file becomes the new version, and the old one stays as history."))
+				messages = append(messages, transcript.UserText(prompts.Runtime("revise-result", map[string]any{"Result": cmd.Revises})))
 			}
 			if cmd.Kind == state.CommandStart {
 				out.Request = clip(cmd.Text, 1500)
@@ -332,8 +331,7 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	}
 	if len(response.Calls) == 0 {
 		out.Invalid = true
-		correction := transcript.UserText("Plain text does not finish this task. " +
-			"Call complete(answer,evidence,unmet), or request_input for a missing prerequisite.")
+		correction := transcript.UserText(prompts.Runtime("completion-protocol", nil))
 		out.Ref, e = a.appendMessages(ctx, in.RunID, out.Ref, []transcript.Message{correction})
 		if e != nil {
 			out.Failure = "completion protocol correction could not be retained"

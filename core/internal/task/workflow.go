@@ -218,7 +218,7 @@ func (r *taskRun) turn() (bool, error) {
 		if err := c.stopTask(r.stopCtx, r.id); err != nil {
 			return false, err
 		}
-		detail := fmt.Sprintf("Stopped at the configured $%.2f task spending limit. Work and results are saved; this task is incomplete.", c.Budget)
+		detail := prompts.Runtime("spending-limit", map[string]any{"Budget": c.Budget})
 		err := r.publish(RefPublication{Publication: Publication{Step: r.step(), Status: state.RunFailed, Detail: detail, Text: detail, StopConfirmed: true, ExpectedIncomplete: true, Spent: c.Spent, CostUnknown: c.CostUnknown}})
 		retry, err := r.boundary(err)
 		return !retry, err
@@ -242,7 +242,7 @@ func (r *taskRun) turn() (bool, error) {
 			return false, err
 		}
 		for _, call := range model.Calls {
-			if err := r.appendResult(call, map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."}); err != nil {
+			if err := r.appendResult(call, map[string]any{"skipped": true, "reason": prompts.Runtime("workflow-execution-admission-changed-before-this-call-ran", nil)}); err != nil {
 				return false, err
 			}
 		}
@@ -285,7 +285,7 @@ func (r *taskRun) handleCalls(calls []CallRef, changed bool) (bool, error) {
 	revised := false
 	for _, call := range calls {
 		if changed || revised {
-			if err := r.appendResult(call, map[string]any{"skipped": true, "reason": "Accepted input changed before this call ran."}); err != nil {
+			if err := r.appendResult(call, map[string]any{"skipped": true, "reason": prompts.Runtime("workflow-accepted-input-changed-before-this-call-ran", nil)}); err != nil {
 				return false, err
 			}
 			continue
@@ -311,7 +311,7 @@ func (r *taskRun) handleCall(call CallRef) (callStep, error) {
 	case call.Name == "request_input" || call.Name == "request_work":
 		return endCalls, r.requestInput(call)
 	case call.Name == "complete" && len(r.c.Jobs) > 0:
-		return endCalls, r.appendResult(call, map[string]any{"accepted": false, "reason": "A background job is still running. Call job_wait or job_stop before proposing completion.", "running_jobs": r.c.Jobs})
+		return endCalls, r.appendResult(call, map[string]any{"accepted": false, "reason": prompts.Runtime("workflow-a-background-job-is-still-running-call-job-wait-or-job", nil), "running_jobs": r.c.Jobs})
 	case call.Name == "complete":
 		return r.complete(call)
 	case call.Name == "job_wait":
@@ -371,7 +371,7 @@ func (r *taskRun) complete(call CallRef) (callStep, error) {
 	if retry {
 		return reviseCalls, r.appendResult(call, map[string]any{
 			"accepted": false,
-			"reason":   "Execution admission changed during completion checking. Reconcile before proposing again.",
+			"reason":   prompts.Runtime("workflow-execution-admission-changed-during-completion-checking", nil),
 		})
 	}
 	if err != nil {
@@ -407,7 +407,7 @@ func (r *taskRun) publishCompletion(call CallRef, check CompletionOutcome) (call
 	}
 	return endCalls, r.appendResult(call, map[string]any{
 		"accepted": false,
-		"reason":   "Accepted instructions changed before publication. Reconcile them before proposing completion again.",
+		"reason":   prompts.Runtime("workflow-accepted-instructions-changed-before-publication-reconc", nil),
 	})
 }
 
@@ -420,7 +420,7 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 	err := workflow.ExecuteActivity(r.quick, a.Project, Projection{Step: r.step(), Kind: "tool", Text: call.Name}).Get(r.ctx, nil)
 	retry, err := r.boundary(err)
 	if retry {
-		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."})
+		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "reason": prompts.Runtime("workflow-execution-admission-changed-before-this-call-ran", nil)})
 	}
 	if err != nil {
 		return nextCall, err
@@ -480,7 +480,7 @@ func (r *taskRun) prepareWrite(call CallRef, operation string) (callStep, error)
 	}).Get(r.ctx, &prepared)
 	retry, err := r.boundary(err)
 	if retry {
-		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "outcome": "failed", "operation_id": operation, "evidence_ref": operation, "reason": "Execution admission changed before this write was prepared. Nothing was sent."})
+		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "outcome": "failed", "operation_id": operation, "evidence_ref": operation, "reason": prompts.Runtime("workflow-execution-admission-changed-before-this-write-was-prepa", nil)})
 	}
 	if err != nil {
 		return nextCall, err
@@ -524,17 +524,15 @@ func (c *Checkpoint) afterTool(output RefToolOutcome, id string) bool {
 	switch {
 	case output.Outcome == "needs_input":
 		c.Question = &state.Question{
-			ID:   fmt.Sprintf("%s-correction-q%d", id, c.Tools),
-			Kind: "input",
-			Text: "Completing this task appears to require another action beyond what it may do, because it can only read right now. " +
-				"Please clarify or authorize what should happen next.",
+			ID:       fmt.Sprintf("%s-correction-q%d", id, c.Tools),
+			Kind:     "input",
+			Text:     prompts.Runtime("read-only-question", nil),
 			Revision: c.Revision,
 		}
 	case output.Outcome == "uncertain" && output.EffectClass != "read":
-		text := "An attempted action has an uncertain outcome. Nori will not repeat it automatically. " +
-			"Please confirm what happened or clarify how to proceed."
+		text := prompts.Runtime("uncertain-action-question", nil)
 		if output.Unresolved != "" {
-			text = output.Unresolved + "\n\nNori will not repeat it automatically. Please confirm what happened or clarify how to proceed."
+			text = output.Unresolved + prompts.Runtime("uncertain-action-followup", nil)
 		}
 		c.Question = &state.Question{
 			ID:       fmt.Sprintf("%s-operation-q%d", id, c.Tools),

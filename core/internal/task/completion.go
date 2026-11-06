@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
@@ -60,7 +61,7 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 	}
 	if snap.Run.Revision != in.Revision || snap.Run.Position != in.Position {
 		out.Action = "reconcile"
-		result := transcript.ToolResultMessage(call.ID, call.Name, map[string]any{"accepted": false, "reason": "Instructions changed. Read the latest instructions before finishing."})
+		result := transcript.ToolResultMessage(call.ID, call.Name, map[string]any{"accepted": false, "reason": prompts.Runtime("completion-instructions-changed-read-the-latest-instructions-befor", nil)})
 		out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{result})
 		return out, classified(e)
 	}
@@ -72,7 +73,7 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 	for _, op := range ops {
 		switch op.Outcome {
 		case "pending", "attempted", "ready", "uncertain", "":
-			check.Proposal.Unmet = append(check.Proposal.Unmet, "The outcome of "+op.Name+" is unresolved; it has not been repeated.")
+			check.Proposal.Unmet = append(check.Proposal.Unmet, prompts.Runtime("operation-unresolved", map[string]any{"Name": op.Name}))
 		}
 	}
 	if e = store.PutCompletionCheck(ctx, in.RunID, check); e != nil {
@@ -81,7 +82,7 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 	out.Action = "publish"
 	if len(check.Proposal.Unmet) > 0 {
 		out.Action = "partial"
-		out.Detail = "Incomplete. " + strings.Join(check.Proposal.Unmet, "; ")
+		out.Detail = prompts.Runtime("completion-incomplete", nil) + strings.Join(check.Proposal.Unmet, "; ")
 	}
 	return out, nil
 }

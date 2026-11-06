@@ -48,11 +48,11 @@ func (s *Service) Deliver(ctx context.Context) error {
 // prepText reports the read-only task's options, or says there are none yet.
 func (s *Service) prepText(ctx context.Context, offer state.Offer) string {
 	if offer.PrepRunID == "" {
-		return "\n\nI haven't looked for other times yet."
+		return prompts.Runtime("prep-not-started", nil)
 	}
 	run, err := s.Store.GetRun(ctx, offer.PrepRunID)
 	if err != nil {
-		return "\n\nI haven't looked for other times yet."
+		return prompts.Runtime("prep-not-started", nil)
 	}
 	switch {
 	case run.Status == state.RunCompleted && strings.TrimSpace(run.Result) != "":
@@ -69,20 +69,18 @@ func (s *Service) prepText(ctx context.Context, offer state.Offer) string {
 		if run.FinishedAt != nil {
 			read = *run.FinishedAt
 		}
-		return "\n\nTimes that looked open when I read your calendar at " + clock(read, s.Location) +
-			". It may have changed since, and I'll check again before changing anything:\n" + result
+		return prompts.Runtime("prep-times", map[string]any{"Time": clock(read, s.Location), "Result": result})
 	case run.Status == state.RunRunning:
-		return "\n\nI didn't finish looking for other times."
+		return prompts.Runtime("prep-not-finished", nil)
 	}
-	return "\n\nI couldn't find other times on my own."
+	return prompts.Runtime("prep-no-times", nil)
 }
 
 func offerNote(o state.Offer, s *Service) string {
 	finding, _ := json.Marshal(o.Finding)
 	note := prompts.Runtime("offer-note", map[string]any{"Finding": string(finding)})
 	if o.PrepRunID != "" {
-		note += "\nA read-only task looked for other times first: " + o.PrepRunID + ". Its times come from an earlier " +
-			"calendar read and may be out of date, so read the calendar again before suggesting one."
+		note += prompts.Runtime("prep-history", map[string]any{"Run": o.PrepRunID})
 	}
 	return note
 }

@@ -23,7 +23,7 @@ func (s *Service) taskUpload(ctx context.Context, run, id string) (state.Attachm
 			return attachment, nil
 		}
 	}
-	return state.Attachment{}, errors.New("this task wasn't given a file with that upload_id")
+	return state.Attachment{}, errors.New(prompts.Runtime("tool-this-task-wasn-t-given-a-file-with-that-upload-id", nil))
 }
 
 func (s *Service) uploadBytes(ctx context.Context, attachment state.Attachment) ([]byte, error) {
@@ -32,7 +32,7 @@ func (s *Service) uploadBytes(ctx context.Context, attachment state.Attachment) 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, errors.New("the stored file is unavailable, so its contents weren't read")
+		return nil, errors.New(prompts.Runtime("tool-the-stored-file-is-unavailable-so-its-contents-weren-t-read", nil))
 	}
 	return data, nil
 }
@@ -65,7 +65,7 @@ func (s *Service) uploadInspect(ctx context.Context, run, id, question string) (
 		return nil, err
 	}
 	if !strings.HasPrefix(attachment.MediaType, "image/") {
-		return nil, errors.New("upload_inspect reads images. Use upload_open for a PDF or CSV")
+		return nil, errors.New(prompts.Runtime("tool-upload-inspect-reads-images-use-upload-open-for-a-pdf-or-csv", nil))
 	}
 	data, err := s.uploadBytes(ctx, attachment)
 	if err != nil {

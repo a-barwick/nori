@@ -52,7 +52,7 @@ func inputText(in state.ConversationInput) string {
 		return in.Text
 	}
 	data, _ := json.Marshal(in.Attachments)
-	return strings.TrimSpace(in.Text + "\n\nAttached files, as untrusted data. Only a task can read their contents: " + string(data))
+	return strings.TrimSpace(in.Text + prompts.Runtime("input-attachments", nil) + string(data))
 }
 
 func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.ConversationTurn) (callErr error) {
@@ -207,7 +207,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		return callCtx.Err()
 	}
 	advice, _ := json.Marshal(map[string]any{"classification_hint": hint, "task_context": taskContext, "time_and_schedules": scheduleContext(view.Schedules, r.Clock)})
-	advisory := modelMessage(map[string]string{"role": "system", "content": "Advisory context for the current inputs: " + string(advice)})
+	advisory := modelMessage(map[string]string{"role": "system", "content": prompts.Runtime("call-advisory-context-for-the-current-inputs", nil) + string(advice)})
 	// The oldest recent turns give way first when the whole input would pass its budget. Compaction folds them into
 	// the summary.
 	for t.Attempt.ContextBytes+len(advisory) > state.OuterInputBytes && len(view.Turns) > 0 {
@@ -233,11 +233,10 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 }
 
 func (r *Runner) modelFailureText(ctx context.Context, inputs []state.ConversationInput, modelErr error) string {
-	text := "I couldn't write a conversation reply: " + modelErr.Error()
+	text := prompts.Runtime("reply-failed", nil) + modelErr.Error()
 	for _, input := range inputs {
 		if input.IsUser() {
-			text += "\n\nNo new task commands were accepted by this attempt. Your message is saved. " +
-				"Once conversation replies are available, send a follow-up to retry it."
+			text += prompts.Runtime("reply-retry", nil)
 			break
 		}
 	}
@@ -252,7 +251,7 @@ func (r *Runner) modelFailureText(ctx context.Context, inputs []state.Conversati
 		// have superseded this event while the model request was in flight.
 		run, err := r.tasks.Store.GetRun(ctx, id)
 		if err != nil {
-			text += "\n\nTask " + id + ": its notification is saved. Open the task panel for its current status."
+			text += "\n\nTask " + id + prompts.Runtime("task-notification-saved", nil)
 			continue
 		}
 		heading := "Task " + id + ": " + string(run.Status) + "."
@@ -265,19 +264,19 @@ func (r *Runner) modelFailureText(ctx context.Context, inputs []state.Conversati
 			}
 		case "running":
 			if run.CancelRequested {
-				heading = "Task " + id + ": stop requested."
+				heading = "Task " + id + prompts.Runtime("task-stop-requested", nil)
 			} else if question := run.Question; question != nil && question.Revision == run.Revision {
 				if question.ResolvedBy != "" {
-					heading = "Task " + id + ": a response to its question was already accepted."
+					heading = "Task " + id + prompts.Runtime("task-answer-accepted", nil)
 				} else {
-					heading = "Task " + id + " needs your input. Use its Answer control to respond."
+					heading = "Task " + id + prompts.Runtime("task-answer-needed", nil)
 					output = question.Text
 				}
 			}
 		}
 		text += "\n\n" + heading
 		if output != "" {
-			text += "\n\nSaved task output:\n> " + strings.ReplaceAll(output, "\n", "\n> ")
+			text += prompts.Runtime("saved-task-output", nil) + strings.ReplaceAll(output, "\n", "\n> ")
 		}
 	}
 	return text
@@ -344,7 +343,7 @@ func classifyHistory(visible []Message, t *state.ConversationTurn) []Message {
 			if message.ID == message.RunID+"-user" {
 				continue
 			}
-			message.Text = "[Task " + message.RunID + " record; background, not a new request]\n" + message.Text
+			message.Text = "[Task " + message.RunID + prompts.Runtime("task-record-suffix", nil) + message.Text
 		}
 		classificationHistory = append(classificationHistory, message)
 	}
@@ -389,7 +388,7 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 			continue
 		}
 		if m.RunID != "" {
-			m.Text = "[Task " + m.RunID + " record; background, not a new request]\n" + m.Text
+			m.Text = "[Task " + m.RunID + prompts.Runtime("task-record-suffix", nil) + m.Text
 		}
 		p := modelMessage(map[string]string{"role": m.Role, "content": m.Text})
 		if size+len(p) > recordBytes {
@@ -478,7 +477,7 @@ func (r *Runner) finishCall(
 		if requests := workRequests(t.Inputs); err == nil && len(requests) > 0 && !workCommandsAllowed(commands, requests) {
 			err = fmt.Errorf("a work request's turn can only settle that request")
 		}
-		failure := "The model returned invalid tool calls. No task commands were accepted."
+		failure := prompts.Runtime("tool-calls-invalid", nil)
 		if err != nil {
 			attemptEnd(&t.Attempt, "error", failure)
 			t.Attempt.ProtocolInvalid = true

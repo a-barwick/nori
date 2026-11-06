@@ -182,7 +182,7 @@ func (a *Activities) PrepareAction(parent context.Context, in RefToolInput) (out
 	if callErr != nil {
 		if ctx.Err() != nil {
 			// A pause or Stop cut the read short. Nothing was sent, so close the record, and the saved task says what to do.
-			if _, saveErr := a.saveWrite(ctx, in.RunID, op, agent.WriteFailed, map[string]any{"applied": false, "reason": "Interrupted before sending. Nothing was sent."}); saveErr != nil {
+			if _, saveErr := a.saveWrite(ctx, in.RunID, op, agent.WriteFailed, map[string]any{"applied": false, "reason": prompts.Runtime("actions-interrupted-before-sending-nothing-was-sent", nil)}); saveErr != nil {
 				return out, saveErr
 			}
 			check, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveTimeout)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -31,33 +30,32 @@ type planned struct {
 
 func checkName(now time.Time) string {
 	if now.Hour() < 12 {
-		return "overnight calendar check"
+		return prompts.Runtime("check-overnight", nil)
 	}
-	return "midday calendar check"
+	return prompts.Runtime("check-midday", nil)
 }
 
 // defaultTime is 8 am after the midnight check and 6 pm after the noon check, moved earlier when the conflict comes
 // first, and never in the past.
 func defaultTime(f state.TravelFinding, now time.Time, location *time.Location) (time.Time, string) {
 	local := now.In(location)
-	hour, why := morningHour, "default morning time"
+	hour, why := morningHour, prompts.Runtime("delivery-morning", nil)
 	if local.Hour() >= 12 {
-		hour, why = eveningHour, "default evening time"
+		hour, why = eveningHour, prompts.Runtime("delivery-evening", nil)
 	}
 	at := time.Date(local.Year(), local.Month(), local.Day(), hour, 0, 0, 0, location)
 	if latest := f.Second.Start.Add(-lead); at.After(latest) {
-		at, why = latest, "the conflict comes before the default time"
+		at, why = latest, prompts.Runtime("delivery-conflict-first", nil)
 	}
 	if at.Before(now) {
-		at, why = now, "the default time has passed"
+		at, why = now, prompts.Runtime("delivery-time-passed", nil)
 	}
 	return at, why
 }
 
 func defaultPlan(f state.TravelFinding, now time.Time, location *time.Location) planned {
 	at, why := defaultTime(f, now, location)
-	text := fmt.Sprintf("From my %s: %s ends at %s, and %s starts at %s. The drive between them takes about %d minutes, and there are %d minutes between them. Want me to look for another time for one of them?",
-		checkName(now), f.First.Title, clock(f.First.End, location), f.Second.Title, clock(f.Second.Start, location), f.DriveMinutes, f.GapMinutes)
+	text := prompts.Runtime("offer-fallback", map[string]any{"Check": checkName(now), "FirstTitle": f.First.Title, "FirstEnd": clock(f.First.End, location), "SecondTitle": f.Second.Title, "SecondStart": clock(f.Second.Start, location), "Drive": f.DriveMinutes, "Gap": f.GapMinutes})
 	return planned{Text: text, DeliverAt: at, Timing: why}
 }
 
@@ -76,7 +74,7 @@ func (s *Service) ask(ctx context.Context, offer *state.Offer, memories []state.
 		"drive_minutes": f.DriveMinutes, "gap_minutes": f.GapMinutes,
 	})
 	system, _ := json.Marshal(map[string]string{"role": "system", "content": prompts.ProactivePlan})
-	user, _ := json.Marshal(map[string]string{"role": "user", "content": "Calendar check finding, as data:\n" + string(facts)})
+	user, _ := json.Marshal(map[string]string{"role": "user", "content": prompts.Runtime("plan-calendar-check-finding-as-data", nil) + string(facts)})
 	record := func(ctx context.Context, u state.Usage) error {
 		u.InputID = state.OfferInputID(offer.ID)
 		return s.Store.RecordUsage(ctx, u)

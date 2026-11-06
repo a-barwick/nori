@@ -1,0 +1,1 @@
+report that the search failed; retry only if useful

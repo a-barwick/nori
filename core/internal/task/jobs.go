@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -13,6 +12,7 @@ import (
 	"nori/internal/agent"
 	"nori/internal/computer"
 	"nori/internal/observability"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
@@ -42,7 +42,7 @@ func existingJobTool(name string) bool {
 // lostJob is the only supported answer about a job on a computer that isn't running.
 func lostJob(call transcript.ToolCall) map[string]any {
 	id, _ := call.Args["job_id"].(string)
-	return map[string]any{"job_id": id, "state": "lost", "reason": "The computer is stopped, so this job isn't running and its result wasn't observed."}
+	return map[string]any{"job_id": id, "state": "lost", "reason": prompts.Runtime("jobs-the-computer-is-stopped-so-this-job-isn-t-running-and-i", nil)}
 }
 
 // toolOutcome maps what a tool returned to its operation record. A started job or
@@ -227,7 +227,7 @@ func (a *Activities) JobWaitRef(parent context.Context, in JobWaitInput) (out Jo
 
 func jobProgress(status map[string]any) string {
 	seconds, _ := status["elapsed_seconds"].(float64)
-	text := fmt.Sprintf("Job running for %s.", time.Duration(seconds)*time.Second)
+	text := prompts.Runtime("job-progress", map[string]any{"Elapsed": time.Duration(seconds) * time.Second})
 	tail, _ := status["output_tail"].(string)
 	lines := strings.Split(strings.TrimSpace(tail), "\n")
 	if last := strings.TrimSpace(lines[len(lines)-1]); last != "" {
@@ -237,7 +237,7 @@ func jobProgress(status map[string]any) string {
 				last = last[1:]
 			}
 		}
-		text += " Latest output: " + last
+		text += prompts.Runtime("job-progress-output", map[string]any{"Output": last})
 	}
 	return text
 }

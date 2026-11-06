@@ -1,0 +1,1 @@
+On {{.Date}}, {{printf "%q" .FirstTitle}} ends at {{.FirstEnd}} at {{printf "%q" .FirstPlace}}, and {{printf "%q" .SecondTitle}} starts at {{.SecondStart}} at {{printf "%q" .SecondPlace}}. The drive takes about {{.Drive}} minutes and the gap is {{.Gap}} minutes.

@@ -2,16 +2,17 @@ package main
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"nori/internal/agent"
+	"nori/internal/platform"
 	"nori/internal/settings"
-	"nori/internal/wake"
 )
 
-// config is the worker's release identity, polling windows and capabilities. It is
-// checked per run from the startup settings, so a missing release fails the request that needs it.
+// config is the worker's release identity, polling windows and capabilities,
+// parsed once before the process opens a listener or connects to providers.
 type config struct {
 	build, deployment      string
 	pollWindow, idleWindow time.Duration
@@ -36,25 +37,32 @@ func capabilities(s settings.Settings) (agent.Capabilities, error) {
 	}, nil
 }
 
-// checkSlice validates once, before the server listens, the settings every request needs. Without it a revision
-// missing one passes the platform's health check and then fails every request. Registration already needs the build
-// and the store, so this adds only the model key and, in main, the computer.
-func checkSlice(s settings.Settings) error {
+func loadConfig(s settings.Settings) (config, error) {
 	for _, setting := range [][2]string{{"NORI_PROJECT_ID", s.Store.Project}, {"FIRESTORE_DATABASE_ID", s.Store.Database}, {"TEMPORAL_BUILD_ID", s.Temporal.BuildID}, {"OPENROUTER_API_KEY", s.Models.OpenRouterKey}} {
 		if _, err := settings.Required(setting[0], setting[1]); err != nil {
-			return err
+			return config{}, err
 		}
 	}
-	return nil
-}
-
-func loadConfig(s settings.Settings, bounded bool, waker wake.Waker) (config, error) {
-	build := s.Temporal.BuildID
-	if build == "" {
-		return config{}, fmt.Errorf("TEMPORAL_BUILD_ID is required; use an immutable release identifier")
+	if err := s.Temporal.Validate(); err != nil {
+		return config{}, err
 	}
-	if bounded && !waker.WorkersNeedWake() {
-		return config{}, fmt.Errorf("request worker requires durable worker wake configuration")
+	if err := platform.CheckComputer(s); err != nil {
+		return config{}, err
+	}
+	if s.Port != "" {
+		// Request workers must support registration and durable continuation wakes.
+		for _, setting := range [][2]string{{"TEMPORAL_DEPLOYMENT_NAME", s.Temporal.DeploymentName}, {"NORI_WORKER_SERVICES", s.Wake.WorkerServices}} {
+			if _, err := settings.Required(setting[0], setting[1]); err != nil {
+				return config{}, err
+			}
+		}
+		var routes map[string]string
+		if err := json.Unmarshal([]byte(s.Wake.WorkerServices), &routes); err != nil || len(routes) == 0 {
+			return config{}, fmt.Errorf("NORI_WORKER_SERVICES must be a nonempty JSON map of worker builds to service URLs")
+		}
+		if _, err := settings.Required("NORI_WORKER_SERVICES route for TEMPORAL_BUILD_ID", routes[s.Temporal.BuildID]); err != nil {
+			return config{}, err
+		}
 	}
 	pollWindow, err := time.ParseDuration(s.Worker.PollWindow)
 	if err != nil || pollWindow <= 0 || pollWindow > 240*time.Second {
@@ -69,7 +77,7 @@ func loadConfig(s settings.Settings, bounded bool, waker wake.Waker) (config, er
 		return config{}, err
 	}
 	return config{
-		build: build, deployment: cmp.Or(s.Temporal.DeploymentName, "nori-task"),
+		build: s.Temporal.BuildID, deployment: cmp.Or(s.Temporal.DeploymentName, "nori-task"),
 		pollWindow: pollWindow, idleWindow: idleWindow, capabilities: caps,
 	}, nil
 }

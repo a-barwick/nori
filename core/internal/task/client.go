@@ -31,10 +31,10 @@ func Queue() string { return configured.TaskQueue }
 // configuration or Terraform state. Workers may continue using their platform's
 // native TEMPORAL_API_KEY secret injection. Local mode never calls secrets.
 func Dial(ctx context.Context, secrets secret.Lookup) (client.Client, error) {
-	address, namespace := configured.Address, configured.Namespace
-	if address == "" || namespace == "" {
-		return nil, errors.New("TEMPORAL_ADDRESS and TEMPORAL_NAMESPACE are required")
+	if err := configured.Validate(); err != nil {
+		return nil, err
 	}
+	address, namespace := configured.Address, configured.Namespace
 	options := client.Options{HostPort: address, Namespace: namespace}
 	if !configured.Local {
 		key, err := secret.Resolve(ctx, secrets, configured.APIKey, configured.APIKeySecret, "TEMPORAL_API_KEY_SECRET_VERSION")
