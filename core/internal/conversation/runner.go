@@ -262,16 +262,42 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		if stale {
 			continue
 		}
+		// Resolve explicit retrievals even when resuming a saved model reply. A missing
+		// ID must not leave the model's display claim or the "Here it is" fallback.
+		shown := []string{}
+		missing := false
+		for _, id := range t.Attempt.ShowResults {
+			if slices.Contains(shown, id) {
+				continue
+			}
+			if _, err := r.tasks.Store.GetResult(ctx, id); errors.Is(err, state.ErrNotFound) {
+				missing = true
+			} else if err != nil {
+				return err
+			} else {
+				shown = append(shown, id)
+			}
+		}
+		t.Attempt.ShowResults = shown
+		showFailure := ""
+		if missing {
+			showFailure = "I couldn't find the requested saved results."
+			if len(shown) > 0 {
+				showFailure = "Some requested saved results are unavailable. The available results are shown below."
+			}
+		}
 		text := t.Attempt.Text
+		commandFailure := ""
 		for _, a := range t.Attempt.Actions {
 			if a.Status == "rejected" {
-				text = "I couldn't apply this set of task changes: " + a.Error + ". No commands in this set were accepted."
+				commandFailure = "I couldn't apply this set of task changes: " + a.Error + ". No commands in this set were accepted."
+				text = commandFailure
 				break
 			}
 		}
-		// A refused memory or schedule change replaces the reply, but tasks the same reply started still say so.
-		if failures := strings.TrimSpace(memoryFailureText(t.Attempt.Memory) + " " + scheduleFailureText(t.Attempt.Schedules)); failures != "" {
-			text = strings.TrimSpace(failures + " " + acceptedCommandText(t.Attempt.Actions))
+		// Failed retrievals or refused changes replace model claims, while accepted tasks still say so.
+		if failures := strings.TrimSpace(showFailure + " " + memoryFailureText(t.Attempt.Memory) + " " + scheduleFailureText(t.Attempt.Schedules)); failures != "" {
+			text = strings.TrimSpace(failures + " " + commandFailure + " " + acceptedCommandText(t.Attempt.Actions))
 		}
 		if text == "" {
 			text = acceptedCommandText(t.Attempt.Actions)
