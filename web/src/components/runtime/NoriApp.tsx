@@ -226,7 +226,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
             onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
             status={work}
             onUnread={onUnread}
-            onRead={runtime.markRead}
+            onShown={runtime.markShown}
             readPosition={session?.read_position}
             presence={false}
             hasOlder={!!session?.next_cursor}

@@ -9,14 +9,14 @@
 </head>
 <body>
 <h1>Clients</h1>
-<p class="lede">The assistant and independent chat clients share one agent service, which owns their saved state and execution.</p>
+<p class="lede">The web app shows the assistant and its independent chats, and one agent service owns their saved state and execution.</p>
 <div class="card"><div class="flow">
 <div class="branch">
-<div class="node"><b>Assistant web client</b><small>Shows the assistant conversation and background tasks.</small></div>
-<div class="node"><b>Chat client</b><small>Shows separate conversations and streamed replies.</small></div>
+<div class="node"><b>Assistant conversation</b><small>Shows one conversation with Nori and its background tasks.</small></div>
+<div class="node"><b>Chats tab</b><small>Shows separate chats and their streamed replies.</small></div>
 </div>
 <div class="arrow">↓ <span class="lbl">messages, file uploads and user decisions</span></div>
-<div class="node"><b>Next.js server</b><small>Checks the same owner and origin for both clients.</small></div>
+<div class="node"><b>Next.js server</b><small>Checks the same owner and origin for both.</small></div>
 <div class="arrow">↓ <span class="lbl">HTTP requests with server credentials</span></div>
 <div class="node outer"><b>Agent service</b><small>Runs turns, saves outcomes and enforces tool approvals.</small></div>
 <div class="arrow">↓ <span class="lbl">saved messages, tasks and conversation changes</span></div>
@@ -25,10 +25,10 @@
 <section><h2>Each client</h2>
 <div class="card"><table class="tall"><tr><th>Client</th><th>Behavior</th><th>Pages</th></tr>
 <tr><td>Assistant</td><td>One conversation with background tasks, Activity and saved results.</td><td><a href="web-client.html">Web client</a>, <a href="frontend.html">Web client architecture</a></td></tr>
-<tr><td>Independent chat</td><td>Multiple conversations with streamed text, CSV reading and tool approvals.</td><td><a href="chat-client.html">Chat client</a></td></tr>
+<tr><td>Chats tab</td><td>Multiple chats with streamed text, CSV reading and tool approvals, opened from the side panel.</td><td><a href="chat-client.html">Chats</a></td></tr>
 <tr class="designed"><td>Native and CLI</td><td>Not built.</td><td>Platform sign-in, push and offline clients remain planned.</td></tr>
 </table></div>
-<p>Both browser clients support phone widths. The assistant links to chat, and chat links back to the assistant.</p>
+<p>The web client supports phone widths. Its side panel switches between Activity and Chats, and an open chat's back arrow returns to the assistant.</p>
 </section>
 <section><h2>What the service owns</h2>
 <div class="card"><table class="tall"><tr><th>Concern</th><th>Service</th><th>Client</th></tr>
@@ -43,10 +43,10 @@
 <ul class="pts">
 <li>Chat messages, events, attachments and approvals belong to one conversation.</li>
 <li>New chats exclude assistant tasks, saved memories and other chats from model context.</li>
-<li>Both clients use the same owner authentication, configured providers and development spending controls.</li>
+<li>The assistant and chats use the same owner authentication, configured providers and development spending controls.</li>
 </ul>
 <p><a href="api.html">Service API</a> describes the routes and replay behavior.</p>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>chat/src/App.svelte</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/app/app.go</code> · <code>core/internal/state/firestore/chat.go</code> · <code>core/internal/state/firestore/database.go</code> · <code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>core/internal/spend/client.go</code> · <code>migration/plan.json</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/src/lib/chat/useChat.ts</code> · <code>web/src/components/runtime/TaskPanel.tsx</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/app/app.go</code> · <code>core/internal/state/firestore/chat.go</code> · <code>core/internal/state/firestore/database.go</code> · <code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>core/internal/spend/client.go</code> · <code>migration/plan.json</code></p></details>
 </body>
 </html>

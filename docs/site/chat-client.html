@@ -3,41 +3,42 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chat client · Nori</title>
+<title>Chats · Nori</title>
 <link rel="stylesheet" href="site.css">
 <script src="site.js" defer></script>
 </head>
 <body>
-<h1>Chat client</h1>
-<p class="lede">Independent conversations stream replies through the same authenticated web server and agent service as the assistant.</p>
+<h1>Chats</h1>
+<p class="lede">Independent chats open from the side panel's Chats tab and stream replies from the same agent service as the assistant.</p>
 <div class="card"><div class="flow">
-<div class="node"><b>Chat client</b><small>Sends “Total the parts in this CSV” with its assigned file ID.</small></div>
+<div class="node"><b>Chats tab</b><small>Sends “Total the parts in this CSV” with its assigned file ID.</small></div>
 <div class="arrow">↓ <span class="lbl">message through the Next.js server</span></div>
 <div class="node outer"><b>Foreground chat service</b><small>Saves the turn and sends this conversation's context to the outer model.</small></div>
 <div class="arrow">↓ <span class="lbl">requested CSV read</span></div>
 <div class="node"><b>CSV reader</b><small>Checks file assignment and returns rows as untrusted data.</small></div>
 <div class="arrow">↓ <span class="lbl">rows for the outer model's answer</span></div>
-<div class="node outer"><b>Foreground chat service</b><small>Saves reply text at most every 400 ms, then the final answer.</small></div>
+<div class="node outer"><b>Foreground chat service</b><small>Saves reply text as it streams, then the final answer.</small></div>
 <div class="arrow">↓ <span class="lbl">numbered events with the changed messages</span></div>
-<div class="node"><b>Chat client</b><small>Applies each event and reloads the saved chat when it falls behind.</small></div>
+<div class="node"><b>Chats tab</b><small>Applies each event and reloads the saved chat when it falls behind.</small></div>
 </div></div>
 <section><h2>Conversation controls</h2>
 <div class="card"><table class="tall"><tr><th>Control</th><th>Behavior</th></tr>
-<tr><td>New conversation</td><td>Opens an empty draft. The chat is saved when its first message or file is sent.</td></tr>
+<tr><td>New chat</td><td>Opens an empty chat in the main area. The chat is saved when its first message or file is sent.</td></tr>
 <tr><td>Send</td><td>Reuses the same message ID when retrying unchanged input after a failed request.</td></tr>
-<tr><td>Stop reply</td><td>Stops the selected turn and preserves its saved partial text.</td></tr>
+<tr><td>Stop reply</td><td>Replaces Send while a reply streams. It stops that turn and keeps its saved partial text.</td></tr>
+<tr><td>Back to Nori</td><td>Closes the chat and shows the assistant conversation again.</td></tr>
 <tr><td>Delete chat</td><td>Removes the chat, its history and its files after a confirmation. It's refused while a reply or action is open.</td></tr>
-<tr><td>Attach CSV</td><td>Uploads a file to this conversation and assigns it to the next message.</td></tr>
+<tr><td>Attach a file</td><td>Offers CSV files, uploads the file to this chat and assigns it to the next message.</td></tr>
 </table></div>
-<p>The sidebar lists saved chats, newest first. When the event stream ends, the client reconnects on its own. If the connection drops, it shows “Reconnecting…” until it's back.</p>
-<p>The Svelte client is packaged with the web app. Both clients remain available while an assistant task waits or runs.</p>
+<p>The Chats tab lists saved chats, newest first. The page address names the open chat, so a reload reopens it.</p>
+<p>When the event stream ends, the web client reconnects on its own. If the connection drops, the chat shows “Reconnecting…” until it's back. Assistant tasks keep running while a chat is open.</p>
 </section>
 <section><h2>Tools and decisions</h2>
 <div class="card"><table class="tall"><tr><th>Tool</th><th>Available behavior</th></tr>
 <tr><td>CSV reading</td><td>Reads assigned CSV files up to 64 KiB. Larger files require the assistant.</td></tr>
 <tr><td>Calendar reading</td><td>Reads the configured calendar through the shared tool implementation.</td></tr>
-<tr><td>Calendar changes and email</td><td>Shows the saved action with Approve this action and Decline buttons.</td></tr>
-<tr><td>Background tasks and computer</td><td>Use the assistant client for task dispatch, shell, browser, PDF or image analysis.</td></tr>
+<tr><td>Calendar changes and email</td><td>Shows the saved action with Approve and Decline buttons.</td></tr>
+<tr><td>Background tasks and computer</td><td>Use the assistant conversation for task dispatch, shell, browser, PDF or image analysis.</td></tr>
 </table></div>
 <p>An approval names one saved question. While it waits, the reply shows “Waiting for your approval” and new messages are refused.</p>
 <p>After Approve, the service sends the saved action and records the provider outcome. The action's text stays under its outcome.</p>
@@ -52,17 +53,17 @@
 </ul>
 <details class="more"><summary>Addresses and limits</summary>
 <div class="card"><table class="tall"><tr><th>Item</th><th>Value</th></tr>
-<tr><td>Packaged client</td><td><code>/chat/index.html</code></td></tr>
+<tr><td>Open chat</td><td>The page address carries <code>?chat=</code> and the chat ID.</td></tr>
 <tr><td>Browser requests</td><td><code>/api/v1/conversations</code> through the same owner-protected Next.js server.</td></tr>
 <tr><td>Uploaded file</td><td>Up to 10 MiB. Foreground CSV reading has the lower 64 KiB limit.</td></tr>
 <tr><td>Chat context</td><td>Input is refused at 64 saved messages or above 96 KiB of message text and operation data.</td></tr>
 <tr><td>Tool result</td><td>Results above 16 KiB become an error record instead of entering the next model request.</td></tr>
-<tr><td>Event stream</td><td>The service ends each stream after 150 seconds, and the client resumes from its last event. A client more than 500 events behind reloads the chat.</td></tr>
+<tr><td>Event stream</td><td>The service ends each stream after 150 seconds, and the web client resumes from its last event. A client more than 500 events behind reloads the chat.</td></tr>
 <tr><td>Owner name</td><td>The agent service's optional <code>NORI_OWNER_NAME</code> names the person in the chat's instructions.</td></tr>
 </table></div>
 <p>Run and verification commands are in the repository README. <a href="api.html">Service API</a> lists the conversation routes.</p>
 </details>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>chat/src/App.svelte</code> · <code>chat/src/contract.ts</code> · <code>chat/vite.config.ts</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/api/chat.go</code> · <code>core/internal/state/firestore/chat.go</code> · <code>core/internal/agent/foreground.go</code> · <code>core/internal/state/uploads.go</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>web/Dockerfile</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/src/lib/chat/useChat.ts</code> · <code>web/src/lib/chat/contract.ts</code> · <code>web/src/lib/chat/thread.ts</code> · <code>web/src/components/runtime/ChatList.tsx</code> · <code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/components/runtime/RuntimeComposer.tsx</code> · <code>web/src/components/chat/Parts.tsx</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/api/chat.go</code> · <code>core/internal/state/firestore/chat.go</code> · <code>core/internal/agent/foreground.go</code> · <code>core/internal/state/uploads.go</code> · <code>web/src/lib/runtime/forward.ts</code></p></details>
 </body>
 </html>
