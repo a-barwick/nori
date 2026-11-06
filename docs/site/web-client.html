@@ -11,22 +11,22 @@
 <h1>Web client</h1>
 <p class="lede">A Next.js app that shows one conversation with Nori and the activity of its tasks.</p>
 <div class="card">
-<img class="shot" src="img/web-desktop.png" width="1440" height="900" alt="The web client at desktop width. A white window on a lavender background holds the Nori header, a conversation with purple user bubbles and a saved document, a composer, and an Activity panel with a task waiting for an answer.">
+<img class="shot" src="img/web-desktop.png" width="1440" height="900" alt="The web client at desktop width. A white window on a lavender background holds the Nori header, a conversation with purple user bubbles and a saved document, a composer, and the side panel on its Activity tab with a task waiting for an answer.">
 <p class="note">Screenshots come from the running client, with made-up data.</p>
 </div>
-<p>Rules for every client are on <a href="clients.html">Clients</a> and <a href="api.html">Service API</a>.</p>
+<p>Shared rules are on <a href="clients.html">Clients</a> and <a href="api.html">Service API</a>.</p>
 <div class="grid2"><a class="card tight go" href="theme.html"><b>Theme</b><span>Colors, type, tokens and the mark.</span></a><a class="card tight go" href="frontend.html"><b>Web client architecture</b><span>Components, requests, live updates and builds.</span></a></div>
 <section><h2>The screen</h2>
 <div class="card"><table class="tall"><tr><th>Part</th><th>What it shows</th><th>Component</th></tr>
 <tr><td>Header</td><td>Nori's mark and status, debug toggle, Refresh, Activity.</td><td>Shell</td></tr>
 <tr><td>Thread</td><td>Saved messages, <a href="proactive.html">calendar offers</a>, documents, time separators, older-message loading and one status line.</td><td><code>Thread</code></td></tr>
-<tr><td>Composer</td><td>A text box, Attach for up to 10 files, Send and a new-message count. Enter sends and Shift+Enter adds a line.</td><td><code>RuntimeComposer</code></td></tr>
-<tr><td>Activity panel</td><td>Running tasks, recent tasks, questions, events, results and screenshots. <code>⌘.</code> or <code>Ctrl+.</code> toggles it.</td><td><code>TaskPanel</code></td></tr>
+<tr><td>Composer</td><td>A text box, Attach for up to 10 files, Send and a new-message count.</td><td><code>RuntimeComposer</code></td></tr>
+<tr><td>Side panel</td><td>An Activity tab for task details and a Chats tab for <a href="chat-client.html">independent chats</a>. <code>⌘.</code> or <code>Ctrl+.</code> toggles it.</td><td><code>TaskPanel</code></td></tr>
 <tr><td>Reading view</td><td>A full-screen copy of a saved reply, with Download as Markdown and Back to chat.</td><td><code>DocumentViewer</code></td></tr>
 </table></div>
 <div class="shots">
 <img class="shot" src="img/web-phone.png" width="780" height="1688" alt="The conversation at phone width. The window fills the screen.">
-<img class="shot" src="img/web-phone-activity.png" width="780" height="1688" alt="The Activity panel at phone width, open as a sheet over the conversation.">
+<img class="shot" src="img/web-phone-activity.png" width="780" height="1688" alt="The side panel at phone width on its Activity tab, open as a sheet over the conversation.">
 </div>
 </section>
 <section><h2>Status and task labels</h2>
@@ -47,7 +47,7 @@
 <tr><td>Stopping…</td><td>Running, and Stop was requested</td><td>None until the agent service confirms</td></tr>
 <tr><td>Completed, Failed, Stopped</td><td>Finished</td><td>None</td></tr>
 </table></div>
-<p>The thread status line can also say that task execution is paused. Chat still works during a pause.</p>
+<p>The thread status line can also say that task execution is paused. Messages still send during a pause.</p>
 <p>A task update sent while an action waits voids that approval request. See <a href="authority.html">Approvals and writes</a>.</p>
 </section>
 <section><h2>Bubbles and documents</h2>
@@ -69,12 +69,12 @@
 </section>
 <details class="more"><summary>Layout by width</summary>
 <table class="tall"><tr><th>Width</th><th>Layout</th></tr>
-<tr><td>1280 px and up</td><td>Activity docks beside the thread at 360 px.</td></tr>
-<tr><td>Below 1280 px</td><td>Activity opens as a sheet from the right, over a scrim.</td></tr>
+<tr><td>1280 px and up</td><td>The side panel docks beside the thread at 360 px.</td></tr>
+<tr><td>Below 1280 px</td><td>The side panel opens as a sheet from the right, over a scrim.</td></tr>
 <tr><td>900 px and below</td><td>The lavender margin shrinks from 28 px to 16 px.</td></tr>
 <tr><td>600 px and below</td><td>The window fills the screen and the Activity button shows only its icon.</td></tr>
 </table>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>web/src/components</code> · <code>web/src/lib/hybrid.ts</code> · <code>web/src/lib/units.ts</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/src/components</code> · <code>web/src/components/runtime/TaskPanel.tsx</code> · <code>web/src/lib/hybrid.ts</code> · <code>web/src/lib/units.ts</code></p></details>
 </body>
 </html>
