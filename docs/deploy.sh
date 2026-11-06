@@ -16,7 +16,7 @@ public=$(mktemp -d)
 trap 'rm -rf "$public"' EXIT
 python3 agent_map.py publish "$public"
 # The privacy policy and terms the Google sign-in screen links to. They aren't docs pages. They go at the root
-# because the image's files are all mode 644, which a directory can't be served with.
+# with the other site files.
 cp legal/privacy.html legal/terms.html "$public/"
 docker build --platform linux/amd64 -f Dockerfile -t "$image" "$public"
 docker push "$image"
