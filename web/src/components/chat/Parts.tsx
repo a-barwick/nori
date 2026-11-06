@@ -106,6 +106,7 @@ function ApprovalPart({ part }: { part: Part }) {
 
 /** One non-text part. A type this client doesn't know shows the fallback text the service sent with it. */
 function PartView({ part }: { part: Part }) {
+  if (part.type === "approval_text") return <p className="whitespace-pre-wrap break-words text-body [overflow-wrap:anywhere]">{part.text}</p>;
   if (part.type === "link" && part.url && /^https?:\/\//.test(part.url)) return <a href={part.url} target="_blank" rel="noreferrer noopener" className="break-words text-meta underline">{part.name ?? part.url}</a>;
   if (["attachment", "artifact", "image"].includes(part.type) && part.url) return <FilePart part={part} />;
   if (part.type === "offer" && part.id && part.url) return <OfferPart part={part} />;

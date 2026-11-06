@@ -426,6 +426,9 @@ func CompleteTurn(c ConversationControl, t ConversationTurn, text string, now ti
 	c.Owner = ""
 	c.LeaseUntil = time.Time{}
 	message := Message{ID: AssistantMessageID(t.ID), Role: "assistant", Text: text, Parts: TextParts(text), CreatedAt: now, TurnID: t.ID}
+	if t.Attempt.Approval != nil && t.Attempt.Status != "error" && text == t.Attempt.Text {
+		message.Parts = []Part{{Type: PartApprovalText, Text: text, Fallback: text}}
+	}
 	return c, t, message
 }
 

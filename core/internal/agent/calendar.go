@@ -29,6 +29,14 @@ const (
 	calendarConnectHint = "Austin needs to run nori-connect-calendar."
 )
 
+// CalendarTimeInstructions keeps timezone clarification consistent across both
+// conversations and task workers. Timestamp validation cannot infer user intent.
+const CalendarTimeInstructions = "Preserve the time zone the user explicitly specifies for the requested time. " +
+	"If a follow-up supplies a new clock time without a zone and an earlier explicit zone could still apply, ask which zone " +
+	"the new time means before proposing calendar_create or calendar_move. Do not silently carry the earlier zone forward or reset it to local time. " +
+	"For example, after a London-time hold, 'move it to next Friday' followed by '2pm' needs a London-or-local clarification. " +
+	"A date-only change keeps the established clock time and zone unless the user says otherwise. Convert the resolved time only once. "
+
 // GoogleScopes are what the connected account grants: reading and changing calendar
 // events, sending mail, and reading a sent message's headers to confirm it.
 var GoogleScopes = []string{

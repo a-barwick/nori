@@ -12,6 +12,8 @@ const (
 	PartArtifact   = "artifact"
 	PartImage      = "image"
 	PartLink       = "link"
+	// PartApprovalText is an exact saved approval question, shown without Markdown.
+	PartApprovalText = "approval_text"
 	// PartOffer is a proactive offer's Accept and Dismiss card. ID names the offer.
 	PartOffer = "offer"
 )
