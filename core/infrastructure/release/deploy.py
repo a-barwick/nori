@@ -249,6 +249,8 @@ def worker_vars(c, build, image):
     # A new worker keeps the Current worker's model. Only Austin changes models.
     target = dict(targets[current_worker()])
     target["capabilities"] = capability_secrets_ready()
+    target["per_user_settings"] = True
+    target["jev_completion"] = False
     require(target["deployment_name"] == ops.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Current worker target is not production")
     require(services.get(build, image) == image and targets.get(build, target) == target, "This build already exists with a different image or target")
     services[build] = image
