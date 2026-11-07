@@ -273,9 +273,9 @@ def worker_queue_names(t, all_queues=False):
     return [t["worker_wake_queue"]] if t.get("worker_wake_queue") else []
 
 
-def worker_queue_state(t, paused, all_queues=False):
+def queue_state(names, paused):
     failures = []
-    for name in worker_queue_names(t, all_queues):
+    for name in names:
         try:
             url = "https://cloudtasks.googleapis.com/v2/" + name
             wanted = "PAUSED" if paused else "RUNNING"
@@ -283,11 +283,19 @@ def worker_queue_state(t, paused, all_queues=False):
             if current.get("state") != wanted:
                 api("POST", url + (":pause" if paused else ":resume"), {})
             if api("GET", url).get("state") != wanted:
-                raise RuntimeError("Worker wake queue did not reach " + wanted)
+                raise RuntimeError("Wake queue did not reach " + wanted + ": " + name)
         except Exception as error:
             failures.append(str(error))
     if failures:
         raise RuntimeError("; ".join(failures))
+
+
+def worker_queue_state(t, paused, all_queues=False):
+    queue_state(worker_queue_names(t, all_queues), paused)
+
+
+def conversation_queue_state(c, paused):
+    queue_state([c["conversation_queue"]], paused)
 
 
 def wait_worker_requests(t):
@@ -421,7 +429,8 @@ def pause(c, worker_config=None):
     failures = []
     # Fence delivery before paused handlers preserve successor wakes. Queue
     # creation remains available while paused; only dispatch is disabled.
-    for step in (lambda: worker_queue_state(temporal_config() if worker_config is None else worker_config, True, all_queues=True),
+    for step in (lambda: conversation_queue_state(c, True),
+                 lambda: worker_queue_state(temporal_config() if worker_config is None else worker_config, True, all_queues=True),
                  lambda: control(c, True), lambda: temporal_pause(worker_config), lambda: metadata({"computer-paused": "true"})):
         try:
             step()
@@ -434,7 +443,7 @@ def pause(c, worker_config=None):
             failures.append(str(error))
     if failures:
         raise RuntimeError("Pause incomplete; computer stop withheld when request drain is uncertain: " + "; ".join(failures))
-    print("Paused: admission closed, worker queue paused, native scalers removed, retained pools at zero, computer stopped; waiting tasks preserved.")
+    print("Paused: admission closed, conversation and worker queues paused, native scalers removed, retained pools at zero, computer stopped; waiting tasks preserved.")
 
 
 def stop_vm():
@@ -470,6 +479,7 @@ def unpause(c):
     verify_no_deadline()
     # Fence delivery before changing admission; accepted pending wakes remain
     # durable until routing is verified and the production queue is resumed.
+    conversation_queue_state(c, True)
     worker_queue_state(temporal_config(), True, all_queues=True)
     control(c, True)
     try:
@@ -478,6 +488,7 @@ def unpause(c):
         control(c, False)
         api("POST", c["runtime_url"].rstrip("/") + "/api/resume", {})
         worker_queue_state(temporal_config(), False)
+        conversation_queue_state(c, False)
     except Exception:
         pause(c)
         raise
