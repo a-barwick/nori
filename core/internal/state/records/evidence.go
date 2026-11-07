@@ -1,4 +1,4 @@
-package firestore
+package records
 
 import (
 	"bytes"
@@ -7,15 +7,13 @@ import (
 	"fmt"
 	"time"
 
-	"cloud.google.com/go/firestore"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
 // Counters live separately from the run because run projections replace the run document. They cap authoritative
 // records without growing the run's arrays.
-func (d *Database) evidenceCount(tx *firestore.Transaction, runID, kind string) (*firestore.DocumentRef, int64, error) {
+func (d *Database) evidenceCount(tx *docstore.Transaction, runID, kind string) (*docstore.DocumentRef, int64, error) {
 	ref := d.runs().Doc(runID).Collection("evidence_metadata").Doc(kind)
 	doc, err := tx.Get(ref)
 	if notFound(err) {
@@ -46,7 +44,7 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 			return fmt.Errorf("operation result reference unavailable: %w", err)
 		}
 	}
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		run, err := decodeRun(tx.Get(d.runs().Doc(runID)))
 		if err != nil {
 			return err
@@ -69,7 +67,7 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 		if err != nil || write.Noop {
 			return err
 		}
-		var countRef *firestore.DocumentRef
+		var countRef *docstore.DocumentRef
 		var count int64
 		if write.NewRecord {
 			if countRef, count, err = d.evidenceCount(tx, runID, "operations"); err != nil {
@@ -91,7 +89,7 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 				return err
 			}
 			if inserted {
-				if err = tx.Update(d.runs().Doc(runID), []firestore.Update{{Path: "event_sequence", Value: event.Sequence}}); err != nil {
+				if err = tx.Update(d.runs().Doc(runID), []docstore.Update{{Path: "event_sequence", Value: event.Sequence}}); err != nil {
 					return err
 				}
 				if err = log.add(state.EventTask, runID); err != nil {
@@ -114,7 +112,7 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 		if op.Cleared != "" {
 			data["cleared"] = op.Cleared
 		}
-		if err := tx.Set(ref, data, firestore.MergeAll); err != nil {
+		if err := tx.Set(ref, data, docstore.MergeAll); err != nil {
 			return err
 		}
 		if write.NewRecord {
@@ -155,7 +153,7 @@ func (d *Database) Operations(ctx context.Context, runID string) ([]state.Operat
 	if _, err := d.GetRun(ctx, runID); err != nil {
 		return nil, err
 	}
-	it := d.runs().Doc(runID).Collection("operations").OrderBy(firestore.DocumentID, firestore.Asc).Limit(state.MaxTaskOperations + 1).Documents(ctx)
+	it := d.runs().Doc(runID).Collection("operations").OrderBy(docstore.DocumentID, docstore.Asc).Limit(state.MaxTaskOperations + 1).Documents(ctx)
 	defer it.Stop()
 	operations := []state.OperationRecord{}
 	for {
@@ -187,7 +185,7 @@ func (d *Database) PutCompletionCheck(ctx context.Context, runID string, check s
 	if err != nil {
 		return err
 	}
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		if _, err := tx.Get(d.runs().Doc(runID)); err != nil {
 			return err
 		}
@@ -234,7 +232,7 @@ func (d *Database) ReadTaskSourceInputs(ctx context.Context, runID string) ([]st
 	if len(ids) == 0 {
 		return []state.ConversationInput{}, nil
 	}
-	refs := make([]*firestore.DocumentRef, 0, len(ids))
+	refs := make([]*docstore.DocumentRef, 0, len(ids))
 	for _, id := range ids {
 		refs = append(refs, d.conversationInputs().Doc(id))
 	}
@@ -328,7 +326,7 @@ func (d *Database) AppendHistory(ctx context.Context, runID, parent string, data
 		return "", err
 	}
 	_, err = d.runs().Doc(runID).Collection("history").Doc(ref).Create(ctx, block)
-	if status.Code(err) == codes.AlreadyExists {
+	if errors.Is(err, docstore.ErrExists) {
 		saved, readErr := d.readHistoryBlock(ctx, runID, ref)
 		if readErr != nil {
 			return "", readErr

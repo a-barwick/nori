@@ -9,6 +9,8 @@ package platform
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"path/filepath"
 
 	"nori/internal/computer"
@@ -19,6 +21,8 @@ import (
 	statefirestore "nori/internal/state/firestore"
 	"nori/internal/state/gcs"
 	"nori/internal/state/localfs"
+	"nori/internal/state/postgres"
+	"nori/internal/state/records"
 	"nori/internal/usage"
 	"nori/internal/users"
 )
@@ -33,18 +37,10 @@ type StoreConfig struct {
 
 // OpenStore opens the durable store selected by this process's settings.
 func OpenStore(ctx context.Context, s settings.Settings, user users.User) (state.ConversationStore, error) {
-	project, err := settings.Required("NORI_PROJECT_ID", s.Store.Project)
-	if err != nil {
-		return nil, err
-	}
-	database, err := settings.Required("FIRESTORE_DATABASE_ID", s.Store.Database)
-	if err != nil {
-		return nil, err
-	}
-	return OpenStoreWith(ctx, s, StoreConfig{Project: project, Database: database, ArtifactBucket: s.Store.ArtifactBucket}, user)
+	return OpenStoreWith(ctx, s, StoreConfig{Project: s.Store.Project, Database: s.Store.Database, ArtifactBucket: s.Store.ArtifactBucket}, user)
 }
 
-// OpenStoreWith opens documents in Firestore and artifact bytes in a local directory or Cloud Storage. The emulator
+// OpenStoreWith opens the selected document backend and artifact bytes in a local directory or Cloud Storage. The emulator
 // and local-artifact guards in s apply to every process.
 func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig, user users.User) (state.ConversationStore, error) {
 	if err := user.Validate(); err != nil {
@@ -59,13 +55,28 @@ func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig, us
 			_ = local.Close()
 		}
 	}
-	// App-specific and process-wide emulator settings must not disagree.
-	emulator := s.Store.StateEmulator
-	if emulator != "" && (!statefirestore.IsLoopback(emulator) || s.Store.FirestoreEmulator != "") {
-		closeLocal()
-		return nil, fmt.Errorf("NORI_STATE_EMULATOR_HOST requires loopback and no FIRESTORE_EMULATOR_HOST")
+	var documents *records.Database
+	switch s.Store.Backend {
+	case "", "firestore":
+		if _, err = settings.Required("NORI_PROJECT_ID", cfg.Project); err != nil {
+			closeLocal()
+			return nil, err
+		}
+		if _, err = settings.Required("FIRESTORE_DATABASE_ID", cfg.Database); err != nil {
+			closeLocal()
+			return nil, err
+		}
+		emulator := s.Store.StateEmulator
+		if emulator != "" && (!statefirestore.IsLoopback(emulator) || s.Store.FirestoreEmulator != "") {
+			closeLocal()
+			return nil, fmt.Errorf("NORI_STATE_EMULATOR_HOST requires loopback and no FIRESTORE_EMULATOR_HOST")
+		}
+		documents, err = statefirestore.Open(ctx, statefirestore.Config{Project: cfg.Project, Database: cfg.Database, EmulatorAddress: emulator, TaskBudgetUSD: s.TaskBudgetUSD})
+	case "postgres":
+		documents, err = postgres.Open(ctx, postgres.Config{URL: s.Store.PostgresURL, TaskBudgetUSD: s.TaskBudgetUSD})
+	default:
+		err = fmt.Errorf("NORI_STORE_BACKEND must be firestore or postgres")
 	}
-	documents, err := statefirestore.Open(ctx, statefirestore.Config{Project: cfg.Project, Database: cfg.Database, EmulatorAddress: emulator, TaskBudgetUSD: s.TaskBudgetUSD})
 	if err != nil {
 		closeLocal()
 		return nil, err
@@ -87,7 +98,7 @@ func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig, us
 }
 
 // openLocalArtifacts opens the development artifact directory when NORI_LOCAL_ARTIFACT_DIR is set. It returns nil
-// when it is not set. The directory is allowed only with a loopback Firestore emulator and local Temporal.
+// when it is not set. The directory is allowed only with a loopback database and local Temporal.
 func openLocalArtifacts(s settings.Settings, user users.User) (state.ArtifactStore, error) {
 	directory := s.Store.LocalArtifactDir
 	if directory == "" {
@@ -97,8 +108,13 @@ func openLocalArtifacts(s settings.Settings, user users.User) (state.ArtifactSto
 	if address == "" {
 		address = s.Store.FirestoreEmulator
 	}
-	if !statefirestore.IsLoopback(address) || !s.Temporal.Local {
-		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR requires a loopback Firestore emulator and TEMPORAL_LOCAL=true")
+	localDatabase := statefirestore.IsLoopback(address)
+	if s.Store.Backend == "postgres" {
+		u, e := url.Parse(s.Store.PostgresURL)
+		localDatabase = e == nil && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback())
+	}
+	if !localDatabase || !s.Temporal.Local {
+		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR requires a loopback database and TEMPORAL_LOCAL=true")
 	}
 	store, err := localfs.Open(filepath.Join(directory, user.FilePrefix()))
 	if err != nil {

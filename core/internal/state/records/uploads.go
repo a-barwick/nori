@@ -1,19 +1,19 @@
-package firestore
+package records
 
 import (
 	"context"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
-func (d *Database) uploads() *firestore.CollectionRef { return d.root().Collection("uploads") }
+func (d *Database) uploads() *docstore.CollectionRef { return d.root().Collection("uploads") }
 
 // CreateUpload saves the record once. A repeat of the same upload returns the saved record, and a different file under
 // the same ID is refused.
 func (d *Database) CreateUpload(ctx context.Context, upload state.Upload) (state.Upload, error) {
 	saved := upload
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		doc, err := tx.Get(d.uploads().Doc(upload.ID))
 		if err == nil {
 			if err = doc.DataTo(&saved); err != nil {
@@ -46,7 +46,7 @@ func (d *Database) GetUpload(ctx context.Context, id string) (state.Upload, erro
 }
 
 // readAttachments completes its reads before the transaction writes.
-func (d *Database) readAttachments(tx *firestore.Transaction, ids []string) ([]state.Attachment, error) {
+func (d *Database) readAttachments(tx *docstore.Transaction, ids []string) ([]state.Attachment, error) {
 	attachments := make([]state.Attachment, 0, len(ids))
 	for _, id := range ids {
 		doc, err := tx.Get(d.uploads().Doc(id))

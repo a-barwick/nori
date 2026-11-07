@@ -1,13 +1,13 @@
-package firestore
+package records
 
 import (
 	"context"
 	"fmt"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/observability"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
 func (d *Database) ConversationStatus(ctx context.Context) (state.ConversationControl, *state.ConversationTurn, error) {
@@ -41,7 +41,7 @@ func (d *Database) UserRoutingPending(ctx context.Context) (bool, error) {
 
 func (d *Database) AcceptConversationInput(ctx context.Context, id, text string, attachments []string) error {
 	traceContext := observability.InjectTrace(ctx)
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		doc, err := tx.Get(d.conversationInputs().Doc(id))
 		if err == nil {
 			var saved state.ConversationInput
@@ -83,8 +83,8 @@ func (d *Database) AcceptConversationInput(ctx context.Context, id, text string,
 }
 
 // inputBatch reads the next inputs after position, within the turn's size bounds.
-func (d *Database) inputBatch(tx *firestore.Transaction, after int64) ([]state.ConversationInput, error) {
-	it := tx.Documents(d.conversationInputs().Where("position", ">", after).OrderBy("position", firestore.Asc).Limit(state.TurnInputLimit))
+func (d *Database) inputBatch(tx *docstore.Transaction, after int64) ([]state.ConversationInput, error) {
+	it := tx.Documents(d.conversationInputs().Where("position", ">", after).OrderBy("position", docstore.Asc).Limit(state.TurnInputLimit))
 	defer it.Stop()
 	batch := state.NewInputBatch()
 	for {
@@ -107,8 +107,8 @@ func (d *Database) inputBatch(tx *firestore.Transaction, after int64) ([]state.C
 }
 
 // unroutedInputs reads the user inputs of earlier turns that were never routed.
-func (d *Database) unroutedInputs(tx *firestore.Transaction, after, through int64) ([]state.ConversationInput, error) {
-	it := tx.Documents(d.conversationInputs().Where("position", ">", after).Where("position", "<=", through).OrderBy("position", firestore.Asc))
+func (d *Database) unroutedInputs(tx *docstore.Transaction, after, through int64) ([]state.ConversationInput, error) {
+	it := tx.Documents(d.conversationInputs().Where("position", ">", after).Where("position", "<=", through).OrderBy("position", docstore.Asc))
 	defer it.Stop()
 	var routing state.RoutingContext
 	for {
@@ -130,12 +130,12 @@ func (d *Database) unroutedInputs(tx *firestore.Transaction, after, through int6
 }
 
 // markTurn points the visible message of each user input at the turn that handles it.
-func (d *Database) markTurn(tx *firestore.Transaction, turn state.ConversationTurn) error {
+func (d *Database) markTurn(tx *docstore.Transaction, turn state.ConversationTurn) error {
 	for _, input := range turn.Inputs {
 		if !input.IsUser() {
 			continue
 		}
-		update := []firestore.Update{{Path: "turn_id", Value: turn.ID}}
+		update := []docstore.Update{{Path: "turn_id", Value: turn.ID}}
 		if err := tx.Update(d.messages().Doc(state.UserMessageID(input.ID)), update); err != nil {
 			return err
 		}
@@ -146,7 +146,7 @@ func (d *Database) markTurn(tx *firestore.Transaction, turn state.ConversationTu
 func (d *Database) AcquireConversation(ctx context.Context, owner, turnID string) (state.ConversationControl, *state.ConversationTurn, error) {
 	var c state.ConversationControl
 	var turn *state.ConversationTurn
-	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var err error
 		c, err = d.readConversation(tx)
 		if err != nil {
@@ -222,7 +222,7 @@ func (d *Database) CheckConversation(ctx context.Context, f state.ConversationFe
 
 func (d *Database) RenewConversation(ctx context.Context, f state.ConversationFence) (bool, error) {
 	stale := false
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
@@ -237,7 +237,7 @@ func (d *Database) RenewConversation(ctx context.Context, f state.ConversationFe
 }
 
 func (d *Database) ReleaseConversation(ctx context.Context, f state.ConversationFence) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		log, err := d.openLog(tx)
 		if err != nil {
 			return err
@@ -258,7 +258,7 @@ func (d *Database) ReleaseConversation(ctx context.Context, f state.Conversation
 
 // SaveConversation fences every checkpoint, including model replies and failed attempts.
 func (d *Database) SaveConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		log, err := d.openLog(tx)
 		if err != nil {
 			return err
@@ -290,7 +290,7 @@ func (d *Database) RestartConversation(
 ) (state.ConversationTurn, time.Duration, error) {
 	var wait time.Duration
 	original := t
-	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		t = original
 		c, err := d.readConversation(tx)
 		if err != nil {
@@ -343,7 +343,7 @@ func (d *Database) RestartConversation(
 }
 
 func (d *Database) PublishConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn, text string) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		log, err := d.openLog(tx)
 		if err != nil {
 			return err
@@ -427,7 +427,7 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 
 // holdAcknowledgements reads before PublishConversation writes anything. The held answer and its acknowledgement
 // then commit in the same transaction.
-func (d *Database) holdAcknowledgements(tx *firestore.Transaction, t state.ConversationTurn, text string) (map[string]state.Run, error) {
+func (d *Database) holdAcknowledgements(tx *docstore.Transaction, t state.ConversationTurn, text string) (map[string]state.Run, error) {
 	runs := map[string]state.Run{}
 	for id, holds := range state.HoldTargets(t) {
 		run, err := decodeRun(tx.Get(d.runs().Doc(id)))
@@ -441,11 +441,11 @@ func (d *Database) holdAcknowledgements(tx *firestore.Transaction, t state.Conve
 
 func (d *Database) ConversationTraces(ctx context.Context) ([]state.ConversationAttempt, error) {
 	return documents[state.ConversationAttempt](
-		d.conversationAttempts().OrderBy("started_at", firestore.Desc).Limit(state.TraceLimit).Documents(ctx))
+		d.conversationAttempts().OrderBy("started_at", docstore.Desc).Limit(state.TraceLimit).Documents(ctx))
 }
 
 func (d *Database) ConversationMessages(ctx context.Context, before string) ([]state.Message, string, error) {
-	q := d.messages().OrderBy("created_at", firestore.Desc).OrderBy(firestore.DocumentID, firestore.Desc)
+	q := d.messages().OrderBy("created_at", docstore.Desc).OrderBy(docstore.DocumentID, docstore.Desc)
 	if before != "" {
 		doc, err := d.messages().Doc(before).Get(ctx)
 		if err != nil {
@@ -485,7 +485,7 @@ func (d *Database) ConversationCommand(ctx context.Context, id string) (*state.C
 // EnsureConversationIntroduction shares admission ordering with real messages. Concurrent first loads enqueue one
 // introduction; existing history is untouched.
 func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt string) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		c, err := d.readConversation(tx)
 		if err != nil || !state.NeedsIntroduction(c) {
 			return err

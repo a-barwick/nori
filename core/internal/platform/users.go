@@ -6,10 +6,17 @@ import (
 
 	"nori/internal/settings"
 	statefirestore "nori/internal/state/firestore"
+	"nori/internal/state/postgres"
 	"nori/internal/users"
 )
 
 func OpenUsers(ctx context.Context, s settings.Settings) (users.Directory, error) {
+	if s.Store.Backend == "postgres" {
+		return postgres.OpenUsers(ctx, postgres.Config{URL: s.Store.PostgresURL, TaskBudgetUSD: s.TaskBudgetUSD})
+	}
+	if s.Store.Backend != "" && s.Store.Backend != "firestore" {
+		return nil, fmt.Errorf("NORI_STORE_BACKEND must be firestore or postgres")
+	}
 	if _, err := settings.Required("NORI_PROJECT_ID", s.Store.Project); err != nil {
 		return nil, err
 	}

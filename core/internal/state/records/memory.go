@@ -1,27 +1,27 @@
-package firestore
+package records
 
 import (
 	"context"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
-func (d *Database) memories() *firestore.CollectionRef { return d.root().Collection("memories") }
-func (d *Database) summary() *firestore.DocumentRef {
+func (d *Database) memories() *docstore.CollectionRef { return d.root().Collection("memories") }
+func (d *Database) summary() *docstore.DocumentRef {
 	return d.root().Collection("conversation").Doc("summary")
 }
 
 // Memories returns every saved memory, oldest first. Their total size is bounded when they are written.
 func (d *Database) Memories(ctx context.Context) ([]state.Memory, error) {
-	it := d.memories().OrderBy("created_at", firestore.Asc).Documents(ctx)
+	it := d.memories().OrderBy("created_at", docstore.Asc).Documents(ctx)
 	defer it.Stop()
 	return documents[state.Memory](it)
 }
 
 // readMemoryChanges reads the memories a turn's changes touch. It runs before the publish transaction writes anything.
-func (d *Database) readMemoryChanges(tx *firestore.Transaction, changes []state.MemoryChange) (map[string]*state.Memory, error) {
+func (d *Database) readMemoryChanges(tx *docstore.Transaction, changes []state.MemoryChange) (map[string]*state.Memory, error) {
 	saved := map[string]*state.Memory{}
 	for _, c := range changes {
 		doc, err := tx.Get(d.memories().Doc(c.ID))
@@ -43,7 +43,7 @@ func (d *Database) readMemoryChanges(tx *firestore.Transaction, changes []state.
 
 // writeMemoryChanges applies a turn's changes inside its publish transaction. A refused change means none apply.
 func (d *Database) writeMemoryChanges(
-	tx *firestore.Transaction, t state.ConversationTurn, saved map[string]*state.Memory, now time.Time,
+	tx *docstore.Transaction, t state.ConversationTurn, saved map[string]*state.Memory, now time.Time,
 ) error {
 	for _, c := range t.Attempt.Memory {
 		if c.Error != "" {
@@ -82,7 +82,7 @@ func (d *Database) ConversationSummary(ctx context.Context) (state.ConversationS
 // SaveConversationSummary replaces the summary unless a newer one is already saved: one for a later context, or one
 // that covers more of this context.
 func (d *Database) SaveConversationSummary(ctx context.Context, s state.ConversationSummary) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var saved state.ConversationSummary
 		doc, err := tx.Get(d.summary())
 		if err != nil && !notFound(err) {
@@ -103,15 +103,15 @@ func (d *Database) SaveConversationSummary(ctx context.Context, s state.Conversa
 // ConversationTurnsAfter returns up to HistoryTurnsExamined turns that started after a time, newest first. A zero time
 // returns the newest turns.
 func (d *Database) ConversationTurnsAfter(ctx context.Context, after time.Time) ([]state.ConversationTurn, error) {
-	return d.turnsAfter(ctx, after, firestore.Desc)
+	return d.turnsAfter(ctx, after, docstore.Desc)
 }
 
 // OldestConversationTurnsAfter returns up to HistoryTurnsExamined turns that started after a time, oldest first.
 func (d *Database) OldestConversationTurnsAfter(ctx context.Context, after time.Time) ([]state.ConversationTurn, error) {
-	return d.turnsAfter(ctx, after, firestore.Asc)
+	return d.turnsAfter(ctx, after, docstore.Asc)
 }
 
-func (d *Database) turnsAfter(ctx context.Context, after time.Time, dir firestore.Direction) ([]state.ConversationTurn, error) {
+func (d *Database) turnsAfter(ctx context.Context, after time.Time, dir docstore.Direction) ([]state.ConversationTurn, error) {
 	query := d.conversationTurns().OrderBy("started_at", dir).Limit(state.HistoryTurnsExamined)
 	if !after.IsZero() {
 		query = query.Where("started_at", ">", after)

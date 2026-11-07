@@ -22,10 +22,12 @@ before `make check`:
 
 The assistant and independent chat use one Go service. Configure the existing main
 checkout's gitignored, mode-600 root `.env` with the names in [.env.example](.env.example).
-The app needs its existing Firestore database, Application Default Credentials and
-Temporal connection, namespace, task queue and worker configuration. Project and
-database names have no defaults. Starting the web and API does not start the separate
-inner task worker or computer. Use explicitly configured emulators for isolated data.
+The app uses Firestore by default, with Application Default Credentials and explicit
+project and database names. Set `NORI_STORE_BACKEND=postgres` and `NORI_POSTGRES_URL`
+to use Postgres instead. Both need Temporal connection, namespace, task queue and
+worker configuration. Starting the web and API does not start the separate inner
+task worker or computer. `make deps` starts isolated local Postgres and Temporal;
+[local setup](core/infrastructure/local/README.md) lists the matching settings.
 
 Provision the sign-in email in the users table before starting the app, and set
 `NORI_LOCAL_EMAIL` for loopback development. Existing installations must import the

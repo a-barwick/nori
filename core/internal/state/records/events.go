@@ -1,4 +1,4 @@
-package firestore
+package records
 
 import (
 	"context"
@@ -6,14 +6,14 @@ import (
 	"slices"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
 const logAttempts = 20
 
-func (d *Database) events() *firestore.CollectionRef { return d.root().Collection("events") }
-func (d *Database) eventHead() *firestore.DocumentRef {
+func (d *Database) events() *docstore.CollectionRef { return d.root().Collection("events") }
+func (d *Database) eventHead() *docstore.DocumentRef {
 	return d.root().Collection("event_head").Doc("head")
 }
 
@@ -21,7 +21,7 @@ func (d *Database) eventHead() *firestore.DocumentRef {
 // or an idle check doesn't conflict with anything, and before its first write, because Firestore requires reads first.
 type eventLog struct {
 	d     *Database
-	tx    *firestore.Transaction
+	tx    *docstore.Transaction
 	seq   int64
 	start int64
 	added map[[2]string]bool
@@ -29,11 +29,11 @@ type eventLog struct {
 
 // logged runs a transaction that adds to the log. Every one of them writes the same head, so they conflict with each
 // other, and more attempts let a burst of task and conversation changes finish.
-func (d *Database) logged(ctx context.Context, f func(context.Context, *firestore.Transaction) error) error {
-	return d.db.RunTransaction(ctx, f, firestore.MaxAttempts(logAttempts))
+func (d *Database) logged(ctx context.Context, f func(context.Context, *docstore.Transaction) error) error {
+	return d.db.RunTransaction(ctx, f, docstore.MaxAttempts(logAttempts))
 }
 
-func (d *Database) openLog(tx *firestore.Transaction) (*eventLog, error) {
+func (d *Database) openLog(tx *docstore.Transaction) (*eventLog, error) {
 	seq, err := readHead(tx.Get(d.eventHead()))
 	if err != nil {
 		return nil, err
@@ -41,7 +41,7 @@ func (d *Database) openLog(tx *firestore.Transaction) (*eventLog, error) {
 	return &eventLog{d: d, tx: tx, seq: seq, start: seq, added: map[[2]string]bool{}}, nil
 }
 
-func readHead(doc *firestore.DocumentSnapshot, err error) (int64, error) {
+func readHead(doc *docstore.DocumentSnapshot, err error) (int64, error) {
 	if notFound(err) {
 		return 0, nil
 	}
@@ -75,32 +75,18 @@ func (d *Database) EventPosition(ctx context.Context) (int64, error) {
 // WatchEvents calls deliver with each batch of events after the position, in order, until ctx ends. Sequence numbers
 // follow commit order and each batch is a consistent read, so a later event can't arrive ahead of an earlier one.
 func (d *Database) WatchEvents(ctx context.Context, after int64, deliver func([]state.LogEvent) error) error {
-	snapshots := d.events().Where("seq", ">", after).OrderBy("seq", firestore.Asc).Snapshots(ctx)
-	defer snapshots.Stop()
-	for {
-		snapshot, err := snapshots.Next()
-		if err != nil {
-			return err
-		}
-		batch := []state.LogEvent{}
-		for _, change := range snapshot.Changes {
-			if change.Kind != firestore.DocumentAdded {
-				continue
-			}
+	return d.events().Where("seq", ">", after).OrderBy("seq", docstore.Asc).Watch(ctx, func(docs []*docstore.DocumentSnapshot) error {
+		batch := make([]state.LogEvent, 0, len(docs))
+		for _, doc := range docs {
 			var event state.LogEvent
-			if err := change.Doc.DataTo(&event); err != nil {
+			if err := doc.DataTo(&event); err != nil {
 				return err
 			}
 			batch = append(batch, event)
 		}
 		slices.SortFunc(batch, func(a, b state.LogEvent) int { return int(a.Seq - b.Seq) })
-		if len(batch) == 0 {
-			continue
-		}
-		if err := deliver(batch); err != nil {
-			return err
-		}
-	}
+		return deliver(batch)
+	})
 }
 
 // ConversationMessage reads one message for the stream.

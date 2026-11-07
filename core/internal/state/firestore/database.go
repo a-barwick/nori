@@ -1,256 +1,278 @@
-// Package firestore is the Firestore backend for state.Database. It reads and writes documents inside Firestore
-// transactions and calls the pure rules in package state to decide what to write. Its document paths, field names and
-// values are the saved layout of existing production data and must not change.
+// Package firestore adapts Firestore to Nori's shared persistence rules. Existing
+// collection paths and saved field names remain unchanged.
 package firestore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
+	"strings"
 
-	"cloud.google.com/go/firestore"
+	native "cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"nori/internal/state"
-	"nori/internal/users"
+	"nori/internal/state/docstore"
+	"nori/internal/state/records"
 )
 
-// Config selects the Firestore database one process uses.
 type Config struct {
-	Project       string
-	Database      string
-	TaskBudgetUSD float64
-	// EmulatorAddress sends this client to a Firestore emulator on a loopback address, without credentials. It is
-	// separate from FIRESTORE_EMULATOR_HOST, which the Firestore SDK reads for every client in the process.
-	EmulatorAddress string
+	Project, Database string
+	TaskBudgetUSD     float64
+	EmulatorAddress   string
 }
+type Database = records.Database
+type Users = records.Users
 
-// Database implements state.Database on Firestore.
-type Database struct {
-	db            *firestore.Client
-	taskBudgetUSD float64
-	user          users.User
-}
-
-var _ state.Database = (*Database)(nil)
-
-// Open connects to the configured Firestore database.
 func Open(ctx context.Context, cfg Config) (*Database, error) {
 	var options []option.ClientOption
 	if cfg.EmulatorAddress != "" {
 		if !IsLoopback(cfg.EmulatorAddress) {
-			return nil, fmt.Errorf("Firestore emulator address %q is not a loopback address", cfg.EmulatorAddress)
+			return nil, fmt.Errorf("Firestore emulator requires loopback")
 		}
-		options = append(options, option.WithEndpoint(cfg.EmulatorAddress), option.WithoutAuthentication(),
-			option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+		options = append(options, option.WithEndpoint(cfg.EmulatorAddress), option.WithoutAuthentication(), option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
 	}
-	db, err := firestore.NewClientWithDatabase(ctx, cfg.Project, cfg.Database, options...)
-	if err != nil {
-		return nil, err
+	db, e := native.NewClientWithDatabase(ctx, cfg.Project, cfg.Database, options...)
+	if e != nil {
+		return nil, e
 	}
-	return &Database{db: db, taskBudgetUSD: cfg.TaskBudgetUSD}, nil
+	return records.New(&backend{db: db}, cfg.TaskBudgetUSD), nil
 }
-
-// IsLoopback reports whether address is a host:port on this machine.
+func OpenUsers(ctx context.Context, cfg Config) (*Users, error) {
+	d, e := Open(ctx, cfg)
+	if e != nil {
+		return nil, e
+	}
+	return records.NewUsers(d), nil
+}
 func IsLoopback(address string) bool {
-	host, _, err := net.SplitHostPort(address)
+	host, _, e := net.SplitHostPort(address)
 	ip := net.ParseIP(host)
-	return err == nil && (host == "localhost" || (ip != nil && ip.IsLoopback()))
+	return e == nil && (host == "localhost" || ip != nil && ip.IsLoopback())
 }
 
-func (d *Database) Close() error { return d.db.Close() }
+type backend struct{ db *native.Client }
 
-// ForUser returns an immutable scope. Every document operation uses this receiver's user.
-// The returned scope borrows the client; only its owner closes it.
-func (d *Database) ForUser(user users.User) (*Database, error) {
-	if err := user.Validate(); err != nil {
-		return nil, err
+func (b *backend) DeleteBatch(ctx context.Context, paths []string) error {
+	batch := b.db.Batch()
+	for _, path := range paths {
+		batch.Delete(b.db.Doc(path))
 	}
-	scoped := *d
-	scoped.user = user
-	return &scoped, nil
-}
-func (d *Database) root() *firestore.DocumentRef {
-	if !users.ValidID(d.user.ID) {
-		panic("document store requires a user scope")
-	}
-	return d.db.Collection("owners").Doc(d.user.DataOwner())
-}
-func (d *Database) runs() *firestore.CollectionRef     { return d.root().Collection("runs") }
-func (d *Database) messages() *firestore.CollectionRef { return d.root().Collection("messages") }
-func (d *Database) commands() *firestore.CollectionRef { return d.root().Collection("task_commands") }
-func (d *Database) usage() *firestore.CollectionRef    { return d.root().Collection("model_usage") }
-func (d *Database) control() *firestore.DocumentRef    { return d.db.Collection("system").Doc("control") }
-func (d *Database) conversation() *firestore.DocumentRef {
-	return d.root().Collection("conversation").Doc("control")
-}
-func (d *Database) conversationInputs() *firestore.CollectionRef {
-	return d.root().Collection("conversation_inputs")
-}
-func (d *Database) conversationTurns() *firestore.CollectionRef {
-	return d.root().Collection("conversation_turns")
-}
-func (d *Database) conversationAttempts() *firestore.CollectionRef {
-	return d.root().Collection("conversation_attempts")
+	_, err := batch.Commit(ctx)
+	return mapped(err)
 }
 
-func notFound(err error) bool { return status.Code(err) == codes.NotFound }
-func isDone(err error) bool   { return errors.Is(err, iterator.Done) }
-
-// decodeRun maps a missing document to state.ErrNotFound.
-func decodeRun(doc *firestore.DocumentSnapshot, err error) (state.Run, error) {
-	if notFound(err) {
-		return state.Run{}, state.ErrNotFound
-	}
-	if err != nil {
-		return state.Run{}, err
-	}
-	var run state.Run
-	err = doc.DataTo(&run)
-	return run, err
+type transaction struct {
+	db *native.Client
+	tx *native.Transaction
 }
 
-// documents decodes every remaining document of iter as T.
-func documents[T any](iter *firestore.DocumentIterator) ([]T, error) {
-	defer iter.Stop()
-	records := []T{}
+func (b *backend) Close() error { return b.db.Close() }
+func mapped(e error) error {
+	switch status.Code(e) {
+	case codes.NotFound:
+		return docstore.ErrNotFound
+	case codes.AlreadyExists:
+		return docstore.ErrExists
+	}
+	return e
+}
+func record(d *native.DocumentSnapshot) docstore.Record {
+	return docstore.Record{Path: d.Ref.Path, Fields: d.Data()}
+}
+
+// Firestore paths include project/database prefixes. Relative paths are the
+// durable keys used by the shared layer and Postgres.
+func relative(d *native.DocumentSnapshot) docstore.Record {
+	r := record(d)
+	if _, path, ok := strings.Cut(r.Path, "/documents/"); ok {
+		r.Path = path
+	}
+	return r
+}
+func (b *backend) Get(ctx context.Context, path string) (docstore.Record, error) {
+	d, e := b.db.Doc(path).Get(ctx)
+	if e != nil {
+		return docstore.Record{}, mapped(e)
+	}
+	return relative(d), nil
+}
+func (t *transaction) Get(ctx context.Context, path string) (docstore.Record, error) {
+	d, e := t.tx.Get(t.db.Doc(path))
+	if e != nil {
+		return docstore.Record{}, mapped(e)
+	}
+	return relative(d), nil
+}
+func query(db *native.Client, s docstore.QuerySpec) native.Query {
+	q := db.Collection(s.Collection).Query
+	for _, f := range s.Filters {
+		q = q.Where(f.Field, f.Op, f.Value)
+	}
+	for _, o := range s.Orders {
+		direction := native.Asc
+		if o.Direction == docstore.Desc {
+			direction = native.Desc
+		}
+		q = q.OrderBy(o.Field, direction)
+	}
+	if s.Fields != nil {
+		q = q.Select(s.Fields...)
+	}
+	if s.Count > 0 {
+		q = q.Limit(s.Count)
+	}
+	if s.After != nil {
+		cursor := []any{}
+		direction := native.Asc
+		hasID := false
+		for _, o := range s.Orders {
+			direction = native.Asc
+			if o.Direction == docstore.Desc {
+				direction = native.Desc
+			}
+			if o.Field == docstore.DocumentID {
+				hasID = true
+				cursor = append(cursor, db.Doc(s.After.Path))
+			} else {
+				cursor = append(cursor, s.After.Fields[o.Field])
+			}
+		}
+		// A snapshot cursor includes the ID tie-breaker, so equal timestamps
+		// cannot cause messages to disappear between pages.
+		if !hasID {
+			q = q.OrderBy(native.DocumentID, direction)
+			cursor = append(cursor, db.Doc(s.After.Path))
+		}
+		q = q.StartAfter(cursor...)
+	}
+	return q
+}
+func rows(db *native.Client, it *native.DocumentIterator) ([]docstore.Record, error) {
+	defer it.Stop()
+	out := []docstore.Record{}
 	for {
-		doc, err := iter.Next()
-		if isDone(err) {
-			return records, nil
+		d, e := it.Next()
+		if e == iterator.Done {
+			return out, nil
 		}
-		if err != nil {
-			return nil, err
+		if e != nil {
+			return nil, mapped(e)
 		}
-		var record T
-		if err = doc.DataTo(&record); err != nil {
-			return nil, err
+		out = append(out, relative(d))
+	}
+}
+func (b *backend) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.Record, error) {
+	return rows(b.db, query(b.db, s).Documents(ctx))
+}
+func (t *transaction) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.Record, error) {
+	return rows(t.db, t.tx.Documents(query(t.db, s)))
+}
+func updates(changes []docstore.Update) ([]native.Update, error) {
+	out := make([]native.Update, 0, len(changes))
+	for _, change := range changes {
+		var value any
+		var e error
+		if docstore.IsDelete(change.Value) {
+			value = native.Delete
+		} else if union, ok := change.Value.(docstore.Union); ok {
+			values := []any{}
+			for _, v := range union {
+				x, err := docstore.Value(v)
+				if err != nil {
+					return nil, err
+				}
+				values = append(values, x)
+			}
+			value = native.ArrayUnion(values...)
+		} else {
+			value, e = docstore.Value(change.Value)
+			if e != nil {
+				return nil, e
+			}
 		}
-		records = append(records, record)
+		out = append(out, native.Update{Path: change.Path, Value: value})
 	}
+	return out, nil
 }
-
-// readConversation reads the conversation control record inside a transaction. A conversation that has none yet reads
-// as a new one.
-func (d *Database) readConversation(tx *firestore.Transaction) (state.ConversationControl, error) {
-	doc, err := tx.Get(d.conversation())
-	if notFound(err) {
-		return state.ConversationControl{}, nil
-	}
-	var c state.ConversationControl
-	if err != nil {
-		return c, err
-	}
-	err = doc.DataTo(&c)
-	return c, err
-}
-
-func (d *Database) Control(ctx context.Context) (state.Control, error) {
-	doc, err := d.control().Get(ctx)
-	if err != nil {
-		return state.Control{}, err
-	}
-	var c state.Control
-	err = doc.DataTo(&c)
-	return c, err
-}
-
-func (d *Database) GetRun(ctx context.Context, id string) (state.Run, error) {
-	return decodeRun(d.runs().Doc(id).Get(ctx))
-}
-
-func (d *Database) Spend(ctx context.Context, update state.SpendUpdate) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		ref := d.runs().Doc(update.RunID)
-		run, err := decodeRun(tx.Get(ref))
+func (b *backend) Apply(ctx context.Context, m docstore.Mutation) error {
+	ref := b.db.Doc(m.Path)
+	var e error
+	switch m.Kind {
+	case "set":
+		var opts []native.SetOption
+		if m.Merge {
+			opts = append(opts, native.MergeAll)
+		}
+		_, e = ref.Set(ctx, m.Fields, opts...)
+	case "create":
+		_, e = ref.Create(ctx, m.Fields)
+	case "delete":
+		_, e = ref.Delete(ctx)
+	case "update":
+		u, err := updates(m.Updates)
 		if err != nil {
 			return err
 		}
-		spent, budget, costUnknown := state.MergeSpend(run, update)
-		if run.ParentID != "" {
-			parentRef := d.runs().Doc(run.ParentID)
-			parent, err := decodeRun(tx.Get(parentRef))
-			if err != nil {
-				return err
-			}
-			parent = state.RollUpSpend(parent, run, update)
-			if err := tx.Update(parentRef, []firestore.Update{
-				{Path: "subtask_spent_usd", Value: parent.SubtaskSpent}, {Path: "cost_unknown", Value: parent.CostUnknown},
-			}); err != nil {
-				return err
-			}
-		}
-		return tx.Update(ref, []firestore.Update{
-			{Path: "spent_usd", Value: spent}, {Path: "budget_usd", Value: budget}, {Path: "cost_unknown", Value: costUnknown},
-		})
-	})
-}
-
-// RecordUsage is idempotent for one observed provider request. The caller keeps the same ID and timestamp when
-// retrying a failed projection.
-func (d *Database) RecordUsage(ctx context.Context, usage state.Usage) error {
-	_, err := d.usage().Doc(usage.ID).Set(ctx, usage)
-	return err
-}
-
-func (d *Database) Artifact(ctx context.Context, runID string, artifact state.Artifact) error {
-	_, err := d.runs().Doc(runID).Update(ctx, []firestore.Update{{Path: "artifacts", Value: firestore.ArrayUnion(artifact)}})
-	return err
-}
-
-func (d *Database) Session(ctx context.Context) (state.Session, error) {
-	return d.session(ctx, sessionWithMessages)
-}
-
-// ConversationProjection returns runs and usage without messages. Full provider turns are selected separately;
-// messages stay cursor-accessible.
-func (d *Database) ConversationProjection(ctx context.Context) (state.Session, error) {
-	return d.session(ctx, conversationProjection)
-}
-
-type sessionMode int
-
-const (
-	sessionWithMessages sessionMode = iota
-	conversationProjection
-)
-
-func (d *Database) session(ctx context.Context, mode sessionMode) (state.Session, error) {
-	control, err := d.Control(ctx)
-	if err != nil {
-		return state.Session{}, err
+		_, e = ref.Update(ctx, u)
+	default:
+		return fmt.Errorf("unknown document mutation")
 	}
-	session := state.Session{Messages: []state.Message{}, Runs: []state.Run{}, Paused: control.Paused}
-	if mode == sessionWithMessages {
-		messages, err := documents[state.Message](
-			d.messages().OrderBy("created_at", firestore.Desc).Limit(state.SessionMessageLimit).Documents(ctx))
+	return mapped(e)
+}
+func (t *transaction) Apply(ctx context.Context, m docstore.Mutation) error {
+	ref := t.db.Doc(m.Path)
+	var e error
+	switch m.Kind {
+	case "set":
+		var opts []native.SetOption
+		if m.Merge {
+			opts = append(opts, native.MergeAll)
+		}
+		e = t.tx.Set(ref, m.Fields, opts...)
+	case "create":
+		e = t.tx.Create(ref, m.Fields)
+	case "delete":
+		e = t.tx.Delete(ref)
+	case "update":
+		u, err := updates(m.Updates)
 		if err != nil {
-			return session, err
+			return err
 		}
-		session.Messages = state.Chronological(messages)
+		e = t.tx.Update(ref, u)
+	default:
+		return fmt.Errorf("unknown document mutation")
 	}
-	recent, err := documents[state.Run](d.runs().OrderBy("started_at", firestore.Desc).Limit(state.SessionRunLimit).Documents(ctx))
-	if err != nil {
-		return session, err
+	return mapped(e)
+}
+func (b *backend) RunTransaction(ctx context.Context, readOnly bool, attempts int, f func(docstore.TransactionBackend) error) error {
+	opts := []native.TransactionOption{native.MaxAttempts(attempts)}
+	if readOnly {
+		opts = append(opts, native.ReadOnly)
 	}
-	session.Runs = recent
-	// Waiting tasks remain visible even after thirty newer tasks have started.
-	open, err := d.OpenTasks(ctx)
-	if err != nil {
-		return session, err
-	}
-	session.Runs = state.MergeOpenRuns(recent, open)
-	if mode == conversationProjection {
-		usage, err := documents[state.Usage](d.usage().OrderBy("created_at", firestore.Desc).Limit(state.SessionUsageLimit).Documents(ctx))
-		if err != nil {
-			return session, err
+	return mapped(b.db.RunTransaction(ctx, func(ctx context.Context, tx *native.Transaction) error { return f(&transaction{db: b.db, tx: tx}) }, opts...))
+}
+func (b *backend) Watch(ctx context.Context, s docstore.QuerySpec, deliver func([]docstore.Record) error) error {
+	snapshots := query(b.db, s).Snapshots(ctx)
+	defer snapshots.Stop()
+	for {
+		snapshot, e := snapshots.Next()
+		if e != nil {
+			return e
 		}
-		session.Usage = usage
+		batch := []docstore.Record{}
+		for _, change := range snapshot.Changes {
+			if change.Kind == native.DocumentAdded {
+				batch = append(batch, relative(change.Doc))
+			}
+		}
+		if len(batch) > 0 {
+			if e := deliver(batch); e != nil {
+				return e
+			}
+		}
 	}
-	return session, nil
 }

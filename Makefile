@@ -37,3 +37,11 @@ deploy deploy-check deploy-status deploy-rollback deploy-unlock:
 
 pause unpause:
 	cd core && NORI_TF_BACKEND=gcs python3 infrastructure/app/ops.py $@
+
+# Local dependencies retain their named volumes across stop/start.
+.PHONY: deps deps-stop
+deps:
+	docker compose -f core/infrastructure/local/compose.yaml up -d --wait
+
+deps-stop:
+	docker compose -f core/infrastructure/local/compose.yaml stop

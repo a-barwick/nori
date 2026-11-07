@@ -1,0 +1,34 @@
+name: nori-local
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: nori
+      POSTGRES_DB: nori
+      # Loopback-only development instance; no production credentials.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nori -d nori"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  temporal:
+    image: temporalio/temporal:1.9.1
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/home/temporal/temporal.db"]
+    ports:
+      - "127.0.0.1:17233:7233"
+      - "127.0.0.1:18233:8233"
+    volumes:
+      - temporal:/home/temporal
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+volumes:
+  postgres:
+  temporal:

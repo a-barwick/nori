@@ -1,11 +1,11 @@
-package firestore
+package records
 
 import (
 	"context"
 	"fmt"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 	"nori/internal/users"
 )
 
@@ -13,15 +13,9 @@ import (
 // server/CLI surface; no route exposes whole rows or calendar credentials.
 type Users struct{ db *Database }
 
-func OpenUsers(ctx context.Context, cfg Config) (*Users, error) {
-	d, err := Open(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &Users{db: d}, nil
-}
-func (u *Users) Close() error                   { return u.db.Close() }
-func (u *Users) rows() *firestore.CollectionRef { return u.db.db.Collection("users") }
+func NewUsers(db *Database) *Users             { return &Users{db: db} }
+func (u *Users) Close() error                  { return u.db.Close() }
+func (u *Users) rows() *docstore.CollectionRef { return u.db.db.Collection("users") }
 func (u *Users) Get(ctx context.Context, id string) (users.User, error) {
 	if !users.ValidID(id) {
 		return users.User{}, state.ErrNotFound
@@ -35,7 +29,7 @@ func (u *Users) Get(ctx context.Context, id string) (users.User, error) {
 	}
 	return decodeUser(doc)
 }
-func decodeUser(doc *firestore.DocumentSnapshot) (users.User, error) {
+func decodeUser(doc *docstore.DocumentSnapshot) (users.User, error) {
 	var row users.User
 	if err := doc.DataTo(&row); err != nil {
 		return row, err
@@ -45,7 +39,7 @@ func decodeUser(doc *firestore.DocumentSnapshot) (users.User, error) {
 	}
 	return row, row.Validate()
 }
-func userRows(iter *firestore.DocumentIterator) ([]users.User, error) {
+func userRows(iter *docstore.DocumentIterator) ([]users.User, error) {
 	defer iter.Stop()
 	rows := []users.User{}
 	for {
@@ -82,7 +76,7 @@ func (u *Users) Create(ctx context.Context, row users.User) error {
 		return err
 	}
 	// Email uniqueness is transactional, including concurrent local provisioning.
-	return u.db.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return u.db.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		matches := tx.Documents(u.rows().Where("email", "==", row.Email).Limit(1))
 		defer matches.Stop()
 		_, err := matches.Next()
@@ -99,7 +93,7 @@ func (u *Users) SetCalendar(ctx context.Context, id string, calendar users.Calen
 	if _, err := u.Get(ctx, id); err != nil {
 		return err
 	}
-	_, err := u.rows().Doc(id).Update(ctx, []firestore.Update{{Path: "calendar", Value: calendar}})
+	_, err := u.rows().Doc(id).Update(ctx, []docstore.Update{{Path: "calendar", Value: calendar}})
 	return err
 }
 

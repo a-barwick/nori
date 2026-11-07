@@ -12,7 +12,7 @@
 <p class="lede">What gets saved, where, and how a saved command reaches Temporal.</p>
   <div class="grid2">
     <div class="card">
-      <h3 style="margin-top:0">Firestore layout</h3>
+      <h3 style="margin-top:0">Saved record layout</h3>
       <pre class="mono" style="font-size:12.5px;line-height:1.65;margin:0;white-space:pre-wrap">system/control            ← project pause switch
 owners/{owner}/
 ├─ conversation/control   ← which turn holds it, what it has processed
@@ -53,8 +53,8 @@ owners/{owner}/
         <h3 style="margin-top:0">Who owns what</h3>
         <table>
           <tr><th>Question</th><th>Answer lives in</th></tr>
-          <tr><td>Was it accepted?</td><td>Firestore command record</td></tr>
-          <tr><td>What has the task spent?</td><td>Workflow state (Firestore holds a copy)</td></tr>
+          <tr><td>Was it accepted?</td><td>Database command record</td></tr>
+          <tr><td>What has the task spent?</td><td>Workflow state (the database holds a copy)</td></tr>
           <tr><td>Which instructions are current?</td><td>Commands the task has already read</td></tr>
           <tr><td>Did that tool call happen?</td><td>Operation record and the computer's receipt</td></tr>
           <tr><td>What did the models cost?</td><td><code>model_usage</code>, written before each call</td></tr>
@@ -62,14 +62,14 @@ owners/{owner}/
       </div>
     </div>
   </div>
-<p>Firestore and Temporal can't share a transaction, so a relay delivers saved commands. Consumers ignore repeats by ID and position.</p>
+<p>The database and Temporal can't share a transaction, so a relay delivers saved commands. Consumers ignore repeats by ID and position.</p>
 <section><h2>What happens when something dies</h2>
 <div class="card"><table class="tall"><tr><th>Interruption</th><th>Recovery</th></tr>
 <tr><td>The outer process dies after accepting input</td><td>Reclaim the saved turn and pending wake, with the original input ID.</td></tr>
 <tr><td>The outer process dies around a dispatch</td><td>Recover the saved model response and command receipts before accepting anything again.</td></tr>
 <tr><td>A task command is delivered twice</td><td>Recognize its ID and position, and don't apply it again.</td></tr>
 <tr><td>A worker restarts while a task waits</td><td>Resume the same task and question on a worker build that can run it.</td></tr>
-<tr><td>A provider's response is lost after a write</td><td>Read the provider's record before considering another action. A used approval cannot send again.</td></tr>
+<tr><td>A provider's response is lost after a write</td><td>Read the provider's record before considering another action. An attempted operation cannot send again.</td></tr>
 <tr><td>The result is saved, then the client disconnects</td><td>Reopen the saved result, and don't repeat the work.</td></tr>
 <tr><td>A task crashes before it can report</td><td>The runtime emits a failure event with completed and unresolved operations.</td></tr>
 </table></div></section>
@@ -77,12 +77,15 @@ owners/{owner}/
 <p>Each layer is a Go package in the service's internal folder.</p>
 <div class="card"><table class="tall"><tr><th>Layer</th><th>Code</th><th>Job</th></tr>
 <tr><td>Records and rules</td><td><code>state/</code></td><td>The record types, errors and store contracts, and the rules that decide whether a write is allowed, such as accepting commands, checking revisions and leases, and publishing results.</td></tr>
-<tr><td>Document backend</td><td><code>state/firestore/</code></td><td>Reads and writes documents inside Firestore transactions and applies those rules. Document paths and field names are the saved layout.</td></tr>
+<tr><td>Persistence</td><td><code>state/records/</code></td><td>Applies the rules inside transactions. Shared by both backends, including leases, write claims, recovery and event numbering.</td></tr>
+<tr><td>Document backends</td><td><code>state/firestore/</code> and <code>state/postgres/</code></td><td>Implement the narrow transaction and query contract in <code>state/docstore/</code>. Firestore paths and saved field names stay unchanged; Postgres stores the same records as indexed JSONB.</td></tr>
 <tr><td>File bytes</td><td><code>state/gcs/</code> and <code>state/localfs/</code></td><td>Stores screenshots, attached files and saved files in Cloud Storage, or in a private folder for local runs.</td></tr>
-<tr><td>Development spend</td><td><code>spend/</code> and <code>spend/firestore/</code></td><td>The budget rules, and a ledger that reserves and settles model spend atomically.</td></tr>
-<tr><td>Wiring</td><td><code>platform/</code></td><td>Opens the backends a process is configured for, from <code>NORI_PROJECT_ID</code> and <code>FIRESTORE_DATABASE_ID</code>. Neither has a default, so a process missing one stops at startup. It is the only production code that names a backend.</td></tr>
+<tr><td>Model usage</td><td><code>usage/</code></td><td>Records model calls in the selected database, optionally also reporting to a host. The workflow enforces the task spending ceiling.</td></tr>
+<tr><td>Wiring</td><td><code>platform/</code></td><td>Selects <code>NORI_STORE_BACKEND</code>: Firestore by default, or Postgres with <code>NORI_POSTGRES_URL</code>. Firestore requires <code>NORI_PROJECT_ID</code> and <code>FIRESTORE_DATABASE_ID</code>.</td></tr>
 </table></div>
-<p>A different database or object store needs its own adapter for these contracts. The rules stay in <code>state</code> and <code>spend</code>.</p></section>
+<p>Postgres applies numbered SQL migrations at startup under a transaction lock. Serializable transactions update each event head with its records, so aborted writes do not consume event numbers. Event streams poll committed records every 250 ms in batches of 200, resuming after the last delivered sequence. This keeps reconnects independent of notifications and releases database connections between polls. Firestore keeps its snapshot listeners.</p>
+<p><code>make deps</code> starts local Postgres and Temporal. See <a href="https://github.com/a-barwick/nori/blob/main/core/infrastructure/local/README.md">local setup</a>. Switching backends does not migrate existing data. Files remain in Cloud Storage or a local folder.</p>
+<p>A different database or object store needs its own adapter for these contracts. The rules stay in <code>state</code>; shared persistence lives in <code>state/records</code>.</p></section>
 <details class="more"><summary>What each record has to hold</summary>
 <table class="tall"><tr><th>Record</th><th>Holds</th></tr>
 <tr><td>Conversation input</td><td>Stable ID, original content or event, accepted order, origin and processing state.</td></tr>
@@ -91,8 +94,8 @@ owners/{owner}/
 <tr><td>Command or event</td><td>Stable ID, target, kind, order, revision, payload and delivery state.</td></tr>
 <tr><td>Operation</td><td>Stable ID, parameters, attempt state, confirmation or uncertainty, and evidence.</td></tr>
 <tr><td>Saved result</td><td>Stable ID, task link, file details, version and delivery times.</td></tr>
-<tr><td>Approval</td><td>The operation holds the exact saved action and its digest. A command records the decision, and one transaction marks the approval used.</td></tr>
+<tr><td>Write claim</td><td>The operation holds the exact saved action and its digest. One transaction changes ready to attempted before sending; uncertain outcomes remain available for recovery.</td></tr>
 </table></details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/state/</code> · <code>core/internal/state/firestore/</code> · <code>core/internal/state/gcs/</code> · <code>core/internal/state/localfs/</code> · <code>core/internal/spend/</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/dispatch/dispatcher.go</code> · <code>core/internal/task/client.go</code> · <code>core/internal/task/actions.go</code> · <code>core/internal/conversation/runner.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state/</code> · <code>core/internal/state/firestore/</code> · <code>core/internal/state/gcs/</code> · <code>core/internal/state/localfs/</code> · <code>core/internal/usage/</code> · <code>core/internal/state/records/</code> · <code>core/internal/state/postgres/</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/dispatch/dispatcher.go</code> · <code>core/internal/task/client.go</code> · <code>core/internal/task/actions.go</code> · <code>core/internal/conversation/runner.go</code></p></details>
 </body>
 </html>

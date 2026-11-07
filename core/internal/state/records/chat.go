@@ -1,4 +1,4 @@
-package firestore
+package records
 
 import (
 	"context"
@@ -8,11 +8,11 @@ import (
 	"slices"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
-func (d *Database) chats() *firestore.CollectionRef { return d.root().Collection("chats") }
+func (d *Database) chats() *docstore.CollectionRef { return d.root().Collection("chats") }
 func (d *Database) CreateChat(ctx context.Context, c state.Chat) error {
 	c.UpdatedAt = time.Now().UTC()
 	_, err := d.chats().Doc(c.ID).Create(ctx, c)
@@ -32,7 +32,7 @@ type chatMessageRecord struct {
 	Attention bool `firestore:"attention"`
 }
 
-func (d *Database) readChat(tx *firestore.Transaction, id string, attention bool, ids []string) (state.Chat, bool, error) {
+func (d *Database) readChat(tx *docstore.Transaction, id string, attention bool, ids []string) (state.Chat, bool, error) {
 	ref := d.chats().Doc(id)
 	doc, err := tx.Get(ref)
 	if notFound(err) {
@@ -53,7 +53,7 @@ func (d *Database) readChat(tx *firestore.Transaction, id string, attention bool
 		}
 		return c, true, nil
 	}
-	docs, err := tx.Documents(ref.Collection("messages").OrderBy("sequence", firestore.Desc).Limit(state.ChatPageSize)).GetAll()
+	docs, err := tx.Documents(ref.Collection("messages").OrderBy("sequence", docstore.Desc).Limit(state.ChatPageSize)).GetAll()
 	if err != nil {
 		return c, false, err
 	}
@@ -102,11 +102,11 @@ func (d *Database) ActiveChats(ctx context.Context) ([]state.Chat, error) {
 	chats := []state.Chat{}
 	for _, header := range headers {
 		var c state.Chat
-		err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			var e error
 			c, _, e = d.readChat(tx, header.ID, true, nil)
 			return e
-		}, firestore.ReadOnly)
+		}, docstore.ReadOnly)
 		if err == state.ErrNotFound {
 			continue
 		}
@@ -119,17 +119,17 @@ func (d *Database) ActiveChats(ctx context.Context) ([]state.Chat, error) {
 }
 
 func (d *Database) Chat(ctx context.Context, id string) (c state.Chat, err error) {
-	err = d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err = d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var e error
 		c, _, e = d.readChat(tx, id, false, nil)
 		return e
-	}, firestore.ReadOnly)
+	}, docstore.ReadOnly)
 	return
 }
 
 func (d *Database) ChatMessages(ctx context.Context, id string, before int64) (page state.ChatMessagePage, err error) {
 	page.Messages = []state.ChatMessage{}
-	err = d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err = d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		doc, e := tx.Get(d.chats().Doc(id))
 		if notFound(e) {
 			return state.ErrNotFound
@@ -151,7 +151,7 @@ func (d *Database) ChatMessages(ctx context.Context, id string, before int64) (p
 			}
 			slices.Reverse(messages)
 		} else {
-			query := d.chats().Doc(id).Collection("messages").OrderBy("sequence", firestore.Desc).Limit(state.ChatPageSize + 1)
+			query := d.chats().Doc(id).Collection("messages").OrderBy("sequence", docstore.Desc).Limit(state.ChatPageSize + 1)
 			if before > 0 {
 				query = query.Where("sequence", "<", before)
 			}
@@ -175,7 +175,7 @@ func (d *Database) ChatMessages(ctx context.Context, id string, before int64) (p
 		slices.Reverse(messages)
 		page.Messages = messages
 		return nil
-	}, firestore.ReadOnly)
+	}, docstore.ReadOnly)
 	return
 }
 
@@ -193,7 +193,7 @@ func sameHeader(a, b state.ChatHeader) bool {
 
 func (d *Database) UpdateChat(ctx context.Context, id string, change func(*state.Chat) (string, error), ids ...string) (state.Chat, error) {
 	var c state.Chat
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var err error
 		var legacy bool
 		c, legacy, err = d.readChat(tx, id, true, ids)
@@ -299,39 +299,25 @@ func (d *Database) UpdateChat(ctx context.Context, id string, change func(*state
 }
 
 func (d *Database) WatchChatEvents(ctx context.Context, id string, after int64, deliver func([]state.ChatEvent) error) error {
-	snapshots := d.chats().Doc(id).Collection("events").Where("seq", ">", after).OrderBy("seq", firestore.Asc).Snapshots(ctx)
-	defer snapshots.Stop()
-	for {
-		snapshot, err := snapshots.Next()
-		if err != nil {
-			return err
-		}
-		batch := []state.ChatEvent{}
-		for _, change := range snapshot.Changes {
-			if change.Kind != firestore.DocumentAdded {
-				continue
-			}
+	return d.chats().Doc(id).Collection("events").Where("seq", ">", after).OrderBy("seq", docstore.Asc).Watch(ctx, func(docs []*docstore.DocumentSnapshot) error {
+		batch := make([]state.ChatEvent, 0, len(docs))
+		for _, doc := range docs {
 			var event state.ChatEvent
-			if err := change.Doc.DataTo(&event); err != nil {
+			if err := doc.DataTo(&event); err != nil {
 				return err
 			}
 			batch = append(batch, event)
 		}
-		if len(batch) == 0 {
-			continue
-		}
 		slices.SortFunc(batch, func(a, b state.ChatEvent) int { return int(a.Seq - b.Seq) })
-		if err := deliver(batch); err != nil {
-			return err
-		}
-	}
+		return deliver(batch)
+	})
 }
 
 // DeleteChat first removes the chat document in a transaction that refuses a busy
 // chat, so no turn can start on it, then removes its event and upload records.
 func (d *Database) DeleteChat(ctx context.Context, id string) ([]string, error) {
 	ref := d.chats().Doc(id)
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		doc, err := tx.Get(ref)
 		if notFound(err) {
 			return state.ErrNotFound
@@ -352,30 +338,34 @@ func (d *Database) DeleteChat(ctx context.Context, id string) ([]string, error) 
 		return nil, err
 	}
 	uploads := []string{}
-	writer := d.db.BulkWriter(ctx)
 	for _, collection := range []string{"events", "uploads", "messages"} {
-		docs, err := ref.Collection(collection).DocumentRefs(ctx).GetAll()
-		if err != nil {
-			writer.End()
-			return uploads, err
-		}
-		for _, doc := range docs {
-			if collection == "uploads" {
-				uploads = append(uploads, doc.ID)
+		for {
+			docs, err := ref.Collection(collection).Select().Limit(200).Documents(ctx).GetAll()
+			if err != nil {
+				return uploads, err
 			}
-			if _, err = writer.Delete(doc); err != nil {
-				writer.End()
+			if len(docs) == 0 {
+				break
+			}
+			paths := make([]string, len(docs))
+			for i, doc := range docs {
+				paths[i] = doc.Ref.Path
+				if collection == "uploads" {
+					uploads = append(uploads, doc.Ref.ID)
+				}
+			}
+			if err = d.db.DeleteBatch(ctx, paths); err != nil {
 				return uploads, err
 			}
 		}
 	}
-	writer.End()
+
 	return uploads, nil
 }
 
 func (d *Database) CreateChatUpload(ctx context.Context, id string, u state.Upload) (state.Upload, error) {
 	saved := u
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		if _, err := tx.Get(d.chats().Doc(id)); notFound(err) {
 			return state.ErrNotFound
 		} else if err != nil {

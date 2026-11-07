@@ -1,20 +1,20 @@
-package firestore
+package records
 
 import (
 	"context"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
-func (d *Database) results() *firestore.CollectionRef { return d.root().Collection("results") }
+func (d *Database) results() *docstore.CollectionRef { return d.root().Collection("results") }
 
-func (d *Database) runResults(tx *firestore.Transaction, runID string) ([]state.Result, error) {
+func (d *Database) runResults(tx *docstore.Transaction, runID string) ([]state.Result, error) {
 	return documents[state.Result](tx.Documents(d.results().Where("run_id", "==", runID)))
 }
 
-func (d *Database) readResult(tx *firestore.Transaction, id string) (*state.Result, error) {
+func (d *Database) readResult(tx *docstore.Transaction, id string) (*state.Result, error) {
 	doc, err := tx.Get(d.results().Doc(id))
 	if notFound(err) {
 		return nil, nil
@@ -32,7 +32,7 @@ func (d *Database) readResult(tx *firestore.Transaction, id string) (*state.Resu
 // SaveResult creates a task's result once. A retry finds the saved record.
 func (d *Database) SaveResult(ctx context.Context, result state.Result) (state.Result, error) {
 	saved := result
-	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		if _, err := decodeRun(tx.Get(d.runs().Doc(result.RunID))); err != nil {
 			return err
 		}
@@ -71,17 +71,17 @@ func (d *Database) GetResult(ctx context.Context, id string) (state.Result, erro
 
 // RecentResults lists the newest results first.
 func (d *Database) RecentResults(ctx context.Context, limit int) ([]state.Result, error) {
-	return documents[state.Result](d.results().OrderBy("created_at", firestore.Desc).Limit(limit).Documents(ctx))
+	return documents[state.Result](d.results().OrderBy("created_at", docstore.Desc).Limit(limit).Documents(ctx))
 }
 
 // RecentRuns lists the newest tasks first. Tasks from before results existed are only found this way.
 func (d *Database) RecentRuns(ctx context.Context, limit int) ([]state.Run, error) {
-	return documents[state.Run](d.runs().OrderBy("started_at", firestore.Desc).Limit(limit).Documents(ctx))
+	return documents[state.Run](d.runs().OrderBy("started_at", docstore.Desc).Limit(limit).Documents(ctx))
 }
 
 // MarkDelivered records that a browser showed these results. The first report stands.
 func (d *Database) MarkDelivered(ctx context.Context, ids []string) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		results := []*state.Result{}
 		for _, id := range ids {
 			result, err := d.readResult(tx, id)
@@ -102,7 +102,7 @@ func (d *Database) MarkDelivered(ctx context.Context, ids []string) error {
 		}
 		now := time.Now().UTC()
 		for _, result := range results {
-			if err = tx.Update(d.results().Doc(result.ID), []firestore.Update{{Path: "delivered_at", Value: now}}); err != nil {
+			if err = tx.Update(d.results().Doc(result.ID), []docstore.Update{{Path: "delivered_at", Value: now}}); err != nil {
 				return err
 			}
 			if err = log.add(state.EventResult, result.ID); err != nil {
@@ -115,7 +115,7 @@ func (d *Database) MarkDelivered(ctx context.Context, ids []string) error {
 
 // replyResults reads the results a turn's reply reports: those of the tasks whose end it announces, and those the
 // outer model chose to show.
-func (d *Database) replyResults(tx *firestore.Transaction, t state.ConversationTurn) ([]state.Result, error) {
+func (d *Database) replyResults(tx *docstore.Transaction, t state.ConversationTurn) ([]state.Result, error) {
 	seen := map[string]bool{}
 	found := []state.Result{}
 	for _, input := range t.Inputs {
