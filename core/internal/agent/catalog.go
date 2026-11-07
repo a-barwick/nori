@@ -36,13 +36,17 @@ func (s *Service) Catalog() []Capability {
 	if !s.Capabilities.Calendar.connected() {
 		account, calendar = prompts.Runtime("capability-no-account", nil), prompts.Runtime("capability-disconnected", nil)
 	}
+	computerAvailability := prompts.Runtime("capability-available", nil)
+	if s.Computer == nil {
+		computerAvailability = "Computer is not enabled in this deployment."
+	}
 	return []Capability{
 		{Name: "Web search", Tools: "web_search", Account: prompts.Runtime("catalog-web-search-account", nil), Availability: search, OnFailure: prompts.Runtime("catalog-web-search-onfailure", nil), Verify: prompts.Runtime("catalog-web-search-verify", nil), Default: true},
-		{Name: "Browser", Tools: "browser_navigate, browser_screenshot, screenshot_inspect", Account: prompts.Runtime("catalog-browser-navigate-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-browser-navigate-onfailure", nil), Verify: prompts.Runtime("catalog-browser-navigate-verify", nil), Default: true},
+		{Name: "Browser", Tools: "browser_navigate, browser_screenshot, screenshot_inspect", Account: prompts.Runtime("catalog-browser-navigate-account", nil), Availability: computerAvailability, OnFailure: prompts.Runtime("catalog-browser-navigate-onfailure", nil), Verify: prompts.Runtime("catalog-browser-navigate-verify", nil), Default: true},
 		{Name: "Attached files", Tools: "upload_open, upload_inspect", Account: prompts.Runtime("catalog-upload-open-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-upload-open-onfailure", nil), Verify: prompts.Runtime("catalog-upload-open-verify", nil)},
 		{Name: "Saved results", Tools: "result_save, result_link, results_find, result_read, result_open", Account: prompts.Runtime("catalog-result-save-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-result-save-onfailure", nil), Verify: prompts.Runtime("catalog-result-save-verify", nil), Default: true},
 		{Name: "Memory and conversation", Tools: "memory_read, conversation_find, operation_read", Account: prompts.Runtime("catalog-memory-read-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-memory-read-onfailure", nil), Verify: prompts.Runtime("catalog-memory-read-verify", nil), Default: true},
-		{Name: "Shell", Tools: "shell, job_start, job_status, job_wait, job_stop", Account: prompts.Runtime("catalog-shell-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-shell-onfailure", nil), Verify: prompts.Runtime("catalog-shell-verify", nil), Default: true},
+		{Name: "Shell", Tools: "shell, job_start, job_status, job_wait, job_stop", Account: prompts.Runtime("catalog-shell-account", nil), Availability: computerAvailability, OnFailure: prompts.Runtime("catalog-shell-onfailure", nil), Verify: prompts.Runtime("catalog-shell-verify", nil), Default: true},
 		{Name: "Google Calendar read", Tools: "calendar_read", Account: account, Availability: calendar, OnFailure: prompts.Runtime("catalog-calendar-read-onfailure", nil), Verify: prompts.Runtime("catalog-calendar-read-verify", nil)},
 		{Name: "Google Calendar write", Tools: "calendar_create, calendar_move", Account: account, Availability: calendar, OnFailure: prompts.Runtime("catalog-calendar-create-onfailure", nil), Verify: prompts.Runtime("catalog-calendar-create-verify", nil)},
 		{Name: "Email send", Tools: "email_send", Account: account, Availability: calendar, OnFailure: prompts.Runtime("catalog-email-send-onfailure", nil), Verify: prompts.Runtime("catalog-email-send-verify", nil)},

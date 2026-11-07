@@ -33,12 +33,7 @@ type userApp struct {
 }
 
 func OpenService(ctx context.Context, waker wake.Waker, cfg settings.Settings) (*Service, error) {
-	for _, setting := range [][2]string{{"JEV_API_KEY", cfg.Models.JevKey}, {"OPENAI_API_KEY", cfg.Models.OpenAIKey}, {"OPENROUTER_API_KEY", cfg.Models.OpenRouterKey}} {
-		if _, err := settings.Required(setting[0], setting[1]); err != nil {
-			return nil, err
-		}
-	}
-	if err := cfg.Temporal.Validate(); err != nil {
+	if err := validateStartup(cfg); err != nil {
 		return nil, err
 	}
 	directory, err := platform.OpenUsers(ctx, cfg)

@@ -109,6 +109,13 @@ func (d *Database) ClaimOffer(ctx context.Context, offer state.Offer) (state.Off
 		}
 		offer.Status, offer.CreatedAt = state.OfferPlanning, time.Now().UTC()
 		saved, proceed = offer, true
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		if err = log.add(state.EventOffer, offer.ID); err != nil {
+			return err
+		}
 		return tx.Create(d.offers().Doc(offer.ID), offer)
 	})
 	return saved, proceed, err
@@ -154,6 +161,13 @@ func (d *Database) SavePlannedOffer(ctx context.Context, offer state.Offer) erro
 			return state.ErrOfferState
 		}
 		offer.Status, offer.CreatedAt = state.OfferPlanned, saved.CreatedAt
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		if err = log.add(state.EventOffer, offer.ID); err != nil {
+			return err
+		}
 		return tx.Set(d.offers().Doc(offer.ID), offer)
 	})
 }
@@ -209,6 +223,9 @@ func (d *Database) DeliverOffer(ctx context.Context, id, day, note, text string,
 		}
 		if !deliver {
 			offer.Status, offer.SkipReason = state.OfferSkipped, skip
+			if err = log.add(state.EventOffer, id); err != nil {
+				return err
+			}
 			return tx.Set(d.offers().Doc(id), offer)
 		}
 		// A conversation that has received nothing waits for its introduction, which runs only before any input.
@@ -228,6 +245,7 @@ func (d *Database) DeliverOffer(ctx context.Context, id, day, note, text string,
 			func() error { return tx.Create(d.messages().Doc(message.ID), message) },
 			func() error { return tx.Set(d.offers().Doc(id), offer) },
 			func() error { return tx.Set(d.proactiveDays().Doc(day), counts) },
+			func() error { return log.add(state.EventOffer, id) },
 			func() error { return log.add(state.EventMessage, message.ID) },
 			func() error { return log.add(state.EventConversation, "") },
 		}
@@ -269,6 +287,9 @@ func (d *Database) DecideOffer(ctx context.Context, id, decision string) (state.
 			return err
 		}
 		if err = tx.Set(d.messages().Doc(message.ID), state.MarkOfferPart(message, id, decision)); err != nil {
+			return err
+		}
+		if err = log.add(state.EventOffer, id); err != nil {
 			return err
 		}
 		return log.add(state.EventMessage, message.ID)

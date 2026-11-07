@@ -56,6 +56,7 @@ type TaskEvidenceStore interface {
 	AppendHistory(ctx context.Context, runID, parent string, data []byte) (ref string, err error)
 	ReadHistory(ctx context.Context, runID, ref string) ([][]byte, error)
 	PutOperation(ctx context.Context, runID string, op OperationRecord) error
+	Operation(ctx context.Context, runID, id string) (OperationRecord, error)
 	Operations(ctx context.Context, runID string) ([]OperationRecord, error)
 	// WriteOperations lists saved writes, without reading the task's other operations.
 	WriteOperations(ctx context.Context, runID string) ([]OperationRecord, error)
@@ -144,6 +145,7 @@ type ConversationDatabase interface {
 	Memories(ctx context.Context) ([]Memory, error)
 	ConversationMessages(ctx context.Context, before string) (messages []Message, next string, err error)
 	ConversationProjection(ctx context.Context) (Session, error)
+	CancelConversation(ctx context.Context, turnID string) error
 	ConversationStatus(ctx context.Context) (ConversationControl, *ConversationTurn, error)
 	ConversationTraces(ctx context.Context) ([]ConversationAttempt, error)
 	EnsureConversationIntroduction(ctx context.Context, prompt string) error
@@ -190,6 +192,7 @@ type ProactiveDatabase interface {
 
 // ScheduleDatabase holds the schedules the user asked for and the notifications that reach them when the app is closed.
 type ScheduleDatabase interface {
+	GetSchedule(ctx context.Context, id string) (Schedule, error)
 	Schedules(ctx context.Context) ([]Schedule, error)
 	// ChangeScheduleNow applies a pause, resume or cancel from a client control. ErrScheduleState means the schedule
 	// was already closed.

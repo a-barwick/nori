@@ -10,7 +10,7 @@ import (
 
 // Reuse the runtime's command schemas in one strict action-list response.
 // Validated actions enter the same durable admission and replay path.
-func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs, scheduleIDs []string, commandPlan bool) any {
+func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs, scheduleIDs []string, commandPlan, disableSchedules bool) any {
 	var tools []struct {
 		Function struct {
 			Name, Description string
@@ -25,6 +25,9 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs, schedul
 		asking, questions = append(asking, request.TaskID), append(questions, request.QuestionID)
 	}
 	for _, tool := range tools {
+		if disableSchedules && (tool.Function.Name == "schedule" || tool.Function.Name == "change_schedule") {
+			continue
+		}
 		if commandPlan && tool.Function.Name != "dispatch" && tool.Function.Name != "steer" {
 			continue
 		}

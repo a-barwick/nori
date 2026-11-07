@@ -375,7 +375,7 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 		if err = d.writeMemoryChanges(tx, t, memories, now); err != nil {
 			return err
 		}
-		if err = d.writeScheduleChanges(tx, t, schedules, now); err != nil {
+		if err = d.writeScheduleChanges(tx, log, t, schedules, now); err != nil {
 			return err
 		}
 		c, completed, message := state.CompleteTurn(c, t, text, now)
@@ -509,5 +509,73 @@ func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt st
 			return err
 		}
 		return tx.Create(d.conversationInputs().Doc(input.ID), input)
+	})
+}
+
+// CancelConversation fences only the named reply. Accepted task commands remain
+// durable and inputs after this turn's coverage remain queued. Retrying a stop
+// cannot cancel a later turn. An input ID can stop its queued batch before acquire.
+func (d *Database) CancelConversation(ctx context.Context, turnID string) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		c, err := d.readConversation(tx)
+		if err != nil {
+			return err
+		}
+		doc, err := tx.Get(d.conversationTurns().Doc(turnID))
+		var t state.ConversationTurn
+		if err == nil {
+			if err = doc.DataTo(&t); err != nil {
+				return err
+			}
+			if t.Status == "cancelled" || t.Status == "completed" {
+				return nil
+			}
+			if c.Active != turnID {
+				return state.ErrConversationStale
+			}
+		} else if notFound(err) {
+			if c.Active != "" {
+				return state.ErrConversationStale
+			}
+			inputs, err := d.inputBatch(tx, c.Consumed)
+			if err != nil {
+				return err
+			}
+			// Only the first queued input names this batch. Newer inputs are not consumed.
+			if len(inputs) == 0 || inputs[0].ID != turnID {
+				return state.ErrConversationStale
+			}
+			t = state.NewTurn(turnID, inputs[:1], nil, c, time.Now().UTC())
+		} else {
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		t.Attempt.Status = "cancelled"
+		c, t, message := state.CompleteTurn(c, t, "Reply stopped.", now)
+		c.Fence++
+		t.Status, message.Status = "cancelled", "cancelled"
+		if t.Attempt.ID != "" {
+			t.Attempt.Status, t.Attempt.FinishedAt = "cancelled", &now
+			t.Attempt.DurationMS = now.Sub(t.Attempt.StartedAt).Milliseconds()
+			if err = tx.Set(d.conversationAttempts().Doc(t.Attempt.ID), t.Attempt); err != nil {
+				return err
+			}
+		}
+		for _, write := range []func() error{
+			func() error { return tx.Set(d.conversation(), c) },
+			func() error { return tx.Set(d.conversationTurns().Doc(t.ID), t) },
+			func() error { return tx.Set(d.messages().Doc(message.ID), message) },
+			func() error { return log.add(state.EventMessage, message.ID) },
+			func() error { return log.add(state.EventConversation, "") },
+		} {
+			if err = write(); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }

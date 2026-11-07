@@ -13,12 +13,14 @@ import (
 	"nori/internal/chat"
 	"nori/internal/conversation"
 	"nori/internal/httpjson"
+	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/wake"
 )
 
 // Deps is everything the routes call into.
 type Deps struct {
+	Features settings.Features
 	// Model is the outer conversation model reported by health checks.
 	Chats  *chat.Service
 	Model  string
@@ -61,6 +63,7 @@ func Handler(deps Deps, local bool) http.Handler {
 		mux.HandleFunc("POST /v1/conversations", s.createChat)
 		mux.HandleFunc("GET /v1/conversations/{conversation}", s.chatSnapshot)
 		mux.HandleFunc("GET /v1/conversations/{conversation}/messages", s.chatHistory)
+		mux.HandleFunc("GET /v1/conversations/{conversation}/operations", s.conversationOperations)
 		mux.HandleFunc("DELETE /v1/conversations/{conversation}", s.deleteChat)
 		mux.HandleFunc("POST /v1/conversations/{conversation}/messages", s.chatMessage)
 		mux.HandleFunc("POST /v1/conversations/{conversation}/cancel", s.chatCancel)
@@ -89,6 +92,9 @@ func Handler(deps Deps, local bool) http.Handler {
 	mux.HandleFunc("POST /api/offer", s.offer)
 	mux.HandleFunc("POST /api/schedule", s.schedule)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.featureUnavailable(w, r) {
+			return
+		}
 		if local {
 			if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
 				writeJSON(w, 403, map[string]string{"error": "Cross-origin requests are not allowed."})
@@ -138,7 +144,7 @@ func writeError(w http.ResponseWriter, err error) {
 		status = 400
 	case errors.Is(err, state.ErrBusy), errors.Is(err, state.ErrDuplicate), errors.Is(err, state.ErrQuestionStale),
 		errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrCancelled), errors.Is(err, state.ErrConversationBusy),
-		errors.Is(err, state.ErrConversationConflict), errors.Is(err, state.ErrChatMessageTooLarge),
+		errors.Is(err, state.ErrConversationConflict), errors.Is(err, state.ErrConversationStale), errors.Is(err, state.ErrChatMessageTooLarge),
 		errors.Is(err, state.ErrMessageConflict), errors.Is(err, state.ErrChatBusy):
 		status = 409
 	}

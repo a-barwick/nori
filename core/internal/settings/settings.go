@@ -16,6 +16,7 @@ import (
 )
 
 type Settings struct {
+	Features    Features
 	Cloud       string
 	AWS         AWS
 	ServiceAuth serviceauth.Config
@@ -44,6 +45,11 @@ type Settings struct {
 	// EnvFile is the configuration file Load read.
 	EnvFile       string
 	Observability Observability
+}
+
+// Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
+type Features struct {
+	DisableBackgroundTasks, DisableJev, DisableComputer, DisableOffers, DisableSchedules bool
 }
 
 type AWS struct {
@@ -153,6 +159,11 @@ func Load() (Settings, error) {
 			return Settings{}, fmt.Errorf("could not load task configuration %s", task)
 		}
 	}
+	for _, name := range []string{"NORI_BACKGROUND_TASKS_ENABLED", "NORI_JEV_ENABLED", "NORI_COMPUTER_ENABLED", "NORI_CALENDAR_OFFERS_ENABLED", "NORI_SCHEDULES_ENABLED"} {
+		if v := os.Getenv(name); v != "" && v != "true" && v != "false" {
+			return Settings{}, fmt.Errorf("%s must be true or false", name)
+		}
+	}
 	s := FromEnvironment()
 	s.EnvFile = file
 	switch s.Cloud {
@@ -209,6 +220,7 @@ func FromEnvironment() Settings {
 		}
 	}
 	return Settings{
+		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") == "false", DisableComputer: os.Getenv("NORI_COMPUTER_ENABLED") == "false", DisableOffers: os.Getenv("NORI_CALENDAR_OFFERS_ENABLED") == "false", DisableSchedules: os.Getenv("NORI_SCHEDULES_ENABLED") == "false"},
 		Cloud:       cloud,
 		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION")), WakeQueueURL: os.Getenv("NORI_AWS_WAKE_QUEUE_URL"), WakeQueueARN: os.Getenv("NORI_AWS_WAKE_QUEUE_ARN"), ScheduleGroup: get("NORI_AWS_SCHEDULE_GROUP", "default"), ScheduleRoleARN: os.Getenv("NORI_AWS_SCHEDULE_ROLE_ARN"), WakeDeadLetterARN: os.Getenv("NORI_AWS_WAKE_DLQ_ARN")},
 		ServiceAuth: serviceauth.Config{Key: os.Getenv("NORI_SERVICE_TOKEN_KEY"), Audience: get("NORI_SERVICE_AUDIENCE", "nori")},
