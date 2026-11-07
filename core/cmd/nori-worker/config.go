@@ -36,7 +36,16 @@ func capabilities(s settings.Settings) (agent.Capabilities, error) {
 }
 
 func loadConfig(s settings.Settings) (config, error) {
-	for _, setting := range [][2]string{{"NORI_PROJECT_ID", s.Store.Project}, {"FIRESTORE_DATABASE_ID", s.Store.Database}, {"TEMPORAL_BUILD_ID", s.Temporal.BuildID}, {"OPENROUTER_API_KEY", s.Models.OpenRouterKey}} {
+	required := [][2]string{{"TEMPORAL_BUILD_ID", s.Temporal.BuildID}, {"OPENROUTER_API_KEY", s.Models.OpenRouterKey}}
+	switch s.Store.Backend {
+	case "", "firestore":
+		required = append(required, [2]string{"NORI_PROJECT_ID", s.Store.Project}, [2]string{"FIRESTORE_DATABASE_ID", s.Store.Database})
+	case "postgres":
+		required = append(required, [2]string{"NORI_POSTGRES_URL", s.Store.PostgresURL})
+	default:
+		return config{}, fmt.Errorf("NORI_STORE_BACKEND must be firestore or postgres")
+	}
+	for _, setting := range required {
 		if _, err := settings.Required(setting[0], setting[1]); err != nil {
 			return config{}, err
 		}
