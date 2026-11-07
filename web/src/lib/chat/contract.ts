@@ -4,13 +4,15 @@ export const PREFIX = '/v1';
 export type Attachment = { id: string; name: string; media_type: string; size: number };
 export type Capabilities = { contract: string; service: string; persistence?: string; provider?: string; model?: string; conversationModes: string[] };
 export type Operation = { id: string; call_id: string; name: string; effect_class: string; outcome: string; action?: { digest: string; text: string; spec: Record<string, string> }; result?: Record<string, unknown> };
-export type Message = { id: string; role: 'user' | 'assistant'; text: string; status: 'streaming' | 'completed' | 'cancelled' | 'failed'; attachments?: Attachment[]; operations?: Operation[] };
-export type Conversation = { id: string; title: string; mode: 'chat' | 'assistant'; messages: Message[]; activeTurn: string | null; position: number; updatedAt?: string };
-export type Header = Omit<Conversation, 'messages'>;
+export type Message = { id: string; sequence: number; role: 'user' | 'assistant'; text: string; status: 'streaming' | 'completed' | 'cancelled' | 'failed'; attachments?: Attachment[]; operations?: Operation[] };
+export type Conversation = { id: string; title: string; mode: 'chat' | 'assistant'; messages: Message[]; activeTurn: string | null; position: number; nextBefore?: number; updatedAt?: string };
+export type Header = Omit<Conversation, 'messages' | 'nextBefore'>;
 export type Summary = { id: string; title: string; mode: 'chat' | 'assistant'; activeTurn: string | null; updatedAt: string };
 // An event carries the conversation's header and only the messages that update added or changed.
 // `reset` means the client is too far behind to replay and should reload the snapshot.
 export type Event = { seq: number; kind: 'reply.updated' | 'turn.completed' | 'turn.cancelled' | 'turn.failed' | 'input.accepted' | 'tool.updated' | 'reset'; conversation: Header; messages: Message[] };
+
+export type MessagePage = { messages: Message[]; nextBefore?: number };
 
 /** The stream can't continue from this position; reload the snapshot. */
 export class StreamReset extends Error {}
@@ -32,6 +34,7 @@ export function apply(conversation: Conversation, event: Event): Conversation {
     const index = messages.findIndex(m => m.id === message.id);
     if (index >= 0) messages[index] = message; else messages.push(message);
   }
+  messages.sort((a, b) => a.sequence - b.sequence);
   return { ...conversation, ...event.conversation, messages };
 }
 
@@ -81,7 +84,7 @@ const pause = (ms: number, signal: AbortSignal) => new Promise<void>(done => {
  * Keeps a conversation current until `signal` aborts: follows the stream, resumes when the server
  * ends it, reloads the snapshot after a reset or failure, and backs off while the service is unreachable.
  */
-export async function stay(start: Conversation, signal: AbortSignal, update: (c: Conversation) => void, connected: (on: boolean) => void, base = '/api') {
+export async function stay(start: Conversation, signal: AbortSignal, update: (c: Conversation, reset?: boolean) => void, connected: (on: boolean) => void, base = '/api') {
   let current = start;
   let failures = 0;
   while (!signal.aborted) {
@@ -96,7 +99,7 @@ export async function stay(start: Conversation, signal: AbortSignal, update: (c:
       }
       try {
         current = await request<Conversation>(`/conversations/${current.id}`, { signal }, base);
-        update(current);
+        update(current, true);
       } catch { /* the next attempt retries */ }
     }
   }

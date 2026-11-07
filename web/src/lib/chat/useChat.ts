@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DraftFile } from "@/lib/types";
-import { CONTRACT, request, stay, type Capabilities, type Conversation, type Summary } from "./contract";
+import { CONTRACT, request, stay, type Capabilities, type Conversation, type MessagePage, type Summary } from "./contract";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const newest = (rows: Summary[]) => [...rows].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
@@ -27,15 +27,24 @@ export function useChat() {
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(true);
   const [sending, setSending] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingPage = useRef(false);
   const currentRef = useRef<Conversation | null>(null);
   const stream = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const creating = useRef<Promise<string> | null>(null);
   const retry = useRef<{ id: string; message: string; conversation: string; attachments: string[] } | null>(null);
 
-  const show = useCallback((c: Conversation) => {
+  const show = useCallback((c: Conversation, reset = false) => {
     const shown = currentRef.current;
     if (shown?.id === c.id && c.position < shown.position) return;
+    // Incoming snapshots/events contain a recent window. Keep pages the user
+    // already loaded, taking current values from the newer event position.
+    if (!reset && shown?.id === c.id) {
+      const messages = new Map(shown.messages.map(m => [m.id, m]));
+      for (const message of c.messages) messages.set(message.id, message);
+      c = { ...c, messages: [...messages.values()].sort((a, b) => a.sequence - b.sequence), nextBefore: shown.nextBefore };
+    }
     currentRef.current = c;
     setCurrent(c);
     setChats((rows) => {
@@ -67,7 +76,7 @@ export function useChat() {
       const controller = new AbortController();
       stream.current = controller;
       setConnected(true);
-      void stay(snapshot, controller.signal, (c) => { if (selected === generation.current) show(c); }, (on) => { if (selected === generation.current) setConnected(on); });
+      void stay(snapshot, controller.signal, (c, reset) => { if (selected === generation.current) show(c, reset); }, (on) => { if (selected === generation.current) setConnected(on); });
     } catch (e) { if (selected === generation.current) setError(String(e)); }
   }, [disconnect, show]);
 
@@ -149,6 +158,27 @@ export function useChat() {
     finally { setSending(false); }
   }
 
+  async function loadOlder() {
+    const shown = currentRef.current;
+    if (!shown?.nextBefore || loadingPage.current) return;
+    const selected = generation.current;
+    loadingPage.current = true;
+    setLoadingOlder(true);
+    setError("");
+    try {
+      const page = await request<MessagePage>(`/conversations/${shown.id}/messages?before=${shown.nextBefore}`);
+      const latest = currentRef.current;
+      if (selected !== generation.current || latest?.id !== shown.id) return;
+      // A stream update may have arrived while the page was loading.
+      const messages = new Map(page.messages.map(m => [m.id, m]));
+      for (const message of latest.messages) messages.set(message.id, message);
+      const merged = { ...latest, nextBefore: page.nextBefore, messages: [...messages.values()].sort((a, b) => a.sequence - b.sequence) };
+      currentRef.current = merged;
+      setCurrent(merged);
+    } catch (e) { if (selected === generation.current) setError(String(e)); }
+    finally { loadingPage.current = false; setLoadingOlder(false); }
+  }
+
   async function stop() {
     const shown = currentRef.current;
     if (!shown?.activeTurn) return;
@@ -196,6 +226,7 @@ export function useChat() {
   return {
     chats, current, open, draft, setDraft, files, error, connected, sending,
     refresh, select, startNew, close, send, stop, remove, attach, retryFile: upload,
+    loadOlder, loadingOlder,
     removeFile: (id: string) => setFiles((rows) => rows.filter((file) => file.id !== id)),
   };
 }

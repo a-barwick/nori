@@ -195,6 +195,9 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
             onUnread={onUnread}
             presence={false}
             emptyMessage="What would you like to talk about?"
+            hasOlder={!!chat.current?.nextBefore}
+            loadingOlder={chat.loadingOlder}
+            onLoadOlder={() => void chat.loadOlder()}
           />
         </div>
         {(chat.error || !chat.connected) && (
