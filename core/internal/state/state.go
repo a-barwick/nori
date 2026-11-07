@@ -17,14 +17,10 @@ import (
 // MaxMessageBytes bounds user instructions and individual tool arguments.
 const MaxMessageBytes = 8192
 
-const Owner = "austinbarwickdavis@gmail.com"
-
 var ErrBusy = errors.New("task is not open")
 var ErrDuplicate = errors.New("run ID already exists")
 var ErrPaused = errors.New("task execution is paused")
 var ErrNotFound = errors.New("not found")
-var ErrCostUnknown = errors.New("Model cost is unknown for a provider request; task stopped before further model calls. " +
-	"Recorded spend includes only known costs.")
 
 type Control struct {
 	Paused bool `json:"paused" firestore:"paused"`
@@ -39,6 +35,7 @@ func (c Control) Check() error {
 }
 
 type Message struct {
+	Status string `json:"status,omitempty" firestore:"status,omitempty"`
 	ID     string `json:"id" firestore:"id"`
 	TurnID string `json:"turn_id,omitempty" firestore:"turn_id,omitempty"`
 	RunID  string `json:"run_id" firestore:"run_id"`

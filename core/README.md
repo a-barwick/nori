@@ -1,34 +1,76 @@
 # Nori core
 
-The Go API owns durable conversation and task admission in Firestore. Both
+The Go API owns durable conversation and task admission in the configured database. Both
 `cmd/nori-local` and `cmd/nori` use the same conversation runner, OpenRouter
 model, and advisory Jev hints. Temporal owns inner task execution; a separate Go
 worker calls OpenRouter Responses and the retained Firecracker computer. Screenshots
 live in a private GCS bucket. The browser uses a same-origin Next.js proxy and
-owner authentication; hosted runtime IAM admits the web and queue caller
+verified sign-in; hosted runtime IAM admits the web and queue caller
 service accounts.
 
 Storage sits behind contracts. `internal/state` holds the records, the
-`ConversationStore` interface and the write rules; `internal/state/firestore`
-implements its documents, and `internal/state/gcs` or `internal/state/localfs`
-stores screenshot bytes. `internal/spend` holds the budget rules and a ledger
-contract with its own Firestore adapter. Only `internal/platform` names a
-backend: `platform.OpenStore` returns a `state.ConversationStore`.
+`ConversationStore` interface and the write rules. `internal/state/records` applies
+them through Firestore or Postgres transactions; `internal/state/gcs` or `internal/state/localfs`
+stores screenshot bytes; AWS selects `internal/state/s3`. `internal/usage` calculates reported model costs. Only `internal/platform` names a
+backend: `platform.OpenStore(ctx, settings, user)` returns an immutable user-scoped `state.ConversationStore`. Every data operation keeps that scope, including detached cleanup and spend recording. The operator pause remains global.
 
 ## Local development
 
 Requires Go 1.26, the web dependencies, and the configured provider credentials.
 Run `make dev` from the repository root for loopback web and Go servers. The
 local Go entrypoint recovers pending conversation work at startup and processes
-it on its application lifecycle, independently of browser requests. Firestore
-and Temporal remain the configured backing services; select their emulators
-explicitly for an isolated local run.
+it on its application lifecycle, independently of browser requests. `make deps`
+starts isolated Postgres and Temporal; see [local setup](infrastructure/local/README.md).
+Firestore stays the default unless `NORI_STORE_BACKEND=postgres` is set.
 
 Commands load the monorepo-root `.env` without overriding existing environment
 variables. Keep it gitignored and mode 600. `NORI_ENV_FILE` selects an existing
 file; `NORI_TASK_ENV_FILE` can select distinct existing task configuration.
 Credentials are used in place. Required names are in
 [`.env.example`](../.env.example).
+
+## Users
+
+The `users` collection holds the sign-in email, display name, time zone, notification
+email, calendar connection and computer for each user. Sign-in verifies Google IAP by default,
+or the configured OIDC issuer on AWS,
+then the web server resolves that email through `/api/users/resolve` using its own
+credentials. It prefixes upstream routes with `/users/<id>/`; browser-supplied IDs
+never select a user. Loopback development uses `NORI_LOCAL_EMAIL` (or the existing
+`OWNER_EMAIL` as a local fallback) and requires a matching row.
+
+From `core/`, provision a user in the configured database:
+
+```sh
+go run ./cmd/nori-user --email user@example.com --name 'User' --timezone America/Los_Angeles
+# Optional computer flags: --computer-instance, --computer-zone, --local-computer-url.
+# Connect calendar and email tools for the returned ID:
+go run ./cmd/nori-connect-calendar --user <id>
+```
+
+Before deploying this version over the single-user service, import its existing
+settings from the main checkout's root `.env`:
+
+```sh
+NORI_ENV_FILE=/absolute/path/to/main/.env go run ./cmd/nori-user --import-legacy --name Austin
+```
+
+This creates `users/owner`, verifies the saved row, then removes the old per-user
+settings from that file while keeping it mode 600. It refuses an existing row with
+different values. It reads the selected database and env file, so use an explicitly
+configured emulator for local experiments. An empty legacy computer setting stays
+empty; if the deployed computer was configured only in infrastructure, populate its
+zone and instance using the command's computer flags during import.
+
+The `owner` row maps to the existing owner document path, unprefixed files and
+`nori-task-<task>` executions. Nothing is moved or rewritten. Other users get separate
+document roots, `users/<id>/` file prefixes and `nori-task-<user>:<task>` executions.
+IDs can repeat across users without exposing records. Old conversation wakes resolve
+only to `owner`; new wakes include the user. Schedules, calendar checks and worker
+reconciliation enumerate rows; each operation uses one immutable scope. API processing
+passes and task activities read the current row, so changes apply on the next pass or
+activity without mutating work already in flight. Calendar tokens never enter API
+responses or model prompts.
 
 ## Observability
 
@@ -63,34 +105,38 @@ diagnostics report export failures and rate-limit drops without recursively
 sending them through the failed exporter. Browser latency requires a completed
 attempt; failures and timeouts are separate outcomes.
 
-Sandbox deployments use `nori-sandbox-openrouter-api-key` and the existing
-feature lease issued by `infrastructure/spend/run.py` for the same logical chat.
-Pass that scope as `sandbox_spend_scope` to Terraform and set new worker targets
-to `spend_profile = "feature"`; retained workers keep their original closed lease.
-Use `run.py --sandbox` to publish the same key and supply its version. Operator deployment and
-admission require its numeric `NORI_SPEND_KEY_SECRET_VERSION`; never restore a
-CI secret or substitute the production model key. Closing the lease stops
-inference while health and cleanup remain available.
+Sandbox deployments use their existing sandbox provider secrets, separate from
+production credentials. New background tasks record `NORI_TASK_BUDGET_USD`
+(default $1) at acceptance and finish incomplete at that ceiling, without a
+budget question. Unknown costs are reported without failing successful work.
+
+`internal/settings` reads every setting once at startup; the root `.env.example` describes each one.
+The task worker validates its Temporal connection settings, release identity,
+and polling windows before starting its listener. User time zones and tool
+connections are read from rows when processing work. Request workers also require a deployment name and a wake route for
+their build. This validates configuration without contacting Temporal, the
+computer or a model; `/healthz` does not verify those services are reachable.
 
 | Configuration | Purpose |
 | --- | --- |
 | `OPENAI_API_KEY`, `JEV_API_KEY` | Required conversation provider credentials for both entrypoints |
-| `NORI_OWNER_NAME` | Optional. The person the independent chat's prompt says Nori works for; without it the prompt says "a personal assistant" |
 | `NORI_AGENT_MODEL` | Conversation model; default `gpt-6.1-sol`. It runs through OpenAI's platform API at a fixed endpoint, with low reasoning and the standard tier |
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
-| `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |
+| `NORI_STORE_BACKEND`, `NORI_POSTGRES_URL` | Firestore by default; `postgres` selects a Postgres connection and applies numbered migrations at startup |
+| `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required for Firestore, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |
 | `FIRESTORE_EMULATOR_HOST`, `TEMPORAL_LOCAL` | Explicit local Firestore endpoint and local Temporal mode; absent/false uses configured services |
-| `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and the API base URL that wakes POST to at `/api/process`. Production passes the native Agent Runtime invoke root, which ends in `/api`. Any `https` host is accepted, or loopback `http` when `TEMPORAL_LOCAL=true` |
+| `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and the API base URL that wakes POST to at `/users/<id>/api/process`. Production passes the native Agent Runtime invoke root, which ends in `/api`. Any `https` host is accepted, or loopback `http` when `TEMPORAL_LOCAL=true` |
 | `NORI_WORKER_SERVICES`, `NORI_WORKER_WAKE_QUEUE`, `CLOUD_TASKS_EMULATOR_HOST` | Optional request-driven workers: JSON map of immutable build to service root URL, the Cloud Tasks queue that wakes them (OIDC, same caller), and a loopback Cloud Tasks emulator for local runs. Without `NORI_WORKER_SERVICES`, workers poll on their own |
-| `OPENROUTER_API_KEY` | Inner worker credential; development uses the spend wrapper's scoped key |
+| `OPENROUTER_API_KEY` | Inner worker credential from the project `.env` |
 | `MODEL_NAME` | Inner worker model; default `openai/gpt-6.1-terra` through OpenRouter Responses |
-| `ARTIFACT_BUCKET` | Private screenshot bucket |
-| `NORI_STATE_EMULATOR_HOST` | App-data Firestore emulator on a loopback address; refused when `FIRESTORE_EMULATOR_HOST` is also set. The shared spend ledger stays on its real database |
-| `NORI_LOCAL_ARTIFACT_DIR` | Absolute private folder for screenshots instead of the bucket. Needs a loopback Firestore emulator and `TEMPORAL_LOCAL=true` |
-| `COMPUTER_ZONE`, `COMPUTER_INSTANCE` | Existing retained computer |
+| `NORI_CLOUD` | `gcp` (default), `aws`, or `local`; see [AWS adapters](infrastructure/aws/README.md) |
+| `ARTIFACT_BUCKET` | Private Cloud Storage or S3 bucket, selected by cloud |
+| `NORI_STATE_EMULATOR_HOST` | App-data Firestore emulator on a loopback address; refused when `FIRESTORE_EMULATOR_HOST` is also set. |
+| `NORI_LOCAL_ARTIFACT_DIR` | Absolute private folder for screenshots instead of the bucket. Needs a loopback database and `TEMPORAL_LOCAL=true` |
+| User row `computer` | Existing retained computer, or a loopback development URL |
 | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | Shared API/worker connection and task queue |
 | `TEMPORAL_API_KEY` | TLS connection key loaded from the selected env file |
-| `TEMPORAL_API_KEY_SECRET_VERSION` | Existing deployed alternative: ADC reads a Secret Manager version |
+| `TEMPORAL_API_KEY_SECRET_VERSION` | Secret reference: GCP Secret Manager version or AWS Secrets Manager name/ARN |
 | `TEMPORAL_DEPLOYMENT_NAME`, `TEMPORAL_BUILD_ID` | Worker deployment and immutable release version |
 
 From `core/`, run the local API and inner worker independently:
@@ -131,6 +177,8 @@ different queue, workflow engine or secret store means writing one adapter.
 | Package | Role |
 | --- | --- |
 | `internal/api` | HTTP routes; no infrastructure imports |
+| `internal/settings` | The one reader of environment variables; each process passes on only what a package needs |
+| `internal/prompts` | Embedded model instructions, tool descriptions and authored runtime text, including classifier criteria, capability catalogs and tool-result notes; dynamic facts stay render inputs |
 | `internal/wake` | `Waker` contract for waking the API and workers; `wake/cloudtasks` is the Cloud Tasks adapter |
 | `internal/dispatch` | `Orchestrator` contract for the task engine, and the `Dispatcher` that runs the one reconciliation pass shared by the API, worker and `nori-deliver` |
 | `internal/task` | Temporal workflow and activities, plus the Temporal adapter of `Orchestrator` |
@@ -150,7 +198,7 @@ different queue, workflow engine or secret store means writing one adapter.
 | `POST /api/turn` | `{id: UUID,message}`; saves input and confirms wake scheduling before HTTP 202, without waiting for a model answer |
 | `POST /api/process` | Internal queue handler; drains conversation and repairs task delivery, returning retryable HTTP 503 while work cannot finish |
 | `POST /api/trace` | `{run_id: task-UUID}`; recorded task steps loaded on demand |
-| `POST /api/input` | `{id: new-UUID,run_id: task-UUID,message}`; ordered correction, answer, or explicit `continue` |
+| `POST /api/input` | `{id: new-UUID,run_id: task-UUID,message}`; ordered correction or answer |
 | `POST /api/cancel` | `{id: task-UUID}`; records Stop and its delivery intent |
 | `POST /api/resume` | `{}`; repairs delivery and wakes retained workflows after operator admission is resumed |
 | `POST /api/artifact` | `{run_id,artifact_id}`; private PNG bytes |
@@ -169,22 +217,6 @@ batch and later input stays queued. Native tool-call/result history survives
 restart. Context is bounded to recent history and traces report truncation;
 older transcript pages remain available separately.
 
-The live conversation E2E suite now checks this async contract, a single saved
-introduction, UUID replay/conflict handling, ordered follow-ups and no dispatch
-for hypothetical work. Use a fresh isolated database and run from the repo root:
-`NORI_E2E_API_URL=http://127.0.0.1:PORT bun test core/e2e/conversation.test.js`.
-`NORI_E2E_URL` instead selects the local web proxy. These calls use the selected
-real models. The older durable-task suite targets the retired direct-run route
-and is not validation of this revision's conversation contract.
-
-The browser-task journeys cover concurrent browser tasks, screenshot retrieval,
-answer replay/staleness, targeted Stop, and a detailed trip correction during a
-real model request. Start the local API, Temporal worker and browser computer
-against a fresh isolated database, then run from the repo root:
-`NORI_M3_E2E_API_URL=http://127.0.0.1:PORT bun test core/e2e/browser-tasks.test.js`.
-Use `NORI_M3_E2E_URL` for the local web proxy instead. This separate opt-in suite
-uses real providers, rejects preexisting tasks, and stops only tasks it creates.
-
 A Firestore transaction admits a whole command batch atomically, including
 commands for independent concurrent tasks. Repeating an identical command UUID
 returns its recorded acceptance; reusing that ID with different content is
@@ -196,7 +228,7 @@ position; final publication also waits for accepted chat input to be routed.
 Durable `system/control.paused` gates work; old `expires_at` fields are ignored.
 Missing or paused control rejects new task execution.
 
-A durable task can wait for input, budget approval, or project resume without a
+A durable task can wait for input or project resume without a
 wall-clock task deadline. It survives normal worker shutdown and project pause.
 Model requests and tool execution keep per-call limits. Interrupted or uncertain
 tool operations can fail the task rather than risk replaying a side effect. Stop requires an

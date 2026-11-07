@@ -22,14 +22,11 @@ type CommandReceipt struct {
 type CommandKind string
 
 const (
-	CommandStart    CommandKind = "start"
-	CommandSteer    CommandKind = "steer"
-	CommandAnswer   CommandKind = "answer"
-	CommandContinue CommandKind = "continue"
-	CommandStop     CommandKind = "stop"
-	CommandHold     CommandKind = "hold"
-	CommandApprove  CommandKind = "approve"
-	CommandDecline  CommandKind = "decline"
+	CommandStart  CommandKind = "start"
+	CommandSteer  CommandKind = "steer"
+	CommandAnswer CommandKind = "answer"
+	CommandStop   CommandKind = "stop"
+	CommandHold   CommandKind = "hold"
 	// CommandSubtaskResult delivers finished subtasks to the parent that asked for them. Only the transaction that
 	// saves a subtask's outcome creates one; it never passes through Prepare, because a pause or the command limit must
 	// not lose a result.
@@ -131,10 +128,6 @@ func (b CommandBatch) Related(commands []Command) []string {
 			if cmd.ParentID != "" {
 				add(cmd.ParentID)
 			}
-		case CommandContinue:
-			if parent := b.Runs[cmd.RunID].ParentID; parent != "" {
-				add(parent)
-			}
 		case CommandStop, CommandSteer:
 			for _, id := range RunningSubtasks(b.Runs[cmd.RunID]) {
 				add(id)
@@ -168,9 +161,13 @@ type PreparedCommands struct {
 
 // Prepare validates the whole batch in order against its evolving in-memory runs. It writes nothing, so a later
 // rejection cannot partly accept a batch.
-func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time, traceContext map[string]string) (PreparedCommands, error) {
+func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time, traceContext map[string]string, taskBudgetUSD float64) (PreparedCommands, error) {
+	if taskBudgetUSD <= 0 {
+		taskBudgetUSD = TaskBudgetUSD
+	}
 	p := commandPrep{
-		runs: b.Runs, exists: b.Exists, opened: map[string]bool{}, now: now, traceContext: traceContext,
+		taskBudgetUSD: taskBudgetUSD,
+		runs:          b.Runs, exists: b.Exists, opened: map[string]bool{}, now: now, traceContext: traceContext,
 		prepared: PreparedCommands{
 			Receipts: make([]CommandReceipt, 0, len(commands)), Accepted: []Command{}, ReadyEvents: []TaskEvent{}, Changed: map[string]bool{},
 		},
@@ -241,13 +238,14 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 
 // commandPrep is the in-memory state Prepare evolves as it validates a batch.
 type commandPrep struct {
-	runs         map[string]Run
-	exists       map[string]bool
-	opened       map[string]bool
-	now          time.Time
-	traceContext map[string]string
-	prepared     PreparedCommands
-	cascaded     []CommandReceipt
+	taskBudgetUSD float64
+	runs          map[string]Run
+	exists        map[string]bool
+	opened        map[string]bool
+	now           time.Time
+	traceContext  map[string]string
+	prepared      PreparedCommands
+	cascaded      []CommandReceipt
 }
 
 func (p *commandPrep) change(run Run) {
@@ -298,8 +296,8 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 		return Run{}, fmt.Errorf("%w: start needs a task request", ErrCommandInvalid)
 	}
 	run := Run{
-		ID: cmd.RunID, Request: cmd.Text, Status: RunRunning, Temporal: true, ProtocolVersion: TaskProtocolVersion,
-		WorkflowVersion: TaskWorkflowVersion, StartedAt: p.now, Budget: TaskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
+		ID: cmd.RunID, Request: cmd.Text, Status: RunRunning,
+		StartedAt: p.now, Budget: p.taskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
 		TraceContext: p.traceContext, OriginTraceContext: p.traceContext, Revises: cmd.Revises,
 	}
 	if cmd.Offer != "" {
@@ -338,7 +336,7 @@ func (p *commandPrep) apply(run *Run, cmd Command) error {
 			run.InterruptRevision = run.Revision
 		}
 		run.Question, run.Waiting, run.PublicationPending = nil, "", false
-	case CommandAnswer, CommandContinue, CommandApprove, CommandDecline:
+	case CommandAnswer:
 		return p.resolve(run, cmd)
 	case CommandStop:
 		run.Revision++
@@ -350,17 +348,11 @@ func (p *commandPrep) apply(run *Run, cmd Command) error {
 	return nil
 }
 
-// resolve answers the task's open question. Continue also grants budget, to the parent when the task is a subtask.
+// resolve answers the task's open question.
 func (p *commandPrep) resolve(run *Run, cmd Command) error {
 	kind := "input"
 	if run.Question != nil && run.Question.Kind == QuestionWork && cmd.Kind == CommandAnswer {
 		kind = QuestionWork
-	}
-	switch cmd.Kind {
-	case CommandContinue:
-		kind = "budget"
-	case CommandApprove, CommandDecline:
-		kind = "approval"
 	}
 	if run.Question == nil || run.Question.ResolvedBy != "" || cmd.QuestionID == "" || run.Question.ID != cmd.QuestionID ||
 		run.Question.Revision != run.Revision || run.Question.Kind != kind {
@@ -370,15 +362,6 @@ func (p *commandPrep) resolve(run *Run, cmd Command) error {
 		return fmt.Errorf("%w: answer is empty", ErrCommandInvalid)
 	}
 	run.Question.ResolvedBy = cmd.ID
-	if cmd.Kind == CommandContinue {
-		if run.ParentID == "" {
-			run.Budget += TaskBudgetUSD
-		} else if owner, known := p.runs[run.ParentID]; known {
-			grantBudget(&owner)
-			run.Budget = owner.Budget
-			p.change(owner)
-		}
-	}
 	return nil
 }
 

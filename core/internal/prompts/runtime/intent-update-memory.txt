@@ -1,0 +1,1 @@
+Explicitly request a persistent memory change.

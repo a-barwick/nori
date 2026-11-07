@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
+
+	"nori/internal/prompts"
 )
 
 // A write has three steps. Prepare validates it and reads the provider, so the user
@@ -57,7 +59,7 @@ func actionDigest(tool, account string, spec map[string]string) string {
 func (s *Service) PrepareWrite(ctx context.Context, name string, args map[string]any) (PreparedWrite, error) {
 	config := s.Capabilities.Calendar
 	if !config.connected() {
-		return PreparedWrite{Result: map[string]any{"available": false, "reason": "The Google account is not connected. " + calendarConnectHint}}, nil
+		return PreparedWrite{Result: map[string]any{"available": false, "reason": prompts.Runtime("writes-the-google-account-is-not-connected", nil) + calendarConnectHint}}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
 	defer cancel()
@@ -72,10 +74,10 @@ func (s *Service) PrepareWrite(ctx context.Context, name string, args map[string
 	case "email_send":
 		prepared, err = s.prepareEmail(ctx, text("to"), text("subject"), text("body"))
 	default:
-		return prepared, errors.New("unknown write tool")
+		return prepared, errors.New(prompts.Runtime("tool-unknown-write-tool", nil))
 	}
 	if errors.Is(err, errCalendarDisconnected) {
-		return PreparedWrite{Result: map[string]any{"available": false, "reason": "The Google connection has expired. " + calendarConnectHint}}, nil
+		return PreparedWrite{Result: map[string]any{"available": false, "reason": prompts.Runtime("writes-the-google-connection-has-expired", nil) + calendarConnectHint}}, nil
 	}
 	if err == nil && prepared.Result == nil {
 		prepared.Digest = actionDigest(name, config.Account, prepared.Spec)
@@ -87,7 +89,7 @@ func (s *Service) PrepareWrite(ctx context.Context, name string, args map[string
 // and reports what happened.
 func (s *Service) SendWrite(ctx context.Context, name string, spec map[string]string) (string, map[string]any) {
 	if s.targetChanged(spec) {
-		return WriteFailed, map[string]any{"applied": false, "reason": "The connected account or write calendar changed after the approval, so this was not sent."}
+		return WriteFailed, map[string]any{"applied": false, "reason": prompts.Runtime("writes-the-connected-account-or-write-calendar-changed-after-t", nil)}
 	}
 	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
 	defer cancel()
@@ -99,13 +101,13 @@ func (s *Service) SendWrite(ctx context.Context, name string, spec map[string]st
 	case "email_send":
 		return s.sendEmail(ctx, spec)
 	}
-	return WriteFailed, map[string]any{"error": "unknown write tool"}
+	return WriteFailed, map[string]any{"error": prompts.Runtime("tool-unknown-write-tool", nil)}
 }
 
 // CheckWrite reads the provider and sends nothing.
 func (s *Service) CheckWrite(ctx context.Context, name string, spec map[string]string) (string, map[string]any) {
 	if s.targetChanged(spec) {
-		return WriteUncertain, map[string]any{"reason": "The connected account or write calendar changed, so the provider can't be read for this write."}
+		return WriteUncertain, map[string]any{"reason": prompts.Runtime("writes-the-connected-account-or-write-calendar-changed-so-the", nil)}
 	}
 	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
 	defer cancel()
@@ -117,7 +119,7 @@ func (s *Service) CheckWrite(ctx context.Context, name string, spec map[string]s
 	case "email_send":
 		return s.checkEmail(ctx, spec)
 	}
-	return WriteFailed, map[string]any{"error": "unknown write tool"}
+	return WriteFailed, map[string]any{"error": prompts.Runtime("tool-unknown-write-tool", nil)}
 }
 
 // targetChanged compares the saved action with this worker's account and write calendar.
@@ -137,13 +139,13 @@ func googleCall(ctx context.Context, client *http.Client, method, address string
 	if in != nil {
 		data, err := json.Marshal(in)
 		if err != nil {
-			return 0, errors.New("provider request could not be encoded")
+			return 0, errors.New(prompts.Runtime("tool-provider-request-could-not-be-encoded", nil))
 		}
 		body = strings.NewReader(string(data))
 	}
 	req, err := http.NewRequestWithContext(ctx, method, address, body)
 	if err != nil {
-		return 0, errors.New("provider request could not be built")
+		return 0, errors.New(prompts.Runtime("tool-provider-request-could-not-be-built", nil))
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -157,7 +159,7 @@ func googleCall(ctx context.Context, client *http.Client, method, address string
 		if errors.As(err, &retrieve) {
 			return http.StatusUnauthorized, errCalendarDisconnected
 		}
-		return 0, errors.New("provider request failed before a response arrived")
+		return 0, errors.New(prompts.Runtime("tool-provider-request-failed-before-a-response-arrived", nil))
 	}
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusUnauthorized {
@@ -165,7 +167,7 @@ func googleCall(ctx context.Context, client *http.Client, method, address string
 	}
 	if res.StatusCode >= 200 && res.StatusCode < 300 && out != nil {
 		if json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(out) != nil {
-			return res.StatusCode, errors.New("provider returned an unreadable response")
+			return res.StatusCode, errors.New(prompts.Runtime("tool-provider-returned-an-unreadable-response", nil))
 		}
 	}
 	return res.StatusCode, nil
@@ -180,13 +182,13 @@ func refusal(status int) map[string]any {
 	output := map[string]any{"applied": false, "provider_status": status}
 	switch status {
 	case http.StatusUnauthorized:
-		output["available"], output["reason"] = false, "The Google connection has expired. "+calendarConnectHint
+		output["available"], output["reason"] = false, prompts.Runtime("connection-expired-prefix", nil)+calendarConnectHint
 	case http.StatusForbidden:
-		output["available"], output["reason"] = false, "The connected account hasn't granted this. "+calendarConnectHint
+		output["available"], output["reason"] = false, prompts.Runtime("connection-not-granted-prefix", nil)+calendarConnectHint
 	case http.StatusPreconditionFailed:
-		output["reason"] = "The event changed after the user saw it. Read it again and propose the move again."
+		output["reason"] = prompts.Runtime("event-changed", nil)
 	default:
-		output["reason"] = "The provider refused this request."
+		output["reason"] = prompts.Runtime("provider-refused", nil)
 	}
 	return output
 }

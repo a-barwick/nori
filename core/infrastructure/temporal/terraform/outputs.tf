@@ -25,17 +25,12 @@ output "scalable_build_ids" {
   value = var.scalable_build_ids
 }
 
-output "spend_alert_config" {
-  description = "Public billing-monitor settings and secret references retained during application releases."
-  value       = var.spend_alert
-}
-
 output "environment" {
   value = var.environment
 }
 
 output "computer_instance" {
-  value = local.worker_env.COMPUTER_INSTANCE
+  value = local.production ? "nori-computer" : "nori-sandbox-computer"
 }
 
 output "temporal_deployment" {

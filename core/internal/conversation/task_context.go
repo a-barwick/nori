@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -94,11 +95,7 @@ type TaskContextCommand struct {
 // commands are user instructions even though they create no conversation message.
 func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunIDs []string, since time.Time) (TaskContext, error) {
 	result := TaskContext{ActiveTasks: []*TaskContextRecord{}, EventTasks: []*TaskContextRecord{}, RecentTasks: []*TaskContextRecord{},
-		Instructions: "Accepted task commands are Austin's instructions, including direct panel controls that do not appear as chat messages. " +
-			"Applied means the worker incorporated that command position, not that its requested effects completed. " +
-			"Check accepted answer/continue commands before saying Austin did not respond. " +
-			"Truncated history or text is incomplete evidence; omitted commands do not establish that no answer or update was received. " +
-			"Historical commands are not new authorization to repeat actions."}
+		Instructions: prompts.Runtime("task-commands", nil)}
 	seen := map[string]bool{}
 	var records []*TaskContextRecord
 	add := func(id string, destination *[]*TaskContextRecord) error {
@@ -212,7 +209,7 @@ func (t *Tasks) contextRecord(ctx context.Context, id string) (*TaskContextRecor
 }
 
 // fitTaskContext shortens the context until it fits taskContextLimit: first old commands and task text, then
-// whole commands, and an open approval's exact action only as a last resort.
+// then whole commands.
 func fitTaskContext(result *TaskContext, records []*TaskContextRecord) error {
 	fits := func() bool { data, err := json.Marshal(*result); return err == nil && len(data) <= taskContextLimit }
 	if fits() {
@@ -246,19 +243,6 @@ func fitTaskContext(result *TaskContext, records []*TaskContextRecord) error {
 		}
 		longest.Commands = longest.Commands[1:]
 		longest.CommandHistoryTruncated = true
-	}
-	// An open approval must show the exact action. Sacrifice old task text and
-	// command history first; only shorten approval questions as a last resort.
-	for _, limit := range []int{8192, 4096, 2048, 1024, 512, 256, 64, 0} {
-		if fits() {
-			return nil
-		}
-		for _, record := range records {
-			if record.Question != nil && record.Question.Kind == "approval" && record.Question.ResolvedBy == "" {
-				trimContextText(&record.Question.Text, limit, &record.QuestionTextTruncated)
-				record.TextTruncated = record.TextTruncated || record.QuestionTextTruncated
-			}
-		}
 	}
 	if !fits() {
 		return fmt.Errorf("task identities and current questions exceed the 12 KiB context limit")
@@ -302,7 +286,7 @@ func trimContextText(text *string, limit int, truncated *bool) {
 	*text, *truncated = (*text)[:limit], true
 }
 
-// trimRecordText shortens a record's text to limit bytes, except an open approval's exact action.
+// trimRecordText shortens a record's text to limit bytes.
 func trimRecordText(record *TaskContextRecord, limit int) {
 	trimContextText(&record.Request, limit, &record.TextTruncated)
 	trimContextText(&record.Waiting, limit, &record.TextTruncated)
@@ -321,7 +305,7 @@ func trimRecordText(record *TaskContextRecord, limit int) {
 		trimContextText(&record.Actions[i].Result, limit, &record.TextTruncated)
 		trimContextText(&record.Actions[i].Text, limit, &record.TextTruncated)
 	}
-	if record.Question != nil && (record.Question.Kind != "approval" || record.Question.ResolvedBy != "") {
+	if record.Question != nil {
 		trimContextText(&record.Question.Text, limit, &record.QuestionTextTruncated)
 		record.TextTruncated = record.TextTruncated || record.QuestionTextTruncated
 	}

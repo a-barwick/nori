@@ -4,6 +4,9 @@ import "time"
 
 // Kinds of log event. Each names a record that changed, and the stream reads its current state when it sends the event.
 const (
+	EventOperation    = "operation"
+	EventSchedule     = "schedule"
+	EventOffer        = "offer"
 	EventMessage      = "message"
 	EventTask         = "task"
 	EventConversation = "conversation"

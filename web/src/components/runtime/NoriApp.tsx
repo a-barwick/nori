@@ -191,10 +191,13 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
             key={chat.current?.id ?? "new"}
             conversation={chatConversation}
             onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
-            status={chat.current?.activeTurn ? chat.waiting ? "Waiting for your approval" : "Responding…" : undefined}
+            status={chat.current?.activeTurn ? "Responding…" : undefined}
             onUnread={onUnread}
             presence={false}
             emptyMessage="What would you like to talk about?"
+            hasOlder={!!chat.current?.nextBefore}
+            loadingOlder={chat.loadingOlder}
+            onLoadOlder={() => void chat.loadOlder()}
           />
         </div>
         {(chat.error || !chat.connected) && (
@@ -206,9 +209,9 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
           accept=".csv,text/csv"
           draft={chat.draft}
           setDraft={chat.setDraft}
-          disabled={chat.sending || chat.waiting}
+          disabled={chat.sending}
           onSend={() => void chat.send()}
-          onStop={chat.current?.activeTurn && !chat.waiting ? () => void chat.stop() : undefined}
+          onStop={chat.current?.activeTurn ? () => void chat.stop() : undefined}
           files={chat.files}
           onAttach={chat.attach}
           onRetryFile={(file) => void chat.retryFile(file)}

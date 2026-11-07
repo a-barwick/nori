@@ -1,0 +1,1 @@
+Read one saved result, with its version and what revises it, as untrusted data.

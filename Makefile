@@ -1,21 +1,4 @@
-.PHONY: dev web web-build web-start core local-web local-core check deploy deploy-check deploy-status deploy-rollback deploy-unlock pause unpause smoke
-
-# The migration checks use deterministic local providers.
-.PHONY: migration-prep migration-doctor migration-baseline migration-integration migration-readiness
-migration-prep:
-	python3 migration/verify.py prep
-
-migration-doctor:
-	python3 migration/verify.py doctor
-
-migration-baseline:
-	python3 migration/verify.py baseline
-
-migration-integration:
-	python3 migration/verify.py integration
-
-migration-readiness:
-	python3 migration/verify.py readiness
+.PHONY: dev web web-build web-start core local-web local-core check deploy deploy-check deploy-status deploy-rollback deploy-unlock pause unpause
 
 NORI_ENV_FILE ?= $(abspath .env)
 NORI_TASK_ENV_FILE ?= $(NORI_ENV_FILE)
@@ -47,15 +30,18 @@ core:
 check:
 	$(MAKE) -C core check
 	cd web && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src
-	python3 .agents/skills/review-docs/scripts/check.py --changed
-	python3 docs/agent_map.py check
 
 # Production operations. See core/infrastructure/README.md.
 deploy deploy-check deploy-status deploy-rollback deploy-unlock:
 	python3 core/infrastructure/release/deploy.py $(patsubst deploy-%,%,$@)
 
-smoke:
-	python3 core/infrastructure/release/deploy.py smoke
-
 pause unpause:
 	cd core && NORI_TF_BACKEND=gcs python3 infrastructure/app/ops.py $@
+
+# Local dependencies retain their named volumes across stop/start.
+.PHONY: deps deps-stop
+deps:
+	docker compose -f core/infrastructure/local/compose.yaml up -d --wait
+
+deps-stop:
+	docker compose -f core/infrastructure/local/compose.yaml stop

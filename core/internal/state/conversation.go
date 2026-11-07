@@ -31,17 +31,16 @@ type ConversationInput struct {
 }
 
 type ConversationControl struct {
-	ProtocolVersion int       `firestore:"protocol_version,omitempty"`
-	UserReceived    int64     `firestore:"user_received,omitempty"`
-	UserRouted      int64     `firestore:"user_routed,omitempty"`
-	Introducing     bool      `firestore:"introducing,omitempty"`
-	Received        int64     `firestore:"received"`
-	Consumed        int64     `firestore:"consumed"`
-	Active          string    `firestore:"active"`
-	Owner           string    `firestore:"owner"`
-	Fence           int64     `firestore:"fence"`
-	LeaseUntil      time.Time `firestore:"lease_until"`
-	LatestAt        time.Time `firestore:"latest_at"`
+	UserReceived int64     `firestore:"user_received,omitempty"`
+	UserRouted   int64     `firestore:"user_routed,omitempty"`
+	Introducing  bool      `firestore:"introducing,omitempty"`
+	Received     int64     `firestore:"received"`
+	Consumed     int64     `firestore:"consumed"`
+	Active       string    `firestore:"active"`
+	Owner        string    `firestore:"owner"`
+	Fence        int64     `firestore:"fence"`
+	LeaseUntil   time.Time `firestore:"lease_until"`
+	LatestAt     time.Time `firestore:"latest_at"`
 	// ContextFrom is the time an operator started a fresh context. The outer model sees nothing from before it, and
 	// nothing is deleted.
 	ContextFrom time.Time `firestore:"context_from,omitempty"`
@@ -57,14 +56,7 @@ type ConversationAction struct {
 	Command   Command   `json:"command" firestore:"command"`
 }
 
-// ConversationApproval identifies the saved action shown by an exact approval prompt.
-type ConversationApproval struct {
-	TaskID     string `firestore:"task_id"`
-	QuestionID string `firestore:"question_id"`
-}
-
 type ConversationAttempt struct {
-	Approval *ConversationApproval `firestore:"approval,omitempty"`
 	// ShowResults are saved results the outer model chose to show in its reply.
 	ShowResults      []string             `firestore:"show_results,omitempty"`
 	StructuredReply  bool                 `firestore:"structured_reply,omitempty"`
@@ -142,24 +134,6 @@ const (
 
 func (in ConversationInput) IsUser() bool {
 	return !in.Introduction && in.Event == nil && in.Offer == "" && in.Schedule == ""
-}
-
-// NewConversationControl is the control record of a conversation that has no saved control document yet.
-func NewConversationControl() ConversationControl { return ConversationControl{ProtocolVersion: 2} }
-
-// Normalize upgrades a control record saved before user input was counted separately from task events.
-func (c *ConversationControl) Normalize() {
-	if c.ProtocolVersion < 2 {
-		c.UserReceived, c.UserRouted = c.Received, c.Consumed
-		c.ProtocolVersion = 2
-	}
-}
-
-// Normalize fills in the user coverage of a turn saved before it was recorded.
-func (t *ConversationTurn) Normalize() {
-	if t.UserThrough == 0 {
-		t.UserThrough = userThrough(t.Inputs)
-	}
 }
 
 // RoutingPending reports whether accepted user input is still waiting for the outer loop to route it.
@@ -426,9 +400,6 @@ func CompleteTurn(c ConversationControl, t ConversationTurn, text string, now ti
 	c.Owner = ""
 	c.LeaseUntil = time.Time{}
 	message := Message{ID: AssistantMessageID(t.ID), Role: "assistant", Text: text, Parts: TextParts(text), CreatedAt: now, TurnID: t.ID}
-	if t.Attempt.Approval != nil && t.Attempt.Status != "error" && text == t.Attempt.Text {
-		message.Parts = []Part{{Type: PartApprovalText, Text: text, Fallback: text}}
-	}
 	return c, t, message
 }
 

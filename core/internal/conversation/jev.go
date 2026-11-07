@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/observability"
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -27,11 +28,10 @@ const (
 type JevClassifier struct {
 	key    string
 	Client *http.Client
-	URL    string
 }
 
 func NewJevClassifier(key string) *JevClassifier {
-	return &JevClassifier{key: key, URL: jevURL, Client: &http.Client{Timeout: 10 * time.Second}}
+	return &JevClassifier{key: key, Client: &http.Client{Timeout: 10 * time.Second}}
 }
 
 func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (classification Classification, err error) {
@@ -97,14 +97,10 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 			continue
 		}
 		questions[string(intent)] = map[string]any{
-			"type": "choice",
-			"instructions": "Independently check whether the CURRENT input batch contains this intent. " +
-				"Read its messages in their supplied order; later messages can correct earlier ones. Several intents may be present. " +
-				"Use conversation only to resolve references. " +
-				"Classify the underlying request independently of available tools, access or requested reply format. " +
-				"This is advisory, never a route or permission. Intent: " + description,
+			"type":         "choice",
+			"instructions": prompts.Runtime("classify-intent", map[string]any{"Intent": description}),
 			"criteria": map[string]string{
-				"present": "The current input batch contains this intent.", "absent": "The current input batch does not contain this intent.",
+				"present": prompts.Runtime("intent-present", nil), "absent": prompts.Runtime("intent-absent", nil),
 			},
 		}
 	}
@@ -114,7 +110,7 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 	if err != nil {
 		return classification, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, jevURL, bytes.NewReader(body))
 	if err != nil {
 		return classification, err
 	}

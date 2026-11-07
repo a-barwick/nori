@@ -1,0 +1,1 @@
+Short context, such as what an approval applied to. Empty when none.

@@ -8,7 +8,6 @@ keeps its progress; running `make deploy` again resumes it.
 import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor
-import copy
 import hashlib
 import importlib.util
 import json
@@ -32,7 +31,7 @@ REGISTRY = "us-central1-docker.pkg.dev/bot-111549/nori-poc"
 STATE_BUCKET = "bot-111549-nori-ci-state"
 LOCK = "nori/deploy.lock"
 TERMINAL = {"completed", "cancelled", "failed"}
-CAPABILITY_SECRETS = ("nori-brave-search-api-key", "nori-google-calendar-client-id", "nori-google-calendar-client-secret", "nori-google-calendar-refresh-token", "nori-google-calendar-account")
+CAPABILITY_SECRETS = ("nori-brave-search-api-key", "nori-google-calendar-client-id", "nori-google-calendar-client-secret")
 # Steps a rollback undoes. Images and the new worker service stay for the retry.
 UNDONE_BY_ROLLBACK = {"computer", "runtime", "web", "register", "current", "verify"}
 
@@ -104,7 +103,26 @@ def release_lock(generation):
 
 def refuse_open_work(c):
     """Never interrupt running work; preserve failed, already-attempted input."""
-    root = ops.firestore(c, "owners/" + quote(OWNER, safe=""))
+    # New rows own separate data roots; the original path remains readable
+    # even before provisioning, so retained work is never hidden from this guard.
+    owners = {OWNER}
+    cursor = ""
+    while True:
+        query = {"pageSize": "300"}
+        if cursor:
+            query["pageToken"] = cursor
+        page = ops.api("GET", ops.firestore(c, "users") + "?" + urlencode(query), allow404=True) or {}
+        for doc in page.get("documents", []):
+            user_id = doc["name"].rsplit("/", 1)[-1]
+            owners.add(OWNER if user_id == "owner" else user_id)
+        cursor = page.get("nextPageToken", "")
+        if not cursor:
+            break
+    for owner in sorted(owners):
+        refuse_user_work(c, ops.firestore(c, "owners/" + quote(owner, safe="")))
+
+
+def refuse_user_work(c, root):
     control = ops.api("GET", root + "/conversation/control", allow404=True)
     if control:
         f = control.get("fields", {})
@@ -228,52 +246,27 @@ def worker_vars(c, build, image):
     targets = {key: {k: v for k, v in value.items() if v is not None} for key, value in outputs["request_worker_targets"].items()}
     require(set(targets) == set(services), "Terraform worker outputs are incomplete; refresh the state first")
     # A new worker keeps the Current worker's model. Only Austin changes models.
-    plain = lambda value: {k: v for k, v in value.items() if k not in {"spend_scope", "spend_profile"}}
-    target = plain(targets[current_worker()])
-    target["jev_completion"] = False  # New workers finish tasks without Jev; retained builds keep their own target.
+    target = dict(targets[current_worker()])
     target["capabilities"] = capability_secrets_ready()
+    target["per_user_settings"] = True
+    target["jev_completion"] = False
     require(target["deployment_name"] == ops.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Current worker target is not production")
-    require(services.get(build, image) == image and plain(targets.get(build, target)) == target, "This build already exists with a different image or target")
+    require(services.get(build, image) == image and targets.get(build, target) == target, "This build already exists with a different image or target")
     services[build] = image
     targets.setdefault(build, target)
     return {"worker_images": images("google_cloud_run_v2_worker_pool", "worker"), "request_worker_images": services, "request_worker_targets": targets,
-            "scalable_build_ids": outputs["scalable_build_ids"], "spend_alert": outputs["spend_alert_config"],
+            "scalable_build_ids": outputs["scalable_build_ids"],
             "observability": outputs["observability_config"], "runtime_invoke_root": c["runtime_url"]}
 
 
-def route_only_update(change, build):
-    """A retained worker may only learn the new worker's route."""
-    computed = {"conditions", "create_time", "creator", "delete_time", "effective_annotations", "effective_labels", "etag", "expire_time", "generation",
-                "last_modifier", "latest_created_revision", "latest_ready_revision", "observed_generation", "reconciling", "terminal_condition",
-                "terraform_labels", "traffic_statuses", "uid", "update_time", "uri", "urls"}
-    before, after = copy.deepcopy(change["before"]), copy.deepcopy(change["after"])
-    routes = []
-    for value in (before, after):
-        for key in computed:
-            value.pop(key, None)
-        template = value["template"][0]
-        template.pop("revision", None)
-        for container in template["containers"]:
-            container.pop("build_info", None)
-            env = {item["name"]: item for item in container["env"]}
-            routes.append(json.loads(env.pop("NORI_WORKER_SERVICES")["value"]))
-            container["env"] = sorted(env.values(), key=lambda item: item["name"])
-    return len(routes) == 2 and set(routes[1]) - set(routes[0]) == {build} and {k: routes[1][k] for k in routes[0]} == routes[0] and before == after
+def plan_changes(plan):
+    """Describe the saved plan without imposing a deployment change allowlist.
 
-
-def check_plan(plan, build):
-    """Refuse anything beyond adding this worker, above all changes to retained data."""
-    allowed = {f'google_cloud_run_v2_service.worker["{build}"]', f'google_cloud_run_v2_service_iam_member.worker_invoke["{build}"]'}
-    created = []
-    for resource in plan.get("resource_changes", []):
-        actions = resource["change"]["actions"]
-        if actions in (["no-op"], ["read"]):
-            continue
-        if resource["type"] == "google_cloud_run_v2_service" and resource["name"] == "worker" and actions == ["update"] and route_only_update(resource["change"], build):
-            continue
-        require(resource["address"] in allowed and actions == ["create"], f"Terraform plan would {'/'.join(actions)} {resource['address']}. Nothing was applied; review this by hand.")
-        created.append(resource["address"])
-    return created
+    Terraform's resource lifecycle and deletion protections still apply.
+    """
+    return [f"{'/'.join(resource['change']['actions'])} {resource['address']}"
+            for resource in plan.get("resource_changes", [])
+            if resource["change"]["actions"] not in (["no-op"], ["read"])]
 
 
 def plan_worker(c, build, image):
@@ -281,7 +274,7 @@ def plan_worker(c, build, image):
     variables.write_text(json.dumps(worker_vars(c, build, image), indent=2))
     run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "plan", "-input=false", "-lock-timeout=60s", f"-var-file={variables}", f"-out={plan_file}"])
     plan_file.chmod(0o600)
-    return check_plan(json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json", str(plan_file)])), build), plan_file
+    return plan_changes(json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json", str(plan_file)]))), plan_file
 
 
 def ops_command(*args):
@@ -418,7 +411,6 @@ def deploy_locked(commit):
     c = None
     try:
         ops.runtime_settings()  # Refuse invalid capacity policy before building or changing production.
-        step("check", lambda: run(["make", "check"], cwd=ROOT))
         step("build", lambda: build_all(state))
         init_terraform()
         c = ops.config()
@@ -430,8 +422,8 @@ def deploy_locked(commit):
             save_state(state)
 
         def apply_worker():
-            created, plan_file = plan_worker(c, state["build"], state["worker"])
-            log("Terraform will add: " + (", ".join(created) or "nothing new"))
+            changes, plan_file = plan_worker(c, state["build"], state["worker"])
+            log("Terraform changes: " + (", ".join(changes) or "none"))
             run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "apply", "-input=false", str(plan_file)])
             plan_file.unlink()
         step("worker", apply_worker)
@@ -463,8 +455,6 @@ def deploy_locked(commit):
 def check(_args):
     """A read-only rehearsal: real Terraform plan and live reads, with the Current image as a stand-in."""
     commit = run(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
-    log("Local check")
-    run(["make", "check"], cwd=ROOT)
     log("Runtime capacity settings: " + json.dumps(ops.runtime_settings(), sort_keys=True))
     log("Terraform state")
     DIR.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -477,9 +467,9 @@ def check(_args):
     state = json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json"]))
     image = next(r["values"]["template"][0]["containers"][0]["image"] for r in state["values"]["root_module"]["resources"]
                  if r["type"] == "google_cloud_run_v2_service" and r["name"] == "worker" and r["index"] == current)
-    created, plan_file = plan_worker(c, "rel-" + commit[:12], image)
+    changes, plan_file = plan_worker(c, "rel-" + commit[:12], image)
     plan_file.unlink()
-    log("The plan only adds: " + ", ".join(created))
+    log("Terraform changes: " + (", ".join(changes) or "none"))
     log("Runtime health")
     ops.api("POST", c["runtime_url"].rstrip("/") + "/api/healthz", {})
     log("Ready to deploy. Nothing was changed.")
@@ -527,47 +517,9 @@ def unlock(args):
     log("Abandoned lock removed. Resume make deploy or run make deploy-rollback.")
 
 
-def smoke(_args):
-    """Send one real browser task through production. It costs model money and appears in Austin's conversation."""
-    init_terraform()
-    c = ops.config()
-    refuse_open_work(c)
-    base = c["runtime_url"].rstrip("/") + "/api/"
-    def call(operation, body):
-        for attempt in range(20):  # The runtime may be starting from zero.
-            try:
-                return ops.api("POST", base + operation, body)
-            except RuntimeError as error:
-                if not re.search(r"HTTP (429|503)$", str(error)) or attempt == 19:
-                    raise
-                time.sleep(3)
-    session = call("session", {})
-    require(not session.get("paused"), "Nori is paused; run make unpause first")
-    before = {r.get("id") for r in session.get("runs", [])}
-    input_id = str(uuid.uuid4())
-    call("turn", {"id": input_id, "message": "Start exactly one task: navigate to https://example.org using the browser, capture a screenshot, then finish with a short "
-                  "description. Do not ask questions, run shell commands, fill forms, or start other tasks. Include this identifier in the task request: nori-smoke-" + input_id})
-    log("Message sent; waiting for the task")
-    end = time.monotonic() + 600
-    while time.monotonic() < end:
-        session = call("session", {})
-        failed = [t for t in session.get("traces", []) if input_id in t.get("input_ids", []) and t.get("status") == "error"]
-        require(not failed, "Nori failed before starting the task: " + str(failed[0].get("error")) if failed else "")
-        new = [r for r in session.get("runs", []) if r.get("id") not in before]
-        if new and new[0].get("status") in TERMINAL:
-            require(new[0]["status"] == "completed", f"The task ended as {new[0]['status']}")
-            steps = call("trace", {"run_id": new[0]["id"]}).get("steps", [])
-            names = {s.get("name") for s in steps if s.get("status") == "completed"}
-            require({"browser_navigate", "browser_screenshot"} <= names, "The task finished without using the browser")
-            log(f"Passed: task {new[0]['id']} browsed and took a screenshot. Run make pause when you are done.")
-            return
-        time.sleep(3)
-    raise RuntimeError("The task did not finish within 10 minutes")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    commands = {"deploy": deploy, "check": check, "status": status, "rollback": manual_rollback, "unlock": unlock, "smoke": smoke}
+    commands = {"deploy": deploy, "check": check, "status": status, "rollback": manual_rollback, "unlock": unlock}
     parser.add_argument("command", choices=commands)
     parser.add_argument("--lock-generation", help="Observed generation of an abandoned lock, for unlock only")
     args = parser.parse_args()

@@ -1,0 +1,1 @@
+The computer is stopped, so this job isn't running and its result wasn't observed.

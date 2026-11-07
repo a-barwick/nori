@@ -1,0 +1,1 @@
+Foreground reading currently supports CSV attachments; use Nori's assistant for PDF or image analysis

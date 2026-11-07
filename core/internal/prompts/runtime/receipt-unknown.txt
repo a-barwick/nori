@@ -1,0 +1,1 @@
+The saved guest receipt does not establish this operation's result. Ask the user; this operation was not repeated.

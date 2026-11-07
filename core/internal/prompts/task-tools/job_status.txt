@@ -1,0 +1,1 @@
+Read a job's current state, elapsed time and latest output without waiting.

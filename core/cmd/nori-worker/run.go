@@ -2,46 +2,38 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"os"
-	"strings"
 	"time"
 
-	"nori/internal/agent"
-	"nori/internal/agent/openrouter"
 	"nori/internal/dispatch"
-	"nori/internal/env"
 	"nori/internal/platform"
+	"nori/internal/settings"
 	"nori/internal/task"
 	"nori/internal/taskworker"
+	"nori/internal/users"
 	"nori/internal/wake"
 	"nori/internal/workerservice"
 )
 
 // run is one worker lifetime. A bounded run belongs to one wake request and ends
 // when its build has no work left; an unbounded run polls until ctx ends.
-func run(ctx context.Context, waker wake.Waker, sliceID string, known []string, bounded bool) (result error) {
-	cfg, err := loadConfig(bounded, waker)
-	if err != nil {
-		return err
-	}
+func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker, sliceID string, known []string, bounded bool) (result error) {
 	slice := &workerservice.Slice{
 		ID: sliceID, Build: cfg.build, Known: known, Bounded: bounded,
 		PollWindow: cfg.pollWindow, IdleWindow: cfg.idleWindow, Waker: waker,
 	}
 	ctx, cancel := slice.Poll(ctx)
 	defer cancel()
-	store, err := platform.OpenStore(ctx)
+	directory, err := platform.OpenUsers(ctx, s)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
-	control, err := store.Control(ctx)
+	defer directory.Close()
+	paused, err := directory.Paused(ctx)
 	if err != nil {
 		return err
 	}
-	if err = control.Check(); err != nil {
+	if paused {
 		return slice.Paused(ctx)
 	}
 	c, err := task.Dial(ctx, platform.Secrets())
@@ -49,46 +41,27 @@ func run(ctx context.Context, waker wake.Waker, sliceID string, known []string, 
 		return err
 	}
 	defer c.Close()
-	key := os.Getenv("OPENROUTER_API_KEY")
-	if key == "" {
-		return fmt.Errorf("OPENROUTER_API_KEY must be configured for the task worker")
-	}
-	local := os.Getenv("TEMPORAL_LOCAL") == "true"
-	if os.Getenv("NORI_LOCAL_COMPUTER_URL") != "" && !local {
-		return fmt.Errorf("NORI_LOCAL_COMPUTER_URL requires TEMPORAL_LOCAL=true")
-	}
-	// A hosted worker wakes the conversation after saving a task event, and
-	// retries that wake on its own tick. A local worker leaves both to the API.
+	group := &userWorkers{directory: directory, cfg: s, client: c, waker: waker, entries: map[users.User]*userWorker{}}
+	defer group.Close()
+	activities := &task.Activities{Resolve: group.Activity}
 	steps := dispatch.Commands | dispatch.Publications
-	model := openrouter.New(key, env.Get("MODEL_NAME", "openai/gpt-6.1-terra"))
-	if address := os.Getenv("NORI_E2E_MODEL_URL"); address != "" {
-		if !local || !strings.HasPrefix(address, "http://127.0.0.1:") {
-			return fmt.Errorf("NORI_E2E_MODEL_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
-		}
-		model.Endpoint = address
-	}
-	service := agent.New(store, model, platform.Computer())
-	service.Capabilities = cfg.capabilities
-	activities := &task.Activities{Agent: service, Store: store}
-	if !local {
-		activities.Notify = waker.WakeConversation
+	if !s.Temporal.Local {
 		steps |= dispatch.ConversationWake
 	}
 	stopTimeout := 25 * time.Second
 	if bounded {
 		stopTimeout = 5 * time.Minute
 	}
-	dispatcher := platform.Dispatcher(store, task.NewEngine(c), waker)
 	worker, err := taskworker.Start(c, taskworker.Options{Deployment: cfg.deployment, Build: cfg.build, StopTimeout: stopTimeout}, activities, known...)
 	if err != nil {
 		return err
 	}
-	defer func() { result = slice.Finish(worker, dispatcher, result) }()
-	if err = dispatcher.Reconcile(ctx, dispatch.RepairClosed); err != nil {
+	defer func() { result = slice.Finish(worker, group, result) }()
+	if err = group.Reconcile(ctx, dispatch.RepairClosed); err != nil {
 		if bounded {
 			return err
 		}
 		log.Printf("worker reconciliation: %v", err)
 	}
-	return slice.Loop(ctx, worker, dispatcher, steps)
+	return slice.Loop(ctx, worker, group, steps)
 }

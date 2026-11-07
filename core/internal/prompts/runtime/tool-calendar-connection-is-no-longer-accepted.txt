@@ -1,0 +1,1 @@
+calendar connection is no longer accepted

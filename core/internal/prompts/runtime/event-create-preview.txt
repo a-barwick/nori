@@ -1,0 +1,7 @@
+Create event
+Account: {{.Account}}
+Calendar: {{.Calendar}}
+Title: {{.Title}}
+Start: {{.Start}}
+End: {{.End}}{{.Note}}
+No one is invited or notified.

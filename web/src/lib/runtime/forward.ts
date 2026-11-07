@@ -1,4 +1,4 @@
-import { isOwner, localDevelopment, sameOrigin, sameOriginRead } from "./auth";
+import { resolveUser, userPath, localDevelopment, sameOrigin, sameOriginRead } from "./auth";
 import { isRuntimeRead } from "./methods";
 import { runtimeAuthorization } from "./credentials";
 import { reportUpstreamFailure, upstreamTraceHeaders } from "@/lib/observability/upstream";
@@ -29,10 +29,12 @@ function upstreamBase(request: Request, mode: Mode): URL | Response {
 async function forward(request: Request, mode: Mode, path: string, init: RequestInit, timeout: number, allowed: (type: string) => boolean) {
   const base = upstreamBase(request, mode);
   if (base instanceof Response) return base;
+  const user = await resolveUser(request.headers, mode === "local");
+  if (!user) return forbidden();
   const label = path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file").replace(/^v1\/conversations\/[^/?]+/, "v1/conversations/item");
   try {
     const authorization: Record<string, string> = mode === "hosted" ? { Authorization: await runtimeAuthorization() } : {};
-    const upstream = await fetch(new URL(path, base), {
+    const upstream = await fetch(new URL(userPath(user.id, path), base), {
       ...init, headers: { ...(init.headers as Record<string, string>), ...authorization, ...upstreamTraceHeaders(request) },
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]), redirect: "error", cache: "no-store",
     });
@@ -56,7 +58,7 @@ async function forward(request: Request, mode: Mode, path: string, init: Request
 
 async function allowedCaller(request: Request, mode: Mode, sameSite: (request: Request) => boolean) {
   if (!sameSite(request)) return false;
-  return mode === "local" ? localDevelopment(request.headers) : isOwner(request.headers);
+  return mode !== "local" || localDevelopment(request.headers);
 }
 
 const forbidden = () => Response.json({ error: "Forbidden." }, { status: 403 });
@@ -105,8 +107,8 @@ export async function conversationRoute(request: Request, mode: Mode, segments: 
     if (segments.length === 2 && request.method === "POST") return uploadRoute(request, mode, path);
     if (segments.length === 3 && /^[a-f0-9-]{36}$/.test(segments[2]) && request.method === "GET") return fileRoute(request, mode, `${path}/${segments[2]}`);
   }
-  const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && operation === "events"))));
-  const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel", "approvals"].includes(operation)));
+  const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && ["events", "messages"].includes(operation)))));
+  const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel"].includes(operation)));
   const remove = request.method === "DELETE" && segments.length === 1 && id !== "assistant" && validID;
   if (!read && !write && !remove) return Response.json({ error: "Not found." }, { status: 404 });
   if (!(await allowedCaller(request, mode, read ? sameOriginRead : sameOrigin))) return forbidden();
@@ -116,6 +118,10 @@ export async function conversationRoute(request: Request, mode: Mode, segments: 
     const incoming = new URL(request.url).searchParams;
     const after = request.headers.get("last-event-id") || incoming.get("after");
     if (after) query.set("after", after);
+  }
+  if (read && operation === "messages") {
+    const before = new URL(request.url).searchParams.get("before");
+    if (before) query.set("before", before);
   }
   let body: string | undefined;
   if (write) {

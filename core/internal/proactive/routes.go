@@ -20,16 +20,14 @@ type Router interface {
 	DriveTime(ctx context.Context, origin, destination string, departAt time.Time) (time.Duration, error)
 }
 
-// RoutesAPI is Google's Routes API with a key restricted to it. URL is routesURL; only a local test stack sets a
-// loopback one.
+// RoutesAPI is Google's Routes API with a key restricted to it.
 type RoutesAPI struct {
 	Key    string
-	URL    string
 	Client *http.Client
 }
 
 func NewRoutesAPI(key string) *RoutesAPI {
-	return &RoutesAPI{Key: key, URL: routesURL, Client: &http.Client{Timeout: 15 * time.Second}}
+	return &RoutesAPI{Key: key, Client: &http.Client{Timeout: 15 * time.Second}}
 }
 
 var errNoRoute = errors.New("no driving route between the two places")
@@ -39,7 +37,7 @@ func (r *RoutesAPI) DriveTime(ctx context.Context, origin, destination string, d
 		"origin": map[string]string{"address": origin}, "destination": map[string]string{"address": destination},
 		"travelMode": "DRIVE", "routingPreference": "TRAFFIC_AWARE", "departureTime": departAt.UTC().Format(time.RFC3339),
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.URL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, routesURL, bytes.NewReader(body))
 	if err != nil {
 		return 0, errors.New("routes request could not be built")
 	}

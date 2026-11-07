@@ -11,39 +11,37 @@ import (
 	"syscall"
 	"time"
 
-	"nori/internal/env"
 	"nori/internal/httpserver"
 	"nori/internal/observability"
 	"nori/internal/platform"
-	"nori/internal/spend"
+	"nori/internal/settings"
 	"nori/internal/wake"
 	"nori/internal/workerservice"
 )
 
 func main() {
-	if e := env.Load(); e != nil {
+	s, e := settings.Load()
+	if e != nil {
 		log.Fatal(e)
 	}
+	cfg, e := loadConfig(s)
+	if e != nil {
+		log.Fatal(e)
+	}
+	platform.Configure(s)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	stopTelemetry := observability.Init(ctx, "nori-worker")
+	stopTelemetry := observability.Init(ctx, "nori-worker", s)
 	defer observability.Shutdown(stopTelemetry)
-	if err := spend.ValidateConfiguration(); err != nil {
-		observability.Fatal(err)
-	}
-	// Both modes run tools, so an incomplete computer setting stops the process here.
-	if err := platform.CheckComputer(); err != nil {
-		observability.Fatal(err)
-	}
 	// Hosted workers also wake the conversation when a task event is saved.
-	waker, err := platform.Waker(ctx, os.Getenv("TEMPORAL_LOCAL") != "true")
+	waker, err := platform.Waker(ctx, s, !s.Temporal.Local)
 	if err != nil {
 		observability.Fatal(err)
 	}
-	if port := os.Getenv("PORT"); port != "" {
-		err = serveSlices(ctx, port, waker)
+	if s.Port != "" {
+		err = serveSlices(ctx, s, cfg, waker)
 	} else {
-		err = run(ctx, waker, "local", nil, false)
+		err = run(ctx, s, cfg, waker, "local", nil, false)
 		if err != nil {
 			observability.RecordErrorCategory(ctx, "worker.lifecycle", err)
 		}
@@ -56,20 +54,22 @@ func main() {
 
 // serveSlices serves wake requests: each /run request is one bounded slice, and a
 // registration request only registers a fresh worker deployment version.
-func serveSlices(ctx context.Context, port string, waker wake.Waker) error {
-	if err := checkSlice(); err != nil {
+func serveSlices(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker) error {
+	addr := ":" + s.Port
+	if s.Temporal.Local {
+		addr = "127.0.0.1:" + s.Port
+	}
+	handler := workerservice.Handler(ctx, func(ctx context.Context, id string, ids []string, registration bool) error {
+		if registration {
+			return register(ctx, s, cfg)
+		}
+		return run(ctx, s, cfg, waker, id, ids, true)
+	})
+	authenticated, err := platform.ServiceHandler(s, handler, s.Temporal.Local)
+	if err != nil {
 		return err
 	}
-	addr := ":" + port
-	if os.Getenv("TEMPORAL_LOCAL") == "true" {
-		addr = "127.0.0.1:" + port
-	}
-	server := httpserver.New(ctx, addr, workerservice.Handler(ctx, func(ctx context.Context, id string, ids []string, registration bool) error {
-		if registration {
-			return register(ctx)
-		}
-		return run(ctx, waker, id, ids, true)
-	}))
+	server := httpserver.New(ctx, addr, authenticated)
 	server.WriteTimeout = 11 * time.Minute
 	if err := httpserver.Listen(ctx, server, 5*time.Minute); err != nil {
 		observability.RecordErrorCategory(ctx, "http.listen", err)

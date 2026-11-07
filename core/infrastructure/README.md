@@ -45,17 +45,16 @@ does not receive these credentials.
 
 ## Delivery
 
-Changes are verified locally and merged through pull requests. There is no CI/CD.
+Use `make check` for local code checks.
 Deploy from the latest `main` on this Mac, only when requested, with Docker running
 and `gcloud` logged in as the owner. Keep the Mac awake for the 10 or so minutes
 it takes.
 
 | Command | What it does |
 | --- | --- |
-| `make deploy-check` | Read-only rehearsal: local check, real Terraform plan, open work, runtime health |
-| `make deploy` | Checks, builds, pauses, deploys, registers and switches to the new worker, verifies, and stays paused |
+| `make deploy-check` | Read-only rehearsal: Terraform plan, open work, runtime health |
+| `make deploy` | Builds, pauses, deploys, registers and switches to the new worker, verifies, and stays paused |
 | `make unpause` | Opens Nori for use. Nothing runs on new code before this |
-| `make smoke` | Sends one real browser task through production, about 7¢, into Austin's conversation. Run it only when asked |
 | `make pause` | Closes admission and stops paid compute |
 | `make deploy-status` | Shows paused state, Current worker, and the last deploy |
 | `make deploy-rollback` | Restores the previous release after an interrupted deploy |
@@ -64,8 +63,9 @@ it takes.
 `make deploy` refuses to start while a task is running or a message has not been
 attempted. While paused, a failed turn's saved input can survive a repair deploy;
 it still needs a user follow-up before another attempt.
-It also refuses any Terraform plan that does more than add the new worker and give
-retained workers its route. A new worker keeps the Current worker's model.
+The saved Terraform plan may include updates to existing resources as well as
+the new worker. Resource lifecycle and deletion protections remain in force.
+A new worker keeps the Current worker's model.
 
 After a mutating step starts, failure recovery reconciles pause and verifies the
 previous release if a release switch was attempted. If recovery fails, production

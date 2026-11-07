@@ -30,7 +30,13 @@ func (p provider) Attach(ctx context.Context, run string) (*computer.Client, err
 	return connect(ctx, p.address, run)
 }
 
-func connect(ctx context.Context, address, run string) (*computer.Client, error) {
+// Validate checks the configured origin without probing or starting the computer.
+func Validate(address string) error {
+	_, err := origin(address)
+	return err
+}
+
+func origin(address string) (*url.URL, error) {
 	u, err := url.Parse(address)
 	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return nil, errors.New("local computer URL must be an HTTP loopback origin")
@@ -40,6 +46,14 @@ func connect(ctx context.Context, address, run string) (*computer.Client, error)
 		return nil, errors.New("local computer URL must use a literal loopback IP")
 	}
 	u.Path = ""
+	return u, nil
+}
+
+func connect(ctx context.Context, address, run string) (*computer.Client, error) {
+	u, err := origin(address)
+	if err != nil {
+		return nil, err
+	}
 	client := computer.NewClient(computer.Connection{BaseURL: u.String(), HTTP: &http.Client{
 		Transport:     &http.Transport{}, // Never send local RPC through an environment proxy.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },

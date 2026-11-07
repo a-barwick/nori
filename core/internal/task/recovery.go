@@ -6,6 +6,7 @@ import (
 
 	"nori/internal/computer"
 	"nori/internal/dispatch"
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -78,17 +79,17 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 			scopes = append(scopes, computerRun(Step{run.ID, revision}))
 		}
 		stopErr := errors.Join(StopComputer(ctx, config, scopes), stopRecoveredJobs(ctx, store, config, run.ID))
-		status, detail := state.RunFailed, "Interrupted: Temporal execution ended before its terminal result was persisted; work was not retried."
+		status, detail := state.RunFailed, prompts.Runtime("recovery-interrupted", nil)
 		if neverStarted {
-			detail = "Cancelled before Temporal execution started."
+			detail = prompts.Runtime("recovery-cancelled", nil)
 		}
 		if run.CancelRequested && stopErr == nil {
 			status = "cancelled"
-			detail = "Cancelled by Austin."
+			detail = prompts.Runtime("cancelled", nil)
 		}
 		if stopErr != nil {
 			status = "failed"
-			detail = "Interrupted: computer stop could not be confirmed during terminal recovery."
+			detail = prompts.Runtime("recovery-computer-unconfirmed", nil)
 			failures = append(failures, stopErr)
 		}
 		detail += attemptedWrites(ctx, store, run.ID)
@@ -109,12 +110,12 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 func attemptedWrites(ctx context.Context, store state.TaskStore, id string) string {
 	ops, err := store.Operations(ctx, id)
 	if err != nil {
-		return " The task's writes couldn't be read, so one may have happened."
+		return prompts.Runtime("recovery-writes-unreadable", nil)
 	}
 	text := ""
 	for _, op := range ops {
 		if op.Outcome == "attempted" {
-			text += " A write may have happened and wasn't checked: " + op.Name + "."
+			text += prompts.Runtime("recovery-write-unchecked", nil) + op.Name + "."
 		}
 	}
 	return text
@@ -198,7 +199,7 @@ func StopPaused(ctx context.Context, store state.TaskStore, config computer.Prov
 		return run, err
 	}
 	run, err = store.Publish(ctx, state.PublishRequest{
-		RunID: id, Revision: run.Revision, Status: state.RunCancelled, Detail: "Stopped by Austin." + attemptedWrites(ctx, store, id), CostUnknown: run.CostUnknown, BypassRouting: true,
+		RunID: id, Revision: run.Revision, Status: state.RunCancelled, Detail: prompts.Runtime("stopped", nil) + attemptedWrites(ctx, store, id), CostUnknown: run.CostUnknown, BypassRouting: true,
 	})
 	if err != nil {
 		return run, err

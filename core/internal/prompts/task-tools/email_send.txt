@@ -1,0 +1,1 @@
+Send one plain-text email from the user's account to one recipient when they asked to send it and the recipient and message are clear. Drafting alone does not authorize sending. Must be the only call in its batch.

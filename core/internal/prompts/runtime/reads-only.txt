@@ -1,0 +1,1 @@
+This task is restricted to reads. Ask the user before expanding its scope to writes or shell execution.

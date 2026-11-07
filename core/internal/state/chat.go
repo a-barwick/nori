@@ -9,13 +9,15 @@ import (
 // Chat is the additive foreground conversation. The assistant's existing records
 // are deliberately absent from this representation and remain at their old paths.
 type Chat struct {
-	ID         string        `json:"id" firestore:"id"`
-	Title      string        `json:"title" firestore:"title"`
-	Mode       string        `json:"mode" firestore:"mode"`
-	Messages   []ChatMessage `json:"messages" firestore:"messages"`
-	ActiveTurn *string       `json:"activeTurn" firestore:"active_turn"`
-	Position   int64         `json:"position" firestore:"position"`
-	UpdatedAt  time.Time     `json:"updatedAt" firestore:"updated_at"`
+	ID           string        `json:"id" firestore:"id"`
+	Title        string        `json:"title" firestore:"title"`
+	Mode         string        `json:"mode" firestore:"mode"`
+	Messages     []ChatMessage `json:"messages" firestore:"messages,omitempty"`
+	MessageCount int64         `json:"-" firestore:"message_count"`
+	NextBefore   int64         `json:"nextBefore,omitempty" firestore:"-"`
+	ActiveTurn   *string       `json:"activeTurn" firestore:"active_turn"`
+	Position     int64         `json:"position" firestore:"position"`
+	UpdatedAt    time.Time     `json:"updatedAt" firestore:"updated_at"`
 	// Started identifies the process that owns a provider attempt. A new process
 	// closes interrupted attempts rather than submitting an unknown-cost call again.
 	Started    string    `json:"-" firestore:"started"`
@@ -27,6 +29,7 @@ type Chat struct {
 
 type ChatMessage struct {
 	ID          string          `json:"id" firestore:"id"`
+	Sequence    int64           `json:"sequence" firestore:"sequence"`
 	Role        string          `json:"role" firestore:"role"`
 	Text        string          `json:"text" firestore:"text"`
 	Status      string          `json:"status" firestore:"status"`
@@ -73,23 +76,13 @@ type ChatEvent struct {
 const ChatEventReplayLimit = 500
 
 var (
-	ErrChatFull        = errors.New("This chat reached its length limit. Start a new chat.")
-	ErrApprovalPending = errors.New("Approve or decline the pending action first.")
-	ErrMessageConflict = errors.New("That message ID was already used for different content.")
-	ErrChatBusy        = errors.New("A reply or action is still open. Stop it or wait for it to finish.")
+	ErrChatMessageTooLarge = errors.New("This message exceeds the saved message size limit.")
+	ErrMessageConflict     = errors.New("That message ID was already used for different content.")
+	ErrChatBusy            = errors.New("A reply or action is still open. Stop it or wait for it to finish.")
 )
 
 func (c Chat) Header() ChatHeader {
 	return ChatHeader{ID: c.ID, Title: c.Title, Mode: c.Mode, ActiveTurn: c.ActiveTurn, Position: c.Position, UpdatedAt: c.UpdatedAt}
-}
-
-// WaitingForApproval reports whether the open turn is paused on a prepared write.
-func (c Chat) WaitingForApproval() bool {
-	if c.ActiveTurn == nil || len(c.Messages) == 0 {
-		return false
-	}
-	ops := c.Messages[len(c.Messages)-1].Operations
-	return len(ops) > 0 && ops[len(ops)-1].Outcome == "prepared"
 }
 
 // NeedsAttention is true while a turn is open or an attempted write has no recorded outcome.
@@ -115,11 +108,31 @@ type ChatDatabase interface {
 	// ActiveChats returns chats with an open turn or an unresolved write.
 	ActiveChats(context.Context) ([]Chat, error)
 	Chat(context.Context, string) (Chat, error)
-	UpdateChat(context.Context, string, func(*Chat) (string, error)) (Chat, error)
+	// UpdateChat loads the latest page plus unresolved writes and explicitly requested message IDs.
+	UpdateChat(context.Context, string, func(*Chat) (string, error), ...string) (Chat, error)
+	ChatMessages(context.Context, string, int64) (ChatMessagePage, error)
 	// WatchChatEvents delivers events after a position as they are committed, until ctx ends or deliver fails.
 	WatchChatEvents(context.Context, string, int64, func([]ChatEvent) error) error
 	// DeleteChat removes an idle chat and its events and upload records, returning the upload IDs it held.
 	DeleteChat(context.Context, string) ([]string, error)
 	CreateChatUpload(context.Context, string, Upload) (Upload, error)
 	ChatUpload(context.Context, string, string) (Upload, error)
+}
+
+// ChatPageSize bounds snapshot and update reads. History remains in message records.
+const ChatPageSize = 64
+const ChatMessageBytes = 256 << 10
+
+type ChatMessagePage struct {
+	Messages   []ChatMessage `json:"messages"`
+	NextBefore int64         `json:"nextBefore,omitempty"`
+}
+
+func (m ChatMessage) NeedsAttention() bool {
+	for _, op := range m.Operations {
+		if op.Action != nil && op.Outcome == "attempted" {
+			return true
+		}
+	}
+	return false
 }

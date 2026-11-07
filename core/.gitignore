@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 /bin/
+/nori-worker
 .DS_Store
 .claude/
 .ori/

@@ -12,11 +12,11 @@ import (
 	"unicode/utf8"
 )
 
-// NotifyMailer emails Austin a notification from his own connected account. It is the runtime's own message to him,
-// not an email a task asked to send, so it needs no approval and goes only to his address.
+// NotifyMailer emails the user a notification from their own connected account. It is the runtime's own message to them,
+// not an email a task asked to send, so it needs no approval and goes only to their address.
 type NotifyMailer struct {
 	Config CalendarConfig
-	// To is his address. When empty it's read once from the account's Gmail profile.
+	// To is their address. When empty it's read once from the account's Gmail profile.
 	To string
 
 	mu      sync.Mutex
@@ -32,7 +32,7 @@ func (m *NotifyMailer) recipient(ctx context.Context) (string, error) {
 	if m.To != "" {
 		address, err := mail.ParseAddress(m.To)
 		if err != nil {
-			return "", errors.New("NORI_NOTIFY_EMAIL must be one email address")
+			return "", errors.New("user notification email must be one email address")
 		}
 		m.address = address.Address
 		return m.address, nil

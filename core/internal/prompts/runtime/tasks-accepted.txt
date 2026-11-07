@@ -1,0 +1,1 @@
+I've accepted your {{.Count}} tasks. I'll let you know when they need your input or have results.

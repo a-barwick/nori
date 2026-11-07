@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -13,6 +12,7 @@ import (
 	"nori/internal/agent"
 	"nori/internal/computer"
 	"nori/internal/observability"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
@@ -42,7 +42,7 @@ func existingJobTool(name string) bool {
 // lostJob is the only supported answer about a job on a computer that isn't running.
 func lostJob(call transcript.ToolCall) map[string]any {
 	id, _ := call.Args["job_id"].(string)
-	return map[string]any{"job_id": id, "state": "lost", "reason": "The computer is stopped, so this job isn't running and its result wasn't observed."}
+	return map[string]any{"job_id": id, "state": "lost", "reason": prompts.Runtime("jobs-the-computer-is-stopped-so-this-job-isn-t-running-and-i", nil)}
 }
 
 // toolOutcome maps what a tool returned to its operation record. A started job or
@@ -118,7 +118,7 @@ func (c *Checkpoint) stopTask(w workflow.Context, id string) error {
 	return nil
 }
 
-// awaitJob returns true once the job has ended and false when Austin's instructions
+// awaitJob returns true once the job has ended and false when the user's instructions
 // changed. No model call runs while it waits.
 func (c *Checkpoint) awaitJob(ctx workflow.Context, wait func() error, id string, call CallRef) (bool, error) {
 	var a *Activities
@@ -146,6 +146,13 @@ func (c *Checkpoint) awaitJob(ctx workflow.Context, wait func() error, id string
 // JobWaitRef polls one job for at most one slice. It reports an end state the
 // workflow then records through the ordinary job_wait operation.
 func (a *Activities) JobWaitRef(parent context.Context, in JobWaitInput) (out JobWaitOutcome, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(parent)
+		if scopeErr != nil {
+			return JobWaitOutcome{}, scopeErr
+		}
+		return scoped.JobWaitRef(parent, in)
+	}
 	messages, err := a.history(parent, in.RunID, in.Ref)
 	if err != nil {
 		return out, classified(err)
@@ -227,7 +234,7 @@ func (a *Activities) JobWaitRef(parent context.Context, in JobWaitInput) (out Jo
 
 func jobProgress(status map[string]any) string {
 	seconds, _ := status["elapsed_seconds"].(float64)
-	text := fmt.Sprintf("Job running for %s.", time.Duration(seconds)*time.Second)
+	text := prompts.Runtime("job-progress", map[string]any{"Elapsed": time.Duration(seconds) * time.Second})
 	tail, _ := status["output_tail"].(string)
 	lines := strings.Split(strings.TrimSpace(tail), "\n")
 	if last := strings.TrimSpace(lines[len(lines)-1]); last != "" {
@@ -237,13 +244,20 @@ func jobProgress(status map[string]any) string {
 				last = last[1:]
 			}
 		}
-		text += " Latest output: " + last
+		text += prompts.Runtime("job-progress-output", map[string]any{"Output": last})
 	}
 	return text
 }
 
 // StopJobs ends every job this task owns. A stopped computer has no running jobs.
 func (a *Activities) StopJobs(ctx context.Context, id string) (err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		return scoped.StopJobs(ctx, id)
+	}
 	ctx, span := startActivity(ctx, "task.stop_jobs", "CHAIN", a.activityRun(ctx, id), 0)
 	defer func() { recordActivityFailure(ctx, err, "task.stop_jobs"); span.End() }()
 	return classified(stopTaskJobs(observability.SuppressErrorCapture(ctx), a.Agent.Computer, id))

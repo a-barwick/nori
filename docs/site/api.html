@@ -13,7 +13,7 @@
 <div class="card"><div class="flow">
 <div class="node"><b>Client</b><small>Sends “Total the parts in this CSV” with a message ID and assigned files.</small></div>
 <div class="arrow">↓ <span class="lbl">same-origin request</span></div>
-<div class="node"><b>Next.js server</b><small>Checks the owner, origin and route before adding server credentials.</small></div>
+<div class="node"><b>Next.js server</b><small>Resolves the verified email to a user, then adds the user ID and server credentials.</small></div>
 <div class="arrow">↓ <span class="lbl">validated HTTP request</span></div>
 <div class="node outer"><b>Agent service</b><small>Saves input before accepting it and publishes recorded changes.</small></div>
 <div class="arrow">↓ <span class="lbl">snapshot or numbered event</span></div>
@@ -21,23 +21,24 @@
 </div></div>
 <section><h2>Endpoints</h2>
 <div class="card"><table class="tall"><tr><th>Conversation</th><th>Routes</th><th>Records</th></tr>
-<tr><td>Assistant</td><td>Existing message, task, snapshot and event routes.</td><td>Keep existing IDs, file references, tasks and pending questions.</td></tr>
-<tr><td>Independent chat</td><td>Conversation creation, deletion, messages, cancellation, approvals, files and events.</td><td>Separate chat records under the same owner.</td></tr>
+<tr><td>Assistant</td><td><code>/v1/conversations/assistant</code>, with the same message, cancel, upload and event routes as chat.</td><td>Typed messages plus tasks, results, schedules and offers. Existing IDs, files and pending questions remain valid.</td></tr>
+<tr><td>Independent chat</td><td>Conversation creation, deletion, messages, cancellation, files and events.</td><td>Separate chat records under the selected user.</td></tr>
 </table></div>
 <p>A new conversation always has chat mode. Client-supplied identity or mode fields grant no permissions.</p>
 <details class="more"><summary>Route and payload reference</summary>
-<p>These are agent-service paths. The browser reaches them through its Next.js server.</p>
+<p>These are the user-scoped agent-service paths. The Next.js server resolves the verified email through <code>POST /api/users/resolve</code>, then prefixes these paths with <code>/users/&lt;id&gt;/</code> using its own credentials. Browser headers, JSON and query parameters never choose the user. Files and event cursors share the same user scope.</p>
 <div class="card"><table class="tall"><tr><th>Route</th><th>Request or response</th></tr>
-<tr><td><code>GET /v1/capabilities</code></td><td>Returns the contract identifier <code>nori-chat-2</code> and execution-mode metadata.</td></tr>
-<tr><td><code>GET /v1/conversations</code></td><td>Returns <code>{conversations: [{id, title, mode, activeTurn, updatedAt}]}</code>, newest first, without messages.</td></tr>
+<tr><td><code>GET /v1/capabilities</code></td><td>Returns <code>conversationContract: "nori-conversations-1"</code>, enabled features and modes. The legacy <code>contract: "nori-chat-2"</code> remains for the current web client.</td></tr>
+<tr><td><code>GET /v1/conversations</code></td><td>Returns headers with <code>id, title, mode, activeTurn, turnPolicy</code>. The assistant comes first when enabled; chats follow newest first.</td></tr>
 <tr><td><code>POST /v1/conversations</code></td><td>Accepts <code>{title?}</code> and returns the new chat.</td></tr>
-<tr><td><code>GET /v1/conversations/{id}</code></td><td>Returns a chat snapshot. Reserved ID <code>assistant</code> returns the existing assistant session.</td></tr>
+<tr><td><code>GET /v1/conversations/{id}</code></td><td>Returns the latest 64 chat messages and a <code>nextBefore</code> cursor when older messages exist. Reserved ID <code>assistant</code> returns the same base plus an <code>assistant</code> object containing tasks, results, open schedules, offers from the message page and the shared read position. Both modes return an opaque <code>nextCursor</code>; chat retains numeric <code>nextBefore</code> for compatibility.</td></tr>
+<tr><td><code>GET /v1/conversations/{id}/messages?before=N</code></td><td>Pass the returned <code>nextCursor</code> as <code>before</code>, URL-encoded. Returns <code>{messages, nextCursor}</code>, oldest first. Chat pages contain up to 64 messages; assistant pages up to 80. Omit <code>before</code> for the latest page.</td></tr>
 <tr><td><code>DELETE /v1/conversations/{id}</code></td><td>Deletes an idle chat with its events, upload records and files.</td></tr>
-<tr><td><code>POST /v1/conversations/{id}/messages</code></td><td>Accepts <code>{id, text, attachments?: [uploadID]}</code>. Returns <code>{turnId, conversation}</code> with HTTP 202.</td></tr>
-<tr><td><code>POST /v1/conversations/{id}/cancel</code></td><td>Accepts <code>{turnId}</code>.</td></tr>
-<tr><td><code>POST /v1/conversations/{id}/approvals</code></td><td>Accepts <code>{questionId, decision}</code>, with <code>approve</code> or <code>decline</code>.</td></tr>
+<tr><td><code>POST /v1/conversations/{id}/messages</code></td><td>Accepts <code>{id, parts: [{type: "text", text}, {type: "attachment", id: uploadID}]}</code>, or legacy <code>{id, text, attachments?}</code>. Do not mix them. Returns <code>{turnId, conversation}</code> with HTTP 202 for either mode.</td></tr>
+<tr><td><code>POST /v1/conversations/{id}/cancel</code></td><td>Accepts <code>{turnId}</code> and returns the conversation. Use <code>activeTurn</code> for a running reply. Before the assistant acquires its turn, the first queued input ID can cancel that input. A stale target returns 409; a repeated stop of a finished target is harmless.</td></tr>
 <tr><td><code>GET /v1/conversations/{id}/events?after=N</code></td><td>Streams <code>{seq, kind, conversation, messages}</code>. <code>conversation</code> has no messages, and <code>messages</code> holds only those the save changed. Kind <code>reset</code> asks the client to reload the snapshot.</td></tr>
 <tr><td><code>POST /v1/conversations/{id}/uploads?id=UUID&amp;filename=NAME</code></td><td>Accepts raw file bytes. <code>GET /v1/conversations/{id}/uploads/{uploadID}</code> reads them.</td></tr>
+<tr><td><code>GET /v1/conversations/{id}/operations?ownerId=ID</code></td><td>Saved tool outcomes owned by a chat message or assistant task. Returns <code>{operations}</code>.</td></tr>
 <tr><td><code>POST /api/turn</code></td><td>Assistant input: <code>{id, message, attachments?}</code>. Returns HTTP 202 after saving and confirming wake delivery.</td></tr>
 <tr><td><code>GET /v1/snapshot</code>, <code>GET /v1/events</code></td><td>Assistant session and record-change stream. <code>POST /api/session</code> remains available.</td></tr>
 <tr><td><code>POST /api/command</code>, <code>/api/input</code>, <code>/api/cancel</code></td><td>Assistant task commands, updates and Stop.</td></tr>
@@ -46,18 +47,32 @@
 <tr><td><code>POST /api/seen</code>, <code>/api/delivered</code></td><td>Assistant read position and result-delivery reports.</td></tr>
 <tr><td><code>POST /api/trace</code>, <code>/api/artifact</code></td><td>Task debug steps and screenshots.</td></tr>
 <tr><td><code>POST /api/process</code>, <code>/api/resume</code></td><td>Internal processing and task delivery. Browser clients cannot call these through the proxy.</td></tr>
-</table></div>
-<p>Assistant messages continue through their existing route. New-chat message routes do not accept the reserved assistant ID.</p>
-<p>A full chat, a pending approval, an open reply and a reused message ID with different content each return HTTP 409 with a message the client can show.</p>
+</table>
+<p>Chats have no conversation-length limit. The model receives the newest complete message groups that fit within 32 messages and 96 KiB of encoded history, stopping at the first group that would exceed either bound. Older messages are omitted, not summarized; saved history is unchanged. Current-turn tool results are separately bounded to eight steps and 16 KiB per result. No new model or shared memory is involved.</p>
+<p>Firestore stores each message separately, with a 256 KiB encoded-message ceiling; individual user inputs, model output and tool results also have their own bounds. Events carry at most one changed message. Existing inline chat history migrates atomically on its next update. Reads, duplicate-input checks and write recovery retain access to older records. Unresolved writes stay indexed until recovery records their outcome. A stream reset reloads the latest page; older history can be loaded again.</p></div>
+<p><code>turnPolicy: "reject_while_running"</code> means chat returns 409 while a reply is open. <code>"fold_into_turn"</code> means the assistant accepts new input and restarts its reply after a quiet second. After three restarts, or when a batch fills, it freezes that turn and queues later input for the next one.</p>
+<p>The shared contract uses typed <code>parts</code> because plain text cannot preserve files, pages, images, links and offers. Each message has <code>id, role, status, parts</code>; unknown non-text parts have a <code>fallback</code>. Existing <code>text</code>, chat <code>sequence</code>, attachments and operations remain. Input parts accept only text and uploaded attachment IDs; host-supplied offer or artifact parts grant no authority.</p>
+<p>Operations retain their existing evidence fields and add <code>owner: {type: "message" | "task", id}</code>. This preserves where work actually ran. <code>attempted</code> or <code>uncertain</code> does not mean confirmed; keep <code>outcome, action, result_ref, attempt, cleared</code> intact. Foreground operations may include an inline <code>result</code>. Assistant results remain referenced by their saved history ID. No new approval step is introduced.</p>
+<p>Reusing a message ID with different content returns HTTP 409. If wake delivery fails after acceptance, HTTP 503 includes <code>accepted: true</code>; retry the same ID.</p>
 </details>
 </section>
 <section><h2>The event stream</h2>
-<div class="card"><table class="tall"><tr><th>Stream</th><th>Saved event</th><th>Client behavior</th></tr>
-<tr><td>Assistant</td><td>Names a changed record and its event number.</td><td>Merges the record by ID. An unusable cursor triggers a reset and snapshot reload.</td></tr>
-<tr><td>Chat</td><td>Contains the chat's title and state, the messages that changed and a consecutive sequence number.</td><td>Replaces each changed message by ID. Resumes after the stream ends at 150 seconds. A reset or a gap reloads the snapshot.</td></tr>
+<p>Both conversation modes use unnamed server-sent events with <code>{seq, kind, conversation, messages}</code>. The SSE ID equals <code>seq</code>. Start from the snapshot's <code>position</code>, then send <code>?after=N</code> or <code>Last-Event-ID</code>. Upsert messages by ID and merge the conversation header. Streams end after 150 seconds; reconnect from the last position. A gap or <code>kind: "reset"</code> requires a fresh snapshot.</p>
+<p>Chat kinds include <code>input.accepted, reply.updated, tool.updated, turn.completed, turn.cancelled, turn.failed</code>. Operations travel on their changed message. Assistant kinds include <code>message, conversation, task, result, operation, schedule, offer, read_position</code>; their payloads use <code>messages, tasks, results, operations, schedules, offers, readPosition</code>. These extras never appear in chat. A conversation event also carries pending/processing state. Heartbeats are SSE comments and do not advance the cursor.</p>
+<p>Assistant event records are resolved by the server, so hosts do not fetch each referenced record. Events are consecutive and are not coalesced. Payloads are current upserts, not historical versions: a replay can already include a later change. A removed referenced record yields <code>missing: true</code> while preserving its sequence. Upsert extras by ID; operations are keyed by owner and ID. Fetch saved operations for a task when its panel opens. Unknown kinds may be ignored after advancing the cursor.</p>
+<p>Stopping chat preserves partial text and saved external-action outcomes. Stopping the assistant fences its reply so a late provider response cannot publish or dispatch more commands. Already accepted tasks continue, newer inputs stay queued, and retained evidence is unchanged. Stop a task separately through the existing task API.</p>
+<p>The existing <code>/api/*</code>, <code>/v1/snapshot</code> and <code>/v1/events</code> contracts remain available to the current web client. No frontend migration is required.</p>
+</section>
+<section><h2>Optional assistant features</h2>
+<p>All five settings default to <code>true</code>. Set a value to <code>false</code> to disable it; other values are rejected at startup.</p>
+<div class="card"><table><tr><th>Setting</th><th>Effect</th></tr>
+<tr><td><code>NORI_BACKGROUND_TASKS_ENABLED</code></td><td>False selects chat-only mode: no Temporal connection, task worker, Jev or OpenRouter key. Assistant routes return HTTP 501 with <code>code: "not_enabled"</code>. Saved assistant work remains for re-enabling.</td></tr>
+<tr><td><code>NORI_JEV_ENABLED</code></td><td>Skips intent classification and removes the Jev key requirement. The outer model and command admission rules remain.</td></tr>
+<tr><td><code>NORI_COMPUTER_ENABLED</code></td><td>Disables computer connections in API and worker processes. Other tools remain available.</td></tr>
+<tr><td><code>NORI_CALENDAR_OFFERS_ENABLED</code></td><td>Disables calendar checks and offer delivery/decisions. Retained offers remain saved.</td></tr>
+<tr><td><code>NORI_SCHEDULES_ENABLED</code></td><td>Disables schedule creation, changes and execution. Existing schedules remain saved; a retained unpublished schedule change waits for re-enabling.</td></tr>
 </table></div>
-<p>Repeating a message ID does not create a second turn. Different text or attachments with that ID are rejected.</p>
-<p>Stopping a chat preserves partial text. Attempted external actions keep their recorded outcomes.</p>
+<p>With all five off, run <code>nori-local</code> with a store, local artifact directory, provisioned user and <code>OPENAI_API_KEY</code>. Its in-process loop handles chat delivery without a queue or Temporal. See <code>core/infrastructure/local/README.md</code> for configuration. Hosted deployments retain their normal authentication and wake transport. Chat never receives background tasks, results, schedules or offers. Model roles and usage reporting are unchanged.</p>
 </section>
 <section><h2>Shared read positions</h2>
 <ul class="pts">
@@ -67,6 +82,6 @@
 </ul>
 <p>Reading the Tucson weather reply clears its count in another assistant session. See <a href="frontend.html#live-updates">Live updates</a>.</p>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/chat.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/conversation/runner.go</code> · <code>core/internal/conversation/session.go</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/state/firestore/chat.go</code> · <code>core/internal/state/notify.go</code> · <code>core/internal/state/firestore/events.go</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/chat/useChat.ts</code> · <code>web/src/lib/chat/contract.ts</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/chat.go</code> · <code>core/internal/api/conversation_contract.go</code> · <code>core/internal/api/conversation_events.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/conversation/runner.go</code> · <code>core/internal/conversation/session.go</code> · <code>core/internal/chat/service.go</code> · <code>core/internal/state/records/chat.go</code> · <code>core/internal/state/notify.go</code> · <code>core/internal/state/records/events.go</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/chat/useChat.ts</code> · <code>web/src/lib/chat/contract.ts</code></p></details>
 </body>
 </html>

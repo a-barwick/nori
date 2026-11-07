@@ -10,14 +10,16 @@ import (
 
 	"github.com/google/uuid"
 	"nori/internal/computer"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
 
 type Service struct {
-	Store    state.Store
-	Model    Model
-	Computer computer.Provider
+	UserFacts string
+	Store     state.Store
+	Model     Model
+	Computer  computer.Provider
 	// Capabilities is set once by the worker before it starts polling.
 	Capabilities Capabilities
 	// HTTP carries the worker's own web requests, such as a search. It follows no redirects.
@@ -75,7 +77,7 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 		if errors.Is(e, computer.ErrBrowserRestarted) {
 			return map[string]any{
 				"page_available": false,
-				"reason":         "Browser restarted; navigate to the task's URL again before taking a screenshot.",
+				"reason":         prompts.Runtime("agent-browser-restarted-navigate-to-the-task-s-url-again-befo", nil),
 			}, nil
 		}
 		if e != nil {
@@ -94,9 +96,9 @@ func (s *Service) Tool(ctx context.Context, run string, c *computer.Client, call
 		return map[string]any{
 			"run_id":      run,
 			"artifact_id": id,
-			"description": "Private browser screenshot saved for Austin. Call screenshot_inspect with this artifact_id to read it.",
+			"description": prompts.Runtime("screenshot-saved", nil),
 		}, nil
 	default:
-		return nil, errors.New("unknown tool")
+		return nil, errors.New(prompts.Runtime("tool-unknown-tool", nil))
 	}
 }

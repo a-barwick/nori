@@ -8,6 +8,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"nori/internal/agent"
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -24,24 +25,23 @@ func applicationKind(err error, kind string) bool {
 // Checkpoint is deliberately bounded: exact model state lives in the immutable
 // history chain, while accounting and user-control state survive ContinueAsNew.
 type Checkpoint struct {
-	Ref                                string
-	Revision, Position                 int64
-	Spent, Budget                      float64
-	CostUnknown                        bool
-	Models, Tools, Checks, Corrections int
-	Question                           *state.Question
-	QuestionPublished                  bool
-	ComputerRevisions                  []int64
-	Stopped                            bool
-	Request                            string
-	ReadOnly                           bool
+	Ref                   string
+	Revision, Position    int64
+	Spent, Budget         float64
+	CostUnknown           bool
+	Models, Tools, Checks int
+	Question              *state.Question
+	QuestionPublished     bool
+	ComputerRevisions     []int64
+	Stopped               bool
+	Request               string
 	// StartBudget replaces the default budget of a new task, and is used only before the first step.
 	StartBudget float64
 	// Jobs are started and not yet observed ended. They outlive a revision, so
 	// only terminal cleanup stops them, not a correction or a question.
 	Jobs        []string
 	JobsStarted bool
-	// Action is the write waiting for a decision or, once approved, to run.
+	// Action is the saved write to run.
 	Action *PendingAction
 	// Others is what the rest of this task's family has spent, read from the store before each budget check. A
 	// subtask inherits a read-only limit from its parent, and that limit outlasts a correction.
@@ -67,7 +67,7 @@ func Workflow(ctx workflow.Context, id string, resume Checkpoint) (result state.
 		}
 		var failure, publishErr error
 		r.result, failure, publishErr = r.c.publishFailure(r.ctx, r.stopCtx, id, err, r.wait, r.result)
-		if superseded(publishErr) && !r.c.CostUnknown && r.ctx.Err() == nil {
+		if superseded(publishErr) && r.ctx.Err() == nil {
 			continue
 		}
 		if publishErr != nil {
@@ -114,7 +114,6 @@ func newTaskRun(ctx workflow.Context, id string, resume Checkpoint) *taskRun {
 		signals: workflow.GetSignalChannel(ctx, Signal),
 	}
 	if r.c.Budget == 0 {
-		r.c.Budget = agent.BudgetUSD
 		if r.c.StartBudget > 0 {
 			r.c.Budget = r.c.StartBudget
 		}
@@ -185,7 +184,7 @@ func (r *taskRun) publish(p RefPublication) error {
 // run takes model turns until the task ends, fails or continues as new, which it reports as true.
 func (r *taskRun) run() (bool, error) {
 	for turns := 0; ; turns++ {
-		if turns >= 32 && !r.c.CostUnknown {
+		if turns >= 32 {
 			return true, workflow.NewContinueAsNewError(r.ctx, WorkflowName, r.id, r.c)
 		}
 		done, err := r.turn()
@@ -211,20 +210,18 @@ func (r *taskRun) turn() (bool, error) {
 		return false, err
 	}
 	c.applySync(synced)
-	if synced.Grants > 0 {
-		r.spend()
-	}
-	if c.CostUnknown {
-		return false, state.ErrCostUnknown
-	}
-	// A decided write runs before the budget check, because it spends nothing.
 	err = c.settleAction(r.ctx, r.quick, r.id, synced)
 	if retry, err := r.boundary(err); retry || err != nil {
 		return false, err
 	}
-	if c.Question == nil && c.Spent+c.Others >= c.Budget {
-		c.Question = r.budgetQuestion()
-		c.QuestionPublished = false
+	if c.Question == nil && c.Budget > 0 && c.Spent+c.Others >= c.Budget {
+		if err := c.stopTask(r.stopCtx, r.id); err != nil {
+			return false, err
+		}
+		detail := prompts.Runtime("spending-limit", map[string]any{"Budget": c.Budget})
+		err := r.publish(RefPublication{Publication: Publication{Step: r.step(), Status: state.RunFailed, Detail: detail, Text: detail, StopConfirmed: true, ExpectedIncomplete: true, Spent: c.Spent, CostUnknown: c.CostUnknown}})
+		retry, err := r.boundary(err)
+		return !retry, err
 	}
 	if c.Question != nil {
 		return false, r.ask()
@@ -245,7 +242,7 @@ func (r *taskRun) turn() (bool, error) {
 			return false, err
 		}
 		for _, call := range model.Calls {
-			if err := r.appendResult(call, map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."}); err != nil {
+			if err := r.appendResult(call, map[string]any{"skipped": true, "reason": prompts.Runtime("workflow-execution-admission-changed-before-this-call-ran", nil)}); err != nil {
 				return false, err
 			}
 		}
@@ -253,18 +250,6 @@ func (r *taskRun) turn() (bool, error) {
 	}
 	changed := current.Revision != c.Revision || current.Position != c.Position
 	return r.handleCalls(model.Calls, changed)
-}
-
-func (r *taskRun) budgetQuestion() *state.Question {
-	c := &r.c
-	return &state.Question{
-		ID:   fmt.Sprintf("%s-budget-p%d", r.id, c.Position),
-		Kind: "budget",
-		Text: fmt.Sprintf("I reached this task’s $%.2f model allowance ($%.4f spent across %d model calls and %d tool attempts, plus $%.4f by its related tasks). "+
-			"The task is not finished. Request: %s\n\nReply continue to grant another $%.2f, or Stop to end the task.",
-			c.Budget, c.Spent, c.Models, c.Tools, c.Others, c.Request, agent.BudgetUSD),
-		Revision: c.Revision,
-	}
 }
 
 // ask stops the computer, publishes the open question once and waits for the next command.
@@ -300,7 +285,7 @@ func (r *taskRun) handleCalls(calls []CallRef, changed bool) (bool, error) {
 	revised := false
 	for _, call := range calls {
 		if changed || revised {
-			if err := r.appendResult(call, map[string]any{"skipped": true, "reason": "Accepted input changed before this call ran."}); err != nil {
+			if err := r.appendResult(call, map[string]any{"skipped": true, "reason": prompts.Runtime("workflow-accepted-input-changed-before-this-call-ran", nil)}); err != nil {
 				return false, err
 			}
 			continue
@@ -326,7 +311,7 @@ func (r *taskRun) handleCall(call CallRef) (callStep, error) {
 	case call.Name == "request_input" || call.Name == "request_work":
 		return endCalls, r.requestInput(call)
 	case call.Name == "complete" && len(r.c.Jobs) > 0:
-		return endCalls, r.appendResult(call, map[string]any{"accepted": false, "reason": "A background job is still running. Call job_wait or job_stop before proposing completion.", "running_jobs": r.c.Jobs})
+		return endCalls, r.appendResult(call, map[string]any{"accepted": false, "reason": prompts.Runtime("workflow-a-background-job-is-still-running-call-job-wait-or-job", nil), "running_jobs": r.c.Jobs})
 	case call.Name == "complete":
 		return r.complete(call)
 	case call.Name == "job_wait":
@@ -335,7 +320,7 @@ func (r *taskRun) handleCall(call CallRef) (callStep, error) {
 			return nextCall, err
 		}
 		if !ended {
-			return reviseCalls, r.appendResult(call, map[string]any{"waiting": false, "state": "running", "reason": "Austin's instructions changed while waiting. The job is still running; job_status, job_wait or job_stop can act on it."})
+			return reviseCalls, r.appendResult(call, map[string]any{"waiting": false, "state": "running", "reason": prompts.Runtime("job-still-running", nil)})
 		}
 	}
 	return r.runTool(call)
@@ -359,7 +344,7 @@ func (r *taskRun) requestInput(call CallRef) error {
 	var a *Activities
 	c := &r.c
 	var q state.Question
-	err := workflow.ExecuteActivity(r.quick, a.InputRef, RefInput{Step: r.step(), Ref: c.Ref, Index: call.Index, ReadOnly: c.ReadOnly}).Get(r.ctx, &q)
+	err := workflow.ExecuteActivity(r.quick, a.InputRef, RefInput{Step: r.step(), Ref: c.Ref, Index: call.Index, ReadOnly: c.Inherited}).Get(r.ctx, &q)
 	if err != nil {
 		return err
 	}
@@ -380,13 +365,13 @@ func (r *taskRun) complete(call CallRef) (callStep, error) {
 	var check CompletionOutcome
 	err := workflow.ExecuteActivity(r.quick, a.CheckCompletion, CompletionInput{
 		Step: r.step(), Ref: c.Ref, ID: fmt.Sprintf("%s-check-%d", r.id, c.Checks),
-		Position: c.Position, CorrectionAttempt: c.Corrections,
+		Position: c.Position,
 	}).Get(r.ctx, &check)
 	retry, err := r.boundary(err)
 	if retry {
 		return reviseCalls, r.appendResult(call, map[string]any{
 			"accepted": false,
-			"reason":   "Execution admission changed during completion checking. Reconcile before proposing again.",
+			"reason":   prompts.Runtime("workflow-execution-admission-changed-during-completion-checking", nil),
 		})
 	}
 	if err != nil {
@@ -394,17 +379,8 @@ func (r *taskRun) complete(call CallRef) (callStep, error) {
 	}
 	c.Ref = check.Ref
 	switch check.Action {
-	// New checks never return unverified; retained histories still replay it.
-	case "publish", "unverified", "partial":
+	case "publish", "partial":
 		return r.publishCompletion(call, check)
-	case "ask":
-		c.Question = &state.Question{
-			ID: fmt.Sprintf("%s-completion-q%d", r.id, c.Checks), Kind: "input", Text: check.Detail, Revision: c.Revision,
-		}
-		c.QuestionPublished = false
-	case "correct":
-		c.Corrections++
-		c.ReadOnly = true
 	case "reconcile":
 	default:
 		return nextCall, errors.New("completion check returned an invalid decision")
@@ -422,8 +398,8 @@ func (r *taskRun) publishCompletion(call CallRef, check CompletionOutcome) (call
 		status = "failed"
 	}
 	err := r.publish(RefPublication{
-		Publication: Publication{Step: r.step(), Status: status, Detail: check.Detail, StopConfirmed: true, Spent: c.Spent},
-		Ref:         c.Ref, Unverified: check.Action == "unverified",
+		Publication: Publication{Step: r.step(), Status: status, Detail: check.Detail, StopConfirmed: true, Spent: c.Spent, CostUnknown: c.CostUnknown},
+		Ref:         c.Ref,
 	})
 	retry, err := r.boundary(err)
 	if !retry {
@@ -431,11 +407,11 @@ func (r *taskRun) publishCompletion(call CallRef, check CompletionOutcome) (call
 	}
 	return endCalls, r.appendResult(call, map[string]any{
 		"accepted": false,
-		"reason":   "Accepted instructions changed before publication. Reconcile them before proposing completion again.",
+		"reason":   prompts.Runtime("workflow-accepted-instructions-changed-before-publication-reconc", nil),
 	})
 }
 
-// runTool runs a tool call, or prepares it for a decision when it writes.
+// runTool runs a tool call, or saves a write for execution.
 func (r *taskRun) runTool(call CallRef) (callStep, error) {
 	var a *Activities
 	c := &r.c
@@ -444,7 +420,7 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 	err := workflow.ExecuteActivity(r.quick, a.Project, Projection{Step: r.step(), Kind: "tool", Text: call.Name}).Get(r.ctx, nil)
 	retry, err := r.boundary(err)
 	if retry {
-		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "reason": "Execution admission changed before this call ran."})
+		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "reason": prompts.Runtime("workflow-execution-admission-changed-before-this-call-ran", nil)})
 	}
 	if err != nil {
 		return nextCall, err
@@ -462,7 +438,7 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 	c.JobsStarted = c.JobsStarted || call.Name == "job_start"
 	var output RefToolOutcome
 	err = workflow.ExecuteActivity(r.ctx, a.ToolRef, RefToolInput{
-		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly || c.Inherited,
+		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.Inherited,
 	}).Get(r.ctx, &output)
 	retry, err = r.boundary(err)
 	if retry {
@@ -494,24 +470,23 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 	return nextCall, nil
 }
 
-// prepareWrite saves a write and the question that asks for its approval. A write that needs no approval ends here.
+// prepareWrite saves the requested write for execution.
 func (r *taskRun) prepareWrite(call CallRef, operation string) (callStep, error) {
 	var a *Activities
 	c := &r.c
 	var prepared ActionPrepared
 	err := workflow.ExecuteActivity(r.ctx, a.PrepareAction, RefToolInput{
-		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.ReadOnly || c.Inherited,
+		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.Inherited,
 	}).Get(r.ctx, &prepared)
 	retry, err := r.boundary(err)
 	if retry {
-		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "outcome": "failed", "operation_id": operation, "evidence_ref": operation, "reason": "Execution admission changed before this write was prepared. Nothing was sent."})
+		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "outcome": "failed", "operation_id": operation, "evidence_ref": operation, "reason": prompts.Runtime("workflow-execution-admission-changed-before-this-write-was-prepa", nil)})
 	}
 	if err != nil {
 		return nextCall, err
 	}
 	c.Ref = prepared.Ref
-	if prepared.Question != nil {
-		c.Question, c.QuestionPublished = prepared.Question, false
+	if prepared.Ready {
 		c.Action = &PendingAction{Operation: operation, CallID: call.ID, Name: call.Name}
 	} else {
 		c.afterTool(prepared.RefToolOutcome, r.id)
@@ -549,17 +524,15 @@ func (c *Checkpoint) afterTool(output RefToolOutcome, id string) bool {
 	switch {
 	case output.Outcome == "needs_input":
 		c.Question = &state.Question{
-			ID:   fmt.Sprintf("%s-correction-q%d", id, c.Tools),
-			Kind: "input",
-			Text: "Completing this task appears to require another action beyond what it may do, because it can only read right now. " +
-				"Please clarify or authorize what should happen next.",
+			ID:       fmt.Sprintf("%s-correction-q%d", id, c.Tools),
+			Kind:     "input",
+			Text:     prompts.Runtime("read-only-question", nil),
 			Revision: c.Revision,
 		}
 	case output.Outcome == "uncertain" && output.EffectClass != "read":
-		text := "An attempted action has an uncertain outcome. Nori will not repeat it automatically. " +
-			"Please confirm what happened or clarify how to proceed."
+		text := prompts.Runtime("uncertain-action-question", nil)
 		if output.Unresolved != "" {
-			text = output.Unresolved + "\n\nNori will not repeat it automatically. Please confirm what happened or clarify how to proceed."
+			text = output.Unresolved + prompts.Runtime("uncertain-action-followup", nil)
 		}
 		c.Question = &state.Question{
 			ID:       fmt.Sprintf("%s-operation-q%d", id, c.Tools),
@@ -577,18 +550,12 @@ func (c *Checkpoint) afterTool(output RefToolOutcome, id string) bool {
 
 // applySync updates only checkpoint state; the workflow retains activity order.
 func (c *Checkpoint) applySync(synced HistorySync) {
-	oldRevision := c.Revision
 	c.Ref, c.Revision, c.Position, c.Request = synced.Ref, synced.Revision, synced.Position, synced.Request
 	if synced.QuestionResolved {
 		c.Question = nil
 		c.QuestionPublished = false
 	}
-	if c.Revision != oldRevision {
-		c.Corrections = 0
-		c.ReadOnly = false
-	}
-	// Accepting a continue adds the grant to the store, so a subtask's grant reaches its parent.
-	c.Budget = max(c.Budget, synced.Budget)
+	c.Budget = synced.Budget
 	c.Others = synced.Others
 	c.CostUnknown = c.CostUnknown || synced.CostUnknown
 	c.Subtask, c.Inherited = synced.Subtask, synced.ReadOnly
@@ -615,10 +582,6 @@ func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string)
 	c.CostUnknown = c.CostUnknown || (!model.CostKnown && !model.NotSent)
 	c.Ref = model.Ref
 	c.projectSpend(spending, id)
-	if c.CostUnknown {
-		err = state.ErrCostUnknown
-		return model, err
-	}
 	if model.Failure != "" {
 		err = errors.New(model.Failure)
 		return model, err
@@ -639,7 +602,7 @@ func (c *Checkpoint) publishFailure(ctx, stopCtx workflow.Context, id string, fa
 	}
 	p := RefPublication{Publication: Publication{
 		Step: Step{id, c.Revision}, Status: status, Detail: failure.Error(), StopConfirmed: c.Stopped,
-		CostUnknown: c.CostUnknown, Spent: c.Spent, BypassRouting: c.CostUnknown || !c.Stopped || status == "cancelled",
+		CostUnknown: c.CostUnknown, Spent: c.Spent, BypassRouting: !c.Stopped || status == "cancelled",
 	}}
 	var publishErr error
 	for {

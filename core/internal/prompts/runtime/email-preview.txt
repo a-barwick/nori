@@ -1,0 +1,6 @@
+Email
+From: {{.Account}}
+To: {{.To}}
+Subject: {{.Subject}}
+
+{{.Body}}

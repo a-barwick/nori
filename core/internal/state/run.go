@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sort"
 	"time"
+
+	"nori/internal/prompts"
 )
 
 var ErrSuperseded = errors.New("task revision changed; reconcile accepted input")
@@ -14,16 +16,8 @@ var ErrRoutingPending = errors.New("accepted user input is awaiting conversation
 var ErrCommandInvalid = errors.New("invalid task command")
 var ErrQuestionStale = errors.New("question is no longer current")
 
-// ErrApprovalUsed means this write already left prepared, so an earlier attempt may have sent it.
-var ErrApprovalUsed = errors.New("approval was already used")
-
-// Every new task records these versions. No current code branches on them, and saved tasks with lower or missing
-// values are read as stored. Earlier releases do branch on them, so a release rolled back after unpause still needs
-// them.
-const (
-	TaskProtocolVersion = 2
-	TaskWorkflowVersion = 3
-)
+// ErrWriteClaimed means this write already left ready, so an earlier attempt may have sent it.
+var ErrWriteClaimed = errors.New("write was already claimed")
 
 type RunStatus string
 
@@ -41,7 +35,7 @@ type Run struct {
 	ID      string `json:"id" firestore:"id"`
 	Request string `json:"request,omitempty" firestore:"request,omitempty"`
 
-	// Lifecycle. Waiting and Question describe what the task needs from Austin; Result or Error ends it. Progress is the
+	// Lifecycle. Waiting and Question describe what the task needs from the user; Result or Error ends it. Progress is the
 	// latest line from a long job the task is watching; it is replaced in place, so it never grows the saved task.
 	Status          RunStatus  `json:"status" firestore:"status"`
 	CancelRequested bool       `json:"cancel_requested" firestore:"cancel_requested"`
@@ -61,7 +55,7 @@ type Run struct {
 	Incorporated      int64 `json:"incorporated,omitempty" firestore:"incorporated,omitempty"`
 	InterruptRevision int64 `json:"interrupt_revision,omitempty" firestore:"interrupt_revision,omitempty"`
 
-	// Model cost in USD from reported token usage. Budget grows only by Austin's explicit continue.
+	// Model cost in USD from reported token usage. Budget is the configured ceiling recorded when the task starts.
 	Spent       float64 `json:"spent_usd,omitempty" firestore:"spent_usd,omitempty"`
 	Budget      float64 `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
 	CostUnknown bool    `json:"cost_unknown,omitempty" firestore:"cost_unknown,omitempty"`
@@ -74,7 +68,7 @@ type Run struct {
 	// conversation; the offer shows its answer when it's delivered.
 	Offer string `json:"offer,omitempty" firestore:"offer,omitempty"`
 	// Schedule names the schedule that started this task. A Quiet one is a monitor check: it can only read, and its
-	// outcome reaches the conversation only when it found what Austin asked to hear about.
+	// outcome reaches the conversation only when it found what the user asked to hear about.
 	Schedule string `json:"schedule,omitempty" firestore:"schedule,omitempty"`
 	Quiet    bool   `json:"quiet,omitempty" firestore:"quiet,omitempty"`
 	// Uploads are the files this task was given, and the only ones it can read.
@@ -102,13 +96,6 @@ type Run struct {
 	// W3C trace parents for the latest sampled command and for the original acceptance. Never sent over JSON.
 	TraceContext       map[string]string `json:"-" firestore:"trace_context,omitempty"`
 	OriginTraceContext map[string]string `json:"-" firestore:"origin_trace_context,omitempty"`
-
-	// Kept so saved tasks round-trip unchanged. New tasks record WorkflowVersion, ProtocolVersion and Temporal; none
-	// sets Deadline, and nothing reads any of them to choose behavior.
-	WorkflowVersion int       `json:"workflow_version,omitempty" firestore:"workflow_version,omitempty"`
-	ProtocolVersion int       `json:"protocol_version,omitempty" firestore:"protocol_version,omitempty"`
-	Temporal        bool      `json:"temporal,omitempty" firestore:"temporal,omitempty"`
-	Deadline        time.Time `json:"deadline" firestore:"deadline"`
 }
 
 type Question struct {
@@ -212,7 +199,7 @@ func ProjectionEvent(kind, text string, now time.Time) (waiting string, event Ev
 // task already holds this question.
 func QuestionEvent(run Run, revision int64, question Question, now time.Time) (event TaskEvent, replay bool, err error) {
 	if question.ID == "" || question.Text == "" || question.Revision != revision ||
-		(question.Kind != "input" && question.Kind != "budget" && question.Kind != "approval" && question.Kind != QuestionWork) {
+		(question.Kind != "input" && question.Kind != QuestionWork) {
 		return TaskEvent{}, false, fmt.Errorf("invalid task question")
 	}
 	if run.Question != nil && run.Question.ID == question.ID {
@@ -236,7 +223,7 @@ type PublishRequest struct {
 	RunID    string
 	Revision int64
 	Status   RunStatus
-	// Detail is the failure or stop reason. Text is the result shown to Austin.
+	// Detail is the failure or stop reason. Text is the result shown to the user.
 	Detail string
 	Text   string
 	// CostUnknown marks the task as having an unpriced provider request.
@@ -252,7 +239,7 @@ type PublishRequest struct {
 // GatesOnRouting reports whether publication must wait for pending user input to be routed. A stop, an unknown cost
 // and an explicit bypass publish immediately.
 func (p PublishRequest) GatesOnRouting() bool {
-	return !(p.Status == RunCancelled || p.CostUnknown || p.BypassRouting)
+	return !(p.Status == RunCancelled || p.BypassRouting)
 }
 
 // AdmitPublication fences a publish against the stored run. It returns proceed=false for a task that already ended,
@@ -288,7 +275,7 @@ func FinishRun(run Run, req PublishRequest, now time.Time) (Run, TaskEvent) {
 	status, detail, text := req.Status, req.Detail, req.Text
 	if run.CancelRequested && status != RunFailed {
 		if status != RunCancelled || detail == "" {
-			detail = "Stopped by Austin."
+			detail = prompts.Runtime("stopped", nil)
 		}
 		status, text = RunCancelled, ""
 	}

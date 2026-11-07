@@ -7,7 +7,9 @@ import (
 
 // The contracts are layered by what a caller needs. Agent steps use Store, task activities use TaskStore, and
 // conversation processing and the HTTP API use ConversationStore. A backend implements Database for documents and
-// ArtifactStore for artifact bytes; Compose joins them.
+// ArtifactStore for artifact bytes; Compose joins them. Every data method takes its user through an immutable
+// receiver scope opened with platform.OpenStore(ctx, settings, user). There is no default user or mutable
+// current-user setting. Detached cleanup contexts keep that same scope. Control is the global operator pause.
 
 // RunStore reads and updates task records.
 type RunStore interface {
@@ -54,8 +56,9 @@ type TaskEvidenceStore interface {
 	AppendHistory(ctx context.Context, runID, parent string, data []byte) (ref string, err error)
 	ReadHistory(ctx context.Context, runID, ref string) ([][]byte, error)
 	PutOperation(ctx context.Context, runID string, op OperationRecord) error
+	Operation(ctx context.Context, runID, id string) (OperationRecord, error)
 	Operations(ctx context.Context, runID string) ([]OperationRecord, error)
-	// WriteOperations lists only the writes that needed approval, without reading the task's other operations.
+	// WriteOperations lists saved writes, without reading the task's other operations.
 	WriteOperations(ctx context.Context, runID string) ([]OperationRecord, error)
 	PutCompletionCheck(ctx context.Context, runID string, check CompletionCheck) error
 	// ReadTaskSourceInputs resolves the exact retained user inputs a task's commands cite, instead of relying on the
@@ -87,9 +90,9 @@ type TaskDatabase interface {
 	Incorporate(ctx context.Context, req IncorporateRequest) error
 	Guard(ctx context.Context, runID string, revision int64) (Run, error)
 	Admit(ctx context.Context, runID string, revision int64, operation string) error
-	// UseApproval moves a prepared write to attempted, in one transaction that also checks the task's revision and
-	// the saved approve command. ErrApprovalUsed means an earlier attempt already took it, so it must not send.
-	UseApproval(ctx context.Context, runID string, revision int64, operation, commandID string) (OperationRecord, error)
+	// ClaimWrite moves a ready write to attempted, in one transaction that also checks the task's revision and
+	// cancellation. ErrWriteClaimed means an earlier attempt already took it, so it must not send.
+	ClaimWrite(ctx context.Context, runID string, revision int64, operation string) (OperationRecord, error)
 	Project(ctx context.Context, req ProjectRequest) error
 	// SetProgress replaces the task's latest progress line. Unlike Project it adds no event, so polling a long job
 	// can't grow the task's saved record.
@@ -142,6 +145,7 @@ type ConversationDatabase interface {
 	Memories(ctx context.Context) ([]Memory, error)
 	ConversationMessages(ctx context.Context, before string) (messages []Message, next string, err error)
 	ConversationProjection(ctx context.Context) (Session, error)
+	CancelConversation(ctx context.Context, turnID string) error
 	ConversationStatus(ctx context.Context) (ConversationControl, *ConversationTurn, error)
 	ConversationTraces(ctx context.Context) ([]ConversationAttempt, error)
 	EnsureConversationIntroduction(ctx context.Context, prompt string) error
@@ -186,8 +190,9 @@ type ProactiveDatabase interface {
 	DecideOffer(ctx context.Context, id, decision string) (Offer, error)
 }
 
-// ScheduleDatabase holds the schedules Austin asked for and the notifications that reach him when the app is closed.
+// ScheduleDatabase holds the schedules the user asked for and the notifications that reach them when the app is closed.
 type ScheduleDatabase interface {
+	GetSchedule(ctx context.Context, id string) (Schedule, error)
 	Schedules(ctx context.Context) ([]Schedule, error)
 	// ChangeScheduleNow applies a pause, resume or cancel from a client control. ErrScheduleState means the schedule
 	// was already closed.

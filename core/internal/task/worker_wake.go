@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -14,7 +13,7 @@ import (
 // that has not completed its first workflow task can use the deployment route.
 func (e *Engine) WorkerBuild(ctx context.Context, id string) (string, error) {
 	c := e.c
-	execution, err := c.DescribeWorkflowExecution(ctx, WorkflowID(id), "")
+	execution, err := c.DescribeWorkflowExecution(ctx, e.workflowID(id), "")
 	if err != nil {
 		return "", err
 	}
@@ -56,7 +55,7 @@ func (e *Engine) WorkerBuild(ctx context.Context, id string) (string, error) {
 	// More than one signal may arrive before the first workflow task. History
 	// length therefore cannot distinguish a new unassigned execution from an old
 	// unversioned one. Inspect the first completed task instead of guessing.
-	history := c.GetWorkflowHistory(ctx, WorkflowID(id), "", false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	history := c.GetWorkflowHistory(ctx, e.workflowID(id), "", false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for history.HasNext() {
 		event, err := history.Next()
 		if err != nil {
@@ -81,8 +80,8 @@ func (e *Engine) WorkerBuild(ctx context.Context, id string) (string, error) {
 }
 
 func deploymentName() string {
-	if name := os.Getenv("TEMPORAL_DEPLOYMENT_NAME"); name != "" {
-		return name
+	if configured.DeploymentName != "" {
+		return configured.DeploymentName
 	}
 	return "nori-task"
 }

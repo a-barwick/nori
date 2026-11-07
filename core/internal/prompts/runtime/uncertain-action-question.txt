@@ -1,0 +1,1 @@
+An attempted action has an uncertain outcome. Nori will not repeat it automatically. Please confirm what happened or clarify how to proceed.

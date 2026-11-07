@@ -1,0 +1,80 @@
+// Package usage defines the accounting boundary shared by model callers.
+package usage
+
+import (
+	"context"
+	"errors"
+	"log"
+	"time"
+
+	"github.com/google/uuid"
+	"nori/internal/state"
+)
+
+// Meter upserts one provider attempt by ID. A pending record precedes provider
+// I/O; a terminal record replaces it even after cancellation. Nil cost means
+// unknown. Implementations must tolerate duplicate records and concurrent calls.
+// Task spending ceilings remain enforced by the task workflow, independently.
+type Meter interface {
+	RecordUsage(context.Context, state.Usage) error
+}
+
+type Func func(context.Context, state.Usage) error
+
+func (f Func) RecordUsage(ctx context.Context, u state.Usage) error { return f(ctx, u) }
+
+type scope struct{ input, provider string }
+type scopeKey struct{}
+
+// WithScope associates a model call with its task, input or compaction operation.
+func WithScope(ctx context.Context, input, provider string) context.Context {
+	return context.WithValue(ctx, scopeKey{}, scope{input, provider})
+}
+
+func Attempt(ctx context.Context, provider, model string) state.Usage {
+	s, _ := ctx.Value(scopeKey{}).(scope)
+	if s.provider != "" {
+		provider = s.provider
+	}
+	return state.Usage{ID: uuid.NewString(), InputID: s.input, Provider: provider, Model: model, CostStatus: "unknown", RequestStatus: "pending", CreatedAt: time.Now().UTC()}
+}
+
+// Finish persists the final observation independently of caller cancellation.
+func Finish(ctx context.Context, meter Meter, u state.Usage) error {
+	save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return meter.RecordUsage(save, u)
+}
+
+// WithHost keeps Nori's durable record as the source of truth and adds a host
+// accounting sink. A host failure before I/O refuses admission. After I/O, a
+// delivery failure is logged without discarding the saved model result.
+func WithHost(local, host Meter) Meter {
+	return Func(func(ctx context.Context, u state.Usage) error {
+		if err := local.RecordUsage(ctx, u); err != nil {
+			return err
+		}
+		if err := host.RecordUsage(ctx, u); err != nil {
+			if u.RequestStatus == "pending" {
+				u.RequestStatus = "not_sent"
+				return errors.Join(errors.New("host metering unavailable; provider request was not sent"), Finish(ctx, local, u))
+			}
+			log.Printf("host usage delivery failed for request %s; the durable usage record is retained", u.ID)
+		}
+		return nil
+	})
+}
+
+// Wrap routes usage through meter while preserving the store's other methods.
+func Wrap(store state.ConversationStore, meter Meter) state.ConversationStore {
+	return &meteredStore{ConversationStore: store, meter: meter}
+}
+
+type meteredStore struct {
+	state.ConversationStore
+	meter Meter
+}
+
+func (s *meteredStore) RecordUsage(ctx context.Context, u state.Usage) error {
+	return s.meter.RecordUsage(ctx, u)
+}

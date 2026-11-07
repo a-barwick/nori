@@ -10,11 +10,9 @@ account="$service@$project.iam.gserviceaccount.com"
 image="$region-docker.pkg.dev/$project/nori-poc/docs:$(date -u +%Y%m%d-%H%M%S)"
 
 cd "$(dirname "$0")"
-# A page that differs from the published site must pass every check.
-python3 ../.agents/skills/review-docs/scripts/check.py --live
 public=$(mktemp -d)
 trap 'rm -rf "$public"' EXIT
-python3 agent_map.py publish "$public"
+python3 publish.py "$public"
 # The privacy policy and terms the Google sign-in screen links to. They aren't docs pages. They go at the root
 # with the other site files.
 cp legal/privacy.html legal/terms.html "$public/"

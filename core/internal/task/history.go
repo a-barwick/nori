@@ -1,17 +1,18 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"go.temporal.io/sdk/activity"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.temporal.io/sdk/activity"
 	"nori/internal/agent"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
@@ -29,7 +30,6 @@ type HistoryInput struct {
 type HistorySync struct {
 	Ref                string
 	Revision, Position int64
-	Grants             int
 	QuestionResolved   bool
 	Request            string
 	// Others, Budget and CostUnknown are the family's shared accounting: what its other tasks have spent, its budget,
@@ -38,16 +38,18 @@ type HistorySync struct {
 	CostUnknown    bool
 	// Subtask and ReadOnly are fixed when the task is accepted.
 	Subtask, ReadOnly bool
-	// Decision is the approve or decline command for the pending write. A later
-	// instruction overrides an approval. ActionClosed is the outcome when an
-	// instruction ended the write here, so its call already has a result.
-	Decision     state.CommandKind
-	DecisionID   string
-	ActionClosed string
+	ActionClosed      string
 }
 type CurrentPosition struct{ Revision, Position int64 }
 
 func (a *Activities) CurrentPosition(ctx context.Context, id string) (out CurrentPosition, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return CurrentPosition{}, scopeErr
+		}
+		return scoped.CurrentPosition(ctx, id)
+	}
 	ctx, span := startActivity(ctx, "task.history.position", "CHAIN", a.activityRun(ctx, id), 0)
 	defer func() { recordActivityFailure(ctx, err, "task.history.position"); span.End() }()
 	snap, e := a.Reconcile(ctx, id)
@@ -104,8 +106,7 @@ type AppendResult struct {
 }
 type RefPublication struct {
 	Publication
-	Ref        string
-	Unverified bool
+	Ref string
 }
 
 func (a *Activities) evidence() (state.TaskEvidenceStore, error) {
@@ -161,7 +162,9 @@ func (a *Activities) history(ctx context.Context, id, ref string) ([]transcript.
 	var messages []transcript.Message
 	for _, block := range blocks {
 		var chunk []transcript.Message
-		if e = json.Unmarshal(block, &chunk); e != nil {
+		decoder := json.NewDecoder(bytes.NewReader(block))
+		decoder.DisallowUnknownFields()
+		if e = decoder.Decode(&chunk); e != nil {
 			return nil, errors.New("task transcript block is invalid")
 		}
 		messages = append(messages, chunk...)
@@ -193,8 +196,25 @@ func lastCall(messages []transcript.Message, index int) (transcript.ToolCall, er
 	return transcript.ToolCall{}, errors.New("saved model call reference does not resolve")
 }
 func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out HistorySync, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return HistorySync{}, scopeErr
+		}
+		return scoped.SyncHistory(ctx, in)
+	}
 	ctx, span := startActivity(ctx, "task.history.sync", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.sync"); span.End() }()
+	// A saved result may settle during pause, but its parent must not consume
+	// the delivery until resume. Completion/publication of an admitted reply
+	// uses separate activities and remains allowed.
+	control, e := a.Store.Control(ctx)
+	if e != nil {
+		return out, classified(e)
+	}
+	if e = control.Check(); e != nil {
+		return out, classified(e)
+	}
 	snap, e := a.Reconcile(ctx, in.RunID)
 	if e != nil {
 		return out, e
@@ -234,18 +254,15 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 		switch cmd.Kind {
 		case state.CommandStart, state.CommandSteer:
 			if action != nil {
-				closed := map[string]any{"voided": true, "operation_id": action.Operation, "reason": "Austin changed the task instructions, so nothing was sent. Propose again if the write is still needed."}
+				closed := map[string]any{"voided": true, "operation_id": action.Operation, "reason": prompts.Runtime("write-voided", nil)}
 				out.ActionClosed = "voided"
-				if out.Decision == state.CommandDecline {
-					closed, out.ActionClosed = map[string]any{"declined": true, "operation_id": action.Operation, "reason": declinedReason}, "declined"
-				}
 				messages = append(messages, transcript.ToolResultMessage(action.CallID, action.Name, closed))
-				action, out.Decision, out.DecisionID = nil, "", ""
+				action = nil
 			}
 			if q != nil && q.CallID != "" {
-				superseded := map[string]any{"superseded": true, "reason": "Austin changed the task instructions."}
+				superseded := map[string]any{"superseded": true, "reason": prompts.Runtime("superseded", nil)}
 				if q.Kind == state.QuestionWork {
-					superseded["reason"] = "Austin changed the task instructions, so this request is closed and any subtask started for it was stopped. Ask again if the work is still needed."
+					superseded["reason"] = prompts.Runtime("request-closed", nil)
 				}
 				messages = append(messages, transcript.ToolResultMessage(q.CallID, questionTool(q), superseded))
 			}
@@ -256,8 +273,7 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 				messages = append(messages, transcript.UserText(note))
 			}
 			if cmd.Revises != "" {
-				messages = append(messages, transcript.UserText("This task revises saved result "+cmd.Revises+". Read it with result_read, and with result_open if it's a file. "+
-					"Your answer or first saved file becomes the new version, and the old one stays as history."))
+				messages = append(messages, transcript.UserText(prompts.Runtime("revise-result", map[string]any{"Result": cmd.Revises})))
 			}
 			if cmd.Kind == state.CommandStart {
 				out.Request = clip(cmd.Text, 1500)
@@ -290,20 +306,6 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 				q = nil
 				out.QuestionResolved = true
 			}
-		case state.CommandApprove, state.CommandDecline:
-			if q != nil && q.ID == cmd.QuestionID && q.Kind == "approval" {
-				q = nil
-				out.QuestionResolved = true
-				out.Decision, out.DecisionID = cmd.Kind, cmd.ID
-			}
-		case state.CommandContinue:
-			if q != nil && q.ID == cmd.QuestionID && q.Kind == "budget" {
-				out.Grants++
-				q = nil
-				out.QuestionResolved = true
-				messages = append(messages, transcript.UserText(
-					fmt.Sprintf("Austin approved another $%.2f of model spend. Continue the task.", agent.BudgetUSD)))
-			}
 		}
 		out.Position = cmd.Position
 	}
@@ -316,6 +318,13 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 	return out, nil
 }
 func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefModelOutcome, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return RefModelOutcome{}, scopeErr
+		}
+		return scoped.ModelRef(ctx, in)
+	}
 	ctx, span := startActivity(ctx, "task.history.model", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.model"); span.End() }()
 	messages, e := a.history(ctx, in.RunID, in.Ref)
@@ -343,8 +352,7 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	}
 	if len(response.Calls) == 0 {
 		out.Invalid = true
-		correction := transcript.UserText("Plain text does not finish this task. " +
-			"Call complete(answer,evidence,unmet), or request_input for a missing prerequisite.")
+		correction := transcript.UserText(prompts.Runtime("completion-protocol", nil))
 		out.Ref, e = a.appendMessages(ctx, in.RunID, out.Ref, []transcript.Message{correction})
 		if e != nil {
 			out.Failure = "completion protocol correction could not be retained"
@@ -371,6 +379,13 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	return out, nil
 }
 func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolOutcome, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return RefToolOutcome{}, scopeErr
+		}
+		return scoped.ToolRef(ctx, in)
+	}
 	ctx, span := startActivity(ctx, "task.history.tool", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.tool"); span.End() }()
 	messages, e := a.history(ctx, in.RunID, in.Ref)
@@ -385,7 +400,7 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	if in.ReadOnly && toolEffect(call.Name) != "read" {
 		result = map[string]any{
 			"outcome":      "needs_input",
-			"error":        "Completion correction permits reads only. Ask Austin before further writes or shell execution.",
+			"error":        prompts.Runtime("reads-only", nil),
 			"effect_class": "read",
 			"operation_id": in.OperationID,
 		}
@@ -415,6 +430,13 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	return out, nil
 }
 func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Question, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return state.Question{}, scopeErr
+		}
+		return scoped.InputRef(ctx, in)
+	}
 	ctx, span := startActivity(ctx, "task.history.question", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.question"); span.End() }()
 	messages, e := a.history(ctx, in.RunID, in.Ref)
@@ -459,6 +481,13 @@ func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Quest
 	return state.Question{Kind: "input", Text: text, CallID: call.ID, Revision: in.Revision, Clears: clears}, nil
 }
 func (a *Activities) AppendToolResult(ctx context.Context, in AppendResult) (ref string, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return "", scopeErr
+		}
+		return scoped.AppendToolResult(ctx, in)
+	}
 	ctx, span := startActivity(ctx, "task.history.append_result", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.append_result"); span.End() }()
 	// A rejected completion can already have its result saved before a
@@ -479,6 +508,13 @@ func (a *Activities) AppendToolResult(ctx context.Context, in AppendResult) (ref
 	return ref, classified(err)
 }
 func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run state.Run, err error) {
+	if a.Resolve != nil {
+		scoped, scopeErr := a.Resolve(ctx)
+		if scopeErr != nil {
+			return state.Run{}, scopeErr
+		}
+		return scoped.PublishRef(ctx, in)
+	}
 	ctx, span := startActivity(ctx, "task.history.publish", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.publish"); span.End() }()
 	if in.Ref != "" {
@@ -493,15 +529,12 @@ func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run sta
 		}
 		in.Text, _ = call.Args["answer"].(string)
 		proposed := proposal(call)
-		in.Answer = &state.ResultDraft{Checked: in.Status == state.RunCompleted && !in.Unverified, Evidence: proposed.Evidence, Unmet: proposed.Unmet}
+		in.Answer = &state.ResultDraft{Checked: in.Status == state.RunCompleted, Evidence: proposed.Evidence, Unmet: proposed.Unmet}
 		if ops, e := a.Store.Operations(ctx, in.RunID); e == nil {
 			in.Answer.Artifacts, in.Answer.Cited = citedOutputs(ops, proposed.Evidence)
 		}
 	}
-	if in.Unverified {
-		in.Text += "\n\nCompletion verification was unavailable; this answer is unverified."
-	}
-	if in.Status != "completed" && !in.Unverified && in.Text != "" && in.Detail != "" {
+	if in.Status != "completed" && in.Text != "" && in.Detail != "" {
 		in.Text += "\n\n" + in.Detail
 	}
 	run, e := a.Publish(ctx, in.Publication)

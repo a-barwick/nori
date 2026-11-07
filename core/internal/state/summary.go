@@ -22,7 +22,7 @@ type ConversationSummary struct {
 	UpdatedAt time.Time     `json:"updated_at" firestore:"updated_at"`
 }
 
-// SummaryItem keeps one thing from an earlier turn in Austin's exact words, with the message it came from.
+// SummaryItem keeps one thing from an earlier turn in the user's exact words, with the message it came from.
 type SummaryItem struct {
 	Kind    string `json:"kind" firestore:"kind"`
 	Quote   string `json:"quote" firestore:"quote"`
@@ -68,8 +68,8 @@ func TurnBytes(t ConversationTurn) int {
 	return n
 }
 
-// CheckSummaryItems keeps only items whose quote is Austin's exact words from the message it names. sources maps input
-// IDs to the text of his messages, including the quotes of the summary being replaced. An item whose quote isn't
+// CheckSummaryItems keeps only items whose quote is the user's exact words from the message it names. sources maps input
+// IDs to the text of their messages, including the quotes of the summary being replaced. An item whose quote isn't
 // exact falls back to the whole message when that fits.
 func CheckSummaryItems(items []SummaryItem, sources map[string]string) (kept []SummaryItem, dropped int) {
 	kept = []SummaryItem{}

@@ -1,0 +1,1 @@
+the result carries the provider's status, the message ID and a read of the sent message

@@ -1,0 +1,1 @@
+Browser restarted; navigate to the task's URL again before taking a screenshot.

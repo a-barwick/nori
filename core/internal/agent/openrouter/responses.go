@@ -1,6 +1,6 @@
 // Package openrouter is the task model adapter for OpenRouter's Responses API. It holds
 // every provider-specific detail: the endpoint, credentials, request and response formats,
-// price ceilings, spend reservation and error text.
+// price ceilings and error text.
 package openrouter
 
 import (
@@ -15,10 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"nori/internal/agent"
-	"nori/internal/spend"
 	"nori/internal/transcript"
+	"nori/internal/usage"
 )
 
 const (
@@ -37,15 +36,14 @@ type Client struct {
 	Key       string
 	ModelName string
 	HTTP      *http.Client
-	// Endpoint is the provider URL. A local test stack sets a loopback one.
-	Endpoint string
+	Meter     usage.Meter
 }
 
-func New(key, model string) *Client {
+func New(key, model string, meter usage.Meter) *Client {
 	return &Client{
 		Key:       key,
+		Meter:     meter,
 		ModelName: model,
-		Endpoint:  endpoint,
 		HTTP: &http.Client{
 			Timeout:       2 * time.Minute,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -80,14 +78,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			"type": "function", "name": tool.Name, "description": tool.Description, "strict": true, "parameters": parameters,
 		})
 	}
-	control, limit, err := spend.Prepare(ctx, provider, req.MaxOutputTokens)
-	if err != nil {
-		return out, err
-	}
-	defer control.Close()
 	fields := map[string]any{
 		"model": c.ModelName, "input": input, "instructions": req.Instructions,
-		"tools": tools, "max_output_tokens": limit, "store": false,
+		"tools": tools, "max_output_tokens": req.MaxOutputTokens, "store": false,
 		"include":  []string{"reasoning.encrypted_content"},
 		"provider": routing(),
 	}
@@ -98,31 +91,34 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if err != nil {
 		return out, errors.New("task request could not be encoded")
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return out, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
 	httpReq.Header.Set("Content-Type", "application/json")
-	reservation, err := control.Reserve(ctx, provider, c.ModelName, len(body), limit, uuid.NewString())
-	if err != nil {
+	record := usage.Attempt(ctx, provider, c.ModelName)
+	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
-	if reservation != nil {
-		defer func() {
-			var cost *float64
-			if out.CostKnown {
-				cost = &out.Cost
-			}
-			err = errors.Join(err, reservation.Settle(ctx, cost, "", nil))
-		}()
-	}
+	record.RequestStatus = "unknown"
+	defer func() {
+		if u := out.Usage; u != nil {
+			input, output, total := int64(u.InputTokens), int64(u.OutputTokens)+int64(u.ReasoningTokens), int64(u.TotalTokens)
+			record.InputTokens, record.OutputTokens, record.TotalTokens = &input, &output, &total
+		}
+		if out.CostKnown {
+			record.CostUSD, record.CostStatus = &out.Cost, "provider"
+		}
+		err = errors.Join(err, usage.Finish(ctx, c.Meter, record))
+	}()
 	// Once handed to HTTP, a transport failure cannot prove it was not billed.
 	out.NotSent = false
 	res, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return out, errors.New("task model request interrupted or unavailable")
 	}
+	record.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return out, fmt.Errorf("task model returned HTTP %d", res.StatusCode)
@@ -158,10 +154,6 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			out.Cost = *u.Cost
 			out.CostKnown = true
 		}
-	}
-	// Keep billed usage even when the generation is incomplete or unusable.
-	if !out.CostKnown {
-		return out, errors.New("task model reported no cost; budget cannot be enforced")
 	}
 	if response.Status != "completed" {
 		return out, errors.New("task model response incomplete; no tools executed")

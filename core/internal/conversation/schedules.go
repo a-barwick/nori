@@ -8,22 +8,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
-// Clock is Austin's time zone and the current time, which the outer model needs to resolve "in 20 minutes" or
+// Clock is the user's time zone and the current time, which the outer model needs to resolve "in 20 minutes" or
 // "tomorrow at ten" into a schedule.
 type Clock struct {
 	Location *time.Location
-	// Now is time.Now, moved only by a local test stack.
-	Now func() time.Time
 }
 
 func (c Clock) now() time.Time {
 	location := c.location()
-	if c.Now != nil {
-		return c.Now().In(location)
-	}
 	return time.Now().In(location)
 }
 
@@ -134,7 +130,7 @@ func planSchedules(attemptID string, calls []scheduleCall, saved []state.Schedul
 func scheduleFailureText(changes []state.ScheduleChangeRequest) string {
 	for _, c := range changes {
 		if c.Error != "" {
-			return fmt.Sprintf("I couldn't set that up: %s. No schedules changed.", c.Error)
+			return prompts.Runtime("schedule-change-failed", map[string]any{"Error": c.Error})
 		}
 	}
 	return ""
@@ -147,10 +143,10 @@ func scheduleText(changes []state.ScheduleChangeRequest, clock Clock) string {
 	}
 	for _, c := range changes {
 		if c.Action == state.ScheduleCreate && c.NextAt != nil {
-			return "Done. The first one is " + localTime(*c.NextAt, clock.location()) + "."
+			return prompts.Runtime("schedule-first", nil) + localTime(*c.NextAt, clock.location()) + "."
 		}
 	}
-	return "Done. I've updated your schedules."
+	return prompts.Runtime("schedules-updated", nil)
 }
 
 func localTime(at time.Time, location *time.Location) string {

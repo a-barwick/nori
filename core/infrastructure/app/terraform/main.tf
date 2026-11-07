@@ -35,16 +35,6 @@ variable "environment" {
   }
 }
 
-variable "sandbox_spend_scope" {
-  type        = string
-  default     = ""
-  description = "Existing bounded feature lease for authorized sandbox work; never a production credential."
-  validation {
-    condition     = var.environment == "production" || can(regex("^[a-f0-9]{64}$", var.sandbox_spend_scope))
-    error_message = "Sandbox requires an existing feature spend scope."
-  }
-}
-
 variable "sandbox_computer_disk_id" {
   type        = string
   default     = null
@@ -537,15 +527,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
         value = google_storage_bucket.artifacts.name
       }
 
-      env {
-        name  = "COMPUTER_ZONE"
-        value = local.zone
-      }
 
-      env {
-        name  = "COMPUTER_INSTANCE"
-        value = google_compute_instance.computer.name
-      }
 
       env {
         name  = "MODEL_NAME"
@@ -566,11 +548,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
           TEMPORAL_TASK_QUEUE             = local.task_queue
           TEMPORAL_DEPLOYMENT_NAME        = local.temporal_deployment
           TEMPORAL_API_KEY_SECRET_VERSION = "projects/${local.project}/secrets/nori-temporal-api-key/versions/latest"
-          }, local.telemetry_env, local.production ? {} : {
-          NORI_SPEND_PROFILE  = "feature"
-          NORI_SPEND_DATABASE = "nori-sandbox"
-          NORI_SPEND_SCOPE    = var.sandbox_spend_scope
-        })
+        }, local.telemetry_env)
         content {
           name  = env.key
           value = env.value

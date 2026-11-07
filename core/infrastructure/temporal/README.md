@@ -171,15 +171,15 @@ builds:
 3. Review the plan from the reduced manifest. It destroys retained pools and
    services, which carry `prevent_destroy` and `deletion_protection`, and it
    shrinks the `NORI_WORKER_SERVICES` route map of the surviving service.
-   `check_plan` and `route_only_update` refuse that by design; do not loosen
-   them. Apply it by hand, lifting the destroy protections only on the
-   resources being retired and restoring them afterwards.
+   The deployment script no longer restricts plans to worker additions. Resource
+   deletion protections remain; retirement still needs explicit authorization
+   and a separate plan for only the resources being retired.
 4. Keep the isolated candidate target unless retiring its data is a separate
    decision. It owns the `nori-worker-candidate` database, event queue and IAM
    binding, so removing it from the manifest also plans to destroy those.
 
-After that apply, `make deploy` runs unchanged: it reads the smaller state and
-its plan again adds only the new worker.
+After that apply, `make deploy` reads the smaller retained-worker inventory from
+state for subsequent releases.
 
 ## Credentials and measurements
 
@@ -189,12 +189,17 @@ plans or logs. The root `.env` remains the local source. Selected models:
 intent `jev-latest`, outer `gpt-6.1-sol` with low reasoning through the
 OpenAI platform API, and task worker `openai/gpt-6.1-terra` through OpenRouter Responses.
 
+New release targets set `per_user_settings=true`: computer and calendar account
+settings come from user rows. Retained builds keep their original environment,
+including the legacy calendar secret references. Their secret containers remain
+managed and protected; a normal release never retires them.
+
 New release targets leave `jev_completion` disabled, because workers no longer
 call Jev to finish a task. Retained targets that enabled it keep `JEV_API_KEY`
 until their tasks drain, so adding a release doesn't change their credentials.
 
 New release targets also enable `capabilities` once `nori-brave-search-api-key`
-and the four `nori-google-calendar-*` secrets each have a version. Without them
+and the two `nori-google-calendar-client-*` secrets each have a version. Without them
 the release still deploys, and its tools report themselves unavailable. Add a
 version from the root `.env` without printing it:
 
@@ -202,10 +207,10 @@ version from the root `.env` without printing it:
 awk -F= '$1=="BRAVE_SEARCH_API_KEY"{printf "%s",substr($0,length($1)+2)}' .env | gcloud secrets versions add nori-brave-search-api-key --data-file=-
 ```
 
-Run `go run ./cmd/nori-connect-calendar` from `core/` to fill
-`GOOGLE_CALENDAR_REFRESH_TOKEN` and `GOOGLE_CALENDAR_ACCOUNT`. An OAuth app in
+Run `go run ./cmd/nori-connect-calendar --user <id>` from `core/` to save
+the calendar refresh token and account in that user's row. An OAuth app in
 Google's testing state loses its refresh token after 7 days, and the calendar then
-reports itself as disconnected until the command runs again and the secret is updated.
+reports itself as disconnected until the command runs again and the row is updated.
 
 Measure acceptance to first activity, active activity completion across polling
 cutoff, response after SDK drain, automatic successor delivery, durable input
@@ -213,56 +218,3 @@ wait/Answer, and targeted Stop with retained browser ownership. Record actual
 model token usage separately from observed compute duration and delayed billing.
 Local checks do not establish native OIDC, Cloud Tasks delivery, service billing,
 or GCE stop/restart. Do not infer physical container zero from a response.
-
-## Optional daily spend alert
-
-`spend-alert.py --check` generates or reads the current UTC billing month's
-Temporal account report, downloads the provider CSV, and reports whether the
-configured threshold has been reached. The default threshold is $10 USD. It sums
-all reported `ContractedCost` charge records across this account's namespaces
-and charge categories; it does not include GCP costs or claim to be a finalized
-invoice. [Temporal's billing schema](https://docs.temporal.io/cloud/billing-api)
-labels USD values as cents, so the configurable default divides by 100. Current
-month data is provisional and lags at least 24 hours, rounded to daily granularity.
-
-Read the existing key in place for a local check (no metrics or email):
-
-```sh
-python3 core/infrastructure/temporal/spend-alert.py --check \
-  --env-file /absolute/path/to/the/existing/root/.env
-# Reuse a requested report instead of generating another overlapping report:
-python3 core/infrastructure/temporal/spend-alert.py --check \
-  --env-file /absolute/path/to/the/existing/root/.env --report-id REPORT_ID
-```
-
-The account-level `TEMPORAL_BILLING_API_KEY` requires billing-report access. The
-namespace execution key is a different credential. No key or signed download URL
-is logged or persisted. JSON output includes the report ID, generation/check
-times, charge coverage when available, unit basis, total, and threshold. Empty
-reports, unsupported currency, unparseable costs, and provider failures produce
-unknown spend instead of $0; exit 2 means a generated report had no interpretable
-charge total, while exit 1 means a request or processing failed. Only a complete
-report returns exit 0. A nonempty report also checks cost against unit price and
-quantity before conversion. The actual account report inspected during local
-validation had headers and no charge rows; nonzero cents-to-USD conversion
-therefore remains unverified against this account's real values.
-
-`terraform/spend-alert.tf` creates nothing unless `spend_alert` is configured with
-a reviewed immutable image digest and an **existing** Secret Manager billing-key
-reference. It never creates or uploads a key payload. `Dockerfile.alert` builds
-from `core/`; its default command is read-only `--check`. The deployed Job alone
-passes `--publish`, using its own service account to write native Cloud Monitoring
-metrics. Publication requires a newly generated report; `--report-id` remains
-read-only inspection so an old report cannot become a fresh successful check. It has one task, parallelism one, no retries, a six-minute timeout, and
-no resident capacity. Scheduler runs it once daily at 17:00 UTC by default; the
-cron schedule, USD threshold, cost-unit override, and secret version are configurable.
-It has no permission to wake task workers or the computer.
-
-Native Monitoring emails Austin's configured GCP account address when the daily
-report reaches the threshold or the report fails/is unknown. The threshold and failure conditions retain the preceding daily
-point for up to 24 hours; a month reset or repaired check can therefore take a
-day to clear. A Job that never runs or cannot publish any metric needs inspection in
-Job/Scheduler diagnostics; deployment acceptance must verify the schedule, initial
-metric, and email channel. No notification or deployment was performed during local validation.
-This monitor adds normal Cloud Run Job, Scheduler, and Monitoring usage. It is an
-alert, not a charge cap, and does not pause execution automatically.

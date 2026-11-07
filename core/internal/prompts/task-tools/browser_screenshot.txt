@@ -1,0 +1,1 @@
+Capture the current browser page as a private PNG artifact for the user. Returns only an artifact reference; use screenshot_inspect to read it.

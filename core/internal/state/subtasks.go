@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	// TaskBudgetUSD is the model cost a top-level task starts with, and what each continue adds.
+	// TaskBudgetUSD is the default task ceiling.
 	TaskBudgetUSD = 1.0
 	// MaxSubtasks bounds the subtasks one work request can start.
 	MaxSubtasks = 4
@@ -143,12 +143,4 @@ func FamilyCost(run Run, parent *Run) (others, budget float64, costUnknown bool)
 		return run.SubtaskSpent, run.Budget, run.CostUnknown
 	}
 	return parent.Spent + parent.SubtaskSpent - run.Spent, parent.Budget, run.CostUnknown || parent.CostUnknown
-}
-
-// grantBudget applies an accepted continue. A subtask's budget belongs to its parent. A sibling that was stopped by the
-// same limit resumes without another grant once the family is back under budget.
-func grantBudget(owner *Run) {
-	if owner.Spent+owner.SubtaskSpent >= owner.Budget {
-		owner.Budget += TaskBudgetUSD
-	}
 }

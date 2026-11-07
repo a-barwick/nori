@@ -1,0 +1,84 @@
+// Package s3 stores private artifact bytes in Amazon S3.
+package s3
+
+import (
+	"bytes"
+	"context"
+	"errors"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	sdk "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
+	"nori/internal/state"
+	"nori/internal/users"
+)
+
+type Store struct {
+	api            *sdk.Client
+	bucket, prefix string
+}
+
+var _ state.ArtifactStore = (*Store)(nil)
+
+func Open(ctx context.Context, region, bucket string, user users.User) (*Store, error) {
+	if err := user.Validate(); err != nil {
+		return nil, err
+	}
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+	if err != nil {
+		return nil, err
+	}
+	return New(sdk.NewFromConfig(cfg), bucket, user)
+}
+func New(api *sdk.Client, bucket string, user users.User) (*Store, error) {
+	if err := user.Validate(); err != nil {
+		return nil, err
+	}
+	return &Store{api: api, bucket: bucket, prefix: "artifacts/" + user.FilePrefix()}, nil
+}
+func code(err error, want string) bool {
+	var e smithy.APIError
+	return errors.As(err, &e) && e.ErrorCode() == want
+}
+func (s *Store) put(ctx context.Context, key, media string, data []byte) error {
+	if s.bucket == "" {
+		return errors.New("ARTIFACT_BUCKET must be configured")
+	}
+	_, err := s.api.PutObject(ctx, &sdk.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key), Body: bytes.NewReader(data), ContentType: aws.String(media), CacheControl: aws.String("private, no-store"), IfNoneMatch: aws.String("*")})
+	if code(err, "PreconditionFailed") {
+		return state.ErrFileExists
+	}
+	return err
+}
+func (s *Store) PutPNG(ctx context.Context, run, id string, data []byte) error {
+	return s.put(ctx, run+"/"+id+".png", "image/png", data)
+}
+func (s *Store) PutFile(ctx context.Context, key, media string, data []byte) error {
+	return s.put(ctx, key, media, data)
+}
+func (s *Store) get(ctx context.Context, key string, artifact bool) ([]byte, error) {
+	out, err := s.api.GetObject(ctx, &sdk.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key)})
+	if code(err, "NoSuchKey") {
+		return nil, state.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer out.Body.Close()
+	if artifact {
+		return state.ReadArtifact(out.Body)
+	}
+	return state.ReadFile(out.Body)
+}
+func (s *Store) GetPNG(ctx context.Context, run, id string) ([]byte, error) {
+	return s.get(ctx, run+"/"+id+".png", true)
+}
+func (s *Store) GetFile(ctx context.Context, key string) ([]byte, error) {
+	return s.get(ctx, key, false)
+}
+func (s *Store) DeleteFile(ctx context.Context, key string) error {
+	_, err := s.api.DeleteObject(ctx, &sdk.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key)})
+	return err
+}
+func (s *Store) Close() error { return nil }

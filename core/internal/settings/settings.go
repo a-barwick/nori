@@ -1,0 +1,303 @@
+// Package settings loads every setting Nori's processes read, once, at startup. It is the only code that reads the
+// process environment. Each process passes on only the values a package needs. .env.example at the repo root
+// describes each setting.
+package settings
+
+import (
+	"fmt"
+	"math"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/joho/godotenv"
+	"nori/internal/serviceauth"
+	"nori/internal/usage"
+)
+
+type Settings struct {
+	Features    Features
+	Cloud       string
+	AWS         AWS
+	ServiceAuth serviceauth.Config
+	// BindHost and Port are where the API listens. Port is empty for a polling worker.
+	BindHost, Port string
+	Models         Models
+	Metering       usage.Config
+	Store          Store
+	Computer       Computer
+	Temporal       Temporal
+	Wake           Wake
+	Worker         Worker
+	Calendar       Calendar
+	// SearchKey is the Brave Search key and RoutesKey the Google Routes key. Without one, that tool reports itself
+	// unavailable.
+	SearchKey, RoutesKey string
+	// TimeZone, NotifyEmail, Computer and the calendar connection are filled from the user row, never the environment.
+	TimeZone string
+	// TaskBudgetUSD is recorded as the spending ceiling when a background task starts.
+	TaskBudgetUSD float64
+	// QuietHours hold back notification emails, as HH:MM-HH:MM.
+	QuietHours string
+	// AppURL is the web app that notification emails link to. NotifyEmail is their recipient: empty means the
+	// connected account's own address, "off" sends none.
+	AppURL, NotifyEmail string
+	// EnvFile is the configuration file Load read.
+	EnvFile       string
+	Observability Observability
+}
+
+// Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
+type Features struct {
+	DisableBackgroundTasks, DisableJev, DisableComputer, DisableOffers, DisableSchedules bool
+}
+
+type AWS struct {
+	Region, WakeQueueURL, WakeQueueARN, ScheduleGroup, ScheduleRoleARN, WakeDeadLetterARN string
+}
+
+type Models struct {
+	// OpenAIKey is the outer conversation's key, JevKey the intent classifier's, and OpenRouterKey the task worker's
+	// and the conversation summary's.
+	OpenAIKey, JevKey, OpenRouterKey string
+	// Outer is the outer conversation model and Inner the task worker model.
+	Outer, Inner string
+}
+
+type Store struct {
+	Backend, PostgresURL string
+	// Project is the Google Cloud project and Database its Firestore database. Neither has a default.
+	Project, Database string
+	// ArtifactBucket is the Cloud Storage bucket for file bytes.
+	ArtifactBucket string
+	// StateEmulator points app data at a loopback Firestore emulator.
+	// FirestoreEmulator points the whole process at one for local development.
+	StateEmulator, FirestoreEmulator string
+	// LocalArtifactDir keeps file bytes in a local directory, for development.
+	LocalArtifactDir string
+}
+
+type Computer struct {
+	// LocalURL selects a loopback development computer. Otherwise Zone and Instance name a Compute Engine instance
+	// in the store's project.
+	LocalURL, Zone, Instance string
+}
+
+type Temporal struct {
+	Address, Namespace string
+	// APIKey, or the Secret Manager version that APIKeySecret names, signs in to Temporal Cloud.
+	APIKey, APIKeySecret string
+	TaskQueue            string
+	// DeploymentName is empty when unset: worker registration requires it, and other code uses nori-task.
+	DeploymentName, BuildID string
+	// Local is a development server with no TLS or API key. CloudRunID tags a Cloud Run worker's identity.
+	Local, CloudRunID bool
+}
+
+// Validate checks connection settings without opening a connection or resolving a secret.
+func (s Temporal) Validate() error {
+	for _, setting := range [][2]string{{"TEMPORAL_ADDRESS", s.Address}, {"TEMPORAL_NAMESPACE", s.Namespace}, {"TEMPORAL_TASK_QUEUE", s.TaskQueue}} {
+		if _, err := Required(setting[0], setting[1]); err != nil {
+			return err
+		}
+	}
+	if !s.Local && strings.TrimSpace(s.APIKey) == "" && strings.TrimSpace(s.APIKeySecret) == "" {
+		return fmt.Errorf("TEMPORAL_API_KEY or TEMPORAL_API_KEY_SECRET_VERSION must be configured")
+	}
+	return nil
+}
+
+type Wake struct {
+	// ConversationQueue and RuntimeURL are the hosted conversation wake. Caller is the service account of every
+	// wake.
+	ConversationQueue, RuntimeURL, Caller string
+	// WorkerServices is a JSON map of worker build to route, and WorkerQueue their wake queue. Emulator is a
+	// loopback Cloud Tasks emulator.
+	WorkerServices, WorkerQueue, Emulator string
+}
+
+type Worker struct {
+	// PollWindow and IdleWindow bound a request worker's slice, as Go durations.
+	PollWindow, IdleWindow string
+}
+
+type Calendar struct {
+	ClientID, ClientSecret, RefreshToken string
+	// Account names the connected Google account. WriteID is the calendar writes go to.
+	Account, WriteID string
+}
+
+type Observability struct {
+	SentryDSN, SentryEnvironment, SentryRelease string
+	// SampleRate and the hourly limits stay text: an invalid value falls back to its default.
+	SampleRate, ErrorsPerHour, LogsPerHour, MetricsPerHour string
+	// Revision and Service are set by Cloud Run.
+	Revision, Service                                                                    string
+	ArizeProject, ArizeProjectURL, ArizeSpace, ArizeKey, ArizeEndpoint, ArizeCertificate string
+	// CaptureContent sends redacted prompt and reply text to Arize.
+	CaptureContent bool
+	// Credentials are values redacted from anything exported.
+	Credentials []string
+}
+
+// Load reads NORI_ENV_FILE (default ../.env), then NORI_TASK_ENV_FILE when it names a separate task configuration,
+// and returns the settings. Missing files are fine in deployed environments; malformed files are not. Already-set
+// variables win. Management credentials are removed first and never loaded.
+func Load() (Settings, error) {
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if managementCredential(name) {
+			_ = os.Unsetenv(name)
+		}
+	}
+	file := get("NORI_ENV_FILE", "../.env")
+	if err := loadFile(file); err != nil && !os.IsNotExist(err) {
+		return Settings{}, fmt.Errorf("could not load %s; check its syntax and permissions", file)
+	}
+	if task := get("NORI_TASK_ENV_FILE", file); task != file {
+		if err := loadFile(task); err != nil && !os.IsNotExist(err) {
+			return Settings{}, fmt.Errorf("could not load task configuration %s", task)
+		}
+	}
+	for _, name := range []string{"NORI_BACKGROUND_TASKS_ENABLED", "NORI_JEV_ENABLED", "NORI_COMPUTER_ENABLED", "NORI_CALENDAR_OFFERS_ENABLED", "NORI_SCHEDULES_ENABLED"} {
+		if v := os.Getenv(name); v != "" && v != "true" && v != "false" {
+			return Settings{}, fmt.Errorf("%s must be true or false", name)
+		}
+	}
+	s := FromEnvironment()
+	s.EnvFile = file
+	switch s.Cloud {
+	case "gcp", "aws", "local":
+	default:
+		return Settings{}, fmt.Errorf("NORI_CLOUD must be gcp, aws or local")
+	}
+	if math.IsNaN(s.TaskBudgetUSD) || math.IsInf(s.TaskBudgetUSD, 0) || s.TaskBudgetUSD <= 0 {
+		return Settings{}, fmt.Errorf("NORI_TASK_BUDGET_USD must be a positive dollar amount")
+	}
+	switch s.Store.Backend {
+	case "firestore":
+	case "postgres":
+		if _, err := Required("NORI_POSTGRES_URL", s.Store.PostgresURL); err != nil {
+			return Settings{}, err
+		}
+	default:
+		return Settings{}, fmt.Errorf("NORI_STORE_BACKEND must be firestore or postgres")
+	}
+	if err := s.Metering.Validate(); err != nil {
+		return Settings{}, err
+	}
+	return s, nil
+}
+
+// FromEnvironment reads the settings from the process environment alone, for a process that loads no file.
+func FromEnvironment() Settings {
+	taskBudget, err := strconv.ParseFloat(get("NORI_TASK_BUDGET_USD", "1"), 64)
+	if err != nil {
+		taskBudget = math.NaN()
+	}
+	cloud := get("NORI_CLOUD", "gcp")
+	defaultStore := "firestore"
+	if cloud == "aws" || cloud == "local" {
+		defaultStore = "postgres"
+	}
+	store := Store{
+		Backend: get("NORI_STORE_BACKEND", defaultStore), PostgresURL: os.Getenv("NORI_POSTGRES_URL"),
+		Project: os.Getenv("NORI_PROJECT_ID"), Database: os.Getenv("FIRESTORE_DATABASE_ID"), ArtifactBucket: os.Getenv("ARTIFACT_BUCKET"),
+		StateEmulator: os.Getenv("NORI_STATE_EMULATOR_HOST"), FirestoreEmulator: os.Getenv("FIRESTORE_EMULATOR_HOST"),
+		LocalArtifactDir: os.Getenv("NORI_LOCAL_ARTIFACT_DIR"),
+	}
+	temporal := Temporal{
+		Address: os.Getenv("TEMPORAL_ADDRESS"), Namespace: os.Getenv("TEMPORAL_NAMESPACE"),
+		APIKey: os.Getenv("TEMPORAL_API_KEY"), APIKeySecret: os.Getenv("TEMPORAL_API_KEY_SECRET_VERSION"),
+		TaskQueue: get("TEMPORAL_TASK_QUEUE", "nori-tasks"), DeploymentName: os.Getenv("TEMPORAL_DEPLOYMENT_NAME"),
+		BuildID: os.Getenv("TEMPORAL_BUILD_ID"), Local: os.Getenv("TEMPORAL_LOCAL") == "true",
+		CloudRunID: os.Getenv("TEMPORAL_CLOUD_RUN_ID") == "true",
+	}
+	var credentials []string
+	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL", "NORI_SERVICE_TOKEN_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+		if value := os.Getenv(name); value != "" {
+			credentials = append(credentials, value)
+		}
+	}
+	return Settings{
+		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") == "false", DisableComputer: os.Getenv("NORI_COMPUTER_ENABLED") == "false", DisableOffers: os.Getenv("NORI_CALENDAR_OFFERS_ENABLED") == "false", DisableSchedules: os.Getenv("NORI_SCHEDULES_ENABLED") == "false"},
+		Cloud:       cloud,
+		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION")), WakeQueueURL: os.Getenv("NORI_AWS_WAKE_QUEUE_URL"), WakeQueueARN: os.Getenv("NORI_AWS_WAKE_QUEUE_ARN"), ScheduleGroup: get("NORI_AWS_SCHEDULE_GROUP", "default"), ScheduleRoleARN: os.Getenv("NORI_AWS_SCHEDULE_ROLE_ARN"), WakeDeadLetterARN: os.Getenv("NORI_AWS_WAKE_DLQ_ARN")},
+		ServiceAuth: serviceauth.Config{Key: os.Getenv("NORI_SERVICE_TOKEN_KEY"), Audience: get("NORI_SERVICE_AUDIENCE", "nori")},
+		BindHost:    get("BIND_HOST", "127.0.0.1"), Port: os.Getenv("PORT"),
+		Models: Models{
+			OpenAIKey: os.Getenv("OPENAI_API_KEY"), JevKey: os.Getenv("JEV_API_KEY"), OpenRouterKey: os.Getenv("OPENROUTER_API_KEY"),
+			Outer: get("NORI_AGENT_MODEL", "gpt-6.1-sol"), Inner: get("MODEL_NAME", "openai/gpt-6.1-terra"),
+		},
+		Store:    store,
+		Metering: usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN")},
+		Computer: Computer{},
+		Temporal: temporal,
+		Wake: Wake{
+			ConversationQueue: os.Getenv("NORI_WAKE_QUEUE"), RuntimeURL: os.Getenv("NORI_RUNTIME_URL"), Caller: os.Getenv("NORI_WAKE_SERVICE_ACCOUNT"),
+			WorkerServices: os.Getenv("NORI_WORKER_SERVICES"), WorkerQueue: os.Getenv("NORI_WORKER_WAKE_QUEUE"), Emulator: os.Getenv("CLOUD_TASKS_EMULATOR_HOST"),
+		},
+		Worker: Worker{PollWindow: get("NORI_WORKER_POLL_WINDOW", "240s"), IdleWindow: get("NORI_WORKER_IDLE_WINDOW", "15s")},
+		Calendar: Calendar{
+			ClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
+		},
+		SearchKey: os.Getenv("BRAVE_SEARCH_API_KEY"), RoutesKey: os.Getenv("GOOGLE_ROUTES_API_KEY"),
+		TaskBudgetUSD: taskBudget,
+		QuietHours:    get("NORI_QUIET_HOURS", "22:00-07:00"),
+		AppURL:        os.Getenv("NORI_APP_URL"),
+		Observability: Observability{
+			SentryDSN: strings.TrimSpace(os.Getenv("SENTRY_DSN")), SentryEnvironment: os.Getenv("SENTRY_ENVIRONMENT"), SentryRelease: os.Getenv("SENTRY_RELEASE"),
+			SampleRate: os.Getenv("SENTRY_TRACES_SAMPLE_RATE"), ErrorsPerHour: os.Getenv("NORI_SENTRY_ERRORS_PER_HOUR"),
+			LogsPerHour: os.Getenv("NORI_SENTRY_LOGS_PER_HOUR"), MetricsPerHour: os.Getenv("NORI_SENTRY_METRICS_PER_HOUR"),
+			Revision: os.Getenv("K_REVISION"), Service: os.Getenv("K_SERVICE"),
+			ArizeProject: get("ARIZE_PROJECT_NAME", "nori"), ArizeProjectURL: strings.TrimSpace(os.Getenv("ARIZE_PROJECT_URL")),
+			ArizeSpace: os.Getenv("ARIZE_SPACE_ID"), ArizeKey: os.Getenv("ARIZE_API_KEY"),
+			ArizeEndpoint: get("ARIZE_OTLP_ENDPOINT", "https://otlp.arize.com/v1/traces"), ArizeCertificate: os.Getenv("ARIZE_OTLP_CERTIFICATE"),
+			CaptureContent: os.Getenv("NORI_ARIZE_CAPTURE_CONTENT") == "true", Credentials: credentials,
+		},
+	}
+}
+
+// MissingError names a required setting that is empty. It carries no value, so a process may print it.
+type MissingError struct{ Name string }
+
+func (e *MissingError) Error() string { return e.Name + " must be configured" }
+
+// Required returns a setting's value, or a MissingError naming its variable when it is empty.
+func Required(name, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", &MissingError{Name: name}
+	}
+	return value, nil
+}
+
+func get(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func managementCredential(name string) bool {
+	switch name {
+	case "OPENROUTER_MANAGEMENT_KEY", "TEMPORAL_BILLING_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "NORI_SPEND_SIGNING_KEY", "NORI_SPEND_FEATURE_ISSUER_TOKEN", "NORI_SPEND_CI_ISSUER_TOKEN", "SENTRY_AUTH_TOKEN":
+		return true
+	}
+	return strings.HasPrefix(name, "NORI_SPEND_LEASE_")
+}
+
+func loadFile(path string) error {
+	values, err := godotenv.Read(path)
+	if err != nil {
+		return err
+	}
+	for name, value := range values {
+		if _, exists := os.LookupEnv(name); !exists && !managementCredential(name) {
+			if err := os.Setenv(name, value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

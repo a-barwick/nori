@@ -1,93 +1,86 @@
 package main
 
 import (
+	"cmp"
+	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"nori/internal/agent"
-	"nori/internal/env"
-	"nori/internal/wake"
+	"nori/internal/settings"
 )
 
-// config is the worker's release identity, polling windows and capabilities. It is
-// read per run, so a missing release surfaces on the request that needs it.
+// config is the worker's release identity, polling windows and capabilities,
+// parsed once before the process opens a listener or connects to providers.
 type config struct {
 	build, deployment      string
 	pollWindow, idleWindow time.Duration
-	capabilities           agent.Capabilities
 }
 
 // capabilities reads the credentials of the optional tools. A missing credential
 // leaves that tool reporting itself unavailable.
-func capabilities() (agent.Capabilities, error) {
-	location, err := time.LoadLocation(env.Get("NORI_TIMEZONE", "America/Los_Angeles"))
+func capabilities(s settings.Settings) (agent.Capabilities, error) {
+	location, err := time.LoadLocation(s.TimeZone)
 	if err != nil {
-		return agent.Capabilities{}, fmt.Errorf("NORI_TIMEZONE must be an IANA time zone")
-	}
-	// A local test stack points the worker at a loopback provider. Nothing else may.
-	base, tokenURL := "", ""
-	if address := os.Getenv("NORI_E2E_GOOGLE_URL"); address != "" {
-		if os.Getenv("TEMPORAL_LOCAL") != "true" || !strings.HasPrefix(address, "http://127.0.0.1:") {
-			return agent.Capabilities{}, fmt.Errorf("NORI_E2E_GOOGLE_URL requires TEMPORAL_LOCAL=true and a 127.0.0.1 address")
-		}
-		base, tokenURL = address, address+"/token"
-	}
-	var offset time.Duration
-	if value := os.Getenv("NORI_E2E_NOW"); value != "" {
-		at, err := time.Parse(time.RFC3339, value)
-		if err != nil || os.Getenv("TEMPORAL_LOCAL") != "true" {
-			return agent.Capabilities{}, fmt.Errorf("NORI_E2E_NOW requires TEMPORAL_LOCAL=true and an RFC 3339 time")
-		}
-		offset = time.Until(at)
+		return agent.Capabilities{}, fmt.Errorf("user time zone must be an IANA time zone")
 	}
 	return agent.Capabilities{
-		ClockOffset: offset,
-		SearchKey:   os.Getenv("BRAVE_SEARCH_API_KEY"), Location: location,
+		SearchKey: s.SearchKey, Location: location,
 		Calendar: agent.CalendarConfig{
-			ClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
-			RefreshToken:  os.Getenv("GOOGLE_CALENDAR_REFRESH_TOKEN"),
-			Account:       env.Get("GOOGLE_CALENDAR_ACCOUNT", "the connected Google account"),
-			WriteCalendar: os.Getenv("GOOGLE_CALENDAR_WRITE_ID"), APIBase: base, TokenURL: tokenURL,
+			ClientID: s.Calendar.ClientID, ClientSecret: s.Calendar.ClientSecret,
+			RefreshToken:  s.Calendar.RefreshToken,
+			Account:       s.Calendar.Account,
+			WriteCalendar: s.Calendar.WriteID,
 		},
 	}, nil
 }
 
-// checkSlice validates once, before the server listens, the settings every request needs. Without it a revision
-// missing one passes the platform's health check and then fails every request. Registration already needs the build
-// and the store, so this adds only the model key and, in main, the computer.
-func checkSlice() error {
-	for _, name := range []string{"NORI_PROJECT_ID", "FIRESTORE_DATABASE_ID", "TEMPORAL_BUILD_ID", "OPENROUTER_API_KEY"} {
-		if _, err := env.Required(name); err != nil {
-			return err
+func loadConfig(s settings.Settings) (config, error) {
+	if s.Features.DisableBackgroundTasks {
+		return config{}, fmt.Errorf("background tasks are not enabled")
+	}
+	required := [][2]string{{"TEMPORAL_BUILD_ID", s.Temporal.BuildID}, {"OPENROUTER_API_KEY", s.Models.OpenRouterKey}}
+	switch s.Store.Backend {
+	case "", "firestore":
+		required = append(required, [2]string{"NORI_PROJECT_ID", s.Store.Project}, [2]string{"FIRESTORE_DATABASE_ID", s.Store.Database})
+	case "postgres":
+		required = append(required, [2]string{"NORI_POSTGRES_URL", s.Store.PostgresURL})
+	default:
+		return config{}, fmt.Errorf("NORI_STORE_BACKEND must be firestore or postgres")
+	}
+	for _, setting := range required {
+		if _, err := settings.Required(setting[0], setting[1]); err != nil {
+			return config{}, err
 		}
 	}
-	return nil
-}
-
-func loadConfig(bounded bool, waker wake.Waker) (config, error) {
-	build := os.Getenv("TEMPORAL_BUILD_ID")
-	if build == "" {
-		return config{}, fmt.Errorf("TEMPORAL_BUILD_ID is required; use an immutable release identifier")
+	if err := s.Temporal.Validate(); err != nil {
+		return config{}, err
 	}
-	if bounded && !waker.WorkersNeedWake() {
-		return config{}, fmt.Errorf("request worker requires durable worker wake configuration")
+	if s.Port != "" {
+		// Request workers must support registration and durable continuation wakes.
+		for _, setting := range [][2]string{{"TEMPORAL_DEPLOYMENT_NAME", s.Temporal.DeploymentName}, {"NORI_WORKER_SERVICES", s.Wake.WorkerServices}} {
+			if _, err := settings.Required(setting[0], setting[1]); err != nil {
+				return config{}, err
+			}
+		}
+		var routes map[string]string
+		if err := json.Unmarshal([]byte(s.Wake.WorkerServices), &routes); err != nil || len(routes) == 0 {
+			return config{}, fmt.Errorf("NORI_WORKER_SERVICES must be a nonempty JSON map of worker builds to service URLs")
+		}
+		if _, err := settings.Required("NORI_WORKER_SERVICES route for TEMPORAL_BUILD_ID", routes[s.Temporal.BuildID]); err != nil {
+			return config{}, err
+		}
 	}
-	pollWindow, err := time.ParseDuration(env.Get("NORI_WORKER_POLL_WINDOW", "240s"))
+	pollWindow, err := time.ParseDuration(s.Worker.PollWindow)
 	if err != nil || pollWindow <= 0 || pollWindow > 240*time.Second {
 		return config{}, fmt.Errorf("NORI_WORKER_POLL_WINDOW must be in (0,240s]")
 	}
-	idleWindow, err := time.ParseDuration(env.Get("NORI_WORKER_IDLE_WINDOW", "15s"))
+	idleWindow, err := time.ParseDuration(s.Worker.IdleWindow)
 	if err != nil || idleWindow <= 0 {
 		return config{}, fmt.Errorf("NORI_WORKER_IDLE_WINDOW must be positive")
 	}
-	caps, err := capabilities()
-	if err != nil {
-		return config{}, err
-	}
 	return config{
-		build: build, deployment: env.Get("TEMPORAL_DEPLOYMENT_NAME", "nori-task"),
-		pollWindow: pollWindow, idleWindow: idleWindow, capabilities: caps,
+		build: s.Temporal.BuildID, deployment: cmp.Or(s.Temporal.DeploymentName, "nori-task"),
+		pollWindow: pollWindow, idleWindow: idleWindow,
 	}, nil
 }

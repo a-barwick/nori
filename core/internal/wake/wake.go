@@ -1,6 +1,6 @@
 // Package wake is the contract for waking compute that sleeps between requests.
 //
-// A wake carries no conversation or task content. Firestore owns what is to be
+// A wake carries no conversation or task content. The database owns what is to be
 // done and in what order; a wake only makes some process look. Wakes may be
 // duplicated or lost, and callers repair a lost one from saved state.
 package wake
@@ -8,6 +8,7 @@ package wake
 import (
 	"context"
 	"errors"
+	"nori/internal/users"
 	"time"
 )
 
@@ -71,3 +72,22 @@ func (w *InProcess) WakeWorker(ctx context.Context, build string, workflowIDs ..
 }
 
 func (w *InProcess) WorkersNeedWake() bool { return w.Workers.WorkersNeedWake() }
+
+// ForUser fixes the identity of every wake emitted by a user-scoped service,
+// including cleanup contexts that deliberately outlive the original request.
+func ForUser(w Waker, id string) Waker { return userWaker{Waker: w, id: id} }
+
+type userWaker struct {
+	Waker
+	id string
+}
+
+func (w userWaker) WakeConversation(ctx context.Context) error {
+	return w.Waker.WakeConversation(users.WithID(ctx, w.id))
+}
+func (w userWaker) WakeConversationAt(ctx context.Context, at time.Time, key string) error {
+	return w.Waker.WakeConversationAt(users.WithID(ctx, w.id), at, key)
+}
+func (w userWaker) WakeWorker(ctx context.Context, build string, ids ...string) error {
+	return w.Waker.WakeWorker(users.WithID(ctx, w.id), build, ids...)
+}

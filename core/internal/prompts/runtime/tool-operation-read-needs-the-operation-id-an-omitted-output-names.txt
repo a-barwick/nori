@@ -1,0 +1,1 @@
+operation_read needs the operation_id an omitted output names

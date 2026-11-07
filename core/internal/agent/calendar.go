@@ -15,6 +15,8 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+
+	"nori/internal/prompts"
 )
 
 const (
@@ -24,18 +26,11 @@ const (
 	maxCalendarEvents = 100
 	maxEventText      = 300
 	// A longer result would risk the saved history's block limit, so the latest events are dropped first.
-	maxCalendarResult   = 32 << 10
-	maxCalendarSpan     = 31 * 24 * time.Hour
-	calendarConnectHint = "Austin needs to run nori-connect-calendar."
+	maxCalendarResult = 32 << 10
+	maxCalendarSpan   = 31 * 24 * time.Hour
 )
 
-// CalendarTimeInstructions keeps timezone clarification consistent across both
-// conversations and task workers. Timestamp validation cannot infer user intent.
-const CalendarTimeInstructions = "Preserve the time zone the user explicitly specifies for the requested time. " +
-	"If a follow-up supplies a new clock time without a zone and an earlier explicit zone could still apply, ask which zone " +
-	"the new time means before proposing calendar_create or calendar_move. Do not silently carry the earlier zone forward or reset it to local time. " +
-	"For example, after a London-time hold, 'move it to next Friday' followed by '2pm' needs a London-or-local clarification. " +
-	"A date-only change keeps the established clock time and zone unless the user says otherwise. Convert the resolved time only once. "
+var calendarConnectHint = prompts.Runtime("calendar-connect", nil)
 
 // GoogleScopes are what the connected account grants: reading and changing calendar
 // events, sending mail, and reading a sent message's headers to confirm it.
@@ -46,12 +41,11 @@ var GoogleScopes = []string{
 	"https://www.googleapis.com/auth/gmail.metadata",
 }
 
-// CalendarConfig is the one account Austin connected. The refresh token stays in
+// CalendarConfig is the one account the user connected. The refresh token stays in
 // this process: it never reaches the computer, the model or a saved result.
-// WriteCalendar is the one calendar writes go to. APIBase and TokenURL point a local
-// test stack at a loopback provider, and are empty everywhere else.
+// WriteCalendar is the one calendar writes go to.
 type CalendarConfig struct {
-	ClientID, ClientSecret, RefreshToken, Account, WriteCalendar, APIBase, TokenURL string
+	ClientID, ClientSecret, RefreshToken, Account, WriteCalendar string
 }
 
 func (c CalendarConfig) target() string {
@@ -62,17 +56,11 @@ func (c CalendarConfig) target() string {
 }
 
 func (c CalendarConfig) calendarURL() string {
-	if c.APIBase != "" {
-		return c.APIBase + "/calendar/v3"
-	}
 	return calendarAPI
 }
 
 func (c CalendarConfig) client(ctx context.Context) *http.Client {
 	config := CalendarOAuth(c.ClientID, c.ClientSecret, "")
-	if c.TokenURL != "" {
-		config.Endpoint.TokenURL = c.TokenURL
-	}
 	return config.Client(ctx, &oauth2.Token{RefreshToken: c.RefreshToken})
 }
 
@@ -96,7 +84,7 @@ type calendarEntry struct {
 func calendarGet(ctx context.Context, client *http.Client, address string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return errors.New("calendar request could not be built")
+		return errors.New(prompts.Runtime("tool-calendar-request-could-not-be-built", nil))
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -104,7 +92,7 @@ func calendarGet(ctx context.Context, client *http.Client, address string, out a
 		if errors.As(err, &retrieve) {
 			return errCalendarDisconnected
 		}
-		return errors.New("calendar request failed before a response arrived")
+		return errors.New(prompts.Runtime("tool-calendar-request-failed-before-a-response-arrived", nil))
 	}
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusUnauthorized {
@@ -114,19 +102,19 @@ func calendarGet(ctx context.Context, client *http.Client, address string, out a
 		return fmt.Errorf("calendar returned HTTP %d", res.StatusCode)
 	}
 	if json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(out) != nil {
-		return errors.New("calendar returned an unreadable response")
+		return errors.New(prompts.Runtime("tool-calendar-returned-an-unreadable-response", nil))
 	}
 	return nil
 }
 
-var errCalendarDisconnected = errors.New("calendar connection is no longer accepted")
+var errCalendarDisconnected = errors.New(prompts.Runtime("tool-calendar-connection-is-no-longer-accepted", nil))
 
-// calendarRead returns events from every calendar Austin has selected, named with
+// calendarRead returns events from every calendar the user has selected, named with
 // the connected account. Attendees and descriptions stay out of the model's input.
 func (s *Service) calendarRead(ctx context.Context, start, end string) (map[string]any, error) {
 	config := s.Capabilities.Calendar
 	if !config.connected() {
-		return map[string]any{"available": false, "reason": "Google Calendar is not connected. " + calendarConnectHint}, nil
+		return map[string]any{"available": false, "reason": prompts.Runtime("calendar-google-calendar-is-not-connected", nil) + calendarConnectHint}, nil
 	}
 	from, to, err := calendarRange(start, end)
 	if err != nil {
@@ -137,7 +125,7 @@ func (s *Service) calendarRead(ctx context.Context, start, end string) (map[stri
 	result, err := readCalendars(ctx, config, config.client(ctx), from, to, s.now())
 	if errors.Is(err, errCalendarDisconnected) {
 		// An app in Google's testing state loses its refresh token after 7 days.
-		return map[string]any{"available": false, "reason": "The Google Calendar connection has expired. " + calendarConnectHint}, nil
+		return map[string]any{"available": false, "reason": prompts.Runtime("calendar-the-google-calendar-connection-has-expired", nil) + calendarConnectHint}, nil
 	}
 	return result, err
 }
@@ -145,14 +133,14 @@ func (s *Service) calendarRead(ctx context.Context, start, end string) (map[stri
 func calendarRange(start, end string) (time.Time, time.Time, error) {
 	from, err := time.Parse(time.RFC3339, start)
 	if err != nil {
-		return from, from, errors.New("calendar_read start must be RFC 3339 with a time zone offset")
+		return from, from, errors.New(prompts.Runtime("tool-calendar-read-start-must-be-rfc-3339-with-a-time-zone-offset", nil))
 	}
 	to, err := time.Parse(time.RFC3339, end)
 	if err != nil {
-		return from, to, errors.New("calendar_read end must be RFC 3339 with a time zone offset")
+		return from, to, errors.New(prompts.Runtime("tool-calendar-read-end-must-be-rfc-3339-with-a-time-zone-offset", nil))
 	}
 	if !to.After(from) || to.Sub(from) > maxCalendarSpan {
-		return from, to, errors.New("calendar_read needs an end after start, at most 31 days later")
+		return from, to, errors.New(prompts.Runtime("tool-calendar-read-needs-an-end-after-start-at-most-31-days-later", nil))
 	}
 	return from, to, nil
 }
@@ -181,7 +169,7 @@ type CalendarRead struct {
 // any task, with the same account and limits as calendar_read.
 func ReadCalendarEvents(ctx context.Context, config CalendarConfig, from, to time.Time) (CalendarRead, error) {
 	if !config.connected() {
-		return CalendarRead{}, errors.New("Google Calendar is not connected")
+		return CalendarRead{}, errors.New(prompts.Runtime("tool-google-calendar-is-not-connected", nil))
 	}
 	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
 	defer cancel()

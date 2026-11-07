@@ -27,6 +27,7 @@ import (
 	"google.golang.org/api/cloudtasks/v2"
 	"google.golang.org/api/option"
 	"nori/internal/observability"
+	"nori/internal/users"
 	"nori/internal/wake"
 )
 
@@ -122,6 +123,9 @@ func New(ctx context.Context, cfg Config) (*Waker, error) {
 func (w *Waker) WorkersNeedWake() bool { return w.workers != nil }
 
 func (w *Waker) WakeConversation(ctx context.Context) error {
+	if !users.ValidID(users.ID(ctx)) {
+		return fmt.Errorf("conversation wake requires a user")
+	}
 	if w.conversation == nil {
 		return wake.ErrNotConfigured
 	}
@@ -132,7 +136,7 @@ func (w *Waker) WakeConversation(ctx context.Context) error {
 	err := w.create(ctx, c.queue, &cloudtasks.Task{
 		DispatchDeadline: "600s",
 		HttpRequest: &cloudtasks.HttpRequest{
-			Url: c.url, HttpMethod: "POST", Headers: requestHeaders(ctx), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
+			Url: userURL(c.url, users.ID(ctx)), HttpMethod: "POST", Headers: requestHeaders(ctx), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
 			OauthToken: &cloudtasks.OAuthToken{ServiceAccountEmail: c.caller, Scope: "https://www.googleapis.com/auth/cloud-platform"},
 		},
 	})
@@ -145,6 +149,9 @@ func (w *Waker) WakeConversation(ctx context.Context) error {
 var taskName = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
 func (w *Waker) WakeConversationAt(ctx context.Context, at time.Time, key string) error {
+	if !users.ValidID(users.ID(ctx)) {
+		return fmt.Errorf("conversation wake requires a user")
+	}
 	if w.conversation == nil {
 		return wake.ErrNotConfigured
 	}
@@ -152,11 +159,11 @@ func (w *Waker) WakeConversationAt(ctx context.Context, at time.Time, key string
 	defer span.End()
 	c := w.conversation
 	err := w.create(ctx, c.queue, &cloudtasks.Task{
-		Name:             c.queue + "/tasks/" + taskName.ReplaceAllString(key, "-"),
+		Name:             c.queue + "/tasks/" + taskName.ReplaceAllString(users.ID(ctx)+"-"+key, "-"),
 		ScheduleTime:     at.UTC().Format(time.RFC3339),
 		DispatchDeadline: "600s",
 		HttpRequest: &cloudtasks.HttpRequest{
-			Url: c.url, HttpMethod: "POST", Headers: requestHeaders(ctx), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
+			Url: userURL(c.url, users.ID(ctx)), HttpMethod: "POST", Headers: requestHeaders(ctx), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
 			OauthToken: &cloudtasks.OAuthToken{ServiceAccountEmail: c.caller, Scope: "https://www.googleapis.com/auth/cloud-platform"},
 		},
 	})
@@ -206,6 +213,7 @@ func (w *Waker) create(ctx context.Context, queue string, task *cloudtasks.Task)
 
 func requestHeaders(ctx context.Context) map[string]string {
 	headers := map[string]string{"Content-Type": "application/json"}
+
 	for name, value := range observability.InjectTrace(ctx) {
 		headers[name] = value
 	}
@@ -256,4 +264,8 @@ func checkQueue(queue, caller string) error {
 		return fmt.Errorf("a Cloud Tasks queue (projects/PROJECT/locations/LOCATION/queues/QUEUE) and its caller are required")
 	}
 	return nil
+}
+
+func userURL(target, id string) string {
+	return strings.TrimSuffix(target, "/api/process") + "/users/" + url.PathEscape(id) + "/api/process"
 }
