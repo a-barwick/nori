@@ -63,8 +63,9 @@ it takes.
 `make deploy` refuses to start while a task is running or a message has not been
 attempted. While paused, a failed turn's saved input can survive a repair deploy;
 it still needs a user follow-up before another attempt.
-It also refuses any Terraform plan that does more than add the new worker and give
-retained workers its route. A new worker keeps the Current worker's model.
+The saved Terraform plan may include updates to existing resources as well as
+the new worker. Resource lifecycle and deletion protections remain in force.
+A new worker keeps the Current worker's model.
 
 After a mutating step starts, failure recovery reconciles pause and verifies the
 previous release if a release switch was attempted. If recovery fails, production

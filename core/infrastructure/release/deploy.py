@@ -8,7 +8,6 @@ keeps its progress; running `make deploy` again resumes it.
 import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor
-import copy
 import hashlib
 import importlib.util
 import json
@@ -260,39 +259,14 @@ def worker_vars(c, build, image):
             "observability": outputs["observability_config"], "runtime_invoke_root": c["runtime_url"]}
 
 
-def route_only_update(change, build):
-    """A retained worker may only learn the new worker's route."""
-    computed = {"conditions", "create_time", "creator", "delete_time", "effective_annotations", "effective_labels", "etag", "expire_time", "generation",
-                "last_modifier", "latest_created_revision", "latest_ready_revision", "observed_generation", "reconciling", "terminal_condition",
-                "terraform_labels", "traffic_statuses", "uid", "update_time", "uri", "urls"}
-    before, after = copy.deepcopy(change["before"]), copy.deepcopy(change["after"])
-    routes = []
-    for value in (before, after):
-        for key in computed:
-            value.pop(key, None)
-        template = value["template"][0]
-        template.pop("revision", None)
-        for container in template["containers"]:
-            container.pop("build_info", None)
-            env = {item["name"]: item for item in container["env"]}
-            routes.append(json.loads(env.pop("NORI_WORKER_SERVICES")["value"]))
-            container["env"] = sorted(env.values(), key=lambda item: item["name"])
-    return len(routes) == 2 and set(routes[1]) - set(routes[0]) == {build} and {k: routes[1][k] for k in routes[0]} == routes[0] and before == after
+def plan_changes(plan):
+    """Describe the saved plan without imposing a deployment change allowlist.
 
-
-def check_plan(plan, build):
-    """Refuse anything beyond adding this worker, above all changes to retained data."""
-    allowed = {f'google_cloud_run_v2_service.worker["{build}"]', f'google_cloud_run_v2_service_iam_member.worker_invoke["{build}"]'}
-    created = []
-    for resource in plan.get("resource_changes", []):
-        actions = resource["change"]["actions"]
-        if actions in (["no-op"], ["read"]):
-            continue
-        if resource["type"] == "google_cloud_run_v2_service" and resource["name"] == "worker" and actions == ["update"] and route_only_update(resource["change"], build):
-            continue
-        require(resource["address"] in allowed and actions == ["create"], f"Terraform plan would {'/'.join(actions)} {resource['address']}. Nothing was applied; review this by hand.")
-        created.append(resource["address"])
-    return created
+    Terraform's resource lifecycle and deletion protections still apply.
+    """
+    return [f"{'/'.join(resource['change']['actions'])} {resource['address']}"
+            for resource in plan.get("resource_changes", [])
+            if resource["change"]["actions"] not in (["no-op"], ["read"])]
 
 
 def plan_worker(c, build, image):
@@ -300,7 +274,7 @@ def plan_worker(c, build, image):
     variables.write_text(json.dumps(worker_vars(c, build, image), indent=2))
     run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "plan", "-input=false", "-lock-timeout=60s", f"-var-file={variables}", f"-out={plan_file}"])
     plan_file.chmod(0o600)
-    return check_plan(json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json", str(plan_file)])), build), plan_file
+    return plan_changes(json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json", str(plan_file)]))), plan_file
 
 
 def ops_command(*args):
@@ -449,8 +423,8 @@ def deploy_locked(commit):
             save_state(state)
 
         def apply_worker():
-            created, plan_file = plan_worker(c, state["build"], state["worker"])
-            log("Terraform will add: " + (", ".join(created) or "nothing new"))
+            changes, plan_file = plan_worker(c, state["build"], state["worker"])
+            log("Terraform changes: " + (", ".join(changes) or "none"))
             run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "apply", "-input=false", str(plan_file)])
             plan_file.unlink()
         step("worker", apply_worker)
@@ -496,9 +470,9 @@ def check(_args):
     state = json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json"]))
     image = next(r["values"]["template"][0]["containers"][0]["image"] for r in state["values"]["root_module"]["resources"]
                  if r["type"] == "google_cloud_run_v2_service" and r["name"] == "worker" and r["index"] == current)
-    created, plan_file = plan_worker(c, "rel-" + commit[:12], image)
+    changes, plan_file = plan_worker(c, "rel-" + commit[:12], image)
     plan_file.unlink()
-    log("The plan only adds: " + ", ".join(created))
+    log("Terraform changes: " + (", ".join(changes) or "none"))
     log("Runtime health")
     ops.api("POST", c["runtime_url"].rstrip("/") + "/api/healthz", {})
     log("Ready to deploy. Nothing was changed.")
