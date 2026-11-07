@@ -1,15 +1,20 @@
 import { GoogleAuth } from "google-auth-library";
+import { SignJWT } from "jose";
 
 const google = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
 
-/**
- * The `Authorization` header value for one call from the web server to the runtime.
- *
- * The hosted runtime is a GCP Agent Runtime, which accepts a Google access token for this service's own service
- * account. A runtime somewhere else changes only this function. It must not use the browser's or sign-in provider's
- * credentials, and throws when it cannot produce its own.
- */
+/** Trusted service credentials, independent of the browser's sign-in token. */
 export async function runtimeAuthorization(): Promise<string> {
+  const cloud = process.env.NORI_CLOUD || "gcp";
+  if (cloud === "aws") {
+    const key = new TextEncoder().encode(process.env.NORI_SERVICE_TOKEN_KEY || "");
+    const audience = process.env.NORI_SERVICE_AUDIENCE || "nori";
+    if (key.length < 32 || !audience.trim()) throw new Error("Service authentication is not configured");
+    const token = await new SignJWT({}).setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setIssuer("nori-service").setAudience(audience).setIssuedAt().setExpirationTime("60s").sign(key);
+    return `Bearer ${token}`;
+  }
+  if (cloud !== "gcp") throw new Error("Local deployments require the loopback development proxy");
   const token = await google.getAccessToken();
   if (!token) throw new Error("No runtime credentials");
   return `Bearer ${token}`;

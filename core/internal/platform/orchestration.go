@@ -7,16 +7,17 @@ import (
 
 	"nori/internal/dispatch"
 	"nori/internal/secret"
+	"nori/internal/secret/awssecrets"
 	"nori/internal/secret/secretmanager"
 	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/task"
 	"nori/internal/wake"
+	"nori/internal/wake/awssqs"
 	"nori/internal/wake/cloudtasks"
 )
 
-// Waker returns the wake adapter this process is configured for. Cloud Tasks
-// is the only adapter today; a process with nothing to wake gets wake.Disabled.
+// Waker selects Cloud Tasks on GCP, SQS and Scheduler on AWS, or in-process local delivery.
 //
 // withConversation requires the hosted conversation wake (NORI_WAKE_QUEUE,
 // NORI_RUNTIME_URL), which only a process that sends it may ask for. Worker
@@ -24,6 +25,19 @@ import (
 // NORI_WAKE_SERVICE_ACCOUNT names the caller of both. TEMPORAL_LOCAL=true admits
 // loopback targets, and CLOUD_TASKS_EMULATOR_HOST selects a loopback emulator.
 func Waker(ctx context.Context, s settings.Settings, withConversation bool) (wake.Waker, error) {
+	if s.Cloud == "local" {
+		return wake.Disabled{}, nil
+	}
+	if s.Cloud == "aws" {
+		if !withConversation && s.Wake.WorkerServices == "" {
+			return wake.Disabled{}, nil
+		}
+		cfg, err := AWSWakes(s, withConversation)
+		if err != nil {
+			return nil, err
+		}
+		return awssqs.Open(ctx, cfg)
+	}
 	cfg := cloudtasks.Config{Local: s.Temporal.Local}
 	caller := s.Wake.Caller
 	if withConversation {
@@ -54,7 +68,25 @@ func Waker(ctx context.Context, s settings.Settings, withConversation bool) (wak
 }
 
 // Secrets returns the secret store this deployment keeps credentials in.
-func Secrets() secret.Lookup { return secretmanager.Lookup{} }
+var configuredSecrets secret.Lookup = secretmanager.Lookup{}
+
+func Secrets() secret.Lookup { return configuredSecrets }
+
+func AWSWakes(s settings.Settings, withConversation bool) (awssqs.Config, error) {
+	cfg := awssqs.Config{Region: s.AWS.Region, QueueURL: s.AWS.WakeQueueURL, QueueARN: s.AWS.WakeQueueARN, ScheduleGroup: s.AWS.ScheduleGroup, ScheduleRoleARN: s.AWS.ScheduleRoleARN, DeadLetterARN: s.AWS.WakeDeadLetterARN, Auth: s.ServiceAuth, Local: s.Temporal.Local}
+	if withConversation {
+		if s.Wake.RuntimeURL == "" {
+			return cfg, fmt.Errorf("NORI_RUNTIME_URL must be configured")
+		}
+		cfg.RuntimeURL = s.Wake.RuntimeURL
+	}
+	if s.Wake.WorkerServices != "" {
+		if err := json.Unmarshal([]byte(s.Wake.WorkerServices), &cfg.Workers); err != nil || len(cfg.Workers) == 0 {
+			return cfg, fmt.Errorf("invalid NORI_WORKER_SERVICES")
+		}
+	}
+	return cfg, nil
+}
 
 // Engine connects to the task engine that Configure set up.
 func Engine(ctx context.Context, userID string) (*task.Engine, error) {
@@ -76,4 +108,12 @@ func Dispatcher(s settings.Settings, store state.ConversationStore, engine dispa
 // Configure sets the Temporal connection once at process startup.
 func Configure(s settings.Settings) {
 	task.Configure(s.Temporal)
+	switch s.Cloud {
+	case "aws":
+		configuredSecrets = awssecrets.Lookup{Region: s.AWS.Region}
+	case "local":
+		configuredSecrets = nil
+	default:
+		configuredSecrets = secretmanager.Lookup{}
+	}
 }

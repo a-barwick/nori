@@ -50,6 +50,15 @@ limit is 10 MiB. It has a finite saved-context limit and does not include assist
 history, tasks or memories. Use the assistant for background work, shell, browser,
 PDF or image analysis. See [Chats](docs/site/chat-client.html).
 
+## Infrastructure
+
+`NORI_CLOUD` selects `gcp` (default), `aws`, or `local`. AWS uses Postgres by default,
+S3, SQS with a wake consumer and EventBridge Scheduler, Secrets Manager, and an
+EC2 computer reached through SSM. OIDC verifies sign-in and short-lived signed
+tokens authenticate trusted service calls. See [AWS configuration](core/infrastructure/aws/README.md)
+for required services, identity-provider integration and verification limits.
+This repository does not provision or deploy an AWS environment.
+
 ## Durable tasks
 
 The deployed task API uses Temporal Cloud. Tasks can wait across worker shutdown

@@ -11,7 +11,7 @@ service accounts.
 Storage sits behind contracts. `internal/state` holds the records, the
 `ConversationStore` interface and the write rules. `internal/state/records` applies
 them through Firestore or Postgres transactions; `internal/state/gcs` or `internal/state/localfs`
-stores screenshot bytes. `internal/usage` calculates reported model costs. Only `internal/platform` names a
+stores screenshot bytes; AWS selects `internal/state/s3`. `internal/usage` calculates reported model costs. Only `internal/platform` names a
 backend: `platform.OpenStore(ctx, settings, user)` returns an immutable user-scoped `state.ConversationStore`. Every data operation keeps that scope, including detached cleanup and spend recording. The operator pause remains global.
 
 ## Local development
@@ -32,7 +32,8 @@ Credentials are used in place. Required names are in
 ## Users
 
 The `users` collection holds the sign-in email, display name, time zone, notification
-email, calendar connection and computer for each user. Sign-in verifies Google IAP,
+email, calendar connection and computer for each user. Sign-in verifies Google IAP by default,
+or the configured OIDC issuer on AWS,
 then the web server resolves that email through `/api/users/resolve` using its own
 credentials. It prefixes upstream routes with `/users/<id>/`; browser-supplied IDs
 never select a user. Loopback development uses `NORI_LOCAL_EMAIL` (or the existing
@@ -128,13 +129,14 @@ computer or a model; `/healthz` does not verify those services are reachable.
 | `NORI_WORKER_SERVICES`, `NORI_WORKER_WAKE_QUEUE`, `CLOUD_TASKS_EMULATOR_HOST` | Optional request-driven workers: JSON map of immutable build to service root URL, the Cloud Tasks queue that wakes them (OIDC, same caller), and a loopback Cloud Tasks emulator for local runs. Without `NORI_WORKER_SERVICES`, workers poll on their own |
 | `OPENROUTER_API_KEY` | Inner worker credential from the project `.env` |
 | `MODEL_NAME` | Inner worker model; default `openai/gpt-6.1-terra` through OpenRouter Responses |
-| `ARTIFACT_BUCKET` | Private screenshot bucket |
+| `NORI_CLOUD` | `gcp` (default), `aws`, or `local`; see [AWS adapters](infrastructure/aws/README.md) |
+| `ARTIFACT_BUCKET` | Private Cloud Storage or S3 bucket, selected by cloud |
 | `NORI_STATE_EMULATOR_HOST` | App-data Firestore emulator on a loopback address; refused when `FIRESTORE_EMULATOR_HOST` is also set. |
 | `NORI_LOCAL_ARTIFACT_DIR` | Absolute private folder for screenshots instead of the bucket. Needs a loopback database and `TEMPORAL_LOCAL=true` |
 | User row `computer` | Existing retained computer, or a loopback development URL |
 | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | Shared API/worker connection and task queue |
 | `TEMPORAL_API_KEY` | TLS connection key loaded from the selected env file |
-| `TEMPORAL_API_KEY_SECRET_VERSION` | Existing deployed alternative: ADC reads a Secret Manager version |
+| `TEMPORAL_API_KEY_SECRET_VERSION` | Secret reference: GCP Secret Manager version or AWS Secrets Manager name/ARN |
 | `TEMPORAL_DEPLOYMENT_NAME`, `TEMPORAL_BUILD_ID` | Worker deployment and immutable release version |
 
 From `core/`, run the local API and inner worker independently:

@@ -59,12 +59,17 @@ func serveSlices(ctx context.Context, s settings.Settings, cfg config, waker wak
 	if s.Temporal.Local {
 		addr = "127.0.0.1:" + s.Port
 	}
-	server := httpserver.New(ctx, addr, workerservice.Handler(ctx, func(ctx context.Context, id string, ids []string, registration bool) error {
+	handler := workerservice.Handler(ctx, func(ctx context.Context, id string, ids []string, registration bool) error {
 		if registration {
 			return register(ctx, s, cfg)
 		}
 		return run(ctx, s, cfg, waker, id, ids, true)
-	}))
+	})
+	authenticated, err := platform.ServiceHandler(s, handler, s.Temporal.Local)
+	if err != nil {
+		return err
+	}
+	server := httpserver.New(ctx, addr, authenticated)
 	server.WriteTimeout = 11 * time.Minute
 	if err := httpserver.Listen(ctx, server, 5*time.Minute); err != nil {
 		observability.RecordErrorCategory(ctx, "http.listen", err)
