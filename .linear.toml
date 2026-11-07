@@ -1,0 +1,6 @@
+# linear cli
+# https://github.com/schpet/linear-cli
+
+workspace = "a-barwick"
+team_id = "AB"
+issue_sort = "priority"
