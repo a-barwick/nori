@@ -1,6 +1,6 @@
 # Nori core
 
-The Go API owns durable conversation and task admission in Firestore. Both
+The Go API owns durable conversation and task admission in the configured database. Both
 `cmd/nori-local` and `cmd/nori` use the same conversation runner, OpenRouter
 model, and advisory Jev hints. Temporal owns inner task execution; a separate Go
 worker calls OpenRouter Responses and the retained Firecracker computer. Screenshots
@@ -9,8 +9,8 @@ verified sign-in; hosted runtime IAM admits the web and queue caller
 service accounts.
 
 Storage sits behind contracts. `internal/state` holds the records, the
-`ConversationStore` interface and the write rules; `internal/state/firestore`
-implements its documents, and `internal/state/gcs` or `internal/state/localfs`
+`ConversationStore` interface and the write rules. `internal/state/records` applies
+them through Firestore or Postgres transactions; `internal/state/gcs` or `internal/state/localfs`
 stores screenshot bytes. `internal/usage` calculates reported model costs. Only `internal/platform` names a
 backend: `platform.OpenStore(ctx, settings, user)` returns an immutable user-scoped `state.ConversationStore`. Every data operation keeps that scope, including detached cleanup and spend recording. The operator pause remains global.
 
@@ -19,9 +19,9 @@ backend: `platform.OpenStore(ctx, settings, user)` returns an immutable user-sco
 Requires Go 1.26, the web dependencies, and the configured provider credentials.
 Run `make dev` from the repository root for loopback web and Go servers. The
 local Go entrypoint recovers pending conversation work at startup and processes
-it on its application lifecycle, independently of browser requests. Firestore
-and Temporal remain the configured backing services; select their emulators
-explicitly for an isolated local run.
+it on its application lifecycle, independently of browser requests. `make deps`
+starts isolated Postgres and Temporal; see [local setup](infrastructure/local/README.md).
+Firestore stays the default unless `NORI_STORE_BACKEND=postgres` is set.
 
 Commands load the monorepo-root `.env` without overriding existing environment
 variables. Keep it gitignored and mode 600. `NORI_ENV_FILE` selects an existing
@@ -121,7 +121,8 @@ computer or a model; `/healthz` does not verify those services are reachable.
 | `OPENAI_API_KEY`, `JEV_API_KEY` | Required conversation provider credentials for both entrypoints |
 | `NORI_AGENT_MODEL` | Conversation model; default `gpt-6.1-sol`. It runs through OpenAI's platform API at a fixed endpoint, with low reasoning and the standard tier |
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
-| `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |
+| `NORI_STORE_BACKEND`, `NORI_POSTGRES_URL` | Firestore by default; `postgres` selects a Postgres connection and applies numbered migrations at startup |
+| `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required for Firestore, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |
 | `FIRESTORE_EMULATOR_HOST`, `TEMPORAL_LOCAL` | Explicit local Firestore endpoint and local Temporal mode; absent/false uses configured services |
 | `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and the API base URL that wakes POST to at `/users/<id>/api/process`. Production passes the native Agent Runtime invoke root, which ends in `/api`. Any `https` host is accepted, or loopback `http` when `TEMPORAL_LOCAL=true` |
 | `NORI_WORKER_SERVICES`, `NORI_WORKER_WAKE_QUEUE`, `CLOUD_TASKS_EMULATOR_HOST` | Optional request-driven workers: JSON map of immutable build to service root URL, the Cloud Tasks queue that wakes them (OIDC, same caller), and a loopback Cloud Tasks emulator for local runs. Without `NORI_WORKER_SERVICES`, workers poll on their own |
@@ -129,7 +130,7 @@ computer or a model; `/healthz` does not verify those services are reachable.
 | `MODEL_NAME` | Inner worker model; default `openai/gpt-6.1-terra` through OpenRouter Responses |
 | `ARTIFACT_BUCKET` | Private screenshot bucket |
 | `NORI_STATE_EMULATOR_HOST` | App-data Firestore emulator on a loopback address; refused when `FIRESTORE_EMULATOR_HOST` is also set. |
-| `NORI_LOCAL_ARTIFACT_DIR` | Absolute private folder for screenshots instead of the bucket. Needs a loopback Firestore emulator and `TEMPORAL_LOCAL=true` |
+| `NORI_LOCAL_ARTIFACT_DIR` | Absolute private folder for screenshots instead of the bucket. Needs a loopback database and `TEMPORAL_LOCAL=true` |
 | User row `computer` | Existing retained computer, or a loopback development URL |
 | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | Shared API/worker connection and task queue |
 | `TEMPORAL_API_KEY` | TLS connection key loaded from the selected env file |

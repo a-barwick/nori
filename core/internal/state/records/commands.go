@@ -1,12 +1,12 @@
-package firestore
+package records
 
 import (
 	"context"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/observability"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
 // AcceptCommandBatch validates every command before writing any of them. The caller's IDs are the durable delivery
@@ -17,7 +17,7 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 	}
 	var receipts []state.CommandReceipt
 	traceContext := observability.InjectTrace(ctx)
-	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		receipts = make([]state.CommandReceipt, 0, len(commands))
 		batch, err := d.readCommandBatch(tx, commands)
 		if err != nil {
@@ -38,7 +38,7 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 }
 
 // readCommandBatch completes all document reads before the transaction writes, including for repeated task IDs.
-func (d *Database) readCommandBatch(tx *firestore.Transaction, commands []state.Command) (state.CommandBatch, error) {
+func (d *Database) readCommandBatch(tx *docstore.Transaction, commands []state.Command) (state.CommandBatch, error) {
 	batch := state.NewCommandBatch()
 	for _, cmd := range commands {
 		doc, err := tx.Get(d.commands().Doc(cmd.ID))
@@ -89,7 +89,7 @@ func (d *Database) readCommandBatch(tx *firestore.Transaction, commands []state.
 // admitCommandBatch is part of the acceptance transaction: input acceptance and new task admission serialize on the
 // same conversation control document. A batch of replays is not admitted again.
 func (d *Database) admitCommandBatch(
-	tx *firestore.Transaction, commands []state.Command, batch state.CommandBatch, fence *state.ConversationFence,
+	tx *docstore.Transaction, commands []state.Command, batch state.CommandBatch, fence *state.ConversationFence,
 ) (state.Control, error) {
 	if batch.AllDuplicates(commands) {
 		return state.Control{}, nil
@@ -115,7 +115,7 @@ func (d *Database) admitCommandBatch(
 }
 
 func (d *Database) writeCommandBatch(
-	tx *firestore.Transaction, batch state.CommandBatch, prepared state.PreparedCommands, traceContext map[string]string,
+	tx *docstore.Transaction, batch state.CommandBatch, prepared state.PreparedCommands, traceContext map[string]string,
 ) error {
 	if len(prepared.Changed) == 0 && len(prepared.Accepted) == 0 && len(prepared.ReadyEvents) == 0 {
 		return nil
@@ -151,7 +151,7 @@ func (d *Database) writeCommandBatch(
 // appendHeldEvents handles registration after a task finished. Reading the run in the registration transaction
 // serializes it against terminal publication. All event reads precede writes, including batches with several
 // terminal tasks.
-func (d *Database) appendHeldEvents(tx *firestore.Transaction, events []state.TaskEvent, traceContext map[string]string) error {
+func (d *Database) appendHeldEvents(tx *docstore.Transaction, events []state.TaskEvent, traceContext map[string]string) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -181,7 +181,7 @@ func (d *Database) appendHeldEvents(tx *firestore.Transaction, events []state.Ta
 
 // appendTaskEvent is called after the task transaction's other reads and before its writes. The state transition and
 // outer inbox insertion commit together. It reports false when the same event was already in the inbox.
-func (d *Database) appendTaskEvent(tx *firestore.Transaction, event state.TaskEvent, traceContext map[string]string) (bool, error) {
+func (d *Database) appendTaskEvent(tx *docstore.Transaction, event state.TaskEvent, traceContext map[string]string) (bool, error) {
 	ref := d.conversationInputs().Doc(state.TaskEventInputID(event.ID))
 	doc, err := tx.Get(ref)
 	if err == nil {

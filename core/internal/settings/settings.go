@@ -51,6 +51,7 @@ type Models struct {
 }
 
 type Store struct {
+	Backend, PostgresURL string
 	// Project is the Google Cloud project and Database its Firestore database. Neither has a default.
 	Project, Database string
 	// ArtifactBucket is the Cloud Storage bucket for file bytes.
@@ -149,6 +150,15 @@ func Load() (Settings, error) {
 	if math.IsNaN(s.TaskBudgetUSD) || math.IsInf(s.TaskBudgetUSD, 0) || s.TaskBudgetUSD <= 0 {
 		return Settings{}, fmt.Errorf("NORI_TASK_BUDGET_USD must be a positive dollar amount")
 	}
+	switch s.Store.Backend {
+	case "firestore":
+	case "postgres":
+		if _, err := Required("NORI_POSTGRES_URL", s.Store.PostgresURL); err != nil {
+			return Settings{}, err
+		}
+	default:
+		return Settings{}, fmt.Errorf("NORI_STORE_BACKEND must be firestore or postgres")
+	}
 	if err := s.Metering.Validate(); err != nil {
 		return Settings{}, err
 	}
@@ -162,6 +172,7 @@ func FromEnvironment() Settings {
 		taskBudget = math.NaN()
 	}
 	store := Store{
+		Backend: get("NORI_STORE_BACKEND", "firestore"), PostgresURL: os.Getenv("NORI_POSTGRES_URL"),
 		Project: os.Getenv("NORI_PROJECT_ID"), Database: os.Getenv("FIRESTORE_DATABASE_ID"), ArtifactBucket: os.Getenv("ARTIFACT_BUCKET"),
 		StateEmulator: os.Getenv("NORI_STATE_EMULATOR_HOST"), FirestoreEmulator: os.Getenv("FIRESTORE_EMULATOR_HOST"),
 		LocalArtifactDir: os.Getenv("NORI_LOCAL_ARTIFACT_DIR"),
@@ -174,7 +185,7 @@ func FromEnvironment() Settings {
 		CloudRunID: os.Getenv("TEMPORAL_CLOUD_RUN_ID") == "true",
 	}
 	var credentials []string
-	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN"} {
+	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL"} {
 		if value := os.Getenv(name); value != "" {
 			credentials = append(credentials, value)
 		}

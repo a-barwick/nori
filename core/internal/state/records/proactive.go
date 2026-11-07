@@ -1,23 +1,23 @@
-package firestore
+package records
 
 import (
 	"context"
 	"sort"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
-func (d *Database) proactiveChecks() *firestore.CollectionRef {
+func (d *Database) proactiveChecks() *docstore.CollectionRef {
 	return d.root().Collection("proactive_checks")
 }
-func (d *Database) offers() *firestore.CollectionRef { return d.root().Collection("proactive_offers") }
-func (d *Database) proactiveDays() *firestore.CollectionRef {
+func (d *Database) offers() *docstore.CollectionRef { return d.root().Collection("proactive_offers") }
+func (d *Database) proactiveDays() *docstore.CollectionRef {
 	return d.root().Collection("proactive_days")
 }
 
-func (d *Database) readProactiveDay(tx *firestore.Transaction, day string) (state.ProactiveDay, error) {
+func (d *Database) readProactiveDay(tx *docstore.Transaction, day string) (state.ProactiveDay, error) {
 	var saved state.ProactiveDay
 	doc, err := tx.Get(d.proactiveDays().Doc(day))
 	if notFound(err) {
@@ -29,7 +29,7 @@ func (d *Database) readProactiveDay(tx *firestore.Transaction, day string) (stat
 	return saved, doc.DataTo(&saved)
 }
 
-func (d *Database) readOffer(tx *firestore.Transaction, id string) (state.Offer, error) {
+func (d *Database) readOffer(tx *docstore.Transaction, id string) (state.Offer, error) {
 	var o state.Offer
 	doc, err := tx.Get(d.offers().Doc(id))
 	if notFound(err) {
@@ -44,7 +44,7 @@ func (d *Database) readOffer(tx *firestore.Transaction, id string) (state.Offer,
 func (d *Database) BeginProactiveCheck(ctx context.Context, id, day, owner string, manual bool) (state.ProactiveCheck, bool, error) {
 	var check state.ProactiveCheck
 	var proceed bool
-	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var saved *state.ProactiveCheck
 		doc, err := tx.Get(d.proactiveChecks().Doc(id))
 		if err == nil {
@@ -76,7 +76,7 @@ func (d *Database) BeginProactiveCheck(ctx context.Context, id, day, owner strin
 
 // FinishProactiveCheck saves the check's outcome if this caller still holds it.
 func (d *Database) FinishProactiveCheck(ctx context.Context, check state.ProactiveCheck) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var saved state.ProactiveCheck
 		doc, err := tx.Get(d.proactiveChecks().Doc(check.ID))
 		if err != nil {
@@ -97,7 +97,7 @@ func (d *Database) FinishProactiveCheck(ctx context.Context, check state.Proacti
 func (d *Database) ClaimOffer(ctx context.Context, offer state.Offer) (state.Offer, bool, error) {
 	var saved state.Offer
 	var proceed bool
-	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var err error
 		saved, err = d.readOffer(tx, offer.ID)
 		if err == nil {
@@ -116,7 +116,7 @@ func (d *Database) ClaimOffer(ctx context.Context, offer state.Offer) (state.Off
 
 // ChargeProactive reserves one planning call, or a prep task's whole budget, against the day's cap.
 func (d *Database) ChargeProactive(ctx context.Context, day string, prep bool) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		counts, err := d.readProactiveDay(tx, day)
 		if err != nil {
 			return err
@@ -134,7 +134,7 @@ func (d *Database) ChargeProactive(ctx context.Context, day string, prep bool) e
 }
 
 func (d *Database) SettleProactivePlan(ctx context.Context, day string, cost *float64) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		counts, err := d.readProactiveDay(tx, day)
 		if err != nil {
 			return err
@@ -145,7 +145,7 @@ func (d *Database) SettleProactivePlan(ctx context.Context, day string, cost *fl
 
 // SavePlannedOffer stores the planned text and time of an offer that is still being planned.
 func (d *Database) SavePlannedOffer(ctx context.Context, offer state.Offer) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		saved, err := d.readOffer(tx, offer.ID)
 		if err != nil {
 			return err
@@ -185,7 +185,7 @@ func (d *Database) GetOffer(ctx context.Context, id string) (state.Offer, error)
 // about the offer, text is what the user sees, and protocol is the turn's saved model history.
 func (d *Database) DeliverOffer(ctx context.Context, id, day, note, text string, protocol []string, now time.Time) (state.Offer, error) {
 	var offer state.Offer
-	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var err error
 		if offer, err = d.readOffer(tx, id); err != nil {
 			return err
@@ -244,7 +244,7 @@ func (d *Database) DeliverOffer(ctx context.Context, id, day, note, text string,
 // DecideOffer records the user's accept or dismiss and updates the card on the offer's message.
 func (d *Database) DecideOffer(ctx context.Context, id, decision string) (state.Offer, error) {
 	var offer state.Offer
-	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var err error
 		if offer, err = d.readOffer(tx, id); err != nil {
 			return err

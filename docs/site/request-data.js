@@ -41,7 +41,7 @@ window.REQUEST_FLOW = [
       note: 'The action schema is shortened. The runtime validates commands, saves receipts and acknowledges acceptance. Cost is calculated from token usage.' },
   ],
   [ // 4. Commands are validated together, then accepted
-    { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'task_commands/{id}', source: 'core/internal/state/firestore/commands.go',
+    { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'task_commands/{id}', source: 'core/internal/state/records/commands.go',
       saved: { id: WEATHER, run_id: WEATHER, kind: 'start', text: REQUEST, position: 1, revision: 1, delivered: false, source_input_ids: [INPUT], created_at: TIME },
       note: 'The start command\'s ID is also the task ID. There\'s one of these per dispatch.' },
     { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'runs/{id}', source: 'core/internal/state/run.go',
@@ -56,7 +56,7 @@ window.REQUEST_FLOW = [
       request: { workflow_id: `nori-task-${WEATHER}`, workflow_type: 'nori-task-v3', args: [WEATHER], signal: 'task-command',
         signal_payload: { id: WEATHER, run_id: WEATHER, kind: 'start', text: REQUEST, position: 1, revision: 1 } },
       note: 'A retry reaches the same workflow ID, so redelivery can\'t start a second workflow.' },
-    { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'task_commands/{id}', source: 'core/internal/state/firestore/commands.go',
+    { from: 'Go service', to: 'Firestore', edge: 'service-firestore', call: 'task_commands/{id}', source: 'core/internal/state/records/commands.go',
       saved: { id: WEATHER, delivered: true, '…': 'other fields unchanged' } },
     { from: 'Cloud Tasks', to: 'Worker', edge: 'temporal-inner', call: 'POST /run', source: 'core/internal/workerservice/handler.go',
       request: { workflow_ids: [`nori-task-${WEATHER}`] },
@@ -79,7 +79,7 @@ window.REQUEST_FLOW = [
       note: 'This is a display copy. The workflow holds the real spend figure.' },
   ],
   [ // 7. The result comes back as a conversation event
-    { from: 'Worker', to: 'Firestore', edge: 'inner-firestore', call: 'conversation_inputs/event-{id}', source: 'core/internal/state/firestore/commands.go',
+    { from: 'Worker', to: 'Firestore', edge: 'inner-firestore', call: 'conversation_inputs/event-{id}', source: 'core/internal/state/records/commands.go',
       saved: { id: `event-${WEATHER}-terminal`, position: 13, created_at: TIME, event: { id: `${WEATHER}-terminal`, run_id: WEATHER, kind: 'result', sequence: 1, instruction_revision: 1, text: 'Saturday in Tucson looks sunny, around 82°F.', created_at: TIME } },
       note: 'Saved in the same transaction as the task\'s final state. Other kinds are needs_input, failure and stopped.' },
     { from: 'Go service', to: 'OpenAI', edge: 'service-models', call: 'POST /chat/completions', source: 'core/internal/conversation/openai.go',

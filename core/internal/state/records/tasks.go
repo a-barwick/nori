@@ -1,12 +1,12 @@
-package firestore
+package records
 
 import (
 	"context"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/observability"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
 func (d *Database) Accept(ctx context.Context, cmd state.Command) (state.Run, error) {
@@ -31,7 +31,7 @@ func (d *Database) Pending(ctx context.Context) ([]state.Command, error) {
 }
 
 func (d *Database) Delivered(ctx context.Context, commandID string) error {
-	_, err := d.commands().Doc(commandID).Update(ctx, []firestore.Update{{Path: "delivered", Value: true}})
+	_, err := d.commands().Doc(commandID).Update(ctx, []docstore.Update{{Path: "delivered", Value: true}})
 	return err
 }
 
@@ -50,7 +50,7 @@ func (d *Database) Reconcile(ctx context.Context, runID string) (state.TaskSnaps
 }
 
 func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		ref := d.runs().Doc(req.RunID)
 		run, err := decodeRun(tx.Get(ref))
 		if err != nil {
@@ -66,9 +66,9 @@ func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest
 		if err != nil {
 			return err
 		}
-		updates := []firestore.Update{{Path: "incorporated", Value: req.Position}}
+		updates := []docstore.Update{{Path: "incorporated", Value: req.Position}}
 		if plan.ClearQuestion {
-			updates = append(updates, firestore.Update{Path: "waiting", Value: ""}, firestore.Update{Path: "question", Value: firestore.Delete})
+			updates = append(updates, docstore.Update{Path: "waiting", Value: ""}, docstore.Update{Path: "question", Value: docstore.Delete})
 		}
 		if err = log.add(state.EventTask, req.RunID); err != nil {
 			return err
@@ -78,7 +78,7 @@ func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest
 }
 
 // guard additionally fences new paid work while execution is paused.
-func (d *Database) guard(tx *firestore.Transaction, runID string, revision int64) (state.Run, error) {
+func (d *Database) guard(tx *docstore.Transaction, runID string, revision int64) (state.Run, error) {
 	run, err := decodeRun(tx.Get(d.runs().Doc(runID)))
 	if err != nil {
 		return run, err
@@ -99,7 +99,7 @@ func (d *Database) guard(tx *firestore.Transaction, runID string, revision int64
 
 func (d *Database) Guard(ctx context.Context, runID string, revision int64) (state.Run, error) {
 	var run state.Run
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var err error
 		run, err = d.guard(tx, runID, revision)
 		return err
@@ -108,7 +108,7 @@ func (d *Database) Guard(ctx context.Context, runID string, revision int64) (sta
 }
 
 func (d *Database) Admit(ctx context.Context, runID string, revision int64, operation string) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		if _, err := d.guard(tx, runID, revision); err != nil {
 			return err
 		}
@@ -117,15 +117,15 @@ func (d *Database) Admit(ctx context.Context, runID string, revision int64, oper
 		if err := tx.Create(d.runs().Doc(runID).Collection("operations").Doc(operation), admitted); err != nil {
 			return err
 		}
-		return tx.Update(d.runs().Doc(runID), []firestore.Update{
-			{Path: "operation_refs", Value: firestore.ArrayUnion(operation)}, {Path: "cleanup_pending", Value: true},
+		return tx.Update(d.runs().Doc(runID), []docstore.Update{
+			{Path: "operation_refs", Value: docstore.ArrayUnion(operation)}, {Path: "cleanup_pending", Value: true},
 		})
 	})
 }
 
 func (d *Database) ClaimWrite(ctx context.Context, runID string, revision int64, operation string) (state.OperationRecord, error) {
 	var used state.OperationRecord
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		if _, err := d.guard(tx, runID, revision); err != nil {
 			return err
 		}
@@ -143,13 +143,13 @@ func (d *Database) ClaimWrite(ctx context.Context, runID string, revision int64,
 		}
 		used = op
 		used.Outcome, used.Attempt = "attempted", 1
-		return tx.Set(ref, map[string]any{"outcome": used.Outcome, "attempt": used.Attempt, "action": used.Action}, firestore.MergeAll)
+		return tx.Set(ref, map[string]any{"outcome": used.Outcome, "attempt": used.Attempt, "action": used.Action}, docstore.MergeAll)
 	})
 	return used, err
 }
 
 func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		log, err := d.openLog(tx)
 		if err != nil {
 			return err
@@ -162,8 +162,8 @@ func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error 
 			return err
 		}
 		// A new projection supersedes the last job progress line.
-		return tx.Update(d.runs().Doc(req.RunID), []firestore.Update{
-			{Path: "waiting", Value: waiting}, {Path: "progress", Value: ""}, {Path: "events", Value: firestore.ArrayUnion(event)},
+		return tx.Update(d.runs().Doc(req.RunID), []docstore.Update{
+			{Path: "waiting", Value: waiting}, {Path: "progress", Value: ""}, {Path: "events", Value: docstore.ArrayUnion(event)},
 		})
 	})
 }
@@ -171,7 +171,7 @@ func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error 
 // SetProgress replaces the task's latest progress line. Unlike Project it adds no event, so polling a long job can't
 // grow the task's saved record.
 func (d *Database) SetProgress(ctx context.Context, runID string, revision int64, text string) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		run, err := d.guard(tx, runID, revision)
 		if err != nil {
 			return err
@@ -187,14 +187,14 @@ func (d *Database) SetProgress(ctx context.Context, runID string, revision int64
 		if err = log.add(state.EventTask, runID); err != nil {
 			return err
 		}
-		return tx.Update(d.runs().Doc(runID), []firestore.Update{{Path: "progress", Value: text}})
+		return tx.Update(d.runs().Doc(runID), []docstore.Update{{Path: "progress", Value: text}})
 	})
 }
 
 // ProjectQuestion commits the durable wait and its outer inbox event together.
 func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision int64, question state.Question) error {
 	traceContext := observability.InjectTrace(ctx)
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		run, err := d.guard(tx, runID, revision)
 		if err != nil {
 			return err
@@ -232,7 +232,7 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 	var run state.Run
 	routingPending := false
 	traceContext := observability.InjectTrace(ctx)
-	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		routingPending = false
 		ref := d.runs().Doc(req.RunID)
 		var err error
@@ -252,7 +252,7 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			if conversation.RoutingPending() {
 				routingPending = true
 				run = state.DeferPublication(run)
-				return tx.Update(ref, []firestore.Update{
+				return tx.Update(ref, []docstore.Update{
 					{Path: "publication_pending", Value: true}, {Path: "publication_generation", Value: run.PublicationGeneration},
 				})
 			}
@@ -360,7 +360,7 @@ type publishInputs struct {
 	schedule *state.Schedule
 }
 
-func (d *Database) publishReads(tx *firestore.Transaction, runID string, run state.Run) (publishInputs, error) {
+func (d *Database) publishReads(tx *docstore.Transaction, runID string, run state.Run) (publishInputs, error) {
 	var in publishInputs
 	var err error
 	if in.existing, err = d.runResults(tx, runID); err != nil {
@@ -392,7 +392,7 @@ func (d *Database) publishReads(tx *firestore.Transaction, runID string, run sta
 }
 
 // stopSubtasks stops the running subtasks of a task that ended.
-func (d *Database) stopSubtasks(tx *firestore.Transaction, log *eventLog, children map[string]state.Run, runID string, now time.Time) error {
+func (d *Database) stopSubtasks(tx *docstore.Transaction, log *eventLog, children map[string]state.Run, runID string, now time.Time) error {
 	for id, child := range children {
 		stopped, stop, changed := state.StopSubtask(child, runID+":ended", now)
 		if !changed {
@@ -436,7 +436,7 @@ func (d *Database) CleanupTasks(ctx context.Context) ([]state.Run, error) {
 }
 
 func (d *Database) FinishCleanup(ctx context.Context, runID string) error {
-	_, err := d.runs().Doc(runID).Update(ctx, []firestore.Update{{Path: "cleanup_pending", Value: false}})
+	_, err := d.runs().Doc(runID).Update(ctx, []docstore.Update{{Path: "cleanup_pending", Value: false}})
 	return err
 }
 
@@ -449,7 +449,7 @@ func (d *Database) PublicationTasks(ctx context.Context) ([]state.Run, error) {
 }
 
 func (d *Database) PublicationWoken(ctx context.Context, runID string, generation int64) error {
-	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		run, err := decodeRun(tx.Get(d.runs().Doc(runID)))
 		if err != nil {
 			return err
@@ -457,7 +457,7 @@ func (d *Database) PublicationWoken(ctx context.Context, runID string, generatio
 		if !state.ShouldClearPublication(run, generation) {
 			return nil
 		}
-		return tx.Update(d.runs().Doc(runID), []firestore.Update{{Path: "publication_pending", Value: false}})
+		return tx.Update(d.runs().Doc(runID), []docstore.Update{{Path: "publication_pending", Value: false}})
 	})
 }
 
@@ -472,7 +472,7 @@ func (d *Database) TaskSteps(ctx context.Context, runID string) ([]state.TaskSte
 		return nil, err
 	}
 	steps, err := documents[state.TaskStep](
-		d.runs().Doc(runID).Collection("steps").OrderBy("started_at", firestore.Desc).Limit(state.TaskStepLimit).Documents(ctx))
+		d.runs().Doc(runID).Collection("steps").OrderBy("started_at", docstore.Desc).Limit(state.TaskStepLimit).Documents(ctx))
 	if err != nil {
 		return nil, err
 	}

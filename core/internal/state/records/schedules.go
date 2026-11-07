@@ -1,25 +1,25 @@
-package firestore
+package records
 
 import (
 	"context"
 	"sort"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
-func (d *Database) schedules() *firestore.CollectionRef { return d.root().Collection("schedules") }
-func (d *Database) notifications() *firestore.CollectionRef {
+func (d *Database) schedules() *docstore.CollectionRef { return d.root().Collection("schedules") }
+func (d *Database) notifications() *docstore.CollectionRef {
 	return d.root().Collection("notifications")
 }
-func (d *Database) notifyDays() *firestore.CollectionRef { return d.root().Collection("notify_days") }
-func (d *Database) notifySeen() *firestore.DocumentRef {
+func (d *Database) notifyDays() *docstore.CollectionRef { return d.root().Collection("notify_days") }
+func (d *Database) notifySeen() *docstore.DocumentRef {
 	return d.root().Collection("conversation").Doc("seen")
 }
 
 // readSchedule returns nil when the schedule doesn't exist.
-func (d *Database) readSchedule(tx *firestore.Transaction, id string) (*state.Schedule, error) {
+func (d *Database) readSchedule(tx *docstore.Transaction, id string) (*state.Schedule, error) {
 	doc, err := tx.Get(d.schedules().Doc(id))
 	if notFound(err) {
 		return nil, nil
@@ -34,7 +34,7 @@ func (d *Database) readSchedule(tx *firestore.Transaction, id string) (*state.Sc
 // Schedules returns every saved schedule, oldest first. Open ones are bounded when they are created; closed ones stay
 // as history.
 func (d *Database) Schedules(ctx context.Context) ([]state.Schedule, error) {
-	it := d.schedules().OrderBy("created_at", firestore.Asc).Limit(500).Documents(ctx)
+	it := d.schedules().OrderBy("created_at", docstore.Asc).Limit(500).Documents(ctx)
 	defer it.Stop()
 	return documents[state.Schedule](it)
 }
@@ -42,7 +42,7 @@ func (d *Database) Schedules(ctx context.Context) ([]state.Schedule, error) {
 // ChangeScheduleNow applies a pause, resume or cancel from a client control to the saved schedule.
 func (d *Database) ChangeScheduleNow(ctx context.Context, id, change string, location *time.Location, now time.Time) (state.Schedule, error) {
 	var s state.Schedule
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		prior, err := d.readSchedule(tx, id)
 		if err != nil {
 			return err
@@ -59,7 +59,7 @@ func (d *Database) ChangeScheduleNow(ctx context.Context, id, change string, loc
 }
 
 // readScheduleChanges reads the schedules a turn's changes touch, before the publish transaction writes anything.
-func (d *Database) readScheduleChanges(tx *firestore.Transaction, changes []state.ScheduleChangeRequest) (map[string]*state.Schedule, error) {
+func (d *Database) readScheduleChanges(tx *docstore.Transaction, changes []state.ScheduleChangeRequest) (map[string]*state.Schedule, error) {
 	saved := map[string]*state.Schedule{}
 	for _, c := range changes {
 		s, err := d.readSchedule(tx, c.ID)
@@ -75,7 +75,7 @@ func (d *Database) readScheduleChanges(tx *firestore.Transaction, changes []stat
 // reply was written; they are applied again here to the saved schedules, so a change made since is kept. A refused
 // change means none apply.
 func (d *Database) writeScheduleChanges(
-	tx *firestore.Transaction, t state.ConversationTurn, saved map[string]*state.Schedule, now time.Time,
+	tx *docstore.Transaction, t state.ConversationTurn, saved map[string]*state.Schedule, now time.Time,
 ) error {
 	for _, c := range t.Attempt.Schedules {
 		if c.Error != "" {
@@ -120,7 +120,7 @@ func (d *Database) ClaimSchedule(
 	ctx context.Context, id, key, runID, reason string, message *state.ScheduleMessage, now time.Time,
 ) (state.Schedule, error) {
 	var saved state.Schedule
-	err := d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		s, err := d.readSchedule(tx, id)
 		if err != nil {
 			return err
@@ -177,7 +177,7 @@ func (d *Database) ClaimSchedule(
 
 // ArmSchedule records the time of the timed wake asked for, so the next pass doesn't ask again.
 func (d *Database) ArmSchedule(ctx context.Context, id string, at time.Time) error {
-	_, err := d.schedules().Doc(id).Update(ctx, []firestore.Update{{Path: "armed_for", Value: at.UTC()}})
+	_, err := d.schedules().Doc(id).Update(ctx, []docstore.Update{{Path: "armed_for", Value: at.UTC()}})
 	return err
 }
 
@@ -198,7 +198,7 @@ func (d *Database) ReadPosition(ctx context.Context) (state.NotifySeenMark, erro
 // MarkSeen records the newest reply shown in a client's viewport. The mark only moves forward, and its event is
 // committed with the mark so other clients can resume it after being offline.
 func (d *Database) MarkSeen(ctx context.Context, messageID string) error {
-	return d.logged(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		doc, err := tx.Get(d.messages().Doc(messageID))
 		if notFound(err) {
 			return state.ErrNotFound
@@ -251,7 +251,7 @@ func (d *Database) PendingNotifications(ctx context.Context) ([]state.Notificati
 func (d *Database) ClaimNotification(ctx context.Context, id string, quiet state.QuietHours, local time.Time) (state.Notification, string, error) {
 	var n state.Notification
 	var decision string
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		doc, err := tx.Get(d.notifications().Doc(id))
 		if err != nil {
 			return err
@@ -300,9 +300,9 @@ func (d *Database) ClaimNotification(ctx context.Context, id string, quiet state
 
 // FinishNotification records what a claimed send did.
 func (d *Database) FinishNotification(ctx context.Context, id, status, reason string, now time.Time) error {
-	updates := []firestore.Update{{Path: "status", Value: status}, {Path: "reason", Value: reason}}
+	updates := []docstore.Update{{Path: "status", Value: status}, {Path: "reason", Value: reason}}
 	if status == state.NotifySent {
-		updates = append(updates, firestore.Update{Path: "sent_at", Value: now.UTC()})
+		updates = append(updates, docstore.Update{Path: "sent_at", Value: now.UTC()})
 	}
 	_, err := d.notifications().Doc(id).Update(ctx, updates)
 	return err
