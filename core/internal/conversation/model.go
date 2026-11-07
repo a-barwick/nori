@@ -20,7 +20,8 @@ type ReplyModel interface {
 // ReplyRequest is everything one turn gives the model. The runner builds a fresh request for each call, so adapters
 // hold no per-call state.
 type ReplyRequest struct {
-	Messages []json.RawMessage
+	DisableSchedules bool
+	Messages         []json.RawMessage
 	// Stream receives cumulative visible text; returning an error stops provider I/O.
 	Stream func(string) error
 	// Tools are server-selected foreground tool schemas.

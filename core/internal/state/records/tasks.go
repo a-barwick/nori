@@ -125,7 +125,7 @@ func (d *Database) Admit(ctx context.Context, runID string, revision int64, oper
 
 func (d *Database) ClaimWrite(ctx context.Context, runID string, revision int64, operation string) (state.OperationRecord, error) {
 	var used state.OperationRecord
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		if _, err := d.guard(tx, runID, revision); err != nil {
 			return err
 		}
@@ -140,6 +140,13 @@ func (d *Database) ClaimWrite(ctx context.Context, runID string, revision int64,
 		}
 		if op.Outcome != "ready" || op.Action == nil {
 			return state.ErrWriteClaimed
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		if err = log.add(state.EventOperation, runID+"/"+operation); err != nil {
+			return err
 		}
 		used = op
 		used.Outcome, used.Attempt = "attempted", 1

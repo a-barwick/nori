@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"nori/internal/conversation"
 	"nori/internal/state"
 )
 
@@ -19,7 +20,11 @@ import (
 const ChatContract = "nori-chat-2"
 
 func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"contract": ChatContract, "service": "nori", "persistence": "durable", "provider": "openai", "model": s.Model, "conversationModes": []string{"assistant", "chat"}})
+	modes := []string{"assistant", "chat"}
+	if s.Features.DisableBackgroundTasks {
+		modes = []string{"chat"}
+	}
+	writeJSON(w, 200, map[string]any{"conversationContract": "nori-conversations-1", "contract": ChatContract, "service": "nori", "persistence": "durable", "provider": "openai", "model": s.Model, "conversationModes": modes, "features": map[string]bool{"backgroundTasks": !s.Features.DisableBackgroundTasks, "jev": !s.Features.DisableBackgroundTasks && !s.Features.DisableJev, "computer": !s.Features.DisableComputer, "calendarOffers": !s.Features.DisableBackgroundTasks && !s.Features.DisableOffers, "schedules": !s.Features.DisableBackgroundTasks && !s.Features.DisableSchedules}})
 }
 func (s *server) listChats(w http.ResponseWriter, r *http.Request) {
 	chats, err := s.Chats.List(r.Context())
@@ -27,7 +32,26 @@ func (s *server) listChats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"conversations": chats})
+	rows := make([]conversationHeader, 0, len(chats)+1)
+	if !s.Features.DisableBackgroundTasks {
+		position, err := s.Tasks.Store.EventPosition(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		presence, err := s.Runner.Presence(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		header := assistantHeader(presence.Conversation, position)
+		header.Paused = &presence.Paused
+		rows = append(rows, header)
+	}
+	for _, c := range chats {
+		rows = append(rows, conversationHeader{ChatHeader: state.ChatHeader{ID: c.ID, Title: c.Title, Mode: c.Mode, ActiveTurn: c.ActiveTurn, UpdatedAt: c.UpdatedAt}, TurnPolicy: "reject_while_running"})
+	}
+	writeJSON(w, 200, map[string]any{"conversations": rows})
 }
 func (s *server) createChat(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -46,7 +70,7 @@ func (s *server) createChat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 201, c)
+	writeJSON(w, 201, chatView(c))
 }
 func (s *server) deleteChat(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("conversation")
@@ -63,16 +87,12 @@ func (s *server) deleteChat(w http.ResponseWriter, r *http.Request) {
 func (s *server) chatSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("conversation")
 	if id == "assistant" {
-		session, err := s.Runner.Snapshot(r.Context())
+		view, err := s.assistantSnapshot(r.Context(), "")
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		messages := []state.ChatMessage{}
-		for _, m := range session.Messages {
-			messages = append(messages, state.ChatMessage{ID: m.ID, Role: m.Role, Text: m.Text, Status: "completed"})
-		}
-		writeJSON(w, 200, map[string]any{"id": "assistant", "title": "Nori", "mode": "assistant", "messages": messages, "activeTurn": nil, "position": session.Position, "session": session})
+		writeJSON(w, 200, view)
 		return
 	}
 	c, err := s.Chats.Store.Chat(r.Context(), id)
@@ -80,7 +100,7 @@ func (s *server) chatSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 200, c)
+	writeJSON(w, 200, chatView(c))
 }
 
 // repairWake queues processing for a turn that should be running but may have
@@ -96,12 +116,30 @@ func (s *server) repairWake(ctx context.Context, c state.Chat) {
 
 func (s *server) chatMessage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ID          string   `json:"id"`
-		Text        string   `json:"text"`
-		Attachments []string `json:"attachments,omitempty"`
+		ID          string       `json:"id"`
+		Text        string       `json:"text"`
+		Attachments []string     `json:"attachments,omitempty"`
+		Parts       []state.Part `json:"parts,omitempty"`
 	}
 	if !decode(w, r, &body) {
 		return
+	}
+	if body.Parts != nil {
+		if body.Text != "" || len(body.Attachments) != 0 {
+			writeJSON(w, 400, map[string]string{"error": "Send parts or text and attachments, not both."})
+			return
+		}
+		for _, p := range body.Parts {
+			switch p.Type {
+			case state.PartText:
+				body.Text += p.Text
+			case state.PartAttachment:
+				body.Attachments = append(body.Attachments, p.ID)
+			default:
+				writeJSON(w, 400, map[string]string{"error": "User messages accept text and attachment parts."})
+				return
+			}
+		}
 	}
 	body.Text = strings.TrimSpace(body.Text)
 	if !validID(body.ID) || (body.Text == "" && len(body.Attachments) == 0) || len(body.Text) > state.MaxMessageBytes || len(body.Attachments) > state.MaxAttachments {
@@ -115,7 +153,21 @@ func (s *server) chatMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.PathValue("conversation") == "assistant" {
-		writeJSON(w, 400, map[string]string{"error": "Use /api/turn for the assistant."})
+		session, err := s.Runner.HandleInput(r.Context(), conversation.Input{ID: body.ID, Message: body.Text, Attachments: body.Attachments})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		view, err := s.assistantView(r.Context(), session)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if err = s.ensureWake(r.Context(), session); err != nil {
+			writeJSON(w, 503, map[string]any{"accepted": true, "conversation": view, "error": "Message saved; retry with the same ID to confirm delivery."})
+			return
+		}
+		writeJSON(w, 202, map[string]any{"turnId": body.ID, "conversation": view})
 		return
 	}
 	c, err := s.Chats.Accept(r.Context(), r.PathValue("conversation"), body.ID, body.Text, body.Attachments)
@@ -131,11 +183,11 @@ func (s *server) chatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if c.ActiveTurn != nil {
 		if err = s.wakeConversation(r.Context()); err != nil {
-			writeJSON(w, 503, map[string]any{"error": "Message saved; retry with the same ID to confirm delivery.", "accepted": true, "conversation": c})
+			writeJSON(w, 503, map[string]any{"error": "Message saved; retry with the same ID to confirm delivery.", "accepted": true, "conversation": chatView(c)})
 			return
 		}
 	}
-	writeJSON(w, 202, map[string]any{"turnId": body.ID, "conversation": c})
+	writeJSON(w, 202, map[string]any{"turnId": body.ID, "conversation": chatView(c)})
 }
 func (s *server) chatCancel(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -148,35 +200,50 @@ func (s *server) chatCancel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "Invalid turn ID."})
 		return
 	}
+	if r.PathValue("conversation") == "assistant" {
+		if err := s.Tasks.Store.CancelConversation(r.Context(), body.TurnID); err != nil {
+			writeError(w, err)
+			return
+		}
+		view, err := s.assistantSnapshot(r.Context(), "")
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if err = s.wakeConversation(r.Context()); err != nil {
+			writeJSON(w, 503, map[string]any{"accepted": true, "conversation": view, "error": "Stop is saved; delivery unavailable."})
+			return
+		}
+		writeJSON(w, 200, view)
+		return
+	}
 	c, err := s.Chats.Cancel(r.Context(), r.PathValue("conversation"), body.TurnID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	if err = s.wakeConversation(r.Context()); err != nil {
-		writeJSON(w, 503, map[string]any{"accepted": true, "conversation": c, "error": "Stop is saved; delivery unavailable."})
+		writeJSON(w, 503, map[string]any{"accepted": true, "conversation": chatView(c), "error": "Stop is saved; delivery unavailable."})
 		return
 	}
-	writeJSON(w, 200, c)
+	writeJSON(w, 200, chatView(c))
 }
 
 // chatEvents follows a chat's event log with a database listener, so an idle
 // stream costs nothing. Like the assistant's stream it ends before the web
 // service's request limit, and the client resumes from its last event.
 func (s *server) chatEvents(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("conversation") == "assistant" {
+		s.assistantEvents(w, r)
+		return
+	}
 	id := r.PathValue("conversation")
-	after := int64(0)
-	var err error
-	if value := r.URL.Query().Get("after"); value != "" {
-		after, err = strconv.ParseInt(value, 10, 64)
-		if err != nil || after < 0 {
-			writeJSON(w, 400, map[string]string{"error": "Invalid event position."})
-			return
-		}
+	after, valid := conversationResumePosition(r)
+	if !valid {
+		writeJSON(w, 400, map[string]string{"error": "Invalid event position."})
+		return
 	}
-	if value, e := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64); e == nil && value > after {
-		after = value
-	}
+
 	c, err := s.Chats.Store.Chat(r.Context(), id)
 	if err != nil {
 		writeError(w, err)
@@ -204,7 +271,7 @@ func (s *server) chatEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	// A client too far behind reloads the snapshot instead of replaying every event.
 	if c.Position-after > state.ChatEventReplayLimit {
-		_ = send(map[string]any{"seq": 0, "kind": "reset", "conversation": c.Header(), "messages": []state.ChatMessage{}}, c.Position)
+		_ = send(conversationEvent{Seq: c.Position, Kind: "reset", Conversation: conversationHeader{ChatHeader: c.Header(), TurnPolicy: "reject_while_running"}, Messages: []messageView{}}, c.Position)
 		return
 	}
 	_ = controller.Flush()
@@ -243,7 +310,7 @@ func (s *server) chatEvents(w http.ResponseWriter, r *http.Request) {
 				if event.Seq <= after {
 					continue
 				}
-				if send(event, event.Seq) != nil {
+				if send(chatEventView(event), event.Seq) != nil {
 					return
 				}
 				after = event.Seq
@@ -252,6 +319,10 @@ func (s *server) chatEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *server) chatUpload(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("conversation") == "assistant" {
+		s.upload(w, r)
+		return
+	}
 	id := r.URL.Query().Get("id")
 	if !validID(id) {
 		writeJSON(w, 400, map[string]string{"error": "Invalid upload ID."})
@@ -270,6 +341,10 @@ func (s *server) chatUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, u.Attachment)
 }
 func (s *server) chatReadUpload(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("conversation") == "assistant" {
+		s.readUpload(w, r)
+		return
+	}
 	id := r.PathValue("id")
 	if !validID(id) {
 		writeJSON(w, 404, map[string]string{"error": "File not found."})
@@ -284,6 +359,15 @@ func (s *server) chatReadUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) chatHistory(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("conversation") == "assistant" {
+		view, err := s.assistantSnapshot(r.Context(), r.URL.Query().Get("before"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"messages": view.Messages, "nextCursor": view.NextCursor})
+		return
+	}
 	before := int64(0)
 	if value := r.URL.Query().Get("before"); value != "" {
 		var err error
@@ -298,5 +382,5 @@ func (s *server) chatHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 200, page)
+	writeJSON(w, 200, map[string]any{"messages": chatMessages(page.Messages), "nextBefore": page.NextBefore, "nextCursor": chatCursor(page.NextBefore)})
 }

@@ -123,8 +123,8 @@ func openLocalArtifacts(s settings.Settings, user users.User) (state.ArtifactSto
 		u, e := url.Parse(s.Store.PostgresURL)
 		localDatabase = e == nil && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback())
 	}
-	if !localDatabase || !s.Temporal.Local {
-		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR requires a loopback database and TEMPORAL_LOCAL=true")
+	if !localDatabase || (!s.Temporal.Local && !s.Features.DisableBackgroundTasks) {
+		return nil, fmt.Errorf("NORI_LOCAL_ARTIFACT_DIR requires a loopback database and either chat-only mode or TEMPORAL_LOCAL=true")
 	}
 	store, err := localfs.Open(filepath.Join(directory, user.FilePrefix()))
 	if err != nil {
@@ -137,6 +137,9 @@ func openLocalArtifacts(s settings.Settings, user users.User) (state.ArtifactSto
 // loopback development computer; otherwise the cloud setting selects a retained GCE or EC2 instance. There is no default computer. Connecting validates the choice, so a process that
 // never uses the computer does not need one configured.
 func Computer(s settings.Settings) computer.Provider {
+	if s.Features.DisableComputer {
+		return nil
+	}
 	if address := s.Computer.LocalURL; address != "" {
 		return computer.Traced(local.New(address))
 	}
@@ -157,6 +160,9 @@ func Computer(s settings.Settings) computer.Provider {
 // zone and instance on GCP, or AWS region and instance. A process that runs tools calls it at startup, so a bad configuration stops the process
 // instead of failing every task. Computer stays lazy, so other processes need no computer settings.
 func CheckComputer(s settings.Settings) error {
+	if s.Features.DisableComputer {
+		return nil
+	}
 	if s.Computer.LocalURL != "" {
 		if !s.Temporal.Local {
 			return fmt.Errorf("user computer local URL requires TEMPORAL_LOCAL=true")

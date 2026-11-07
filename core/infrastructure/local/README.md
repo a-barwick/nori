@@ -44,3 +44,31 @@ resume cursor, and idle streams hold no database connection. This is sufficient
 for the current personal app and avoids a second notification/reconnect path.
 Firestore continues using snapshot listeners. Changing the backend setting does
 not copy data between databases; existing production records remain in Firestore.
+
+## Chat-only runtime
+
+Set all five feature flags to `false` in the main checkout's `.env`:
+
+```dotenv
+NORI_BACKGROUND_TASKS_ENABLED=false
+NORI_JEV_ENABLED=false
+NORI_COMPUTER_ENABLED=false
+NORI_CALENDAR_OFFERS_ENABLED=false
+NORI_SCHEDULES_ENABLED=false
+```
+
+Keep `NORI_CLOUD=local`, the Postgres settings and `NORI_LOCAL_ARTIFACT_DIR` from
+above. Only `OPENAI_API_KEY` is required for models; keep the prescribed outer model.
+Temporal settings, Jev and OpenRouter keys are unnecessary in this mode. Start only
+Postgres with `docker compose -f core/infrastructure/local/compose.yaml up -d postgres`,
+provision a user, then run `go run ./cmd/nori-local` from `core/`. Set `NORI_ENV_FILE`
+to the main checkout's existing env file when working in a worktree.
+
+The local loop processes accepted chats and resumes saved work after a restart.
+The runtime accepts trusted server requests at `/users/<id>/v1/conversations`;
+use the existing web proxy or your host's authenticated backend. It deliberately
+rejects direct browser requests. Assistant routes return `501` with
+`code: "not_enabled"`. Turning features off does not delete their records or stop
+an already-running worker process; apply the same configuration to every process
+and stop that deployment's worker when selecting chat-only mode. Re-enabling uses
+the retained work. Chats remain separate from assistant tasks in either mode.

@@ -81,9 +81,10 @@ type Session struct {
 	ReadPosition state.NotifySeenMark `json:"read_position"`
 }
 type Runner struct {
-	UserFacts  string
-	model      ReplyModel
-	classifier IntentClassifier
+	DisableSchedules bool
+	UserFacts        string
+	model            ReplyModel
+	classifier       IntentClassifier
 	// summarizer writes the conversation summary. compactAfter pauses compaction after a failure.
 	summarizer   SummaryModel
 	compactAfter time.Time
@@ -319,6 +320,9 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			text = "Here it is."
 		}
 		buildProtocol(&t, text)
+		if r.DisableSchedules && len(t.Attempt.Schedules) > 0 {
+			return fmt.Errorf("schedules are not enabled; retained changes await re-enabling")
+		}
 		e = r.tasks.Store.PublishConversation(ctx, f, t, text)
 		if errors.Is(e, state.ErrConversationStale) {
 			continue

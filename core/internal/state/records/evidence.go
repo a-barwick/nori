@@ -77,11 +77,11 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 				return err
 			}
 		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
 		if event, notify := state.LateWriteEvent(run, saved, op, time.Now().UTC()); notify {
-			log, err := d.openLog(tx)
-			if err != nil {
-				return err
-			}
 			// Reading the run in this transaction serializes the result with Stop:
 			// either its terminal notification can see the answer, or this one follows it.
 			inserted, err := d.appendTaskEvent(tx, event, run.TraceContext)
@@ -99,6 +99,9 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 					return err
 				}
 			}
+		}
+		if err = log.add(state.EventOperation, runID+"/"+op.ID); err != nil {
+			return err
 		}
 		// Merge preserves admitted_at and any existing receipt/admission metadata.
 		data := map[string]any{
@@ -365,4 +368,23 @@ func (d *Database) ReadHistory(ctx context.Context, runID, ref string) ([][]byte
 		}
 	}
 	return chain.Payloads()
+}
+
+func (d *Database) Operation(ctx context.Context, runID, id string) (state.OperationRecord, error) {
+	if !state.ValidEvidenceID(runID) || !state.ValidEvidenceID(id) {
+		return state.OperationRecord{}, state.ErrNotFound
+	}
+	doc, err := d.runs().Doc(runID).Collection("operations").Doc(id).Get(ctx)
+	if notFound(err) {
+		return state.OperationRecord{}, state.ErrNotFound
+	}
+	if err != nil {
+		return state.OperationRecord{}, err
+	}
+	var op state.OperationRecord
+	if err = doc.DataTo(&op); err != nil {
+		return op, err
+	}
+	recorded, _ := doc.Data()["evidence_recorded"].(bool)
+	return state.ReadOperation(op, recorded, doc.Ref.ID)
 }

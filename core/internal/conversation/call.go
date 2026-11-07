@@ -72,7 +72,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			attribute.Int64("nori.phase.prompt_ms", promptMS), attribute.Int64("nori.phase.outer_ms", outerMS),
 			attribute.String("nori.reply.status", t.Attempt.Status),
 		)
-		if callErr != nil && !errors.Is(ctx.Err(), context.Canceled) && !errors.Is(callErr, state.ErrConversationStale) {
+		if callErr != nil && !errors.Is(ctx.Err(), context.Canceled) && !errors.Is(callErr, state.ErrConversationStale) && !errors.Is(callErr, state.ErrConversationBusy) {
 			observability.RecordErrorCategory(ctx, "conversation.attempt", callErr)
 		} else if t.Attempt.Status == "error" {
 			span.SetStatus(codes.Error, "conversation reply failed")
@@ -148,7 +148,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		}
 		return ctx.Err()
 	}
-	request := ReplyRequest{RecordUsage: record, NoDispatch: true}
+	request := ReplyRequest{RecordUsage: record, NoDispatch: true, DisableSchedules: r.DisableSchedules}
 	for _, input := range t.Inputs {
 		if input.IsUser() {
 			request.NoDispatch = false
@@ -466,6 +466,9 @@ func (r *Runner) finishCall(
 		var scheduled []scheduleCall
 		if err == nil {
 			calls, scheduled, err = splitSchedules(calls)
+			if r.DisableSchedules && len(scheduled) > 0 {
+				err = fmt.Errorf("schedules are not enabled")
+			}
 		}
 		var commands []state.Command
 		if err == nil {
@@ -571,6 +574,10 @@ func (r *Runner) startHint(
 	visible []Message, inputID string,
 ) (<-chan hintResult, error) {
 	hintReady := make(chan hintResult, 1)
+	if r.classifier == nil {
+		hintReady <- hintResult{durationMS: -1}
+		return hintReady, nil
+	}
 	// Exclude this batch and any subsequently queued inputs from Jev's history.
 	// The owned batch is supplied separately, once, in durable acceptance order.
 	classificationHistory := classifyHistory(visible, t)

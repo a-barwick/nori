@@ -24,6 +24,8 @@ import (
 )
 
 type App struct {
+	Store      state.ConversationStore
+	Features   settings.Features
 	Chats      *chat.Service
 	Runner     *conversation.Runner
 	Tasks      *conversation.Tasks
@@ -40,63 +42,70 @@ type App struct {
 func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user users.User) (*App, error) {
 	cfg = platform.ForUser(cfg, user)
 	waker = wake.ForUser(waker, user.ID)
-	jevKey, err := settings.Required("JEV_API_KEY", cfg.Models.JevKey)
-	if err != nil {
+	if err := validateStartup(cfg); err != nil {
 		return nil, err
 	}
-	key, err := settings.Required("OPENAI_API_KEY", cfg.Models.OpenAIKey)
-	if err != nil {
-		return nil, err
-	}
-	// The conversation summary uses the task worker's OpenRouter key.
-	summaryKey, err := settings.Required("OPENROUTER_API_KEY", cfg.Models.OpenRouterKey)
-	if err != nil {
-		return nil, err
-	}
+	key := cfg.Models.OpenAIKey
 	store, err := platform.OpenStore(ctx, cfg, user)
 	if err != nil {
 		return nil, err
 	}
-	engine, err := platform.Engine(ctx, user.ID)
-	if err != nil {
-		store.Close()
-		return nil, err
-	}
-	if cfg.Computer.LocalURL != "" && !cfg.Temporal.Local {
-		engine.Close()
-		store.Close()
-		return nil, fmt.Errorf("user computer local URL requires TEMPORAL_LOCAL=true")
-	}
-	dispatcher := platform.Dispatcher(cfg, store, engine, waker, user.ID)
-	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
 	model := cfg.Models.Outer
 	outer := conversation.NewOpenAIModel(key, model)
-	// The conversation summary is written by the inner task model, through the same OpenRouter key the task worker uses.
-	summarizer := openrouter.New(summaryKey, "openai/gpt-6.1-terra", store)
-	classifier := conversation.NewJevClassifier(jevKey)
-	runner := conversation.New(outer, classifier, summarizer, tasks)
-	runner.UserFacts = user.Facts()
-	checks, err := openProactive(cfg, store, runner, tasks, outer, waker)
+	checks, err := openProactive(cfg, store, nil, nil, outer, waker)
 	if err != nil {
-		engine.Close()
 		store.Close()
 		return nil, err
 	}
-	runner.Clock = conversation.Clock{Location: checks.Location}
-	later, err := openSchedules(cfg, store, tasks, waker, runner.Clock, checks.Calendar)
-	if err != nil {
-		engine.Close()
-		store.Close()
-		return nil, err
-	}
-	tools := agent.New(store, summarizer, platform.Computer(cfg))
+	tools := agent.New(store, nil, platform.Computer(cfg))
 	tools.UserFacts = user.Facts()
 	if checks.Calendar != nil {
 		tools.Capabilities.Calendar = *checks.Calendar
 	}
 	tools.Capabilities.Location = checks.Location
 	chats := chat.New(store, outer, tools)
-	return &App{Chats: chats, Runner: runner, Tasks: tasks, Dispatcher: dispatcher, Waker: waker, Model: model, Proactive: checks, Schedules: later, engine: engine}, nil
+	result := &App{Store: store, Features: cfg.Features, Chats: chats, Waker: waker, Model: model}
+	if cfg.Features.DisableBackgroundTasks {
+		return result, nil
+	}
+	engine, err := platform.Engine(ctx, user.ID)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	if cfg.Computer.LocalURL != "" && !cfg.Temporal.Local && !cfg.Features.DisableComputer {
+		engine.Close()
+		store.Close()
+		return nil, fmt.Errorf("user computer local URL requires TEMPORAL_LOCAL=true")
+	}
+	dispatcher := platform.Dispatcher(cfg, store, engine, waker, user.ID)
+	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
+	// The conversation summary is written by the inner task model, through the same OpenRouter key the task worker uses.
+	summarizer := openrouter.New(cfg.Models.OpenRouterKey, "openai/gpt-6.1-terra", store)
+	tools.Model = summarizer
+	var classifier conversation.IntentClassifier
+	if !cfg.Features.DisableJev {
+		classifier = conversation.NewJevClassifier(cfg.Models.JevKey)
+	}
+	runner := conversation.New(outer, classifier, summarizer, tasks)
+	runner.UserFacts = user.Facts()
+	runner.DisableSchedules = cfg.Features.DisableSchedules
+	checks.Runner, checks.Tasks = runner, tasks
+	runner.Clock = conversation.Clock{Location: checks.Location}
+	var later *schedules.Service
+	if !cfg.Features.DisableSchedules {
+		later, err = openSchedules(cfg, store, tasks, waker, runner.Clock, checks.Calendar)
+		if err != nil {
+			engine.Close()
+			store.Close()
+			return nil, err
+		}
+	}
+	if cfg.Features.DisableOffers {
+		checks = nil
+	}
+	result.Runner, result.Tasks, result.Dispatcher, result.Proactive, result.Schedules, result.engine = runner, tasks, dispatcher, checks, later, engine
+	return result, nil
 }
 
 // openSchedules runs what the user asked for later. Notifications go to their connected account by email; without one
@@ -138,19 +147,36 @@ func openProactive(cfg settings.Settings, store state.ConversationStore, runner 
 
 func (a *App) Close() {
 	a.Chats.Close()
-	a.engine.Close()
-	a.Tasks.Store.Close()
+	if a.engine != nil {
+		a.engine.Close()
+	}
+	a.Store.Close()
 }
 
 // API returns what the HTTP routes call into.
 func (a *App) API() api.Deps {
-	return api.Deps{Chats: a.Chats, Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Proactive: a.Proactive}
+	deps := api.Deps{Chats: a.Chats, Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features}
+	if a.Proactive != nil {
+		deps.Proactive = a.Proactive
+	}
+	return deps
 }
 
-func (a *App) Resume(ctx context.Context) error { return a.Dispatcher.Resume(ctx) }
+func (a *App) Resume(ctx context.Context) error {
+	if a.Dispatcher == nil {
+		return nil
+	}
+	return a.Dispatcher.Resume(ctx)
+}
 
 func (a *App) Process(ctx context.Context) error { return a.process(ctx, true) }
 func (a *App) process(ctx context.Context, foreground bool) error {
+	if a.Runner == nil {
+		if foreground {
+			return a.Chats.Process(ctx)
+		}
+		return nil
+	}
 	// A paused worker cannot finish a queued Stop. Retry only accepted Stop
 	// targets here, including a timed-out cleanup from the submitting request.
 	var stopErr error
@@ -182,11 +208,11 @@ func (a *App) process(ctx context.Context, foreground bool) error {
 	processErr := a.Runner.Process(ctx)
 	// Offers wait for an idle conversation, so they go out after the pass that published the latest reply.
 	var offerErr, scheduleErr error
-	if processErr == nil {
+	if processErr == nil && a.Proactive != nil {
 		offerErr = a.Proactive.Deliver(ctx)
 	}
 	// Schedules fire after the pass too, so a reminder never cuts into a reply.
-	if processErr == nil {
+	if processErr == nil && a.Schedules != nil {
 		scheduleErr = a.Schedules.Run(ctx)
 		if errors.Is(scheduleErr, state.ErrConversationBusy) {
 			scheduleErr = nil

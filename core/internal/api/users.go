@@ -65,6 +65,10 @@ func UserHandler(directory users.Directory, open func(context.Context, users.Use
 				if r.URL.Path == "/api/resume" {
 					err = deps.Ops.Resume(r.Context())
 				} else {
+					if deps.Proactive == nil {
+						release()
+						continue
+					}
 					check, cancel := context.WithTimeout(r.Context(), 80*time.Second)
 					_, err = deps.Proactive.Check(check, false)
 					cancel()

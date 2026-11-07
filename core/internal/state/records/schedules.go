@@ -42,7 +42,7 @@ func (d *Database) Schedules(ctx context.Context) ([]state.Schedule, error) {
 // ChangeScheduleNow applies a pause, resume or cancel from a client control to the saved schedule.
 func (d *Database) ChangeScheduleNow(ctx context.Context, id, change string, location *time.Location, now time.Time) (state.Schedule, error) {
 	var s state.Schedule
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		prior, err := d.readSchedule(tx, id)
 		if err != nil {
 			return err
@@ -51,6 +51,13 @@ func (d *Database) ChangeScheduleNow(ctx context.Context, id, change string, loc
 			return state.ErrNotFound
 		}
 		if s, err = state.ChangeSchedule(*prior, state.ScheduleChangeRequest{ID: id, Change: change}, location, now); err != nil {
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		if err = log.add(state.EventSchedule, id); err != nil {
 			return err
 		}
 		return tx.Set(d.schedules().Doc(id), s)
@@ -75,7 +82,7 @@ func (d *Database) readScheduleChanges(tx *docstore.Transaction, changes []state
 // reply was written; they are applied again here to the saved schedules, so a change made since is kept. A refused
 // change means none apply.
 func (d *Database) writeScheduleChanges(
-	tx *docstore.Transaction, t state.ConversationTurn, saved map[string]*state.Schedule, now time.Time,
+	tx *docstore.Transaction, log *eventLog, t state.ConversationTurn, saved map[string]*state.Schedule, now time.Time,
 ) error {
 	for _, c := range t.Attempt.Schedules {
 		if c.Error != "" {
@@ -106,6 +113,9 @@ func (d *Database) writeScheduleChanges(
 			continue
 		}
 		saved[c.ID] = &s
+		if err = log.add(state.EventSchedule, s.ID); err != nil {
+			return err
+		}
 		if err = tx.Set(d.schedules().Doc(s.ID), s); err != nil {
 			return err
 		}
@@ -136,9 +146,7 @@ func (d *Database) ClaimSchedule(
 			updated.LastRunID = runID
 		}
 		saved = updated
-		if message == nil {
-			return tx.Set(d.schedules().Doc(id), updated)
-		}
+
 		c, err := d.readConversation(tx)
 		if err != nil {
 			return err
@@ -146,6 +154,12 @@ func (d *Database) ClaimSchedule(
 		log, err := d.openLog(tx)
 		if err != nil {
 			return err
+		}
+		if message == nil {
+			if err = log.add(state.EventSchedule, id); err != nil {
+				return err
+			}
+			return tx.Set(d.schedules().Doc(id), updated)
 		}
 		if !state.Idle(c) {
 			return state.ErrConversationBusy
@@ -162,6 +176,7 @@ func (d *Database) ClaimSchedule(
 			func() error { return tx.Create(d.messages().Doc(m.ID), m) },
 			func() error { return tx.Set(d.notifications().Doc(notification.ID), notification) },
 			func() error { return tx.Set(d.schedules().Doc(id), updated) },
+			func() error { return log.add(state.EventSchedule, id) },
 			func() error { return log.add(state.EventMessage, m.ID) },
 			func() error { return log.add(state.EventConversation, "") },
 		}
@@ -306,4 +321,16 @@ func (d *Database) FinishNotification(ctx context.Context, id, status, reason st
 	}
 	_, err := d.notifications().Doc(id).Update(ctx, updates)
 	return err
+}
+
+func (d *Database) GetSchedule(ctx context.Context, id string) (state.Schedule, error) {
+	var schedule state.Schedule
+	doc, err := d.schedules().Doc(id).Get(ctx)
+	if notFound(err) {
+		return schedule, state.ErrNotFound
+	}
+	if err != nil {
+		return schedule, err
+	}
+	return schedule, doc.DataTo(&schedule)
 }
