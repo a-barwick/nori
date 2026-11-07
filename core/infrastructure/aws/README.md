@@ -6,9 +6,7 @@ GCP remains the default cloud and retains its existing adapters. `local` selects
 local files, in-process wakes and a loopback computer, without a secret service.
 
 This is application support, not a provisioned AWS environment. There is no AWS
-Terraform or deployment in this change. Local SDK/HTTP fixtures verify request and
-response behavior; AWS IAM, a retained EC2 guest, an SSM tunnel and a real identity
-provider still need deployment-specific validation.
+Terraform or deployment in this repository.
 
 ## Configuration
 

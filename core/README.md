@@ -142,12 +142,7 @@ redundant wake creation during session polling.
 
 The API image is `infrastructure/Dockerfile`, built from `core/`. The worker image
 is `infrastructure/temporal/Dockerfile.worker`; the web image is `../web/Dockerfile`,
-built from `web/`. This source revision has not been deployed. Rollout requires
-the queue/IAM Terraform changes, the existing Runtime invoke root supplied as
-`runtime_invoke_root`, and server OpenRouter/Jev credentials provisioned through
-an approved credential path. Native Runtime status/deadline forwarding and
-Cloud Tasks OAuth delivery still need cloud verification. Existing deployment,
-worker registration, pause/resume, and retained-data operations are covered by
+built from `web/`. Deployment, worker registration, pause/resume, and retained-data operations are covered by
 [app operations](infrastructure/app/README.md) and
 [Temporal operations](infrastructure/temporal/README.md).
 
@@ -238,13 +233,10 @@ stop/start workers and the computer without deleting saved work. Keep service
 minimums at zero, maximums at one, and stop paid capacity after live work. Follow
 the linked operations guides for the exact current lifecycle and its limits.
 
-## Historical computer provisioning reference
-
-These notes describe the original disposable-host trial and retained-disk
-foundation. The current retained computer uses the [app lifecycle](infrastructure/app/README.md).
-Do not apply the old disposable-host lifecycle against that VM.
-
 ## Original retained-disk microVM reference
+
+The current retained computer uses the [app lifecycle](infrastructure/app/README.md).
+Do not apply this older lifecycle against that VM.
 
 The original `infrastructure/microvm/computer.sh` manages one bounded host and a separately
 retained `bot-computer-data` disk. The 20 GiB standard disk costs about $0.80/month
