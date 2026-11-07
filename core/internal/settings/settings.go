@@ -11,10 +11,14 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"nori/internal/serviceauth"
 	"nori/internal/usage"
 )
 
 type Settings struct {
+	Cloud       string
+	AWS         AWS
+	ServiceAuth serviceauth.Config
 	// BindHost and Port are where the API listens. Port is empty for a polling worker.
 	BindHost, Port string
 	Models         Models
@@ -40,6 +44,10 @@ type Settings struct {
 	// EnvFile is the configuration file Load read.
 	EnvFile       string
 	Observability Observability
+}
+
+type AWS struct {
+	Region, WakeQueueURL, WakeQueueARN, ScheduleGroup, ScheduleRoleARN, WakeDeadLetterARN string
 }
 
 type Models struct {
@@ -147,6 +155,11 @@ func Load() (Settings, error) {
 	}
 	s := FromEnvironment()
 	s.EnvFile = file
+	switch s.Cloud {
+	case "gcp", "aws", "local":
+	default:
+		return Settings{}, fmt.Errorf("NORI_CLOUD must be gcp, aws or local")
+	}
 	if math.IsNaN(s.TaskBudgetUSD) || math.IsInf(s.TaskBudgetUSD, 0) || s.TaskBudgetUSD <= 0 {
 		return Settings{}, fmt.Errorf("NORI_TASK_BUDGET_USD must be a positive dollar amount")
 	}
@@ -171,8 +184,13 @@ func FromEnvironment() Settings {
 	if err != nil {
 		taskBudget = math.NaN()
 	}
+	cloud := get("NORI_CLOUD", "gcp")
+	defaultStore := "firestore"
+	if cloud == "aws" || cloud == "local" {
+		defaultStore = "postgres"
+	}
 	store := Store{
-		Backend: get("NORI_STORE_BACKEND", "firestore"), PostgresURL: os.Getenv("NORI_POSTGRES_URL"),
+		Backend: get("NORI_STORE_BACKEND", defaultStore), PostgresURL: os.Getenv("NORI_POSTGRES_URL"),
 		Project: os.Getenv("NORI_PROJECT_ID"), Database: os.Getenv("FIRESTORE_DATABASE_ID"), ArtifactBucket: os.Getenv("ARTIFACT_BUCKET"),
 		StateEmulator: os.Getenv("NORI_STATE_EMULATOR_HOST"), FirestoreEmulator: os.Getenv("FIRESTORE_EMULATOR_HOST"),
 		LocalArtifactDir: os.Getenv("NORI_LOCAL_ARTIFACT_DIR"),
@@ -185,13 +203,16 @@ func FromEnvironment() Settings {
 		CloudRunID: os.Getenv("TEMPORAL_CLOUD_RUN_ID") == "true",
 	}
 	var credentials []string
-	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL"} {
+	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL", "NORI_SERVICE_TOKEN_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
 		if value := os.Getenv(name); value != "" {
 			credentials = append(credentials, value)
 		}
 	}
 	return Settings{
-		BindHost: get("BIND_HOST", "127.0.0.1"), Port: os.Getenv("PORT"),
+		Cloud:       cloud,
+		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION")), WakeQueueURL: os.Getenv("NORI_AWS_WAKE_QUEUE_URL"), WakeQueueARN: os.Getenv("NORI_AWS_WAKE_QUEUE_ARN"), ScheduleGroup: get("NORI_AWS_SCHEDULE_GROUP", "default"), ScheduleRoleARN: os.Getenv("NORI_AWS_SCHEDULE_ROLE_ARN"), WakeDeadLetterARN: os.Getenv("NORI_AWS_WAKE_DLQ_ARN")},
+		ServiceAuth: serviceauth.Config{Key: os.Getenv("NORI_SERVICE_TOKEN_KEY"), Audience: get("NORI_SERVICE_AUDIENCE", "nori")},
+		BindHost:    get("BIND_HOST", "127.0.0.1"), Port: os.Getenv("PORT"),
 		Models: Models{
 			OpenAIKey: os.Getenv("OPENAI_API_KEY"), JevKey: os.Getenv("JEV_API_KEY"), OpenRouterKey: os.Getenv("OPENROUTER_API_KEY"),
 			Outer: get("NORI_AGENT_MODEL", "gpt-6.1-sol"), Inner: get("MODEL_NAME", "openai/gpt-6.1-terra"),

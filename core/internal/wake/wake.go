@@ -1,6 +1,6 @@
 // Package wake is the contract for waking compute that sleeps between requests.
 //
-// A wake carries no conversation or task content. Firestore owns what is to be
+// A wake carries no conversation or task content. The database owns what is to be
 // done and in what order; a wake only makes some process look. Wakes may be
 // duplicated or lost, and callers repair a lost one from saved state.
 package wake

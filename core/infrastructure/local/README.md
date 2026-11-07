@@ -8,6 +8,7 @@ services, not production configuration.
 Configure the main checkout's gitignored, mode-600 `.env`:
 
 ```dotenv
+NORI_CLOUD=local
 NORI_STORE_BACKEND=postgres
 NORI_POSTGRES_URL=postgres://nori@127.0.0.1:15432/nori?sslmode=disable
 TEMPORAL_LOCAL=true

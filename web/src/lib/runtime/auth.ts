@@ -1,4 +1,5 @@
 import { runtimeAuthorization } from "./credentials";
+import { oidcIdentity } from "./oidc";
 import { OAuth2Client } from "google-auth-library";
 
 // Provider verification returns an email; the trusted API maps it to a provisioned user.
@@ -72,13 +73,18 @@ export function sameOriginRead(request: Request): boolean {
   return request.headers.get("sec-fetch-site") === "same-origin";
 }
 
-// ---- Google IAP: the only provider-specific code -------------------------------------------------------------------
+// Google IAP remains the GCP default; OIDC is selected for other clouds.
 
 const verifier = new OAuth2Client();
 let keyCache: { expires: number; keys: Record<string, string> } | undefined;
 
 /** Verify Google's signed assertion; unsigned identity headers are never trusted. */
 async function providerIdentity(headers: Headers): Promise<Identity | null> {
+ const cloud = process.env.NORI_CLOUD || "gcp";
+ if (!["gcp", "aws", "local"].includes(cloud)) return null;
+ const provider = process.env.NORI_AUTH_PROVIDER || (cloud === "gcp" ? "iap" : "oidc");
+ if (provider === "oidc") return oidcIdentity(headers);
+ if (provider !== "iap") return null;
   const assertion = headers.get("x-goog-iap-jwt-assertion");
   const audience = process.env.IAP_AUDIENCE;
   if (!assertion || !audience) return null;

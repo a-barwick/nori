@@ -38,7 +38,11 @@ func main() {
 	defer nori.Close()
 	// Only request-bound /api/process performs outer work in hosted mode. Cloud
 	// Tasks owns retry delivery across scale-to-zero and process termination.
-	server := httpserver.New(ctx, net.JoinHostPort(s.BindHost, cmp.Or(s.Port, "8080")), nori.Handler(false))
+	handler, err := platform.ServiceHandler(s, nori.Handler(false), false)
+	if err != nil {
+		observability.Fatal(err)
+	}
+	server := httpserver.New(ctx, net.JoinHostPort(s.BindHost, cmp.Or(s.Port, "8080")), handler)
 	log.Printf("Nori durable conversation listening on %s model=%s", server.Addr, s.Models.Outer)
 	if err := httpserver.Listen(ctx, server, 25*time.Second); err != nil {
 		observability.RecordErrorCategory(ctx, "http.listen", err)

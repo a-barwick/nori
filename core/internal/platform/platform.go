@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 
 	"nori/internal/computer"
+	"nori/internal/computer/ec2"
 	"nori/internal/computer/gce"
 	"nori/internal/computer/local"
 	"nori/internal/settings"
@@ -23,6 +24,7 @@ import (
 	"nori/internal/state/localfs"
 	"nori/internal/state/postgres"
 	"nori/internal/state/records"
+	"nori/internal/state/s3"
 	"nori/internal/usage"
 	"nori/internal/users"
 )
@@ -89,7 +91,12 @@ func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig, us
 	if local != nil {
 		return meteredStore(s, user, state.Compose(documents, local))
 	}
-	objects, err := gcs.Open(ctx, cfg.ArtifactBucket, user)
+	var objects state.ArtifactStore
+	if s.Cloud == "aws" {
+		objects, err = s3.Open(ctx, s.AWS.Region, cfg.ArtifactBucket, user)
+	} else {
+		objects, err = gcs.Open(ctx, cfg.ArtifactBucket, user)
+	}
 	if err != nil {
 		_ = documents.Close()
 		return nil, err
@@ -102,6 +109,9 @@ func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig, us
 func openLocalArtifacts(s settings.Settings, user users.User) (state.ArtifactStore, error) {
 	directory := s.Store.LocalArtifactDir
 	if directory == "" {
+		if s.Cloud == "local" {
+			return nil, fmt.Errorf("NORI_CLOUD=local requires NORI_LOCAL_ARTIFACT_DIR")
+		}
 		return nil, nil
 	}
 	address := s.Store.StateEmulator
@@ -124,12 +134,17 @@ func openLocalArtifacts(s settings.Settings, user users.User) (state.ArtifactSto
 }
 
 // Computer returns the provider for the selected user. A local URL selects a
-// loopback development computer; otherwise the row names a Compute Engine
-// instance in NORI_PROJECT_ID. There is no default computer. Connecting validates the choice, so a process that
+// loopback development computer; otherwise the cloud setting selects a retained GCE or EC2 instance. There is no default computer. Connecting validates the choice, so a process that
 // never uses the computer does not need one configured.
 func Computer(s settings.Settings) computer.Provider {
 	if address := s.Computer.LocalURL; address != "" {
 		return computer.Traced(local.New(address))
+	}
+	if s.Cloud == "local" {
+		return computer.Traced(local.New(s.Computer.LocalURL))
+	}
+	if s.Cloud == "aws" {
+		return computer.Traced(ec2.New(ec2.Config{Region: s.AWS.Region, Instance: s.Computer.Instance}))
 	}
 	return computer.Traced(gce.New(gce.Config{
 		Project:  s.Store.Project,
@@ -139,7 +154,7 @@ func Computer(s settings.Settings) computer.Provider {
 }
 
 // CheckComputer fails when the computer settings that Computer reads are incomplete: a local URL, or a project,
-// zone and instance. A process that runs tools calls it at startup, so a bad configuration stops the process
+// zone and instance on GCP, or AWS region and instance. A process that runs tools calls it at startup, so a bad configuration stops the process
 // instead of failing every task. Computer stays lazy, so other processes need no computer settings.
 func CheckComputer(s settings.Settings) error {
 	if s.Computer.LocalURL != "" {
@@ -151,7 +166,14 @@ func CheckComputer(s settings.Settings) error {
 		}
 		return nil
 	}
-	for _, setting := range [][2]string{{"NORI_PROJECT_ID", s.Store.Project}, {"user computer zone", s.Computer.Zone}, {"user computer instance", s.Computer.Instance}} {
+	required := [][2]string{{"NORI_PROJECT_ID", s.Store.Project}, {"user computer zone", s.Computer.Zone}, {"user computer instance", s.Computer.Instance}}
+	if s.Cloud == "local" {
+		return fmt.Errorf("local cloud requires a user computer local URL")
+	}
+	if s.Cloud == "aws" {
+		required = [][2]string{{"AWS_REGION", s.AWS.Region}, {"user computer instance", s.Computer.Instance}}
+	}
+	for _, setting := range required {
 		if _, err := settings.Required(setting[0], setting[1]); err != nil {
 			return fmt.Errorf("computer is not configured: %w", err)
 		}
