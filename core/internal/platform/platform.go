@@ -19,6 +19,7 @@ import (
 	statefirestore "nori/internal/state/firestore"
 	"nori/internal/state/gcs"
 	"nori/internal/state/localfs"
+	"nori/internal/usage"
 	"nori/internal/users"
 )
 
@@ -75,14 +76,14 @@ func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig, us
 		return nil, err
 	}
 	if local != nil {
-		return state.Compose(documents, local), nil
+		return meteredStore(s, user, state.Compose(documents, local))
 	}
 	objects, err := gcs.Open(ctx, cfg.ArtifactBucket, user)
 	if err != nil {
 		_ = documents.Close()
 		return nil, err
 	}
-	return state.Compose(documents, objects), nil
+	return meteredStore(s, user, state.Compose(documents, objects))
 }
 
 // openLocalArtifacts opens the development artifact directory when NORI_LOCAL_ARTIFACT_DIR is set. It returns nil
@@ -140,4 +141,13 @@ func CheckComputer(s settings.Settings) error {
 		}
 	}
 	return nil
+}
+
+func meteredStore(s settings.Settings, user users.User, store state.ConversationStore) (state.ConversationStore, error) {
+	meter, err := usage.Open(s.Metering, user.ID, store)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	return usage.Wrap(store, meter), nil
 }

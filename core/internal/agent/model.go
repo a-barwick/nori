@@ -7,7 +7,7 @@ import (
 )
 
 // Model is the inner task model. An adapter owns everything particular to one provider:
-// endpoint, credentials, request and response formats, spend reservation and the text of
+// endpoint, credentials, request and response formats, usage reporting and the text of
 // its errors. The agent and task packages see only the types below.
 type Model interface {
 	// Provider and Name identify the model in traces and cost records, for example

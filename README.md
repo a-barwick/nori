@@ -67,6 +67,18 @@ does not update the deployed services, worker images, or Terraform state.
 
 ## Model usage
 
+Model callers share `usage.Meter`. `NORI_USAGE_METER=store` (default) records usage
+in the selected database. Set it to `http` with `NORI_USAGE_ENDPOINT` and
+`NORI_USAGE_TOKEN` to also send usage metadata to a host. The host receives
+`{user_id, usage}` before dispatch (`pending`) and after the response, and upserts
+by `(user_id, usage.id)`. A missing cost stays unknown. No prompts or files are sent.
+
+Host admission failure prevents the model call. Final host delivery failure is
+logged while the result and local usage record survive; there is no automatic
+host-delivery retry queue. Hosts can reconcile from the durable records. Go hosts
+can implement `usage.Meter` and select it with `usage.WithHost`/`usage.Wrap` at
+startup. The workflow still enforces `NORI_TASK_BUDGET_USD` independently.
+
 Provider usage remains recorded. Development commands use ordinary project keys;
 there is no temporary-key issuer, per-chat allowance, progress fingerprint,
 shared development budget database, or request reservation. Provider account

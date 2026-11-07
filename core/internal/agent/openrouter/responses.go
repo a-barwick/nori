@@ -17,6 +17,7 @@ import (
 
 	"nori/internal/agent"
 	"nori/internal/transcript"
+	"nori/internal/usage"
 )
 
 const (
@@ -35,11 +36,13 @@ type Client struct {
 	Key       string
 	ModelName string
 	HTTP      *http.Client
+	Meter     usage.Meter
 }
 
-func New(key, model string) *Client {
+func New(key, model string, meter usage.Meter) *Client {
 	return &Client{
 		Key:       key,
+		Meter:     meter,
 		ModelName: model,
 		HTTP: &http.Client{
 			Timeout:       2 * time.Minute,
@@ -94,12 +97,28 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
 	httpReq.Header.Set("Content-Type", "application/json")
+	record := usage.Attempt(ctx, provider, c.ModelName)
+	if err := c.Meter.RecordUsage(ctx, record); err != nil {
+		return out, err
+	}
+	record.RequestStatus = "unknown"
+	defer func() {
+		if u := out.Usage; u != nil {
+			input, output, total := int64(u.InputTokens), int64(u.OutputTokens)+int64(u.ReasoningTokens), int64(u.TotalTokens)
+			record.InputTokens, record.OutputTokens, record.TotalTokens = &input, &output, &total
+		}
+		if out.CostKnown {
+			record.CostUSD, record.CostStatus = &out.Cost, "provider"
+		}
+		err = errors.Join(err, usage.Finish(ctx, c.Meter, record))
+	}()
 	// Once handed to HTTP, a transport failure cannot prove it was not billed.
 	out.NotSent = false
 	res, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return out, errors.New("task model request interrupted or unavailable")
 	}
+	record.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return out, fmt.Errorf("task model returned HTTP %d", res.StatusCode)
