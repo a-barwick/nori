@@ -4,17 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"nori/internal/agent"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
+	"nori/internal/usage"
 )
 
 // compactionInstructions tell the summary model what to keep. The runtime checks every quote against the user's saved
@@ -172,30 +171,10 @@ func (r *Runner) compactOnce(ctx context.Context) error {
 }
 
 func (r *Runner) summarize(ctx context.Context, prompt string) ([]state.SummaryItem, string, error) {
-	usage := state.Usage{
-		ID: uuid.NewString(), InputID: "compaction", Provider: "compaction", Model: r.summarizer.Name(),
-		CostStatus: "unknown", RequestStatus: "pending", CreatedAt: time.Now().UTC(),
-	}
-	if err := r.tasks.Store.RecordUsage(ctx, usage); err != nil {
-		return nil, "", fmt.Errorf("usage recording unavailable; summary request was not sent")
-	}
-	response, err := r.summarizer.Respond(ctx, agent.Request{
+	response, err := r.summarizer.Respond(usage.WithScope(ctx, "compaction", "compaction"), agent.Request{
 		Instructions: prompts.Compaction, Tools: []transcript.Tool{summaryTool}, MaxOutputTokens: 4096, Reasoning: "medium",
 		Messages: []transcript.Message{{Role: transcript.RoleUser, Parts: []transcript.Part{{Text: prompt}}}},
 	})
-	usage.RequestStatus = "received"
-	if u := response.Usage; u != nil {
-		input, output, total := int64(u.InputTokens), int64(u.OutputTokens+u.ReasoningTokens), int64(u.TotalTokens)
-		usage.InputTokens, usage.OutputTokens, usage.TotalTokens = &input, &output, &total
-	}
-	if response.CostKnown {
-		usage.CostUSD, usage.CostStatus = &response.Cost, "provider"
-	}
-	record, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if recordErr := r.tasks.Store.RecordUsage(record, usage); recordErr != nil {
-		err = errors.Join(err, recordErr)
-	}
 	if err != nil {
 		return nil, "", err
 	}

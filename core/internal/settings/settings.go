@@ -11,12 +11,14 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"nori/internal/usage"
 )
 
 type Settings struct {
 	// BindHost and Port are where the API listens. Port is empty for a polling worker.
 	BindHost, Port string
 	Models         Models
+	Metering       usage.Config
 	Store          Store
 	Computer       Computer
 	Temporal       Temporal
@@ -147,6 +149,9 @@ func Load() (Settings, error) {
 	if math.IsNaN(s.TaskBudgetUSD) || math.IsInf(s.TaskBudgetUSD, 0) || s.TaskBudgetUSD <= 0 {
 		return Settings{}, fmt.Errorf("NORI_TASK_BUDGET_USD must be a positive dollar amount")
 	}
+	if err := s.Metering.Validate(); err != nil {
+		return Settings{}, err
+	}
 	return s, nil
 }
 
@@ -169,7 +174,7 @@ func FromEnvironment() Settings {
 		CloudRunID: os.Getenv("TEMPORAL_CLOUD_RUN_ID") == "true",
 	}
 	var credentials []string
-	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY"} {
+	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN"} {
 		if value := os.Getenv(name); value != "" {
 			credentials = append(credentials, value)
 		}
@@ -181,6 +186,7 @@ func FromEnvironment() Settings {
 			Outer: get("NORI_AGENT_MODEL", "gpt-6.1-sol"), Inner: get("MODEL_NAME", "openai/gpt-6.1-terra"),
 		},
 		Store:    store,
+		Metering: usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN")},
 		Computer: Computer{},
 		Temporal: temporal,
 		Wake: Wake{

@@ -23,6 +23,7 @@ import (
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
+	"nori/internal/usage"
 )
 
 type Activities struct {
@@ -178,7 +179,7 @@ func (a *Activities) bounded(parent context.Context, step Step, interruptible ..
 	if e != nil {
 		return nil, nil, state.Run{}, classified(e)
 	}
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(usage.WithScope(parent, step.RunID, ""))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

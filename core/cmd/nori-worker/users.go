@@ -53,7 +53,7 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 	if err != nil {
 		return nil, err
 	}
-	model := openrouter.New(cfg.Models.OpenRouterKey, cfg.Models.Inner)
+	model := openrouter.New(cfg.Models.OpenRouterKey, cfg.Models.Inner, store)
 	service := agent.New(store, model, platform.Computer(cfg))
 	service.Capabilities = caps
 	service.UserFacts = row.Facts()

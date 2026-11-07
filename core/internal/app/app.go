@@ -72,7 +72,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	model := cfg.Models.Outer
 	outer := conversation.NewOpenAIModel(key, model)
 	// The conversation summary is written by the inner task model, through the same OpenRouter key the task worker uses.
-	summarizer := openrouter.New(summaryKey, "openai/gpt-6.1-terra")
+	summarizer := openrouter.New(summaryKey, "openai/gpt-6.1-terra", store)
 	classifier := conversation.NewJevClassifier(jevKey)
 	runner := conversation.New(outer, classifier, summarizer, tasks)
 	runner.UserFacts = user.Facts()
