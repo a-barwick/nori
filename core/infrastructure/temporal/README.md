@@ -189,6 +189,11 @@ plans or logs. The root `.env` remains the local source. Selected models:
 intent `jev-latest`, outer `gpt-6.1-sol` with low reasoning through the
 OpenAI platform API, and task worker `openai/gpt-6.1-terra` through OpenRouter Responses.
 
+New release targets set `per_user_settings=true`: computer and calendar account
+settings come from user rows. Retained builds keep their original environment,
+including the legacy calendar secret references. Their secret containers remain
+managed and protected; a normal release never retires them.
+
 New release targets leave `jev_completion` disabled, because workers no longer
 call Jev to finish a task. Retained targets that enabled it keep `JEV_API_KEY`
 until their tasks drain, so adding a release doesn't change their credentials.

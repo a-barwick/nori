@@ -24,6 +24,8 @@ locals {
     NORI_WAKE_QUEUE           = "projects/${local.project}/locations/us-central1/queues/${local.conversation_name}"
     NORI_WAKE_SERVICE_ACCOUNT = "${local.conversation_name}-wake@${local.project}.iam.gserviceaccount.com"
     NORI_RUNTIME_URL          = var.runtime_invoke_root
+    COMPUTER_ZONE             = "us-central1-a"
+    COMPUTER_INSTANCE         = local.production ? "nori-computer" : "nori-sandbox-computer"
     MODEL_NAME                = "gemini-3.8-flash"
     MODEL_LOCATION            = "global"
     MODEL_INPUT_USD_PER_MTOK  = "0.75"

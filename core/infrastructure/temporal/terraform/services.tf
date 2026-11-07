@@ -22,6 +22,10 @@ variable "request_worker_targets" {
     model_name = optional(string, "gemini-3.8-flash")
     # Search and calendar credentials; retained builds keep their env.
     capabilities = optional(bool, false)
+    # Only new builds read computer/calendar settings from user rows.
+    per_user_settings = optional(bool, false)
+    # Preserve Jev references on retained binaries that used completion checks.
+    jev_completion = optional(bool, false)
   }))
   default = {}
   validation {
@@ -183,7 +187,9 @@ resource "google_cloud_run_v2_service" "worker" {
         cpu_idle = true
       }
       dynamic "env" {
-        for_each = merge(local.worker_env, local.telemetry_env, {
+        for_each = merge({ for name, value in local.worker_env : name => value
+          if !var.request_worker_targets[each.key].per_user_settings || !contains(["COMPUTER_INSTANCE", "COMPUTER_ZONE"], name)
+          }, local.telemetry_env, {
           FIRESTORE_DATABASE_ID    = var.request_worker_targets[each.key].firestore_database
           NORI_WAKE_QUEUE          = var.request_worker_targets[each.key].firestore_database == "nori-worker-candidate" ? google_cloud_tasks_queue.candidate_events[0].id : local.worker_env.NORI_WAKE_QUEUE
           MODEL_NAME               = var.request_worker_targets[each.key].model_name
@@ -212,6 +218,18 @@ resource "google_cloud_run_v2_service" "worker" {
           }
         }
       }
+      dynamic "env" {
+        for_each = var.request_worker_targets[each.key].jev_completion ? [1] : []
+        content {
+          name = "JEV_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = local.production ? "nori-jev-api-key" : "nori-sandbox-jev-api-key"
+              version = "latest"
+            }
+          }
+        }
+      }
       env {
         name = "TEMPORAL_API_KEY"
         value_source {
@@ -222,7 +240,7 @@ resource "google_cloud_run_v2_service" "worker" {
         }
       }
       dynamic "env" {
-        for_each = var.request_worker_targets[each.key].capabilities ? local.capability_secrets : {}
+        for_each = var.request_worker_targets[each.key].capabilities ? (var.request_worker_targets[each.key].per_user_settings ? local.capability_secrets : local.retained_capability_secrets) : {}
         content {
           name = env.key
           value_source {
