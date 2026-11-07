@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 
@@ -18,54 +19,164 @@ func (d *Database) CreateChat(ctx context.Context, c state.Chat) error {
 	return err
 }
 
-// ChatSummaries reads only the list fields, newest first.
 func (d *Database) ChatSummaries(ctx context.Context) ([]state.ChatSummary, error) {
 	chats, err := documents[state.ChatSummary](d.chats().Select("id", "title", "mode", "active_turn", "updated_at").Documents(ctx))
 	slices.SortStableFunc(chats, func(a, b state.ChatSummary) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
 	return chats, err
 }
 
-func (d *Database) ActiveChats(ctx context.Context) ([]state.Chat, error) {
-	chats, err := documents[state.Chat](d.chats().Where("attention", "==", true).Documents(ctx))
-	for i := range chats {
-		if chats[i].Messages == nil {
-			chats[i].Messages = []state.ChatMessage{}
-		}
-	}
-	return chats, err
+// The message index and its content share one bounded document. Attention keeps
+// unresolved writes discoverable independently of the recent history window.
+type chatMessageRecord struct {
+	state.ChatMessage
+	Attention bool `firestore:"attention"`
 }
 
-func (d *Database) Chat(ctx context.Context, id string) (state.Chat, error) {
-	doc, err := d.chats().Doc(id).Get(ctx)
+func (d *Database) readChat(tx *firestore.Transaction, id string, attention bool, ids []string) (state.Chat, bool, error) {
+	ref := d.chats().Doc(id)
+	doc, err := tx.Get(ref)
 	if notFound(err) {
-		return state.Chat{}, state.ErrNotFound
+		return state.Chat{}, false, state.ErrNotFound
 	}
 	if err != nil {
-		return state.Chat{}, err
+		return state.Chat{}, false, err
 	}
 	var c state.Chat
-	err = doc.DataTo(&c)
-	if c.Messages == nil {
-		c.Messages = []state.ChatMessage{}
+	if err = doc.DataTo(&c); err != nil {
+		return c, false, err
 	}
-	return c, err
-}
-
-// changedMessages returns the messages an update added or changed, compared by their public form.
-func changedMessages(before, after []state.ChatMessage) []state.ChatMessage {
-	prior := map[string]string{}
-	for _, m := range before {
-		encoded, _ := json.Marshal(m)
-		prior[m.ID] = string(encoded)
+	legacy := len(c.Messages) > 0
+	if legacy {
+		c.MessageCount = int64(len(c.Messages))
+		for i := range c.Messages {
+			c.Messages[i].Sequence = int64(i + 1)
+		}
+		return c, true, nil
 	}
-	changed := []state.ChatMessage{}
-	for _, m := range after {
-		encoded, _ := json.Marshal(m)
-		if prior[m.ID] != string(encoded) {
-			changed = append(changed, m)
+	docs, err := tx.Documents(ref.Collection("messages").OrderBy("sequence", firestore.Desc).Limit(state.ChatPageSize)).GetAll()
+	if err != nil {
+		return c, false, err
+	}
+	if attention {
+		pending, e := tx.Documents(ref.Collection("messages").Where("attention", "==", true)).GetAll()
+		if e != nil {
+			return c, false, e
+		}
+		docs = append(docs, pending...)
+	}
+	for _, id := range ids {
+		extra, e := tx.Get(ref.Collection("messages").Doc(id))
+		if notFound(e) {
+			continue
+		}
+		if e != nil {
+			return c, false, e
+		}
+		docs = append(docs, extra)
+	}
+	c.Messages = []state.ChatMessage{}
+	seen := map[string]bool{}
+	for _, doc := range docs {
+		var m state.ChatMessage
+		if err := doc.DataTo(&m); err != nil {
+			return c, false, err
+		}
+		if !seen[m.ID] {
+			c.Messages = append(c.Messages, m)
+			seen[m.ID] = true
 		}
 	}
-	return changed
+	slices.SortFunc(c.Messages, func(a, b state.ChatMessage) int { return int(a.Sequence - b.Sequence) })
+	c.NextBefore = 0
+	if c.MessageCount > state.ChatPageSize {
+		c.NextBefore = c.MessageCount - state.ChatPageSize + 1
+	}
+	return c, false, nil
+}
+
+func (d *Database) ActiveChats(ctx context.Context) ([]state.Chat, error) {
+	headers, err := documents[state.ChatSummary](d.chats().Where("attention", "==", true).Select("id").Documents(ctx))
+	if err != nil {
+		return nil, err
+	}
+	chats := []state.Chat{}
+	for _, header := range headers {
+		var c state.Chat
+		err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+			var e error
+			c, _, e = d.readChat(tx, header.ID, true, nil)
+			return e
+		}, firestore.ReadOnly)
+		if err == state.ErrNotFound {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		chats = append(chats, c)
+	}
+	return chats, nil
+}
+
+func (d *Database) Chat(ctx context.Context, id string) (c state.Chat, err error) {
+	err = d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		var e error
+		c, _, e = d.readChat(tx, id, false, nil)
+		return e
+	}, firestore.ReadOnly)
+	return
+}
+
+func (d *Database) ChatMessages(ctx context.Context, id string, before int64) (page state.ChatMessagePage, err error) {
+	page.Messages = []state.ChatMessage{}
+	err = d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		doc, e := tx.Get(d.chats().Doc(id))
+		if notFound(e) {
+			return state.ErrNotFound
+		}
+		if e != nil {
+			return e
+		}
+		var c state.Chat
+		if e = doc.DataTo(&c); e != nil {
+			return e
+		}
+		messages := []state.ChatMessage{}
+		if len(c.Messages) > 0 {
+			for i, m := range c.Messages {
+				m.Sequence = int64(i + 1)
+				if before == 0 || m.Sequence < before {
+					messages = append(messages, m)
+				}
+			}
+			slices.Reverse(messages)
+		} else {
+			query := d.chats().Doc(id).Collection("messages").OrderBy("sequence", firestore.Desc).Limit(state.ChatPageSize + 1)
+			if before > 0 {
+				query = query.Where("sequence", "<", before)
+			}
+			docs, e := tx.Documents(query).GetAll()
+			if e != nil {
+				return e
+			}
+			for _, doc := range docs {
+				var m state.ChatMessage
+				if e = doc.DataTo(&m); e != nil {
+					return e
+				}
+				messages = append(messages, m)
+			}
+		}
+		page.NextBefore = 0
+		if len(messages) > state.ChatPageSize {
+			messages = messages[:state.ChatPageSize]
+			page.NextBefore = messages[len(messages)-1].Sequence
+		}
+		slices.Reverse(messages)
+		page.Messages = messages
+		return nil
+	}, firestore.ReadOnly)
+	return
 }
 
 func sameHeader(a, b state.ChatHeader) bool {
@@ -80,32 +191,21 @@ func sameHeader(a, b state.ChatHeader) bool {
 	return sameTurn && a == b
 }
 
-func (d *Database) UpdateChat(ctx context.Context, id string, change func(*state.Chat) (string, error)) (state.Chat, error) {
+func (d *Database) UpdateChat(ctx context.Context, id string, change func(*state.Chat) (string, error), ids ...string) (state.Chat, error) {
 	var c state.Chat
 	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		ref := d.chats().Doc(id)
-		doc, err := tx.Get(ref)
-		if notFound(err) {
-			return state.ErrNotFound
-		}
+		var err error
+		var legacy bool
+		c, legacy, err = d.readChat(tx, id, true, ids)
 		if err != nil {
 			return err
 		}
-		c = state.Chat{}
-		if err = doc.DataTo(&c); err != nil {
-			return err
-		}
-		if c.Messages == nil {
-			c.Messages = []state.ChatMessage{}
-		}
-		before := slices.Clone(c.Messages)
-		header := c.Header()
-		prior := map[string]string{}
+		before := map[string]state.ChatMessage{}
 		for _, m := range c.Messages {
-			for _, op := range m.Operations {
-				prior[op.ID] = op.Outcome
-			}
+			m.Operations = slices.Clone(m.Operations)
+			before[m.ID] = m
 		}
+		header := c.Header()
 		kind, err := change(&c)
 		if err != nil {
 			return err
@@ -113,13 +213,40 @@ func (d *Database) UpdateChat(ctx context.Context, id string, change func(*state
 		if kind == "" {
 			return nil
 		}
-		// Tool admission shares the global pause fence with background tasks.
 		startsTool := false
-		for _, m := range c.Messages {
+		changed := []state.ChatMessage{}
+		visible := []state.ChatMessage{}
+		for i := range c.Messages {
+			m := &c.Messages[i]
+			prior, exists := before[m.ID]
+			if !exists {
+				c.MessageCount++
+				m.Sequence = c.MessageCount
+			}
 			for _, op := range m.Operations {
-				if op.Outcome == "attempted" && prior[op.ID] != "attempted" {
+				wasAttempted := false
+				for _, old := range prior.Operations {
+					if old.ID == op.ID && old.Outcome == "attempted" {
+						wasAttempted = true
+					}
+				}
+				if op.Outcome == "attempted" && !wasAttempted {
 					startsTool = true
 				}
+			}
+			if legacy || !reflect.DeepEqual(prior, *m) {
+				changed = append(changed, *m)
+			}
+			oldJSON, _ := json.Marshal(prior)
+			newJSON, e := json.Marshal(m)
+			if e != nil {
+				return e
+			}
+			if len(newJSON) > state.ChatMessageBytes {
+				return state.ErrChatMessageTooLarge
+			}
+			if string(oldJSON) != string(newJSON) {
+				visible = append(visible, *m)
 			}
 		}
 		if startsTool {
@@ -135,22 +262,38 @@ func (d *Database) UpdateChat(ctx context.Context, id string, change func(*state
 				return e
 			}
 		}
-		encoded, _ := json.Marshal(c)
-		if len(encoded) > 512<<10 {
-			return state.ErrChatFull
+		ref := d.chats().Doc(id)
+		for _, m := range changed {
+			if err := tx.Set(ref.Collection("messages").Doc(m.ID), chatMessageRecord{ChatMessage: m, Attention: m.NeedsAttention()}); err != nil {
+				return err
+			}
 		}
-		messages := changedMessages(before, c.Messages)
 		c.Attention = c.NeedsAttention()
-		// A lease renewal changes nothing a client sees, so it saves without an event.
-		if len(messages) == 0 && sameHeader(c.Header(), header) {
-			return tx.Set(ref, c)
+		// One changed message per event keeps event documents bounded too. The
+		// transaction saves the entire update atomically; sequence numbers stay contiguous.
+		if len(visible) > 0 || !sameHeader(c.Header(), header) {
+			if len(visible) == 0 {
+				visible = append(visible, state.ChatMessage{})
+			}
+			c.UpdatedAt = time.Now().UTC()
+			for _, m := range visible {
+				c.Position++
+				messages := []state.ChatMessage{}
+				if m.ID != "" {
+					messages = append(messages, m)
+				}
+				if err := tx.Create(ref.Collection("events").Doc(fmt.Sprintf("%020d", c.Position)), state.ChatEvent{Seq: c.Position, Kind: kind, Conversation: c.Header(), Messages: messages}); err != nil {
+					return err
+				}
+			}
 		}
-		c.Position++
-		c.UpdatedAt = time.Now().UTC()
-		if err = tx.Set(ref, c); err != nil {
-			return err
+		c.NextBefore = 0
+		if c.MessageCount > state.ChatPageSize {
+			c.NextBefore = c.MessageCount - state.ChatPageSize + 1
 		}
-		return tx.Create(ref.Collection("events").Doc(fmt.Sprintf("%020d", c.Position)), state.ChatEvent{Seq: c.Position, Kind: kind, Conversation: c.Header(), Messages: messages})
+		saved := c
+		saved.Messages = nil
+		return tx.Set(ref, saved)
 	})
 	return c, err
 }
@@ -200,7 +343,7 @@ func (d *Database) DeleteChat(ctx context.Context, id string) ([]string, error) 
 		if err = doc.DataTo(&c); err != nil {
 			return err
 		}
-		if c.NeedsAttention() {
+		if c.Attention || c.NeedsAttention() {
 			return state.ErrChatBusy
 		}
 		return tx.Delete(ref)
@@ -210,7 +353,7 @@ func (d *Database) DeleteChat(ctx context.Context, id string) ([]string, error) 
 	}
 	uploads := []string{}
 	writer := d.db.BulkWriter(ctx)
-	for _, collection := range []string{"events", "uploads"} {
+	for _, collection := range []string{"events", "uploads", "messages"} {
 		docs, err := ref.Collection(collection).DocumentRefs(ctx).GetAll()
 		if err != nil {
 			writer.End()

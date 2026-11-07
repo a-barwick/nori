@@ -60,6 +60,7 @@ func Handler(deps Deps, local bool) http.Handler {
 		mux.HandleFunc("GET /v1/conversations", s.listChats)
 		mux.HandleFunc("POST /v1/conversations", s.createChat)
 		mux.HandleFunc("GET /v1/conversations/{conversation}", s.chatSnapshot)
+		mux.HandleFunc("GET /v1/conversations/{conversation}/messages", s.chatHistory)
 		mux.HandleFunc("DELETE /v1/conversations/{conversation}", s.deleteChat)
 		mux.HandleFunc("POST /v1/conversations/{conversation}/messages", s.chatMessage)
 		mux.HandleFunc("POST /v1/conversations/{conversation}/cancel", s.chatCancel)
@@ -137,7 +138,7 @@ func writeError(w http.ResponseWriter, err error) {
 		status = 400
 	case errors.Is(err, state.ErrBusy), errors.Is(err, state.ErrDuplicate), errors.Is(err, state.ErrQuestionStale),
 		errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrCancelled), errors.Is(err, state.ErrConversationBusy),
-		errors.Is(err, state.ErrConversationConflict), errors.Is(err, state.ErrChatFull),
+		errors.Is(err, state.ErrConversationConflict), errors.Is(err, state.ErrChatMessageTooLarge),
 		errors.Is(err, state.ErrMessageConflict), errors.Is(err, state.ErrChatBusy):
 		status = 409
 	}

@@ -282,3 +282,21 @@ func (s *server) chatReadUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	serveFile(w, u.Name, u.MediaType, data)
 }
+
+func (s *server) chatHistory(w http.ResponseWriter, r *http.Request) {
+	before := int64(0)
+	if value := r.URL.Query().Get("before"); value != "" {
+		var err error
+		before, err = strconv.ParseInt(value, 10, 64)
+		if err != nil || before < 1 {
+			writeJSON(w, 400, map[string]string{"error": "Invalid message position."})
+			return
+		}
+	}
+	page, err := s.Chats.Store.ChatMessages(r.Context(), r.PathValue("conversation"), before)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, 200, page)
+}

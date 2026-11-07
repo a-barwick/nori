@@ -107,7 +107,7 @@ export async function conversationRoute(request: Request, mode: Mode, segments: 
     if (segments.length === 2 && request.method === "POST") return uploadRoute(request, mode, path);
     if (segments.length === 3 && /^[a-f0-9-]{36}$/.test(segments[2]) && request.method === "GET") return fileRoute(request, mode, `${path}/${segments[2]}`);
   }
-  const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && operation === "events"))));
+  const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && ["events", "messages"].includes(operation)))));
   const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel"].includes(operation)));
   const remove = request.method === "DELETE" && segments.length === 1 && id !== "assistant" && validID;
   if (!read && !write && !remove) return Response.json({ error: "Not found." }, { status: 404 });
@@ -118,6 +118,10 @@ export async function conversationRoute(request: Request, mode: Mode, segments: 
     const incoming = new URL(request.url).searchParams;
     const after = request.headers.get("last-event-id") || incoming.get("after");
     if (after) query.set("after", after);
+  }
+  if (read && operation === "messages") {
+    const before = new URL(request.url).searchParams.get("before");
+    if (before) query.set("before", before);
   }
   let body: string | undefined;
   if (write) {

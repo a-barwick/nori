@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,19 +93,7 @@ func (s *Service) Accept(ctx context.Context, id, input, text string, attachment
 		if c.ActiveTurn != nil {
 			return "", state.ErrChatBusy
 		}
-		// Bound each durable document and prompt without deleting accepted history.
-		size := len(text)
-		for _, m := range c.Messages {
-			size += len(m.Text)
-			for _, op := range m.Operations {
-				b, _ := json.Marshal(op)
-				size += len(b)
-			}
-		}
-		if len(c.Messages) >= 64 || size > 96<<10 {
-			return "", state.ErrChatFull
-		}
-		if len(c.Messages) == 0 && c.Title == "New chat" {
+		if c.MessageCount == 0 && len(c.Messages) == 0 && c.Title == "New chat" {
 			title := []rune(text)
 			if len(title) > 48 {
 				title = title[:48]
@@ -118,7 +107,7 @@ func (s *Service) Accept(ctx context.Context, id, input, text string, attachment
 		c.LeaseUntil = time.Time{}
 		c.Messages = append(c.Messages, state.ChatMessage{ID: input + "-user", Role: "user", Text: text, Status: "completed", Attachments: assigned}, state.ChatMessage{ID: input + "-assistant", Role: "assistant", Status: "streaming"})
 		return "input.accepted", nil
-	})
+	}, input+"-user")
 }
 
 // Tick recovers durable accepted work even when the browser and request disappear.
@@ -292,7 +281,7 @@ func (s *Service) Cancel(ctx context.Context, id, turn string) (state.Chat, erro
 			}
 		}
 		return "turn.cancelled", nil
-	})
+	}, turn+"-assistant")
 	if err == nil {
 		s.stop(id, turn)
 	}
@@ -407,22 +396,40 @@ func raw(role string, content any) json.RawMessage {
 // history builds the prompt. Tool output and attachment details travel as user-role
 // data, never as system messages, so they carry no more authority than the chat itself.
 func history(c state.Chat, turn string) []json.RawMessage {
-	messages := []json.RawMessage{raw("system", prompts.Chat)}
-	for _, m := range c.Messages {
+	const historyBytes = 96 << 10
+	const historyMessages = 32
+	groups := [][]json.RawMessage{}
+	total := 0
+	for i := len(c.Messages) - 1; i >= 0 && len(groups) < historyMessages; i-- {
+		m := c.Messages[i]
 		if m.ID == turn+"-assistant" {
-			break
+			continue
 		}
+		group := []json.RawMessage{}
 		if len(m.Attachments) > 0 {
 			b, _ := json.Marshal(m.Attachments)
-			messages = append(messages, raw("user", prompts.Runtime("chat-attachments", nil)+string(b)))
+			group = append(group, raw("user", prompts.Runtime("chat-attachments", nil)+string(b)))
 		}
 		if m.Text != "" {
-			messages = append(messages, raw(m.Role, m.Text))
+			group = append(group, raw(m.Role, m.Text))
 		}
 		if len(m.Operations) > 0 {
 			b, _ := json.Marshal(m.Operations)
-			messages = append(messages, raw("user", prompts.Runtime("chat-history-evidence", nil)+string(b)))
+			group = append(group, raw("user", prompts.Runtime("chat-history-evidence", nil)+string(b)))
 		}
+		size := 0
+		for _, entry := range group {
+			size += len(entry)
+		}
+		if total+size > historyBytes {
+			break
+		}
+		total += size
+		groups = append(groups, group)
+	}
+	messages := []json.RawMessage{raw("system", prompts.Chat)}
+	for i := len(groups) - 1; i >= 0; i-- {
+		messages = append(messages, groups[i]...)
 	}
 	return messages
 }
@@ -534,18 +541,15 @@ func (s *Service) read(ctx context.Context, c state.Chat, id, name string, args 
 		return s.Tools.CallRuntimeTool(ctx, "", name, args)
 	}
 	upload, _ := args["upload_id"].(string)
-	for _, m := range c.Messages {
-		for _, a := range m.Attachments {
-			if a.ID == upload {
-				data, err := s.Store.GetFile(ctx, uploadKey(id, upload))
-				if err != nil {
-					return nil, err
-				}
-				return agent.ReadAttachedCSV(a, data)
-			}
-		}
+	u, err := s.Store.ChatUpload(ctx, id, upload)
+	if err != nil {
+		return nil, state.ErrAttachmentMissing
 	}
-	return nil, state.ErrAttachmentMissing
+	data, err := s.Store.GetFile(ctx, uploadKey(id, upload))
+	if err != nil {
+		return nil, err
+	}
+	return agent.ReadAttachedCSV(u.Attachment, data)
 }
 
 func allowedTool(name string) bool {
@@ -585,7 +589,7 @@ func (s *Service) executeWrite(ctx context.Context, id, turn string, selected st
 			}
 		}
 		return "", nil
-	})
+	}, turn+"-assistant")
 	if err != nil {
 		log.Printf("chat %s: saving the outcome of write %s failed; it stays attempted until its lease ends and is then checked again: %v", id, selected.ID, err)
 	}
@@ -675,7 +679,7 @@ func (s *Service) recoverCancelled(ctx context.Context, id, operation string) {
 	for _, m := range c.Messages {
 		for _, op := range m.Operations {
 			if op.ID == operation {
-				s.executeWrite(ctx, id, "", op, true)
+				s.executeWrite(ctx, id, strings.TrimSuffix(m.ID, "-assistant"), op, true)
 				return
 			}
 		}
