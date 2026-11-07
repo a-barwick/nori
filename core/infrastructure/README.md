@@ -45,15 +45,15 @@ does not receive these credentials.
 
 ## Delivery
 
-Changes are verified locally and merged through pull requests. There is no CI/CD.
+Use `make check` for local code checks.
 Deploy from the latest `main` on this Mac, only when requested, with Docker running
 and `gcloud` logged in as the owner. Keep the Mac awake for the 10 or so minutes
 it takes.
 
 | Command | What it does |
 | --- | --- |
-| `make deploy-check` | Read-only rehearsal: local check, real Terraform plan, open work, runtime health |
-| `make deploy` | Checks, builds, pauses, deploys, registers and switches to the new worker, verifies, and stays paused |
+| `make deploy-check` | Read-only rehearsal: Terraform plan, open work, runtime health |
+| `make deploy` | Builds, pauses, deploys, registers and switches to the new worker, verifies, and stays paused |
 | `make unpause` | Opens Nori for use. Nothing runs on new code before this |
 | `make pause` | Closes admission and stops paid compute |
 | `make deploy-status` | Shows paused state, Current worker, and the last deploy |

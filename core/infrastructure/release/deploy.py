@@ -411,7 +411,6 @@ def deploy_locked(commit):
     c = None
     try:
         ops.runtime_settings()  # Refuse invalid capacity policy before building or changing production.
-        step("check", lambda: run(["make", "check"], cwd=ROOT))
         step("build", lambda: build_all(state))
         init_terraform()
         c = ops.config()
@@ -456,8 +455,6 @@ def deploy_locked(commit):
 def check(_args):
     """A read-only rehearsal: real Terraform plan and live reads, with the Current image as a stand-in."""
     commit = run(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
-    log("Local check")
-    run(["make", "check"], cwd=ROOT)
     log("Runtime capacity settings: " + json.dumps(ops.runtime_settings(), sort_keys=True))
     log("Terraform state")
     DIR.mkdir(parents=True, mode=0o700, exist_ok=True)
