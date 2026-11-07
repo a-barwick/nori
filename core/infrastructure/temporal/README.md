@@ -171,15 +171,15 @@ builds:
 3. Review the plan from the reduced manifest. It destroys retained pools and
    services, which carry `prevent_destroy` and `deletion_protection`, and it
    shrinks the `NORI_WORKER_SERVICES` route map of the surviving service.
-   `check_plan` and `route_only_update` refuse that by design; do not loosen
-   them. Apply it by hand, lifting the destroy protections only on the
-   resources being retired and restoring them afterwards.
+   The deployment script no longer restricts plans to worker additions. Resource
+   deletion protections remain; retirement still needs explicit authorization
+   and a separate plan for only the resources being retired.
 4. Keep the isolated candidate target unless retiring its data is a separate
    decision. It owns the `nori-worker-candidate` database, event queue and IAM
    binding, so removing it from the manifest also plans to destroy those.
 
-After that apply, `make deploy` runs unchanged: it reads the smaller state and
-its plan again adds only the new worker.
+After that apply, `make deploy` reads the smaller retained-worker inventory from
+state for subsequent releases.
 
 ## Credentials and measurements
 

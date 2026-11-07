@@ -1,23 +1,15 @@
 # Nori
 
-Follow Austin's current request. Older memory, plans, and skills do not add workflow gates. Complete authorized work without routine go-aheads or mandatory planning, demo, status, or review stages.
-
-Verify the requested behavior proportionally, including the real integration boundary when relevant. Repeat checks only for changed evidence or unresolved failures. Fix blockers; put nonblocking findings in Linear Backlog with evidence and why they can wait. Use related links, not blocking dependencies; do not implement follow-ups without authorization.
-
-Use a `codex/*` branch and PR; merge completed, verified work without an extra approval round. Use a build or type check appropriate to the changed code. No mandatory test, demo, or review cycle. Deploy only when requested, with `make deploy` (see `core/infrastructure/README.md`). Model/CLI/external reviews require an explicit request; reviewer selection alone does not require a review.
+Follow Austin's current request. Verify the changed behavior with checks that fit the change. Use a `codex/*` branch and PR, and merge verified work. Deploy only when requested, with `make deploy` (see `core/infrastructure/README.md`). Run model, CLI, or external reviews only when requested.
 
 ## Threads
 
 - One thread writes one deliverable. Start subagents or message other threads only when Austin asks in this thread.
 - A stop covers the action Austin named. Do not widen it into removing a check, changing a pipeline, or cancelling a running deployment without asking.
 
-## Looking things up
-
-Search the code directly. `docs/agent_map.py` is optional navigation, not a prerequisite for reading or editing files.
-
 ## Documentation
 
-Nori's documentation lives in `docs/site/`. Update it when requested or when an existing instruction becomes wrong because of the change. Keep writing concise and grounded in the code. The writing skills are optional guidance. No separate review, screenshots, style checker, commit trailers, or review checkpoints are required. Publish only when requested.
+Nori's documentation lives in `docs/site/`. Update it when requested or when a change makes it inaccurate. Keep private data out of the public site. Publish only when requested.
 
 ## Marketing film
 
