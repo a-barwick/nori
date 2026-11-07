@@ -1,1 +1,0 @@
-The provider accepted the write, but the event can't be found.

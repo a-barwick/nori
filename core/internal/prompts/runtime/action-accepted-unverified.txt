@@ -1,1 +1,0 @@
-The provider accepted the action. Nori could not verify its final state.

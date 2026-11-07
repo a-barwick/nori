@@ -25,7 +25,6 @@ type HistoryInput struct {
 	Ref      string
 	Position int64
 	Question *state.Question
-	Action   *PendingAction
 }
 type HistorySync struct {
 	Ref                string
@@ -38,7 +37,6 @@ type HistorySync struct {
 	CostUnknown    bool
 	// Subtask and ReadOnly are fixed when the task is accepted.
 	Subtask, ReadOnly bool
-	ActionClosed      string
 }
 type CurrentPosition struct{ Revision, Position int64 }
 
@@ -246,19 +244,12 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 	}
 	messages := []transcript.Message{}
 	q := in.Question
-	action := in.Action
 	for _, cmd := range snap.Commands {
 		if cmd.Position <= in.Position {
 			continue
 		}
 		switch cmd.Kind {
 		case state.CommandStart, state.CommandSteer:
-			if action != nil {
-				closed := map[string]any{"voided": true, "operation_id": action.Operation, "reason": prompts.Runtime("write-voided", nil)}
-				out.ActionClosed = "voided"
-				messages = append(messages, transcript.ToolResultMessage(action.CallID, action.Name, closed))
-				action = nil
-			}
 			if q != nil && q.CallID != "" {
 				superseded := map[string]any{"superseded": true, "reason": prompts.Runtime("superseded", nil)}
 				if q.Kind == state.QuestionWork {

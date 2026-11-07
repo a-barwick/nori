@@ -24,7 +24,7 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 	if s.Features.DisableBackgroundTasks {
 		modes = []string{"chat"}
 	}
-	writeJSON(w, 200, map[string]any{"conversationContract": "nori-conversations-1", "contract": ChatContract, "service": "nori", "persistence": "durable", "provider": "openai", "model": s.Model, "conversationModes": modes, "features": map[string]bool{"backgroundTasks": !s.Features.DisableBackgroundTasks, "jev": !s.Features.DisableBackgroundTasks && !s.Features.DisableJev, "computer": !s.Features.DisableComputer, "calendarOffers": !s.Features.DisableBackgroundTasks && !s.Features.DisableOffers, "schedules": !s.Features.DisableBackgroundTasks && !s.Features.DisableSchedules}})
+	writeJSON(w, 200, map[string]any{"conversationContract": "nori-conversations-1", "contract": ChatContract, "service": "nori", "persistence": "durable", "provider": "openai", "model": s.Model, "conversationModes": modes, "features": map[string]bool{"backgroundTasks": !s.Features.DisableBackgroundTasks, "jev": !s.Features.DisableBackgroundTasks && !s.Features.DisableJev, "computer": !s.Features.DisableComputer}})
 }
 func (s *server) listChats(w http.ResponseWriter, r *http.Request) {
 	chats, err := s.Chats.List(r.Context())

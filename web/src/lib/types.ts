@@ -1,7 +1,7 @@
 export type Sender = "nori" | "me";
 
 /** One piece of a message. A client that doesn't know the type shows `fallback`. */
-export type Part = { type: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number; url?: string; status?: string };
+export type Part = { type: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number; url?: string };
 /** A saved output of a task. Created, checked, reported and delivered are separate facts. */
 export type SavedResult = {
   id: string; root_id: string; version: number; revises?: string; superseded_by?: string; run_id: string; kind: "answer" | "file" | "screenshot" | "link";
@@ -106,11 +106,6 @@ export type TaskStep = {
   cost_usd?: number; cost_status: string; calls?: { name: string; arguments: string }[];
   arguments?: string; result?: string; error?: string;
 };
-export type Schedule = {
-  id: string; kind: "reminder" | "task" | "monitor"; text: string; status: "active" | "paused";
-  rule: { repeat: string; start: string; time: string; days?: string[]; month_day?: number; every_hours?: number; ends?: string };
-  time_zone: string; next_at?: string; snooze_at?: string;
-};
 export type ReadPosition = { message_id: string; through: string; position: number };
 export type Session = {
   messages: Message[]; runs: Run[]; paused: boolean;
@@ -121,8 +116,6 @@ export type Session = {
   traces?: ConversationTrace[];
   next_cursor?: string;
   results?: SavedResult[];
-  /** Open reminders, scheduled tasks and monitors, oldest first. */
-  schedules?: Schedule[];
   /** Event log position this snapshot reflects. */
   position?: number;
   /** The owner's read position, shared across sessions. */

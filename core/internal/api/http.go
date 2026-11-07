@@ -28,8 +28,6 @@ type Deps struct {
 	Tasks  *conversation.Tasks
 	Waker  wake.Waker
 	Ops    Operations
-	// Proactive is nil when the calendar check isn't configured.
-	Proactive Proactive
 }
 
 // Operations are the process-level actions behind the internal routes.
@@ -88,9 +86,6 @@ func Handler(deps Deps, local bool) http.Handler {
 	mux.HandleFunc("GET /v1/results/{id}/file", s.readResultFile)
 	mux.HandleFunc("POST /api/delivered", s.delivered)
 	mux.HandleFunc("POST /api/seen", s.seen)
-	mux.HandleFunc("POST /api/proactive", s.check)
-	mux.HandleFunc("POST /api/offer", s.offer)
-	mux.HandleFunc("POST /api/schedule", s.schedule)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.featureUnavailable(w, r) {
 			return

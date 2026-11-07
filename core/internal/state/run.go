@@ -16,9 +16,6 @@ var ErrRoutingPending = errors.New("accepted user input is awaiting conversation
 var ErrCommandInvalid = errors.New("invalid task command")
 var ErrQuestionStale = errors.New("question is no longer current")
 
-// ErrWriteClaimed means this write already left ready, so an earlier attempt may have sent it.
-var ErrWriteClaimed = errors.New("write was already claimed")
-
 type RunStatus string
 
 const (
@@ -64,13 +61,6 @@ type Run struct {
 	// A parent's Subtasks are the ones it started, and SubtaskSpent is their cost, which counts against the parent's budget.
 	ParentID string `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
 	ReadOnly bool   `json:"read_only,omitempty" firestore:"read_only,omitempty"`
-	// Offer names the proactive offer this read-only task prepares. Its questions and outcome stay out of the
-	// conversation; the offer shows its answer when it's delivered.
-	Offer string `json:"offer,omitempty" firestore:"offer,omitempty"`
-	// Schedule names the schedule that started this task. A Quiet one is a monitor check: it can only read, and its
-	// outcome reaches the conversation only when it found what the user asked to hear about.
-	Schedule string `json:"schedule,omitempty" firestore:"schedule,omitempty"`
-	Quiet    bool   `json:"quiet,omitempty" firestore:"quiet,omitempty"`
 	// Uploads are the files this task was given, and the only ones it can read.
 	Uploads []Attachment `json:"uploads,omitempty" firestore:"uploads,omitempty"`
 	// Revises is the saved result this task was started to change.

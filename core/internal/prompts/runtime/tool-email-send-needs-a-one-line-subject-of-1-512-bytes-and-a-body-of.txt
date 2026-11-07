@@ -1,1 +1,0 @@
-email_send needs a one-line subject of 1–512 bytes and a body of 1–8192 bytes

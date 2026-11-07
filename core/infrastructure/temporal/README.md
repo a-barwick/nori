@@ -207,11 +207,6 @@ version from the root `.env` without printing it:
 awk -F= '$1=="BRAVE_SEARCH_API_KEY"{printf "%s",substr($0,length($1)+2)}' .env | gcloud secrets versions add nori-brave-search-api-key --data-file=-
 ```
 
-Run `go run ./cmd/nori-connect-calendar --user <id>` from `core/` to save
-the calendar refresh token and account in that user's row. An OAuth app in
-Google's testing state loses its refresh token after 7 days, and the calendar then
-reports itself as disconnected until the command runs again and the row is updated.
-
 Measure acceptance to first activity, active activity completion across polling
 cutoff, response after SDK drain, automatic successor delivery, durable input
 wait/Answer, and targeted Stop with retained browser ownership. Record actual

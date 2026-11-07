@@ -31,8 +31,8 @@ Credentials are used in place. Required names are in
 
 ## Users
 
-The `users` collection holds the sign-in email, display name, time zone, notification
-email, calendar connection and computer for each user. Sign-in verifies Google IAP by default,
+The `users` collection holds the sign-in email, display name, time zone
+and computer for each user. Sign-in verifies Google IAP by default,
 or the configured OIDC issuer on AWS,
 then the web server resolves that email through `/api/users/resolve` using its own
 credentials. It prefixes upstream routes with `/users/<id>/`; browser-supplied IDs
@@ -44,19 +44,16 @@ From `core/`, provision a user in the configured database:
 ```sh
 go run ./cmd/nori-user --email user@example.com --name 'User' --timezone America/Los_Angeles
 # Optional computer flags: --computer-instance, --computer-zone, --local-computer-url.
-# Connect calendar and email tools for the returned ID:
-go run ./cmd/nori-connect-calendar --user <id>
 ```
 
 The `owner` row maps to the existing owner document path, unprefixed files and
 `nori-task-<task>` executions. Nothing is moved or rewritten. Other users get separate
 document roots, `users/<id>/` file prefixes and `nori-task-<user>:<task>` executions.
 IDs can repeat across users without exposing records. Old conversation wakes resolve
-only to `owner`; new wakes include the user. Schedules, calendar checks and worker
-reconciliation enumerate rows; each operation uses one immutable scope. API processing
+only to `owner`; new wakes include the user. Worker reconciliation
+enumerates rows; each operation uses one immutable scope. API processing
 passes and task activities read the current row, so changes apply on the next pass or
-activity without mutating work already in flight. Calendar tokens never enter API
-responses or model prompts.
+activity without mutating work already in flight.
 
 ## Observability
 

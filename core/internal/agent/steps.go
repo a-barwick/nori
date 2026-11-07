@@ -19,7 +19,7 @@ import (
 // detailed answer without changing the model's default thinking settings.
 const modelOutputTokenLimit = 8192
 
-// Web search, screenshot reading and calendar reads run on the worker. Everything else runs on the computer.
+// Web search and screenshot reading run on the worker. Everything else runs on the computer.
 func taskTools(wait, work bool) []transcript.Tool {
 	text := &transcript.Schema{Type: transcript.TypeString}
 	list := &transcript.Schema{Type: transcript.TypeArray, Items: text}
@@ -117,21 +117,6 @@ func taskTools(wait, work bool) []transcript.Tool {
 			Parameters:  params("artifact_id", "question"),
 		},
 		{
-			Name:        "calendar_create",
-			Description: prompts.TaskTool("calendar_create"),
-			Parameters:  params("title", "start", "end", "description", "private"),
-		},
-		{
-			Name:        "calendar_move",
-			Description: prompts.TaskTool("calendar_move"),
-			Parameters:  params("event_id", "start", "end"),
-		},
-		{
-			Name:        "email_send",
-			Description: prompts.TaskTool("email_send"),
-			Parameters:  params("to", "subject", "body"),
-		},
-		{
 			Name:        "memory_read",
 			Description: prompts.TaskTool("memory_read"),
 		},
@@ -153,11 +138,6 @@ func taskTools(wait, work bool) []transcript.Tool {
 				Properties: map[string]*transcript.Schema{"names": list},
 				Required:   []string{"names"},
 			},
-		},
-		{
-			Name:        "calendar_read",
-			Description: prompts.TaskTool("calendar_read"),
-			Parameters:  params("start", "end"),
 		},
 	}
 	if wait {
@@ -287,17 +267,6 @@ func ValidateCalls(calls []transcript.ToolCall, wait, work bool) error {
 				if text, ok := name.(string); !ok || strings.TrimSpace(text) == "" || len(text) > 80 {
 					return errors.New(prompts.Runtime("tool-capability-load-names-must-be-catalog-capability-names", nil))
 				}
-			}
-		case "calendar_read":
-			start, _ := call.Args["start"].(string)
-			end, _ := call.Args["end"].(string)
-			if _, _, err := calendarRange(start, end); err != nil {
-				return err
-			}
-		case "calendar_create", "calendar_move", "email_send":
-			// Prepare validates the content. A write parks the task, so it runs alone.
-			if len(calls) != 1 {
-				return errors.New(prompts.Runtime("exclusive-tool", map[string]any{"Tool": call.Name}))
 			}
 		case "complete":
 			if len(calls) != 1 {

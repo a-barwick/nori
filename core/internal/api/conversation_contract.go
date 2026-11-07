@@ -12,7 +12,7 @@ import (
 )
 
 // These are HTTP projections, not a second persistence model. Typed parts retain
-// files, pages and offers; text/attachments remain for existing chat clients.
+// files and pages; text/attachments remain for existing chat clients.
 type messageView struct {
 	ID          string             `json:"id"`
 	Role        string             `json:"role"`
@@ -36,11 +36,9 @@ type operationView struct {
 	Result map[string]any `json:"result,omitempty"`
 }
 type assistantExtras struct {
-	Tasks        []state.Run          `json:"tasks,omitempty"`
-	Results      []state.Result       `json:"results,omitempty"`
-	Schedules    []state.Schedule     `json:"schedules,omitempty"`
-	Offers       []state.Offer        `json:"offers,omitempty"`
-	ReadPosition state.NotifySeenMark `json:"readPosition"`
+	Tasks        []state.Run    `json:"tasks,omitempty"`
+	Results      []state.Result `json:"results,omitempty"`
+	ReadPosition state.ReadMark `json:"readPosition"`
 }
 type conversationHeader struct {
 	state.ChatHeader
@@ -56,16 +54,14 @@ type conversationView struct {
 	Assistant  *assistantExtras `json:"assistant,omitempty"`
 }
 type conversationEvent struct {
-	Seq          int64                 `json:"seq"`
-	Kind         string                `json:"kind"`
-	Conversation conversationHeader    `json:"conversation"`
-	Messages     []messageView         `json:"messages"`
-	Tasks        []state.Run           `json:"tasks,omitempty"`
-	Results      []state.Result        `json:"results,omitempty"`
-	Schedules    []state.Schedule      `json:"schedules,omitempty"`
-	Offers       []state.Offer         `json:"offers,omitempty"`
-	Operations   []operationView       `json:"operations,omitempty"`
-	ReadPosition *state.NotifySeenMark `json:"readPosition,omitempty"`
+	Seq          int64              `json:"seq"`
+	Kind         string             `json:"kind"`
+	Conversation conversationHeader `json:"conversation"`
+	Messages     []messageView      `json:"messages"`
+	Tasks        []state.Run        `json:"tasks,omitempty"`
+	Results      []state.Result     `json:"results,omitempty"`
+	Operations   []operationView    `json:"operations,omitempty"`
+	ReadPosition *state.ReadMark    `json:"readPosition,omitempty"`
 	// Missing says a referenced record no longer exists; it does not invent a result.
 	Missing bool `json:"missing,omitempty"`
 }
@@ -120,20 +116,9 @@ func (s *server) assistantView(ctx context.Context, session conversation.Session
 	v.Paused = &session.Paused
 	v.Messages = make([]messageView, 0, len(session.Messages))
 	v.NextCursor = session.NextCursor
-	v.Assistant = &assistantExtras{Tasks: session.Runs, Results: session.Results, Schedules: session.Schedules, Offers: []state.Offer{}, ReadPosition: session.ReadPosition}
-	seen := map[string]bool{}
+	v.Assistant = &assistantExtras{Tasks: session.Runs, Results: session.Results, ReadPosition: session.ReadPosition}
 	for _, m := range session.Messages {
 		v.Messages = append(v.Messages, assistantMessage(m))
-		for _, p := range m.Parts {
-			if p.Type == state.PartOffer && !seen[p.ID] {
-				offer, err := s.Tasks.Store.GetOffer(ctx, p.ID)
-				if err != nil {
-					return conversationView{}, err
-				}
-				v.Assistant.Offers = append(v.Assistant.Offers, offer)
-				seen[p.ID] = true
-			}
-		}
 	}
 	return v, nil
 }

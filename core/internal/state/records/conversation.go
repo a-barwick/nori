@@ -367,26 +367,11 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 		if err != nil {
 			return err
 		}
-		schedules, err := d.readScheduleChanges(tx, t.Attempt.Schedules)
-		if err != nil {
-			return err
-		}
 		now := time.Now().UTC()
 		if err = d.writeMemoryChanges(tx, t, memories, now); err != nil {
 			return err
 		}
-		if err = d.writeScheduleChanges(tx, log, t, schedules, now); err != nil {
-			return err
-		}
 		c, completed, message := state.CompleteTurn(c, t, text, now)
-		// A reply to something other than the user's own message, such as a task's result or question, reaches them even
-		// when the app is closed.
-		if state.Notifies(t) {
-			notification := state.NotificationFor(message, false)
-			if err = tx.Set(d.notifications().Doc(notification.ID), notification); err != nil {
-				return err
-			}
-		}
 		marked, parts := state.ReportResults(results, t.Attempt.ShowResults, message.ID, now)
 		message.Parts = append(message.Parts, parts...)
 		for _, result := range marked {

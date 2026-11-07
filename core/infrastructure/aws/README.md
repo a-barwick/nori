@@ -1,7 +1,6 @@
 # AWS adapters
 
-`NORI_CLOUD=aws` selects S3 files, SQS wakes with EventBridge Scheduler for future
-delivery, Secrets Manager, an EC2 computer, OIDC sign-in and signed service calls.
+`NORI_CLOUD=aws` selects S3 files, SQS wakes, Secrets Manager, an EC2 computer, OIDC sign-in and signed service calls.
 Postgres becomes the default database; an explicit `NORI_STORE_BACKEND` still wins.
 GCP remains the default cloud and retains its existing adapters. `local` selects
 local files, in-process wakes and a loopback computer, without a secret service.
@@ -23,9 +22,7 @@ AWS SDK clients use workload IAM roles or the standard AWS credential chain.
 | `NORI_POSTGRES_URL` | Private Postgres connection, with production TLS |
 | `ARTIFACT_BUCKET` | Private S3 bucket |
 | `NORI_RUNTIME_URL` | HTTPS root of the Go API, without query or credentials |
-| `NORI_AWS_WAKE_QUEUE_URL`, `NORI_AWS_WAKE_QUEUE_ARN` | Existing standard SQS queue |
-| `NORI_AWS_SCHEDULE_ROLE_ARN`, `NORI_AWS_SCHEDULE_GROUP` | Scheduler execution role and group (default group when omitted) |
-| `NORI_AWS_WAKE_DLQ_ARN` | SQS dead-letter queue for failed scheduled delivery |
+| `NORI_AWS_WAKE_QUEUE_URL` | Existing standard SQS queue |
 | `NORI_WORKER_SERVICES` | Optional JSON map from immutable worker build to HTTPS service root; omitted means workers poll Temporal |
 | `NORI_SERVICE_TOKEN_KEY`, `NORI_SERVICE_AUDIENCE` | Shared service signing secret of at least 32 random bytes; audience defaults to `nori` |
 | `TEMPORAL_API_KEY_SECRET_VERSION` | Optional Secrets Manager name or ARN; the existing variable is retained for compatibility |
@@ -43,12 +40,7 @@ It needs the queue settings, runtime and worker routes, and service signing secr
 It keeps two deliveries active so a long worker request can coexist with a
 conversation wake. The API and worker do not consume SQS themselves.
 
-Immediate wakes go straight to SQS. Future wakes use a named, one-time Scheduler
-target that sends to the same queue. This avoids SQS's short delay limit without
-holding a process or periodically re-enqueuing distant schedules. Scheduler has
-minute-level precision. Names include the user and stable wake key; completed
-schedules are deleted. Scheduler retries target delivery for up to 24 hours and
-185 attempts, then retains failures in its configured DLQ.
+Wakes go straight to SQS.
 
 The consumer only deletes after an HTTP 2xx response. Handler failures, a crash or
 an ambiguous delete cause redelivery; handlers retain their existing duplicate
@@ -58,16 +50,12 @@ Bodies contain user/workflow identities and trace context, never conversation
 content, target URLs or credentials. Targets come from settings and the consumer
 mints a fresh, one-minute service token for each attempt.
 
-Configure queue retention and an SQS redrive policy/DLQ, and monitor both that DLQ
-and the Scheduler DLQ. Replay retained failures after repairing the cause; finite
+Configure queue retention and an SQS redrive policy/DLQ, and monitor that DLQ. Replay retained failures after repairing the cause; finite
 AWS retention is not an unlimited delivery guarantee. Keep routes for retained
-worker builds. No queue, role, DLQ or policy is created automatically.
+worker builds. No queue, DLQ or policy is created automatically.
 
-Relevant permissions are SQS send/receive/delete/change-visibility, Scheduler
-create-schedule and IAM pass-role. The Scheduler role needs permission to send to
-the wake queue and its DLQ. Scope all of them to the configured resources.
-[Scheduler targets](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_Target.html)
-and [SQS receive/visibility](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html)
+Relevant permissions are SQS send/receive/delete/change-visibility, scoped to the
+configured queue. [SQS receive/visibility](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html)
 describe the delivery boundary.
 
 ## Sign-in and service authentication

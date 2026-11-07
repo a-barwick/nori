@@ -1,1 +1,0 @@
-calendar_move needs the event_id calendar_read returned

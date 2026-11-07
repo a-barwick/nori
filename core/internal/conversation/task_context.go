@@ -12,7 +12,6 @@ import (
 )
 
 const taskContextLimit = 12 << 10
-const actionResultLimit = 1 << 10
 
 type TaskContext struct {
 	ActiveTasks []*TaskContextRecord `json:"active_tasks"`
@@ -65,17 +64,6 @@ type TaskContextRecord struct {
 	TextTruncated           bool                 `json:"text_truncated,omitempty"`
 	Outcome                 *state.TaskOutcome   `json:"outcome,omitempty"`
 	OutcomeUnavailable      bool                 `json:"outcome_unavailable,omitempty"`
-	Actions                 []ActionRecord       `json:"actions,omitempty"`
-}
-
-// ActionRecord is what a task's write shows: the action as the user saw it, its
-// outcome and the provider's answer. Attempted means it may have happened.
-type ActionRecord struct {
-	OperationID string `json:"operation_id"`
-	Tool        string `json:"tool"`
-	Outcome     string `json:"outcome"`
-	Text        string `json:"text,omitempty"`
-	Result      string `json:"result,omitempty"`
 }
 
 type TaskContextCommand struct {
@@ -200,11 +188,6 @@ func (t *Tasks) contextRecord(ctx context.Context, id string) (*TaskContextRecor
 			QuestionID: command.QuestionID, Position: command.Position, Revision: command.Revision,
 			SourceInputIDs: command.SourceInputIDs, Accepted: true, Applied: command.Position <= run.Incorporated})
 	}
-	if len(run.OperationRefs) > 0 {
-		if record.Actions, err = t.actionRecords(ctx, run.ID); err != nil {
-			return nil, err
-		}
-	}
 	return record, nil
 }
 
@@ -250,32 +233,6 @@ func fitTaskContext(result *TaskContext, records []*TaskContextRecord) error {
 	return nil
 }
 
-func (t *Tasks) actionRecords(ctx context.Context, id string) ([]ActionRecord, error) {
-	operations, err := t.Store.WriteOperations(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	var actions []ActionRecord
-	for _, op := range operations {
-		action := ActionRecord{OperationID: op.ID, Tool: op.Name, Outcome: op.Outcome}
-		if op.Action != nil {
-			action.Text = op.Action.Text
-		}
-		if op.ResultRef != "" {
-			blocks, err := t.Store.ReadHistory(ctx, id, op.ResultRef)
-			if err != nil {
-				return nil, err
-			}
-			if len(blocks) == 1 {
-				action.Result = string(blocks[0])
-				trimContextText(&action.Result, actionResultLimit, new(bool))
-			}
-		}
-		actions = append(actions, action)
-	}
-	return actions, nil
-}
-
 func trimContextText(text *string, limit int, truncated *bool) {
 	if len(*text) <= limit {
 		return
@@ -300,10 +257,6 @@ func trimRecordText(record *TaskContextRecord, limit int) {
 		for i := range record.Outcome.Evidence {
 			trimContextText(&record.Outcome.Evidence[i].Result, limit, &record.Outcome.Shortened)
 		}
-	}
-	for i := range record.Actions {
-		trimContextText(&record.Actions[i].Result, limit, &record.TextTruncated)
-		trimContextText(&record.Actions[i].Text, limit, &record.TextTruncated)
 	}
 	if record.Question != nil {
 		trimContextText(&record.Question.Text, limit, &record.QuestionTextTruncated)

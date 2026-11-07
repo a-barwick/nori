@@ -1,1 +1,0 @@
-Read the user's calendar for that day and the next two days, and list up to three times when one of the two events could move so there's enough time to drive between them. Say which event each time is for.

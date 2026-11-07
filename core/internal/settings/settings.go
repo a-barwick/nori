@@ -29,19 +29,12 @@ type Settings struct {
 	Temporal       Temporal
 	Wake           Wake
 	Worker         Worker
-	Calendar       Calendar
-	// SearchKey is the Brave Search key and RoutesKey the Google Routes key. Without one, that tool reports itself
-	// unavailable.
-	SearchKey, RoutesKey string
-	// TimeZone, NotifyEmail, Computer and the calendar connection are filled from the user row, never the environment.
+	// SearchKey is the Brave Search key. Without it, web search reports itself unavailable.
+	SearchKey string
+	// TimeZone and Computer are filled from the user row, never the environment.
 	TimeZone string
 	// TaskBudgetUSD is recorded as the spending ceiling when a background task starts.
 	TaskBudgetUSD float64
-	// QuietHours hold back notification emails, as HH:MM-HH:MM.
-	QuietHours string
-	// AppURL is the web app that notification emails link to. NotifyEmail is their recipient: empty means the
-	// connected account's own address, "off" sends none.
-	AppURL, NotifyEmail string
 	// EnvFile is the configuration file Load read.
 	EnvFile       string
 	Observability Observability
@@ -49,11 +42,11 @@ type Settings struct {
 
 // Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
 type Features struct {
-	DisableBackgroundTasks, DisableJev, DisableComputer, DisableOffers, DisableSchedules bool
+	DisableBackgroundTasks, DisableJev, DisableComputer bool
 }
 
 type AWS struct {
-	Region, WakeQueueURL, WakeQueueARN, ScheduleGroup, ScheduleRoleARN, WakeDeadLetterARN string
+	Region, WakeQueueURL string
 }
 
 type Models struct {
@@ -121,12 +114,6 @@ type Worker struct {
 	PollWindow, IdleWindow string
 }
 
-type Calendar struct {
-	ClientID, ClientSecret, RefreshToken string
-	// Account names the connected Google account. WriteID is the calendar writes go to.
-	Account, WriteID string
-}
-
 type Observability struct {
 	SentryDSN, SentryEnvironment, SentryRelease string
 	// SampleRate and the hourly limits stay text: an invalid value falls back to its default.
@@ -159,7 +146,7 @@ func Load() (Settings, error) {
 			return Settings{}, fmt.Errorf("could not load task configuration %s", task)
 		}
 	}
-	for _, name := range []string{"NORI_BACKGROUND_TASKS_ENABLED", "NORI_JEV_ENABLED", "NORI_COMPUTER_ENABLED", "NORI_CALENDAR_OFFERS_ENABLED", "NORI_SCHEDULES_ENABLED"} {
+	for _, name := range []string{"NORI_BACKGROUND_TASKS_ENABLED", "NORI_JEV_ENABLED", "NORI_COMPUTER_ENABLED"} {
 		if v := os.Getenv(name); v != "" && v != "true" && v != "false" {
 			return Settings{}, fmt.Errorf("%s must be true or false", name)
 		}
@@ -220,9 +207,9 @@ func FromEnvironment() Settings {
 		}
 	}
 	return Settings{
-		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") == "false", DisableComputer: os.Getenv("NORI_COMPUTER_ENABLED") == "false", DisableOffers: os.Getenv("NORI_CALENDAR_OFFERS_ENABLED") == "false", DisableSchedules: os.Getenv("NORI_SCHEDULES_ENABLED") == "false"},
+		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") == "false", DisableComputer: os.Getenv("NORI_COMPUTER_ENABLED") == "false"},
 		Cloud:       cloud,
-		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION")), WakeQueueURL: os.Getenv("NORI_AWS_WAKE_QUEUE_URL"), WakeQueueARN: os.Getenv("NORI_AWS_WAKE_QUEUE_ARN"), ScheduleGroup: get("NORI_AWS_SCHEDULE_GROUP", "default"), ScheduleRoleARN: os.Getenv("NORI_AWS_SCHEDULE_ROLE_ARN"), WakeDeadLetterARN: os.Getenv("NORI_AWS_WAKE_DLQ_ARN")},
+		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION")), WakeQueueURL: os.Getenv("NORI_AWS_WAKE_QUEUE_URL")},
 		ServiceAuth: serviceauth.Config{Key: os.Getenv("NORI_SERVICE_TOKEN_KEY"), Audience: get("NORI_SERVICE_AUDIENCE", "nori")},
 		BindHost:    get("BIND_HOST", "127.0.0.1"), Port: os.Getenv("PORT"),
 		Models: Models{
@@ -237,14 +224,9 @@ func FromEnvironment() Settings {
 			ConversationQueue: os.Getenv("NORI_WAKE_QUEUE"), RuntimeURL: os.Getenv("NORI_RUNTIME_URL"), Caller: os.Getenv("NORI_WAKE_SERVICE_ACCOUNT"),
 			WorkerServices: os.Getenv("NORI_WORKER_SERVICES"), WorkerQueue: os.Getenv("NORI_WORKER_WAKE_QUEUE"), Emulator: os.Getenv("CLOUD_TASKS_EMULATOR_HOST"),
 		},
-		Worker: Worker{PollWindow: get("NORI_WORKER_POLL_WINDOW", "240s"), IdleWindow: get("NORI_WORKER_IDLE_WINDOW", "15s")},
-		Calendar: Calendar{
-			ClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
-		},
-		SearchKey: os.Getenv("BRAVE_SEARCH_API_KEY"), RoutesKey: os.Getenv("GOOGLE_ROUTES_API_KEY"),
+		Worker:        Worker{PollWindow: get("NORI_WORKER_POLL_WINDOW", "240s"), IdleWindow: get("NORI_WORKER_IDLE_WINDOW", "15s")},
+		SearchKey:     os.Getenv("BRAVE_SEARCH_API_KEY"),
 		TaskBudgetUSD: taskBudget,
-		QuietHours:    get("NORI_QUIET_HOURS", "22:00-07:00"),
-		AppURL:        os.Getenv("NORI_APP_URL"),
 		Observability: Observability{
 			SentryDSN: strings.TrimSpace(os.Getenv("SENTRY_DSN")), SentryEnvironment: os.Getenv("SENTRY_ENVIRONMENT"), SentryRelease: os.Getenv("SENTRY_RELEASE"),
 			SampleRate: os.Getenv("SENTRY_TRACES_SAMPLE_RATE"), ErrorsPerHour: os.Getenv("NORI_SENTRY_ERRORS_PER_HOUR"),

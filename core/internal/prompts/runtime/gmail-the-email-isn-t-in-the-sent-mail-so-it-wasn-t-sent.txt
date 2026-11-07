@@ -1,1 +1,0 @@
-The email isn't in the sent mail, so it wasn't sent.

@@ -1,1 +1,0 @@
-the result carries the provider's status, the event ID and a read of the event

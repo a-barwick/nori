@@ -47,14 +47,12 @@ not copy data between databases; existing production records remain in Firestore
 
 ## Chat-only runtime
 
-Set all five feature flags to `false` in the main checkout's `.env`:
+Set all three feature flags to `false` in the main checkout's `.env`:
 
 ```dotenv
 NORI_BACKGROUND_TASKS_ENABLED=false
 NORI_JEV_ENABLED=false
 NORI_COMPUTER_ENABLED=false
-NORI_CALENDAR_OFFERS_ENABLED=false
-NORI_SCHEDULES_ENABLED=false
 ```
 
 Keep `NORI_CLOUD=local`, the Postgres settings and `NORI_LOCAL_ARTIFACT_DIR` from

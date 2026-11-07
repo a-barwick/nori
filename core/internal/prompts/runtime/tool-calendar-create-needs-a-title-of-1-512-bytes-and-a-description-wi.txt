@@ -1,1 +1,0 @@
-calendar_create needs a title of 1–512 bytes and a description within 2048 bytes

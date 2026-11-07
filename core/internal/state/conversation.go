@@ -24,10 +24,6 @@ type ConversationInput struct {
 	TraceContext map[string]string `json:"-" firestore:"trace_context,omitempty"`
 	// Attachments are the files sent with a user's message.
 	Attachments []Attachment `firestore:"attachments,omitempty"`
-	// Offer names the proactive offer this input delivered. Its Text is the note the outer model sees about it.
-	Offer string `firestore:"offer,omitempty"`
-	// Schedule names the schedule whose reminder or notice this input delivered.
-	Schedule string `firestore:"schedule,omitempty"`
 }
 
 type ConversationControl struct {
@@ -82,8 +78,6 @@ type ConversationAttempt struct {
 	ContextBytes     int                  `firestore:"context_bytes"`
 	// Memory holds the remember and forget changes this attempt asked for. They apply when its reply is published.
 	Memory []MemoryChange `firestore:"memory,omitempty"`
-	// Schedules holds the schedule changes this attempt asked for. They also apply when its reply is published.
-	Schedules []ScheduleChangeRequest `firestore:"schedules,omitempty"`
 }
 
 type ConversationTurn struct {
@@ -133,7 +127,7 @@ const (
 )
 
 func (in ConversationInput) IsUser() bool {
-	return !in.Introduction && in.Event == nil && in.Offer == "" && in.Schedule == ""
+	return !in.Introduction && in.Event == nil
 }
 
 // RoutingPending reports whether accepted user input is still waiting for the outer loop to route it.
@@ -361,12 +355,12 @@ func RestartTurn(c ConversationControl, t ConversationTurn, inputs []Conversatio
 		if accepted && t.Attempt.Reply != "" {
 			t.Context = append(t.Context, t.Attempt.Reply)
 			t.Context = append(t.Context, t.Attempt.Results...)
-			// Memory and schedule changes apply only when a reply is published, so a superseded reply's never did.
+			// Memory changes apply only when a reply is published, so a superseded reply's never did.
 			// The note tells the next attempt to ask again for any that still apply.
-			if len(t.Attempt.Memory) > 0 || len(t.Attempt.Schedules) > 0 {
+			if len(t.Attempt.Memory) > 0 {
 				note, _ := json.Marshal(map[string]string{"role": "system", "content": "The preceding response was " +
 					"superseded by newer input before it was published. Its task commands were accepted, but none of its " +
-					"remember, forget or schedule changes were applied. Make any of them again if they still apply."})
+					"remember or forget changes were applied. Make any of them again if they still apply."})
 				t.Context = append(t.Context, string(note))
 			}
 		}

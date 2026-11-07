@@ -10,7 +10,7 @@ import (
 )
 
 // Users reads the user directory in the same database as scoped records. It is a trusted
-// server/CLI surface; no route exposes whole rows or calendar credentials.
+// server/CLI surface; no route exposes whole rows.
 type Users struct{ db *Database }
 
 func NewUsers(db *Database) *Users             { return &Users{db: db} }
@@ -89,14 +89,6 @@ func (u *Users) Create(ctx context.Context, row users.User) error {
 		return tx.Create(u.rows().Doc(row.ID), row)
 	})
 }
-func (u *Users) SetCalendar(ctx context.Context, id string, calendar users.Calendar) error {
-	if _, err := u.Get(ctx, id); err != nil {
-		return err
-	}
-	_, err := u.rows().Doc(id).Update(ctx, []docstore.Update{{Path: "calendar", Value: calendar}})
-	return err
-}
-
 func (u *Users) Paused(ctx context.Context) (bool, error) {
 	c, err := u.db.Control(ctx)
 	return c.Paused, err

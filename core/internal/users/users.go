@@ -22,15 +22,7 @@ type User struct {
 	Email       string   `json:"email" firestore:"email"`
 	DisplayName string   `json:"display_name" firestore:"display_name"`
 	TimeZone    string   `json:"time_zone" firestore:"time_zone"`
-	NotifyEmail string   `json:"notification_email" firestore:"notification_email"`
-	Calendar    Calendar `json:"calendar" firestore:"calendar"`
 	Computer    Computer `json:"computer" firestore:"computer"`
-}
-
-type Calendar struct {
-	RefreshToken string `json:"refresh_token,omitempty" firestore:"refresh_token"`
-	Account      string `json:"account" firestore:"account"`
-	WriteID      string `json:"write_id" firestore:"write_id"`
 }
 
 type Computer struct {
@@ -63,12 +55,6 @@ func (u User) Validate() error {
 	if _, err := time.LoadLocation(u.TimeZone); err != nil {
 		return fmt.Errorf("user time zone must be an IANA time zone")
 	}
-	if u.NotifyEmail != "" && u.NotifyEmail != "off" {
-		a, err := mail.ParseAddress(u.NotifyEmail)
-		if err != nil || a.Address != u.NotifyEmail {
-			return fmt.Errorf("notification email must be one email address or off")
-		}
-	}
 	return nil
 }
 
@@ -94,7 +80,6 @@ type Directory interface {
 	List(context.Context) ([]User, error)
 	Paused(context.Context) (bool, error)
 	Create(context.Context, User) error
-	SetCalendar(context.Context, string, Calendar) error
 	Close() error
 }
 

@@ -16,8 +16,6 @@ import (
 var files embed.FS
 
 var (
-	// CalendarTime tells a model how to read and write calendar times. The conversation and chat prompts include it.
-	CalendarTime = render("calendar-time")
 	// Conversation is the outer loop's system prompt, and ConversationTools its task commands as a JSON tool list.
 	Conversation      = render("conversation")
 	ConversationTools = read("conversation-tools.json")
@@ -29,8 +27,6 @@ var (
 	CommandPlan = render("command-plan")
 	// TaskWorker is the inner loop's system prompt.
 	TaskWorker = render("task-worker")
-	// ProactivePlan writes the offer for a calendar conflict the scheduled check found.
-	ProactivePlan = render("proactive-plan")
 	// Chat is the independent chat's system prompt.
 	Chat = render("chat")
 

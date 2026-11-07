@@ -1,1 +1,0 @@
-Scheduled reminder: the user set up reminder {{.ID}} earlier, and it was delivered now. It is their own earlier request, not a new message, and asks for nothing more unless they reply.

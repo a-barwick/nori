@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"time"
+	"unicode/utf8"
 
 	"nori/internal/prompts"
 )
@@ -84,4 +85,14 @@ func (s *Service) webSearch(ctx context.Context, query string) (map[string]any, 
 
 func cleanSnippet(text string) string {
 	return html.UnescapeString(snippetTags.ReplaceAllString(text, ""))
+}
+
+func clipText(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	for limit > 0 && !utf8.RuneStart(text[limit]) {
+		limit--
+	}
+	return text[:limit] + "…"
 }

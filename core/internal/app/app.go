@@ -15,8 +15,6 @@ import (
 	"nori/internal/conversation"
 	"nori/internal/dispatch"
 	"nori/internal/platform"
-	"nori/internal/proactive"
-	"nori/internal/schedules"
 	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/users"
@@ -32,8 +30,6 @@ type App struct {
 	Dispatcher *dispatch.Dispatcher
 	Waker      wake.Waker
 	Model      string
-	Proactive  *proactive.Service
-	Schedules  *schedules.Service
 	engine     dispatch.Orchestrator
 }
 
@@ -52,17 +48,14 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	}
 	model := cfg.Models.Outer
 	outer := conversation.NewOpenAIModel(key, model)
-	checks, err := openProactive(cfg, store, nil, nil, outer, waker)
+	location, err := time.LoadLocation(cfg.TimeZone)
 	if err != nil {
 		store.Close()
-		return nil, err
+		return nil, fmt.Errorf("user time zone must be an IANA time zone")
 	}
 	tools := agent.New(store, nil, platform.Computer(cfg))
 	tools.UserFacts = user.Facts()
-	if checks.Calendar != nil {
-		tools.Capabilities.Calendar = *checks.Calendar
-	}
-	tools.Capabilities.Location = checks.Location
+	tools.Capabilities.Location = location
 	chats := chat.New(store, outer, tools)
 	result := &App{Store: store, Features: cfg.Features, Chats: chats, Waker: waker, Model: model}
 	if cfg.Features.DisableBackgroundTasks {
@@ -89,60 +82,9 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	}
 	runner := conversation.New(outer, classifier, summarizer, tasks)
 	runner.UserFacts = user.Facts()
-	runner.DisableSchedules = cfg.Features.DisableSchedules
-	checks.Runner, checks.Tasks = runner, tasks
-	runner.Clock = conversation.Clock{Location: checks.Location}
-	var later *schedules.Service
-	if !cfg.Features.DisableSchedules {
-		later, err = openSchedules(cfg, store, tasks, waker, runner.Clock, checks.Calendar)
-		if err != nil {
-			engine.Close()
-			store.Close()
-			return nil, err
-		}
-	}
-	if cfg.Features.DisableOffers {
-		checks = nil
-	}
-	result.Runner, result.Tasks, result.Dispatcher, result.Proactive, result.Schedules, result.engine = runner, tasks, dispatcher, checks, later, engine
+	runner.Clock = conversation.Clock{Location: location}
+	result.Runner, result.Tasks, result.Dispatcher, result.engine = runner, tasks, dispatcher, engine
 	return result, nil
-}
-
-// openSchedules runs what the user asked for later. Notifications go to their connected account by email; without one
-// they are skipped with that reason, and schedules still run.
-func openSchedules(cfg settings.Settings, store state.ConversationStore, tasks *conversation.Tasks, waker wake.Waker, clock conversation.Clock, calendar *agent.CalendarConfig) (*schedules.Service, error) {
-	quiet, err := state.ParseQuietHours(cfg.QuietHours)
-	if err != nil {
-		return nil, fmt.Errorf("NORI_QUIET_HOURS: %w", err)
-	}
-	s := &schedules.Service{Store: store, Tasks: tasks, Waker: waker, Clock: clock, Quiet: quiet, AppURL: cfg.AppURL}
-	if calendar != nil && cfg.NotifyEmail != "off" {
-		s.Mailer = &agent.NotifyMailer{Config: *calendar, To: cfg.NotifyEmail}
-	}
-	return s, nil
-}
-
-// openProactive sets up the calendar check with the same Google account the task worker uses. A missing credential
-// leaves the check refusing with a reason; delivery and offers still work.
-func openProactive(cfg settings.Settings, store state.ConversationStore, runner *conversation.Runner, tasks *conversation.Tasks, model conversation.ReplyModel, waker wake.Waker) (*proactive.Service, error) {
-	location, err := time.LoadLocation(cfg.TimeZone)
-	if err != nil {
-		return nil, fmt.Errorf("user time zone must be an IANA time zone")
-	}
-	s := &proactive.Service{Store: store, Runner: runner, Tasks: tasks, Model: model, Waker: waker, Location: location}
-	calendar := agent.CalendarConfig{
-		ClientID: cfg.Calendar.ClientID, ClientSecret: cfg.Calendar.ClientSecret,
-		RefreshToken: cfg.Calendar.RefreshToken, Account: cfg.Calendar.Account,
-		WriteCalendar: cfg.Calendar.WriteID,
-	}
-	if calendar.ClientID != "" && calendar.ClientSecret != "" && calendar.RefreshToken != "" {
-		s.Calendar = &calendar
-	}
-	if key := cfg.RoutesKey; key != "" {
-		router := proactive.NewRoutesAPI(key)
-		s.Router = router
-	}
-	return s, nil
 }
 
 func (a *App) Close() {
@@ -155,11 +97,7 @@ func (a *App) Close() {
 
 // API returns what the HTTP routes call into.
 func (a *App) API() api.Deps {
-	deps := api.Deps{Chats: a.Chats, Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features}
-	if a.Proactive != nil {
-		deps.Proactive = a.Proactive
-	}
-	return deps
+	return api.Deps{Chats: a.Chats, Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features}
 }
 
 func (a *App) Resume(ctx context.Context) error {
@@ -206,24 +144,12 @@ func (a *App) process(ctx context.Context, foreground bool) error {
 		chatDone <- nil
 	}
 	processErr := a.Runner.Process(ctx)
-	// Offers wait for an idle conversation, so they go out after the pass that published the latest reply.
-	var offerErr, scheduleErr error
-	if processErr == nil && a.Proactive != nil {
-		offerErr = a.Proactive.Deliver(ctx)
-	}
-	// Schedules fire after the pass too, so a reminder never cuts into a reply.
-	if processErr == nil && a.Schedules != nil {
-		scheduleErr = a.Schedules.Run(ctx)
-		if errors.Is(scheduleErr, state.ErrConversationBusy) {
-			scheduleErr = nil
-		}
-	}
 	// Dispatch and explicit controls can outlive their first delivery attempt.
 	// Keep the queue notification until delivery is confirmed.
 	delivery, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	reconcileErr := a.Dispatcher.Reconcile(delivery, dispatch.Commands|dispatch.Publications)
-	return errors.Join(<-chatDone, stopErr, processErr, offerErr, scheduleErr, reconcileErr)
+	return errors.Join(<-chatDone, stopErr, processErr, reconcileErr)
 }
 
 var _ api.Operations = (*App)(nil)

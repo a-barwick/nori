@@ -151,19 +151,6 @@ func (s *server) assistantEvent(ctx context.Context, e state.LogEvent) (conversa
 			return v, err
 		}
 		v.ReadPosition = &p
-	case state.EventSchedule:
-		schedule, err := store.GetSchedule(ctx, e.Ref)
-		if err != nil {
-			return v, err
-		}
-		v.Schedules = []state.Schedule{schedule}
-
-	case state.EventOffer:
-		offer, err := store.GetOffer(ctx, e.Ref)
-		if err != nil {
-			return v, err
-		}
-		v.Offers = []state.Offer{offer}
 	case state.EventOperation:
 		runID, opID, ok := strings.Cut(e.Ref, "/")
 		if !ok {

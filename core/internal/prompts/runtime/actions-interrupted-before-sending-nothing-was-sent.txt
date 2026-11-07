@@ -1,1 +1,0 @@
-Interrupted before sending. Nothing was sent.

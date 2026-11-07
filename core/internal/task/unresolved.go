@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"nori/internal/agent"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
@@ -64,10 +63,10 @@ func failureCleared(call transcript.ToolCall, output map[string]any) string {
 	return ""
 }
 
-// clearable reports an unresolved operation that the user's answer can release. A prepared write stays
-// unresolved, because the provider decides what happened to it, and so does a record with no saved result.
+// clearable reports an unresolved operation that the user's answer can release. A record with no saved result stays
+// unresolved.
 func clearable(op state.OperationRecord) bool {
-	return unresolvedWrite(op) && agent.WriteEffect(op.Name) == "" && op.Name != "request_work" && op.ResultRef != "" &&
+	return unresolvedWrite(op) && op.Name != "request_work" && op.ResultRef != "" &&
 		(op.Outcome == "failed" || op.Outcome == "uncertain")
 }
 

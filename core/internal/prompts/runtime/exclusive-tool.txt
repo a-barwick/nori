@@ -1,1 +1,0 @@
-{{.Tool}} must be the only tool call

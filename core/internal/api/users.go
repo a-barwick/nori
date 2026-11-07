@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"time"
 
 	"nori/internal/users"
 )
@@ -47,14 +46,13 @@ func UserHandler(directory users.Directory, open func(context.Context, users.Use
 			r = r.Clone(r.Context())
 			r.URL = &copyURL
 		}
-		if id == "" && r.Method == "POST" && (r.URL.Path == "/api/proactive" || r.URL.Path == "/api/resume") {
+		if id == "" && r.Method == "POST" && r.URL.Path == "/api/resume" {
 			rows, err := directory.List(r.Context())
 			if err != nil {
 				writeError(w, err)
 				return
 			}
-			// Each call retains its own row and durable check identity. Other users
-			// still run when one fails; a scheduler retry is safe for finished checks.
+			// Other users still resume when one fails.
 			failed := false
 			for _, row := range rows {
 				deps, release, err := open(r.Context(), row)
@@ -62,20 +60,7 @@ func UserHandler(directory users.Directory, open func(context.Context, users.Use
 					failed = true
 					continue
 				}
-				if r.URL.Path == "/api/resume" {
-					err = deps.Ops.Resume(r.Context())
-				} else {
-					if deps.Proactive == nil {
-						release()
-						continue
-					}
-					check, cancel := context.WithTimeout(r.Context(), 80*time.Second)
-					_, err = deps.Proactive.Check(check, false)
-					cancel()
-					if wakeErr := deps.Waker.WakeConversation(r.Context()); wakeErr != nil {
-						err = wakeErr
-					}
-				}
+				err = deps.Ops.Resume(r.Context())
 				release()
 				if err != nil {
 					failed = true

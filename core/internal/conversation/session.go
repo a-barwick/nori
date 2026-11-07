@@ -3,7 +3,6 @@ package conversation
 import (
 	"context"
 	"encoding/json"
-	"slices"
 	"sync"
 	"time"
 
@@ -31,16 +30,14 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 	}
 	var attempts []state.ConversationAttempt
 	var results []state.Result
-	var schedules []state.Schedule
-	var readPosition state.NotifySeenMark
-	var readErrors [6]error
+	var readPosition state.ReadMark
+	var readErrors [5]error
 	var reads sync.WaitGroup
 	reads.Go(func() { native, readErrors[0] = r.tasks.Store.ConversationProjection(ctx) })
 	reads.Go(func() { messages, next, readErrors[1] = r.tasks.Store.ConversationMessages(ctx, before) })
 	reads.Go(func() { attempts, readErrors[2] = r.tasks.Store.ConversationTraces(ctx) })
 	reads.Go(func() { results, readErrors[3] = r.tasks.Store.RecentResults(ctx, state.RecentResultLimit) })
-	reads.Go(func() { schedules, readErrors[4] = r.tasks.Store.Schedules(ctx) })
-	reads.Go(func() { readPosition, readErrors[5] = r.tasks.Store.ReadPosition(ctx) })
+	reads.Go(func() { readPosition, readErrors[4] = r.tasks.Store.ReadPosition(ctx) })
 	reads.Wait()
 	for _, err := range readErrors {
 		if err != nil {
@@ -53,7 +50,7 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 	}
 	result := Session{
 		Session: native, NextCursor: next, Dispatches: []Dispatch{}, Traces: []Trace{}, Position: position, Results: results, ReadPosition: readPosition,
-		Conversation: conversationStatus(c, t), Schedules: slices.DeleteFunc(schedules, func(s state.Schedule) bool { return !s.Open() }),
+		Conversation: conversationStatus(c, t),
 	}
 	for _, a := range attempts {
 		trace := Trace{

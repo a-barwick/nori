@@ -13,7 +13,6 @@ import (
 // the user the capability is unavailable rather than appear not to have chosen it.
 type Capabilities struct {
 	SearchKey string
-	Calendar  CalendarConfig
 	Location  *time.Location
 }
 
@@ -32,10 +31,6 @@ func (s *Service) Catalog() []Capability {
 	if s.Capabilities.SearchKey == "" {
 		search = prompts.Runtime("capability-search-unavailable", nil)
 	}
-	account, calendar := s.Capabilities.Calendar.Account, prompts.Runtime("capability-available", nil)
-	if !s.Capabilities.Calendar.connected() {
-		account, calendar = prompts.Runtime("capability-no-account", nil), prompts.Runtime("capability-disconnected", nil)
-	}
 	computerAvailability := prompts.Runtime("capability-available", nil)
 	if s.Computer == nil {
 		computerAvailability = "Computer is not enabled in this deployment."
@@ -47,9 +42,6 @@ func (s *Service) Catalog() []Capability {
 		{Name: "Saved results", Tools: "result_save, result_link, results_find, result_read, result_open", Account: prompts.Runtime("catalog-result-save-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-result-save-onfailure", nil), Verify: prompts.Runtime("catalog-result-save-verify", nil), Default: true},
 		{Name: "Memory and conversation", Tools: "memory_read, conversation_find, operation_read", Account: prompts.Runtime("catalog-memory-read-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-memory-read-onfailure", nil), Verify: prompts.Runtime("catalog-memory-read-verify", nil), Default: true},
 		{Name: "Shell", Tools: "shell, job_start, job_status, job_wait, job_stop", Account: prompts.Runtime("catalog-shell-account", nil), Availability: computerAvailability, OnFailure: prompts.Runtime("catalog-shell-onfailure", nil), Verify: prompts.Runtime("catalog-shell-verify", nil), Default: true},
-		{Name: "Google Calendar read", Tools: "calendar_read", Account: account, Availability: calendar, OnFailure: prompts.Runtime("catalog-calendar-read-onfailure", nil), Verify: prompts.Runtime("catalog-calendar-read-verify", nil)},
-		{Name: "Google Calendar write", Tools: "calendar_create, calendar_move", Account: account, Availability: calendar, OnFailure: prompts.Runtime("catalog-calendar-create-onfailure", nil), Verify: prompts.Runtime("catalog-calendar-create-verify", nil)},
-		{Name: "Email send", Tools: "email_send", Account: account, Availability: calendar, OnFailure: prompts.Runtime("catalog-email-send-onfailure", nil), Verify: prompts.Runtime("catalog-email-send-verify", nil)},
 	}
 }
 
@@ -73,7 +65,7 @@ func (s *Service) catalogInstruction() string {
 // RuntimeTool reports a tool the worker runs itself, without the computer.
 func RuntimeTool(name string) bool {
 	switch name {
-	case "web_search", "calendar_read", "screenshot_inspect", "upload_inspect", "result_link", "results_find", "result_read",
+	case "web_search", "screenshot_inspect", "upload_inspect", "result_link", "results_find", "result_read",
 		"memory_read", "conversation_find", "capability_load", "operation_read":
 		return true
 	}
@@ -90,8 +82,6 @@ func (s *Service) CallRuntimeTool(ctx context.Context, run, name string, args ma
 	switch name {
 	case "web_search":
 		return s.webSearch(ctx, text("query"))
-	case "calendar_read":
-		return s.calendarRead(ctx, text("start"), text("end"))
 	case "screenshot_inspect":
 		return s.inspectScreenshot(ctx, run, text("artifact_id"), text("question"))
 	case "upload_inspect":

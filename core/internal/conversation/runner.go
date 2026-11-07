@@ -72,25 +72,22 @@ type Session struct {
 	Traces         []Trace            `json:"traces"`
 	NextCursor     string             `json:"next_cursor,omitempty"`
 	Results        []state.Result     `json:"results"`
-	// Schedules are the open reminders, tasks and monitors, oldest first.
-	Schedules []state.Schedule `json:"schedules"`
 	// Position is the event log's position when this snapshot was read. Events after it may already be included, and
 	// applying one again changes nothing.
 	Position int64 `json:"position"`
 	// ReadPosition is shared by every client and only moves forward.
-	ReadPosition state.NotifySeenMark `json:"read_position"`
+	ReadPosition state.ReadMark `json:"read_position"`
 }
 type Runner struct {
-	DisableSchedules bool
-	UserFacts        string
-	model            ReplyModel
-	classifier       IntentClassifier
+	UserFacts  string
+	model      ReplyModel
+	classifier IntentClassifier
 	// summarizer writes the conversation summary. compactAfter pauses compaction after a failure.
 	summarizer   SummaryModel
 	compactAfter time.Time
 	tasks        *Tasks
 	process      sync.Mutex
-	// Clock is the user's time zone and the time, for schedules.
+	// Clock is the user's time zone.
 	Clock Clock
 }
 
@@ -299,7 +296,7 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			}
 		}
 		// Failed retrievals or refused changes replace model claims, while accepted tasks still say so.
-		if failures := strings.TrimSpace(showFailure + " " + memoryFailureText(t.Attempt.Memory) + " " + scheduleFailureText(t.Attempt.Schedules)); failures != "" {
+		if failures := strings.TrimSpace(showFailure + " " + memoryFailureText(t.Attempt.Memory)); failures != "" {
 			text = strings.TrimSpace(failures + " " + commandFailure + " " + acceptedCommandText(t.Attempt.Actions))
 		}
 		if text == "" {
@@ -313,16 +310,10 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		if strings.TrimSpace(text) == "" {
 			text = memoryText(t.Attempt.Memory)
 		}
-		if strings.TrimSpace(text) == "" {
-			text = scheduleText(t.Attempt.Schedules, r.Clock)
-		}
 		if strings.TrimSpace(text) == "" && len(t.Attempt.ShowResults) > 0 {
 			text = "Here it is."
 		}
 		buildProtocol(&t, text)
-		if r.DisableSchedules && len(t.Attempt.Schedules) > 0 {
-			return fmt.Errorf("schedules are not enabled; retained changes await re-enabling")
-		}
 		e = r.tasks.Store.PublishConversation(ctx, f, t, text)
 		if errors.Is(e, state.ErrConversationStale) {
 			continue
@@ -364,8 +355,7 @@ func decodeSavedReply(a state.ConversationAttempt, reply *Reply) error {
 	// Actions line up with task commands only: shown results and memory changes have no action.
 	reply.Calls = slices.DeleteFunc(reply.Calls, func(call ToolCall) bool {
 		name := call.Function.Name
-		return name == "show_result" || name == state.MemoryRemember || name == state.MemoryForget ||
-			name == state.ScheduleCreate || name == state.ScheduleChange
+		return name == "show_result" || name == state.MemoryRemember || name == state.MemoryForget
 	})
 	return nil
 }
@@ -467,13 +457,6 @@ func buildProtocol(t *state.ConversationTurn, text string) {
 		t.Protocol = append(t.Protocol, string(modelMessage(map[string]string{
 			"role":    "system",
 			"content": prompts.Runtime("runner-saved-memory-changes-for-the-preceding-response-a-chang", nil) + string(changes),
-		})))
-	}
-	if len(t.Attempt.Schedules) > 0 {
-		changes, _ := json.Marshal(t.Attempt.Schedules)
-		t.Protocol = append(t.Protocol, string(modelMessage(map[string]string{
-			"role":    "system",
-			"content": prompts.Runtime("runner-saved-schedule-changes-for-the-preceding-response-a-cha", nil) + string(changes),
 		})))
 	}
 	if t.Attempt.StructuredReply || t.Attempt.Reply == "" || t.Attempt.Status == "error" || text != t.Attempt.Text {

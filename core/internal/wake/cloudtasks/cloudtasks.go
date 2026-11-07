@@ -12,23 +12,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
-	"time"
 
-	"google.golang.org/api/googleapi"
+	"nori/internal/observability"
+	"nori/internal/users"
+	"nori/internal/wake"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/api/cloudtasks/v2"
 	"google.golang.org/api/option"
-	"nori/internal/observability"
-	"nori/internal/users"
-	"nori/internal/wake"
 )
 
 var tracer = otel.Tracer("nori/wake")
@@ -142,37 +137,6 @@ func (w *Waker) WakeConversation(ctx context.Context) error {
 	})
 	if err != nil {
 		observability.RecordErrorCategory(ctx, "wake.conversation", err)
-	}
-	return err
-}
-
-var taskName = regexp.MustCompile(`[^A-Za-z0-9_-]`)
-
-func (w *Waker) WakeConversationAt(ctx context.Context, at time.Time, key string) error {
-	if !users.ValidID(users.ID(ctx)) {
-		return fmt.Errorf("conversation wake requires a user")
-	}
-	if w.conversation == nil {
-		return wake.ErrNotConfigured
-	}
-	ctx, span := tracer.Start(ctx, "cloud_tasks.schedule_at", trace.WithSpanKind(trace.SpanKindProducer))
-	defer span.End()
-	c := w.conversation
-	err := w.create(ctx, c.queue, &cloudtasks.Task{
-		Name:             c.queue + "/tasks/" + taskName.ReplaceAllString(users.ID(ctx)+"-"+key, "-"),
-		ScheduleTime:     at.UTC().Format(time.RFC3339),
-		DispatchDeadline: "600s",
-		HttpRequest: &cloudtasks.HttpRequest{
-			Url: userURL(c.url, users.ID(ctx)), HttpMethod: "POST", Headers: requestHeaders(ctx), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
-			OauthToken: &cloudtasks.OAuthToken{ServiceAccountEmail: c.caller, Scope: "https://www.googleapis.com/auth/cloud-platform"},
-		},
-	})
-	var apiErr *googleapi.Error
-	if errors.As(err, &apiErr) && apiErr.Code == http.StatusConflict {
-		return nil
-	}
-	if err != nil {
-		observability.RecordErrorCategory(ctx, "wake.conversation_at", err)
 	}
 	return err
 }

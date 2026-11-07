@@ -10,7 +10,6 @@ import (
 	"errors"
 	"log"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 	"nori/internal/conversation"
 	"nori/internal/prompts"
 	"nori/internal/state"
-	"nori/internal/transcript"
 )
 
 const (
@@ -27,7 +25,6 @@ const (
 	// database transaction and one event, so saving every token would not scale.
 	persistEvery = 400 * time.Millisecond
 	turnLease    = 10 * time.Second
-	writeLease   = 30 * time.Second
 	maxSteps     = 8
 )
 
@@ -111,23 +108,13 @@ func (s *Service) Accept(ctx context.Context, id, input, text string, attachment
 }
 
 // Tick recovers durable accepted work even when the browser and request disappear.
-// Its lease fences concurrent service processes. Unknown provider attempts close
-// as interrupted after their lease expires; they are never sent again.
+// Its lease fences concurrent service processes.
 func (s *Service) Tick(ctx context.Context) error {
 	chats, err := s.Store.ActiveChats(ctx)
 	if err != nil {
 		return err
 	}
 	for _, c := range chats {
-		for _, m := range c.Messages {
-			for _, op := range m.Operations {
-				current := c.ActiveTurn != nil && m.ID == *c.ActiveTurn+"-assistant"
-				if !current && op.Action != nil && op.Outcome == "attempted" && !op.LeaseUntil.After(time.Now()) {
-					s.recoverCancelled(ctx, c.ID, op.ID)
-				}
-			}
-		}
-		// An open turn needs a worker.
 		if c.ActiveTurn != nil {
 			s.launch(ctx, c.ID, *c.ActiveTurn)
 		}
@@ -187,13 +174,6 @@ func (s *Service) Process(ctx context.Context) error {
 			for _, c := range chats {
 				if c.ActiveTurn != nil {
 					return state.ErrConversationBusy
-				}
-				for _, m := range c.Messages {
-					for _, op := range m.Operations {
-						if op.Action != nil && op.Outcome == "attempted" {
-							return state.ErrConversationBusy
-						}
-					}
 				}
 			}
 			return nil
@@ -274,12 +254,6 @@ func (s *Service) Cancel(ctx context.Context, id, turn string) (state.Chat, erro
 		c.ActiveTurn = nil
 		c.Started = ""
 		c.LeaseUntil = time.Time{}
-		for i := range m.Operations {
-			op := &m.Operations[i]
-			if op.Outcome == "ready" {
-				op.Outcome = "voided"
-			}
-		}
 		return "turn.cancelled", nil
 	}, turn+"-assistant")
 	if err == nil {
@@ -288,28 +262,14 @@ func (s *Service) Cancel(ctx context.Context, id, turn string) (state.Chat, erro
 	return c, err
 }
 
-// claim takes the turn's lease. It returns the prepared write to run, if any.
-func (s *Service) claim(ctx context.Context, id, turn string) (c state.Chat, write *state.ChatOperation, recovering bool, err error) {
-	c, err = s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
+// claim takes the turn's lease.
+func (s *Service) claim(ctx context.Context, id, turn string) (state.Chat, error) {
+	return s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
 		if c.ActiveTurn == nil || *c.ActiveTurn != turn {
 			return "", state.ErrCancelled
 		}
 		m := &c.Messages[len(c.Messages)-1]
-		if len(m.Operations) > 0 {
-			op := &m.Operations[len(m.Operations)-1]
-			if op.Action != nil && (op.Outcome == "ready" || op.Outcome == "attempted") {
-				if op.Outcome == "attempted" && op.LeaseUntil.After(time.Now()) {
-					return "", state.ErrConversationBusy
-				}
-				recovering = op.Outcome == "attempted"
-				op.Outcome = "attempted"
-				op.Owner = s.owner
-				op.LeaseUntil = time.Now().Add(writeLease)
-				selected := *op
-				write = &selected
-			}
-		}
-		if write == nil && c.Started != "" {
+		if c.Started != "" {
 			if c.LeaseUntil.After(time.Now()) {
 				return "", state.ErrConversationBusy
 			}
@@ -323,16 +283,11 @@ func (s *Service) claim(ctx context.Context, id, turn string) (c state.Chat, wri
 		c.LeaseUntil = time.Now().Add(turnLease)
 		return "reply.updated", nil
 	})
-	return c, write, recovering, err
 }
 
 func (s *Service) run(ctx context.Context, id, turn string) {
-	c, write, recovering, err := s.claim(ctx, id, turn)
+	c, err := s.claim(ctx, id, turn)
 	if err != nil || c.ActiveTurn == nil {
-		return
-	}
-	if write != nil {
-		s.executeWrite(ctx, id, turn, *write, recovering)
 		return
 	}
 	defer s.heartbeat(ctx, id, turn)()
@@ -475,57 +430,21 @@ func (s *Service) respond(ctx context.Context, id, turn string, messages []json.
 // false when the turn ended.
 func (s *Service) call(ctx context.Context, id, turn string, call conversation.ToolCall) (string, bool) {
 	var args map[string]any
-	if json.Unmarshal([]byte(call.Function.Arguments), &args) != nil || !allowedTool(call.Function.Name) {
+	if json.Unmarshal([]byte(call.Function.Arguments), &args) != nil || call.Function.Name != "upload_read" {
 		s.finish(id, turn, "failed")
 		return "", false
 	}
-	tc := transcript.ToolCall{ID: call.ID, Name: call.Function.Name, Args: args}
-	if tc.Name != "upload_read" {
-		if err := agent.ValidateCalls([]transcript.ToolCall{tc}, false, false); err != nil {
-			s.finish(id, turn, "failed")
-			return "", false
-		}
+	op := state.ChatOperation{OperationRecord: state.OperationRecord{ID: uuid.NewString(), CallID: call.ID, Name: call.Function.Name, EffectClass: "read", Outcome: "attempted"}}
+	if _, err := s.update(ctx, id, turn, "tool.updated", func(m *state.ChatMessage) { m.Operations = append(m.Operations, op) }); err != nil {
+		s.finish(id, turn, "failed")
+		return "", false
 	}
-	op := state.ChatOperation{OperationRecord: state.OperationRecord{ID: uuid.NewString(), CallID: call.ID, Name: tc.Name, EffectClass: "read", Outcome: "attempted"}}
-	if effect := agent.WriteEffect(tc.Name); effect != "" {
-		control, err := s.Store.Control(ctx)
-		if err != nil || control.Check() != nil {
-			s.finish(id, turn, "failed")
-			return "", false
-		}
-		op.EffectClass = effect
-		prepared, err := s.Tools.PrepareWrite(ctx, tc.Name, args)
-		if err != nil {
-			s.finish(id, turn, "failed")
-			return "", false
-		}
-		if prepared.Result != nil {
-			op.Result = prepared.Result
-			op.Outcome = "completed"
-		} else {
-			op.Outcome = "ready"
-			op.Action = &state.Action{Digest: prepared.Digest, Text: prepared.Text, Spec: prepared.Spec}
-		}
-	}
-	c, err := s.update(ctx, id, turn, "tool.updated", func(m *state.ChatMessage) { m.Operations = append(m.Operations, op) })
+	var err error
+	op.Result, err = s.readUpload(ctx, id, args)
+	op.Outcome = "completed"
 	if err != nil {
-		s.finish(id, turn, "failed")
-		return "", false
-	}
-	if op.Outcome == "ready" {
-		_, selected, recovering, claimErr := s.claim(ctx, id, turn)
-		if claimErr == nil && selected != nil {
-			s.executeWrite(ctx, id, turn, *selected, recovering)
-		}
-		return "", false
-	}
-	if op.Result == nil {
-		op.Result, err = s.read(ctx, c, id, tc.Name, args)
-		op.Outcome = "completed"
-		if err != nil {
-			op.Outcome = "failed"
-			op.Result = map[string]any{"error": err.Error()}
-		}
+		op.Outcome = "failed"
+		op.Result = map[string]any{"error": err.Error()}
 	}
 	op.Result = boundedResult(op.Result)
 	if _, err = s.update(ctx, id, turn, "tool.updated", func(m *state.ChatMessage) { m.Operations[len(m.Operations)-1] = op }); err != nil {
@@ -535,11 +454,8 @@ func (s *Service) call(ctx context.Context, id, turn string, call conversation.T
 	return prompts.Runtime("chat-tool-evidence", nil) + string(result), true
 }
 
-// read runs a read-only tool. upload_read reads only files assigned in this chat.
-func (s *Service) read(ctx context.Context, c state.Chat, id, name string, args map[string]any) (map[string]any, error) {
-	if name != "upload_read" {
-		return s.Tools.CallRuntimeTool(ctx, "", name, args)
-	}
+// readUpload reads only files assigned in this chat.
+func (s *Service) readUpload(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
 	upload, _ := args["upload_id"].(string)
 	u, err := s.Store.ChatUpload(ctx, id, upload)
 	if err != nil {
@@ -550,49 +466,6 @@ func (s *Service) read(ctx context.Context, c state.Chat, id, name string, args 
 		return nil, err
 	}
 	return agent.ReadAttachedCSV(u.Attachment, data)
-}
-
-func allowedTool(name string) bool {
-	return name == "upload_read" || name == "calendar_read" || agent.WriteEffect(name) != ""
-}
-
-func (s *Service) executeWrite(ctx context.Context, id, turn string, selected state.ChatOperation, recovering bool) {
-	// Stop cannot cancel an already attempted write. The provider call is bounded by
-	// the shared implementation. A lost response is reconciled by read only.
-	var outcome string
-	var result map[string]any
-	if recovering {
-		outcome, result = s.Tools.CheckWrite(context.WithoutCancel(ctx), selected.Name, selected.Action.Spec)
-	} else {
-		outcome, result = s.Tools.SendWrite(context.WithoutCancel(ctx), selected.Name, selected.Action.Spec)
-	}
-	result = boundedResult(result)
-	save, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := s.Store.UpdateChat(save, id, func(c *state.Chat) (string, error) {
-		for mi := range c.Messages {
-			m := &c.Messages[mi]
-			for oi := range m.Operations {
-				op := &m.Operations[oi]
-				if op.ID == selected.ID && op.Outcome == "attempted" && op.Owner == s.owner && op.LeaseUntil.After(time.Now()) {
-					op.Outcome = outcome
-					op.Result = result
-					if c.ActiveTurn != nil && *c.ActiveTurn == turn {
-						m.Status = "completed"
-						m.Text = writeOutcomeText(selected.Name, outcome)
-						c.ActiveTurn = nil
-						c.Started = ""
-						c.LeaseUntil = time.Time{}
-					}
-					return "tool.updated", nil
-				}
-			}
-		}
-		return "", nil
-	}, turn+"-assistant")
-	if err != nil {
-		log.Printf("chat %s: saving the outcome of write %s failed; it stays attempted until its lease ends and is then checked again: %v", id, selected.ID, err)
-	}
 }
 
 func boundedResult(result map[string]any) map[string]any {
@@ -648,7 +521,7 @@ func toolSchemas() json.RawMessage {
 	for _, t := range []struct {
 		Name string
 		Keys []string
-	}{{"upload_read", []string{"upload_id"}}, {"calendar_read", []string{"start", "end"}}, {"calendar_create", []string{"title", "start", "end", "description", "private"}}, {"calendar_move", []string{"event_id", "start", "end"}}, {"email_send", []string{"to", "subject", "body"}}} {
+	}{{"upload_read", []string{"upload_id"}}} {
 		props := map[string]any{}
 		for _, key := range t.Keys {
 			props[key] = map[string]any{"type": "string"}
@@ -657,52 +530,4 @@ func toolSchemas() json.RawMessage {
 	}
 	b, _ := json.Marshal(schemas)
 	return b
-}
-
-func (s *Service) recoverCancelled(ctx context.Context, id, operation string) {
-	c, err := s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
-		for mi := range c.Messages {
-			for oi := range c.Messages[mi].Operations {
-				op := &c.Messages[mi].Operations[oi]
-				if op.ID == operation && op.Outcome == "attempted" && op.Action != nil && !op.LeaseUntil.After(time.Now()) {
-					op.Owner = s.owner
-					op.LeaseUntil = time.Now().Add(writeLease)
-					return "tool.updated", nil
-				}
-			}
-		}
-		return "", state.ErrConversationBusy
-	})
-	if err != nil {
-		return
-	}
-	for _, m := range c.Messages {
-		for _, op := range m.Operations {
-			if op.ID == operation {
-				s.executeWrite(ctx, id, strings.TrimSuffix(m.ID, "-assistant"), op, true)
-				return
-			}
-		}
-	}
-}
-
-func writeOutcomeText(tool, outcome string) string {
-	switch outcome {
-	case agent.WriteConfirmed:
-		switch tool {
-		case "calendar_create":
-			return prompts.Runtime("calendar-added", nil)
-		case "calendar_move":
-			return prompts.Runtime("calendar-moved", nil)
-		case "email_send":
-			return prompts.Runtime("email-sent", nil)
-		}
-	case agent.WriteSubmitted:
-		return prompts.Runtime("action-accepted-unverified", nil)
-	case agent.WriteUncertain:
-		return prompts.Runtime("action-uncertain", nil)
-	case agent.WriteFailed:
-		return prompts.Runtime("action-failed", nil)
-	}
-	return prompts.Runtime("action-unverified", nil)
 }

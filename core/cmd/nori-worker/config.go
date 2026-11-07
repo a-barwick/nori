@@ -26,12 +26,6 @@ func capabilities(s settings.Settings) (agent.Capabilities, error) {
 	}
 	return agent.Capabilities{
 		SearchKey: s.SearchKey, Location: location,
-		Calendar: agent.CalendarConfig{
-			ClientID: s.Calendar.ClientID, ClientSecret: s.Calendar.ClientSecret,
-			RefreshToken:  s.Calendar.RefreshToken,
-			Account:       s.Calendar.Account,
-			WriteCalendar: s.Calendar.WriteID,
-		},
 	}, nil
 }
 

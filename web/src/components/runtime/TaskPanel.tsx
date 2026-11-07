@@ -5,8 +5,8 @@ import { Check, ChevronDown, Globe, List, MessageCircle, Terminal, X } from "luc
 import { Medallion } from "@/components/mark/NoriMark";
 import { DebugBlock } from "@/components/dev/DebugBlock";
 import { Button, IconButton, SectionHeader } from "@/components/ui/primitives";
-import type { Artifact, PendingTaskCommand, Run, Schedule, Session, TaskCommand , SavedResult } from "@/lib/types";
-import { clock, separatorLabel } from "@/lib/time";
+import type { Artifact, PendingTaskCommand, Run, Session, TaskCommand , SavedResult } from "@/lib/types";
+import { clock } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
 const incomplete = (run: Run) => run.status === "failed" && /^incomplete\b/i.test(run.error || "");
@@ -33,40 +33,6 @@ function SavedResults({ results, agentMode }: { results: SavedResult[]; agentMod
       {result.kind === "link" && result.url && /^https?:\/\//.test(result.url) && <a className="text-caption underline" href={result.url} target="_blank" rel="noreferrer noopener">Open link</a>}
     </li>)}</ul>
   </section>;
-}
-
-const kindLabel = { reminder: "Reminder", task: "Scheduled task", monitor: "Monitor" };
-
-/** Open schedules, with the same pause, resume and cancel the user can ask for in chat. */
-function Schedules({ schedules, agentMode, onChanged }: { schedules: Schedule[]; agentMode?: boolean; onChanged: () => void }) {
-  const [sending, setSending] = useState<string>();
-  const [error, setError] = useState("");
-  if (!schedules.length) return null;
-  const change = async (id: string, next: "pause" | "resume" | "cancel") => {
-    setSending(id);
-    setError("");
-    try {
-      const response = await fetch(`${agentMode ? "/api/agent" : "/api"}/schedule`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, change: next }), cache: "no-store" });
-      if (!response.ok && response.status !== 409) throw new Error();
-      onChanged();
-    } catch {
-      setError("That didn't save. Try again, or ask Nori in the chat.");
-    } finally {
-      setSending(undefined);
-    }
-  };
-  return <details className="mt-4">
-    <summary className="cursor-pointer px-2 py-2 text-meta font-medium">Schedules ({schedules.length})</summary>
-    {error && <p role="alert" className="px-2 text-caption">{error}</p>}
-    <ul className="space-y-1">{schedules.map((schedule) => <li key={schedule.id} className="rounded-tile border border-hairline p-3">
-      <p className="line-clamp-2 text-row-title font-medium">{schedule.text}</p>
-      <p className="mt-1 text-caption text-ink-3">{kindLabel[schedule.kind] ?? "Schedule"} · {schedule.status === "paused" ? "Paused" : schedule.next_at ? `Next ${separatorLabel(Date.parse(schedule.snooze_at ?? schedule.next_at))}` : "No time set"}</p>
-      <div className="mt-2 flex flex-wrap gap-2">
-        <Button size="sm" variant="quiet" disabled={sending === schedule.id} onClick={() => void change(schedule.id, schedule.status === "paused" ? "resume" : "pause")}>{schedule.status === "paused" ? "Resume" : "Pause"}</Button>
-        <Button size="sm" variant="quiet" disabled={sending === schedule.id} onClick={() => void change(schedule.id, "cancel")}>Cancel</Button>
-      </div>
-    </li>)}</ul>
-  </details>;
 }
 
 function Screenshot({
@@ -331,7 +297,6 @@ export function TaskPanel({
             {selected?.id === run.id && expanded && selectedDetails}
           </article>)}
         </details>}
-        <Schedules schedules={session?.schedules ?? []} agentMode={agentMode} onChanged={onRefresh} />
         <Button size="sm" variant="quiet" onClick={onRefresh} disabled={loading} className="mt-4 w-full">{loading ? "Loading…" : "Refresh history"}</Button>
         </>}
       </div>

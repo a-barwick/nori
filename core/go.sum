@@ -58,8 +58,6 @@ github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.11 h1:jNP7wZylDeSJh
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.11/go.mod h1:1US+8JBnF0xNm6GE6wM5u5ugFwSZpkd2686gMuql5tI=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.114.9 h1:MLHGyNy4melTyk9e63s+9QgLKCHPDJrP+1NfJhtU1g4=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.114.9/go.mod h1:zfUkiNK2JiYlR1/SnU8aJ8Gj1nMFLkPZ69rVLv6jWPo=
-github.com/aws/aws-sdk-go-v2/service/scheduler v1.26.4 h1:hiOqLQk0Z+Kmxaitp5nyuFL1z00MUbJ2NiDaOOWB6eE=
-github.com/aws/aws-sdk-go-v2/service/scheduler v1.26.4/go.mod h1:c/l3seCTI6HZ/pTWWR1wsNkPVgYzAPHWNbk9MYDtM88=
 github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.11 h1:0NZn7E93Z4ITCyCmfcxRdt25fk6+jb/Q6cH7o8orMPM=
 github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.11/go.mod h1:1D541hm6m91rQHgEP2Rek41RpA98LywXABLJGbxRBHM=
 github.com/aws/aws-sdk-go-v2/service/signin v1.12.4 h1:uo84u6f6YatFOBwk3DKM+ToqgVEB0cDjHQLsfrRm44A=

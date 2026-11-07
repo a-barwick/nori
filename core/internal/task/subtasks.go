@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"nori/internal/agent"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
@@ -31,7 +30,7 @@ func unresolvedWrite(op state.OperationRecord) bool {
 		return false
 	}
 	return op.Outcome == "uncertain" || op.Outcome == "pending" || op.Outcome == "attempted" ||
-		(op.Outcome == "failed" && agent.WriteEffect(op.Name) == "" && op.Name != "request_work")
+		(op.Outcome == "failed" && op.Name != "request_work")
 }
 
 // workQuestion parks the parent on its request. A parent that can't do a write itself can't get one done by asking, so

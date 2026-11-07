@@ -24,7 +24,6 @@ func run() error {
 	email := flag.String("email", "", "sign-in email")
 	name := flag.String("name", "", "display name")
 	zone := flag.String("timezone", "UTC", "IANA time zone")
-	notify := flag.String("notification-email", "", "notification email; empty uses the calendar account; off disables email")
 	computer := flag.String("computer-instance", "", "retained Compute Engine instance")
 	computerZone := flag.String("computer-zone", "", "Compute Engine zone")
 	local := flag.String("local-computer-url", "", "loopback development computer URL")
@@ -33,7 +32,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	row := users.User{ID: cmp.Or(*id, uuid.NewString()), Email: users.Email(*email), DisplayName: *name, TimeZone: *zone, NotifyEmail: *notify,
+	row := users.User{ID: cmp.Or(*id, uuid.NewString()), Email: users.Email(*email), DisplayName: *name, TimeZone: *zone,
 		Computer: users.Computer{Instance: *computer, Zone: *computerZone, LocalURL: *local}}
 	if err := row.Validate(); err != nil {
 		return err

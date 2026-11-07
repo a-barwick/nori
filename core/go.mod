@@ -9,7 +9,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.16
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.344.2
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.9
-	github.com/aws/aws-sdk-go-v2/service/scheduler v1.26.4
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.11
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.52.11
 	github.com/aws/smithy-go v1.28.8

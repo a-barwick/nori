@@ -1,1 +1,0 @@
-Ask the user before further action; never repeat an attempted write automatically.

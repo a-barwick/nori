@@ -35,14 +35,10 @@ type Checkpoint struct {
 	ComputerRevisions     []int64
 	Stopped               bool
 	Request               string
-	// StartBudget replaces the default budget of a new task, and is used only before the first step.
-	StartBudget float64
 	// Jobs are started and not yet observed ended. They outlive a revision, so
 	// only terminal cleanup stops them, not a correction or a question.
 	Jobs        []string
 	JobsStarted bool
-	// Action is the saved write to run.
-	Action *PendingAction
 	// Others is what the rest of this task's family has spent, read from the store before each budget check. A
 	// subtask inherits a read-only limit from its parent, and that limit outlasts a correction.
 	Others             float64
@@ -114,9 +110,6 @@ func newTaskRun(ctx workflow.Context, id string, resume Checkpoint) *taskRun {
 		signals: workflow.GetSignalChannel(ctx, Signal),
 	}
 	if r.c.Budget == 0 {
-		if r.c.StartBudget > 0 {
-			r.c.Budget = r.c.StartBudget
-		}
 		r.c.Stopped = true
 	}
 	return r
@@ -194,7 +187,7 @@ func (r *taskRun) run() (bool, error) {
 	}
 }
 
-// turn syncs accepted input, settles any decided write, asks open questions and otherwise handles one model
+// turn syncs accepted input, asks open questions and otherwise handles one model
 // response. It reports true when the task has been published.
 func (r *taskRun) turn() (bool, error) {
 	var a *Activities
@@ -204,16 +197,12 @@ func (r *taskRun) turn() (bool, error) {
 	}
 	var synced HistorySync
 	err := workflow.ExecuteActivity(r.syncing, a.SyncHistory, HistoryInput{
-		Step: r.step(), Ref: c.Ref, Position: c.Position, Question: c.Question, Action: c.Action,
+		Step: r.step(), Ref: c.Ref, Position: c.Position, Question: c.Question,
 	}).Get(r.ctx, &synced)
 	if retry, err := r.boundary(err); retry || err != nil {
 		return false, err
 	}
 	c.applySync(synced)
-	err = c.settleAction(r.ctx, r.quick, r.id, synced)
-	if retry, err := r.boundary(err); retry || err != nil {
-		return false, err
-	}
 	if c.Question == nil && c.Budget > 0 && c.Spent+c.Others >= c.Budget {
 		if err := c.stopTask(r.stopCtx, r.id); err != nil {
 			return false, err
@@ -425,9 +414,6 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 	if err != nil {
 		return nextCall, err
 	}
-	if agent.WriteEffect(call.Name) != "" {
-		return r.prepareWrite(call, operation)
-	}
 	// A tool the worker runs itself never touches the computer, so it leaves nothing to stop.
 	if !agent.RuntimeTool(call.Name) {
 		if len(c.ComputerRevisions) == 0 || c.ComputerRevisions[len(c.ComputerRevisions)-1] != c.Revision {
@@ -468,30 +454,6 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 		return reviseCalls, nil
 	}
 	return nextCall, nil
-}
-
-// prepareWrite saves the requested write for execution.
-func (r *taskRun) prepareWrite(call CallRef, operation string) (callStep, error) {
-	var a *Activities
-	c := &r.c
-	var prepared ActionPrepared
-	err := workflow.ExecuteActivity(r.ctx, a.PrepareAction, RefToolInput{
-		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.Inherited,
-	}).Get(r.ctx, &prepared)
-	retry, err := r.boundary(err)
-	if retry {
-		return reviseCalls, r.appendResult(call, map[string]any{"skipped": true, "outcome": "failed", "operation_id": operation, "evidence_ref": operation, "reason": prompts.Runtime("workflow-execution-admission-changed-before-this-write-was-prepa", nil)})
-	}
-	if err != nil {
-		return nextCall, err
-	}
-	c.Ref = prepared.Ref
-	if prepared.Ready {
-		c.Action = &PendingAction{Operation: operation, CallID: call.ID, Name: call.Name}
-	} else {
-		c.afterTool(prepared.RefToolOutcome, r.id)
-	}
-	return endCalls, nil
 }
 
 func (c *Checkpoint) projectSpend(w workflow.Context, id string) {

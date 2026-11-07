@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/primitives";
 import type { Part } from "@/lib/types";
 
 function formatSize(bytes: number) {
@@ -51,37 +50,10 @@ function FilePart({ part }: { part: Part }) {
   );
 }
 
-/** A proactive offer's card. Its decision is saved by the service, which updates this part when it changes. */
-function OfferPart({ part }: { part: Part }) {
-  const [sending, setSending] = useState<"accepted" | "dismissed">();
-  const [error, setError] = useState("");
-  const decide = async (decision: "accepted" | "dismissed") => {
-    setSending(decision);
-    setError("");
-    try {
-      const response = await fetch(part.url!, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: part.id, decision }), cache: "no-store" });
-      if (!response.ok && response.status !== 409) throw new Error();
-    } catch {
-      setError("That didn't save. Try again, or reply in the chat.");
-      setSending(undefined);
-    }
-  };
-  if (part.status === "accepted") return <p className="text-caption text-ink-3">Accepted.</p>;
-  if (part.status === "dismissed") return <p className="text-caption text-ink-3">Dismissed. I won&apos;t bring this one up again.</p>;
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Button size="sm" disabled={!!sending} onClick={() => void decide("accepted")}>Yes, look</Button>
-      <Button size="sm" variant="quiet" disabled={!!sending} onClick={() => void decide("dismissed")}>Dismiss</Button>
-      {error && <span role="alert" className="text-caption">{error}</span>}
-    </div>
-  );
-}
-
 /** One non-text part. A type this client doesn't know shows the fallback text the service sent with it. */
 function PartView({ part }: { part: Part }) {
   if (part.type === "link" && part.url && /^https?:\/\//.test(part.url)) return <a href={part.url} target="_blank" rel="noreferrer noopener" className="break-words text-meta underline">{part.name ?? part.url}</a>;
   if (["attachment", "artifact", "image"].includes(part.type) && part.url) return <FilePart part={part} />;
-  if (part.type === "offer" && part.id && part.url) return <OfferPart part={part} />;
   if (part.type === "action") return <details className="text-caption text-ink-3"><summary className="cursor-pointer">{part.name}</summary><p className="mt-1 whitespace-pre-wrap break-words">{part.text}</p></details>;
   if (part.type === "note") return <p className="text-caption text-ink-3">{part.text}</p>;
   return part.fallback ? <p className="text-body">{part.fallback}</p> : null;

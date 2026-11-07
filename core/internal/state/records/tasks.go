@@ -123,38 +123,6 @@ func (d *Database) Admit(ctx context.Context, runID string, revision int64, oper
 	})
 }
 
-func (d *Database) ClaimWrite(ctx context.Context, runID string, revision int64, operation string) (state.OperationRecord, error) {
-	var used state.OperationRecord
-	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
-		if _, err := d.guard(tx, runID, revision); err != nil {
-			return err
-		}
-		ref := d.runs().Doc(runID).Collection("operations").Doc(operation)
-		doc, err := tx.Get(ref)
-		if err != nil {
-			return err
-		}
-		var op state.OperationRecord
-		if err = doc.DataTo(&op); err != nil {
-			return err
-		}
-		if op.Outcome != "ready" || op.Action == nil {
-			return state.ErrWriteClaimed
-		}
-		log, err := d.openLog(tx)
-		if err != nil {
-			return err
-		}
-		if err = log.add(state.EventOperation, runID+"/"+operation); err != nil {
-			return err
-		}
-		used = op
-		used.Outcome, used.Attempt = "attempted", 1
-		return tx.Set(ref, map[string]any{"outcome": used.Outcome, "attempt": used.Attempt, "action": used.Action}, docstore.MergeAll)
-	})
-	return used, err
-}
-
 func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		log, err := d.openLog(tx)
@@ -218,15 +186,12 @@ func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision i
 		if len(eventTraceContext) == 0 {
 			eventTraceContext = run.TraceContext
 		}
-		// An offer's prep task waits quietly: the offer is how the user hears about it.
-		if run.Offer == "" {
-			inserted, err := d.appendTaskEvent(tx, event, eventTraceContext)
-			if err != nil || !inserted {
-				return err
-			}
-			if err = log.add(state.EventConversation, ""); err != nil {
-				return err
-			}
+		inserted, err := d.appendTaskEvent(tx, event, eventTraceContext)
+		if err != nil || !inserted {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
+			return err
 		}
 		if err = log.add(state.EventTask, runID); err != nil {
 			return err
@@ -273,26 +238,14 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 		if err != nil {
 			return err
 		}
-		parent, schedule := in.parent, in.schedule
+		parent := in.parent
 		finished, event := state.FinishRun(run, admitted, now)
 		published, conflict := state.PublishResults(finished, admitted, in.existing, in.prior, now)
 		if conflict != "" {
 			finished.Result = conflict + "\n\n" + finished.Result
 			event.Text = finished.Result
 		}
-		// An offer's prep task reports to its offer, not the conversation.
-		announce := run.ParentID == "" && run.Offer == ""
-		// A monitor check that found nothing new says nothing. One that failed or was stopped still reports.
-		if run.Quiet && finished.Status == state.RunCompleted {
-			alert, _ := state.MonitorOutcome(finished.Result)
-			announce = announce && alert
-			if schedule != nil {
-				updated := state.ApplyMonitorResult(*schedule, finished.Result, now)
-				schedule = &updated
-			}
-		} else {
-			schedule = nil
-		}
+		announce := run.ParentID == ""
 		var result *state.Command
 		if run.ParentID != "" {
 			var waiting bool
@@ -345,11 +298,6 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 				return err
 			}
 		}
-		if schedule != nil {
-			if err = tx.Set(d.schedules().Doc(schedule.ID), *schedule); err != nil {
-				return err
-			}
-		}
 		return tx.Set(ref, run)
 	})
 	if err == nil && routingPending {
@@ -364,7 +312,6 @@ type publishInputs struct {
 	prior    *state.Result
 	parent   state.Run
 	children map[string]state.Run
-	schedule *state.Schedule
 }
 
 func (d *Database) publishReads(tx *docstore.Transaction, runID string, run state.Run) (publishInputs, error) {
@@ -387,11 +334,6 @@ func (d *Database) publishReads(tx *docstore.Transaction, runID string, run stat
 	in.children = map[string]state.Run{}
 	for _, id := range state.RunningSubtasks(run) {
 		if in.children[id], err = decodeRun(tx.Get(d.runs().Doc(id))); err != nil {
-			return in, err
-		}
-	}
-	if run.Schedule != "" {
-		if in.schedule, err = d.readSchedule(tx, run.Schedule); err != nil {
 			return in, err
 		}
 	}

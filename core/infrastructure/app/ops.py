@@ -484,75 +484,9 @@ def unpause(c):
     print("Unpaused: tasks may run; the computer starts only when a tool needs it.")
 
 
-# The calendar check runs in the conversation service, so it reads the worker's calendar secrets and its own Routes
-# key. make deploy doesn't apply Terraform runtime settings, so this setup is native and idempotent, like
-# publish-computer. Secret payloads move from the root .env through stdin, never arguments or state.
-ROUTES_SECRET = "nori-google-routes-api-key"
-CALENDAR_SECRETS = {
-    "GOOGLE_CALENDAR_CLIENT_ID": "nori-google-calendar-client-id",
-    "GOOGLE_CALENDAR_CLIENT_SECRET": "nori-google-calendar-client-secret",
-}
-PROACTIVE_JOB = "nori-proactive-check"
-# Check each user's half-day slot in their own time zone.
-TIMEZONE = "UTC"
-
-
-def secret_enabled(secret):
-    try:
-        return bool(gcloud("secrets", "versions", "list", secret, "--filter=state=enabled", "--limit=1", "--format=value(name)"))
-    except subprocess.CalledProcessError:
-        return False
-
-
-def proactive_secret_env():
-    """The runtime's secret references for the check, once every secret has a version."""
-    secrets = {**CALENDAR_SECRETS, "GOOGLE_ROUTES_API_KEY": ROUTES_SECRET}
-    if ENVIRONMENT != "production" or not all(secret_enabled(secret) for secret in secrets.values()):
-        return {}
-    return {name: {"name": name, "secretRef": {"secret": secret, "version": "latest"}} for name, secret in secrets.items()}
-
-
-def proactive_setup(c):
-    if ENVIRONMENT != "production":
-        raise RuntimeError("The calendar check is set up for production only")
-    # A secret without a version is created and filled from the root .env, so setup doesn't stop partway.
-    for name, secret in {**CALENDAR_SECRETS, "GOOGLE_ROUTES_API_KEY": ROUTES_SECRET}.items():
-        if secret_enabled(secret):
-            continue
-        value = temporal_env().get(name, "")
-        if not value:
-            raise RuntimeError(name + " is missing from the root .env")
-        try:
-            gcloud("secrets", "describe", secret, "--format=value(name)")
-        except subprocess.CalledProcessError:
-            gcloud("secrets", "create", secret, "--replication-policy=automatic")
-        subprocess.run(["gcloud", "--project", PROJECT, "--quiet", "secrets", "versions", "add", secret, "--data-file=-"],
-                       input=value, text=True, check=True, capture_output=True, timeout=remaining(120))
-        print(name + " saved to " + secret + ".")
-    readers = ["serviceAccount:" + c["runtime_service_account"], f"serviceAccount:service-{NUMBER}@gcp-sa-aiplatform.iam.gserviceaccount.com"]
-    for secret in [*CALENDAR_SECRETS.values(), ROUTES_SECRET]:
-        for member in readers:
-            gcloud("secrets", "add-iam-policy-binding", secret, "--member=" + member, "--role=roles/secretmanager.secretAccessor", "--condition=None", "--format=none")
-    gcloud("services", "enable", "cloudscheduler.googleapis.com")
-    # Enabling the API doesn't create its service agent, which mints the job's OAuth token.
-    gcloud("beta", "services", "identity", "create", "--service=cloudscheduler.googleapis.com", "--format=none")
-    caller = c["conversation_wake_service_account"]
-    gcloud("iam", "service-accounts", "add-iam-policy-binding", caller, "--member=" + f"serviceAccount:service-{NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com",
-           "--role=roles/iam.serviceAccountTokenCreator", "--condition=None", "--format=none")
-    job = ["--location=" + REGION, "--schedule=0 * * * *", "--time-zone=" + TIMEZONE, "--uri=" + c["runtime_url"].rstrip("/") + "/api/proactive",
-           "--http-method=POST", "--headers=Content-Type=application/json", "--message-body={}", "--oauth-service-account-email=" + caller,
-           "--oauth-token-scope=https://www.googleapis.com/auth/cloud-platform", "--attempt-deadline=300s", "--max-retry-attempts=2", "--min-backoff=120s"]
-    try:
-        gcloud("scheduler", "jobs", "describe", PROACTIVE_JOB, "--location=" + REGION, "--format=value(name)")
-        gcloud("scheduler", "jobs", "update", "http", PROACTIVE_JOB, *job)
-    except subprocess.CalledProcessError:
-        gcloud("scheduler", "jobs", "create", "http", PROACTIVE_JOB, *job)
-    print("Calendar check scheduled at 12 am and 12 pm " + TIMEZONE + ". Run deploy-runtime to give the runtime its secrets.")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["bootstrap-identities", "publish-computer", "deploy-runtime", "deploy-web", "unpause", "pause", "clear-deadline", "status", "spend-caps", "proactive-setup"])
+    parser.add_argument("action", choices=["bootstrap-identities", "publish-computer", "deploy-runtime", "deploy-web", "unpause", "pause", "clear-deadline", "status", "spend-caps"])
     parser.add_argument("value", nargs="?")
     args = parser.parse_args()
     if args.action == "bootstrap-identities":
@@ -595,8 +529,6 @@ def main():
             "NORI_WAKE_SERVICE_ACCOUNT": c["conversation_wake_service_account"],
             "NORI_RUNTIME_URL": c["runtime_url"],
             "NORI_EXECUTION_MODE": "temporal",
-            # Notification emails link here.
-            "NORI_APP_URL": c["web_url"],
             "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",
             "TEMPORAL_NAMESPACE": "quickstart-nori.qtjow",
             "TEMPORAL_TASK_QUEUE": TASK_QUEUE,
@@ -607,7 +539,6 @@ def main():
         secret_env = {entry["name"]: entry for entry in current.get("spec", {}).get("deploymentSpec", {}).get("secretEnv", [])}
         secret_env["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "secretRef": {
             "secret": "nori-sandbox-openai-api-key" if ENVIRONMENT == "sandbox" else "nori-openai-api-key", "version": "latest"}}
-        secret_env.update(proactive_secret_env())
         deployment = {**runtime_settings(), "env": list(env.values()), "secretEnv": list(secret_env.values())}
         if ENVIRONMENT == "sandbox":
             env["NORI_ENVIRONMENT"] = {"name": "NORI_ENVIRONMENT", "value": "sandbox"}
@@ -623,8 +554,6 @@ def main():
         print(gcloud("run", "services", "update", WEB, "--region=" + REGION, "--image=" + args.value))
     elif args.action == "clear-deadline":
         clear_deadline()
-    elif args.action == "proactive-setup":
-        proactive_setup(c)
     elif args.action == "unpause":
         unpause(c)
     elif args.action == "pause":

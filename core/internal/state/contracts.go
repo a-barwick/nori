@@ -58,8 +58,6 @@ type TaskEvidenceStore interface {
 	PutOperation(ctx context.Context, runID string, op OperationRecord) error
 	Operation(ctx context.Context, runID, id string) (OperationRecord, error)
 	Operations(ctx context.Context, runID string) ([]OperationRecord, error)
-	// WriteOperations lists saved writes, without reading the task's other operations.
-	WriteOperations(ctx context.Context, runID string) ([]OperationRecord, error)
 	PutCompletionCheck(ctx context.Context, runID string, check CompletionCheck) error
 	// ReadTaskSourceInputs resolves the exact retained user inputs a task's commands cite, instead of relying on the
 	// bounded recent-conversation view.
@@ -90,9 +88,6 @@ type TaskDatabase interface {
 	Incorporate(ctx context.Context, req IncorporateRequest) error
 	Guard(ctx context.Context, runID string, revision int64) (Run, error)
 	Admit(ctx context.Context, runID string, revision int64, operation string) error
-	// ClaimWrite moves a ready write to attempted, in one transaction that also checks the task's revision and
-	// cancellation. ErrWriteClaimed means an earlier attempt already took it, so it must not send.
-	ClaimWrite(ctx context.Context, runID string, revision int64, operation string) (OperationRecord, error)
 	Project(ctx context.Context, req ProjectRequest) error
 	// SetProgress replaces the task's latest progress line. Unlike Project it adds no event, so polling a long job
 	// can't grow the task's saved record.
@@ -155,9 +150,9 @@ type ConversationDatabase interface {
 	RestartConversation(ctx context.Context, f ConversationFence, t ConversationTurn) (ConversationTurn, time.Duration, error)
 	SaveConversation(ctx context.Context, f ConversationFence, t ConversationTurn) error
 	UserRoutingPending(ctx context.Context) (bool, error)
-
-	ProactiveDatabase
-	ScheduleDatabase
+	// MarkSeen moves the shared read position forward to a message.
+	MarkSeen(ctx context.Context, messageID string) error
+	ReadPosition(ctx context.Context) (ReadMark, error)
 
 	// The event log. Writes happen inside the transactions above.
 	EventPosition(ctx context.Context) (int64, error)
@@ -170,40 +165,4 @@ type ConversationDatabase interface {
 type ConversationStore interface {
 	Database
 	Artifacts
-}
-
-// ProactiveDatabase holds the calendar check's runs, the offers it plans and the daily counts that limit them.
-type ProactiveDatabase interface {
-	// BeginProactiveCheck claims a check by ID. proceed is false when it already finished.
-	BeginProactiveCheck(ctx context.Context, id, day, owner string, manual bool) (check ProactiveCheck, proceed bool, err error)
-	FinishProactiveCheck(ctx context.Context, check ProactiveCheck) error
-	// ClaimOffer saves a found conflict once. proceed is true while it still needs planning.
-	ClaimOffer(ctx context.Context, offer Offer) (saved Offer, proceed bool, err error)
-	// ChargeProactive reserves a planning call, or with prep a prep task's budget, against the day's cap.
-	ChargeProactive(ctx context.Context, day string, prep bool) error
-	SettleProactivePlan(ctx context.Context, day string, cost *float64) error
-	SavePlannedOffer(ctx context.Context, offer Offer) error
-	PlannedOffers(ctx context.Context) ([]Offer, error)
-	GetOffer(ctx context.Context, id string) (Offer, error)
-	// DeliverOffer publishes a due offer as a finished turn, or skips it. ErrConversationBusy means a turn is running.
-	DeliverOffer(ctx context.Context, id, day, note, text string, protocol []string, now time.Time) (Offer, error)
-	DecideOffer(ctx context.Context, id, decision string) (Offer, error)
-}
-
-// ScheduleDatabase holds the schedules the user asked for and the notifications that reach them when the app is closed.
-type ScheduleDatabase interface {
-	GetSchedule(ctx context.Context, id string) (Schedule, error)
-	Schedules(ctx context.Context) ([]Schedule, error)
-	// ChangeScheduleNow applies a pause, resume or cancel from a client control. ErrScheduleState means the schedule
-	// was already closed.
-	ChangeScheduleNow(ctx context.Context, id, change string, location *time.Location, now time.Time) (Schedule, error)
-	// ClaimSchedule claims the due occurrence named by key and, with a message, publishes it. ErrConversationBusy means a
-	// turn is running; ErrScheduleState means the occurrence is no longer due.
-	ClaimSchedule(ctx context.Context, id, key, runID, reason string, message *ScheduleMessage, now time.Time) (Schedule, error)
-	ArmSchedule(ctx context.Context, id string, at time.Time) error
-	MarkSeen(ctx context.Context, messageID string) error
-	ReadPosition(ctx context.Context) (NotifySeenMark, error)
-	PendingNotifications(ctx context.Context) ([]Notification, error)
-	ClaimNotification(ctx context.Context, id string, quiet QuietHours, local time.Time) (Notification, string, error)
-	FinishNotification(ctx context.Context, id, status, reason string, now time.Time) error
 }

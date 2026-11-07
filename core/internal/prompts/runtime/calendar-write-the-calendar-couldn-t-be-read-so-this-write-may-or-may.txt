@@ -1,1 +1,0 @@
-The calendar couldn't be read, so this write may or may not have happened.

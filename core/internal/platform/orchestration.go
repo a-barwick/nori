@@ -17,7 +17,7 @@ import (
 	"nori/internal/wake/cloudtasks"
 )
 
-// Waker selects Cloud Tasks on GCP, SQS and Scheduler on AWS, or in-process local delivery.
+// Waker selects Cloud Tasks on GCP, SQS on AWS, or in-process local delivery.
 //
 // withConversation requires the hosted conversation wake (NORI_WAKE_QUEUE,
 // NORI_RUNTIME_URL), which only a process that sends it may ask for. Worker
@@ -73,7 +73,7 @@ var configuredSecrets secret.Lookup = secretmanager.Lookup{}
 func Secrets() secret.Lookup { return configuredSecrets }
 
 func AWSWakes(s settings.Settings, withConversation bool) (awssqs.Config, error) {
-	cfg := awssqs.Config{Region: s.AWS.Region, QueueURL: s.AWS.WakeQueueURL, QueueARN: s.AWS.WakeQueueARN, ScheduleGroup: s.AWS.ScheduleGroup, ScheduleRoleARN: s.AWS.ScheduleRoleARN, DeadLetterARN: s.AWS.WakeDeadLetterARN, Auth: s.ServiceAuth, Local: s.Temporal.Local}
+	cfg := awssqs.Config{Region: s.AWS.Region, QueueURL: s.AWS.WakeQueueURL, Auth: s.ServiceAuth, Local: s.Temporal.Local}
 	if withConversation {
 		if s.Wake.RuntimeURL == "" {
 			return cfg, fmt.Errorf("NORI_RUNTIME_URL must be configured")

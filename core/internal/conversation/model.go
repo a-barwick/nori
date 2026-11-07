@@ -20,8 +20,7 @@ type ReplyModel interface {
 // ReplyRequest is everything one turn gives the model. The runner builds a fresh request for each call, so adapters
 // hold no per-call state.
 type ReplyRequest struct {
-	DisableSchedules bool
-	Messages         []json.RawMessage
+	Messages []json.RawMessage
 	// Stream receives cumulative visible text; returning an error stops provider I/O.
 	Stream func(string) error
 	// Tools are server-selected foreground tool schemas.
@@ -37,8 +36,6 @@ type ReplyRequest struct {
 	TaskIDs []string
 	// MemoryIDs are the saved memories; forget and corrections may only name these.
 	MemoryIDs []string
-	// ScheduleIDs are the open schedules; change_schedule may only name these.
-	ScheduleIDs []string
 	// TelemetryInput is the current user message, not the conversation history.
 	TelemetryInput string
 	// RecordUsage saves a usage entry before the provider is called and again once the result is known.
