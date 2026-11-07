@@ -9,6 +9,16 @@ const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export type Identity = { email: string };
 
+const lastRejection = new Map<string, number>();
+function rejected(stage: string, status?: number): null {
+  if (Date.now() - (lastRejection.get(stage) ?? 0) >= 60_000) {
+    lastRejection.set(stage, Date.now());
+    // Never log assertions, provider error messages, or user identities.
+    console.warn(JSON.stringify({ severity: "WARNING", message: "nori.auth.rejected", stage, ...(status ? { status } : {}) }));
+  }
+  return null;
+}
+
 export function localDevelopment(headers: Headers) {
   if (process.env.NODE_ENV !== "development") return false;
   try {
@@ -42,11 +52,11 @@ export async function resolveUser(headers: Headers, local = localDevelopment(hea
       body: JSON.stringify({ email: identity.email }), cache: "no-store", redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok) return null;
+    if (!response.ok) return rejected("user_resolution", response.status);
     const value = await response.json();
     if (typeof value.id !== "string" || !(value.id === "owner" || /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.id))) return null;
     return { ...identity, id: value.id };
-  } catch { return null; }
+  } catch { return rejected("user_resolution_connection"); }
 }
 
 export async function isUser(headers: Headers): Promise<boolean> { return !!(await resolveUser(headers)); }
@@ -87,24 +97,34 @@ async function providerIdentity(headers: Headers): Promise<Identity | null> {
  if (provider !== "iap") return null;
   const assertion = headers.get("x-goog-iap-jwt-assertion");
   const audience = process.env.IAP_AUDIENCE;
-  if (!assertion || !audience) return null;
+  if (!assertion || !audience) return rejected("iap_configuration");
+  let stage = "iap_header";
   try {
     const jwtHeader = JSON.parse(Buffer.from(assertion.split(".")[0], "base64url").toString());
     if (jwtHeader.alg !== "ES256" || typeof jwtHeader.kid !== "string") return null;
     if (!keyCache || keyCache.expires < Date.now() || !keyCache.keys[jwtHeader.kid]) {
+      stage = "iap_keys";
       const { pubkeys } = await verifier.getIapPublicKeys();
       keyCache = { keys: pubkeys, expires: Date.now() + 5 * 60_000 };
     }
+    stage = "iap_verification";
     const ticket = await verifier.verifySignedJwtWithCertsAsync(
       assertion, keyCache.keys, audience, ["https://cloud.google.com/iap"], 660,
     );
     const claims = ticket.getPayload();
     const now = Date.now() / 1000;
-    const valid = !!claims && typeof claims.email === "string" && typeof claims.sub === "string" &&
-      typeof claims.iat === "number" && typeof claims.exp === "number" &&
-      claims.iat <= now + 30 && claims.exp >= now - 30 && claims.exp - claims.iat <= 660;
-    return valid ? { email: claims.email as string } : null;
-  } catch {
-    return null;
+    if (!claims || typeof claims.email !== "string" || typeof claims.sub !== "string" ||
+      typeof claims.iat !== "number" || typeof claims.exp !== "number") return rejected("iap_claims");
+    if (claims.iat > now + 30) return rejected("iap_claims_early");
+    if (claims.exp < now - 30) return rejected("iap_claims_expired");
+    if (claims.exp - claims.iat > 660) return rejected("iap_claims_lifetime");
+    return { email: claims.email };
+  } catch (error) {
+    if (stage === "iap_verification" && error instanceof Error) {
+      for (const [prefix, reason] of [["Expiration time too far", "lifetime"], ["Token used too early", "early"], ["Token used too late", "expired"], ["Wrong recipient", "audience"], ["Invalid issuer", "issuer"], ["Invalid token signature", "signature"]]) {
+        if (error.message.startsWith(prefix)) { stage = `iap_${reason}`; break; }
+      }
+    }
+    return rejected(stage);
   }
 }

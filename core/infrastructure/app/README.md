@@ -67,7 +67,7 @@ python3 infrastructure/app/ops.py unpause
 ```
 
 Tasks normally start without an operator resume ceremony or execution-session
-expiry. Pause first fences dispatch on all retained worker wake queues, then
+expiry. Pause first fences dispatch on the conversation queue and all retained worker wake queues, then
 closes `system/control.paused`, removes native Temporal compute configurations,
 and reconciles retained
 pools to zero. It waits for dispatched worker requests to drain before stopping
@@ -75,7 +75,7 @@ the retained computer. Ambiguous or failed deliveries require matching native
 worker stopped/response logs; an incomplete drain withholds computer stop and is
 reported. Waiting tasks and website/history remain available. Unpause verifies
 production service routes for Current and every open pin, opens admission,
-wakes existing tasks, and resumes only the production worker queue. Candidate
+wakes existing tasks, and resumes the conversation and production worker queues. Candidate
 queues stay paused and old WCI scalers are never restored. Explicit task Stop
 remains separate. A completed request does not establish physical container zero.
 The helper reads the existing root `.env` for `TEMPORAL_API_KEY`; use
