@@ -48,20 +48,6 @@ go run ./cmd/nori-user --email user@example.com --name 'User' --timezone America
 go run ./cmd/nori-connect-calendar --user <id>
 ```
 
-Before deploying this version over the single-user service, import its existing
-settings from the main checkout's root `.env`:
-
-```sh
-NORI_ENV_FILE=/absolute/path/to/main/.env go run ./cmd/nori-user --import-legacy --name Austin
-```
-
-This creates `users/owner`, verifies the saved row, then removes the old per-user
-settings from that file while keeping it mode 600. It refuses an existing row with
-different values. It reads the selected database and env file, so use an explicitly
-configured emulator for local experiments. An empty legacy computer setting stays
-empty; if the deployed computer was configured only in infrastructure, populate its
-zone and instance using the command's computer flags during import.
-
 The `owner` row maps to the existing owner document path, unprefixed files and
 `nori-task-<task>` executions. Nothing is moved or rewritten. Other users get separate
 document roots, `users/<id>/` file prefixes and `nori-task-<user>:<task>` executions.
@@ -260,14 +246,6 @@ the linked operations guides for the exact current lifecycle and its limits.
 These notes describe the original disposable-host trial and retained-disk
 foundation. The current retained computer uses the [app lifecycle](infrastructure/app/README.md).
 Do not apply the old disposable-host lifecycle against that VM.
-
-### Boot smoke
-
-A disposable Firecracker trial on 2026-10-24 verified nested KVM, two guest boots
-and orderly shutdowns, rootfs-marker survival, and complete resource cleanup.
-Historical source remains in `infrastructure/microvm/run.sh`, which now refuses
-`--execute`: current cloud lifecycle belongs to Terraform. Operational evidence
-is retained in the Bot workspace at `.artifacts/microvm/`, outside this checkout.
 
 ## Original retained-disk microVM reference
 

@@ -10,11 +10,6 @@
 <body>
 <h1>Sources</h1>
 <p class="lede">The design is on this site. When it disagrees with the code, the code decides what's running today.</p>
-<section><h2>Other files in the repo</h2>
-<div class="card"><table class="tall"><tr><th>File</th><th>Covers</th></tr>
-<tr><td><code>docs/design-snapshot.md</code></td><td>One consolidated design document from October 26, 2026. It isn't maintained, and its implementation baseline is out of date.</td></tr>
-<tr><td><code>docs/client-contract.md</code></td><td>The full proposed client protocol. Its implementation inventory predates event streaming, typed messages and approvals.</td></tr>
-<tr><td><code>docs/separation-of-concerns.md</code></td><td>The service, client kit and shell split.</td></tr></table></div></section>
 <section><h2>Known mismatches</h2>
 <ul class="pts"><li><code>web/README.md</code> says task updates go through <code>/api/input</code> from the composer. The code sends them through <code>/api/command</code> from the Activity panel.</li></ul></section>
 <section><h2>Corrected page claims</h2>
@@ -23,6 +18,6 @@
 <tr><td>Approval and lost-response recovery are planned</td><td>The runtime saves exact calendar and email actions, uses each approval once and reads the provider after a lost response. See <a href="authority.html">Approvals and writes</a>.</td></tr>
 <tr><td>Completion needs a Jev score</td><td>Record checks and cited tool results control completion. Jev only supplies conversation intent hints. See <a href="completion.html">Finishing a task</a>.</td></tr>
 </table></div></section>
-<details class="sources"><summary>Sources</summary><p><code>docs/client-contract.md</code> · <code>web/README.md</code> · <code>web/src/components/runtime/TaskPanel.tsx</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>core/internal/conversation/memory.go</code> · <code>core/internal/conversation/compact.go</code> · <code>core/internal/task/activities.go</code> · <code>core/internal/task/actions.go</code> · <code>core/internal/task/completion.go</code> · <code>core/internal/conversation/jev.go</code> · <code>core/internal/proactive/check.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>web/README.md</code> · <code>web/src/components/runtime/TaskPanel.tsx</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>core/internal/conversation/memory.go</code> · <code>core/internal/conversation/compact.go</code> · <code>core/internal/task/activities.go</code> · <code>core/internal/task/actions.go</code> · <code>core/internal/task/completion.go</code> · <code>core/internal/conversation/jev.go</code> · <code>core/internal/proactive/check.go</code></p></details>
 </body>
 </html>
