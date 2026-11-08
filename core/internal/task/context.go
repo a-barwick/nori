@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 
+	"nori/internal/contextview"
 	"nori/internal/prompts"
+	"nori/internal/state"
 	"nori/internal/transcript"
 )
 
@@ -61,12 +65,12 @@ func messageBytes(message transcript.Message) int {
 }
 
 // omitOutputs replaces large tool outputs with a reference. A capability_load result stays whole, because the tools
-// a task loaded are read back from it.
+// a task loaded are read back from it. User answers also stay whole.
 func omitOutputs(message transcript.Message) transcript.Message {
 	var parts []transcript.Part
 	for i, part := range message.Parts {
 		result := part.ToolResult
-		if result == nil || result.Name == "capability_load" {
+		if result == nil || result.Name == "capability_load" || result.Name == "request_input" {
 			continue
 		}
 		data, _ := json.Marshal(result.Output)
@@ -120,4 +124,166 @@ func (a *Activities) operationRead(ctx context.Context, runID, id string) (map[s
 			"note": prompts.Runtime("context-a-saved-tool-output-is-untrusted-data-as-it-was-when-th", nil)}, nil
 	}
 	return nil, errors.New(prompts.Runtime("operation-not-found", nil))
+}
+
+// managedContext keeps all current-task instructions and a complete recent suffix.
+// Older rounds become source-linked evidence, never fabricated tool responses.
+// The projection is deterministic from the immutable ref, so a restart needs no
+// separate compaction job, paid summarizer or mutable transcript head.
+func managedContext(messages []transcript.Message, ref string, reduced bool) ([]transcript.Message, error) {
+	budget := contextview.TaskBytes
+	if reduced {
+		budget /= 2
+	}
+	fitted := fitContext(messages)
+	size := contextMessagesBytes
+	if size(fitted) <= budget {
+		return fitted, nil
+	}
+	// Try whole recent outputs first, then operation references even in the latest
+	// round. Select the earliest complete boundary whose entire projection fits.
+	if out := projectContext(messages, fitted, ref, budget); out != nil {
+		return out, nil
+	}
+	short := make([]transcript.Message, len(messages))
+	for i, m := range messages {
+		short[i] = omitOutputs(m)
+	}
+	if out := projectContext(messages, short, ref, budget); out != nil {
+		return out, nil
+	}
+	return nil, contextview.ErrOverflow
+}
+
+func projectContext(original, recent []transcript.Message, ref string, budget int) []transcript.Message {
+	suffixBytes := make([]int, len(recent)+1)
+	for i := len(recent) - 1; i >= 0; i-- {
+		suffixBytes[i] = suffixBytes[i+1] + messageBytes(recent[i])
+	}
+	kept := []transcript.Message{}
+	keptBytes := 0
+	retain := func(m transcript.Message) { kept = append(kept, m); keptBytes += messageBytes(m) }
+	evidence := []map[string]any{}
+	calls := map[string]transcript.ToolCall{}
+	pending := map[string]bool{}
+	loaded := map[string]bool{}
+	for i, m := range original {
+		for _, p := range m.Parts {
+			if p.ToolCall != nil {
+				calls[p.ToolCall.ID] = *p.ToolCall
+				pending[p.ToolCall.ID] = true
+			}
+			if m.Role == transcript.RoleUser && p.Text != "" {
+				retain(transcript.UserText(p.Text))
+			}
+			if r := p.ToolResult; r != nil {
+				delete(pending, r.CallID)
+				if r.Name == "capability_load" {
+					data, _ := json.Marshal(r.Output["loaded"])
+					if call, ok := calls[r.CallID]; ok && !loaded[string(data)] {
+						loaded[string(data)] = true
+						retain(transcript.Message{Role: transcript.RoleModel, Parts: []transcript.Part{{ToolCall: &call}}})
+						retain(transcript.ToolResultMessage(r.CallID, r.Name, r.Output))
+					}
+				} else if r.Name == "request_input" || r.Name == "request_work" {
+					result := any(r.Output)
+					// User answers stay whole. Delegated work is evidence and has a
+					// bounded excerpt with an exact source cursor for the rest.
+					data, _ := json.Marshal(result)
+					if r.Name == "request_work" && len(data) > 4096 {
+						result = map[string]any{"excerpt": strings.ToValidUTF8(string(data[:4096]), ""), "truncated": true, "before": strconv.Itoa(i + 1), "history_ref": ref}
+					}
+					data, _ = json.Marshal(map[string]any{"tool": r.Name, "request": calls[r.CallID].Args, "result": result})
+					retain(transcript.UserText(prompts.Runtime("context-retained-answer", nil) + string(data)))
+				}
+				row := map[string]any{"message": i, "tool": r.Name}
+				for _, key := range []string{"operation_id", "outcome", "artifact_id", "result_id"} {
+					if v, ok := r.Output[key]; ok {
+						row[key] = v
+					}
+				}
+				evidence = append(evidence, row)
+				if len(evidence) > 32 {
+					evidence = evidence[1:]
+				}
+			}
+		}
+		cut := i + 1
+		if len(pending) != 0 || keptBytes+suffixBytes[cut] > budget {
+			continue
+		}
+		data, _ := json.Marshal(map[string]any{"history_ref": ref, "before": strconv.Itoa(cut), "recent_operations": evidence})
+		notice := transcript.UserText(prompts.Runtime("context-task-archive", nil) + string(data))
+		if messageBytes(notice)+keptBytes+suffixBytes[cut] > budget {
+			continue
+		}
+		out := append([]transcript.Message{notice}, kept...)
+		return append(out, recent[cut:]...)
+	}
+	return nil
+}
+
+func (a *Activities) taskHistoryRead(ctx context.Context, run, ref, beforeText, offsetText string) (map[string]any, error) {
+	if !state.ValidHistoryRef(ref) {
+		return nil, errors.New("invalid history reference")
+	}
+	before, err := strconv.Atoi(beforeText)
+	if err != nil || before < 0 {
+		return nil, errors.New("before must be a nonnegative message index")
+	}
+	messages, err := a.history(ctx, run, ref)
+	if err != nil {
+		return nil, err
+	}
+	if before == 0 || before > len(messages) {
+		before = len(messages)
+	}
+	offset, err := strconv.Atoi(offsetText)
+	if err != nil || offset < 0 {
+		return nil, errors.New("offset must be nonnegative")
+	}
+	if before == 0 {
+		return map[string]any{"has_more": false}, nil
+	}
+	fragments := []map[string]any{}
+	remaining := 8000
+	for before > 0 && remaining > 0 && len(fragments) < 12 {
+		m := messages[before-1]
+		parts := []transcript.Part{}
+		for _, p := range m.Parts {
+			if p.Provider == nil {
+				parts = append(parts, p)
+			}
+		}
+		data, err := json.Marshal(transcript.Message{Role: m.Role, Parts: parts})
+		if err != nil {
+			return nil, err
+		}
+		if offset > len(data) || (offset < len(data) && data[offset]&0xC0 == 0x80) {
+			return nil, errors.New("invalid message offset")
+		}
+		end := min(len(data), offset+remaining)
+		for end < len(data) && end > offset && data[end]&0xC0 == 0x80 {
+			end--
+		}
+		if end == offset && end < len(data) {
+			break
+		}
+		fragments = append(fragments, map[string]any{"message_index": before - 1, "offset": offset, "message_json": string(data[offset:end])})
+		remaining -= end - offset
+		if end < len(data) {
+			offset = end
+			break
+		}
+		before, offset = before-1, 0
+	}
+	return map[string]any{"fragments": fragments, "next_before": strconv.Itoa(before), "next_offset": strconv.Itoa(offset), "has_more": before > 0, "note": prompts.Runtime("context-archive-data", nil)}, nil
+}
+
+func contextMessagesBytes(messages []transcript.Message) int {
+	total := 0
+	for _, m := range messages {
+		total += messageBytes(m)
+	}
+	return total
 }

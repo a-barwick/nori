@@ -42,7 +42,7 @@ func summaryMessage(s state.ConversationSummary) json.RawMessage {
 	for _, item := range s.Items {
 		items = append(items, shown{item.Kind, item.Quote, item.InputID, item.Note})
 	}
-	data, _ := json.Marshal(map[string]any{"items": items, "model_gist": s.Gist, "turns_summarized": s.Turns})
+	data, _ := json.Marshal(map[string]any{"items": items, "model_gist": s.Gist, "turns_indexed": s.Turns, "source_excerpts": s.Excerpts, "refinement_through": s.RefinementThrough})
 	return modelMessage(map[string]string{"role": "system", "content": prompts.Runtime("summary", map[string]any{"Summary": string(data)})})
 }
 

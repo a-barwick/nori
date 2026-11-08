@@ -142,6 +142,61 @@ is repaired by a retry, reconnect, local processing loop, or active worker; ther
 is no new always-on sweep while all compute is idle. Older pinned workers retain
 their existing notification behavior until they drain.
 
+## Managed model context
+
+Saved history is authoritative. Model requests use a bounded view of it, maintained
+at execution boundaries without deleting or rewriting messages, task history,
+provider items, or source inputs.
+
+* **Assistant:** Before a reply, oldest-first compaction catches up with the recent
+  window without calling a model. It commits a partial index of user and assistant
+  source excerpts separately from the semantic summary, so indexing cannot evict
+  an existing constraint. Idle refinement reads the original turns using its own
+  source watermark, reserved before provider I/O. A canceled or crashed refinement
+  leaves the index usable and is not automatically replayed. Replacement compares
+  the original summary and context cutoff, so stale maintenance cannot overwrite newer context.
+* **Chats:** Under the active turn lease, an extractive index advances through every
+  omitted message, including history older than the snapshot page. It retains the
+  opening request and recent excerpts. The current user message stays whole, recent
+  user/reply pairs stay together, and `history_read` can page the original messages
+  or read a specific message's full JSON (including attachments and operations) in
+  chunks. Older read results give way to their arguments when necessary.
+* **Tasks:** Large tool outputs first become operation references. If the view is
+  still too large, complete old call/result rounds give way to an evidence index,
+  while user instructions, complete user answers with their questions, loaded
+  capabilities, and a recent suffix remain. Delegated results retain source-linked
+  excerpts. Boundaries are chosen using the size of the entire retained view.
+  `task_history_read` reads the immutable source, `operation_read`
+  reads full saved tool results, and `conversation_read` resolves summary input IDs
+  and visible user/assistant message IDs under the conversation cutoff.
+  Derived views are reproducible from the task's revision and immutable history
+  reference; they need no separate scheduler or paid summarization activity.
+
+Application input budgets are conservative byte limits: 96 KiB for chats and
+128 KiB for tasks, with a 192 KiB final encoded-request cap including schemas and
+instructions. The existing assistant budget is 40 KiB. These are application
+budgets, not advertised model window sizes. Output tokens retain their separate
+caps. An explicit provider context rejection permits at most one smaller request;
+ordinary provider errors and uncertain interrupted calls do not authorize retries.
+Existing leases and model receipts fence that recovery. A refusal without provider
+cost evidence remains unknown-cost; the runtime does not invent a zero charge.
+A request whose required instructions still do not fit ends with an explicit
+failure, retaining its sources.
+
+Extractive indexes are partial views, not semantic summaries or permission. A model
+must retrieve missing source details before relying on them. Existing task archive
+limits still apply. No model, provider, production service, or deployment setting
+changes with this implementation.
+
+The reference is Pi Durable at [`6e2222a`](https://github.com/earendil-works/pi/tree/6e2222a8dda06e3d69fad46d630f152f5873567a/packages/durable):
+[`context.ts`](https://github.com/earendil-works/pi/blob/6e2222a8dda06e3d69fad46d630f152f5873567a/packages/durable/src/harness/context.ts)
+separates immutable history from derived views, and
+[`compaction.ts`](https://github.com/earendil-works/pi/blob/6e2222a8dda06e3d69fad46d630f152f5873567a/packages/durable/src/harness/compaction.ts)
+uses safe message boundaries and transactional summary placement. Nori adopts
+those properties with its existing database leases and Temporal receipts. It uses
+bounded extractive maintenance where no additional model call is needed; Pi's
+single-session scheduler and token estimation are not introduced.
+
 ## Observability
 
 Sentry and Arize export are optional and fail open. Set `SENTRY_DSN` for

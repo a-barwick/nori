@@ -75,13 +75,23 @@ func (r *Runner) compact(ctx context.Context) {
 			}
 		}
 	}()
-	if err := r.compactOnce(ctx); err != nil && ctx.Err() == nil {
+	if err := r.compactOnce(ctx, true); err != nil && ctx.Err() == nil {
 		log.Printf("conversation compaction failed: %v", err)
 		r.compactAfter = time.Now().Add(compactionPause)
 	}
 }
 
-func (r *Runner) compactOnce(ctx context.Context) error {
+func (r *Runner) compactOnce(ctx context.Context, refine bool) error {
+	if err := r.indexConversation(ctx); err != nil {
+		return err
+	}
+	if refine && r.summarizer != nil {
+		return r.refineConversation(ctx)
+	}
+	return nil
+}
+
+func (r *Runner) indexConversation(ctx context.Context) error {
 	from, err := r.contextStart(ctx)
 	if err != nil {
 		return err
@@ -90,6 +100,7 @@ func (r *Runner) compactOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	expected := summary
 	after := from
 	if summary.Applies(from) {
 		after = summary.Through
@@ -115,7 +126,12 @@ func (r *Runner) compactOnce(ctx context.Context) error {
 	}
 	// Newest first: keep the newest turns out, then summarize the rest oldest first, within the read bounds. The
 	// summary's through never moves past a turn compaction didn't read.
-	older := turns[min(state.CompactKeep, len(turns)):]
+	keep, keptBytes := 0, 0
+	for keep < len(turns) && keep < state.CompactKeep && keptBytes+state.TurnBytes(turns[keep]) <= state.RecentTurnBytes {
+		keptBytes += state.TurnBytes(turns[keep])
+		keep++
+	}
+	older := turns[keep:]
 	if pageFull && len(older) > 0 {
 		newest := older[0].StartedAt
 		if older, err = r.tasks.Store.OldestConversationTurnsAfter(ctx, after); err != nil {
@@ -130,16 +146,87 @@ func (r *Runner) compactOnce(ctx context.Context) error {
 	if len(older) == 0 {
 		return nil
 	}
+	// Preserve semantic items unchanged. The separately bounded extractive index
+	// cannot evict a remembered constraint or pretend a partial quote is a fact.
+	next := summary
+	next.Excerpts = slices.Clone(summary.Excerpts)
+	if next.RefinementThrough.IsZero() && summary.Model != "extractive" {
+		next.RefinementThrough = summary.Through // legacy semantic summaries
+	}
+	through, count, inputBytes := time.Time{}, 0, 0
+	for _, t := range older {
+		view, _ := compactionTurn(t)
+		data, _ := json.Marshal(view)
+		if count > 0 && (count >= state.CompactTurnLimit || inputBytes+len(data) > state.CompactInputBytes) {
+			break
+		}
+		inputBytes += len(data)
+		for _, in := range t.Inputs {
+			if in.IsUser() && strings.TrimSpace(in.Text) != "" {
+				next.Excerpts = append(next.Excerpts, sourceExcerpt(state.UserMessageID(in.ID), "user", in.Text))
+			}
+		}
+		if reply := publishedReply(t); reply != "" {
+			next.Excerpts = append(next.Excerpts, sourceExcerpt(state.AssistantMessageID(t.ID), "assistant", reply))
+		}
+		through, count = t.StartedAt, count+1
+	}
+	next.From, next.Through, next.Turns = from, through, summary.Turns+count
+	if next.Model == "" {
+		next.Model = "extractive"
+	}
+	next.UpdatedAt = time.Now().UTC()
+	state.FitConversationExcerpts(&next)
+	return r.tasks.Store.SaveConversationSummary(ctx, next, expected)
+}
+
+func sourceExcerpt(id, role, text string) state.ConversationExcerpt {
+	if len(text) > state.MaxSummaryQuote {
+		text = strings.ToValidUTF8(text[:state.MaxSummaryQuote], "")
+	}
+	return state.ConversationExcerpt{MessageID: id, Role: role, Text: text}
+}
+
+// Idle refinement catches up independently of reply-path indexing. Its source
+// watermark is reserved before the request, so an interrupted paid batch is not
+// silently retried. All its original messages remain available for source reads.
+func (r *Runner) refineConversation(ctx context.Context) error {
+	from, err := r.contextStart(ctx)
+	if err != nil {
+		return err
+	}
+	summary, err := r.tasks.Store.ConversationSummary(ctx)
+	if err != nil || !summary.Applies(from) {
+		return err
+	}
+	after := maxTime(from, summary.RefinementThrough)
+	if summary.RefinementThrough.IsZero() && summary.Model != "extractive" {
+		after = summary.Through
+	}
+	if !after.Before(summary.Through) {
+		return nil
+	}
+	turns, err := r.tasks.Store.OldestConversationTurnsAfter(ctx, after)
+	if err != nil {
+		return err
+	}
 	sources := map[string]string{}
 	for _, item := range summary.Items {
 		sources[item.InputID] = strings.TrimPrefix(sources[item.InputID]+"\n"+item.Quote, "\n")
 	}
-	rendered, through, count := []any{}, time.Time{}, 0
-	inputBytes := 0
-	for _, t := range older {
+	rendered := []any{}
+	through, inputBytes := after, 0
+	for _, t := range turns {
+		if t.StartedAt.After(summary.Through) {
+			break
+		}
+		if t.Status != "completed" {
+			through = t.StartedAt
+			continue
+		}
 		view, users := compactionTurn(t)
 		data, _ := json.Marshal(view)
-		if count > 0 && (count >= state.CompactTurnLimit || inputBytes+len(data) > state.CompactInputBytes) {
+		if len(rendered) > 0 && (len(rendered) >= state.CompactTurnLimit || inputBytes+len(data) > state.CompactInputBytes) {
 			break
 		}
 		inputBytes += len(data)
@@ -147,26 +234,42 @@ func (r *Runner) compactOnce(ctx context.Context) error {
 		for id, text := range users {
 			sources[id] = text
 		}
-		through, count = t.StartedAt, count+1
+		through = t.StartedAt
 	}
-	prompt, _ := json.Marshal(map[string]any{
-		"previous_summary": map[string]any{"items": summary.Items, "gist": summary.Gist}, "turns": rendered,
-	})
-	items, gist, err := r.summarize(ctx, string(prompt))
+	if !through.After(after) {
+		return nil
+	}
+	reserved := summary
+	reserved.RefinementThrough, reserved.UpdatedAt = through, time.Now().UTC()
+	if err := r.tasks.Store.SaveConversationSummary(ctx, reserved, summary); err != nil {
+		return err
+	}
+	if len(rendered) == 0 {
+		return nil
+	}
+	prompt, _ := json.Marshal(map[string]any{"previous_summary": map[string]any{"items": summary.Items, "gist": summary.Gist}, "turns": rendered})
+	modelCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	items, gist, err := r.summarize(modelCtx, string(prompt))
 	if err != nil {
 		return err
 	}
 	kept, dropped := state.CheckSummaryItems(items, sources)
 	if dropped > 0 {
-		log.Printf("conversation compaction dropped %d summary items whose quotes weren't the user's words", dropped)
+		log.Printf("conversation compaction dropped %d unverified quotes", dropped)
 	}
-	next := state.ConversationSummary{
-		From: from, Through: through, Items: kept, Gist: strings.TrimSpace(gist), Turns: summary.Turns + count,
-		Model: r.summarizer.Name(), UpdatedAt: time.Now().UTC(),
-	}
+	next := reserved
+	next.Items, next.Gist = kept, strings.TrimSpace(gist)
+	next.Model, next.UpdatedAt = r.summarizer.Name(), time.Now().UTC()
 	state.FitSummary(&next)
-	log.Printf("conversation compaction summarized %d turns into %d items", count, len(next.Items))
-	return r.tasks.Store.SaveConversationSummary(ctx, next)
+	return r.tasks.Store.SaveConversationSummary(ctx, next, reserved)
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 func (r *Runner) summarize(ctx context.Context, prompt string) ([]state.SummaryItem, string, error) {

@@ -101,7 +101,9 @@ var taskToolDefinitions = func() []taskToolDefinition {
 		defineTaskTool("upload_inspect", params("upload_id", "question"), attachmentCapability, paidRead),
 		defineTaskTool("screenshot_inspect", params("artifact_id", "question"), browserCapability, paidRead),
 		defineTaskTool("memory_read", nil, memoryCapability, runtimeRead),
+		defineTaskTool("conversation_read", params("message_id"), memoryCapability, runtimeRead),
 		defineTaskTool("conversation_find", params("query"), memoryCapability, runtimeRead),
+		defineTaskTool("task_history_read", params("history_ref", "before", "offset"), memoryCapability, runtimeRead),
 		defineTaskTool("operation_read", params("operation_id"), memoryCapability, runtimeRead),
 		defineTaskTool("capability_load", capabilities, "", runtimeRead),
 		requestInput,
@@ -222,10 +224,21 @@ func ValidateCalls(calls []transcript.ToolCall, wait, work bool) error {
 			if strings.TrimSpace(question) == "" || len(question) > state.MaxMessageBytes {
 				return errors.New(prompts.Runtime("tool-upload-inspect-needs-a-question-of-1-8192-bytes", nil))
 			}
+		case "conversation_read":
+			id, _ := call.Args["message_id"].(string)
+			if !state.ValidEvidenceID(id) {
+				return errors.New("conversation_read requires a source message_id or input_id")
+			}
 		case "conversation_find":
 			query, _ := call.Args["query"].(string)
 			if strings.TrimSpace(query) == "" || len(query) > maxSearchQuery {
 				return errors.New(prompts.Runtime("history-query-required", map[string]any{"Limit": maxSearchQuery}))
+			}
+		case "task_history_read":
+			ref, _ := call.Args["history_ref"].(string)
+			before, _ := call.Args["before"].(string)
+			if !state.ValidHistoryRef(ref) || len(before) > 10 || before == "" {
+				return errors.New("task_history_read needs history_ref and before")
 			}
 		case "operation_read":
 			id, _ := call.Args["operation_id"].(string)

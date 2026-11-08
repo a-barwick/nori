@@ -297,13 +297,35 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	if e != nil {
 		return out, classified(e)
 	}
+	view, e := managedContext(messages, in.Ref, false)
+	if e != nil {
+		return RefModelOutcome{Ref: in.Ref, NotSent: true, Failure: e.Error()}, nil
+	}
 	checkpoint.RecoveryUntil = receiptDeadline(ctx)
 	if e = a.Store.StartTaskModelCheckpoint(ctx, in.RunID, checkpoint); e != nil {
 		return out, e
 	}
-	outcome, e := a.Model(ctx, ModelInput{Step: in.Step, Messages: fitContext(messages), Interruptible: true, Subtask: in.Subtask})
+	outcome, e := a.Model(ctx, ModelInput{Step: in.Step, Messages: view, Interruptible: true, Subtask: in.Subtask})
 	if e != nil {
 		return out, e
+	}
+	// Only an explicit context refusal permits a smaller second request. The
+	// original checkpoint already fences the whole activity: a crash during either
+	// request recovers the receipt or settles unknown, never sends again.
+	if outcome.ContextOverflow && ctx.Err() == nil {
+		reduced, fitErr := managedContext(messages, in.Ref, true)
+		if fitErr == nil && contextMessagesBytes(reduced) < contextMessagesBytes(view) {
+			first := outcome.Response
+			retry, retryErr := a.Model(ctx, ModelInput{Step: in.Step, Messages: reduced, Interruptible: true, Subtask: in.Subtask, ContextRetry: true})
+			if retryErr == nil {
+				outcome = retry
+				outcome.Response.Cost += first.Cost
+				outcome.Response.CostKnown = (first.CostKnown || first.NotSent) && (retry.Response.CostKnown || retry.Response.NotSent)
+				outcome.Response.NotSent = first.NotSent && retry.Response.NotSent
+			} else {
+				outcome.Failure = retryErr.Error()
+			}
+		}
 	}
 	response := outcome.Response
 	out = RefModelOutcome{Cost: response.Cost, CostKnown: response.CostKnown, NotSent: response.NotSent, Failure: outcome.Failure}

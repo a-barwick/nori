@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"nori/internal/agent"
+	"nori/internal/contextview"
 	"nori/internal/transcript"
 	"nori/internal/usage"
 )
@@ -86,6 +87,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if err != nil {
 		return out, errors.New("task request could not be encoded")
 	}
+	if err := contextview.Check(len(body)); err != nil {
+		return out, err
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return out, err
@@ -116,6 +120,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	record.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		if (res.StatusCode == 400 || res.StatusCode == 413) && contextview.Refusal(res.Body) {
+			return out, contextview.ErrOverflow
+		}
 		return out, fmt.Errorf("task model returned HTTP %d", res.StatusCode)
 	}
 	var response struct {

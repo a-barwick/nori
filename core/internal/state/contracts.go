@@ -27,6 +27,7 @@ type RunStore interface {
 	RecentRuns(ctx context.Context, limit int) ([]Run, error)
 	Memories(ctx context.Context) ([]Memory, error)
 	ConversationSummary(ctx context.Context) (ConversationSummary, error)
+	ReadConversationMessage(ctx context.Context, id string) (Message, error)
 	ConversationMessages(ctx context.Context, before string) (messages []Message, next string, err error)
 }
 
@@ -136,7 +137,7 @@ type ConversationDatabase interface {
 	// OldestConversationTurnsAfter returns up to HistoryTurnsExamined turns that started after a time, oldest first.
 	OldestConversationTurnsAfter(ctx context.Context, after time.Time) ([]ConversationTurn, error)
 	ConversationSummary(ctx context.Context) (ConversationSummary, error)
-	SaveConversationSummary(ctx context.Context, s ConversationSummary) error
+	SaveConversationSummary(ctx context.Context, s, expected ConversationSummary) error
 	Memories(ctx context.Context) ([]Memory, error)
 	ConversationMessages(ctx context.Context, before string) (messages []Message, next string, err error)
 	ConversationProjection(ctx context.Context) (Session, error)

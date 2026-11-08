@@ -16,6 +16,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"nori/internal/agent"
 	"nori/internal/computer"
+	"nori/internal/contextview"
 	"nori/internal/dispatch"
 	"nori/internal/observability"
 	"nori/internal/prompts"
@@ -37,13 +38,15 @@ type ModelInput struct {
 	Messages      []transcript.Message
 	Interruptible bool
 	Subtask       bool
+	ContextRetry  bool
 }
 
 // ModelOutcome preserves billed usage in Temporal history even when the
 // response is unusable. Activity errors discard ordinary return values.
 type ModelOutcome struct {
-	Response agent.Response
-	Failure  string
+	Response        agent.Response
+	Failure         string
+	ContextOverflow bool
 }
 type ToolInput struct {
 	Step
@@ -230,6 +233,9 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 		Kind: "model", Status: "running", Revision: in.Revision, StartedAt: time.Now().UTC(),
 		Model: a.Agent.Model.Name(), CostStatus: "unknown",
 	}
+	if in.ContextRetry {
+		trace.ID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(trace.ID+":context")).String()
+	}
 	a.recordStep(in.RunID, trace)
 	// Detailed answers share the output allowance with thinking. Keep a bounded
 	// model deadline that leaves room for both, while bounded still observes Stop.
@@ -238,7 +244,7 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	response, e := a.Agent.Decide(observability.SuppressErrorCapture(modelCtx), in.Messages, true, !in.Subtask)
 	span.SetAttributes(attribute.Bool("nori.output.present", response.Answer != ""), attribute.Int("nori.tool.call_count", len(response.Calls)))
 	recordActivityFailure(modelCtx, e, "task.model")
-	outcome := ModelOutcome{Response: response}
+	outcome := ModelOutcome{Response: response, ContextOverflow: errors.Is(e, contextview.ErrOverflow)}
 	if e != nil {
 		outcome.Failure = e.Error()
 	}

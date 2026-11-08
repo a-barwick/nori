@@ -291,6 +291,11 @@ func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.Op
 		// The saved outputs belong to the task's evidence, which only the activities hold.
 		id, _ := in.Call.Args["operation_id"].(string)
 		output, err = a.operationRead(ctx, in.RunID, id)
+	} else if in.Call.Name == "task_history_read" {
+		ref, _ := in.Call.Args["history_ref"].(string)
+		before, _ := in.Call.Args["before"].(string)
+		offset, _ := in.Call.Args["offset"].(string)
+		output, err = a.taskHistoryRead(ctx, in.RunID, ref, before, offset)
 	} else {
 		output, err = a.Agent.CallRuntimeTool(observability.SuppressErrorCapture(ctx), in.RunID, in.Call.Name, in.Call.Args)
 	}
