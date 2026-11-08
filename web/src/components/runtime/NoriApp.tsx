@@ -236,13 +236,16 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
             }
           />
         </div>
-        {pending.filter((item) => item.error).map((item) => (
+        {pending.filter((item) => item.error).map((item) => {
+          const label = item.text || item.attachments?.map((file) => file.name).join(", ") || "your message";
+          return (
           <div key={item.id} role="alert" className="mx-6 mb-2 rounded-tile bg-surface p-3 text-meta text-ink-2">
-            Could not confirm “{item.text.slice(0, 80)}{item.text.length > 80 ? "…" : ""}”. {item.error}{" "}
+            Could not confirm “{label.slice(0, 80)}{label.length > 80 ? "…" : ""}”. {item.error}{" "}
             <button type="button" className="font-medium text-accent-text hover:underline" disabled={loading} onClick={() => void runtime.retry(item)}>Retry message</button>{" "}
             <button type="button" className="font-medium text-ink-2 hover:underline" onClick={() => runtime.dismissPending(item.id)}>Dismiss</button>
           </div>
-        ))}
+          );
+        })}
         {notice && (
           <div className="nova-runtime-notice w-full shrink-0 self-center px-6 pb-3">
             <div

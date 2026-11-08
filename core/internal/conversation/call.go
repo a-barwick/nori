@@ -339,7 +339,7 @@ func classifyHistory(visible []Message, t *state.ConversationTurn) []Message {
 			continue
 		}
 		if message.RunID != "" {
-			if message.ID == message.RunID+"-user" {
+			if message.ID == state.UserMessageID(message.RunID) {
 				continue
 			}
 			message.Text = "[Task " + message.RunID + prompts.Runtime("task-record-suffix", nil) + message.Text
@@ -379,7 +379,7 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 		if m.TurnID != "" || !m.CreatedAt.After(since) {
 			continue
 		}
-		if m.RunID != "" && m.ID == m.RunID+"-user" {
+		if m.RunID != "" && m.ID == state.UserMessageID(m.RunID) {
 			continue
 		}
 		if m.RunID != "" {

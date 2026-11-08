@@ -243,7 +243,7 @@ func (s *Service) update(ctx context.Context, id, turn, kind string, f func(*sta
 		f(reply)
 		c.LeaseUntil = time.Now().Add(turnLease)
 		return kind, nil
-	})
+	}, state.AssistantMessageID(turn))
 }
 
 func (s *Service) finish(id, turn, status string) {
@@ -261,7 +261,7 @@ func (s *Service) finish(id, turn, status string) {
 			m.Text = prompts.Runtime("chat-interrupted", nil)
 		}
 		return endTurn(c, m, status), nil
-	})
+	}, state.AssistantMessageID(turn))
 	if err != nil {
 		log.Printf("chat %s: saving the %s status of turn %s failed: %v", id, status, turn, err)
 	}
@@ -307,7 +307,7 @@ func (s *Service) claim(ctx context.Context, id, turn string) (state.Chat, error
 		c.Started = s.owner
 		c.LeaseUntil = time.Now().Add(turnLease)
 		return "reply.updated", nil
-	})
+	}, state.AssistantMessageID(turn))
 }
 
 func (s *Service) run(ctx context.Context, id, turn string) {

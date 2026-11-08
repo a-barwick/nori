@@ -156,10 +156,12 @@ export function useChat() {
   const startNew = () => choose(true);
   const close = () => choose(false);
 
+  const UNLOADED = "This chat didn't load. Open it again from the list.";
+
   // Start a persisted chat only when it has a message or an upload.
   async function ensure(selection: Selection) {
     if (selection.conversation) return selection.conversation.id;
-    if (selection.id) return;
+    if (selection.id) throw new Error(UNLOADED);
     selection.creating ??= (async () => {
       const created = await request<Conversation>("/conversations", { method: "POST", body: "{}", signal: selection.controller.signal });
       if (active.current !== selection) return;
@@ -175,6 +177,7 @@ export function useChat() {
     const text = draft.trim();
     if (!selection || selection.sending || selection.conversation?.activeTurn || !hasSubmission(text, files)) return;
     if (messageTooLong(text)) { setError("Please keep the message within 8,192 UTF-8 bytes."); return; }
+    if (selection.id && !selection.conversation) { setError(UNLOADED); return; }
     const sending = Symbol();
     selection.sending = sending;
     setSending(true);
@@ -193,8 +196,9 @@ export function useChat() {
       const saved = await request<{ conversation: Conversation }>(`${conversationPath(id)}/messages`, { method: "POST", body });
       if (timelines.current.get(id) !== timeline) return;
       if (timeline.submission === submission) timeline.submission = undefined;
+      // The text is saved even if the user switched chats mid-send; don't leave it to be sent twice.
+      setDraft((current) => (current.trim() === text ? "" : current));
       if (active.current !== selection) return;
-      setDraft("");
       clearFiles();
       show(selection, saved.conversation);
     } catch (error) {
@@ -254,7 +258,6 @@ export function useChat() {
     const timeline = selection.timeline;
     try {
       await request(conversationPath(shown.id), { method: "DELETE" });
-      if (timelines.current.get(shown.id) !== timeline) return;
       timelines.current.delete(shown.id);
       setChats((rows) => rows.filter((chat) => chat.id !== shown.id));
       if (active.current?.id === shown.id) close();

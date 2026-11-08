@@ -19,11 +19,16 @@ def run(args, **kwargs):
     return subprocess.check_output(args, text=True, **kwargs).strip()
 
 
+# Go sources plus the prompts, migrations and data files they embed; editor and
+# Finder litter must not change the revision.
+BUILD_SUFFIXES = {".go", ".txt", ".sql", ".json"}
+
+
 def source_digest():
     digest = hashlib.sha256()
     files = [CORE / "go.mod", CORE / "go.sum", CORE / ".dockerignore", ROOT / "Dockerfile.worker"]
     for directory in (CORE / "cmd", CORE / "internal"):
-        files.extend(p for p in directory.rglob("*") if p.is_file())
+        files.extend(p for p in directory.rglob("*") if p.is_file() and p.suffix in BUILD_SUFFIXES)
     for path in sorted(files):
         digest.update(str(path.relative_to(CORE)).encode() + b"\0" + hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()

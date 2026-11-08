@@ -118,7 +118,8 @@ def refuse_open_work(c):
         cursor = page.get("nextPageToken", "")
         if not cursor:
             break
-    paused = ops.api("GET", ops.firestore(c, "system/control"))["fields"]["paused"].get("booleanValue", False)
+    control = ops.api("GET", ops.firestore(c, "system/control"), allow404=True) or {}
+    paused = control.get("fields", {}).get("paused", {}).get("booleanValue", False)
     for owner in sorted(owners):
         refuse_user_work(ops.firestore(c, "owners/" + quote(owner, safe="")), paused)
 
