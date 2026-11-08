@@ -36,9 +36,9 @@ func (s *Service) memoryRead(ctx context.Context) (map[string]any, error) {
 	if summary.Applies(time.Time{}) {
 		items := []map[string]any{}
 		for _, item := range summary.Items {
-			items = append(items, map[string]any{"kind": item.Kind, "user_words": item.Quote, "message_id": item.InputID, "model_note": item.Note})
+			items = append(items, map[string]any{"kind": item.Kind, "user_words": item.Quote, "input_id": item.InputID, "model_note": item.Note})
 		}
-		out["conversation_summary"] = map[string]any{"through": summary.Through, "items": items, "model_gist": summary.Gist}
+		out["conversation_summary"] = map[string]any{"through": summary.Through, "items": items, "model_gist": summary.Gist, "source_excerpts": summary.Excerpts}
 	}
 	return out, nil
 }

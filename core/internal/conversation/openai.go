@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"nori/internal/contextview"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -71,6 +72,9 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	if err != nil {
 		return reply, err
 	}
+	if err := contextview.Check(len(body)); err != nil {
+		return reply, err
+	}
 	span.SetAttributes(attribute.Int("nori.prompt.bytes", len(body)))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIChatURL, bytes.NewReader(body))
 	if err != nil {
@@ -97,7 +101,9 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	reply.Usage.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		logRefusal(res)
+		if logRefusal(res) && (res.StatusCode == 400 || res.StatusCode == 413) {
+			return reply, contextview.ErrOverflow
+		}
 		return reply, providerHTTPError{res.StatusCode, fmt.Sprintf("model provider returned HTTP %d", res.StatusCode)}
 	}
 	if request.Stream != nil {
@@ -108,18 +114,20 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 
 // logRefusal records why the provider refused a request: its error type and code and its rate-limit headers. The
 // error's message is left out because it can quote the account.
-func logRefusal(res *http.Response) {
+func logRefusal(res *http.Response) bool {
 	var body struct {
 		Error struct {
-			Type string `json:"type"`
-			Code string `json:"code"`
+			Type string          `json:"type"`
+			Code json.RawMessage `json:"code"`
 		} `json:"error"`
 	}
-	_ = json.NewDecoder(io.LimitReader(res.Body, 16<<10)).Decode(&body)
+	data, _ := io.ReadAll(io.LimitReader(res.Body, 16<<10))
+	_ = json.Unmarshal(data, &body)
 	h := res.Header
 	log.Printf("outer model refused: status=%d type=%q code=%q retry_after=%q limit_requests=%q remaining_requests=%q reset_requests=%q limit_tokens=%q remaining_tokens=%q reset_tokens=%q",
-		res.StatusCode, body.Error.Type, body.Error.Code, h.Get("Retry-After"), h.Get("X-Ratelimit-Limit-Requests"), h.Get("X-Ratelimit-Remaining-Requests"), h.Get("X-Ratelimit-Reset-Requests"),
+		res.StatusCode, body.Error.Type, string(body.Error.Code), h.Get("Retry-After"), h.Get("X-Ratelimit-Limit-Requests"), h.Get("X-Ratelimit-Remaining-Requests"), h.Get("X-Ratelimit-Reset-Requests"),
 		h.Get("X-Ratelimit-Limit-Tokens"), h.Get("X-Ratelimit-Remaining-Tokens"), h.Get("X-Ratelimit-Reset-Tokens"))
+	return contextview.Refusal(bytes.NewReader(data))
 }
 
 func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span trace.Span) ([]byte, error) {
@@ -440,14 +448,15 @@ func decodeOpenAIStream(res *http.Response, reply Reply, request ReplyRequest, s
 func foregroundFormat(tools json.RawMessage) any {
 	var definitions []struct {
 		Function struct {
-			Name       string         `json:"name"`
-			Parameters map[string]any `json:"parameters"`
+			Name        string         `json:"name"`
+			Description string         `json:"description"`
+			Parameters  map[string]any `json:"parameters"`
 		} `json:"function"`
 	}
 	_ = json.Unmarshal(tools, &definitions)
 	variants := []any{}
 	for _, tool := range definitions {
-		variants = append(variants, actionVariant(tool.Function.Name, "", tool.Function.Parameters))
+		variants = append(variants, actionVariant(tool.Function.Name, tool.Function.Description, tool.Function.Parameters))
 	}
 	return map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "chat_response", "strict": true, "schema": map[string]any{"type": "object", "properties": map[string]any{"actions": map[string]any{"type": "array", "maxItems": 1, "items": map[string]any{"anyOf": variants}}, "text": map[string]any{"type": "string", "maxLength": 16384}}, "required": []string{"actions", "text"}, "additionalProperties": false}}}
 }

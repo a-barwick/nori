@@ -2,6 +2,7 @@ package records
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"nori/internal/state"
@@ -80,7 +81,7 @@ func (d *Database) ConversationSummary(ctx context.Context) (state.ConversationS
 
 // SaveConversationSummary replaces the summary unless a newer one is already saved: one for a later context, or one
 // that covers more of this context.
-func (d *Database) SaveConversationSummary(ctx context.Context, s state.ConversationSummary) error {
+func (d *Database) SaveConversationSummary(ctx context.Context, s, expected state.ConversationSummary) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var saved state.ConversationSummary
 		doc, err := tx.Get(d.summary())
@@ -91,9 +92,15 @@ func (d *Database) SaveConversationSummary(ctx context.Context, s state.Conversa
 			if err = doc.DataTo(&saved); err != nil {
 				return err
 			}
-			if saved.From.After(s.From) || (saved.From.Equal(s.From) && !s.Through.After(saved.Through)) {
-				return nil
-			}
+		}
+		control, err := d.readConversation(tx)
+		if err != nil {
+			return err
+		}
+		// A summary is derived from one exact predecessor and context cutoff.
+		// A later summarizer or reset cannot be overwritten by stale maintenance.
+		if !control.ContextFrom.Equal(s.From) || !saved.From.Equal(expected.From) || !saved.Through.Equal(expected.Through) || !saved.UpdatedAt.Equal(expected.UpdatedAt) {
+			return state.ErrConversationStale
 		}
 		return tx.Set(d.summary(), s)
 	})
@@ -117,4 +124,34 @@ func (d *Database) turnsAfter(ctx context.Context, after time.Time, dir docstore
 	it := query.Documents(ctx)
 	defer it.Stop()
 	return documents[state.ConversationTurn](it)
+}
+
+// ReadConversationMessage accepts visible message IDs and raw summary input IDs.
+// The retained-context cutoff is enforced in storage, including for task tools.
+func (d *Database) ReadConversationMessage(ctx context.Context, id string) (state.Message, error) {
+	if !state.ValidEvidenceID(id) {
+		return state.Message{}, state.ErrNotFound
+	}
+	if !strings.HasSuffix(id, "-user") && !strings.HasSuffix(id, "-assistant") {
+		id = state.UserMessageID(id)
+	}
+	doc, err := d.messages().Doc(id).Get(ctx)
+	if notFound(err) {
+		return state.Message{}, state.ErrNotFound
+	}
+	if err != nil {
+		return state.Message{}, err
+	}
+	var message state.Message
+	if err = doc.DataTo(&message); err != nil {
+		return message, err
+	}
+	control, _, err := d.ConversationStatus(ctx)
+	if err != nil {
+		return state.Message{}, err
+	}
+	if message.ID != id || message.CreatedAt.Before(control.ContextFrom) {
+		return state.Message{}, state.ErrNotFound
+	}
+	return message, nil
 }

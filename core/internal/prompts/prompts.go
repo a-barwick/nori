@@ -23,6 +23,7 @@ var (
 	CommandPlan       = render("command-plan")
 	TaskWorker        = render("task-worker")
 	Chat              = render("chat")
+	ChatTools         = read("chat-tools.json")
 
 	taskTools = func() map[string]string {
 		entries, err := files.ReadDir("task-tools")

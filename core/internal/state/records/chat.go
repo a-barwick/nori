@@ -439,3 +439,40 @@ func (d *Database) ChatUpload(ctx context.Context, id, upload string) (state.Upl
 	err = doc.DataTo(&u)
 	return u, err
 }
+
+// ChatMessagesAfter reads a contiguous oldest-first page for context maintenance.
+func (d *Database) ChatMessagesAfter(ctx context.Context, id string, after int64) (messages []state.ChatMessage, err error) {
+	ref := d.chats().Doc(id)
+	err = d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		c, e := readChatHeader(tx, ref)
+		if e != nil {
+			return e
+		}
+		messages = []state.ChatMessage{}
+		if len(c.Messages) > 0 {
+			for i, m := range c.Messages {
+				m.Sequence = int64(i + 1)
+				if m.Sequence > after {
+					messages = append(messages, m)
+					if len(messages) == state.ChatPageSize {
+						break
+					}
+				}
+			}
+			return nil
+		}
+		docs, e := tx.Documents(ref.Collection("messages").Where("sequence", ">", after).OrderBy("sequence", docstore.Asc).Limit(state.ChatPageSize)).GetAll()
+		if e != nil {
+			return e
+		}
+		for _, doc := range docs {
+			var m state.ChatMessage
+			if e = doc.DataTo(&m); e != nil {
+				return e
+			}
+			messages = append(messages, m)
+		}
+		return nil
+	}, docstore.ReadOnly)
+	return
+}

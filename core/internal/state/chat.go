@@ -24,20 +24,27 @@ type Chat struct {
 	Checkpoint *ChatTurnCheckpoint `json:"-" firestore:"checkpoint,omitempty"`
 	// Attention is true while a turn is open or a write's outcome is unknown, so
 	// recovery reads only these chats instead of every chat.
-	Attention bool `json:"-" firestore:"attention"`
+	Context   *ChatContext `json:"-" firestore:"context,omitempty"`
+	Attention bool         `json:"-" firestore:"attention"`
 }
 
 // ChatTurnCheckpoint belongs to ActiveTurn. A pending model request may have
 // been billed. A pending attachment read can be retried against its saved input.
 type ChatTurnCheckpoint struct {
-	Models       int                 `firestore:"models"`
-	ModelPending bool                `firestore:"model_pending"`
-	Read         *ChatReadCheckpoint `firestore:"read,omitempty"`
+	RejectedContextBytes int                 `firestore:"rejected_context_bytes,omitempty"`
+	ContextReduced       bool                `firestore:"context_reduced,omitempty"`
+	Models               int                 `firestore:"models"`
+	ModelPending         bool                `firestore:"model_pending"`
+	Read                 *ChatReadCheckpoint `firestore:"read,omitempty"`
 }
 
 type ChatReadCheckpoint struct {
 	OperationID string `firestore:"operation_id"`
 	UploadID    string `firestore:"upload_id"`
+	Name        string `firestore:"name,omitempty"`
+	Before      int64  `firestore:"before,omitempty"`
+	MessageID   string `firestore:"message_id,omitempty"`
+	Offset      int    `firestore:"offset,omitempty"`
 }
 
 type ChatMessage struct {
@@ -52,6 +59,7 @@ type ChatMessage struct {
 
 type ChatOperation struct {
 	OperationRecord
+	Arguments  string         `json:"arguments,omitempty" firestore:"arguments,omitempty"`
 	LeaseUntil time.Time      `json:"-" firestore:"lease_until"`
 	Owner      string         `json:"-" firestore:"owner"`
 	Result     map[string]any `json:"result,omitempty" firestore:"result,omitempty"`
@@ -120,6 +128,7 @@ type ChatDatabase interface {
 	// UpdateChat loads the latest page plus unresolved writes and explicitly requested message IDs.
 	UpdateChat(context.Context, string, func(*Chat) (string, error), ...string) (Chat, error)
 	ChatMessages(context.Context, string, int64) (ChatMessagePage, error)
+	ChatMessagesAfter(context.Context, string, int64) ([]ChatMessage, error)
 	// WatchChatEvents delivers events after a position as they are committed, until ctx ends or deliver fails.
 	WatchChatEvents(context.Context, string, int64, func([]ChatEvent) error) error
 	// DeleteChat removes an idle chat and its events and upload records, returning the upload IDs it held.
@@ -144,4 +153,21 @@ func (m ChatMessage) NeedsAttention() bool {
 		}
 	}
 	return false
+}
+
+// ChatContext is an extractive index over an immutable prefix of message records.
+// It is committed under the active turn lease. It never replaces those records.
+type ChatContext struct {
+	Through  int64         `firestore:"through"`
+	Excerpts []ChatExcerpt `firestore:"excerpts"`
+}
+type ChatExcerpt struct {
+	HasAttachments bool   `json:"has_attachments,omitempty" firestore:"has_attachments,omitempty"`
+	HasOperations  bool   `json:"has_operations,omitempty" firestore:"has_operations,omitempty"`
+	Status         string `json:"status" firestore:"status"`
+	ID             string `json:"message_id" firestore:"message_id"`
+	Sequence       int64  `json:"sequence" firestore:"sequence"`
+	Role           string `json:"role" firestore:"role"`
+	Text           string `json:"text" firestore:"text"`
+	Truncated      bool   `json:"truncated" firestore:"truncated"`
 }

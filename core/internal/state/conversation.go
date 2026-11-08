@@ -72,6 +72,7 @@ type ConversationAttempt struct {
 	Actions          []ConversationAction `firestore:"actions"`
 	Usage            []Usage              `firestore:"usage"`
 	Error            string               `firestore:"error"`
+	ContextReduced   bool                 `firestore:"context_reduced,omitempty"`
 	ContextTruncated bool                 `firestore:"context_truncated"`
 	ContextTurns     int                  `firestore:"context_turns"`
 	ContextBytes     int                  `firestore:"context_bytes"`

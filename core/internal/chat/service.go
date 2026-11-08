@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"nori/internal/agent"
+	"nori/internal/contextview"
 	"nori/internal/conversation"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -373,51 +374,10 @@ func raw(role string, content any) json.RawMessage {
 	return b
 }
 
-// history builds the prompt. Tool output and attachment details travel as user-role
-// data, never as system messages, so they carry no more authority than the chat itself.
-func history(c state.Chat, turn string) []json.RawMessage {
-	const historyBytes = 96 << 10
-	const historyMessages = 32
-	groups := [][]json.RawMessage{}
-	total := 0
-	for i := len(c.Messages) - 1; i >= 0 && len(groups) < historyMessages; i-- {
-		m := c.Messages[i]
-		if m.ID == state.AssistantMessageID(turn) {
-			continue
-		}
-		group := []json.RawMessage{}
-		if len(m.Attachments) > 0 {
-			b, _ := json.Marshal(m.Attachments)
-			group = append(group, raw("user", prompts.Runtime("chat-attachments", nil)+string(b)))
-		}
-		if m.Text != "" {
-			group = append(group, raw(m.Role, m.Text))
-		}
-		if len(m.Operations) > 0 {
-			b, _ := json.Marshal(m.Operations)
-			group = append(group, raw("user", prompts.Runtime("chat-history-evidence", nil)+string(b)))
-		}
-		size := 0
-		for _, entry := range group {
-			size += len(entry)
-		}
-		if total+size > historyBytes {
-			break
-		}
-		total += size
-		groups = append(groups, group)
-	}
-	messages := []json.RawMessage{raw("system", prompts.Chat)}
-	for i := len(groups) - 1; i >= 0; i-- {
-		messages = append(messages, groups[i]...)
-	}
-	return messages
-}
-
 func (s *Service) respond(ctx context.Context, id, turn string, messages []json.RawMessage) (conversation.Reply, error) {
 	saved := time.Time{}
 	messages = append(append([]json.RawMessage{}, messages...), raw("system", "User details (data): "+s.userFacts))
-	request := conversation.ReplyRequest{Messages: messages, NoDispatch: true, Foreground: true, Tools: uploadToolSchema, Stream: func(text string) error {
+	request := conversation.ReplyRequest{Messages: messages, NoDispatch: true, Foreground: true, Tools: chatToolSchema, Stream: func(text string) error {
 		if time.Since(saved) < persistEvery {
 			return ctx.Err()
 		}
@@ -453,7 +413,16 @@ func (s *Service) respond(ctx context.Context, id, turn string, messages []json.
 }
 
 func (s *Service) generate(ctx context.Context, id, turn string) (state.Chat, error) {
-	c, err := s.update(ctx, id, turn, func(c *state.Chat, _ *state.ChatMessage) (string, error) {
+	c, messages, err := s.prepareContext(ctx, id, turn)
+	if err != nil {
+		if errors.Is(err, contextview.ErrOverflow) {
+			s.contextFailure(id, turn)
+		} else if ctx.Err() == nil {
+			s.finish(id, turn, "failed")
+		}
+		return c, err
+	}
+	c, err = s.update(ctx, id, turn, func(c *state.Chat, _ *state.ChatMessage) (string, error) {
 		c.Checkpoint.Models++
 		c.Checkpoint.ModelPending = true
 		return "reply.updated", nil
@@ -461,19 +430,23 @@ func (s *Service) generate(ctx context.Context, id, turn string) (state.Chat, er
 	if err != nil {
 		return c, err
 	}
-	m, err := replyMessage(&c, turn)
-	if err != nil {
-		return c, err
-	}
-	messages := history(c, turn)
-	for _, op := range m.Operations {
-		data, _ := json.Marshal(op)
-		messages = append(messages, raw("user", prompts.Runtime("chat-tool-evidence", nil)+string(data)))
-	}
 	reply, err := s.respond(ctx, id, turn, messages)
+	if errors.Is(err, contextview.ErrOverflow) && !c.Checkpoint.ContextReduced && ctx.Err() == nil {
+		return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
+			c.Checkpoint.ModelPending = false
+			c.Checkpoint.ContextReduced = true
+			c.Checkpoint.RejectedContextBytes = rawSize(messages)
+			m.Text = ""
+			return "reply.updated", nil
+		})
+	}
 	if err != nil {
 		if ctx.Err() == nil {
-			s.finish(id, turn, "failed")
+			if errors.Is(err, contextview.ErrOverflow) {
+				s.contextFailure(id, turn)
+			} else {
+				s.finish(id, turn, "failed")
+			}
 		}
 		return c, err
 	}
@@ -483,12 +456,15 @@ func (s *Service) generate(ctx context.Context, id, turn string) (state.Chat, er
 			m.Text = reply.Text
 			return endTurn(c, m, "completed"), nil
 		}
-		if len(reply.Calls) != 1 || reply.Calls[0].Function.Name != "upload_read" {
+		if len(reply.Calls) != 1 {
 			return endTurn(c, m, "failed"), nil
 		}
 		call := reply.Calls[0]
 		var args struct {
-			UploadID string `json:"upload_id"`
+			UploadID  string `json:"upload_id"`
+			Before    int64  `json:"before"`
+			MessageID string `json:"message_id"`
+			Offset    int    `json:"offset"`
 		}
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 			return endTurn(c, m, "failed"), nil
@@ -497,8 +473,15 @@ func (s *Service) generate(ctx context.Context, id, turn string) (state.Chat, er
 			args.UploadID = ""
 		}
 		c.Checkpoint.ModelPending = false
-		c.Checkpoint.Read = &state.ChatReadCheckpoint{OperationID: operationID, UploadID: args.UploadID}
-		m.Operations = append(m.Operations, state.ChatOperation{OperationRecord: state.OperationRecord{
+		c.Checkpoint.RejectedContextBytes = 0
+		if call.Function.Name != "upload_read" && call.Function.Name != "history_read" {
+			return endTurn(c, m, "failed"), nil
+		}
+		if args.Before < 0 || len(args.MessageID) > 128 {
+			return endTurn(c, m, "failed"), nil
+		}
+		c.Checkpoint.Read = &state.ChatReadCheckpoint{OperationID: operationID, UploadID: args.UploadID, Name: call.Function.Name, Before: args.Before, MessageID: args.MessageID, Offset: args.Offset}
+		m.Operations = append(m.Operations, state.ChatOperation{Arguments: call.Function.Arguments, OperationRecord: state.OperationRecord{
 			ID: operationID, CallID: call.ID, Name: call.Function.Name, EffectClass: "read", Outcome: "pending",
 		}})
 		return "tool.updated", nil
@@ -510,7 +493,7 @@ func pendingRead(c *state.Chat, m *state.ChatMessage) *state.ChatOperation {
 		return nil
 	}
 	op := &m.Operations[len(m.Operations)-1]
-	if op.ID != c.Checkpoint.Read.OperationID || op.Name != "upload_read" || op.EffectClass != "read" ||
+	if op.ID != c.Checkpoint.Read.OperationID || (op.Name != "upload_read" && op.Name != "history_read") || op.EffectClass != "read" ||
 		(op.Outcome != "pending" && op.Outcome != "attempted") {
 		return nil
 	}
@@ -537,7 +520,13 @@ func (s *Service) runRead(ctx context.Context, id, turn string) (state.Chat, err
 		return c, err
 	}
 	readCtx, stop := context.WithTimeout(ctx, 30*time.Second)
-	result, readErr := s.readUpload(readCtx, id, c.Checkpoint.Read.UploadID)
+	var result map[string]any
+	var readErr error
+	if c.Checkpoint.Read.Name == "history_read" {
+		result, readErr = s.readHistory(readCtx, id, turn, *c.Checkpoint.Read)
+	} else {
+		result, readErr = s.readUpload(readCtx, id, c.Checkpoint.Read.UploadID)
+	}
 	stop()
 	if ctx.Err() != nil {
 		return c, ctx.Err()
@@ -602,4 +591,4 @@ func (s *Service) ReadUpload(ctx context.Context, id, upload string) (state.Uplo
 	return u, data, err
 }
 
-var uploadToolSchema = json.RawMessage(`[{"type":"function","function":{"name":"upload_read","parameters":{"type":"object","properties":{"upload_id":{"type":"string"}},"required":["upload_id"],"additionalProperties":false}}}]`)
+var chatToolSchema = json.RawMessage(prompts.ChatTools)

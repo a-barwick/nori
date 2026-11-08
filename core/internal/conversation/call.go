@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"nori/internal/contextview"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -263,11 +264,34 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		}
 		request.Messages = messages
 		var modelErr error
-		reply, modelErr = r.model.Respond(callCtx, request)
-		reply.Usage.InputID = inputID
-		attemptUsage(&t.Attempt, reply.Usage)
-		if e = r.recordUsage(inputID, reply.Usage); e != nil {
-			return e
+		for {
+			reply, modelErr = r.model.Respond(callCtx, request)
+			reply.Usage.InputID = inputID
+			attemptUsage(&t.Attempt, reply.Usage)
+			if e = r.recordUsage(inputID, reply.Usage); e != nil {
+				return e
+			}
+			if !errors.Is(modelErr, contextview.ErrOverflow) || t.Attempt.ContextReduced || len(view.Turns) == 0 || callCtx.Err() != nil {
+				break
+			}
+			view.Turns = nil
+			view.Truncated = true
+			reduced := append(buildMessages(t, visible, view, next), advisory)
+			beforeBytes, afterBytes := 0, 0
+			for _, m := range request.Messages {
+				beforeBytes += len(m)
+			}
+			for _, m := range reduced {
+				afterBytes += len(m)
+			}
+			if afterBytes >= beforeBytes {
+				break
+			}
+			t.Attempt.ContextReduced = true
+			request.Messages = reduced
+			if e = r.checkpointModel(ctx, f, t, requestingReply, Reply{}); e != nil {
+				return e
+			}
 		}
 		if modelErr != nil {
 			return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view)
@@ -700,6 +724,43 @@ func (r *Runner) readAttemptHistory(ctx context.Context, from time.Time) history
 	turns, err := r.tasks.Store.ConversationTurnsAfter(ctx, after)
 	if err != nil {
 		return result(err)
+	}
+	// Context maintenance is part of preparing a turn, not dependent on finding
+	// idle time. A committed extractive view survives a failed or interrupted refinement.
+	for {
+		probe := state.NewHistoryWindow()
+		for _, t := range turns {
+			if !probe.Add(t) {
+				break
+			}
+		}
+		if !probe.Truncated {
+			break
+		}
+		before := after
+		maintenanceErr := r.compactOnce(ctx, false)
+		if ctx.Err() != nil {
+			return result(ctx.Err())
+		}
+		summary, err = r.tasks.Store.ConversationSummary(ctx)
+		if err != nil {
+			return result(err)
+		}
+		if maintenanceErr != nil && !errors.Is(maintenanceErr, state.ErrConversationStale) {
+			if !summary.Applies(from) || !summary.Through.After(before) {
+				return result(maintenanceErr)
+			}
+			log.Printf("conversation indexing interrupted; using committed excerpts: %v", maintenanceErr)
+			r.compactAfter = time.Now().Add(compactionPause)
+		}
+		if !summary.Applies(from) || !summary.Through.After(before) {
+			break
+		}
+		view.Summary, after = &summary, summary.Through
+		turns, err = r.tasks.Store.ConversationTurnsAfter(ctx, after)
+		if err != nil {
+			return result(err)
+		}
 	}
 	window := state.NewHistoryWindow()
 	for _, t := range turns {

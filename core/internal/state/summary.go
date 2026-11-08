@@ -13,12 +13,34 @@ type ConversationSummary struct {
 	// A summary applies only to the retained context cutoff it covers.
 	From time.Time `json:"from" firestore:"from"`
 	// Through is when the newest turn it covers started. Turns after it are replayed word for word.
-	Through   time.Time     `json:"through" firestore:"through"`
-	Items     []SummaryItem `json:"items" firestore:"items"`
-	Gist      string        `json:"gist" firestore:"gist"`
-	Turns     int           `json:"turns" firestore:"turns"`
-	Model     string        `json:"model" firestore:"model"`
-	UpdatedAt time.Time     `json:"updated_at" firestore:"updated_at"`
+	// RefinementThrough records the last source batch reserved for idle refinement.
+	// Reserving before provider I/O prevents replaying a possibly paid call after a crash.
+	RefinementThrough time.Time             `json:"refinement_through,omitempty" firestore:"refinement_through,omitempty"`
+	Excerpts          []ConversationExcerpt `json:"excerpts,omitempty" firestore:"excerpts,omitempty"`
+	Through           time.Time             `json:"through" firestore:"through"`
+	Items             []SummaryItem         `json:"items" firestore:"items"`
+	Gist              string                `json:"gist" firestore:"gist"`
+	Turns             int                   `json:"turns" firestore:"turns"`
+	Model             string                `json:"model" firestore:"model"`
+	UpdatedAt         time.Time             `json:"updated_at" firestore:"updated_at"`
+}
+
+// ConversationExcerpt is a partial source index, separate from semantic summary items.
+// It can be evicted without claiming that the source was semantically summarized.
+type ConversationExcerpt struct {
+	MessageID string `json:"message_id" firestore:"message_id"`
+	Role      string `json:"role" firestore:"role"`
+	Text      string `json:"text" firestore:"text"`
+}
+
+func FitConversationExcerpts(s *ConversationSummary) {
+	for len(s.Excerpts) > 0 {
+		data, _ := json.Marshal(s.Excerpts)
+		if len(data) <= SummaryBytes && len(s.Excerpts) <= 16 {
+			return
+		}
+		s.Excerpts = s.Excerpts[1:]
+	}
 }
 
 // SummaryItem keeps one thing from an earlier turn in the user's exact words, with the message it came from.
@@ -108,7 +130,7 @@ func FitSummary(s *ConversationSummary) {
 		s.Gist = trimText(s.Gist, len(s.Gist)/2)
 	}
 	for _, protected := range []bool{false, true} {
-		for i := 0; i < len(s.Items) && size() > SummaryBytes; {
+		for i := 0; i < len(s.Items) && (size() > SummaryBytes || len(s.Items) > MaxSummaryItems); {
 			kind := s.Items[i].Kind
 			if !protected && (kind == "constraint" || kind == "correction") {
 				i++

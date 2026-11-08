@@ -92,6 +92,12 @@ func (s *Service) CallRuntimeTool(ctx context.Context, run, name string, args ma
 		return s.resultRead(ctx, text("result_id"))
 	case "memory_read":
 		return s.memoryRead(ctx)
+	case "conversation_read":
+		input, err := s.Store.ReadConversationMessage(ctx, text("message_id"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"message": input, "note": conversationNote}, nil
 	case "conversation_find":
 		return s.conversationFind(ctx, text("query"))
 	case "capability_load":
