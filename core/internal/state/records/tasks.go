@@ -99,13 +99,13 @@ func (d *Database) Guard(ctx context.Context, runID string, revision int64) (sta
 	return run, err
 }
 
-func (d *Database) Admit(ctx context.Context, runID string, revision int64, operation string) error {
+func (d *Database) Admit(ctx context.Context, runID string, revision int64, operation string, recoveryUntil time.Time) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		if _, err := d.guard(tx, runID, revision); err != nil {
 			return err
 		}
 		// A second activity attempt cannot silently execute an admitted operation.
-		admitted := map[string]any{"id": operation, "revision": revision, "admitted_at": time.Now().UTC()}
+		admitted := map[string]any{"id": operation, "revision": revision, "admitted_at": time.Now().UTC(), "recovery_until": recoveryUntil}
 		if err := tx.Create(d.runs().Doc(runID).Collection("operations").Doc(operation), admitted); err != nil {
 			return err
 		}

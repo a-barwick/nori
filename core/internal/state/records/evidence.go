@@ -35,6 +35,17 @@ func (d *Database) evidenceCount(tx *docstore.Transaction, runID, kind string) (
 }
 
 func (d *Database) PutOperation(ctx context.Context, runID string, op state.OperationRecord) error {
+	return d.putOperation(ctx, runID, op, false)
+}
+
+func (d *Database) SettleOperation(ctx context.Context, runID string, op state.OperationRecord) error {
+	if op.ResultRef == "" {
+		return errors.New("operation settlement requires a result")
+	}
+	return d.putOperation(ctx, runID, op, true)
+}
+
+func (d *Database) putOperation(ctx context.Context, runID string, op state.OperationRecord, settle bool) error {
 	op, err := state.ValidateOperation(runID, op)
 	if err != nil {
 		return err
@@ -57,6 +68,9 @@ func (d *Database) PutOperation(ctx context.Context, runID string, op state.Oper
 			var old state.OperationRecord
 			if err := doc.DataTo(&old); err != nil {
 				return err
+			}
+			if settle && old.ResultRef != "" {
+				return docstore.ErrExists
 			}
 			recorded, _ := doc.Data()["evidence_recorded"].(bool)
 			saved = &state.SavedOperation{Record: old, EvidenceRecorded: recorded}
@@ -285,22 +299,26 @@ func (d *Database) readHistoryBlock(ctx context.Context, runID, ref string) (sta
 	return block, nil
 }
 
-func (d *Database) AppendHistory(ctx context.Context, runID, parent string, data []byte) (string, error) {
+func (d *Database) nextHistoryBlock(ctx context.Context, runID, parent string, data []byte) (state.HistoryBlock, string, error) {
 	if err := state.ValidateHistoryAppend(runID, parent, data); err != nil {
-		return "", err
+		return state.HistoryBlock{}, "", err
 	}
 	if _, err := d.GetRun(ctx, runID); err != nil {
-		return "", err
+		return state.HistoryBlock{}, "", err
 	}
 	var previous *state.HistoryBlock
 	if parent != "" {
 		block, err := d.readHistoryBlock(ctx, runID, parent)
 		if err != nil {
-			return "", fmt.Errorf("task history parent unavailable: %w", err)
+			return state.HistoryBlock{}, "", fmt.Errorf("task history parent unavailable: %w", err)
 		}
 		previous = &block
 	}
-	block, ref, err := state.NextHistoryBlock(runID, parent, previous, data)
+	return state.NextHistoryBlock(runID, parent, previous, data)
+}
+
+func (d *Database) AppendHistory(ctx context.Context, runID, parent string, data []byte) (string, error) {
+	block, ref, err := d.nextHistoryBlock(ctx, runID, parent, data)
 	if err != nil {
 		return "", err
 	}
@@ -344,6 +362,109 @@ func (d *Database) ReadHistory(ctx context.Context, runID, ref string) ([][]byte
 		}
 	}
 	return chain.Payloads()
+}
+
+func (d *Database) StartTaskModelCheckpoint(ctx context.Context, runID string, checkpoint state.TaskModelCheckpoint) error {
+	if !state.ValidEvidenceID(runID) || len(checkpoint.Outcome) != 0 {
+		return errors.New("invalid task model intent")
+	}
+	if err := checkpoint.Validate(); err != nil {
+		return err
+	}
+	_, err := d.runs().Doc(runID).Collection("model_checkpoints").Doc(checkpoint.ID).Create(ctx, checkpoint)
+	return err
+}
+
+func (d *Database) SaveTaskModelCheckpoint(ctx context.Context, runID string, checkpoint state.TaskModelCheckpoint, messages []byte) (string, error) {
+	if len(checkpoint.Outcome) == 0 {
+		return "", errors.New("task model settlement requires an outcome")
+	}
+	if err := checkpoint.Validate(); err != nil {
+		return "", err
+	}
+	run := d.runs().Doc(runID)
+	record := run.Collection("model_checkpoints").Doc(checkpoint.ID)
+	ref := checkpoint.Parent
+	var block state.HistoryBlock
+	if len(messages) == 0 {
+		if _, err := d.GetRun(ctx, runID); err != nil {
+			return "", err
+		}
+	} else {
+		var err error
+		block, ref, err = d.nextHistoryBlock(ctx, runID, checkpoint.Parent, messages)
+		if err != nil {
+			return "", err
+		}
+	}
+	checkpoint.Ref = ref
+	err := d.db.RunTransaction(ctx, func(_ context.Context, tx *docstore.Transaction) error {
+		doc, err := tx.Get(record)
+		switch {
+		case err == nil:
+			var saved state.TaskModelCheckpoint
+			if err := doc.DataTo(&saved); err != nil {
+				return err
+			}
+			if saved.ID != checkpoint.ID || saved.Revision != checkpoint.Revision || saved.Parent != checkpoint.Parent || saved.Subtask != checkpoint.Subtask {
+				return errors.New("task model checkpoint input conflict")
+			}
+			if len(saved.Outcome) != 0 || !saved.RecoveryUntil.Equal(checkpoint.RecoveryUntil) {
+				return docstore.ErrExists
+			}
+		case !notFound(err):
+			return err
+		case !checkpoint.RecoveryUntil.IsZero():
+			return state.ErrNotFound
+		}
+		if len(messages) == 0 {
+			return tx.Set(record, checkpoint)
+		}
+		history := run.Collection("history").Doc(ref)
+		doc, err = tx.Get(history)
+		switch {
+		case notFound(err):
+			if err := tx.Create(history, block); err != nil {
+				return err
+			}
+		case err != nil:
+			return err
+		default:
+			var saved state.HistoryBlock
+			if err := doc.DataTo(&saved); err != nil {
+				return err
+			}
+			if err := state.ValidateSavedHistoryBlock(runID, ref, saved); err != nil {
+				return err
+			}
+			if err := state.CheckHistoryReplay(saved, block); err != nil {
+				return err
+			}
+		}
+		return tx.Set(record, checkpoint)
+	})
+	return ref, err
+}
+
+func (d *Database) TaskModelCheckpoint(ctx context.Context, runID, id string) (state.TaskModelCheckpoint, error) {
+	var checkpoint state.TaskModelCheckpoint
+	if !state.ValidEvidenceID(runID) || !state.ValidEvidenceID(id) {
+		return checkpoint, state.ErrNotFound
+	}
+	doc, err := d.runs().Doc(runID).Collection("model_checkpoints").Doc(id).Get(ctx)
+	if notFound(err) {
+		return checkpoint, state.ErrNotFound
+	}
+	if err != nil {
+		return checkpoint, err
+	}
+	if err := doc.DataTo(&checkpoint); err != nil {
+		return checkpoint, err
+	}
+	if checkpoint.ID != id {
+		return checkpoint, errors.New("task model checkpoint identity conflict")
+	}
+	return checkpoint, checkpoint.Validate()
 }
 
 func (d *Database) Operation(ctx context.Context, runID, id string) (state.OperationRecord, error) {

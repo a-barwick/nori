@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 )
 
 const (
@@ -24,6 +25,27 @@ type HistoryBlock struct {
 	Data   []byte `firestore:"data"`
 	Depth  int    `firestore:"depth"`
 	Bytes  int    `firestore:"bytes"`
+}
+
+// TaskModelCheckpoint records the intent and outcome of one Temporal model activity.
+// Its input binds it to the exact revision and parent transcript it read.
+type TaskModelCheckpoint struct {
+	ID            string    `firestore:"id"`
+	Revision      int64     `firestore:"revision"`
+	Parent        string    `firestore:"parent"`
+	Ref           string    `firestore:"ref"`
+	Subtask       bool      `firestore:"subtask"`
+	RecoveryUntil time.Time `firestore:"recovery_until,omitempty"`
+	Outcome       []byte    `firestore:"outcome,omitempty"`
+}
+
+func (c TaskModelCheckpoint) Validate() error {
+	pending := len(c.Outcome) == 0 && !c.RecoveryUntil.IsZero() && c.Ref == ""
+	if !ValidEvidenceID(c.ID) || c.Revision < 0 || (c.Parent != "" && !ValidHistoryRef(c.Parent)) ||
+		(c.Ref != "" && !ValidHistoryRef(c.Ref)) || len(c.Outcome) > MaxEvidenceRecordBytes || (!pending && !json.Valid(c.Outcome)) {
+		return errors.New("invalid task model checkpoint")
+	}
+	return nil
 }
 
 // ValidHistoryRef reports whether ref has the form of a history reference: a lowercase SHA-256 in hex.

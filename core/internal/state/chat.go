@@ -18,13 +18,26 @@ type Chat struct {
 	ActiveTurn   *string       `json:"activeTurn" firestore:"active_turn"`
 	Position     int64         `json:"position" firestore:"position"`
 	UpdatedAt    time.Time     `json:"updatedAt" firestore:"updated_at"`
-	// Started identifies the process that owns a provider attempt. A new process
-	// closes interrupted attempts rather than submitting an unknown-cost call again.
-	Started    string    `json:"-" firestore:"started"`
-	LeaseUntil time.Time `json:"-" firestore:"lease_until"`
+	// Started and LeaseUntil fence the process advancing the active turn.
+	Started    string              `json:"-" firestore:"started"`
+	LeaseUntil time.Time           `json:"-" firestore:"lease_until"`
+	Checkpoint *ChatTurnCheckpoint `json:"-" firestore:"checkpoint,omitempty"`
 	// Attention is true while a turn is open or a write's outcome is unknown, so
 	// recovery reads only these chats instead of every chat.
 	Attention bool `json:"-" firestore:"attention"`
+}
+
+// ChatTurnCheckpoint belongs to ActiveTurn. A pending model request may have
+// been billed. A pending attachment read can be retried against its saved input.
+type ChatTurnCheckpoint struct {
+	Models       int                 `firestore:"models"`
+	ModelPending bool                `firestore:"model_pending"`
+	Read         *ChatReadCheckpoint `firestore:"read,omitempty"`
+}
+
+type ChatReadCheckpoint struct {
+	OperationID string `firestore:"operation_id"`
+	UploadID    string `firestore:"upload_id"`
 }
 
 type ChatMessage struct {

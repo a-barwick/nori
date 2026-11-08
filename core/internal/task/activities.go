@@ -215,6 +215,10 @@ func (a *Activities) ioError(step Step, err error) error {
 	}
 	return classified(err)
 }
+func modelActivityID(info activity.Info) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(info.WorkflowExecution.RunID+":"+info.ActivityID)).String()
+}
+
 func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, error) {
 	ctx, done, run, e := a.bounded(ctx, in.Step, in.Interruptible)
 	if e != nil {
@@ -223,9 +227,8 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	defer done()
 	ctx, span := startActivity(ctx, "task.model", "AGENT", run, in.Revision)
 	defer span.End()
-	info := activity.GetInfo(ctx)
 	trace := state.TaskStep{
-		ID:   uuid.NewSHA1(uuid.NameSpaceOID, []byte(info.WorkflowExecution.RunID+":"+info.ActivityID)).String(),
+		ID:   modelActivityID(activity.GetInfo(ctx)),
 		Kind: "model", Status: "running", Revision: in.Revision, StartedAt: time.Now().UTC(),
 		Model: a.Agent.Model.Name(), CostStatus: "unknown",
 	}

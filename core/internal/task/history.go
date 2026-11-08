@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.temporal.io/sdk/activity"
 	"nori/internal/agent"
+	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
@@ -286,60 +287,87 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefModelOutcome, err error) {
 	ctx, span := startActivity(ctx, "task.history.model", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.model"); span.End() }()
+	defer historyHeartbeat(ctx)()
+	info := activity.GetInfo(ctx)
+	checkpoint := state.TaskModelCheckpoint{ID: modelActivityID(info), Revision: in.Revision, Parent: in.Ref, Subtask: in.Subtask}
+	if info.Attempt > 1 {
+		return a.recoverModelRef(ctx, in.RunID, checkpoint)
+	}
 	messages, e := a.history(ctx, in.RunID, in.Ref)
 	if e != nil {
 		return out, classified(e)
+	}
+	checkpoint.RecoveryUntil = receiptDeadline(ctx)
+	if e = a.Store.StartTaskModelCheckpoint(ctx, in.RunID, checkpoint); e != nil {
+		return out, e
 	}
 	outcome, e := a.Model(ctx, ModelInput{Step: in.Step, Messages: fitContext(messages), Interruptible: true, Subtask: in.Subtask})
 	if e != nil {
 		return out, e
 	}
 	response := outcome.Response
-	out = RefModelOutcome{Ref: in.Ref, Cost: response.Cost, CostKnown: response.CostKnown, NotSent: response.NotSent, Failure: outcome.Failure}
-	// Accounting is returned even if persisting the response fails. Activity errors
-	// would discard this value, so persistence failure is an ordinary failure field.
+	out = RefModelOutcome{Cost: response.Cost, CostKnown: response.CostKnown, NotSent: response.NotSent, Failure: outcome.Failure}
+	var entries []transcript.Message
 	if response.Message != nil {
-		out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{*response.Message})
+		entries = append(entries, *response.Message)
+	}
+	if out.Failure == "" {
+		entries = finishModelRound(in, response.Calls, entries, &out)
+	}
+	data, e := json.Marshal(out)
+	var messagesJSON []byte
+	if e == nil && len(entries) > 0 {
+		messagesJSON, e = json.Marshal(entries)
+	}
+	if e == nil {
+		checkpoint.Outcome = data
+		save, cancel := receiptContext(ctx)
+		out.Ref, e = a.Store.SaveTaskModelCheckpoint(save, in.RunID, checkpoint, messagesJSON)
+		cancel()
 		if e != nil {
-			out.Ref = in.Ref
-			out.Failure = "model output could not be retained; paid request will not be replayed"
-			return out, nil
+			// A timed-out commit can already be visible. Check the same receipt
+			// before reporting that the output could not be saved.
+			read, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			saved, readErr := a.Store.TaskModelCheckpoint(read, in.RunID, checkpoint.ID)
+			cancel()
+			if readErr == nil && saved.Revision == in.Revision && saved.Parent == in.Ref && saved.Subtask == in.Subtask && bytes.Equal(saved.Outcome, data) {
+				out.Ref, e = saved.Ref, nil
+			}
 		}
 	}
-	if out.Failure != "" {
-		return out, nil
-	}
-	if len(response.Calls) == 0 {
-		out.Invalid = true
-		correction := transcript.UserText(prompts.Runtime("completion-protocol", nil))
-		out.Ref, e = a.appendMessages(ctx, in.RunID, out.Ref, []transcript.Message{correction})
-		if e != nil {
-			out.Failure = "completion protocol correction could not be retained"
-		}
-		return out, nil
-	}
-	if e = agent.ValidateCalls(response.Calls, true, !in.Subtask); e != nil {
-		parts := []transcript.Part{}
-		for _, call := range response.Calls {
-			rejected := map[string]any{"rejected": true, "reason": e.Error(), "executed": false}
-			parts = append(parts, transcript.Part{ToolResult: &transcript.ToolResult{CallID: call.ID, Name: call.Name, Output: rejected}})
-		}
-		out.Invalid = true
-		out.Ref, e = a.appendMessages(ctx, in.RunID, out.Ref, []transcript.Message{{Role: transcript.RoleUser, Parts: parts}})
-		if e != nil {
-			out.Failure = "rejected batch results could not be retained"
-		}
-		return out, nil
-	}
-	for i, call := range response.Calls {
-		out.Calls = append(out.Calls, CallRef{ID: call.ID, Name: call.Name, Index: i})
+	if e != nil {
+		observability.RecordErrorCategory(ctx, "task.model.checkpoint", e)
+		// Return known usage even if the checkpoint could not be committed.
+		out.Ref, out.Calls, out.Failure = in.Ref, nil, "The model result could not be saved."
 	}
 	span.SetAttributes(attribute.Int("nori.tool.call_count", len(out.Calls)))
 	return out, nil
 }
+
+func finishModelRound(in RefModelInput, calls []transcript.ToolCall, entries []transcript.Message, out *RefModelOutcome) []transcript.Message {
+	if len(calls) == 0 {
+		out.Invalid = true
+		correction := transcript.UserText(prompts.Runtime("completion-protocol", nil))
+		return append(entries, correction)
+	}
+	if e := agent.ValidateCalls(calls, true, !in.Subtask); e != nil {
+		parts := []transcript.Part{}
+		for _, call := range calls {
+			rejected := map[string]any{"rejected": true, "reason": e.Error(), "executed": false}
+			parts = append(parts, transcript.Part{ToolResult: &transcript.ToolResult{CallID: call.ID, Name: call.Name, Output: rejected}})
+		}
+		out.Invalid = true
+		return append(entries, transcript.Message{Role: transcript.RoleUser, Parts: parts})
+	}
+	for i, call := range calls {
+		out.Calls = append(out.Calls, CallRef{ID: call.ID, Name: call.Name, Index: i})
+	}
+	return entries
+}
 func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolOutcome, err error) {
 	ctx, span := startActivity(ctx, "task.history.tool", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.tool"); span.End() }()
+	defer historyHeartbeat(ctx)()
 	messages, e := a.history(ctx, in.RunID, in.Ref)
 	if e != nil {
 		return out, classified(e)
@@ -365,7 +393,7 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	result["evidence_ref"] = in.OperationID
 	out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{transcript.ToolResultMessage(call.ID, call.Name, result)})
 	if e != nil {
-		return out, classified(errors.New("tool result transcript could not be retained; operation will not be reissued"))
+		return out, errors.New("The tool result could not be saved to task history.")
 	}
 	out.Outcome, _ = result["outcome"].(string)
 	out.EffectClass, _ = result["effect_class"].(string)
@@ -375,7 +403,7 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	if out.Outcome == "uncertain" && out.EffectClass != "read" {
 		out.Unresolved, out.Clears, e = a.nameUnresolved(ctx, in.RunID, messages)
 		if e != nil {
-			return out, classified(e)
+			return out, e
 		}
 	}
 	return out, nil

@@ -20,9 +20,10 @@ import (
 const (
 	// persistEvery bounds how often streamed text is saved. Each save is one
 	// database transaction and one event, so saving every token would not scale.
-	persistEvery = 400 * time.Millisecond
-	turnLease    = 10 * time.Second
-	maxSteps     = 8
+	persistEvery    = 400 * time.Millisecond
+	turnLease       = 10 * time.Second
+	maxSteps        = 8
+	maxReadAttempts = 2
 )
 
 type chatTurn struct{ chatID, turnID string }
@@ -108,6 +109,7 @@ func (s *Service) Accept(ctx context.Context, id, input, text string, attachment
 		c.ActiveTurn = &input
 		c.Started = ""
 		c.LeaseUntil = time.Time{}
+		c.Checkpoint = &state.ChatTurnCheckpoint{}
 		c.Messages = append(c.Messages, state.ChatMessage{ID: userMessageID, Role: "user", Text: text, Status: "completed", Attachments: assigned}, state.ChatMessage{ID: state.AssistantMessageID(input), Role: "assistant", Status: "streaming"})
 		return "input.accepted", nil
 	}, state.UserMessageID(input))
@@ -224,14 +226,21 @@ func replyMessage(c *state.Chat, turn string) (*state.ChatMessage, error) {
 }
 
 func endTurn(c *state.Chat, reply *state.ChatMessage, status string) string {
+	if status == "failed" && reply.Text == "" {
+		reply.Text = prompts.Runtime("chat-interrupted", nil)
+	}
+	if op := pendingRead(c, reply); op != nil {
+		op.Outcome = status
+	}
 	reply.Status = status
 	c.ActiveTurn = nil
 	c.Started = ""
 	c.LeaseUntil = time.Time{}
+	c.Checkpoint = nil
 	return "turn." + status
 }
 
-func (s *Service) update(ctx context.Context, id, turn, kind string, f func(*state.ChatMessage)) (state.Chat, error) {
+func (s *Service) update(ctx context.Context, id, turn string, f func(*state.Chat, *state.ChatMessage) (string, error)) (state.Chat, error) {
 	return s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
 		if !s.owns(c, turn) {
 			return "", state.ErrCancelled
@@ -240,9 +249,8 @@ func (s *Service) update(ctx context.Context, id, turn, kind string, f func(*sta
 		if err != nil {
 			return "", err
 		}
-		f(reply)
 		c.LeaseUntil = time.Now().Add(turnLease)
-		return kind, nil
+		return f(c, reply)
 	}, state.AssistantMessageID(turn))
 }
 
@@ -256,9 +264,6 @@ func (s *Service) finish(id, turn, status string) {
 		m, err := replyMessage(c, turn)
 		if err != nil {
 			return "", err
-		}
-		if status == "failed" && m.Text == "" {
-			m.Text = prompts.Runtime("chat-interrupted", nil)
 		}
 		return endTurn(c, m, status), nil
 	}, state.AssistantMessageID(turn))
@@ -297,12 +302,16 @@ func (s *Service) claim(ctx context.Context, id, turn string) (state.Chat, error
 		if err != nil {
 			return "", err
 		}
-		if c.Started != "" {
-			if c.LeaseUntil.After(time.Now()) {
-				return "", state.ErrConversationBusy
-			}
-			// Another process started this reply and stopped. Its provider call is never repeated.
+		if c.Started != "" && c.LeaseUntil.After(time.Now()) {
+			return "", state.ErrConversationBusy
+		}
+		// Legacy claimed turns have no checkpoint. A pending model request in
+		// either format may have been billed, so settle it without a resend.
+		if (c.Checkpoint == nil && c.Started != "") || (c.Checkpoint != nil && c.Checkpoint.ModelPending) {
 			return endTurn(c, m, "failed"), nil
+		}
+		if c.Checkpoint == nil {
+			c.Checkpoint = &state.ChatTurnCheckpoint{}
 		}
 		c.Started = s.owner
 		c.LeaseUntil = time.Now().Add(turnLease)
@@ -316,32 +325,23 @@ func (s *Service) run(ctx context.Context, id, turn string) {
 		return
 	}
 	defer s.heartbeat(ctx, id, turn)()
-	messages := history(c, turn)
-	for step := 0; step < maxSteps; step++ {
-		reply, err := s.respond(ctx, id, turn, messages)
+	for c.ActiveTurn != nil && ctx.Err() == nil {
+		switch {
+		case c.Checkpoint.Read != nil:
+			c, err = s.runRead(ctx, id, turn)
+		case c.Checkpoint.Models >= maxSteps:
+			s.finish(id, turn, "failed")
+			return
+		default:
+			c, err = s.generate(ctx, id, turn)
+		}
 		if err != nil {
-			if ctx.Err() == nil {
+			if errors.Is(err, state.ErrPaused) || errors.Is(err, state.ErrChatMessageTooLarge) {
 				s.finish(id, turn, "failed")
 			}
 			return
 		}
-		if len(reply.Calls) == 0 {
-			if _, err = s.update(ctx, id, turn, "reply.updated", func(m *state.ChatMessage) { m.Text = reply.Text }); err == nil {
-				s.finish(id, turn, "completed")
-			}
-			return
-		}
-		if len(reply.Calls) != 1 {
-			s.finish(id, turn, "failed")
-			return
-		}
-		evidence, next := s.call(ctx, id, turn, reply.Calls[0])
-		if !next {
-			return
-		}
-		messages = append(messages, raw("user", evidence))
 	}
-	s.finish(id, turn, "failed")
 }
 
 func (s *Service) heartbeat(ctx context.Context, id, turn string) func() {
@@ -356,7 +356,9 @@ func (s *Service) heartbeat(ctx context.Context, id, turn string) func() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if _, err := s.update(ctx, id, turn, "reply.updated", func(*state.ChatMessage) {}); err != nil {
+				if _, err := s.update(ctx, id, turn, func(*state.Chat, *state.ChatMessage) (string, error) {
+					return "reply.updated", nil
+				}); err != nil {
 					s.stop(id, turn)
 					return
 				}
@@ -420,7 +422,10 @@ func (s *Service) respond(ctx context.Context, id, turn string, messages []json.
 			return ctx.Err()
 		}
 		saved = time.Now()
-		_, err := s.update(ctx, id, turn, "reply.updated", func(m *state.ChatMessage) { m.Text = text })
+		_, err := s.update(ctx, id, turn, func(_ *state.Chat, m *state.ChatMessage) (string, error) {
+			m.Text = text
+			return "reply.updated", nil
+		})
 		return err
 	}}
 	request.RecordUsage = func(callctx context.Context, u state.Usage) error {
@@ -447,34 +452,113 @@ func (s *Service) respond(ctx context.Context, id, turn string, messages []json.
 	return reply, err
 }
 
-func (s *Service) call(ctx context.Context, id, turn string, call conversation.ToolCall) (string, bool) {
-	var args map[string]any
-	if json.Unmarshal([]byte(call.Function.Arguments), &args) != nil || call.Function.Name != "upload_read" {
-		s.finish(id, turn, "failed")
-		return "", false
-	}
-	op := state.ChatOperation{OperationRecord: state.OperationRecord{ID: uuid.NewString(), CallID: call.ID, Name: call.Function.Name, EffectClass: "read", Outcome: "attempted"}}
-	if _, err := s.update(ctx, id, turn, "tool.updated", func(m *state.ChatMessage) { m.Operations = append(m.Operations, op) }); err != nil {
-		s.finish(id, turn, "failed")
-		return "", false
-	}
-	var err error
-	op.Result, err = s.readUpload(ctx, id, args)
-	op.Outcome = "completed"
+func (s *Service) generate(ctx context.Context, id, turn string) (state.Chat, error) {
+	c, err := s.update(ctx, id, turn, func(c *state.Chat, _ *state.ChatMessage) (string, error) {
+		c.Checkpoint.Models++
+		c.Checkpoint.ModelPending = true
+		return "reply.updated", nil
+	})
 	if err != nil {
-		op.Outcome = "failed"
-		op.Result = map[string]any{"error": err.Error()}
+		return c, err
 	}
-	op.Result = boundedResult(op.Result)
-	if _, err = s.update(ctx, id, turn, "tool.updated", func(m *state.ChatMessage) { m.Operations[len(m.Operations)-1] = op }); err != nil {
-		return "", false
+	m, err := replyMessage(&c, turn)
+	if err != nil {
+		return c, err
 	}
-	result, _ := json.Marshal(op)
-	return prompts.Runtime("chat-tool-evidence", nil) + string(result), true
+	messages := history(c, turn)
+	for _, op := range m.Operations {
+		data, _ := json.Marshal(op)
+		messages = append(messages, raw("user", prompts.Runtime("chat-tool-evidence", nil)+string(data)))
+	}
+	reply, err := s.respond(ctx, id, turn, messages)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.finish(id, turn, "failed")
+		}
+		return c, err
+	}
+	operationID := uuid.NewString()
+	return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
+		if len(reply.Calls) == 0 {
+			m.Text = reply.Text
+			return endTurn(c, m, "completed"), nil
+		}
+		if len(reply.Calls) != 1 || reply.Calls[0].Function.Name != "upload_read" {
+			return endTurn(c, m, "failed"), nil
+		}
+		call := reply.Calls[0]
+		var args struct {
+			UploadID string `json:"upload_id"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return endTurn(c, m, "failed"), nil
+		}
+		if !state.ValidUploadID(args.UploadID) {
+			args.UploadID = ""
+		}
+		c.Checkpoint.ModelPending = false
+		c.Checkpoint.Read = &state.ChatReadCheckpoint{OperationID: operationID, UploadID: args.UploadID}
+		m.Operations = append(m.Operations, state.ChatOperation{OperationRecord: state.OperationRecord{
+			ID: operationID, CallID: call.ID, Name: call.Function.Name, EffectClass: "read", Outcome: "pending",
+		}})
+		return "tool.updated", nil
+	})
 }
 
-func (s *Service) readUpload(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
-	upload, _ := args["upload_id"].(string)
+func pendingRead(c *state.Chat, m *state.ChatMessage) *state.ChatOperation {
+	if c.Checkpoint == nil || c.Checkpoint.Read == nil || len(m.Operations) == 0 {
+		return nil
+	}
+	op := &m.Operations[len(m.Operations)-1]
+	if op.ID != c.Checkpoint.Read.OperationID || op.Name != "upload_read" || op.EffectClass != "read" ||
+		(op.Outcome != "pending" && op.Outcome != "attempted") {
+		return nil
+	}
+	return op
+}
+
+func (s *Service) runRead(ctx context.Context, id, turn string) (state.Chat, error) {
+	c, err := s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
+		op := pendingRead(c, m)
+		if op == nil {
+			return endTurn(c, m, "failed"), nil
+		}
+		if op.Attempt >= maxReadAttempts {
+			op.Outcome = "failed"
+			op.Result = map[string]any{"error": prompts.Runtime("chat-read-interrupted", nil)}
+			c.Checkpoint.Read = nil
+		} else {
+			op.Attempt++
+			op.Outcome = "attempted"
+		}
+		return "tool.updated", nil
+	})
+	if err != nil || c.Checkpoint == nil || c.Checkpoint.Read == nil {
+		return c, err
+	}
+	readCtx, stop := context.WithTimeout(ctx, 30*time.Second)
+	result, readErr := s.readUpload(readCtx, id, c.Checkpoint.Read.UploadID)
+	stop()
+	if ctx.Err() != nil {
+		return c, ctx.Err()
+	}
+	return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
+		op := pendingRead(c, m)
+		if op == nil {
+			return endTurn(c, m, "failed"), nil
+		}
+		op.Outcome = "completed"
+		op.Result = boundedResult(result)
+		if readErr != nil {
+			op.Outcome = "failed"
+			op.Result = boundedResult(map[string]any{"error": readErr.Error()})
+		}
+		c.Checkpoint.Read = nil
+		return "tool.updated", nil
+	})
+}
+
+func (s *Service) readUpload(ctx context.Context, id, upload string) (map[string]any, error) {
 	u, err := s.Store.ChatUpload(ctx, id, upload)
 	if err != nil {
 		return nil, state.ErrAttachmentMissing

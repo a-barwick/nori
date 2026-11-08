@@ -195,6 +195,19 @@ batch and later input stays queued. Native tool-call/result history survives
 restart. Context is bounded to recent history and traces report truncation;
 older transcript pages remain available separately.
 
+The assistant checkpoints its draft before independent command planning and
+checkpoints the final plan before command admission. Recovery reuses those
+checkpoints and any accepted command receipts. A paid request interrupted before
+its result was saved ends the attempt. A follow-up can pick up the saved input.
+An interrupted advisory classification falls back to an unavailable hint.
+An unfinished attempt from before checkpoints were introduced settles as
+interrupted, leaving its input available to a follow-up.
+
+Independent chat saves each attachment read and its outcome before generating
+the next reply. An interrupted read can resume under the same operation ID for
+up to two attempts. An interrupted model request retains the partial reply and
+settles as failed so the user can send a follow-up.
+
 A Firestore transaction admits a whole command batch atomically, including
 commands for independent concurrent tasks. Repeating an identical command UUID
 returns its recorded acceptance; reusing that ID with different content is
@@ -221,10 +234,15 @@ another $1. This is a task command, separate from Temporal Continue-As-New.
 Outer conversation and Jev calls have separate provider usage records and do not
 consume the inner task's budget. An unknown provider price remains unknown.
 
-Model/tool activities have one attempt. Each admitted computer operation gets a
-stable ID, request digest, and retained receipt under the task directory's
-`.nori-receipts`. Identical completed operations can return their recorded result;
-started or uncertain receipts refuse automatic re-execution. Cancellation scopes
+Temporal allows up to three delivery attempts for a model or tool activity.
+On retry, the worker waits for the original activity's receipt until its saved
+deadline. Model outcomes commit with their transcript entries, and an expired
+model attempt without a result settles as interrupted. One settlement wins for
+each activity, even if an earlier worker returns at the same time.
+Each admitted computer operation gets a stable ID, request digest, and receipt
+under the task directory's `.nori-receipts`. Recovery uses the saved result or
+checks the guest receipt for up to 15 seconds. When it cannot establish a
+write's outcome, it keeps the uncertainty visible and can wait for the user to answer. Cancellation scopes
 include task revisions, while working directories remain
 `/workspace/tasks/<task-UUID>` across corrections.
 

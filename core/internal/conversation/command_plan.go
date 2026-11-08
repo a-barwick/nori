@@ -25,16 +25,8 @@ func plannedCommand(call ToolCall) bool {
 }
 
 func (r *Runner) planUserCommands(ctx context.Context, t *state.ConversationTurn, reply Reply, request ReplyRequest,
-	view historyView, visible []Message, tasks TaskContext, inputID string,
+	messages []json.RawMessage, inputID string,
 ) (Reply, error) {
-	if !slices.ContainsFunc(t.Inputs, func(in state.ConversationInput) bool { return in.IsUser() }) ||
-		!slices.ContainsFunc(reply.Calls, plannedCommand) {
-		return reply, nil
-	}
-	messages, err := r.commandPlanMessages(ctx, t, view, visible, tasks)
-	if err != nil {
-		return reply, err
-	}
 	plan, err := r.model.Respond(ctx, ReplyRequest{
 		Messages: messages, CommandPlan: true, TaskIDs: request.TaskIDs,
 		TelemetryInput: request.TelemetryInput, RecordUsage: request.RecordUsage,

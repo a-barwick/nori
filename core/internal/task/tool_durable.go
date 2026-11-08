@@ -15,6 +15,7 @@ import (
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
 type persistFunc func(outcome string, output map[string]any, cause error) (map[string]any, error)
@@ -25,6 +26,24 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	evidence := a.Store
 	policy := agent.TaskToolPolicy(in.Call.Name)
 	effect := policy.Effect
+	// A settled result remains evidence after a correction. Reuse it before
+	// applying the current revision and pause checks to any further work.
+	var recovering *state.OperationRecord
+	var saved map[string]any
+	err = a.waitForReceipt(parent, in.RunID, func() (time.Time, error) {
+		var err error
+		recovering, saved, err = a.savedOperation(parent, in)
+		if recovering != nil {
+			return recovering.RecoveryUntil, err
+		}
+		return time.Time{}, err
+	})
+	if errors.Is(err, state.ErrCancelled) {
+		return nil, classified(err)
+	}
+	if err != nil || saved != nil {
+		return saved, err
+	}
 	// A correction waits for paid model reads because interruption can lose the reported cost. Stop still cancels them.
 	ctx, done, run, err := a.bounded(parent, in.Step, effect == "read" && !policy.InterruptedCostUnknown)
 	if err != nil {
@@ -37,28 +56,30 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		attribute.String("tool.name", policy.Name), attribute.String("nori.operation.id", in.OperationID),
 		attribute.String("nori.operation.effect_class", effect),
 	)
-	records, err := evidence.Operations(ctx, in.RunID)
-	if err != nil {
-		return nil, classified(err)
-	}
-	recovering, saved, err := a.savedOperation(ctx, in, records)
-	if err != nil || saved != nil {
-		return saved, err
-	}
+	until := receiptDeadline(parent)
 	if recovering == nil {
-		if blocked := unresolvedWriteBlock(effect, records); blocked != nil {
-			return blocked, nil
+		if blocked, err := a.unresolvedWriteBlock(ctx, in.RunID, effect); err != nil || blocked != nil {
+			return blocked, err
 		}
-		if err = a.Store.Admit(ctx, in.RunID, in.Revision, in.OperationID); err != nil {
+		if err = a.Store.Admit(ctx, in.RunID, in.Revision, in.OperationID, until); err != nil {
+			if errors.Is(err, docstore.ErrExists) {
+				// A timed-out attempt may have committed admission just before this one.
+				return nil, err
+			}
 			return nil, classified(err)
 		}
 	}
-	op := state.OperationRecord{ID: in.OperationID, CallID: in.Call.ID, Name: in.Call.Name, Revision: in.Revision, EffectClass: effect, Outcome: "pending"}
+	op := state.OperationRecord{
+		ID: in.OperationID, CallID: in.Call.ID, Name: in.Call.Name, Revision: in.Revision,
+		EffectClass: effect, Outcome: "pending", RecoveryUntil: until,
+	}
 	if recovering != nil {
 		op = *recovering
 		// Old admission-only records have no descriptive evidence yet.
 		if op.CallID == "" {
 			op.CallID = in.Call.ID
+			op.EffectClass = effect
+			op.Outcome = "pending"
 		}
 		if op.Name == "" {
 			op.Name = in.Call.Name
@@ -85,12 +106,12 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		if e != nil {
 			return nil, classified(e)
 		}
-		save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		save, cancel := receiptContext(ctx)
 		defer cancel()
 		op.ResultRef, e = evidence.AppendHistory(save, in.RunID, "", data)
 		if e != nil {
 			observability.RecordErrorCategory(save, "task.evidence", e)
-			return nil, classified(e)
+			return nil, e
 		}
 		op.Outcome = outcome
 		if outcome == "failed" && op.Cleared == "" {
@@ -99,9 +120,17 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		if id, yes := output["artifact_id"].(string); yes && id != "" {
 			op.ArtifactIDs = []string{id}
 		}
-		if e = evidence.PutOperation(save, in.RunID, op); e != nil {
+		e = evidence.SettleOperation(save, in.RunID, op)
+		if errors.Is(e, docstore.ErrExists) {
+			// Another attempt won the settlement. Use that same result in the transcript.
+			_, settled, readErr := a.savedOperation(save, in)
+			if readErr != nil || settled != nil {
+				return settled, readErr
+			}
+		}
+		if e != nil {
 			observability.RecordErrorCategory(save, "task.evidence", e)
-			return nil, classified(e)
+			return nil, e
 		}
 		span.SetAttributes(attribute.String("nori.tool.outcome", outcome), attribute.Int("nori.operation.attempt", op.Attempt))
 		observability.Event(save, "task.operation.recorded", attribute.String("nori.operation.id", op.ID), attribute.String("nori.tool.outcome", outcome))
@@ -117,62 +146,85 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	return a.computerTool(ctx, in, &op, effect, persist)
 }
 
-func (a *Activities) savedOperation(ctx context.Context, in ToolInput, records []state.OperationRecord) (*state.OperationRecord, map[string]any, error) {
-	for _, saved := range records {
-		if saved.ID != in.OperationID {
-			continue
-		}
-		if saved.Revision != in.Revision || (saved.CallID != "" && saved.CallID != in.Call.ID) || (saved.Name != "" && saved.Name != in.Call.Name) {
-			return nil, nil, classified(errors.New("operation recovery identity conflict"))
-		}
-		if saved.ResultRef == "" {
-			return &saved, nil, nil
-		}
-		blocks, err := a.Store.ReadHistory(ctx, in.RunID, saved.ResultRef)
-		if err != nil {
-			return nil, nil, classified(err)
-		}
-		if len(blocks) != 1 {
-			return nil, nil, classified(errors.New("invalid operation result reference"))
-		}
-		var result map[string]any
-		if err = json.Unmarshal(blocks[0], &result); err != nil {
-			return nil, nil, classified(err)
-		}
-		return nil, result, nil
+func (a *Activities) savedOperation(ctx context.Context, in ToolInput) (*state.OperationRecord, map[string]any, error) {
+	saved, err := a.Store.Operation(ctx, in.RunID, in.OperationID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil, nil
 	}
-	return nil, nil, nil
+	if err != nil {
+		return nil, nil, err
+	}
+	if saved.Revision != in.Revision || (saved.CallID != "" && saved.CallID != in.Call.ID) || (saved.Name != "" && saved.Name != in.Call.Name) {
+		return nil, nil, classified(errors.New("operation recovery identity conflict"))
+	}
+	if saved.ResultRef == "" {
+		return &saved, nil, nil
+	}
+	blocks, err := a.Store.ReadHistory(ctx, in.RunID, saved.ResultRef)
+	if err != nil {
+		return nil, nil, err
+	}
+	var result map[string]any
+	if len(blocks) != 1 || json.Unmarshal(blocks[0], &result) != nil || result == nil {
+		return nil, nil, classified(errors.New("invalid saved operation result"))
+	}
+	observability.Event(ctx, "task.operation.checkpoint_reused", attribute.String("nori.operation.id", saved.ID))
+	return nil, result, nil
 }
 
-func unresolvedWriteBlock(effect string, records []state.OperationRecord) map[string]any {
+func (a *Activities) unresolvedWriteBlock(ctx context.Context, runID, effect string) (map[string]any, error) {
 	if effect == "read" || effect == "control" {
-		return nil
+		return nil, nil
+	}
+	records, err := a.Store.Operations(ctx, runID)
+	if err != nil {
+		return nil, err
 	}
 	for _, saved := range records {
 		if unresolvedWrite(saved) {
 			return map[string]any{
 				"operation_id": saved.ID, "outcome": "uncertain", "effect_class": saved.EffectClass,
 				"error": prompts.Runtime("write-uncertain", map[string]any{"Tool": saved.Name}),
-			}
+			}, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // recoverComputerTool recovers an interrupted computer call by inspection only: a stopped guest remains stopped,
 // and an unknown or pending write is never submitted again.
 func (a *Activities) recoverComputerTool(ctx context.Context, in ToolInput, op state.OperationRecord, effect string, persist persistFunc) (map[string]any, error) {
-	inspect, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	inspect, stop := context.WithTimeout(observability.SuppressErrorCapture(ctx), 15*time.Second)
 	defer stop()
-	c, attachErr := computer.Attach(observability.SuppressErrorCapture(inspect), a.Agent.Computer, computerRun(in.Step))
-	if attachErr == nil {
-		defer c.Close()
-		c.SetTaskID(in.RunID)
-		receiptIDs := []string{in.OperationID}
-		if op.Attempt > 1 {
-			receiptIDs = []string{fmt.Sprintf("%s-a%d", in.OperationID, op.Attempt)}
-		} else if op.Attempt == 0 && effect == "read" {
-			receiptIDs = []string{in.OperationID + "-a2", in.OperationID}
+	until, _ := inspect.Deadline()
+	receiptIDs := []string{in.OperationID}
+	if op.Attempt > 1 {
+		receiptIDs = []string{fmt.Sprintf("%s-a%d", in.OperationID, op.Attempt)}
+	} else if op.Attempt == 0 && effect == "read" {
+		receiptIDs = []string{in.OperationID + "-a2", in.OperationID}
+	}
+	var c *computer.Client
+	defer func() {
+		if c != nil {
+			c.Close()
+		}
+	}()
+	var output map[string]any
+	var outcome string
+	err := a.waitForReceipt(inspect, in.RunID, func() (time.Time, error) {
+		if c == nil {
+			if a.Agent.Computer == nil {
+				return time.Time{}, nil
+			}
+			attached, err := computer.Attach(inspect, a.Agent.Computer, computerRun(in.Step))
+			if errors.Is(err, computer.ErrStopped) {
+				return time.Time{}, nil
+			}
+			if err != nil {
+				return until, nil
+			}
+			c = attached
+			c.SetTaskID(in.RunID)
 		}
 		for _, receiptID := range receiptIDs {
 			receipt, readErr := c.Operation(inspect, receiptID)
@@ -181,22 +233,41 @@ func (a *Activities) recoverComputerTool(ctx context.Context, in ToolInput, op s
 				if errors.As(readErr, &rpc) && rpc.Status == 404 {
 					continue
 				}
-				break
+				c.Close()
+				c = nil
+				return until, nil
 			}
 			if receipt.Status != "completed" {
-				break
+				// The guest reports an in-flight receipt as uncertain. It can
+				// finish after the activity that dispatched it has timed out.
+				return until, nil
 			}
-			output, outcome, recovered := a.savedToolReceipt(inspect, in, receipt)
-			if recovered {
-				return persist(outcome, output, nil)
-			}
-			break
+			output, outcome, _ = a.savedToolReceipt(inspect, in, receipt)
+			return time.Time{}, nil
 		}
+		return until, nil
+	})
+	if output != nil {
+		return persist(outcome, output, nil)
 	}
-	return map[string]any{
+	if errors.Is(err, state.ErrCancelled) {
+		return nil, classified(err)
+	}
+	if ctx.Err() != nil {
+		return nil, a.ioError(in.Step, ctx.Err())
+	}
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
+	output = map[string]any{
 		"operation_id": op.ID, "outcome": "uncertain", "effect_class": op.EffectClass,
 		"error": prompts.Runtime("receipt-unknown", nil),
-	}, nil
+	}
+	if op.Outcome == "pending" {
+		// Keep a durable uncertain result so an answer can resolve the hold.
+		return persist("uncertain", output, nil)
+	}
+	return output, nil
 }
 
 // computerTool runs a call on the task's computer. Only an allowlisted read is attempted a second time.

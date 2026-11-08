@@ -261,7 +261,7 @@ func (d *Database) UpdateChat(ctx context.Context, id string, change func(*state
 			for _, op := range m.Operations {
 				wasAttempted := false
 				for _, old := range prior.Operations {
-					if old.ID == op.ID && old.Outcome == "attempted" {
+					if old.ID == op.ID && old.Outcome == "attempted" && old.Attempt >= op.Attempt {
 						wasAttempted = true
 					}
 				}
@@ -286,6 +286,9 @@ func (d *Database) UpdateChat(ctx context.Context, id string, change func(*state
 		}
 		if startsTool {
 			doc, e := tx.Get(controlDoc(d.db))
+			if notFound(e) {
+				return state.ErrPaused
+			}
 			if e != nil {
 				return e
 			}

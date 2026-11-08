@@ -218,6 +218,7 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			a := state.ConversationAttempt{
 				ID: fmt.Sprintf("%s-attempt-%d", t.ID, t.Restarts+1), TurnID: t.ID, Number: t.Restarts + 1, Model: r.model.Name(),
 				Status: "running", StartedAt: time.Now().UTC(), Actions: []state.ConversationAction{}, Usage: []state.Usage{},
+				ModelCheckpoint: &state.ConversationModelCheckpoint{Phase: preparingReply},
 			}
 			for _, in := range t.Inputs {
 				a.InputIDs = append(a.InputIDs, in.ID)
@@ -331,17 +332,27 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 	}
 }
 func decodeSavedReply(a state.ConversationAttempt, reply *Reply) error {
+	if err := restoreReply(a.Reply, a.Text, a.StructuredReply, reply); err != nil {
+		return err
+	}
+	// Actions line up with task commands only: shown results and memory changes have no action.
+	reply.Calls = slices.DeleteFunc(reply.Calls, func(call ToolCall) bool {
+		name := call.Function.Name
+		return name == "show_result" || name == state.MemoryRemember || name == state.MemoryForget
+	})
+	return nil
+}
+
+func restoreReply(message, text string, structured bool, reply *Reply) error {
 	var m struct {
 		Content *string    `json:"content"`
 		Calls   []ToolCall `json:"tool_calls"`
 	}
-	if e := json.Unmarshal([]byte(a.Reply), &m); e != nil {
+	if e := json.Unmarshal([]byte(message), &m); e != nil {
 		return e
 	}
-	reply.Message = json.RawMessage(a.Reply)
-	reply.Text = a.Text
-	reply.Calls = m.Calls
-	if a.StructuredReply {
+	*reply = Reply{Message: json.RawMessage(message), Text: text, Calls: m.Calls, Structured: structured}
+	if structured {
 		if m.Content == nil {
 			return fmt.Errorf("saved structured routing response is missing")
 		}
@@ -351,11 +362,6 @@ func decodeSavedReply(a state.ConversationAttempt, reply *Reply) error {
 			return err
 		}
 	}
-	// Actions line up with task commands only: shown results and memory changes have no action.
-	reply.Calls = slices.DeleteFunc(reply.Calls, func(call ToolCall) bool {
-		name := call.Function.Name
-		return name == "show_result" || name == state.MemoryRemember || name == state.MemoryForget
-	})
 	return nil
 }
 func (r *Runner) recoverActions(ctx context.Context, t *state.ConversationTurn) error {

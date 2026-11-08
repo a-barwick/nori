@@ -21,7 +21,7 @@ export function chatThread(chat: Conversation | null): Thread {
       else parts.push({ type: "note", text: label(operation) });
     }
     if (message.status === "cancelled") parts.push({ type: "note", text: "Stopped" });
-    if (message.status === "failed") parts.push({ type: "note", text: "Reply interrupted" });
+    if (message.status === "failed") parts.push({ type: "note", text: "Reply interrupted. Send a follow-up to continue." });
     const text = message.text;
     if (!text && !parts.length) continue;
     items.push({ id: message.id, sender: message.role === "user" ? "me" : "nori", at, text, parts });

@@ -79,10 +79,10 @@ type taskRun struct {
 	id     string
 	c      Checkpoint
 	result state.Run
-	// ctx runs model and tool calls; quick runs bookkeeping; syncing may repeat a history sync;
+	// recovering retries delivery of model and tool checkpoints; quick runs bookkeeping; syncing may repeat a history sync;
 	// stopCtx allows for stopping the computer; spending projects spend.
-	ctx, quick, syncing, stopCtx, spending workflow.Context
-	signals                                workflow.ReceiveChannel
+	ctx, quick, syncing, recovering, stopCtx, spending workflow.Context
+	signals                                            workflow.ReceiveChannel
 }
 
 func newTaskRun(ctx workflow.Context, id string, resume Checkpoint) *taskRun {
@@ -101,6 +101,7 @@ func newTaskRun(ctx workflow.Context, id string, resume Checkpoint) *taskRun {
 		syncing: workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 			StartToCloseTimeout: 20 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3},
 		}),
+		recovering: workflow.WithRetryPolicy(ctx, temporal.RetryPolicy{MaximumAttempts: 3}),
 		stopCtx: workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 			StartToCloseTimeout: 200 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1},
 		}),
@@ -209,7 +210,7 @@ func (r *taskRun) turn() (bool, error) {
 	if c.Question != nil {
 		return false, r.ask()
 	}
-	model, err := c.callModel(r.ctx, r.quick, r.spending, r.id)
+	model, err := c.callModel(r.recovering, r.quick, r.spending, r.id)
 	if retry, err := r.boundary(err); retry || err != nil {
 		return false, err
 	}
@@ -414,7 +415,7 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 	}
 	c.JobsStarted = c.JobsStarted || call.Name == "job_start"
 	var output RefToolOutcome
-	err = workflow.ExecuteActivity(r.ctx, a.ToolRef, RefToolInput{
+	err = workflow.ExecuteActivity(r.recovering, a.ToolRef, RefToolInput{
 		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.Inherited,
 	}).Get(r.ctx, &output)
 	retry, err = r.boundary(err)
@@ -422,9 +423,9 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 		return reviseCalls, r.appendResult(call, map[string]any{"outcome": "uncertain", "operation_id": operation, "replayed": false})
 	}
 	if err != nil {
-		// A worker that died mid-call leaves a paid tool's cost open. Attempts are capped at 1.
+		// Without a settled receipt, a paid operation may still have incurred cost.
 		var application *temporal.ApplicationError
-		if !errors.As(err, &application) {
+		if !errors.As(err, &application) || !application.NonRetryable() {
 			c.CostUnknown = c.CostUnknown || policy.InterruptedCostUnknown
 			if policy.InterruptedCostUSD > 0 {
 				c.Spent += policy.InterruptedCostUSD
@@ -522,7 +523,7 @@ func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string)
 	err = workflow.ExecuteActivity(ctx, a.ModelRef, RefModelInput{Step: Step{id, c.Revision}, Ref: c.Ref, Subtask: c.Subtask}).Get(ctx, &model)
 	if err != nil {
 		var application *temporal.ApplicationError
-		if !errors.As(err, &application) {
+		if !errors.As(err, &application) || !application.NonRetryable() {
 			c.CostUnknown = true
 		}
 		return model, err

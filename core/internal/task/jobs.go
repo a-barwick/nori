@@ -265,11 +265,15 @@ func stopTaskJobs(ctx context.Context, config computer.Provider, id string) erro
 }
 
 // runtimeTool runs a tool that needs no computer. It keeps the same operation
-// record as a computer tool and is never repeated automatically.
+// record as a computer tool. Recovery returns a receipt or settles the interruption.
 func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.OperationRecord, recovering bool, policy agent.ToolPolicy, persist persistFunc) (map[string]any, error) {
 	if recovering {
 		// The earlier attempt may have been billed and its cost was not returned.
-		return persist("failed", map[string]any{"cost_unknown": policy.InterruptedCostUnknown, "cost_usd": policy.InterruptedCostUSD}, errors.New("the worker stopped before this read finished; it was not repeated"))
+		outcome := "failed"
+		if policy.Effect != "read" {
+			outcome = "uncertain"
+		}
+		return persist(outcome, map[string]any{"cost_unknown": policy.InterruptedCostUnknown, "cost_usd": policy.InterruptedCostUSD}, errors.New("the worker stopped before the operation result was saved"))
 	}
 	if _, err := a.Store.Guard(ctx, in.RunID, in.Revision); err != nil {
 		if _, saveErr := persist("skipped", nil, err); saveErr != nil {

@@ -77,6 +77,15 @@ type ConversationAttempt struct {
 	ContextBytes     int                  `firestore:"context_bytes"`
 	// Memory holds the remember and forget changes this attempt asked for. They apply when its reply is published.
 	Memory []MemoryChange `firestore:"memory,omitempty"`
+	// ModelCheckpoint is private intermediate work. Only Reply and Actions may authorize commands.
+	ModelCheckpoint *ConversationModelCheckpoint `json:"-" firestore:"model_checkpoint,omitempty"`
+}
+
+type ConversationModelCheckpoint struct {
+	Phase      string `firestore:"phase"`
+	Message    string `firestore:"message,omitempty"`
+	Text       string `firestore:"text,omitempty"`
+	Structured bool   `firestore:"structured,omitempty"`
 }
 
 type ConversationTurn struct {

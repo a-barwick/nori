@@ -50,7 +50,13 @@ type Store interface {
 type TaskEvidenceStore interface {
 	AppendHistory(ctx context.Context, runID, parent string, data []byte) (ref string, err error)
 	ReadHistory(ctx context.Context, runID, ref string) ([][]byte, error)
+	StartTaskModelCheckpoint(ctx context.Context, runID string, checkpoint TaskModelCheckpoint) error
+	// SaveTaskModelCheckpoint commits a model outcome together with its new transcript block, if any.
+	SaveTaskModelCheckpoint(ctx context.Context, runID string, checkpoint TaskModelCheckpoint, messages []byte) (ref string, err error)
+	TaskModelCheckpoint(ctx context.Context, runID, id string) (TaskModelCheckpoint, error)
 	PutOperation(ctx context.Context, runID string, op OperationRecord) error
+	// SettleOperation publishes an activity's result only if no activity has settled this operation.
+	SettleOperation(ctx context.Context, runID string, op OperationRecord) error
 	Operation(ctx context.Context, runID, id string) (OperationRecord, error)
 	Operations(ctx context.Context, runID string) ([]OperationRecord, error)
 	PutCompletionCheck(ctx context.Context, runID string, check CompletionCheck) error
@@ -80,7 +86,7 @@ type TaskDatabase interface {
 	// Worker fences and projections. Each checks the task's revision.
 	Incorporate(ctx context.Context, req IncorporateRequest) error
 	Guard(ctx context.Context, runID string, revision int64) (Run, error)
-	Admit(ctx context.Context, runID string, revision int64, operation string) error
+	Admit(ctx context.Context, runID string, revision int64, operation string, recoveryUntil time.Time) error
 	Project(ctx context.Context, req ProjectRequest) error
 	// SetProgress replaces the task's latest progress line. Unlike Project it adds no event, so polling a long job
 	// can't grow the task's saved record.

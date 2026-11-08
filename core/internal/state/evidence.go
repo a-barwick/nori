@@ -19,16 +19,18 @@ const (
 )
 
 type OperationRecord struct {
-	ID          string   `json:"id" firestore:"id"`
-	CallID      string   `json:"call_id" firestore:"call_id"`
-	Name        string   `json:"name" firestore:"name"`
-	EffectClass string   `json:"effect_class" firestore:"effect_class"`
-	Outcome     string   `json:"outcome" firestore:"outcome"`
-	ResultRef   string   `json:"result_ref" firestore:"result_ref"`
-	Revision    int64    `json:"revision" firestore:"revision"`
-	Attempt     int      `json:"attempt" firestore:"attempt"`
-	ArtifactIDs []string `json:"artifact_ids" firestore:"artifact_ids"`
-	Action      *Action  `json:"action,omitempty" firestore:"action,omitempty"`
+	ID          string `json:"id" firestore:"id"`
+	CallID      string `json:"call_id" firestore:"call_id"`
+	Name        string `json:"name" firestore:"name"`
+	EffectClass string `json:"effect_class" firestore:"effect_class"`
+	Outcome     string `json:"outcome" firestore:"outcome"`
+	ResultRef   string `json:"result_ref" firestore:"result_ref"`
+	Revision    int64  `json:"revision" firestore:"revision"`
+	Attempt     int    `json:"attempt" firestore:"attempt"`
+	// RecoveryUntil is the admitting activity's deadline for settling its receipt.
+	RecoveryUntil time.Time `json:"-" firestore:"recovery_until,omitempty"`
+	ArtifactIDs   []string  `json:"artifact_ids" firestore:"artifact_ids"`
+	Action        *Action   `json:"action,omitempty" firestore:"action,omitempty"`
 	// Cleared says why a failed or uncertain operation no longer blocks later ones. The outcome and result stay as saved.
 	Cleared string `json:"cleared,omitempty" firestore:"cleared,omitempty"`
 }
