@@ -4,7 +4,13 @@ import (
 	"context"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"nori/internal/observability"
+	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 )
@@ -193,10 +199,10 @@ func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision i
 
 func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state.Run, error) {
 	var run state.Run
-	routingPending := false
+	routingPending, finishedNow, incomplete := false, false, false
 	traceContext := observability.InjectTrace(ctx)
 	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
-		routingPending = false
+		routingPending, finishedNow = false, false
 		ref := d.runs().Doc(req.RunID)
 		var err error
 		run, err = decodeRun(tx.Get(ref))
@@ -207,7 +213,7 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 		if err != nil || !proceed {
 			return err
 		}
-		if admitted.GatesOnRouting() {
+		if run.Finishing == nil && admitted.GatesOnRouting() {
 			conversation, err := d.readConversation(tx)
 			if err != nil {
 				return err
@@ -228,6 +234,48 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 		in, err := d.publishReads(tx, req.RunID, run)
 		if err != nil {
 			return err
+		}
+		unfinished := false
+		for _, child := range in.children {
+			unfinished = unfinished || (child.Status == state.RunRunning && child.Finishing == nil)
+		}
+		if run.Finishing == nil && admitted.Status == state.RunCompleted && unfinished {
+			// Ending owned work is cleanup, not proof that the requested work succeeded.
+			detail := prompts.Runtime("completion-owned-work-unfinished", nil)
+			admitted.Status, admitted.Detail, admitted.ExpectedIncomplete = state.RunFailed, detail, true
+			admitted.Text += "\n\n" + detail
+			if admitted.Answer != nil {
+				answer := *admitted.Answer
+				answer.Checked = false
+				answer.Unmet = append(append([]string{}, answer.Unmet...), detail)
+				admitted.Answer = &answer
+			}
+		}
+		pending := run.CleanupPending
+		for _, child := range in.children {
+			pending = pending || child.Status == state.RunRunning || child.CleanupPending
+		}
+		if pending {
+			if err = d.stopSubtasks(tx, log, in.children, req.RunID, now); err != nil {
+				return err
+			}
+			if run.ParentID != "" {
+				parent := state.RollUpSpend(in.parent, run, state.SpendUpdate{Spent: admitted.Spent, CostUnknown: admitted.CostUnknown})
+				if err = tx.Set(d.runs().Doc(run.ParentID), parent); err != nil {
+					return err
+				}
+				if err = log.add(state.EventTask, run.ParentID); err != nil {
+					return err
+				}
+			}
+			run.Finishing = &admitted
+			run.Question, run.Progress, run.PublicationPending = nil, "", false
+			run.Waiting = prompts.Runtime("task-finishing", nil)
+			run.Spent, run.CostUnknown = max(run.Spent, admitted.Spent), run.CostUnknown || admitted.CostUnknown
+			if err = log.add(state.EventTask, run.ID); err != nil {
+				return err
+			}
+			return tx.Set(ref, run)
 		}
 		parent := in.parent
 		finished, event := state.FinishRun(run, admitted, now)
@@ -262,6 +310,7 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			}
 		}
 		run = finished
+		finishedNow, incomplete = true, admitted.ExpectedIncomplete
 		if err = log.add(state.EventTask, req.RunID); err != nil {
 			return err
 		}
@@ -272,9 +321,6 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			if err = log.add(state.EventResult, result.ID); err != nil {
 				return err
 			}
-		}
-		if err = d.stopSubtasks(tx, log, in.children, req.RunID, now); err != nil {
-			return err
 		}
 		if run.ParentID != "" {
 			if err = tx.Set(d.runs().Doc(run.ParentID), parent); err != nil {
@@ -291,10 +337,31 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 		}
 		return tx.Set(ref, run)
 	})
+	if err == nil && finishedNow {
+		observeTaskEnd(ctx, run, incomplete)
+	}
 	if err == nil && routingPending {
 		err = state.ErrRoutingPending
 	}
+	if err == nil && run.Status != state.RunRunning && run.ParentID != "" {
+		// Child settlement is durable before this wake-up. A crash here is repaired by the open-parent scan.
+		err = d.finishPending(ctx, run.ParentID)
+	}
 	return run, err
+}
+
+func (d *Database) finishPending(ctx context.Context, id string) error {
+	run, err := d.GetRun(ctx, id)
+	if err != nil {
+		return err
+	}
+	if run.Finishing != nil {
+		_, err = d.Publish(ctx, *run.Finishing)
+	} else if run.Status != state.RunRunning && run.ParentID != "" {
+		// Older workers can publish a child before cleaning it up.
+		err = d.finishPending(ctx, run.ParentID)
+	}
+	return err
 }
 
 // publishInputs is what publishing a task reads. A Firestore transaction must finish its reads before it writes.
@@ -321,9 +388,11 @@ func (d *Database) publishReads(tx *docstore.Transaction, runID string, run stat
 			return in, err
 		}
 	}
-	// A parent that ends for any reason ends its subtasks, so this covers failure and recovery as well as Stop.
+	// Terminal children can still have cleanup pending from an older worker. Read all owned children, not just
+	// the cached running links, before deciding that the parent's lifetime is over.
 	in.children = map[string]state.Run{}
-	for _, id := range state.RunningSubtasks(run) {
+	for _, link := range run.Subtasks {
+		id := link.ID
 		if in.children[id], err = decodeRun(tx.Get(d.runs().Doc(id))); err != nil {
 			return in, err
 		}
@@ -350,33 +419,39 @@ func (d *Database) stopSubtasks(tx *docstore.Transaction, log *eventLog, childre
 	return nil
 }
 
-// OperationRevisions identifies only scopes that were durably admitted, including attempts whose worker died before
-// their RPC outcome reached Temporal.
-func (d *Database) OperationRevisions(ctx context.Context, runID string) ([]int64, error) {
-	iter := d.runs().Doc(runID).Collection("operations").Documents(ctx)
-	defer iter.Stop()
-	revisions := []int64{}
-	for {
-		doc, err := iter.Next()
-		if isDone(err) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		revision, _ := doc.Data()["revision"].(int64)
-		revisions = append(revisions, revision)
-	}
-	return state.UniqueRevisions(revisions), nil
-}
-
 func (d *Database) CleanupTasks(ctx context.Context) ([]state.Run, error) {
 	return documents[state.Run](d.runs().Where("cleanup_pending", "==", true).Documents(ctx))
 }
 
-func (d *Database) FinishCleanup(ctx context.Context, runID string) error {
-	_, err := d.runs().Doc(runID).Update(ctx, []docstore.Update{{Path: "cleanup_pending", Value: false}})
-	return err
+func (d *Database) FinishCleanup(ctx context.Context, runID, detail string) error {
+	err := d.logged(ctx, func(_ context.Context, tx *docstore.Transaction) error {
+		ref := d.runs().Doc(runID)
+		run, err := decodeRun(tx.Get(ref))
+		if err != nil {
+			return err
+		}
+		// An old cleanup attempt cannot erase a later admission on a still-executing task.
+		if run.Status == state.RunRunning && run.Finishing == nil {
+			return state.ErrBusy
+		}
+		if detail != "" && run.Status != state.RunRunning && !run.CleanupPending {
+			return nil // A late failed attempt cannot undo confirmed cleanup.
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		if err = log.add(state.EventTask, runID); err != nil {
+			return err
+		}
+		return tx.Update(ref, []docstore.Update{
+			{Path: "cleanup_pending", Value: detail != ""}, {Path: "cleanup_error", Value: detail},
+		})
+	})
+	if err != nil || detail != "" {
+		return err
+	}
+	return d.finishPending(ctx, runID)
 }
 
 func (d *Database) PublicationTasks(ctx context.Context) ([]state.Run, error) {
@@ -416,4 +491,27 @@ func (d *Database) TaskSteps(ctx context.Context, runID string) ([]state.TaskSte
 		return nil, err
 	}
 	return state.Chronological(steps), nil
+}
+
+// Terminal telemetry follows the committed outcome, including cleanup and recovery finalization.
+func observeTaskEnd(ctx context.Context, run state.Run, incomplete bool) {
+	if run.FinishedAt == nil || run.StartedAt.IsZero() || run.FinishedAt.Before(run.StartedAt) {
+		return
+	}
+	durationCtx := observability.ExtractTrace(ctx, run.OriginTraceContext)
+	_, span := otel.Tracer("nori/task").Start(durationCtx, "task.acceptance_to_terminal",
+		trace.WithTimestamp(run.StartedAt), trace.WithLinks(trace.Link{SpanContext: trace.SpanContextFromContext(ctx)}),
+		trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),
+			attribute.String("nori.task.id", run.ID), attribute.String("nori.task.status", string(run.Status)), attribute.Bool("nori.output.present", run.Result != "")))
+	event := "task." + string(run.Status)
+	if run.Status == state.RunFailed {
+		if incomplete {
+			event = "task.incomplete"
+		} else {
+			span.SetStatus(codes.Error, "task failed")
+		}
+	}
+	observability.Event(ctx, event, attribute.String("nori.task.id", run.ID))
+	observability.Metric(ctx, "nori.task.duration_ms", float64(run.FinishedAt.Sub(run.StartedAt).Milliseconds()))
+	span.End(trace.WithTimestamp(*run.FinishedAt))
 }

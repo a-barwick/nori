@@ -184,6 +184,9 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 			if run.Status != RunRunning {
 				return p.prepared, ErrBusy
 			}
+			if run.Finishing != nil && cmd.Kind != CommandStop {
+				return p.prepared, ErrBusy
+			}
 			if cmd.Kind == CommandStart {
 				return p.prepared, ErrDuplicate
 			}

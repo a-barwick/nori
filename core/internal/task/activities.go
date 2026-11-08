@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"nori/internal/agent"
@@ -153,7 +152,7 @@ func (a *Activities) Reconcile(ctx context.Context, id string) (state.TaskSnapsh
 	if snap.Run.CancelRequested {
 		return snap, classified(state.ErrCancelled)
 	}
-	if snap.Run.Status != state.RunRunning {
+	if snap.Run.Status != state.RunRunning || snap.Run.Finishing != nil {
 		return snap, classified(state.ErrBusy)
 	}
 	// Reconciliation and publication do not start paid work. Their revision
@@ -405,29 +404,9 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 	}
 	r, err := a.Store.Publish(ctx, state.PublishRequest{
 		RunID: p.RunID, Revision: p.Revision, Status: p.Status, Detail: p.Detail, Text: p.Text,
-		CostUnknown: p.CostUnknown, Spent: p.Spent, BypassRouting: p.BypassRouting, Answer: p.Answer,
+		CostUnknown: p.CostUnknown, Spent: p.Spent, BypassRouting: p.BypassRouting, Answer: p.Answer, ExpectedIncomplete: p.ExpectedIncomplete,
 	})
 	if err == nil {
-		if (run.Status == state.RunRunning || run.Status == "") && r.FinishedAt != nil && !r.StartedAt.IsZero() && !r.FinishedAt.Before(r.StartedAt) {
-			durationCtx := observability.ExtractTrace(ctx, r.OriginTraceContext)
-			_, durationSpan := taskTracer.Start(durationCtx, "task.acceptance_to_terminal",
-				trace.WithTimestamp(r.StartedAt), trace.WithLinks(trace.Link{SpanContext: span.SpanContext()}),
-				trace.WithAttributes(
-					attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),
-					attribute.String("nori.task.id", p.RunID), attribute.String("nori.task.status", string(r.Status)),
-					attribute.Bool("nori.output.present", r.Result != ""),
-				))
-			if r.Status == state.RunFailed && p.ExpectedIncomplete {
-				observability.Event(ctx, "task.incomplete", attribute.String("nori.task.id", p.RunID))
-			} else if r.Status == state.RunFailed {
-				durationSpan.SetStatus(codes.Error, "task failed")
-				observability.Event(ctx, "task.failed", attribute.String("nori.task.id", p.RunID))
-			} else if r.Status == state.RunCompleted {
-				observability.Event(ctx, "task.completed", attribute.String("nori.task.id", p.RunID))
-			}
-			observability.Metric(ctx, "nori.task.duration_ms", float64(r.FinishedAt.Sub(r.StartedAt).Milliseconds()))
-			durationSpan.End(trace.WithTimestamp(*r.FinishedAt))
-		}
 		a.notify(ctx)
 	}
 	return r, classified(err)
@@ -442,7 +421,7 @@ func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) (err e
 	computerCtx := observability.SuppressErrorCapture(ctx)
 	c, err := computer.Attach(computerCtx, a.Agent.Computer, in.Scope)
 	if errors.Is(err, computer.ErrStopped) {
-		return a.Store.FinishCleanup(ctx, in.RunID)
+		return a.Store.FinishCleanup(ctx, in.RunID, "")
 	}
 	if err != nil {
 		return classified(err)
@@ -451,7 +430,7 @@ func (a *Activities) CloseBrowser(ctx context.Context, in BrowserCleanup) (err e
 	if err = c.CloseTaskBrowser(computerCtx, in.RunID); err != nil {
 		return classified(err)
 	}
-	return a.Store.FinishCleanup(ctx, in.RunID)
+	return a.Store.FinishCleanup(ctx, in.RunID, "")
 }
 
 // Spend is unguarded: cost already incurred is recorded even if a correction

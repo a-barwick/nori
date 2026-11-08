@@ -37,11 +37,14 @@ type Run struct {
 	CancelRequested bool       `json:"cancel_requested" firestore:"cancel_requested"`
 	StartedAt       time.Time  `json:"started_at" firestore:"started_at"`
 	FinishedAt      *time.Time `json:"finished_at,omitempty" firestore:"finished_at,omitempty"`
-	Waiting         string     `json:"waiting,omitempty" firestore:"waiting,omitempty"`
-	Progress        string     `json:"progress,omitempty" firestore:"progress,omitempty"`
-	Question        *Question  `json:"question,omitempty" firestore:"question,omitempty"`
-	Result          string     `json:"result,omitempty" firestore:"result,omitempty"`
-	Error           string     `json:"error,omitempty" firestore:"error,omitempty"`
+	// Finishing fences new execution and retains the outcome until owned work and cleanup drain.
+	// Only its target status is public; the answer is published when the task actually ends.
+	Finishing *PublishRequest `json:"finishing,omitempty" firestore:"finishing,omitempty"`
+	Waiting   string          `json:"waiting,omitempty" firestore:"waiting,omitempty"`
+	Progress  string          `json:"progress,omitempty" firestore:"progress,omitempty"`
+	Question  *Question       `json:"question,omitempty" firestore:"question,omitempty"`
+	Result    string          `json:"result,omitempty" firestore:"result,omitempty"`
+	Error     string          `json:"error,omitempty" firestore:"error,omitempty"`
 
 	// Command ordering. Position counts accepted commands, Revision counts accepted instructions, and Incorporated is
 	// the last position the worker has folded into its work. InterruptRevision is the revision of the latest
@@ -56,7 +59,8 @@ type Run struct {
 	Budget      float64 `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
 	CostUnknown bool    `json:"cost_unknown,omitempty" firestore:"cost_unknown,omitempty"`
 
-	// Subtasks. ParentID names the task this one works for, and ReadOnly is the limit it inherited from that parent.
+	// Subtasks. ParentID names the task this one works for; an empty ParentID means an independent task owned by
+	// this user. ReadOnly is the limit inherited from a parent. Jobs always share their task's lifetime.
 	// A parent's Subtasks are the ones it started, and SubtaskSpent is their cost, which counts against the parent's budget.
 	ParentID string `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
 	ReadOnly bool   `json:"read_only,omitempty" firestore:"read_only,omitempty"`
@@ -77,6 +81,7 @@ type Run struct {
 	// Admitted tool operations and whether the computer still needs cleanup.
 	OperationRefs  []string `json:"operation_refs,omitempty" firestore:"operation_refs,omitempty"`
 	CleanupPending bool     `json:"cleanup_pending,omitempty" firestore:"cleanup_pending,omitempty"`
+	CleanupError   string   `json:"cleanup_error,omitempty" firestore:"cleanup_error,omitempty"`
 
 	Events    []Event    `json:"events" firestore:"events"`
 	Artifacts []Artifact `json:"artifacts" firestore:"artifacts"`
@@ -127,7 +132,7 @@ func GuardRun(r Run, revision int64) error {
 	if r.Revision != revision || r.Incorporated != TaskPosition(r) {
 		return ErrSuperseded
 	}
-	if r.Status != RunRunning {
+	if r.Status != RunRunning || r.Finishing != nil {
 		return ErrBusy
 	}
 	return nil
@@ -202,17 +207,18 @@ func WithQuestion(run Run, question Question, event TaskEvent) Run {
 }
 
 type PublishRequest struct {
-	RunID       string
-	Revision    int64
-	Status      RunStatus
-	Detail      string
-	Text        string
-	CostUnknown bool
+	ExpectedIncomplete bool      `json:"-" firestore:"expected_incomplete"`
+	RunID              string    `json:"-" firestore:"run_id"`
+	Revision           int64     `json:"-" firestore:"revision"`
+	Status             RunStatus `json:"status" firestore:"status"`
+	Detail             string    `json:"-" firestore:"detail"`
+	Text               string    `json:"-" firestore:"text"`
+	CostUnknown        bool      `json:"-" firestore:"cost_unknown"`
 	// Spent is the task's final cost, saved with its outcome so a parent's budget never misses it.
-	Spent         float64
-	BypassRouting bool
+	Spent         float64 `json:"-" firestore:"spent"`
+	BypassRouting bool    `json:"-" firestore:"bypass_routing"`
 	// Answer is set when the task proposed an answer, which is then saved as a result.
-	Answer *ResultDraft
+	Answer *ResultDraft `json:"-" firestore:"answer,omitempty"`
 }
 
 func (p PublishRequest) GatesOnRouting() bool {
@@ -224,6 +230,18 @@ func (p PublishRequest) GatesOnRouting() bool {
 func AdmitPublication(run Run, req PublishRequest) (admitted PublishRequest, proceed bool, err error) {
 	if run.Status != RunRunning {
 		return req, false, nil
+	}
+	if run.Finishing != nil {
+		// A retry or closed-workflow repair must retain the accepted answer, not replace it with a crash failure.
+		req = *run.Finishing
+		if run.CancelRequested {
+			req.Status, req.Revision = RunCancelled, run.Revision
+			req.Text, req.Detail, req.Answer = "", prompts.Runtime("stopped", nil), nil
+		}
+		return req, true, nil
+	}
+	if req.Status != RunCompleted && req.Status != RunFailed && req.Status != RunCancelled {
+		return req, false, ErrCommandInvalid
 	}
 	if req.Status == RunCancelled && run.CancelRequested {
 		req.Revision = run.Revision
@@ -270,6 +288,7 @@ func FinishRun(run Run, req PublishRequest, now time.Time) (Run, TaskEvent) {
 		OperationRefs: run.OperationRefs, CreatedAt: now,
 	}
 	run.PublicationPending = false
+	run.Finishing = nil
 	run.CostUnknown = run.CostUnknown || req.CostUnknown
 	run.Spent = max(run.Spent, req.Spent)
 	run.Status, run.Error, run.Result, run.Waiting, run.Question, run.FinishedAt = status, detail, text, "", nil, &now

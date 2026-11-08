@@ -146,6 +146,10 @@ func (r *taskRun) cleanup() error {
 	cleanup, _ := workflow.NewDisconnectedContext(r.ctx)
 	cleanup = workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(r.stopCtx))
 	r.c.projectSpend(workflow.WithActivityOptions(cleanup, workflow.GetActivityOptions(r.spending)), r.id)
+	if workflow.GetVersion(r.ctx, "structured-task-cleanup", workflow.DefaultVersion, 1) != workflow.DefaultVersion {
+		// The stored ownership plan includes operations whose replies never reached this checkpoint.
+		return workflow.ExecuteActivity(cleanup, a.Cleanup, r.id).Get(cleanup, nil)
+	}
 	var err error
 	if e := r.c.stopTask(cleanup, r.id); e != nil {
 		err = fmt.Errorf("computer stop could not be confirmed: %w", e)

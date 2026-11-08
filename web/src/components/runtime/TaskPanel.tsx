@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils";
 const incomplete = (run: Run) => run.status === "failed" && /^incomplete\b/i.test(run.error || "");
 
 function statusLabel(run: Run) {
+  if (run.cleanup_error) return "Cleanup pending";
+  if (run.finishing) return run.cancel_requested ? "Stopping owned work…" : "Finishing and cleaning up…";
   if (incomplete(run)) return "Incomplete";
   if (run.status === "running" && run.cancel_requested) return "Stopping…";
   if (run.status === "running" && run.question?.resolved_by) return run.question.kind === "work" ? "Waiting for its subtasks" : "Answer accepted";
@@ -166,8 +168,9 @@ export function TaskPanel({
     <h4 className="mb-3 text-meta font-medium">Task details</h4>
     {selected.status === "running" && (question?.text || selected.waiting) && <p className="mb-3 whitespace-pre-wrap break-words text-meta text-ink-2 [overflow-wrap:anywhere]">{question?.text || selected.waiting}</p>}
     {selected.status === "running" && !question?.text && !selected.waiting && selected.progress && <p className="mb-3 whitespace-pre-wrap break-words text-meta text-ink-2 [overflow-wrap:anywhere]">{selected.progress}</p>}
+    {selected.cleanup_error && <p role="status" className="mb-3 rounded-tile bg-fill-1 p-3 text-meta text-ink-2">{selected.cleanup_error}</p>}
     {selected.error && <p role="status" className={cn("mb-3 rounded-tile p-3 text-meta", selected.status === "failed" ? "bg-danger-bg text-danger" : "bg-fill-1 text-ink-2")}>{selected.error}</p>}
-    {selected.status === "running" && !selected.cancel_requested && <form className="mb-4 space-y-2 px-2" onSubmit={(event) => {
+    {selected.status === "running" && !selected.cancel_requested && !selected.finishing && <form className="mb-4 space-y-2 px-2" onSubmit={(event) => {
       event.preventDefault();
       const text = drafts[selected.id]?.trim();
       if (!text || updateDisabled || (answerable && question?.resolved_by)) return;
@@ -234,7 +237,7 @@ export function TaskPanel({
             {run.cancel_requested || stopping ? "Stopping…" : "Stop task"}
           </Button>
         </div>}
-        {run.cancel_requested && run.status === "running" && <p className="text-caption text-ink-3">Waiting for the computer to confirm it has stopped.</p>}
+        {run.cancel_requested && run.status === "running" && <p className="text-caption text-ink-3">Waiting for owned tasks, jobs, and computer operations to stop.</p>}
         {taskCommands.map((command) => <div key={command.command.id} role={command.error ? "alert" : "status"} className="text-meta text-ink-2">
           <p>{command.sending ? "Sending task command…" : command.error || "Waiting for command acceptance…"}</p>
           {command.command.text && <p className="mt-1 line-clamp-3 whitespace-pre-wrap">{command.command.text}</p>}

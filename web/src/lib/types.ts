@@ -45,6 +45,9 @@ export type Run = {
   id: string;
   status: RunStatus;
   cancel_requested: boolean;
+  finishing?: { status: RunStatus };
+  cleanup_pending?: boolean;
+  cleanup_error?: string;
   request?: string;
   holds?: TaskHold[];
   position?: number;

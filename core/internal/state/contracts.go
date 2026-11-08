@@ -98,8 +98,8 @@ type TaskDatabase interface {
 	PublicationTasks(ctx context.Context) ([]Run, error)
 	PublicationWoken(ctx context.Context, runID string, generation int64) error
 	CleanupTasks(ctx context.Context) ([]Run, error)
-	FinishCleanup(ctx context.Context, runID string) error
-	OperationRevisions(ctx context.Context, runID string) ([]int64, error)
+	// An empty detail confirms cleanup; otherwise cleanup remains pending with a public explanation.
+	FinishCleanup(ctx context.Context, runID, detail string) error
 
 	// Detailed traces, fetched only when opened.
 	RecordTaskStep(ctx context.Context, runID string, step TaskStep) error

@@ -39,7 +39,7 @@ func linkSubtask(parent Run, exists bool, cmd Command, opened map[string]bool) (
 	if !exists {
 		return parent, Question{}, ErrNotFound
 	}
-	if parent.Status != RunRunning {
+	if parent.Status != RunRunning || parent.Finishing != nil {
 		return parent, Question{}, ErrBusy
 	}
 	if parent.CancelRequested {
@@ -73,9 +73,9 @@ func linkSubtask(parent Run, exists bool, cmd Command, opened map[string]bool) (
 }
 
 // StopSubtask requests Stop on a running subtask because its parent stopped, failed or changed. cause makes the command
-// ID stable when a transaction retries. It reports false for a subtask that has already ended or been stopped.
+// ID stable when a transaction retries. An already-finishing child keeps its committed outcome and only drains cleanup.
 func StopSubtask(child Run, cause string, now time.Time) (Run, Command, bool) {
-	if child.Status != RunRunning || child.CancelRequested {
+	if child.Status != RunRunning || child.CancelRequested || child.Finishing != nil {
 		return child, Command{}, false
 	}
 	child.Revision++
@@ -102,7 +102,7 @@ func SettleSubtask(parent, before, finished Run, now time.Time) (settled Run, re
 		}
 	}
 	question := parent.Question
-	if parent.Status != RunRunning || parent.CancelRequested || question == nil || question.ID != questionID || question.Revision != parent.Revision {
+	if parent.Status != RunRunning || parent.Finishing != nil || parent.CancelRequested || question == nil || question.ID != questionID || question.Revision != parent.Revision {
 		return parent, nil, false
 	}
 	for _, link := range parent.Subtasks {

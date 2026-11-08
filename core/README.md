@@ -55,6 +55,47 @@ enumerates rows; each operation uses one immutable scope. API processing
 passes and task activities read the current row, so changes apply on the next pass or
 activity without mutating work already in flight.
 
+## Task ownership
+
+A top-level task belongs to its user and has an independent lifetime. A subtask
+belongs to its `parent_id`; it cannot create another level of subtasks. A shell
+job belongs to the task that started it, across questions and instruction
+revisions. Job responses include `task_id` and `lifetime: "task"`. Work that must
+outlive another task must be dispatched as a separate top-level task; jobs and
+subtasks cannot detach themselves.
+
+Completion, failure, and Stop first save a finishing intent. While a task is
+finishing, execution and new subtasks are fenced; Stop and follow-up holds remain
+available. The stored answer, evidence, and cost survive a worker crash, but the
+terminal event and answer are published only after owned children have ended
+and computer operations, jobs, and browser cleanup have been confirmed. Trying
+to finish with running subtasks stops them and produces an incomplete outcome.
+Child cost is rolled up when recorded, including during finishing.
+
+Worker cleanup, closed-workflow recovery, and paused Stop use the same cleanup
+path. Cleanup errors keep the task open with `cleanup_error`; recovery retries
+cleanup without repeating model or tool execution. Successful cleanup can finalize
+the saved result even after the original Temporal execution has closed. The
+durable task record owns this finalization; a closed Temporal execution alone
+does not mean the task has finished. Terminal telemetry follows the committed
+outcome as well.
+
+The guest saves a task-wide job fence before final cleanup and retains failed
+process-group stops across retries and restarts. A provisional stop before
+publication does not close that lifetime, since a concurrent correction may
+still win. Deploy the updated computer agent before the updated worker: final
+job cleanup requires its explicit `closed` acknowledgement. An older guest's
+acknowledgement leaves cleanup pending. A Temporal version marker preserves the
+cleanup activity order when replaying older histories. Runs pinned to older
+worker binaries retain that build's behavior until they drain.
+
+This adopts Pi Durable's durable ownership intent, held completion, and recovery
+from committed state, reviewed in its
+[scheduler at `6e2222a`](https://github.com/earendil-works/pi/blob/6e2222a8dda06e3d69fad46d630f152f5873567a/packages/durable/src/harness/scheduler.ts#L1022)
+and [task graph](https://github.com/earendil-works/pi/blob/6e2222a8dda06e3d69fad46d630f152f5873567a/packages/durable/src/harness/task-graph.ts).
+Nori keeps its bounded parent/child relationship, existing database transactions,
+and Temporal execution rather than adding a second scheduler or a general task graph.
+
 ## Observability
 
 Sentry and Arize export are optional and fail open. Set `SENTRY_DSN` for

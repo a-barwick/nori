@@ -244,10 +244,10 @@ func jobProgress(status map[string]any) string {
 func (a *Activities) StopJobs(ctx context.Context, id string) (err error) {
 	ctx, span := startActivity(ctx, "task.stop_jobs", "CHAIN", a.activityRun(ctx, id), 0)
 	defer func() { recordActivityFailure(ctx, err, "task.stop_jobs"); span.End() }()
-	return classified(stopTaskJobs(observability.SuppressErrorCapture(ctx), a.Agent.Computer, id))
+	return classified(stopTaskJobs(observability.SuppressErrorCapture(ctx), a.Agent.Computer, id, false))
 }
 
-func stopTaskJobs(ctx context.Context, config computer.Provider, id string) error {
+func stopTaskJobs(ctx context.Context, config computer.Provider, id string, close bool) error {
 	for attempt := 0; ; attempt++ {
 		c, err := computer.Attach(ctx, config, id)
 		if errors.Is(err, computer.ErrStopped) {
@@ -256,7 +256,7 @@ func stopTaskJobs(ctx context.Context, config computer.Provider, id string) erro
 		if err != nil {
 			return err
 		}
-		err = c.StopTaskJobs(ctx, id)
+		err = c.StopTaskJobs(ctx, id, close)
 		c.Close()
 		if attempt > 0 || !errors.Is(err, computer.ErrDraining) {
 			return err

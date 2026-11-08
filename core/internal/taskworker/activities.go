@@ -20,6 +20,7 @@ func registerTask(w worker.Worker, scope ActivityScope) {
 	registerAction(w, scope, "Ask", (*task.Activities).Ask)
 	registerResult(w, scope, "CheckCompletion", (*task.Activities).CheckCompletion)
 	registerAction(w, scope, "CloseBrowser", (*task.Activities).CloseBrowser)
+	registerAction(w, scope, "Cleanup", (*task.Activities).Cleanup)
 	registerResult(w, scope, "Context", (*task.Activities).Context)
 	registerResult(w, scope, "CurrentPosition", (*task.Activities).CurrentPosition)
 	registerResult(w, scope, "InputRef", (*task.Activities).InputRef)

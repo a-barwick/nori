@@ -44,21 +44,22 @@ func (c *Client) JobStop(ctx context.Context, jobID string) (map[string]any, err
 
 // StopTaskJobs ends every job a task owns. A guest older than the job protocol
 // cannot have started one, so it has nothing to stop.
-func (c *Client) StopTaskJobs(ctx context.Context, taskID string) error {
+func (c *Client) StopTaskJobs(ctx context.Context, taskID string, close bool) error {
 	if !c.jobs {
 		return nil
 	}
-	data, err := c.post(ctx, rpc.StopTaskJobsPath, map[string]string{"task_id": taskID}, 4096)
+	data, err := c.post(ctx, rpc.StopTaskJobsPath, map[string]any{"task_id": taskID, "close": close}, 4096)
 	if err != nil {
 		return err
 	}
 	var ack struct {
 		Stopped bool `json:"stopped"`
+		Closed  bool `json:"closed"`
 	}
 	if err = json.Unmarshal(data, &ack); err != nil {
 		return err
 	}
-	if !ack.Stopped {
+	if !ack.Stopped || (close && !ack.Closed) {
 		return errors.New("computer did not acknowledge stopped jobs")
 	}
 	return nil

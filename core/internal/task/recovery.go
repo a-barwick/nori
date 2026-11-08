@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"nori/internal/agent"
 	"nori/internal/computer"
 	"nori/internal/dispatch"
 	"nori/internal/prompts"
@@ -58,41 +59,33 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 		execution, e := engine.Inspect(ctx, run.ID)
 		missing := errors.Is(e, dispatch.ErrNoExecution)
 		neverStarted := missing && run.CancelRequested
-		if e != nil && !neverStarted {
+		finishing := missing && run.Finishing != nil
+		if e != nil && !neverStarted && !finishing {
 			if !missing {
 				failures = append(failures, e)
 			}
 			continue
 		}
-		if !neverStarted && !execution.Closed {
+		if !neverStarted && !finishing && !execution.Closed {
 			continue
 		}
-		scopes, e := operationScopes(ctx, store, run.ID)
-		if e != nil {
-			failures = append(failures, e)
+		if run.Finishing != nil {
+			if e := repairCleanup(ctx, store, config, run); e != nil {
+				failures = append(failures, e)
+			}
 			continue
 		}
-		stopErr := errors.Join(StopComputer(ctx, config, scopes), stopRecoveredJobs(ctx, store, config, run.ID))
 		status, detail := state.RunFailed, prompts.Runtime("recovery-interrupted", nil)
-		if neverStarted {
-			detail = prompts.Runtime("recovery-cancelled", nil)
-		}
-		if run.CancelRequested && stopErr == nil {
-			status = state.RunCancelled
-			detail = prompts.Runtime("cancelled", nil)
-		}
-		if stopErr != nil {
-			status = state.RunFailed
-			detail = prompts.Runtime("recovery-computer-unconfirmed", nil)
-			failures = append(failures, stopErr)
+		if run.CancelRequested {
+			status, detail = state.RunCancelled, prompts.Runtime("cancelled", nil)
 		}
 		detail += attemptedWrites(ctx, store, run.ID)
-		if _, e = store.Publish(ctx, state.PublishRequest{
+		if run, e = store.Publish(ctx, state.PublishRequest{
 			RunID: run.ID, Revision: run.Revision, Status: status, Detail: detail, CostUnknown: run.CostUnknown, BypassRouting: true,
 		}); e != nil {
 			failures = append(failures, e)
-		} else if stopErr == nil && run.CleanupPending {
-			if e = closeTaskBrowser(ctx, store, config, run.ID, scopes); e != nil {
+		} else {
+			if e = repairCleanup(ctx, store, config, run); e != nil {
 				failures = append(failures, e)
 			}
 		}
@@ -114,24 +107,38 @@ func attemptedWrites(ctx context.Context, store state.TaskStore, id string) stri
 	return text
 }
 
-func repairCleanup(ctx context.Context, store state.TaskStore, config computer.Provider, run state.Run) error {
+func repairCleanup(ctx context.Context, store state.TaskStore, config computer.Provider, run state.Run) (err error) {
+	defer func() {
+		if err != nil {
+			receipt, cancel := receiptContext(ctx)
+			defer cancel()
+			err = errors.Join(err, store.FinishCleanup(receipt, run.ID, prompts.Runtime("task-cleanup-unconfirmed", nil)))
+		}
+	}()
 	scopes, err := operationScopes(ctx, store, run.ID)
 	if err != nil {
 		return err
 	}
-	if err = errors.Join(StopComputer(ctx, config, scopes), stopRecoveredJobs(ctx, store, config, run.ID)); err != nil {
+	if err = errors.Join(StopComputer(ctx, config, scopes), stopRecoveredJobs(ctx, store, config, run.ID, true)); err != nil {
 		return err
 	}
 	return closeTaskBrowser(ctx, store, config, run.ID, scopes)
 }
 
 func operationScopes(ctx context.Context, store state.TaskStore, runID string) ([]string, error) {
-	revisions, err := store.OperationRevisions(ctx, runID)
+	ops, err := store.Operations(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
+	var revisions []int64
+	for _, op := range ops {
+		if op.Name == "request_work" || agent.TaskToolPolicy(op.Name).Runtime {
+			continue
+		}
+		revisions = append(revisions, op.Revision)
+	}
 	scopes := make([]string, 0, len(revisions))
-	for _, revision := range revisions {
+	for _, revision := range state.UniqueRevisions(revisions) {
 		scopes = append(scopes, computerRun(Step{runID, revision}))
 	}
 	return scopes, nil
@@ -140,25 +147,25 @@ func operationScopes(ctx context.Context, store state.TaskStore, runID string) (
 // stopRecoveredJobs ends jobs a closed workflow left running. A guest /cancel doesn't
 // reach them, because a job belongs to its task. Tasks that never started a job skip
 // this, so recovering an older task doesn't depend on the guest's job routes.
-func stopRecoveredJobs(ctx context.Context, store state.TaskStore, config computer.Provider, id string) error {
+func stopRecoveredJobs(ctx context.Context, store state.TaskStore, config computer.Provider, id string, close bool) error {
 	ops, err := store.Operations(ctx, id)
 	if err != nil {
 		return err
 	}
 	for _, op := range ops {
 		if op.Name == "job_start" {
-			return stopTaskJobs(ctx, config, id)
+			return stopTaskJobs(ctx, config, id, close)
 		}
 	}
 	return nil
 }
 func closeTaskBrowser(ctx context.Context, store state.TaskStore, config computer.Provider, id string, scopes []string) error {
 	if len(scopes) == 0 {
-		return store.FinishCleanup(ctx, id)
+		return store.FinishCleanup(ctx, id, "")
 	}
 	c, err := computer.Attach(ctx, config, scopes[0])
 	if errors.Is(err, computer.ErrStopped) {
-		return store.FinishCleanup(ctx, id)
+		return store.FinishCleanup(ctx, id, "")
 	}
 	if err != nil {
 		return err
@@ -167,7 +174,7 @@ func closeTaskBrowser(ctx context.Context, store state.TaskStore, config compute
 	if err = c.CloseTaskBrowser(ctx, id); err != nil {
 		return err
 	}
-	return store.FinishCleanup(ctx, id)
+	return store.FinishCleanup(ctx, id, "")
 }
 
 // StopPaused completes an accepted Stop without waking paid workers or starting
@@ -181,28 +188,45 @@ func StopPaused(ctx context.Context, store state.TaskStore, config computer.Prov
 		return store.GetRun(ctx, id)
 	}
 	run, err := store.GetRun(ctx, id)
-	if err != nil || !run.CancelRequested || run.Status != state.RunRunning {
-		return run, err
-	}
-	scopes, err := operationScopes(ctx, store, id)
 	if err != nil {
 		return run, err
 	}
-	if err = StopComputer(ctx, config, scopes); err != nil {
+	if run.Status != state.RunRunning {
+		if run.CleanupPending {
+			err = repairCleanup(ctx, store, config, run)
+		}
 		return run, err
 	}
-	run, err = store.GetRun(ctx, id)
-	if err != nil {
-		return run, err
+	if !run.CancelRequested && run.Finishing == nil {
+		return run, nil
 	}
+	// Persist the finishing intent first. Cleanup uses the same path as a worker or crash repair,
+	// including task-owned jobs. No paid execution or computer wake is needed.
 	run, err = store.Publish(ctx, state.PublishRequest{
 		RunID: id, Revision: run.Revision, Status: state.RunCancelled, Detail: prompts.Runtime("stopped", nil) + attemptedWrites(ctx, store, id), CostUnknown: run.CostUnknown, BypassRouting: true,
 	})
 	if err != nil {
 		return run, err
 	}
-	if run.CleanupPending {
-		err = closeTaskBrowser(ctx, store, config, id, scopes)
+	var failures []error
+	if err = repairCleanup(ctx, store, config, run); err != nil {
+		failures = append(failures, err)
 	}
-	return run, err
+	for _, child := range run.Subtasks {
+		if _, err = StopPaused(ctx, store, config, child.ID); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	run, err = store.GetRun(ctx, id)
+	return run, errors.Join(append(failures, err)...)
+}
+
+// Cleanup completes the same durable cleanup plan used after a crash and during a paused Stop.
+func (a *Activities) Cleanup(ctx context.Context, id string) error {
+	run, err := a.Store.GetRun(ctx, id)
+	if err == nil {
+		err = repairCleanup(ctx, a.Store, a.Agent.Computer, run)
+	}
+	a.notify(ctx)
+	return classified(err)
 }

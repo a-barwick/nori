@@ -131,56 +131,117 @@ func (s *server) readJob(id string) (jobRecord, error) {
 }
 
 func (s *server) finishJob(record jobRecord) error {
+	s.jobsMu.Lock()
+	defer s.jobsMu.Unlock()
 	err := s.writeJob(record)
 	if err != nil {
-		s.jobsMu.Lock()
 		if s.unsavedJobs == nil {
 			s.unsavedJobs = make(map[string]jobRecord)
 		}
 		s.unsavedJobs[record.ID] = record
-		s.jobsMu.Unlock()
+	} else {
+		delete(s.unsavedJobs, record.ID)
 	}
 	return err
 }
 
-// recoverJobs runs before the guest accepts requests. Nothing else can own a job
-// recorded as running now, so its process tree is killed and its state is lost.
-func (s *server) recoverJobs() {
+func (s *server) jobRecords() ([]jobRecord, error) {
 	root, err := s.jobRoot()
 	if err != nil {
-		log.Printf("job recovery unavailable: %v", err)
-		return
+		return nil, err
 	}
 	defer root.Close()
 	dir, err := root.Open(".")
 	if err != nil {
-		log.Printf("job recovery unavailable: %v", err)
-		return
+		return nil, err
 	}
 	defer dir.Close()
 	names, err := dir.Readdirnames(-1)
 	if err != nil {
-		log.Printf("job recovery unavailable: %v", err)
-		return
+		return nil, err
 	}
+	var records []jobRecord
 	for _, name := range names {
 		if filepath.Ext(name) != ".json" {
 			continue
 		}
 		record, err := s.readJob(strings.TrimSuffix(name, ".json"))
-		if err != nil || record.State != "running" {
-			continue
+		if err != nil {
+			return nil, err
 		}
-		if record.Group != "" {
-			_ = os.WriteFile(filepath.Join(record.Group, "cgroup.kill"), []byte("1"), 0600)
-			_ = os.Remove(record.Group)
-		}
-		now := time.Now().UTC()
-		record.State, record.FinishedAt, record.Group = "lost", &now, ""
-		if err = s.finishJob(record); err != nil {
-			log.Printf("job %s could not be marked lost: %v", record.ID, err)
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+// recoverJobs drains abandoned process trees before serving requests. Failed cleanup remains recorded.
+func (s *server) recoverJobs() {
+	records, err := s.jobRecords()
+	if err != nil {
+		log.Printf("job recovery unavailable: %v", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), jobStopDeadline)
+	defer cancel()
+	for _, record := range records {
+		if err := s.settleJob(ctx, record); err != nil {
+			log.Printf("job %s cleanup remains unconfirmed: %v", record.ID, err)
 		}
 	}
+}
+
+// A failed stop retains its process-group identity. Neither a second stop nor a guest restart may forget it.
+func (s *server) settleJob(ctx context.Context, record jobRecord) error {
+	if record.State != "running" && record.State != "stop_unconfirmed" {
+		return nil
+	}
+	if record.Group == "" {
+		return errors.New("job process group is unknown")
+	}
+	if _, err := os.Stat(record.Group); !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return err
+		}
+		group := &operationGroup{path: record.Group}
+		if err := group.stop(ctx); err != nil {
+			return err
+		}
+		_ = os.Remove(record.Group)
+	}
+	now := time.Now().UTC()
+	record.State, record.FinishedAt, record.Group = "lost", &now, ""
+	return s.finishJob(record)
+}
+
+// The fence is saved before draining jobs and shares the reservation lock with startJob.
+// It survives a guest restart and rejects late starts from every revision of this task.
+func (s *server) taskJobsClosed(id string, close bool) (bool, error) {
+	root, err := s.jobRoot()
+	if err != nil {
+		return false, err
+	}
+	defer root.Close()
+	name := "task-" + id + ".stopped"
+	if !close {
+		_, err := root.Stat(name)
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return err == nil, err
+	}
+	file, err := root.OpenFile(name, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return false, err
+	}
+	if err := errors.Join(file.Sync(), file.Close()); err != nil {
+		return false, err
+	}
+	dir, err := root.Open(".")
+	if err != nil {
+		return false, err
+	}
+	defer dir.Close()
+	return true, dir.Sync()
 }
 
 func (s *server) runningJobs() int {
@@ -215,6 +276,16 @@ func (s *server) startJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.jobsMu.Lock()
+	closed, err := s.taskJobsClosed(req.TaskID, false)
+	if err != nil || closed || s.jobs[req.JobID] != nil {
+		s.jobsMu.Unlock()
+		if err != nil {
+			http.Error(w, "job ownership unavailable", 503)
+		} else {
+			http.Error(w, "task closed or job already exists", 409)
+		}
+		return
+	}
 	running := 0
 	for _, job := range s.jobs {
 		if job.snapshot().TaskID == req.TaskID {
@@ -319,7 +390,7 @@ func (s *server) superviseJob(job *activeJob, cmd *exec.Cmd, group *operationGro
 	}
 	job.mu.Lock()
 	now := time.Now().UTC()
-	job.record.FinishedAt, job.record.Group = &now, ""
+	job.record.FinishedAt = &now
 	switch {
 	case stopErr != nil:
 		job.record.State = "stop_unconfirmed"
@@ -330,6 +401,9 @@ func (s *server) superviseJob(job *activeJob, cmd *exec.Cmd, group *operationGro
 	default:
 		job.record.State = "finished"
 		job.record.ExitCode = &code
+	}
+	if stopErr == nil {
+		job.record.Group = ""
 	}
 	record := job.record
 	job.mu.Unlock()
@@ -353,7 +427,7 @@ func (s *server) jobStatusOf(record jobRecord, live *activeJob) map[string]any {
 	if record.FinishedAt != nil {
 		end = *record.FinishedAt
 	}
-	result := map[string]any{"job_id": record.ID, "state": record.State, "started_at": record.StartedAt, "elapsed_seconds": int(end.Sub(record.StartedAt).Seconds())}
+	result := map[string]any{"job_id": record.ID, "task_id": record.TaskID, "lifetime": "task", "state": record.State, "started_at": record.StartedAt, "elapsed_seconds": int(end.Sub(record.StartedAt).Seconds())}
 	s.jobsMu.Lock()
 	_, unsaved := s.unsavedJobs[record.ID]
 	s.jobsMu.Unlock()
@@ -478,8 +552,18 @@ func (s *server) jobStop(w http.ResponseWriter, r *http.Request) {
 		record = live.snapshot()
 	}
 	if record.State == "stop_unconfirmed" {
-		http.Error(w, "job stop could not be confirmed", 502)
-		return
+		ctx, cancel := context.WithTimeout(r.Context(), jobStopDeadline)
+		defer cancel()
+		if err := s.settleJob(ctx, record); err != nil {
+			http.Error(w, "job stop could not be confirmed", 502)
+			return
+		}
+		var err error
+		record, err = s.readJob(req.JobID)
+		if err != nil {
+			http.Error(w, "job state unavailable", 503)
+			return
+		}
 	}
 	respond(w, s.jobStatusOf(record, nil))
 }
@@ -489,6 +573,7 @@ func (s *server) jobStop(w http.ResponseWriter, r *http.Request) {
 func (s *server) stopTaskJobs(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TaskID string `json:"task_id"`
+		Close  bool   `json:"close"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -498,6 +583,13 @@ func (s *server) stopTaskJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.jobsMu.Lock()
+	if req.Close {
+		if _, err := s.taskJobsClosed(req.TaskID, true); err != nil {
+			s.jobsMu.Unlock()
+			http.Error(w, "job ownership could not be closed", 503)
+			return
+		}
+	}
 	owned := []*activeJob{}
 	for _, job := range s.jobs {
 		if job.record.TaskID == req.TaskID {
@@ -507,11 +599,24 @@ func (s *server) stopTaskJobs(w http.ResponseWriter, r *http.Request) {
 	s.jobsMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), jobStopDeadline)
 	defer cancel()
+	var failures []error
 	for _, job := range owned {
-		if err := job.stop(ctx); err != nil || job.snapshot().State == "stop_unconfirmed" {
-			http.Error(w, "job stop could not be confirmed", 502)
-			return
+		if err := job.stop(ctx); err != nil {
+			failures = append(failures, err)
 		}
 	}
-	respond(w, map[string]bool{"stopped": true})
+	if len(failures) == 0 {
+		records, err := s.jobRecords()
+		failures = append(failures, err)
+		for _, record := range records {
+			if record.TaskID == req.TaskID {
+				failures = append(failures, s.settleJob(ctx, record))
+			}
+		}
+	}
+	if errors.Join(failures...) != nil {
+		http.Error(w, "job stop could not be confirmed", 502)
+		return
+	}
+	respond(w, map[string]bool{"stopped": true, "closed": req.Close})
 }
