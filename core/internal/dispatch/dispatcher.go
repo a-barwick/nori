@@ -72,7 +72,7 @@ func (d *Dispatcher) repairClosed(ctx context.Context) error {
 	}
 	var failures []error
 	for _, run := range runs {
-		if run.CancelRequested {
+		if run.CancelRequested || run.Finishing != nil {
 			_, err := d.Recovery.StopPaused(ctx, run.ID)
 			failures = append(failures, err)
 		}

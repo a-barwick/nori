@@ -235,8 +235,11 @@ func AdmitPublication(run Run, req PublishRequest) (admitted PublishRequest, pro
 		// A retry or closed-workflow repair must retain the accepted answer, not replace it with a crash failure.
 		req = *run.Finishing
 		if run.CancelRequested {
-			req.Status, req.Revision = RunCancelled, run.Revision
-			req.Text, req.Detail, req.Answer = "", prompts.Runtime("stopped", nil), nil
+			req.Revision = run.Revision
+			if req.Status != RunFailed {
+				req.Status = RunCancelled
+				req.Text, req.Detail, req.Answer = "", prompts.Runtime("stopped", nil), nil
+			}
 		}
 		return req, true, nil
 	}

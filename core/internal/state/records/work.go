@@ -37,18 +37,24 @@ func (d *Database) WorkVersion(ctx context.Context, tasks bool) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	runs, err := documents[state.Run](d.runs().Where("status", "==", "running").
+		Select("id", "revision", "cancel_requested", "finishing").Documents(ctx))
+	if err != nil {
+		return "", err
+	}
+	for _, run := range runs {
+		if run.Finishing != nil {
+			// Cleanup may already be confirmed when a crash interrupts final
+			// publication, so finishing itself is durable recovery demand.
+			return fmt.Sprintf("finishing:%s:%d", run.ID, run.Revision), nil
+		}
+		if control.Paused && run.CancelRequested {
+			return fmt.Sprintf("stop:%s:%d", run.ID, run.Revision), nil
+		}
+	}
 	if control.Paused {
-		// Paused commands stay saved for resume. Only accepted Stops need
-		// API cleanup while the task workers are unavailable.
-		runs, err := d.OpenTasks(ctx)
-		if err != nil {
-			return "", err
-		}
-		for _, run := range runs {
-			if run.CancelRequested {
-				return fmt.Sprintf("stop:%s:%d", run.ID, run.Revision), nil
-			}
-		}
+		// Other paused commands stay saved for resume. Accepted Stops and
+		// finishing outcomes can drain while task workers are unavailable.
 		return "", nil
 	}
 	commands, err := documents[state.Command](d.commands().Where("delivered", "==", false).Select("id").Limit(1).Documents(ctx))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -145,6 +146,8 @@ func (s *server) finishJob(record jobRecord) error {
 	return err
 }
 
+// Return readable records alongside scan failures so known jobs can still drain.
+// Callers must retain the error when acknowledging complete task cleanup.
 func (s *server) jobRecords() ([]jobRecord, error) {
 	root, err := s.jobRoot()
 	if err != nil {
@@ -161,25 +164,26 @@ func (s *server) jobRecords() ([]jobRecord, error) {
 		return nil, err
 	}
 	var records []jobRecord
+	var failures []error
 	for _, name := range names {
 		if filepath.Ext(name) != ".json" {
 			continue
 		}
 		record, err := s.readJob(strings.TrimSuffix(name, ".json"))
 		if err != nil {
-			return nil, err
+			failures = append(failures, fmt.Errorf("job record %s: %w", name, err))
+			continue
 		}
 		records = append(records, record)
 	}
-	return records, nil
+	return records, errors.Join(failures...)
 }
 
 // recoverJobs drains abandoned process trees before serving requests. Failed cleanup remains recorded.
 func (s *server) recoverJobs() {
 	records, err := s.jobRecords()
 	if err != nil {
-		log.Printf("job recovery unavailable: %v", err)
-		return
+		log.Printf("job recovery scan incomplete: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), jobStopDeadline)
 	defer cancel()
