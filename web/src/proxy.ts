@@ -1,12 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { isUser } from "@/lib/runtime/auth";
+import { accessFailureResponse, resolveUser } from "@/lib/runtime/auth";
 
 export async function proxy(request: NextRequest) {
-  if (!(await isUser(request.headers))) {
-    return new NextResponse("Nori is private. Sign in through the configured Google IAP endpoint.", {
-      status: 403, headers: { "Cache-Control": "no-store" },
-    });
-  }
+  const user = await resolveUser(request.headers);
+  if ("status" in user) return accessFailureResponse(user, true);
   const headers = new Headers(request.headers);
   headers.delete("x-nori-user");
   // IAP uses this to invoke Cloud Run. It must never become upstream credentials.
@@ -15,5 +12,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health$).*)"],
+  // API and envelope handlers check the caller and resolve the user themselves.
+  matcher: ["/((?!api/|sentry-tunnel$|_next/static|_next/image|favicon.ico).*)"],
 };

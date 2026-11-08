@@ -39,11 +39,11 @@ The predictable service URL uses Cloud Run's documented
 The 40-character build limit keeps its DNS segment below 64 characters. The same
 root URL is configured as an accepted audience, avoiding a Terraform cycle.
 
-From `core/`, use the explicit cost-control switch:
+From the repo root, use the explicit production cost-control switch when needed:
 
 ```sh
-python3 infrastructure/app/ops.py pause
-python3 infrastructure/app/ops.py unpause
+make pause
+make unpause
 ```
 
 Pause first fences dispatch on all retained worker wake queues, then closes

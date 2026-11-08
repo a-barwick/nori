@@ -28,10 +28,10 @@ Compose environment, container computer and GKE scaffold were retired. Their ret
 `nori-dev_postgres-data`, `nori-dev_computer-workspace`, and
 `nori-dev_computer-home`, has not been migrated or deleted.
 
-Keep paid workers and the computer off after live work. Application deadlines
-bound individual work; cloud capacity policy and operator lifecycle are described
-in the app and Temporal guides. Never delete or rebuild the retained user disk,
-browser profile, or files as part of capacity cleanup.
+Leave production available after live checks. Workers run on demand and the
+browser VM stops when idle and wakes for the next tool. Use the local stack or
+sandbox for checks that need a shutdown. Never delete or rebuild the retained
+user disk, browser profile, or files as part of capacity cleanup.
 
 Telemetry is optional. The app and Temporal Terraform stacks each accept the same
 `observability` object for Sentry DSNs, AX space/project settings, capture consent,
@@ -52,9 +52,9 @@ it takes.
 | Command | What it does |
 | --- | --- |
 | `make deploy-check` | Read-only rehearsal: Terraform plan, open work, runtime health |
-| `make deploy` | Builds, pauses, deploys, registers and switches to the new worker, verifies, and stays paused |
-| `make unpause` | Opens Nori for use. Nothing runs on new code before this |
-| `make pause` | Closes admission and stops paid compute |
+| `make deploy` | Builds, pauses for the release, switches to the new worker, verifies, and reopens if Nori was open |
+| `make unpause` | Opens a paused, verified release for use |
+| `make pause` | Explicitly closes admission and stops paid compute |
 | `make deploy-status` | Shows paused state, Current worker, and the last deploy |
 | `make deploy-rollback` | Restores the previous release after an interrupted deploy |
 | `make deploy-unlock` | Shows the lock owner and the generation needed to recover an abandoned lock |
@@ -66,16 +66,16 @@ The saved Terraform plan may include updates to existing resources as well as
 the new worker. Resource lifecycle and deletion protections remain in force.
 A new worker keeps the Current worker's model.
 
-After a mutating step starts, failure recovery reconciles pause and verifies the
-previous release if a release switch was attempted. If recovery fails, production
-may be partially changed: keep admission closed, run `make pause`, inspect
-`make deploy-status`, and run `make deploy-rollback` before reopening.
-Run `make deploy` again after fixing the
-cause; finished steps are reused, and images are reused by commit. If the process
-is killed, `make deploy` resumes it instead. Progress lives in
-`~/.local/state/nori/bot-111549/deploy/`.
+On release failure, rollback verifies the previous release before restoring
+availability. If recovery fails, production may be partially changed: keep
+admission closed, inspect `make deploy-status`, and retry the release or run
+`make deploy-rollback` before reopening. If only reopening failed after
+verification, fix the cause and retry `make unpause`. A paused service stays
+paused through a release or rollback. Progress lives in
+`~/.local/state/nori/bot-111549/deploy/`; an interrupted deploy can resume from
+its last completed step, and images are reused by commit.
 
-Every deploy and rollback takes an exclusive lock, even for the same commit.
+Production deploy, rollback, pause, and unpause share an exclusive lock.
 After a killed process, run `make deploy-unlock` to inspect the owner. Confirm it
 has stopped, including on another host, then use the displayed generation with
 `python3 core/infrastructure/release/deploy.py unlock --lock-generation GENERATION`.

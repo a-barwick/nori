@@ -229,9 +229,9 @@ include task revisions, while working directories remain
 `/workspace/tasks/<task-UUID>` across corrections.
 
 Operator cloud capacity is separate from durable task state. Pause/resume can
-stop/start workers and the computer without deleting saved work. Keep service
-minimums at zero, maximums at one, and stop paid capacity after live work. Follow
-the linked operations guides for the exact current lifecycle and its limits.
+stop/start workers and the computer without deleting saved work. Leave production
+open after live checks. The services scale on demand and the computer stops on
+idle. Follow the linked operations guides for the lifecycle and its limits.
 
 ## Original retained-disk microVM reference
 

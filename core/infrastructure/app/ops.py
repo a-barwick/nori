@@ -416,6 +416,19 @@ def control(c, paused):
     return api("PATCH", firestore(c, "system/control") + "?currentDocument.exists=true&updateMask.fieldPaths=paused&updateMask.fieldPaths=expires_at", {"fields": {"paused": {"booleanValue": paused}}})
 
 
+def execution_open(c, workers):
+    control_doc = api("GET", firestore(c, "system/control"))
+    if control_doc.get("fields", {}).get("paused", {}).get("booleanValue") is not False:
+        return False
+    if not all(
+        api("GET", "https://cloudtasks.googleapis.com/v2/" + name).get("state") == "RUNNING"
+        for name in (c["conversation_queue"], workers["worker_wake_queue"])
+    ):
+        return False
+    vm = api("GET", vm_url())
+    return any(item["key"] == "computer-paused" and item["value"] == "false" for item in vm["metadata"].get("items", []))
+
+
 def pause(c, worker_config=None):
     failures = []
 
@@ -546,6 +559,8 @@ def main():
     parser.add_argument("action", choices=["bootstrap-identities", "publish-computer", "deploy-runtime", "deploy-web", "unpause", "pause", "clear-deadline", "status", "spend-caps"])
     parser.add_argument("value", nargs="?")
     args = parser.parse_args()
+    if args.action in {"pause", "unpause"} and ENVIRONMENT == "production":
+        raise RuntimeError(f"Run make {args.action} from the repo root to take the production operation lock.")
     if args.action == "bootstrap-identities":
         for service in ("aiplatform.googleapis.com", "iap.googleapis.com", "run.googleapis.com", "cloudtasks.googleapis.com"):
             result = operation(api("POST", f"https://serviceusage.googleapis.com/v1beta1/projects/{NUMBER}/services/{service}:generateServiceIdentity", {}), "serviceusage")

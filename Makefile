@@ -35,7 +35,11 @@ deploy deploy-check deploy-status deploy-rollback deploy-unlock:
 	python3 core/infrastructure/release/deploy.py $(patsubst deploy-%,%,$@)
 
 pause unpause:
-	cd core && NORI_TF_BACKEND=gcs python3 infrastructure/app/ops.py $@
+ifeq ($(NORI_ENVIRONMENT),sandbox)
+	cd core && NORI_TF_BACKEND=gcs NORI_ENVIRONMENT=sandbox python3 infrastructure/app/ops.py $@
+else
+	python3 core/infrastructure/release/deploy.py $@
+endif
 
 # Local dependencies retain their named volumes across stop/start.
 .PHONY: deps deps-stop

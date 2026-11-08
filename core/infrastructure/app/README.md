@@ -60,11 +60,9 @@ Terraform ignores independent image changes, computer release metadata, and nati
 
 ## Pause and idle stop
 
-```sh
-python3 infrastructure/app/ops.py status
-python3 infrastructure/app/ops.py pause
-python3 infrastructure/app/ops.py unpause
-```
+From the repo root, use `make deploy-status` for production status.
+Use `make pause` for an explicit operator hold and `make unpause` to reopen. Leave
+production open after live checks; the browser VM still stops on idle.
 
 Tasks normally start without an operator resume ceremony or execution-session
 expiry. Pause first fences dispatch on the conversation queue and all retained worker wake queues, then

@@ -1,4 +1,4 @@
-import { resolveUser, sameOrigin, sameOriginRead, type ScopedRuntime } from "./auth";
+import { accessFailureResponse, resolveUser, sameOrigin, sameOriginRead, type ScopedRuntime } from "./auth";
 import { isRuntimeMethod, isRuntimeRead } from "./methods";
 import { runtimeHeaders } from "./credentials";
 import { localDevelopment, runtimeMode, runtimeTarget, type Mode } from "./target";
@@ -29,11 +29,11 @@ async function relay(request: Request, { base, userID, mode }: ScopedRuntime, pa
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]), redirect: "error", cache: "no-store",
     });
     if (upstream.status >= 500) reportUpstreamFailure(label, mode, upstream.status);
-    if (operation && mode === "hosted" && upstream.status === 429) {
-      reportUpstreamRejection(operation, request, trace, upstream.headers);
+    if (mode === "hosted" && upstream.status === 429) {
+      reportUpstreamRejection(operation ?? label, request, trace, upstream.headers);
       void upstream.body?.cancel().catch(() => undefined);
       // Platforms can return private HTML error bodies. Relay only the throttling signal and sanitized headers.
-      return Response.json({ error: "Nori is temporarily busy. Refresh history shortly." }, {
+      return Response.json({ error: "Nori is busy. Try again shortly." }, {
         status: 429,
         headers: { "Cache-Control": "no-store", ...rejectionHeaders(upstream.headers) },
       });
@@ -66,7 +66,7 @@ async function forward(request: Request, mode: Mode, path: string, init: Request
   const target = runtimeTarget(mode);
   if (target instanceof Response) return target;
   const user = await resolveUser(request.headers, target);
-  if (!user) return forbidden();
+  if ("status" in user) return accessFailureResponse(user);
   return relay(request, user, path, init, { timeout: READ_TIMEOUT_MS, allowed });
 }
 
@@ -81,7 +81,7 @@ export async function operationRoute(request: Request, mode: Mode, operation: st
   const target = runtimeTarget(mode);
   if (target instanceof Response) return local ? target : forbidden();
   const user = await resolveUser(request.headers, target);
-  if (!user) return forbidden();
+  if ("status" in user) return accessFailureResponse(user);
   let body: string;
   try {
     body = JSON.stringify(await request.json());

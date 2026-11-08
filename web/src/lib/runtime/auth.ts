@@ -22,25 +22,45 @@ async function identify(headers: Headers): Promise<Identity | null> {
 }
 
 export type ScopedRuntime = RuntimeTarget & { userID: string };
+type AccessFailure = { status: 403 | 429 | 503; error: string; retryAfter?: string };
+const denied: AccessFailure = { status: 403, error: "Sign in with an account that has access to Nori." };
+const unavailable: AccessFailure = { status: 503, error: "Nori is temporarily unavailable. Try again shortly." };
 
-export async function resolveUser(headers: Headers, target = runtimeTarget(runtimeMode(headers))): Promise<ScopedRuntime | null> {
-  if (target instanceof Response || (target.mode === "local" && !localDevelopment(headers))) return null;
+export function accessFailureResponse(failure: AccessFailure, plainText = false) {
+  const headers = new Headers({ "Cache-Control": "no-store" });
+  if (failure.retryAfter) headers.set("Retry-After", failure.retryAfter);
+  const init = { status: failure.status, headers };
+  return plainText ? new Response(failure.error, init) : Response.json({ error: failure.error }, init);
+}
+
+export async function resolveUser(headers: Headers, target = runtimeTarget(runtimeMode(headers))): Promise<ScopedRuntime | AccessFailure> {
+  if (target instanceof Response) return unavailable;
+  if (target.mode === "local" && !localDevelopment(headers)) return denied;
   const identity = await identify(headers);
-  if (!identity) return null;
+  if (!identity) return denied;
   try {
     const response = await fetch(new URL("api/users/resolve", target.base), {
       method: "POST", headers: { "Content-Type": "application/json", ...await runtimeHeaders(target.mode) },
       body: JSON.stringify({ email: identity.email }), cache: "no-store", redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok) return rejected("user_resolution", response.status);
+    if (!response.ok) {
+      rejected("user_resolution", response.status);
+      void response.body?.cancel().catch(() => undefined);
+      if (response.status === 429) {
+        const retryAfter = response.headers.get("retry-after") ?? "";
+        return { status: 429, error: "Nori is busy. Try again shortly.", retryAfter: /^\d{1,6}$/.test(retryAfter) ? retryAfter : undefined };
+      }
+      return response.status === 403 ? denied : unavailable;
+    }
     const value = await response.json();
-    if (typeof value.id !== "string" || !(value.id === "owner" || /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.id))) return null;
+    if (typeof value.id !== "string" || !(value.id === "owner" || /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.id))) return unavailable;
     return { ...target, userID: value.id };
-  } catch { return rejected("user_resolution_connection"); }
+  } catch {
+    rejected("user_resolution_connection");
+    return unavailable;
+  }
 }
-
-export async function isUser(headers: Headers): Promise<boolean> { return !!(await resolveUser(headers)); }
 
 export function sameOrigin(request: Request) {
   const origin = request.headers.get("origin");

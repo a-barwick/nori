@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Deploy Nori to production from this Mac. See core/infrastructure/README.md.
 
-A deploy keeps admission closed until `make unpause`. If interrupted, it keeps
-its progress for a retry or rollback.
+A deploy temporarily closes admission and restores prior availability after a
+verified release or rollback. Interrupted releases keep progress for recovery.
 """
 import argparse
 import base64
@@ -32,6 +32,7 @@ STATE_BUCKET = "bot-111549-nori-ci-state"
 LOCK = "nori/deploy.lock"
 TERMINAL = {"completed", "cancelled", "failed"}
 BRAVE_SEARCH_SECRET = "nori-brave-search-api-key"
+REQUESTED_ENVIRONMENT = os.environ.get("NORI_ENVIRONMENT", "production")
 # Steps a rollback undoes. Images and the new worker service stay for the retry.
 UNDONE_BY_ROLLBACK = {"computer", "runtime", "web", "register", "current", "verify"}
 
@@ -93,7 +94,7 @@ def acquire_lock(commit):
     except ops.APIError as error:
         if error.status != 412:
             raise
-        raise RuntimeError("Another deploy holds the lock, including for this commit. Run make deploy-unlock to inspect it; recover only after its owner has stopped.") from None
+        raise RuntimeError("Another production operation holds the lock. Run make deploy-unlock to inspect it; recover only after its owner has stopped.") from None
 
 
 def release_lock(generation):
@@ -383,8 +384,21 @@ def rollback(c, state):
     save_state(state)
 
 
+def restore_availability(c, state):
+    if not state.get("reopen_after"):
+        return "Nori remains paused."
+    try:
+        if not ops.execution_open(c, ops.temporal_config()):
+            ops.unpause(c)
+    except Exception as error:
+        raise RuntimeError(f"The release was verified, but reopening failed: {error}. Check make deploy-status and retry make unpause.") from None
+    state.pop("reopen_after")
+    save_state(state)
+    return "Nori is open."
+
+
 def interrupted(_signal, _frame):
-    raise RuntimeError("Deploy interrupted")
+    raise RuntimeError("Production operation interrupted")
 
 
 def deploy(_args):
@@ -401,6 +415,11 @@ def deploy(_args):
 def deploy_locked(commit):
     # Read shared progress only after acquiring the production lock.
     state = load_state()
+    if state and state["status"] in {"finished", "rolled_back"} and state.get("reopen_after"):
+        init_terraform()
+        log("Previous release operation already verified. " + restore_availability(ops.config(), state))
+        if state["commit"] == commit and state["status"] == "finished":
+            return
     if state and state["status"] == "running":
         require(state["commit"] == commit, f"A deploy of {state['commit'][:10]} was interrupted. Check out that commit to resume it, or run make deploy-rollback.")
         log("Resuming the interrupted deploy")
@@ -409,13 +428,11 @@ def deploy_locked(commit):
     state["status"] = "running"
     DIR.mkdir(parents=True, mode=0o700, exist_ok=True)
     save_state(state)
-    signal.signal(signal.SIGTERM, interrupted)
-    signal.signal(signal.SIGINT, interrupted)
 
     def step(name, action):
         if name not in state["done"]:
             log(name.capitalize())
-            if name in UNDONE_BY_ROLLBACK or name in {"pause", "worker"}:
+            if (name in UNDONE_BY_ROLLBACK or name in {"pause", "worker"}) and name not in state.get("started", []):
                 state.setdefault("started", []).append(name)
                 save_state(state)
             action()
@@ -430,6 +447,8 @@ def deploy_locked(commit):
         c = ops.config()
         if "pause" not in state["done"]:
             refuse_open_work(c)
+            if "pause" not in state.get("started", []):
+                state["reopen_after"] = ops.execution_open(c, ops.temporal_config())
         step("pause", lambda: ops.pause(c))
         if "previous" not in state:
             state["previous"] = read_previous(c)
@@ -459,13 +478,17 @@ def deploy_locked(commit):
         try:
             rollback(c, state)
         except Exception as recovery_error:
-            raise RuntimeError(f"Production may be partially changed; recovery failed: {recovery_error}. Keep Nori closed. Run make pause, inspect make deploy-status, then make deploy-rollback before reopening.") from None
-        outcome = ("Verified the previous release and left Nori paused." if restored else
-                   "Pause was attempted; Nori is now verified paused. No release switch was attempted.") if touched else "Production was not changed."
+            raise RuntimeError(f"Production may be partially changed; recovery failed: {recovery_error}. Keep Nori closed. Inspect make deploy-status and retry or roll back the release before reopening.") from None
+        outcome = "Production was not changed."
+        if touched:
+            outcome = "Verified the previous release." if restored else "No release switch was attempted."
+            outcome += " " + restore_availability(c, state)
         raise RuntimeError(outcome + " Fix the cause and run make deploy again; finished steps are reused.") from None
+    # Reopening may admit work on this release. Persist verification first and
+    # do not roll back images if reopening fails or is interrupted.
     state["status"] = "finished"
     save_state(state)
-    log(f"Deployed {commit[:10]}: worker {state['build']}. Nori is paused; run make unpause to use it.")
+    log(f"Deployed {commit[:10]}: worker {state['build']}. " + restore_availability(c, state))
 
 
 def check(_args):
@@ -492,6 +515,7 @@ def status(_args):
     control = ops.api("GET", ops.firestore(c, "system/control"))
     saved = load_state() or {}
     print(json.dumps({"paused": control.get("fields", {}).get("paused", {}).get("booleanValue"), "computer": ops.api("GET", ops.vm_url())["status"],
+                      "reopen_pending": saved.get("status") in {"finished", "rolled_back"} and saved.get("reopen_after") is True,
                       "current_worker": current_worker(), "last_deploy": {key: saved.get(key) for key in ("commit", "build", "status", "done")}}, indent=2))
 
 
@@ -502,8 +526,33 @@ def manual_rollback(_args):
         require(state and state["status"] == "running", "No interrupted deploy to roll back")
         init_terraform()
         c = ops.config()
+        touched = "pause" in set(state["done"]) | set(state.get("started", []))
         rollback(c, state)
-        log("Recovery completed. Check make deploy-status before reopening.")
+        log("Recovery completed." + (" " + restore_availability(c, state) if touched else ""))
+    finally:
+        release_lock(generation)
+
+
+def set_paused(paused):
+    require(REQUESTED_ENVIRONMENT == "production", "Use make pause or make unpause with NORI_ENVIRONMENT=sandbox for the sandbox.")
+    generation = acquire_lock("pause" if paused else "unpause")
+    try:
+        state = load_state()
+        require(paused or not state or state["status"] != "running", "Resolve the interrupted deploy before reopening: run make deploy-status, then retry or roll back the deploy.")
+        init_terraform()
+        c = ops.config()
+        if paused:
+            # An explicit operator hold overrides a release's plan to reopen.
+            if state and state.pop("reopen_after", None):
+                save_state(state)
+            ops.pause(c)
+        else:
+            if not ops.execution_open(c, ops.temporal_config()):
+                ops.unpause(c)
+            else:
+                log("Nori is already open.")
+            if state and state.pop("reopen_after", None):
+                save_state(state)
     finally:
         release_lock(generation)
 
@@ -530,11 +579,15 @@ def unlock(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    commands = {"deploy": deploy, "check": check, "status": status, "rollback": manual_rollback, "unlock": unlock}
+    commands = {"deploy": deploy, "check": check, "status": status, "rollback": manual_rollback, "unlock": unlock,
+                "pause": lambda _: set_paused(True), "unpause": lambda _: set_paused(False)}
     parser.add_argument("command", choices=commands)
     parser.add_argument("--lock-generation", help="Observed generation of an abandoned lock, for unlock only")
     args = parser.parse_args()
     os.umask(0o077)
+    if args.command in {"deploy", "rollback", "pause", "unpause"}:
+        signal.signal(signal.SIGTERM, interrupted)
+        signal.signal(signal.SIGINT, interrupted)
     try:
         commands[args.command](args)
     except Exception as error:
