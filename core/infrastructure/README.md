@@ -114,8 +114,7 @@ The first copies are kept until deleted by hand: snapshot
 `nori-computer-data-first-20261031` and export
 `gs://bot-111549-nori-poc/firestore-exports/nori-poc-20261031`. The boot disk and sandbox have no scheduled copies.
 
-The outer runtime uses `gpt-6.1-sol` with low reasoning through the OpenAI
-platform API. Before a future deployment, provision the selected environment's
-`nori-openai-api-key` or `nori-sandbox-openai-api-key` Secret Manager version.
-The deployment config references it as `OPENAI_API_KEY`; it does not copy the
-local key or replace the inner worker's OpenRouter credential.
+Production uses `gpt-6.1-sol` for replies and `gpt-6.1-terra` for tasks,
+image inspection, and summary refinement. The runtime and new workers reference
+`nori-openai-api-key` as `OPENAI_API_KEY`. Sol handles routing without Jev in
+production. Local development and sandbox keep their own provider configuration.

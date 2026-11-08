@@ -34,7 +34,7 @@ type Response struct {
 	Message *transcript.Message
 	Calls   []transcript.ToolCall
 	Answer  string
-	// Usage is nil when the provider reported none. Cost is the provider-reported USD
+	// Usage is nil when the provider reported none. Cost is the reported or calculated USD
 	// cost of this request, valid only when CostKnown is true.
 	Usage     *Usage
 	Cost      float64
@@ -64,7 +64,7 @@ type InspectRequest struct {
 type Inspection struct {
 	Observation string
 	// Sent is set once a request has left the process, so a missing cost means the request may
-	// have been billed. Cost is the provider-reported USD cost, valid only when CostKnown is true.
+	// have been billed. Cost is the reported or calculated USD cost, valid only when CostKnown is true.
 	Sent      bool
 	Cost      float64
 	CostKnown bool

@@ -276,9 +276,9 @@ def plan_worker(c, build, image=None):
     if build in targets:
         require(image is None or services[build] == image, "This build already exists with a different image")
     else:
-        # Only Austin changes models. A rehearsal can use Current's image as a stand-in.
+        # A rehearsal uses Current's image as a stand-in. Retained workers keep their model configuration.
         targets[build] = {**targets[current], "capabilities": False, "brave_search": brave_search_ready(),
-                          "per_user_settings": True, "jev_completion": False}
+                          "per_user_settings": True, "jev_completion": False, "model_name": "gpt-6.1-terra"}
         services[build] = image or services[current]
     target = targets[build]
     require(target["deployment_name"] == ops.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Worker target is not production")

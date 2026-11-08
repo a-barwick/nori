@@ -27,7 +27,8 @@ func loadConfig(s settings.Settings) (config, error) {
 	if s.Features.DisableBackgroundTasks {
 		return config{}, fmt.Errorf("background tasks are not enabled")
 	}
-	required := [][2]string{{"TEMPORAL_BUILD_ID", s.Temporal.BuildID}, {"OPENROUTER_API_KEY", s.Models.OpenRouterKey}}
+	taskKeyName, taskKey := s.Models.TaskCredential()
+	required := [][2]string{{"TEMPORAL_BUILD_ID", s.Temporal.BuildID}, {taskKeyName, taskKey}}
 	switch s.Store.Backend {
 	case "", "firestore":
 		required = append(required, [2]string{"NORI_PROJECT_ID", s.Store.Project}, [2]string{"FIRESTORE_DATABASE_ID", s.Store.Database})

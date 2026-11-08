@@ -531,7 +531,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
 
       env {
         name  = "MODEL_NAME"
-        value = var.model
+        value = local.production ? "gpt-6.1-terra" : var.model
       }
 
       dynamic "env" {
@@ -547,7 +547,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
           TEMPORAL_TASK_QUEUE             = local.task_queue
           TEMPORAL_DEPLOYMENT_NAME        = local.temporal_deployment
           TEMPORAL_API_KEY_SECRET_VERSION = "projects/${local.project}/secrets/nori-temporal-api-key/versions/latest"
-        }, local.telemetry_env)
+        }, local.production ? { NORI_JEV_ENABLED = "false" } : {}, local.telemetry_env)
         content {
           name  = env.key
           value = env.value
@@ -555,7 +555,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
       }
 
       dynamic "secret_env" {
-        for_each = merge(local.conversation_secrets, local.arize_secret_env)
+        for_each = merge({ for name, secret in local.conversation_secrets : name => secret if !local.production || name == "OPENAI_API_KEY" }, local.arize_secret_env)
         content {
           name = secret_env.key
           secret_ref {

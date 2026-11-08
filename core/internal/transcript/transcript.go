@@ -2,7 +2,7 @@
 // model: text, tool calls, tool results, and the opaque state a model provider needs
 // back to continue its own turn. Task code, the workflow and storage use only these
 // types. Request formats for a particular provider live in that provider's adapter
-// (see internal/agent/openrouter).
+// (see internal/agent/responses).
 package transcript
 
 // Role says who produced a message.

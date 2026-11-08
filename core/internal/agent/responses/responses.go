@@ -1,4 +1,4 @@
-package openrouter
+package responses
 
 import (
 	"bytes"
@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -19,10 +18,9 @@ import (
 )
 
 const (
-	provider = "openrouter"
-	endpoint = "https://openrouter.ai/api/v1/responses"
 	// selectedModel is the only model authorized for inner tasks.
-	selectedModel = "openai/gpt-6.1-terra"
+	routerModel = "openai/gpt-6.1-terra"
+	directModel = "gpt-6.1-terra"
 	// stateFormat marks transcript.ProviderState written by this adapter. Its data is the
 	// JSON array of output items from a response, which keeps encrypted reasoning and call
 	// IDs exactly as the provider returned them.
@@ -48,19 +46,48 @@ func New(key, model string, meter usage.Meter) *Client {
 	}
 }
 
-func routing() map[string]any {
-	return map[string]any{"max_price": map[string]float64{"prompt": 1, "completion": 5}, "require_parameters": true}
+func (c *Client) direct() bool { return c.ModelName == directModel }
+
+func (c *Client) Provider() string {
+	if c.direct() {
+		return "openai"
+	}
+	return "openrouter"
 }
 
-func (c *Client) Provider() string { return provider }
-func (c *Client) Name() string     { return c.ModelName }
+func (c *Client) Name() string { return c.ModelName }
+
+func (c *Client) endpoint() string {
+	if c.direct() {
+		return "https://api.openai.com/v1/responses"
+	}
+	return "https://openrouter.ai/api/v1/responses"
+}
+
+func (c *Client) format() string {
+	if c.direct() {
+		return "nori.openai.responses"
+	}
+	return stateFormat
+}
+
+func (c *Client) requestOptions(fields map[string]any) {
+	if c.direct() {
+		fields["service_tier"] = "default"
+		fields["prompt_cache_options"] = map[string]string{"mode": "explicit"}
+		return
+	}
+	fields["provider"] = map[string]any{"max_price": map[string]float64{"prompt": 1, "completion": 5}, "require_parameters": true}
+}
+
+func (c *Client) validModel() bool { return c.direct() || c.ModelName == routerModel }
 
 func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Response, err error) {
 	out.NotSent = true
-	if c.ModelName != selectedModel {
-		return out, errors.New("task model must be the selected openai/gpt-6.1-terra")
+	if !c.validModel() {
+		return out, errors.New("task model must be the selected GPT-6.1 Terra")
 	}
-	input, err := responseInput(req.Messages)
+	input, err := responseInput(req.Messages, c.format())
 	if err != nil {
 		return out, err
 	}
@@ -77,12 +104,12 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	fields := map[string]any{
 		"model": c.ModelName, "input": input, "instructions": req.Instructions,
 		"tools": tools, "max_output_tokens": req.MaxOutputTokens, "store": false,
-		"include":  []string{"reasoning.encrypted_content"},
-		"provider": routing(),
+		"include": []string{"reasoning.encrypted_content"},
 	}
 	if req.Reasoning != "" {
 		fields["reasoning"] = map[string]string{"effort": req.Reasoning}
 	}
+	c.requestOptions(fields)
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return out, errors.New("task request could not be encoded")
@@ -90,27 +117,18 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if err := contextview.Check(len(body)); err != nil {
 		return out, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
 	if err != nil {
 		return out, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
 	httpReq.Header.Set("Content-Type", "application/json")
-	record := usage.Attempt(ctx, provider, c.ModelName)
+	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
 	record.RequestStatus = "unknown"
-	defer func() {
-		if u := out.Usage; u != nil {
-			input, output, total := int64(u.InputTokens), int64(u.OutputTokens)+int64(u.ReasoningTokens), int64(u.TotalTokens)
-			record.InputTokens, record.OutputTokens, record.TotalTokens = &input, &output, &total
-		}
-		if out.CostKnown {
-			record.CostUSD, record.CostStatus = &out.Cost, "provider"
-		}
-		err = errors.Join(err, usage.Finish(ctx, c.Meter, record))
-	}()
+	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
 	// Once handed to HTTP, a transport failure cannot prove it was not billed.
 	out.NotSent = false
 	res, err := c.HTTP.Do(httpReq)
@@ -128,33 +146,18 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	var response struct {
 		Status string            `json:"status"`
 		Output []json.RawMessage `json:"output"`
-		Usage  *struct {
-			Input        int32    `json:"input_tokens"`
-			Output       int32    `json:"output_tokens"`
-			Total        int32    `json:"total_tokens"`
-			Cost         *float64 `json:"cost"`
-			InputDetails struct {
-				Cached int32 `json:"cached_tokens"`
-			} `json:"input_tokens_details"`
-			OutputDetails struct {
-				Reasoning int32 `json:"reasoning_tokens"`
-			} `json:"output_tokens_details"`
-		} `json:"usage"`
+		Model  string            `json:"model"`
+		Tier   string            `json:"service_tier"`
+		Usage  *responseUsage    `json:"usage"`
 	}
 	if json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response) != nil {
 		return out, errors.New("task model returned an unreadable response")
 	}
-	if u := response.Usage; u != nil {
+	out.Cost, out.CostKnown = c.recordCost(&record, response.Model, response.Tier, response.Usage)
+	if u := response.Usage; u != nil && u.Input != nil && u.Output != nil && u.Total != nil {
 		out.Usage = &agent.Usage{
-			InputTokens:     u.Input,
-			OutputTokens:    u.Output - u.OutputDetails.Reasoning,
-			ReasoningTokens: u.OutputDetails.Reasoning,
-			CachedTokens:    u.InputDetails.Cached,
-			TotalTokens:     u.Total,
-		}
-		if u.Cost != nil && *u.Cost >= 0 && !math.IsNaN(*u.Cost) && !math.IsInf(*u.Cost, 0) {
-			out.Cost = *u.Cost
-			out.CostKnown = true
+			InputTokens: int32(*u.Input), OutputTokens: int32(*u.Output - u.OutputDetails.Reasoning),
+			ReasoningTokens: int32(u.OutputDetails.Reasoning), CachedTokens: int32(u.InputDetails.Cached), TotalTokens: int32(*u.Total),
 		}
 	}
 	if response.Status != "completed" {
@@ -166,7 +169,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 	message := &transcript.Message{
 		Role:  transcript.RoleModel,
-		Parts: []transcript.Part{{Provider: &transcript.ProviderState{Format: stateFormat, Data: saved}}},
+		Parts: []transcript.Part{{Provider: &transcript.ProviderState{Format: c.format(), Data: saved}}},
 	}
 	out.Message = message
 	calls := []transcript.ToolCall{}
@@ -221,11 +224,11 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 // responseInput builds the Responses input items from a transcript. A model turn that
 // carries this adapter's provider state is replayed from it exactly. Everything else,
 // including turns saved by an earlier provider, is rebuilt from its portable parts.
-func responseInput(messages []transcript.Message) ([]any, error) {
+func responseInput(messages []transcript.Message, format string) ([]any, error) {
 	input := []any{}
 	pending := map[string][]string{}
 	for i, message := range messages {
-		if state := message.Provider(); state != nil && state.Format == stateFormat {
+		if state := message.Provider(); state != nil && state.Format == format {
 			var items []json.RawMessage
 			if json.Unmarshal(state.Data, &items) != nil {
 				return nil, errors.New("invalid saved model response")

@@ -219,6 +219,18 @@ resource "google_cloud_run_v2_service" "worker" {
         }
       }
       dynamic "env" {
+        for_each = local.production && var.request_worker_targets[each.key].model_name == "gpt-6.1-terra" ? [1] : []
+        content {
+          name = "OPENAI_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = "nori-openai-api-key"
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
         for_each = var.request_worker_targets[each.key].jev_completion ? [1] : []
         content {
           name = "JEV_API_KEY"

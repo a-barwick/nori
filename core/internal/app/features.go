@@ -16,7 +16,8 @@ func validateStartup(cfg settings.Settings) error {
 			return err
 		}
 	}
-	if _, err := settings.Required("OPENROUTER_API_KEY", cfg.Models.OpenRouterKey); err != nil {
+	taskKeyName, taskKey := cfg.Models.TaskCredential()
+	if _, err := settings.Required(taskKeyName, taskKey); err != nil {
 		return err
 	}
 	return cfg.Temporal.Validate()

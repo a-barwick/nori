@@ -255,6 +255,9 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	}
 	if response.CostKnown {
 		trace.CostUSD, trace.CostStatus = &response.Cost, "reported"
+		if a.Agent.Model.Provider() == "openai" {
+			trace.CostStatus = "calculated"
+		}
 	} else if response.NotSent {
 		trace.CostStatus = "not_sent"
 	}
