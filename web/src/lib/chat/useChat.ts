@@ -276,8 +276,12 @@ export function useChat() {
       method: "POST", headers: { "Content-Type": item.file.type || "text/csv" }, body: item.file, redirect: "error",
       signal: AbortSignal.any([selection.controller.signal, AbortSignal.timeout(30_000)]),
     });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result?.error || `Upload failed (${response.status})`);
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      const error = typeof result?.error === "string" ? result.error : "";
+      throw new Error(error || `Upload failed (${response.status})`);
+    }
+    if (result?.id !== item.id) throw new Error("The upload could not be confirmed. Retry this file.");
     return result as Attachment;
   }
 
