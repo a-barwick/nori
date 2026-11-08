@@ -27,6 +27,7 @@ type App struct {
 	Tasks      *conversation.Tasks
 	Dispatcher *dispatch.Dispatcher
 	Waker      wake.Waker
+	WakeRepair *wake.Repairer
 	Model      string
 	engine     dispatch.Orchestrator
 	handler    http.Handler
@@ -53,6 +54,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	userFacts := user.Facts()
 	chats := chat.New(store, outer, userFacts)
 	result := &App{Store: store, Features: cfg.Features, Chats: chats, Waker: waker, Model: model}
+	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
 	if cfg.Features.DisableBackgroundTasks {
 		return result, nil
 	}
@@ -67,6 +69,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		return nil, fmt.Errorf("user computer local URL requires TEMPORAL_LOCAL=true")
 	}
 	dispatcher := platform.Dispatcher(cfg, store, engine, waker, user.ID)
+	dispatcher.WakeRepair = result.WakeRepair
 	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
 	// Compaction keeps a fixed model even when the task worker uses a different one.
 	summarizer := openrouter.New(cfg.Models.OpenRouterKey, "openai/gpt-6.1-terra", store)
@@ -100,6 +103,8 @@ func (a *App) Resume(ctx context.Context) error {
 	return a.Dispatcher.Resume(ctx)
 }
 
+func (a *App) RepairWake(ctx context.Context) error { return a.WakeRepair.Repair(ctx) }
+
 func (a *App) Process(ctx context.Context) error {
 	if a.Runner == nil {
 		return a.Chats.Process(ctx)
@@ -107,42 +112,34 @@ func (a *App) Process(ctx context.Context) error {
 	chatDone := make(chan error, 1)
 	go func() { chatDone <- a.Chats.Process(ctx) }()
 	assistantErr := a.processAssistant(ctx)
-	return errors.Join(<-chatDone, assistantErr)
+	if err := errors.Join(<-chatDone, assistantErr); err != nil {
+		return err
+	}
+	// A command inserted behind an outbox scan's cursor, or input committed
+	// while another lane drained, still needs this queue request to retry.
+	pending, err := a.Store.WorkVersion(ctx, true)
+	if err == nil && pending != "" {
+		err = state.ErrConversationBusy
+	}
+	return err
 }
 
 func (a *App) processAssistant(ctx context.Context) error {
 	if a.Runner == nil {
 		return nil
 	}
-	// A paused worker cannot finish a queued Stop. Retry only accepted Stop
-	// targets here, including a timed-out cleanup from the submitting request.
-	var stopErr error
-	store := a.Tasks.Store
-	control, err := store.Control(ctx)
-	if err != nil {
-		return err
-	}
-	if control.Paused {
-		runs, err := store.OpenTasks(ctx)
-		if err != nil {
-			return err
-		}
-		for _, run := range runs {
-			if run.CancelRequested {
-				cleanup, cancel := context.WithTimeout(ctx, 10*time.Second)
-				_, err := a.Dispatcher.StopPaused(cleanup, run.ID)
-				cancel()
-				stopErr = errors.Join(stopErr, err)
-			}
-		}
-	}
+	// Advance already accepted tasks before doing potentially slow model work.
+	// The same reconciliation boundary is used by worker startup and recovery.
+	before, cancel := context.WithTimeout(ctx, 10*time.Second)
+	beforeErr := a.Dispatcher.Reconcile(before, dispatch.RepairClosed|dispatch.Commands|dispatch.Publications)
+	cancel()
 	processErr := a.Runner.Process(ctx)
 	// Dispatch and explicit controls can outlive their first delivery attempt.
 	// Keep the queue notification until delivery is confirmed.
-	delivery, cancel := context.WithTimeout(ctx, 5*time.Second)
+	delivery, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	reconcileErr := a.Dispatcher.Reconcile(delivery, dispatch.Commands|dispatch.Publications)
-	return errors.Join(stopErr, processErr, reconcileErr)
+	reconcileErr := a.Dispatcher.Reconcile(delivery, dispatch.RepairClosed|dispatch.Commands|dispatch.Publications)
+	return errors.Join(beforeErr, processErr, reconcileErr)
 }
 
 var _ api.Operations = (*App)(nil)

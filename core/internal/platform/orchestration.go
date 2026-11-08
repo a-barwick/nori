@@ -99,8 +99,16 @@ func Engine(ctx context.Context, s settings.Settings, userID string) (*task.Engi
 
 // Dispatcher assembles the reconciliation pass every delivering process shares.
 func Dispatcher(s settings.Settings, store state.ConversationStore, engine dispatch.Orchestrator, waker wake.Waker, userID string) *dispatch.Dispatcher {
+	waker = wake.ForUser(waker, userID)
 	return &dispatch.Dispatcher{
-		Store: store, Engine: engine, Waker: wake.ForUser(waker, userID), UserID: userID,
-		Recovery: task.Recovery{Store: store, Engine: engine, Computer: Computer(s)},
+		Store: store, Engine: engine, Waker: waker, UserID: userID,
+		Recovery:   task.Recovery{Store: store, Engine: engine, Computer: Computer(s)},
+		WakeRepair: WorkWakes(store, waker, true),
 	}
+}
+
+func WorkWakes(store state.Database, waker wake.Waker, tasks bool) *wake.Repairer {
+	return &wake.Repairer{Waker: waker, Pending: func(ctx context.Context) (string, error) {
+		return store.WorkVersion(ctx, tasks)
+	}}
 }

@@ -59,9 +59,6 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 	service.UserFacts = row.Facts()
 	waker := wake.ForUser(g.waker, row.ID)
 	activities := &task.Activities{Agent: service, Store: store}
-	if !cfg.Temporal.Local {
-		activities.Notify = waker.WakeConversation
-	}
 	entry := &userWorker{activities: activities, store: store, dispatcher: platform.Dispatcher(cfg, store, task.NewEngine(g.client, cfg.Temporal, row.ID), waker, row.ID)}
 	g.entries[row] = entry
 	return entry, nil

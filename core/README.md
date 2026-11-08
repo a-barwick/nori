@@ -96,6 +96,52 @@ and [task graph](https://github.com/earendil-works/pi/blob/6e2222a8dda06e3d69fad
 Nori keeps its bounded parent/child relationship, existing database transactions,
 and Temporal execution rather than adding a second scheduler or a general task graph.
 
+## Execution coordination
+
+Committed records determine what work needs to advance. Queue messages and
+Temporal signals only notify the process that can advance it.
+
+| Authority | Responsibility |
+| --- | --- |
+| Conversation inbox and leased turn | Order user input and task events; fence stale replies and commands. |
+| Task commands and run revision | Accept instructions atomically; retain delivery intent until the engine signal and required worker wake succeed. |
+| Temporal history | Own runnable task execution, activity retries, durable waits, and the pinned worker build. |
+| Publication transaction | Save an outcome and its conversation event together, after routing and owned-work conditions permit it. |
+| Shared dispatcher | Repair closed executions or paused Stops, relay commands, release held publications, and repair API wakes. |
+
+The API reconciles before and after assistant processing. Workers use the same
+dispatcher during startup and polling. Task acceptance retains a short delivery
+attempt for responsiveness; it does not own separate recovery rules. The command
+outbox is scanned in bounded pages through a stable cursor, including past failed
+deliveries. Each page sends one notification per task. The workflow reads saved
+command positions, so transport ordering and duplicate signals cannot reorder
+instructions. Acknowledgement follows successful delivery; a crash may repeat a
+notification but cannot erase the accepted command.
+
+`WorkVersion` derives wake demand from existing records: unleased assistant or
+chat turns, pending commands, eligible publications, terminal cleanup, and paused
+Stops. It does not depend on the client's current conversation or recent history.
+Snapshots, stream reconnects/heartbeats, and worker polling use one wake-repair
+policy. Only a confirmed wake is throttled, and newly discovered work bypasses
+that throttle. Chat-only installations inspect only chats.
+
+Activities commit outcomes without queue I/O. The worker coordinator confirms
+the conversation wake during polling and again after activities drain. A failed
+reconciliation or final wake keeps the incoming queue request retryable; it cannot
+turn an already saved success or question into a task failure. The API also checks
+for work arriving during its processing pass before acknowledging its wake.
+
+This applies Pi Durable's [stored commit publication](https://github.com/earendil-works/pi/blob/6e2222a8dda06e3d69fad46d630f152f5873567a/packages/durable/src/session/session.ts#L1297),
+[ordered inbox boundaries](https://github.com/earendil-works/pi/blob/6e2222a8dda06e3d69fad46d630f152f5873567a/packages/durable/src/harness/inbox.ts#L63),
+and [wake demand including reconciliation](https://github.com/earendil-works/pi/blob/6e2222a8dda06e3d69fad46d630f152f5873567a/packages/durable/src/harness/scheduler.ts#L520).
+Nori retains its database/Temporal boundary: consolidating their histories into
+Pi's single-session scheduler would require replacing distributed leases, worker
+versioning, and hosted execution. No additional journal or scheduler is needed
+for this change. If a process dies between acceptance and enqueue, the saved work
+is repaired by a retry, reconnect, local processing loop, or active worker; there
+is no new always-on sweep while all compute is idle. Older pinned workers retain
+their existing notification behavior until they drain.
+
 ## Observability
 
 Sentry and Arize export are optional and fail open. Set `SENTRY_DSN` for

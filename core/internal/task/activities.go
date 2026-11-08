@@ -25,9 +25,8 @@ import (
 )
 
 type Activities struct {
-	Agent  *agent.Service
-	Store  state.TaskStore
-	Notify func(context.Context) error
+	Agent *agent.Service
+	Store state.TaskStore
 }
 type Step struct {
 	RunID    string
@@ -358,20 +357,12 @@ func StopComputer(ctx context.Context, config computer.Provider, ids []string) e
 	}
 	return nil
 }
-func (a *Activities) notify(ctx context.Context) {
-	if a.Notify != nil {
-		if err := a.Notify(ctx); err != nil {
-			log.Printf("task event saved; conversation wake remains pending: %v", err)
-		}
-	}
-}
 func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) {
 	ctx, span := startActivity(ctx, "task.question", "CHAIN", a.activityRun(ctx, p.RunID), p.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.question"); span.End() }()
 	if err := a.Store.ProjectQuestion(ctx, p.RunID, p.Revision, p.Question); err != nil {
 		return classified(err)
 	}
-	a.notify(ctx)
 	return nil
 }
 func (a *Activities) Publish(ctx context.Context, p Publication) (result state.Run, resultErr error) {
@@ -406,9 +397,6 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 		RunID: p.RunID, Revision: p.Revision, Status: p.Status, Detail: p.Detail, Text: p.Text,
 		CostUnknown: p.CostUnknown, Spent: p.Spent, BypassRouting: p.BypassRouting, Answer: p.Answer, ExpectedIncomplete: p.ExpectedIncomplete,
 	})
-	if err == nil {
-		a.notify(ctx)
-	}
 	return r, classified(err)
 }
 func (a *Activities) Project(ctx context.Context, p Projection) error {

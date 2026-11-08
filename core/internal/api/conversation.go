@@ -60,16 +60,19 @@ func (s *server) writeSession(w http.ResponseWriter, r *http.Request, before str
 			return
 		}
 	}
-	var wakeErr error
-	if !session.Conversation.Processing {
-		wakeErr = s.ensureWake(r.Context(), session)
-	}
+	wakeErr := s.Ops.RepairWake(r.Context())
 	if wakeErr != nil {
 		log.Printf("conversation wake reconciliation failed: %v", wakeErr)
 		writeJSON(w, 503, map[string]any{"error": "Conversation delivery is unavailable. Retry shortly.", "retryable": true, "session": session})
 		return
 	}
 	writeJSON(w, 200, session)
+}
+
+func (s *server) repairWake(ctx context.Context) {
+	if err := s.Ops.RepairWake(ctx); err != nil {
+		log.Printf("saved work wake repair failed: %v", err)
+	}
 }
 
 func (s *server) turn(w http.ResponseWriter, r *http.Request) {

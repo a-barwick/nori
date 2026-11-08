@@ -89,7 +89,7 @@ type conversationFeed[T any] struct {
 	limit     int64
 	heartbeat time.Duration
 	comment   string
-	onOpen    func()
+	repair    func()
 	watch     func(context.Context, func([]T) error) error
 	sequence  func(T) int64
 	project   func(context.Context, T) (conversationEvent, error)
@@ -104,15 +104,15 @@ func streamConversation[T any](w http.ResponseWriter, r *http.Request, after int
 	stream := prepareEventStream(w, "no-store")
 	_ = stream.control.SetWriteDeadline(time.Time{})
 	w.WriteHeader(http.StatusOK)
-	if position-after > feed.limit {
-		_ = stream.send("", position, conversationEvent{Kind: "reset", Seq: position, Conversation: feed.header, Messages: []messageView{}})
-		return
-	}
 	if stream.control.Flush() != nil {
 		return
 	}
-	if feed.onOpen != nil {
-		feed.onOpen()
+	if feed.repair != nil {
+		feed.repair()
+	}
+	if position-after > feed.limit {
+		_ = stream.send("", position, conversationEvent{Kind: "reset", Seq: position, Conversation: feed.header, Messages: []messageView{}})
+		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), streamLifetime)
 	defer cancel()
@@ -131,6 +131,9 @@ func streamConversation[T any](w http.ResponseWriter, r *http.Request, after int
 		case <-heartbeat.C:
 			if stream.comment(feed.comment) != nil {
 				return
+			}
+			if feed.repair != nil {
+				feed.repair()
 			}
 		case batch := <-batches:
 			for _, event := range batch {

@@ -77,8 +77,9 @@ type TaskDatabase interface {
 
 	// The optional fence ties acceptance to the conversation turn that produced the batch.
 	AcceptCommandBatch(ctx context.Context, commands []Command, fence *ConversationFence) ([]CommandReceipt, error)
-	// Pending lists accepted commands whose delivery to the worker is not confirmed; Delivered confirms one.
-	Pending(ctx context.Context) ([]Command, error)
+	// Pending pages unconfirmed commands by ID, starting after the prior page's
+	// Next cursor (empty on the first call). Delivered confirms one command.
+	Pending(ctx context.Context, after string) (CommandPage, error)
 	Delivered(ctx context.Context, commandID string) error
 	// Reconcile returns a task with the commands it has accepted, in order.
 	Reconcile(ctx context.Context, runID string) (TaskSnapshot, error)
@@ -117,6 +118,9 @@ type Database interface {
 	ChatDatabase
 	TaskDatabase
 	ConversationDatabase
+	// WorkVersion returns an opaque identity for pending API work, or empty when
+	// none needs a wake. tasks=false excludes assistant/task work in chat-only mode.
+	WorkVersion(ctx context.Context, tasks bool) (string, error)
 	Close() error
 }
 

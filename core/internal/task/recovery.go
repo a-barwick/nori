@@ -227,6 +227,5 @@ func (a *Activities) Cleanup(ctx context.Context, id string) error {
 	if err == nil {
 		err = repairCleanup(ctx, a.Store, a.Agent.Computer, run)
 	}
-	a.notify(ctx)
 	return classified(err)
 }

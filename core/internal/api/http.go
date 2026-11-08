@@ -33,6 +33,9 @@ type Operations interface {
 	// Resume repairs delivery and wakes retained workflows after the operator
 	// reopens admission.
 	Resume(ctx context.Context) error
+	// RepairWake derives missing notification demand from all of this user's
+	// committed work, independently of the conversation a client is viewing.
+	RepairWake(ctx context.Context) error
 }
 
 type server struct {

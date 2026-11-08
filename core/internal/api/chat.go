@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -90,6 +89,7 @@ func (s *server) chatSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, view)
+		s.repairWake(r.Context())
 		return
 	}
 	c, err := s.Chats.Store.Chat(r.Context(), id)
@@ -98,17 +98,7 @@ func (s *server) chatSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, chatView(c))
-}
-
-// repairWake queues processing for a turn that should be running but may have
-// lost its wake. Duplicate wakes are harmless: only the turn's lease runs work.
-func (s *server) repairWake(ctx context.Context, c state.Chat) {
-	if c.ActiveTurn == nil {
-		return
-	}
-	if err := s.wakeConversation(ctx); err != nil {
-		log.Printf("chat wake repair failed: %v", err)
-	}
+	s.repairWake(r.Context())
 }
 
 func (s *server) chatMessage(w http.ResponseWriter, r *http.Request) {
@@ -164,9 +154,7 @@ func (s *server) chatMessage(w http.ResponseWriter, r *http.Request) {
 		c, err := s.Chats.Accept(r.Context(), id, body.ID, body.Text, body.Attachments)
 		if errors.Is(err, state.ErrChatBusy) {
 			// A busy chat may have lost the wake that starts its saved turn.
-			if current, e := s.Chats.Store.Chat(r.Context(), id); e == nil {
-				s.repairWake(r.Context(), current)
-			}
+			s.repairWake(r.Context())
 		}
 		if err != nil {
 			writeError(w, err)
@@ -241,7 +229,7 @@ func (s *server) chatEvents(w http.ResponseWriter, r *http.Request) {
 		limit:     state.ChatEventReplayLimit,
 		heartbeat: 15 * time.Second,
 		comment:   "keepalive",
-		onOpen:    func() { s.repairWake(r.Context(), c) },
+		repair:    func() { s.repairWake(r.Context()) },
 		watch: func(ctx context.Context, deliver func([]state.ChatEvent) error) error {
 			return s.Chats.Store.WatchChatEvents(ctx, id, after, deliver)
 		},

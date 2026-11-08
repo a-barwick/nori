@@ -116,11 +116,7 @@ func (s *server) sendPresence(ctx context.Context, stream eventStream, last stri
 	if err != nil {
 		return last
 	}
-	if presence.Conversation.Pending && !presence.Conversation.Processing {
-		if err := s.wakeConversation(ctx); err != nil {
-			log.Printf("conversation wake reconciliation failed: %v", err)
-		}
-	}
+	s.repairWake(ctx)
 	encoded, err := json.Marshal(presence)
 	if err != nil || string(encoded) == last {
 		return last
