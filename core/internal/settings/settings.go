@@ -51,11 +51,19 @@ type AWS struct {
 }
 
 type Models struct {
-	// OpenAIKey is the outer conversation's key, JevKey the intent classifier's, and OpenRouterKey the task worker's
-	// and the conversation summary's.
+	// OpenAIKey serves conversation replies and, with the direct Terra ID, tasks and summaries.
 	OpenAIKey, JevKey, OpenRouterKey string
 	// Outer is the outer conversation model and Inner the task worker model.
 	Outer, Inner string
+}
+
+func (m Models) UsesOpenAIForTasks() bool { return m.Inner == "gpt-6.1-terra" }
+
+func (m Models) TaskCredential() (name, key string) {
+	if m.UsesOpenAIForTasks() {
+		return "OPENAI_API_KEY", m.OpenAIKey
+	}
+	return "OPENROUTER_API_KEY", m.OpenRouterKey
 }
 
 type Store struct {

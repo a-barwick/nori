@@ -1,4 +1,4 @@
-package openrouter
+package responses
 
 import (
 	"bytes"
@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strings"
 
@@ -17,38 +16,34 @@ import (
 )
 
 func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out agent.Inspection, err error) {
-	if c.ModelName != selectedModel {
-		return out, errors.New("task model must be the selected openai/gpt-6.1-terra")
+	if !c.validModel() {
+		return out, errors.New("task model must be the selected GPT-6.1 Terra")
 	}
 	image := "data:" + req.MediaType + ";base64," + base64.StdEncoding.EncodeToString(req.Image)
-	body, err := json.Marshal(map[string]any{
+	fields := map[string]any{
 		"model": c.ModelName, "instructions": req.Instructions, "max_output_tokens": req.MaxOutputTokens, "store": false,
 		"input": []any{map[string]any{"role": "user", "content": []any{
 			map[string]any{"type": "input_text", "text": req.Question},
 			map[string]any{"type": "input_image", "image_url": image, "detail": "high"},
 		}}},
-		"provider": routing(),
-	})
+	}
+	c.requestOptions(fields)
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return out, errors.New("inspection request could not be encoded")
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
 	if err != nil {
 		return out, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
 	httpReq.Header.Set("Content-Type", "application/json")
-	record := usage.Attempt(ctx, provider, c.ModelName)
+	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
 	record.RequestStatus = "unknown"
-	defer func() {
-		if out.CostKnown {
-			record.CostUSD, record.CostStatus = &out.Cost, "provider"
-		}
-		err = errors.Join(err, usage.Finish(ctx, c.Meter, record))
-	}()
+	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
 	out.Sent = true
 	res, err := c.HTTP.Do(httpReq)
 	if err != nil {
@@ -68,23 +63,14 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 				Text string `json:"text"`
 			} `json:"content"`
 		} `json:"output"`
-		Usage *struct {
-			Cost   *float64 `json:"cost"`
-			Input  *int64   `json:"input_tokens"`
-			Output *int64   `json:"output_tokens"`
-			Total  *int64   `json:"total_tokens"`
-		} `json:"usage"`
+		Model string         `json:"model"`
+		Tier  string         `json:"service_tier"`
+		Usage *responseUsage `json:"usage"`
 	}
 	if json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response) != nil {
 		return out, errors.New("inspection model returned an unreadable response")
 	}
-	if u := response.Usage; u != nil {
-		record.InputTokens, record.OutputTokens, record.TotalTokens = u.Input, u.Output, u.Total
-	}
-	if response.Usage != nil && response.Usage.Cost != nil && *response.Usage.Cost >= 0 &&
-		!math.IsNaN(*response.Usage.Cost) && !math.IsInf(*response.Usage.Cost, 0) {
-		out.Cost, out.CostKnown = *response.Usage.Cost, true
-	}
+	out.Cost, out.CostKnown = c.recordCost(&record, response.Model, response.Tier, response.Usage)
 	text := []string{}
 	for _, item := range response.Output {
 		if item.Type != "message" {

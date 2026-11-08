@@ -9,7 +9,7 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"nori/internal/agent"
-	"nori/internal/agent/openrouter"
+	"nori/internal/agent/responses"
 	"nori/internal/dispatch"
 	"nori/internal/platform"
 	"nori/internal/settings"
@@ -53,7 +53,8 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 	if err != nil {
 		return nil, err
 	}
-	model := openrouter.New(cfg.Models.OpenRouterKey, cfg.Models.Inner, store)
+	_, taskKey := cfg.Models.TaskCredential()
+	model := responses.New(taskKey, cfg.Models.Inner, store)
 	service := agent.New(store, model, platform.Computer(cfg))
 	service.Capabilities = caps
 	service.UserFacts = row.Facts()

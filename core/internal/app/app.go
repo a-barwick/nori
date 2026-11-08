@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"nori/internal/agent/openrouter"
+	"nori/internal/agent/responses"
 	"nori/internal/api"
 	"nori/internal/chat"
 	"nori/internal/conversation"
@@ -71,8 +71,12 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	dispatcher := platform.Dispatcher(cfg, store, engine, waker, user.ID)
 	dispatcher.WakeRepair = result.WakeRepair
 	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
-	// Compaction keeps a fixed model even when the task worker uses a different one.
-	summarizer := openrouter.New(cfg.Models.OpenRouterKey, "openai/gpt-6.1-terra", store)
+	_, taskKey := cfg.Models.TaskCredential()
+	summaryModel := "openai/gpt-6.1-terra"
+	if cfg.Models.UsesOpenAIForTasks() {
+		summaryModel = cfg.Models.Inner
+	}
+	summarizer := responses.New(taskKey, summaryModel, store)
 	var classifier conversation.IntentClassifier
 	if !cfg.Features.DisableJev {
 		classifier = conversation.NewJevClassifier(cfg.Models.JevKey)

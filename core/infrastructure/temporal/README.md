@@ -185,9 +185,10 @@ state for subsequent releases.
 
 The existing Secret Manager container `nori-temporal-api-key` supplies the worker
 credential by reference. Its payload never enters Terraform, state, images,
-plans or logs. The root `.env` remains the local source. Selected models:
-intent `jev-latest`, outer `gpt-6.1-sol` with low reasoning through the
-OpenAI platform API, and task worker `openai/gpt-6.1-terra` through OpenRouter Responses.
+plans or logs. The root `.env` remains the local source. New production workers
+use `gpt-6.1-terra` through OpenAI Responses and reference the existing
+`nori-openai-api-key` secret. The outer runtime uses `gpt-6.1-sol` for replies
+and intent routing. Local and candidate workers keep their existing settings.
 
 New release targets set `per_user_settings=true` so computer settings come
 from user rows. Retained builds keep their original environment,

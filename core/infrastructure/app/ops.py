@@ -547,6 +547,12 @@ def deploy_runtime(c, workers, image):
         env.pop("OPENROUTER_MANAGEMENT_KEY", None)
         secret_env.pop("OPENROUTER_MANAGEMENT_KEY", None)
         secret_env["OPENROUTER_API_KEY"] = {"name": "OPENROUTER_API_KEY", "secretRef": {"secret": "nori-sandbox-openrouter-api-key", "version": "latest"}}
+    else:
+        env["MODEL_NAME"] = {"name": "MODEL_NAME", "value": "gpt-6.1-terra"}
+        env["NORI_JEV_ENABLED"] = {"name": "NORI_JEV_ENABLED", "value": "false"}
+        for name in ("OPENROUTER_API_KEY", "OPENROUTER_MANAGEMENT_KEY", "JEV_API_KEY"):
+            env.pop(name, None)
+            secret_env.pop(name, None)
     patch_runtime(c, image, {**runtime_settings(), "env": list(env.values()), "secretEnv": list(secret_env.values())})
 
 

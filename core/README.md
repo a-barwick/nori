@@ -1,9 +1,10 @@
 # Nori core
 
 The Go API owns durable conversation and task admission in the configured database. Both
-`cmd/nori-local` and `cmd/nori` use the same conversation runner, OpenRouter
-model, and advisory Jev hints. Temporal owns inner task execution; a separate Go
-worker calls OpenRouter Responses and the retained Firecracker computer. Screenshots
+`cmd/nori-local` and `cmd/nori` use the same conversation runner. Production uses OpenAI directly for
+replies, task reasoning, image inspection, and conversation summaries. Local development
+keeps OpenRouter and advisory Jev hints. Temporal owns inner task execution and
+a separate Go worker operates the retained Firecracker computer. Screenshots
 live in a private GCS bucket. The browser uses a same-origin Next.js proxy and
 verified sign-in; hosted runtime IAM admits the web and queue caller
 service accounts.
@@ -185,8 +186,7 @@ failure, retaining its sources.
 
 Extractive indexes are partial views, not semantic summaries or permission. A model
 must retrieve missing source details before relying on them. Existing task archive
-limits still apply. No model, provider, production service, or deployment setting
-changes with this implementation.
+limits still apply.
 
 The reference is Pi Durable at [`6e2222a`](https://github.com/earendil-works/pi/tree/6e2222a8dda06e3d69fad46d630f152f5873567a/packages/durable):
 [`context.ts`](https://github.com/earendil-works/pi/blob/6e2222a8dda06e3d69fad46d630f152f5873567a/packages/durable/src/harness/context.ts)
@@ -244,7 +244,7 @@ computer or a model; `/healthz` does not verify those services are reachable.
 
 | Configuration | Purpose |
 | --- | --- |
-| `OPENAI_API_KEY`, `JEV_API_KEY` | Required conversation provider credentials for both entrypoints |
+| `OPENAI_API_KEY`, `JEV_API_KEY` | OpenAI credential for replies and direct Terra. Jev requires its own key when enabled |
 | `NORI_AGENT_MODEL` | Conversation model; default `gpt-6.1-sol`. It runs through OpenAI's platform API at a fixed endpoint, with low reasoning and the standard tier |
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
 | `NORI_STORE_BACKEND`, `NORI_POSTGRES_URL` | Firestore by default; `postgres` selects a Postgres connection and applies numbered migrations at startup |
@@ -252,8 +252,8 @@ computer or a model; `/healthz` does not verify those services are reachable.
 | `FIRESTORE_EMULATOR_HOST`, `TEMPORAL_LOCAL` | Explicit local Firestore endpoint and local Temporal mode; absent/false uses configured services |
 | `NORI_WAKE_QUEUE`, `NORI_WAKE_SERVICE_ACCOUNT`, `NORI_RUNTIME_URL` | Hosted entrypoint's Cloud Tasks queue, OAuth caller, and the API base URL that wakes POST to at `/users/<id>/api/process`. Production passes the native Agent Runtime invoke root, which ends in `/api`. Any `https` host is accepted, or loopback `http` when `TEMPORAL_LOCAL=true` |
 | `NORI_WORKER_SERVICES`, `NORI_WORKER_WAKE_QUEUE`, `CLOUD_TASKS_EMULATOR_HOST` | Optional request-driven workers: JSON map of immutable build to service root URL, the Cloud Tasks queue that wakes them (OIDC, same caller), and a loopback Cloud Tasks emulator for local runs. Without `NORI_WORKER_SERVICES`, workers poll on their own |
-| `OPENROUTER_API_KEY` | Inner worker credential from the project `.env` |
-| `MODEL_NAME` | Inner worker model; default `openai/gpt-6.1-terra` through OpenRouter Responses |
+| `OPENROUTER_API_KEY` | Inner worker credential for the local OpenRouter route |
+| `MODEL_NAME` | Production uses `gpt-6.1-terra` through OpenAI Responses. Local defaults to `openai/gpt-6.1-terra` through OpenRouter Responses |
 | `NORI_CLOUD` | `gcp` (default), `aws`, or `local`; see [AWS adapters](infrastructure/aws/README.md) |
 | `ARTIFACT_BUCKET` | Private Cloud Storage or S3 bucket, selected by cloud |
 | `NORI_STATE_EMULATOR_HOST` | App-data Firestore emulator on a loopback address; refused when `FIRESTORE_EMULATOR_HOST` is also set. |
