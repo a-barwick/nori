@@ -89,6 +89,11 @@ func (s *Slice) Finish(w Worker, d Dispatch, result error) error {
 	}
 	check, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	// Activities only commit outcomes. After draining them, this coordinator
+	// confirms the API wake, including outcomes committed after the last poll.
+	// Failure keeps the incoming queue notification retryable without changing
+	// the task's already committed success or question into a task failure.
+	result = errors.Join(result, d.Reconcile(check, dispatch.ConversationWake))
 	control, err := d.Control(check)
 	if err != nil {
 		return errors.Join(result, err)
@@ -136,6 +141,11 @@ func (s *Slice) Loop(ctx context.Context, w Worker, d Dispatch, steps dispatch.S
 			pass |= dispatch.RepairClosed
 		}
 		if err := d.Reconcile(ctx, pass); err != nil && ctx.Err() == nil {
+			if s.Bounded {
+				// Reconciliation is work too. Quiet Temporal queues cannot
+				// acknowledge away a failed command relay or outcome wake.
+				return err
+			}
 			log.Printf("worker reconciliation: %v", err)
 		}
 		if quiet, err := s.Quiet(ctx, w, d); err != nil {

@@ -20,12 +20,22 @@ func (d *Database) OpenTasks(ctx context.Context) ([]state.Run, error) {
 	return documents[state.Run](d.runs().Where("status", "==", "running").Documents(ctx))
 }
 
-func (d *Database) Pending(ctx context.Context) ([]state.Command, error) {
-	commands, err := documents[state.Command](d.commands().Where("delivered", "==", false).Limit(state.PendingCommandLimit).Documents(ctx))
-	if err != nil {
-		return nil, err
+func (d *Database) Pending(ctx context.Context, after string) (state.CommandPage, error) {
+	query := d.commands().Where("delivered", "==", false).OrderBy(docstore.DocumentID, docstore.Asc).Limit(state.PendingCommandLimit)
+	if after != "" {
+		// ID is the entire ordering key; a cursor needs no reread of the
+		// record that may already have left the pending set.
+		query = query.StartAfter(&docstore.DocumentSnapshot{Ref: d.commands().Doc(after)})
 	}
-	return state.OrderPending(commands), nil
+	commands, err := documents[state.Command](query.Documents(ctx))
+	if err != nil {
+		return state.CommandPage{}, err
+	}
+	page := state.CommandPage{Commands: commands}
+	if len(commands) == state.PendingCommandLimit {
+		page.Next = commands[len(commands)-1].ID
+	}
+	return page, nil
 }
 
 func (d *Database) Delivered(ctx context.Context, commandID string) error {

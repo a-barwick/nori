@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
-	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -25,22 +23,18 @@ const (
 	// Publications wakes executions holding a finished result, once no chat
 	// input is waiting to be routed.
 	Publications
-	// ConversationWake wakes the API for saved chat input that nothing is
-	// processing. It suits a poller, so repeat wakes for the same input are
-	// throttled.
+	// ConversationWake repairs API notifications from all saved runnable work.
+	// Confirmed repeats are throttled; new work and failed enqueues are not.
 	ConversationWake
 )
 
 type Dispatcher struct {
-	UserID   string
-	Store    state.ConversationStore
-	Engine   Orchestrator
-	Waker    wake.Waker
-	Recovery Recovery
-
-	mu               sync.Mutex
-	lastWakeReceived int64
-	lastWakeAttempt  time.Time
+	UserID     string
+	Store      state.ConversationStore
+	Engine     Orchestrator
+	Waker      wake.Waker
+	Recovery   Recovery
+	WakeRepair *wake.Repairer
 }
 
 // Reconcile runs the selected steps once, in this order: repair of closed
@@ -57,28 +51,46 @@ func (d *Dispatcher) Reconcile(ctx context.Context, steps Steps) error {
 			failures = append(failures, fmt.Errorf("%s: %w", label, err))
 		}
 	}
-	step(RepairClosed, "terminal recovery", func(ctx context.Context) error { return d.Recovery.RepairClosed(ctx) })
+	step(RepairClosed, "terminal recovery", d.repairClosed)
 	step(Commands, "pending command delivery", d.deliverCommands)
 	step(Publications, "held publication wake", d.wakePublications)
-	step(ConversationWake, "pending task event wake", d.wakeConversation)
+	step(ConversationWake, "pending work wake", d.WakeRepair.Repair)
 	return errors.Join(failures...)
 }
 
-func (d *Dispatcher) StopPaused(ctx context.Context, runID string) (state.Run, error) {
-	return d.Recovery.StopPaused(ctx, runID)
+func (d *Dispatcher) repairClosed(ctx context.Context) error {
+	control, err := d.Store.Control(ctx)
+	if err != nil {
+		return err
+	}
+	if !control.Paused {
+		return d.Recovery.RepairClosed(ctx)
+	}
+	runs, err := d.Store.OpenTasks(ctx)
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, run := range runs {
+		if run.CancelRequested {
+			_, err := d.Recovery.StopPaused(ctx, run.ID)
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // deliverCommands is called after acceptance and on worker/API startup. A crash
 // before marking the durable intent delivered merely sends a duplicate on repair.
 func (d *Dispatcher) deliverCommands(ctx context.Context) (resultErr error) {
-	pending, e := d.Store.Pending(ctx)
-	if e != nil {
+	page, err := d.Store.Pending(ctx, "")
+	if err != nil {
 		if !errors.Is(ctx.Err(), context.Canceled) {
-			observability.RecordErrorCategory(ctx, "task.delivery", e)
+			observability.RecordErrorCategory(ctx, "task.delivery", err)
 		}
-		return e
+		return err
 	}
-	if len(pending) == 0 {
+	if len(page.Commands) == 0 {
 		return nil
 	}
 	ctx, span := tracer.Start(ctx, "task.deliver_pending", trace.WithAttributes(
@@ -89,18 +101,50 @@ func (d *Dispatcher) deliverCommands(ctx context.Context) (resultErr error) {
 		}
 		span.End()
 	}()
-	span.SetAttributes(attribute.Int("nori.command.count", len(pending)))
 	var failures []error
 	requestDriven := d.Waker.WorkersNeedWake()
-	for _, cmd := range pending {
-		delivered, err := d.relayCommand(ctx, cmd, requestDriven)
-		if delivered {
-			err = d.Store.Delivered(ctx, cmd.ID)
+	count := 0
+	for {
+		count += len(page.Commands)
+		// Signals carry notifications, not instructions. One per task is enough:
+		// the workflow reads every accepted command in its stored position order.
+		groups := map[string][]state.Command{}
+		var order []string
+		for _, cmd := range page.Commands {
+			if len(groups[cmd.RunID]) == 0 {
+				order = append(order, cmd.RunID)
+			}
+			groups[cmd.RunID] = append(groups[cmd.RunID], cmd)
 		}
+		for _, id := range order {
+			commands := groups[id]
+			notification := commands[0]
+			for _, cmd := range commands {
+				if cmd.Kind == state.CommandStop {
+					notification = cmd
+				}
+			}
+			delivered, err := d.relayCommand(ctx, notification, requestDriven)
+			if delivered {
+				for _, cmd := range commands {
+					if err := d.Store.Delivered(ctx, cmd.ID); err != nil {
+						failures = append(failures, err)
+					}
+				}
+			}
+			if err != nil {
+				failures = append(failures, err)
+			}
+		}
+		if page.Next == "" {
+			break
+		}
+		page, err = d.Store.Pending(ctx, page.Next)
 		if err != nil {
-			failures = append(failures, err)
+			return errors.Join(append(failures, err)...)
 		}
 	}
+	span.SetAttributes(attribute.Int("nori.command.count", count))
 	return errors.Join(failures...)
 }
 
@@ -110,12 +154,13 @@ func (d *Dispatcher) relayCommand(ctx context.Context, cmd state.Command, reques
 		return false, err
 	}
 	terminal := run.Status != state.RunRunning
+	notification := state.Command{RunID: cmd.RunID, Kind: "commands-ready"}
 	if terminal {
 		if !run.CancelRequested || cmd.Kind != state.CommandStop {
 			return true, nil
 		}
 		// Stop may have projected cancellation while its workflow was parked.
-		err = d.Engine.Signal(ctx, cmd.RunID, cmd)
+		err = d.Engine.Signal(ctx, cmd.RunID, notification)
 		if errors.Is(err, ErrNoExecution) {
 			return true, nil
 		}
@@ -133,13 +178,13 @@ func (d *Dispatcher) relayCommand(ctx context.Context, cmd state.Command, reques
 			return false, nil
 		}
 		// An accepted Stop can signal an existing execution without starting one.
-		if err := d.Engine.Signal(ctx, cmd.RunID, cmd); err != nil {
+		if err := d.Engine.Signal(ctx, cmd.RunID, notification); err != nil {
 			return false, fmt.Errorf("command %s delivery: %w", cmd.ID, err)
 		}
 		return !requestDriven, nil
 	}
 	if !terminal {
-		if err := d.Engine.SignalOrStart(ctx, cmd); err != nil {
+		if err := d.Engine.SignalOrStart(ctx, notification); err != nil {
 			return false, fmt.Errorf("command %s delivery: %w", cmd.ID, err)
 		}
 	}
@@ -151,6 +196,10 @@ func (d *Dispatcher) relayCommand(ctx context.Context, cmd state.Command, reques
 // fence preserves a newer hold if another user input arrives during delivery.
 // It reuses the user-only routing fence that terminal publication waits on.
 func (d *Dispatcher) wakePublications(ctx context.Context) error {
+	control, err := d.Store.Control(ctx)
+	if err != nil || control.Paused {
+		return err
+	}
 	pending, err := d.Store.UserRoutingPending(ctx)
 	if err != nil {
 		return err
@@ -177,30 +226,6 @@ func (d *Dispatcher) wakePublications(ctx context.Context) error {
 		}
 	}
 	return errors.Join(failures...)
-}
-
-func (d *Dispatcher) wakeConversation(ctx context.Context) error {
-	relay, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	control, _, err := d.Store.ConversationStatus(relay)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	if !control.Pending() || control.Processing(now) {
-		return nil
-	}
-	d.mu.Lock()
-	if control.Received == d.lastWakeReceived && now.Sub(d.lastWakeAttempt) < time.Minute {
-		d.mu.Unlock()
-		return nil
-	}
-	// Record the attempt before scheduling: an error may still mean the queue
-	// accepted the wake. Bound duplicate fallback wakes while preserving
-	// immediate delivery for newly received input.
-	d.lastWakeReceived, d.lastWakeAttempt = control.Received, now
-	d.mu.Unlock()
-	return d.Waker.WakeConversation(relay)
 }
 
 // Resume signals existing durable tasks after admission reopens. User-input waits

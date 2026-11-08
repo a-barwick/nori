@@ -17,6 +17,13 @@ type CommandReceipt struct {
 	Run     Run     `json:"run"`
 }
 
+// CommandPage scans the delivery outbox in stable ID order. Next survives
+// acknowledgements deleting records from the pending set during the scan.
+type CommandPage struct {
+	Commands []Command
+	Next     string
+}
+
 // Command and its delivery intent are committed in the acceptance transaction.
 // ID is supplied by the caller and is stable across HTTP and relay retries.
 type CommandKind string
@@ -376,9 +383,4 @@ func ReconcileCommands(run Run, commands []Command) []Command {
 	}
 	sort.Slice(selected, func(i, j int) bool { return selected[i].Position < selected[j].Position })
 	return selected
-}
-
-func OrderPending(commands []Command) []Command {
-	sort.Slice(commands, func(i, j int) bool { return commands[i].CreatedAt.Before(commands[j].CreatedAt) })
-	return commands
 }

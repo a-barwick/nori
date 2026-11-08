@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"strings"
 
@@ -29,6 +28,7 @@ func (s *server) assistantEvents(w http.ResponseWriter, r *http.Request) {
 		limit:     state.EventReplayLimit,
 		heartbeat: streamHeartbeat,
 		comment:   "heartbeat",
+		repair:    func() { s.repairWake(r.Context()) },
 		watch: func(ctx context.Context, deliver func([]state.LogEvent) error) error {
 			return store.WatchEvents(ctx, after, deliver)
 		},
@@ -66,11 +66,6 @@ func (s *server) assistantEvent(ctx context.Context, e state.LogEvent) (conversa
 		v.Results = []state.Result{result.Summary()}
 	case state.EventConversation:
 		v.Conversation.Paused = &presence.Paused
-		if presence.Conversation.Pending && !presence.Conversation.Processing {
-			if err = s.wakeConversation(ctx); err != nil {
-				log.Printf("conversation wake repair: %v", err)
-			}
-		}
 	case state.EventReadPosition:
 		p, err := store.ReadPosition(ctx)
 		if err != nil {

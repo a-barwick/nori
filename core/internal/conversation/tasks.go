@@ -70,7 +70,6 @@ func (t *Tasks) AcceptBatch(ctx context.Context, commands []state.Command, fence
 			break
 		}
 	}
-	t.repairPausedStops(ctx, receipts)
 	return receipts, nil
 }
 
@@ -118,36 +117,4 @@ func (t *Tasks) Cancel(ctx context.Context, id string) (state.Run, error) {
 		return state.Run{}, err
 	}
 	return receipts[0].Run, nil
-}
-
-// Stop can finish a never-started task while its worker remains paused. This
-// only repairs terminal state and attaches for cleanup; it never starts compute.
-func (t *Tasks) repairPausedStops(ctx context.Context, receipts []state.CommandReceipt) {
-	stops := map[string]bool{}
-	for _, receipt := range receipts {
-		if receipt.Command.Kind == state.CommandStop {
-			stops[receipt.Command.RunID] = true
-		}
-	}
-	if len(stops) == 0 {
-		return
-	}
-	repair, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	control, err := t.Store.Control(repair)
-	if err != nil || !control.Paused {
-		return
-	}
-	for id := range stops {
-		if _, err = t.Dispatcher.StopPaused(repair, id); err != nil {
-			log.Printf("Stop recovery pending for task %s: %v", id, err)
-		}
-	}
-	for i := range receipts {
-		if stops[receipts[i].Command.RunID] {
-			if latest, err := t.Store.GetRun(repair, receipts[i].Command.RunID); err == nil {
-				receipts[i].Run = latest
-			}
-		}
-	}
 }
