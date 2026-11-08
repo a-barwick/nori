@@ -22,7 +22,6 @@ func InjectTrace(ctx context.Context) map[string]string {
 	return nil
 }
 
-// ExtractTrace restores only W3C trace context from a durable carrier.
 func ExtractTrace(ctx context.Context, headers map[string]string) context.Context {
 	return propagation.TraceContext{}.Extract(ctx, propagation.MapCarrier{"traceparent": headers["traceparent"]})
 }

@@ -34,7 +34,6 @@ func pendingTaskHolds(holds []TaskHold) []TaskHold {
 	return result
 }
 
-// HoldTargets names, per task, the holds that a conversation turn's inputs asked it to answer.
 func HoldTargets(turn ConversationTurn) map[string]map[string]bool {
 	wanted := map[string]map[string]bool{}
 	for _, input := range turn.Inputs {

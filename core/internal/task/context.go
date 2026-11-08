@@ -16,7 +16,6 @@ const (
 	// prompt cache keeps working until the transcript grows past the limit again.
 	InnerInputBytes = 128 << 10
 	InnerKeepBytes  = 64 << 10
-	// omitOutputBytes is the smallest tool output worth omitting.
 	omitOutputBytes = 512
 )
 
@@ -94,7 +93,6 @@ func omitOutputs(message transcript.Message) transcript.Message {
 	return transcript.Message{Role: message.Role, Parts: parts}
 }
 
-// operationRead returns the saved output of one of this task's tool calls.
 func (a *Activities) operationRead(ctx context.Context, runID, id string) (map[string]any, error) {
 	ops, err := a.Store.Operations(ctx, runID)
 	if err != nil {

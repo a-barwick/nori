@@ -12,7 +12,7 @@ import (
 
 func OpenUsers(ctx context.Context, s settings.Settings) (users.Directory, error) {
 	if s.Store.Backend == "postgres" {
-		return postgres.OpenUsers(ctx, postgres.Config{URL: s.Store.PostgresURL, TaskBudgetUSD: s.TaskBudgetUSD})
+		return postgres.OpenUsers(ctx, s.Store.PostgresURL)
 	}
 	if s.Store.Backend != "" && s.Store.Backend != "firestore" {
 		return nil, fmt.Errorf("NORI_STORE_BACKEND must be firestore or postgres")
@@ -26,7 +26,7 @@ func OpenUsers(ctx context.Context, s settings.Settings) (users.Directory, error
 	if s.Store.StateEmulator != "" && s.Store.FirestoreEmulator != "" {
 		return nil, fmt.Errorf("NORI_STATE_EMULATOR_HOST and FIRESTORE_EMULATOR_HOST cannot both be set")
 	}
-	return statefirestore.OpenUsers(ctx, statefirestore.Config{Project: s.Store.Project, Database: s.Store.Database, EmulatorAddress: s.Store.StateEmulator, TaskBudgetUSD: s.TaskBudgetUSD})
+	return statefirestore.OpenUsers(ctx, statefirestore.Config{Project: s.Store.Project, Database: s.Store.Database, EmulatorAddress: s.Store.StateEmulator})
 }
 
 // ForUser combines process credentials with one row. It never modifies shared settings.

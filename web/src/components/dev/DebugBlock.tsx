@@ -1,10 +1,10 @@
 "use client";
 
 import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { runtimePath } from "@/lib/runtime/paths";
 import { clock } from "@/lib/time";
 import { cn } from "@/lib/utils";
-import type { ConversationTrace, TaskStep, Usage } from "@/lib/types";
-import type { DebugInfo } from "@/lib/types";
+import type { ConversationTrace, DebugInfo, TaskStep, Usage } from "@/lib/types";
 
 const n = (value: number) => value.toLocaleString("en-US");
 const secs = (ms: number | undefined) => ms === undefined ? undefined : `${(ms / 1000).toFixed(1)} s`;
@@ -13,7 +13,6 @@ const ROW = "grid grid-cols-[8px_5ch_minmax(0,1fr)_auto] items-center gap-x-[1ch
 const SUMMARY = cn(ROW, "cursor-pointer list-none rounded-[3px] hover:bg-fill-1 [&::-webkit-details-marker]:hidden");
 const DETAIL = "mb-1 ml-[calc(8px+5ch+2ch+4px)] border-l border-hairline py-0.5 pl-[1ch]";
 
-/** One reply's recorded outer attempts and, on request, the linked task's steps. */
 export function DebugBlock({ info }: { info: DebugInfo }) {
   const [expanded, setExpanded] = useState(false);
   const [steps, setSteps] = useState<TaskStep[]>();
@@ -28,7 +27,7 @@ export function DebugBlock({ info }: { info: DebugInfo }) {
     const controller = new AbortController();
     async function load() {
       try {
-        const response = await fetch(`${info.agentMode ? "/api/agent" : "/api"}/trace`, {
+        const response = await fetch(runtimePath(info.agentMode, "trace"), {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ run_id: runId }), cache: "no-store", signal: controller.signal,
         });

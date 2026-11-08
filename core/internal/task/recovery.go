@@ -10,8 +10,6 @@ import (
 	"nori/internal/state"
 )
 
-// Recovery is the dispatcher's repair of closed and paused tasks. It needs the
-// engine to prove an execution closed and the computer to stop and clean up.
 type Recovery struct {
 	Store    state.TaskStore
 	Engine   dispatch.Orchestrator
@@ -69,14 +67,10 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 		if !neverStarted && !execution.Closed {
 			continue
 		}
-		revisions, e := store.OperationRevisions(ctx, run.ID)
+		scopes, e := operationScopes(ctx, store, run.ID)
 		if e != nil {
 			failures = append(failures, e)
 			continue
-		}
-		scopes := []string{}
-		for _, revision := range revisions {
-			scopes = append(scopes, computerRun(Step{run.ID, revision}))
 		}
 		stopErr := errors.Join(StopComputer(ctx, config, scopes), stopRecoveredJobs(ctx, store, config, run.ID))
 		status, detail := state.RunFailed, prompts.Runtime("recovery-interrupted", nil)
@@ -84,11 +78,11 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 			detail = prompts.Runtime("recovery-cancelled", nil)
 		}
 		if run.CancelRequested && stopErr == nil {
-			status = "cancelled"
+			status = state.RunCancelled
 			detail = prompts.Runtime("cancelled", nil)
 		}
 		if stopErr != nil {
-			status = "failed"
+			status = state.RunFailed
 			detail = prompts.Runtime("recovery-computer-unconfirmed", nil)
 			failures = append(failures, stopErr)
 		}
@@ -106,7 +100,6 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 	return errors.Join(failures...)
 }
 
-// attemptedWrites says which writes may have happened when a task ends without checking them.
 func attemptedWrites(ctx context.Context, store state.TaskStore, id string) string {
 	ops, err := store.Operations(ctx, id)
 	if err != nil {
@@ -122,18 +115,26 @@ func attemptedWrites(ctx context.Context, store state.TaskStore, id string) stri
 }
 
 func repairCleanup(ctx context.Context, store state.TaskStore, config computer.Provider, run state.Run) error {
-	revisions, err := store.OperationRevisions(ctx, run.ID)
+	scopes, err := operationScopes(ctx, store, run.ID)
 	if err != nil {
 		return err
-	}
-	scopes := []string{}
-	for _, revision := range revisions {
-		scopes = append(scopes, computerRun(Step{run.ID, revision}))
 	}
 	if err = errors.Join(StopComputer(ctx, config, scopes), stopRecoveredJobs(ctx, store, config, run.ID)); err != nil {
 		return err
 	}
 	return closeTaskBrowser(ctx, store, config, run.ID, scopes)
+}
+
+func operationScopes(ctx context.Context, store state.TaskStore, runID string) ([]string, error) {
+	revisions, err := store.OperationRevisions(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	scopes := make([]string, 0, len(revisions))
+	for _, revision := range revisions {
+		scopes = append(scopes, computerRun(Step{runID, revision}))
+	}
+	return scopes, nil
 }
 
 // stopRecoveredJobs ends jobs a closed workflow left running. A guest /cancel doesn't
@@ -183,13 +184,9 @@ func StopPaused(ctx context.Context, store state.TaskStore, config computer.Prov
 	if err != nil || !run.CancelRequested || run.Status != state.RunRunning {
 		return run, err
 	}
-	revisions, err := store.OperationRevisions(ctx, id)
+	scopes, err := operationScopes(ctx, store, id)
 	if err != nil {
 		return run, err
-	}
-	scopes := []string{}
-	for _, revision := range revisions {
-		scopes = append(scopes, computerRun(Step{id, revision}))
 	}
 	if err = StopComputer(ctx, config, scopes); err != nil {
 		return run, err

@@ -111,19 +111,19 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		}
 	}()
 	work.Go(func() { tasksReady <- r.readAttemptTasks(callCtx) })
-	ciStart, e := r.contextStart(callCtx)
+	contextFrom, e := r.contextStart(callCtx)
 	if e != nil {
 		return e
 	}
-	work.Go(func() { historyReady <- r.readAttemptHistory(callCtx, ciStart) })
+	work.Go(func() { historyReady <- r.readAttemptHistory(callCtx, contextFrom) })
 	readStarted := time.Now()
 	visible, next, e := r.tasks.Store.ConversationMessages(callCtx, "")
 	visibleMS = time.Since(readStarted).Milliseconds()
 	if e != nil {
 		return e
 	}
-	if !ciStart.IsZero() {
-		visible = slices.DeleteFunc(visible, func(m Message) bool { return m.CreatedAt.Before(ciStart) })
+	if !contextFrom.IsZero() {
+		visible = slices.DeleteFunc(visible, func(m Message) bool { return m.CreatedAt.Before(contextFrom) })
 	}
 	inputID := t.Inputs[0].ID
 	for _, input := range t.Inputs {
@@ -168,7 +168,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		return historyRead.err
 	}
 	view := historyRead.view
-	view.Truncated = view.Truncated || !ciStart.IsZero()
+	view.Truncated = view.Truncated || !contextFrom.IsZero()
 	for _, memory := range view.Memories {
 		request.MemoryIDs = append(request.MemoryIDs, memory.ID)
 	}
@@ -180,7 +180,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if taskRead.err != nil {
 		return taskRead.err
 	}
-	taskContext, err := r.prepareAttemptTasks(callCtx, t, &request, taskRead.session, ciStart)
+	taskContext, err := r.prepareAttemptTasks(callCtx, t, &request, taskRead.session, contextFrom)
 	if err != nil {
 		return err
 	}
@@ -349,8 +349,6 @@ func classifyHistory(visible []Message, t *state.ConversationTurn) []Message {
 	return classificationHistory
 }
 
-// historyView is what the outer model sees of the conversation before the current inputs: saved memories, the summary
-// of older turns, and the recent turns after it.
 type historyView struct {
 	Memories  []state.Memory
 	Summary   *state.ConversationSummary
@@ -358,7 +356,6 @@ type historyView struct {
 	Truncated bool
 }
 
-// recordBytes bounds the task records and other visible messages outside turns that are replayed with history.
 const recordBytes = 4 << 10
 
 func buildMessages(t *state.ConversationTurn, visible []Message, view historyView, next string) []json.RawMessage {
@@ -485,7 +482,6 @@ func (r *Runner) finishCall(
 			if fromUser {
 				t.Attempt.ShowResults = shows
 			}
-			// Remember and forget only reach a turn with the user's message: other turns have no actions at all.
 			if fromUser && len(remembered) > 0 {
 				t.Attempt.Memory, _ = planMemory(t.Attempt.ID, remembered, view.Memories)
 			}
@@ -516,7 +512,6 @@ func (r *Runner) finishCall(
 				for _, attachment := range named {
 					upload, err := r.tasks.Store.GetUpload(ctx, attachment.ID)
 					if errors.Is(err, state.ErrNotFound) {
-						// A file that isn't there is left out, and the task reports what it was given.
 						continue
 					}
 					if err != nil {
@@ -530,7 +525,6 @@ func (r *Runner) finishCall(
 				for _, input := range t.Inputs {
 					if input.IsUser() {
 						command.SourceInputIDs = append(command.SourceInputIDs, input.ID)
-						// A file sent with this message goes to the task this message starts or changes.
 						if receivers == 1 && (command.Kind == state.CommandStart || command.Kind == state.CommandSteer || command.Kind == state.CommandAnswer) {
 							command.Attachments = state.MergeAttachments(command.Attachments, input.Attachments)
 						}
@@ -556,7 +550,6 @@ type hintResult struct {
 	durationMS int64
 }
 
-// startHint reuses a saved Jev hint or classifies concurrently with setup.
 func (r *Runner) startHint(
 	work *sync.WaitGroup, callCtx context.Context, record func(context.Context, state.Usage) error, t *state.ConversationTurn,
 	visible []Message, inputID string,
@@ -606,8 +599,6 @@ type taskResult struct {
 	durationMS int64
 }
 
-// readAttemptHistory reads the memories, the summary that applies to the context starting at from, and the turns after
-// it that fit the recent window.
 func (r *Runner) readAttemptHistory(ctx context.Context, from time.Time) historyResult {
 	started := time.Now()
 	var view historyView
@@ -646,13 +637,12 @@ func (r *Runner) readAttemptTasks(ctx context.Context) taskResult {
 }
 
 func (r *Runner) prepareAttemptTasks(
-	callCtx context.Context, t *state.ConversationTurn, request *ReplyRequest, snapshot state.Session, ciStart time.Time,
+	callCtx context.Context, t *state.ConversationTurn, request *ReplyRequest, snapshot state.Session, contextFrom time.Time,
 ) (TaskContext, error) {
-	if !ciStart.IsZero() {
-		// Keep active work visible even if it predates CI. Preflight normally
-		// refuses it; never hide it merely to make a smoke request cheaper.
+	if !contextFrom.IsZero() {
+		// A retained history cutoff still exposes work that can act on the user's behalf.
 		snapshot.Runs = slices.DeleteFunc(snapshot.Runs, func(run state.Run) bool {
-			return run.StartedAt.Before(ciStart) && (run.Status == state.RunCompleted || run.Status == state.RunFailed || run.Status == state.RunCancelled)
+			return run.StartedAt.Before(contextFrom) && (run.Status == state.RunCompleted || run.Status == state.RunFailed || run.Status == state.RunCancelled)
 		})
 	}
 	eventRunIDs := []string{}
@@ -661,7 +651,7 @@ func (r *Runner) prepareAttemptTasks(
 			eventRunIDs = append(eventRunIDs, input.Event.RunID)
 		}
 	}
-	taskContext, err := r.tasks.ContextRecords(callCtx, snapshot.Runs, eventRunIDs, ciStart)
+	taskContext, err := r.tasks.ContextRecords(callCtx, snapshot.Runs, eventRunIDs, contextFrom)
 	if err != nil {
 		return TaskContext{}, err
 	}

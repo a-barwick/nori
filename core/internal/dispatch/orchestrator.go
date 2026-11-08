@@ -1,10 +1,6 @@
-// Package dispatch delivers saved task commands to the task orchestration
-// engine and repairs the gaps between Firestore and that engine.
-//
-// Firestore is the source of truth. A command is saved with a delivery intent,
-// delivered to the engine, then marked delivered, so a crash between the last
-// two steps only sends a duplicate. The Orchestrator contract keeps every
-// caller of this package free of the engine behind it.
+// Package dispatch delivers saved task commands. It acknowledges a command
+// after signaling the engine and scheduling any required worker wake. Recovery
+// can resend the same command ID after a crash in that window.
 package dispatch
 
 import (
@@ -17,7 +13,6 @@ import (
 	"nori/internal/users"
 )
 
-// ErrNoExecution means the engine has no execution for the task.
 var ErrNoExecution = errors.New("no execution for task")
 
 // Orchestrator is what dispatch needs from the engine that runs task workflows.
@@ -41,17 +36,13 @@ type Orchestrator interface {
 	Close()
 }
 
-// Execution is the state of one task execution as the engine reports it.
 type Execution struct {
-	// Closed is true once the execution finished, failed or was cancelled.
 	Closed bool
 	// NeedsWorker is true while the execution has a workflow step, activity or
 	// operation waiting for a worker.
 	NeedsWorker bool
 }
 
-// Recovery repairs task state after an execution ended or cannot run. It needs
-// the engine and the computer, so package task implements it.
 type Recovery interface {
 	// RepairClosed publishes the terminal state of tasks whose execution closed
 	// before the task did, and finishes pending computer cleanup.

@@ -34,22 +34,20 @@ const (
 )
 
 type Command struct {
-	Interrupt      bool     `json:"interrupt,omitempty" firestore:"interrupt,omitempty"`
-	QuestionID     string   `json:"question_id,omitempty" firestore:"question_id,omitempty"`
-	SourceInputIDs []string `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
-	// Attachments are files this command gives the task.
-	Attachments []Attachment `json:"attachments,omitempty" firestore:"attachments,omitempty"`
-	// Revises names the saved result a start command is meant to change.
-	Revises   string      `json:"revises,omitempty" firestore:"revises,omitempty"`
-	ID        string      `json:"id" firestore:"id"`
-	RunID     string      `json:"run_id" firestore:"run_id"`
-	ParentID  string      `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
-	Kind      CommandKind `json:"kind" firestore:"kind"`
-	Text      string      `json:"text" firestore:"text"`
-	Position  int64       `json:"position" firestore:"position"`
-	Revision  int64       `json:"revision" firestore:"revision"`
-	Delivered bool        `json:"delivered" firestore:"delivered"`
-	CreatedAt time.Time   `json:"created_at" firestore:"created_at"`
+	Interrupt      bool         `json:"interrupt,omitempty" firestore:"interrupt,omitempty"`
+	QuestionID     string       `json:"question_id,omitempty" firestore:"question_id,omitempty"`
+	SourceInputIDs []string     `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
+	Attachments    []Attachment `json:"attachments,omitempty" firestore:"attachments,omitempty"`
+	Revises        string       `json:"revises,omitempty" firestore:"revises,omitempty"`
+	ID             string       `json:"id" firestore:"id"`
+	RunID          string       `json:"run_id" firestore:"run_id"`
+	ParentID       string       `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
+	Kind           CommandKind  `json:"kind" firestore:"kind"`
+	Text           string       `json:"text" firestore:"text"`
+	Position       int64        `json:"position" firestore:"position"`
+	Revision       int64        `json:"revision" firestore:"revision"`
+	Delivered      bool         `json:"delivered" firestore:"delivered"`
+	CreatedAt      time.Time    `json:"created_at" firestore:"created_at"`
 }
 
 type TaskSnapshot struct {
@@ -58,18 +56,14 @@ type TaskSnapshot struct {
 }
 
 const (
-	// MaxCommandBatch bounds the commands one acceptance transaction admits.
 	MaxCommandBatch = 32
 	// MaxTaskCommands bounds the commands one task accepts, other than a stop.
-	MaxTaskCommands = 32
-	// MaxTaskHolds and MaxTaskHoldBytes bound the conversation questions waiting on one task.
-	MaxTaskHolds     = 32
-	MaxTaskHoldBytes = 32 << 10
-	// PendingCommandLimit bounds one read of undelivered commands.
+	MaxTaskCommands     = 32
+	MaxTaskHolds        = 32
+	MaxTaskHoldBytes    = 32 << 10
 	PendingCommandLimit = 100
 )
 
-// SameCommand reports whether a retry carries the same intent as a saved command with that ID.
 func SameCommand(a, b Command) bool {
 	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID &&
 		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs) &&
@@ -94,11 +88,9 @@ func ValidateCommandBatch(commands []Command) error {
 // CommandBatch holds what an acceptance transaction read for a batch. Backends read every document before they write,
 // including when several commands name the same task.
 type CommandBatch struct {
-	// Prior holds the saved command for each command ID that was already accepted.
 	Prior map[string]*Command
 	// Runs holds each task named by the batch that exists. Prepare updates it with the batch's effects.
-	Runs map[string]Run
-	// Exists records, for every task named by the batch, whether its record exists.
+	Runs   map[string]Run
 	Exists map[string]bool
 }
 
@@ -140,9 +132,7 @@ func (b CommandBatch) AllDuplicates(commands []Command) bool {
 	return true
 }
 
-// PreparedCommands is a validated batch ready to write.
 type PreparedCommands struct {
-	// Accepted are the new commands to create.
 	Accepted []Command
 	// ReadyEvents are inbox events for holds registered on tasks that already ended.
 	ReadyEvents []TaskEvent
@@ -229,7 +219,6 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 	return p.prepared, nil
 }
 
-// commandPrep is the in-memory state Prepare evolves as it validates a batch.
 type commandPrep struct {
 	taskBudgetUSD float64
 	runs          map[string]Run
@@ -280,7 +269,6 @@ func (p *commandPrep) hold(cmd Command, run Run) error {
 	return nil
 }
 
-// start creates the task a start command names, as a top-level task or a subtask.
 func (p *commandPrep) start(cmd Command) (Run, error) {
 	if cmd.Kind != CommandStart {
 		return Run{}, ErrNotFound
@@ -305,7 +293,6 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 	return run, nil
 }
 
-// apply changes the task's revision, question or cancellation as the command asks.
 func (p *commandPrep) apply(run *Run, cmd Command) error {
 	switch cmd.Kind {
 	case CommandStart, CommandSteer:
@@ -329,7 +316,6 @@ func (p *commandPrep) apply(run *Run, cmd Command) error {
 	return nil
 }
 
-// resolve answers the task's open question.
 func (p *commandPrep) resolve(run *Run, cmd Command) error {
 	kind := "input"
 	if run.Question != nil && run.Question.Kind == QuestionWork && cmd.Kind == CommandAnswer {
@@ -346,7 +332,6 @@ func (p *commandPrep) resolve(run *Run, cmd Command) error {
 	return nil
 }
 
-// stopSubtasks cascades a stop or steer to the task's running subtasks.
 func (p *commandPrep) stopSubtasks(run Run, commandID string) {
 	for _, id := range RunningSubtasks(run) {
 		child, stop, changed := StopSubtask(p.runs[id], commandID, p.now)
@@ -390,7 +375,6 @@ func ReconcileCommands(run Run, commands []Command) []Command {
 	return selected
 }
 
-// OrderPending sorts undelivered commands oldest first.
 func OrderPending(commands []Command) []Command {
 	sort.Slice(commands, func(i, j int) bool { return commands[i].CreatedAt.Before(commands[j].CreatedAt) })
 	return commands

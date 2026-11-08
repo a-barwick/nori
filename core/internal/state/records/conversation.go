@@ -82,7 +82,6 @@ func (d *Database) AcceptConversationInput(ctx context.Context, id, text string,
 	})
 }
 
-// inputBatch reads the next inputs after position, within the turn's size bounds.
 func (d *Database) inputBatch(tx *docstore.Transaction, after int64) ([]state.ConversationInput, error) {
 	it := tx.Documents(d.conversationInputs().Where("position", ">", after).OrderBy("position", docstore.Asc).Limit(state.TurnInputLimit))
 	defer it.Stop()
@@ -106,7 +105,6 @@ func (d *Database) inputBatch(tx *docstore.Transaction, after int64) ([]state.Co
 	return batch.Inputs, nil
 }
 
-// unroutedInputs reads the user inputs of earlier turns that were never routed.
 func (d *Database) unroutedInputs(tx *docstore.Transaction, after, through int64) ([]state.ConversationInput, error) {
 	it := tx.Documents(d.conversationInputs().Where("position", ">", after).Where("position", "<=", through).OrderBy("position", docstore.Asc))
 	defer it.Stop()
@@ -129,7 +127,6 @@ func (d *Database) unroutedInputs(tx *docstore.Transaction, after, through int64
 	}
 }
 
-// markTurn points the visible message of each user input at the turn that handles it.
 func (d *Database) markTurn(tx *docstore.Transaction, turn state.ConversationTurn) error {
 	for _, input := range turn.Inputs {
 		if !input.IsUser() {

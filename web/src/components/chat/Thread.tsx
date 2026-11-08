@@ -7,15 +7,15 @@ import { Button } from "@/components/ui/primitives";
 import { clock } from "@/lib/time";
 import { buildUnits, posOf, type Unit } from "@/lib/units";
 import type { ReadPosition, TextItem, Thread as Conversation } from "@/lib/types";
-import { cn, firstSentence } from "@/lib/utils";
-import { scrollWithin } from "@/lib/dom";
+import { cn, documentTitle, firstSentence } from "@/lib/utils";
 import { DebugBlock } from "@/components/dev/DebugBlock";
 import { Markdown } from "./Markdown";
 import { BubbleUnit } from "./Message";
 
-/* ── Page block: not a bubble; full column width, paper and ink ── */
+const TOP_MASK = 56;
+type OpenDocument = (item: TextItem, body: string) => void;
 
-function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: string; onOpenDocument?: (item: TextItem, body: string) => void }) {
+function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: string; onOpenDocument: OpenDocument }) {
   const ref = useRef<HTMLDivElement>(null);
   const [tall, setTall] = useState(false);
   // A page you just watched being written stays open; older ones fold.
@@ -33,7 +33,7 @@ function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: strin
   }, []);
 
   const collapsed = tall && !expanded;
-  const title = body.match(/^#{1,3}\s+(.+)$/m)?.[1] ?? firstSentence(body).slice(0, 48);
+  const title = documentTitle(body);
 
   return (
     <article className="nova-document group/page relative mt-4 w-full" data-item-id={item.id} aria-label={`Nori: ${title}`}>
@@ -54,7 +54,7 @@ function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: strin
             {copied ? <Check size={15} strokeWidth={1.5} /> : <Copy size={15} strokeWidth={1.5} />}
             {copied ? "Copied" : "Copy"}
           </Button>
-          {onOpenDocument && <Button size="sm" variant="quiet" onClick={() => onOpenDocument(item, body)}><FileText size={15} strokeWidth={1.5} />Open document</Button>}
+          <Button size="sm" variant="quiet" onClick={() => onOpenDocument(item, body)}><FileText size={15} strokeWidth={1.5} />Open document</Button>
         </div>
       </header>
       <div className={cn("relative mt-1", collapsed && "max-h-[50vh] overflow-hidden")}>
@@ -81,7 +81,7 @@ function WorkLine({ label, onDetails }: { label: string; onDetails?: () => void 
   );
 }
 
-function UnitView({ unit, onOpenDocument }: { unit: Unit; onOpenDocument?: (item: TextItem, body: string) => void }) {
+function UnitView({ unit, onOpenDocument }: { unit: Unit; onOpenDocument: OpenDocument }) {
   switch (unit.type) {
     case "sep":
       return <div className="my-6 text-center text-caption text-ink-3">{unit.label}</div>;
@@ -103,31 +103,28 @@ function UnitView({ unit, onOpenDocument }: { unit: Unit; onOpenDocument?: (item
 
 export function Thread({
   onUnread,
-  presence,
   conversation,
   status,
   emptyMessage,
   onOpenDocument,
   onStatusDetails,
-  hasOlder = false,
-  loadingOlder = false,
+  hasOlder,
+  loadingOlder,
   onLoadOlder,
   onShown,
   readPosition,
 }: {
   onShown?: (messageIDs: string[]) => void;
   readPosition?: ReadPosition;
-  hasOlder?: boolean;
-  loadingOlder?: boolean;
-  onLoadOlder?: () => void;
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  onLoadOlder: () => void;
   onStatusDetails?: () => void;
-  onOpenDocument?: (item: TextItem, body: string) => void;
+  onOpenDocument: OpenDocument;
   conversation: Conversation;
   status?: string;
-  emptyMessage?: string;
+  emptyMessage: string;
   onUnread: (count: number, jump: () => void) => void;
-  /** The presence medallion floats at top center, so content fades out lower. */
-  presence: boolean;
 }) {
   const thread = conversation;
   const items = thread.items;
@@ -176,11 +173,11 @@ export function Thread({
         else shown.delete(entry.target);
       }
       report();
-    }, { root, rootMargin: `${presence ? -104 : -56}px 0px 0px 0px` });
+    }, { root, rootMargin: `-${TOP_MASK}px 0px 0px 0px` });
     root.querySelectorAll<HTMLElement>("[data-item-id]").forEach((node) => observer.observe(node));
     document.addEventListener("visibilitychange", report);
     return () => { observer.disconnect(); document.removeEventListener("visibilitychange", report); };
-  }, [items, onShown, presence]);
+  }, [items, onShown]);
 
 
   useLayoutEffect(() => {
@@ -192,7 +189,6 @@ export function Thread({
     prependAnchor.current = null;
   }, [items, loadingOlder]);
 
-  // New arrivals: follow along if you're at the bottom, otherwise count them.
   useEffect(() => {
     const previousIndex = items.findIndex((item) => item.id === previousFirst.current);
     const prepended = previousIndex > 0;
@@ -233,8 +229,12 @@ export function Thread({
   useEffect(() => {
     const jump = () => {
       const el = firstUnread ? scroller.current?.querySelector<HTMLElement>(`[data-item-id="${firstUnread}"]`) : null;
-      if (el) scrollWithin(el, "start");
-      else scrollToBottom(true);
+      const root = scroller.current;
+      if (root && el) {
+        // Keep the outer shell still and place the message below the mask.
+        const top = el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop - TOP_MASK - 16;
+        root.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+      } else scrollToBottom(true);
       setUnreadIDs([]);
     };
     onUnread(unread, jump);
@@ -254,26 +254,26 @@ export function Thread({
       ref={scroller}
       onScroll={onScroll}
       className="thread-mask scrollbar-quiet h-full overflow-y-auto"
-      style={{ "--top-fade": presence ? "104px" : "56px" } as React.CSSProperties}
+      style={{ "--top-fade": `${TOP_MASK}px` } as React.CSSProperties}
     >
       <div
         ref={content}
         role="log"
         aria-live="polite"
         aria-label={`Conversation: ${thread.title}`}
-        className={cn("mx-auto max-w-[768px] px-[clamp(24px,calc(72px-(100vw-768px)/2),72px)] pb-[148px] transition-[padding] duration-300", presence ? "pt-28" : "pt-16")}
+        className="mx-auto max-w-[768px] px-[clamp(24px,calc(72px-(100vw-768px)/2),72px)] pt-16 pb-[148px]"
       >
         <div aria-live="off">
           {hasOlder && <div className="mb-4 text-center"><Button size="sm" variant="quiet" disabled={loadingOlder} onClick={() => {
             const first = scroller.current?.querySelector<HTMLElement>("[data-item-id]");
             if (first?.dataset.itemId) prependAnchor.current = { id: first.dataset.itemId, top: first.getBoundingClientRect().top };
             atBottom.current = false;
-            onLoadOlder?.();
+            onLoadOlder();
           }}>{loadingOlder ? "Loading older messages…" : "Load older messages"}</Button></div>}
           {units.length === 0 && (
             <div className="grid min-h-[calc(100dvh-320px)] place-items-center">
               <p className="arrive text-title text-ink-2" style={{ animationDelay: "250ms" }}>
-                {emptyMessage ?? "Nori is getting ready to say hello…"}
+                {emptyMessage}
               </p>
             </div>
           )}

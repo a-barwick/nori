@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"nori/internal/computer/rpc"
 )
 
 type RPCError struct {
@@ -31,7 +33,7 @@ type OperationReceipt struct {
 
 func (c *Client) Operation(ctx context.Context, id string) (OperationReceipt, error) {
 	var out OperationReceipt
-	data, err := c.post(ctx, "/operation", map[string]string{"id": id, "run_id": c.run}, 3<<20)
+	data, err := c.post(ctx, rpc.OperationPath, map[string]string{"id": id, "run_id": c.run}, 3<<20)
 	if err == nil {
 		err = json.Unmarshal(data, &out)
 	}
@@ -41,7 +43,7 @@ func (c *Client) Operation(ctx context.Context, id string) (OperationReceipt, er
 	return out, err
 }
 func (c *Client) CancelRead(ctx context.Context, id string) error {
-	data, err := c.post(ctx, "/operation/cancel", map[string]string{"id": id, "run_id": c.run}, 4096)
+	data, err := c.post(ctx, rpc.CancelReadPath, map[string]string{"id": id, "run_id": c.run}, 4096)
 	if err != nil {
 		return err
 	}

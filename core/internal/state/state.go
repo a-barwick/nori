@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// MaxMessageBytes bounds user instructions and individual tool arguments.
 const MaxMessageBytes = 8192
 
 var ErrBusy = errors.New("task is not open")
@@ -35,14 +34,13 @@ func (c Control) Check() error {
 }
 
 type Message struct {
-	Status string `json:"status,omitempty" firestore:"status,omitempty"`
-	ID     string `json:"id" firestore:"id"`
-	TurnID string `json:"turn_id,omitempty" firestore:"turn_id,omitempty"`
-	RunID  string `json:"run_id" firestore:"run_id"`
-	Role   string `json:"role" firestore:"role"`
-	Text   string `json:"text" firestore:"text"`
-	Parts  []Part `json:"parts,omitempty" firestore:"parts,omitempty"`
-	// ResultIDs are the saved results this reply reports.
+	Status    string    `json:"status,omitempty" firestore:"status,omitempty"`
+	ID        string    `json:"id" firestore:"id"`
+	TurnID    string    `json:"turn_id,omitempty" firestore:"turn_id,omitempty"`
+	RunID     string    `json:"run_id" firestore:"run_id"`
+	Role      string    `json:"role" firestore:"role"`
+	Text      string    `json:"text" firestore:"text"`
+	Parts     []Part    `json:"parts,omitempty" firestore:"parts,omitempty"`
 	ResultIDs []string  `json:"result_ids,omitempty" firestore:"result_ids,omitempty"`
 	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
 }
@@ -107,7 +105,6 @@ func MergeOpenRuns(recent, open []Run) []Run {
 	return merged
 }
 
-// Chronological reverses a newest-first query result in place and returns it.
 func Chronological[T any](newestFirst []T) []T {
 	for i, j := 0, len(newestFirst)-1; i < j; i, j = i+1, j-1 {
 		newestFirst[i], newestFirst[j] = newestFirst[j], newestFirst[i]

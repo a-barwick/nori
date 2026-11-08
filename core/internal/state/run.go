@@ -28,7 +28,6 @@ const (
 // Run is one task. The fields are grouped by what they describe; the stored and JSON field names do not depend on
 // the order.
 type Run struct {
-	// Identity and request.
 	ID      string `json:"id" firestore:"id"`
 	Request string `json:"request,omitempty" firestore:"request,omitempty"`
 
@@ -79,7 +78,6 @@ type Run struct {
 	OperationRefs  []string `json:"operation_refs,omitempty" firestore:"operation_refs,omitempty"`
 	CleanupPending bool     `json:"cleanup_pending,omitempty" firestore:"cleanup_pending,omitempty"`
 
-	// Display projections.
 	Events    []Event    `json:"events" firestore:"events"`
 	Artifacts []Artifact `json:"artifacts" firestore:"artifacts"`
 
@@ -151,15 +149,12 @@ type ProjectRequest struct {
 	Text     string
 }
 
-// Incorporation says what recording a worker's incorporated position changes.
 type Incorporation struct {
 	// Noop is set when a wake carried no new commands. The task is not rewritten while a user answers its question.
-	Noop bool
-	// ClearQuestion drops the waiting text and the question because new commands superseded them.
+	Noop          bool
 	ClearQuestion bool
 }
 
-// PlanIncorporation applies the revision and position fence for a worker folding accepted commands into its work.
 func PlanIncorporation(r Run, revision, position int64) (Incorporation, error) {
 	if r.Revision != revision {
 		return Incorporation{}, ErrSuperseded
@@ -177,7 +172,6 @@ func PlanIncorporation(r Run, revision, position int64) (Incorporation, error) {
 	return plan, nil
 }
 
-// ProjectionEvent returns the display event for a progress projection and the task's waiting text afterward.
 func ProjectionEvent(kind, text string, now time.Time) (waiting string, event Event) {
 	if kind == "waiting" {
 		waiting = text
@@ -202,32 +196,25 @@ func QuestionEvent(run Run, revision int64, question Question, now time.Time) (e
 	return event, false, nil
 }
 
-// WithQuestion returns the run waiting on question after event was added to the inbox.
 func WithQuestion(run Run, question Question, event TaskEvent) Run {
 	run.Question, run.Waiting, run.EventSequence = &question, question.Text, event.Sequence
 	return run
 }
 
-// PublishRequest asks to end a task with a result, failure or stop.
 type PublishRequest struct {
-	RunID    string
-	Revision int64
-	Status   RunStatus
-	// Detail is the failure or stop reason. Text is the result shown to the user.
-	Detail string
-	Text   string
-	// CostUnknown marks the task as having an unpriced provider request.
+	RunID       string
+	Revision    int64
+	Status      RunStatus
+	Detail      string
+	Text        string
 	CostUnknown bool
 	// Spent is the task's final cost, saved with its outcome so a parent's budget never misses it.
-	Spent float64
-	// BypassRouting publishes without waiting for pending user input to be routed.
+	Spent         float64
 	BypassRouting bool
 	// Answer is set when the task proposed an answer, which is then saved as a result.
 	Answer *ResultDraft
 }
 
-// GatesOnRouting reports whether publication must wait for pending user input to be routed. A stop, an unknown cost
-// and an explicit bypass publish immediately.
 func (p PublishRequest) GatesOnRouting() bool {
 	return !(p.Status == RunCancelled || p.BypassRouting)
 }
@@ -294,12 +281,10 @@ func ShouldClearPublication(run Run, generation int64) bool {
 	return run.PublicationPending && run.PublicationGeneration == generation
 }
 
-// OpenOnly keeps the runs that are still running.
 func OpenOnly(runs []Run) []Run {
 	return slices.DeleteFunc(runs, func(run Run) bool { return run.Status != RunRunning })
 }
 
-// UniqueRevisions returns the distinct revisions in ascending order.
 func UniqueRevisions(revisions []int64) []int64 {
 	seen := map[int64]bool{}
 	unique := []int64{}

@@ -17,17 +17,31 @@ import (
 	"google.golang.org/grpc/status"
 	"nori/internal/state/docstore"
 	"nori/internal/state/records"
+	"nori/internal/users"
 )
 
 type Config struct {
 	Project, Database string
-	TaskBudgetUSD     float64
 	EmulatorAddress   string
 }
-type Database = records.Database
-type Users = records.Users
 
-func Open(ctx context.Context, cfg Config) (*Database, error) {
+func Open(ctx context.Context, cfg Config, user users.User, taskBudgetUSD float64) (*records.Database, error) {
+	b, err := openBackend(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return records.New(b, user, taskBudgetUSD), nil
+}
+
+func OpenUsers(ctx context.Context, cfg Config) (*records.Users, error) {
+	b, err := openBackend(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return records.NewUsers(b), nil
+}
+
+func openBackend(ctx context.Context, cfg Config) (*backend, error) {
 	var options []option.ClientOption
 	if cfg.EmulatorAddress != "" {
 		if !IsLoopback(cfg.EmulatorAddress) {
@@ -39,14 +53,7 @@ func Open(ctx context.Context, cfg Config) (*Database, error) {
 	if e != nil {
 		return nil, e
 	}
-	return records.New(&backend{db: db}, cfg.TaskBudgetUSD), nil
-}
-func OpenUsers(ctx context.Context, cfg Config) (*Users, error) {
-	d, e := Open(ctx, cfg)
-	if e != nil {
-		return nil, e
-	}
-	return records.NewUsers(d), nil
+	return &backend{db: db}, nil
 }
 func IsLoopback(address string) bool {
 	host, _, e := net.SplitHostPort(address)

@@ -11,11 +11,11 @@ import (
 
 // Users reads the user directory in the same database as scoped records. It is a trusted
 // server/CLI surface; no route exposes whole rows.
-type Users struct{ db *Database }
+type Users struct{ db *docstore.Client }
 
-func NewUsers(db *Database) *Users             { return &Users{db: db} }
+func NewUsers(backend docstore.Backend) *Users { return &Users{db: docstore.New(backend)} }
 func (u *Users) Close() error                  { return u.db.Close() }
-func (u *Users) rows() *docstore.CollectionRef { return u.db.db.Collection("users") }
+func (u *Users) rows() *docstore.CollectionRef { return u.db.Collection("users") }
 func (u *Users) Get(ctx context.Context, id string) (users.User, error) {
 	if !users.ValidID(id) {
 		return users.User{}, state.ErrNotFound
@@ -76,7 +76,7 @@ func (u *Users) Create(ctx context.Context, row users.User) error {
 		return err
 	}
 	// Email uniqueness is transactional, including concurrent local provisioning.
-	return u.db.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+	return u.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		matches := tx.Documents(u.rows().Where("email", "==", row.Email).Limit(1))
 		defer matches.Stop()
 		_, err := matches.Next()
@@ -90,6 +90,6 @@ func (u *Users) Create(ctx context.Context, row users.User) error {
 	})
 }
 func (u *Users) Paused(ctx context.Context) (bool, error) {
-	c, err := u.db.Control(ctx)
+	c, err := readControl(ctx, controlDoc(u.db))
 	return c.Paused, err
 }

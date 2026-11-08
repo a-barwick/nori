@@ -5,6 +5,7 @@ package taskworker
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -13,15 +14,12 @@ import (
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
-	"nori/internal/task"
 )
 
-// Options pin the worker to one immutable release.
 type Options struct {
-	// Deployment and Build are the Temporal worker deployment version.
+	TaskQueue         string
 	Deployment, Build string
-	// StopTimeout is how long Stop waits for running activities.
-	StopTimeout time.Duration
+	StopTimeout       time.Duration
 }
 
 // Runner is a started worker. It remembers which executions it has served so a
@@ -33,15 +31,18 @@ type Runner struct {
 
 // Start begins polling the task queue. known are executions an earlier wake
 // named; the tracker reports them even if this worker never runs an activity.
-func Start(c client.Client, o Options, activities *task.Activities, known ...string) (*Runner, error) {
+func Start(c client.Client, o Options, scope ActivityScope, known ...string) (*Runner, error) {
+	if scope == nil {
+		return nil, errors.New("worker requires a task activity user scope")
+	}
 	tracker := newTracker(known...)
-	w := worker.New(c, task.Queue(), worker.Options{
+	w := worker.New(c, o.TaskQueue, worker.Options{
 		Interceptors:                       []interceptor.WorkerInterceptor{tracker},
 		MaxConcurrentActivityExecutionSize: 4, MaxConcurrentWorkflowTaskExecutionSize: 2,
 		WorkerStopTimeout: o.StopTimeout,
 		DeploymentOptions: deployment(o.Deployment, o.Build),
 	})
-	registerTask(w, activities)
+	registerTask(w, scope)
 	if err := w.Start(); err != nil {
 		return nil, err
 	}
@@ -51,8 +52,6 @@ func Start(c client.Client, o Options, activities *task.Activities, known ...str
 // Stop stops polling and waits up to the stop timeout for running activities.
 func (r *Runner) Stop() { r.w.Stop() }
 
-// Activity reports every execution this worker has seen, how many activities are
-// running, and how long it has been since one started or finished.
 func (r *Runner) Activity() ([]string, int, time.Duration) { return r.tracker.snapshot() }
 
 func deployment(name, build string) worker.DeploymentOptions {
@@ -61,11 +60,6 @@ func deployment(name, build string) worker.DeploymentOptions {
 		Version:                   worker.WorkerDeploymentVersion{DeploymentName: name, BuildID: build},
 		DefaultVersioningBehavior: workflow.VersioningBehaviorPinned,
 	}
-}
-
-func registerTask(w worker.Worker, activities *task.Activities) {
-	w.RegisterWorkflowWithOptions(task.Workflow, workflow.RegisterOptions{Name: task.WorkflowName, VersioningBehavior: workflow.VersioningBehaviorPinned})
-	w.RegisterActivity(activities)
 }
 
 // tracker remembers every execution seen by this worker, including executions

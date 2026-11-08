@@ -31,8 +31,7 @@ resource "google_compute_firewall" "iap_ssh" {
   }
 }
 
-# New blank retained storage. No production snapshot, data copy, format command,
-# or guest initialization is performed here. Initialize the guest separately.
+# Initialize the sandbox guest separately from storage provisioning.
 resource "google_compute_disk" "computer_data" {
   name = "nori-sandbox-computer-data"
   zone = "us-central1-a"

@@ -1,19 +1,29 @@
 package api
 
-import (
-	"net/http"
-	"strings"
-)
+import "net/http"
 
-func (s *server) featureUnavailable(w http.ResponseWriter, r *http.Request) bool {
-	path := r.URL.Path
-	feature := ""
-	if s.Features.DisableBackgroundTasks && (strings.HasPrefix(path, "/v1/conversations/assistant") || (strings.HasPrefix(path, "/api/") && path != "/api/process" && path != "/api/resume" && path != "/api/healthz") || path == "/v1/snapshot" || path == "/v1/events" || strings.HasPrefix(path, "/v1/uploads") || strings.HasPrefix(path, "/v1/results")) {
-		feature = "assistant"
+func (s *server) assistantRoute(handler http.HandlerFunc) http.HandlerFunc {
+	if s.Features.DisableBackgroundTasks {
+		return assistantUnavailable
 	}
-	if feature == "" {
-		return false
+	return handler
+}
+
+func (s *server) conversationRoute(handler http.HandlerFunc) http.HandlerFunc {
+	if !s.Features.DisableBackgroundTasks {
+		return handler
 	}
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": feature + " is not enabled.", "code": "not_enabled", "feature": feature})
-	return true
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("conversation") == "assistant" {
+			assistantUnavailable(w, r)
+			return
+		}
+		handler(w, r)
+	}
+}
+
+func assistantUnavailable(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{
+		"error": "assistant is not enabled.", "code": "not_enabled", "feature": "assistant",
+	})
 }

@@ -28,11 +28,10 @@ type Memory struct {
 type MemoryChange struct {
 	Kind string `json:"kind" firestore:"kind"`
 	// ID is the memory written or deleted. A correction keeps the ID of the memory it replaces.
-	ID    string `json:"id" firestore:"id"`
-	Text  string `json:"text,omitempty" firestore:"text,omitempty"`
-	About string `json:"about,omitempty" firestore:"about,omitempty"`
-	// Replaces is set when a remember corrects an existing memory.
-	Replaces bool `json:"replaces,omitempty" firestore:"replaces,omitempty"`
+	ID       string `json:"id" firestore:"id"`
+	Text     string `json:"text,omitempty" firestore:"text,omitempty"`
+	About    string `json:"about,omitempty" firestore:"about,omitempty"`
+	Replaces bool   `json:"replaces,omitempty" firestore:"replaces,omitempty"`
 	// Error says why the change was refused. A turn with any refused change applies none of them.
 	Error string `json:"error,omitempty" firestore:"error,omitempty"`
 }
@@ -49,8 +48,6 @@ const (
 	MemorySourceBytes = 1 << 10
 )
 
-// PlanMemoryChanges checks a turn's changes against the saved memories. It fills in Error on each change that can't be
-// applied and reports whether all of them can.
 func PlanMemoryChanges(saved []Memory, changes []MemoryChange) bool {
 	byID := map[string]Memory{}
 	total := 0
@@ -87,7 +84,6 @@ func PlanMemoryChanges(saved []Memory, changes []MemoryChange) bool {
 	return ok
 }
 
-// ApplyMemoryChange returns the memory a remember writes. existing is the saved memory it corrects, if any.
 func ApplyMemoryChange(c MemoryChange, existing *Memory, source ConversationInput, now time.Time) Memory {
 	m := Memory{ID: c.ID, Text: c.Text, About: c.About, SourceInputID: source.ID, SourceText: BoundedSource(source.Text), CreatedAt: now, UpdatedAt: now}
 	if m.About == "" {
@@ -99,7 +95,6 @@ func ApplyMemoryChange(c MemoryChange, existing *Memory, source ConversationInpu
 	return m
 }
 
-// BoundedSource is the copy of the user's message kept with something saved from it.
 func BoundedSource(text string) string {
 	if len(text) <= MemorySourceBytes {
 		return text

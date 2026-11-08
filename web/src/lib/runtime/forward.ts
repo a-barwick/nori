@@ -1,105 +1,142 @@
-import { resolveUser, userPath, localDevelopment, sameOrigin, sameOriginRead } from "./auth";
-import { isRuntimeRead } from "./methods";
-import { runtimeAuthorization } from "./credentials";
-import { reportUpstreamFailure, upstreamTraceHeaders } from "@/lib/observability/upstream";
-
-export type Mode = "hosted" | "local";
+import { resolveUser, sameOrigin, sameOriginRead, type ScopedRuntime } from "./auth";
+import { isRuntimeMethod, isRuntimeRead } from "./methods";
+import { runtimeHeaders } from "./credentials";
+import { localDevelopment, runtimeMode, runtimeTarget, type Mode } from "./target";
+import { reportUpstreamFailure, reportUpstreamRejection, rejectionHeaders, upstreamTraceHeaders } from "@/lib/observability/upstream";
+import { MAX_FILE_BYTES } from "../submission";
 
 // A stream ends upstream first. This limit only catches one that stopped responding.
 const READ_TIMEOUT_MS = 170_000;
-const UPLOAD_TIMEOUT_MS = 170_000;
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const RELAYED = ["content-disposition", "content-security-policy", "content-length"];
+const json = (type: string) => type.includes("application/json");
+const eventStream = (type: string) => type.startsWith("text/event-stream");
+const forbidden = () => Response.json({ error: "Forbidden." }, { status: 403 });
+const notFound = () => Response.json({ error: "Not found." }, { status: 404 });
 
-function upstreamBase(request: Request, mode: Mode): URL | Response {
-  const configured = mode === "local" ? process.env.NORI_LOCAL_AGENT_URL : process.env.NORI_RUNTIME_URL;
-  if (!configured) return mode === "local" ? Response.json({ error: "Not found." }, { status: 404 }) : Response.json({ error: "Nori's runtime is not configured yet." }, { status: 503 });
-  if (mode === "local" && !localDevelopment(request.headers)) return Response.json({ error: "Not found." }, { status: 404 });
-  try {
-    const base = new URL(configured.endsWith("/") ? configured : `${configured}/`);
-    const valid = mode === "local" ? base.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname) && base.pathname === "/" : base.protocol === "https:";
-    if (!valid || base.username || base.password || base.search || base.hash) throw new Error();
-    return base;
-  } catch {
-    return Response.json({ error: mode === "local" ? "NORI_LOCAL_AGENT_URL must be a loopback HTTP origin." : "Nori's runtime URL is invalid." }, { status: 503 });
-  }
-}
+type RelayPolicy = {
+  timeout: number;
+  allowed: (type: string) => boolean;
+  operation?: string;
+};
 
-/** Sends one request to the Go API with this server's own credentials. Browser credentials and IAP headers never go upstream. */
-async function forward(request: Request, mode: Mode, path: string, init: RequestInit, timeout: number, allowed: (type: string) => boolean) {
-  const base = upstreamBase(request, mode);
-  if (base instanceof Response) return base;
-  const user = await resolveUser(request.headers, mode === "local");
-  if (!user) return forbidden();
-  const label = path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file").replace(/^v1\/conversations\/[^/?]+/, "v1/conversations/item");
+async function relay(request: Request, { base, userID, mode }: ScopedRuntime, path: string, init: RequestInit, { timeout, allowed, operation }: RelayPolicy) {
+  const label = operation ?? path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file").replace(/^v1\/conversations\/[^/]+/, "v1/conversations/item");
   try {
-    const authorization: Record<string, string> = mode === "hosted" ? { Authorization: await runtimeAuthorization() } : {};
-    const upstream = await fetch(new URL(userPath(user.id, path), base), {
-      ...init, headers: { ...(init.headers as Record<string, string>), ...authorization, ...upstreamTraceHeaders(request) },
+    const trace = upstreamTraceHeaders(request);
+    // Construct a fresh header set so neither browser credentials nor IAP headers reach the runtime.
+    const upstream = await fetch(new URL(`users/${encodeURIComponent(userID)}/${path}`, base), {
+      ...init, headers: { ...(init.headers as Record<string, string>), ...await runtimeHeaders(mode), ...trace },
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]), redirect: "error", cache: "no-store",
     });
     if (upstream.status >= 500) reportUpstreamFailure(label, mode, upstream.status);
+    if (operation && mode === "hosted" && upstream.status === 429) {
+      reportUpstreamRejection(operation, request, trace, upstream.headers);
+      void upstream.body?.cancel().catch(() => undefined);
+      // Platforms can return private HTML error bodies. Relay only the throttling signal and sanitized headers.
+      return Response.json({ error: "Nori is temporarily busy. Refresh history shortly." }, {
+        status: 429,
+        headers: { "Cache-Control": "no-store", ...rejectionHeaders(upstream.headers) },
+      });
+    }
     const type = upstream.headers.get("content-type") || "application/json";
     if (!allowed(type)) {
       void upstream.body?.cancel().catch(() => undefined);
       return Response.json({ error: "The runtime returned an unsupported response." }, { status: 502 });
     }
-    const headers: Record<string, string> = { "Content-Type": type, "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "X-Content-Type-Options": "nosniff" };
-    for (const name of RELAYED) {
-      const value = upstream.headers.get(name);
-      if (value) headers[name] = value;
+    const headers: Record<string, string> = { "Content-Type": type, "Cache-Control": operation ? "no-store" : "no-cache, no-transform" };
+    if (!operation || mode === "hosted") headers["X-Content-Type-Options"] = "nosniff";
+    if (!operation) {
+      headers["X-Accel-Buffering"] = "no";
+      for (const name of RELAYED) {
+        const value = upstream.headers.get(name);
+        if (value) headers[name] = value;
+      }
     }
     return new Response(upstream.body, { status: upstream.status, headers });
   } catch {
     if (!request.signal.aborted) reportUpstreamFailure(label, mode);
-    return Response.json({ error: "Connection to Nori's runtime was interrupted." }, { status: 502 });
+    const error = !operation ? "Connection to Nori's runtime was interrupted."
+      : mode === "local" ? "Could not reach the local agent. Check that the Go runner is running, then retry."
+      : "Connection to Nori's runtime was interrupted. Refresh history to confirm the task's status.";
+    return Response.json({ error }, { status: 502 });
   }
 }
 
-async function allowedCaller(request: Request, mode: Mode, sameSite: (request: Request) => boolean) {
-  if (!sameSite(request)) return false;
-  return mode !== "local" || localDevelopment(request.headers);
+async function forward(request: Request, mode: Mode, path: string, init: RequestInit, allowed: RelayPolicy["allowed"]) {
+  const target = runtimeTarget(mode);
+  if (target instanceof Response) return target;
+  const user = await resolveUser(request.headers, target);
+  if (!user) return forbidden();
+  return relay(request, user, path, init, { timeout: READ_TIMEOUT_MS, allowed });
 }
 
-const forbidden = () => Response.json({ error: "Forbidden." }, { status: 403 });
+function allowedCaller(request: Request, mode: Mode, sameSite: (request: Request) => boolean) {
+  return sameSite(request) && (mode !== "local" || localDevelopment(request.headers));
+}
 
-/** `GET /v1/snapshot` and `GET /v1/events`. EventSource sends its resume position as a header, and Agent Runtime only passes the URL on. */
-export async function readRoute(request: Request, mode: Mode, name: string) {
-  if (!isRuntimeRead(name)) return Response.json({ error: "Not found." }, { status: 404 });
-  if (!(await allowedCaller(request, mode, sameOriginRead))) return forbidden();
+export async function operationRoute(request: Request, mode: Mode, operation: string) {
+  const local = mode === "local";
+  if (!isRuntimeMethod(operation) || (local && runtimeMode(request.headers) !== "local")) return notFound();
+  if (!sameOrigin(request)) return forbidden();
+  const target = runtimeTarget(mode);
+  if (target instanceof Response) return local ? target : forbidden();
+  const user = await resolveUser(request.headers, target);
+  if (!user) return forbidden();
+  let body: string;
+  try {
+    body = JSON.stringify(await request.json());
+    if (body.length > (local ? 64_000 : 128_000)) return Response.json({ error: "Request is too large." }, { status: 413 });
+  } catch {
+    return Response.json({ error: local ? "Send a JSON object." : "Request body must be JSON." }, { status: 400 });
+  }
+  return relay(request, user, `api/${operation}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body,
+  }, {
+    timeout: local ? 100_000 : 145_000,
+    allowed: (type) => local || json(type) || type.startsWith("image/png"),
+    operation,
+  });
+}
+
+function historyQuery(request: Request, afterAllowed: boolean, beforeAllowed: boolean) {
   const incoming = new URL(request.url).searchParams;
   const query = new URLSearchParams();
-  const after = request.headers.get("last-event-id") || incoming.get("after");
+  // Agent Runtime does not relay EventSource's Last-Event-ID header.
+  const after = afterAllowed && (request.headers.get("last-event-id") || incoming.get("after"));
   if (after) query.set("after", after);
-  const before = incoming.get("before");
+  const before = beforeAllowed && incoming.get("before");
   if (before) query.set("before", before);
-  return forward(request, mode, `v1/${name}${query.size ? `?${query}` : ""}`, {}, READ_TIMEOUT_MS,
-    (type) => type.includes("application/json") || type.startsWith("text/event-stream"));
+  return query.size ? `?${query}` : "";
 }
 
-/** `POST /v1/uploads`. The whole file is read here first, so a dropped upload never reaches the service. */
+export async function readRoute(request: Request, mode: Mode, name: string) {
+  if (!isRuntimeRead(name)) return notFound();
+  if (!allowedCaller(request, mode, sameOriginRead)) return forbidden();
+  return forward(request, mode, `v1/${name}${historyQuery(request, true, true)}`, {},
+    (type) => json(type) || eventStream(type));
+}
+
 export async function uploadRoute(request: Request, mode: Mode, path = "v1/uploads") {
-  if (!(await allowedCaller(request, mode, sameOrigin))) return forbidden();
-  if (Number(request.headers.get("content-length") ?? 0) > MAX_UPLOAD_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
+  if (!allowedCaller(request, mode, sameOrigin)) return forbidden();
+  if (Number(request.headers.get("content-length") ?? 0) > MAX_FILE_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
   const incoming = new URL(request.url).searchParams;
   const query = new URLSearchParams({ id: incoming.get("id") ?? "", filename: incoming.get("filename") ?? "" });
+  // Buffer the file so an interrupted upload does not reach the service.
   let body: ArrayBuffer;
   try { body = await request.arrayBuffer(); } catch {
     return Response.json({ error: "The upload was interrupted, so nothing was saved. Try again.", retryable: true }, { status: 400 });
   }
-  if (body.byteLength > MAX_UPLOAD_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
-  return forward(request, mode, `${path}?${query}`, { method: "POST", body, headers: { "Content-Type": request.headers.get("content-type") || "application/octet-stream" } },
-    UPLOAD_TIMEOUT_MS, (type) => type.includes("application/json"));
+  if (body.byteLength > MAX_FILE_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
+  return forward(request, mode, `${path}?${query}`, { method: "POST", body, headers: { "Content-Type": request.headers.get("content-type") || "application/octet-stream" } }, json);
 }
 
-/** `GET /v1/uploads/<id>`: the file bytes, with the service's attachment and sandbox headers. */
 export async function fileRoute(request: Request, mode: Mode, path: string) {
-  if (!(await allowedCaller(request, mode, sameOriginRead))) return forbidden();
-  return forward(request, mode, path, {}, READ_TIMEOUT_MS, (type) => /^(application\/json|application\/pdf|application\/octet-stream|image\/(png|jpeg|webp)|text\/csv|text\/plain)/.test(type));
+  if (!allowedCaller(request, mode, sameOriginRead)) return forbidden();
+  return forward(request, mode, path, {}, (type) => /^(application\/json|application\/pdf|application\/octet-stream|image\/(png|jpeg|webp)|text\/csv|text\/plain)/.test(type));
 }
 
-/** Additive conversation API. Each route is allowlisted; caller headers never become runtime credentials. */
-export async function conversationRoute(request: Request, mode: Mode, segments: string[]) {
+export async function conversationRoute(request: Request, segments: string[]) {
+  const mode = runtimeMode(request.headers);
   const [id, operation] = segments;
   const validID = id === "assistant" || /^[a-f0-9-]{36}$/.test(id || "");
   if (validID && operation === "uploads") {
@@ -110,19 +147,9 @@ export async function conversationRoute(request: Request, mode: Mode, segments: 
   const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && ["events", "messages"].includes(operation)))));
   const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel"].includes(operation)));
   const remove = request.method === "DELETE" && segments.length === 1 && id !== "assistant" && validID;
-  if (!read && !write && !remove) return Response.json({ error: "Not found." }, { status: 404 });
-  if (!(await allowedCaller(request, mode, read ? sameOriginRead : sameOrigin))) return forbidden();
-  if (remove) return forward(request, mode, `v1/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }, READ_TIMEOUT_MS, type => type.includes("application/json"));
-  const query = new URLSearchParams();
-  if (operation === "events") {
-    const incoming = new URL(request.url).searchParams;
-    const after = request.headers.get("last-event-id") || incoming.get("after");
-    if (after) query.set("after", after);
-  }
-  if (read && operation === "messages") {
-    const before = new URL(request.url).searchParams.get("before");
-    if (before) query.set("before", before);
-  }
+  if (!read && !write && !remove) return notFound();
+  if (!allowedCaller(request, mode, read ? sameOriginRead : sameOrigin)) return forbidden();
+  const query = historyQuery(request, operation === "events", read && operation === "messages");
   let body: string | undefined;
   if (write) {
     if (Number(request.headers.get("content-length") ?? 0) > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
@@ -132,17 +159,12 @@ export async function conversationRoute(request: Request, mode: Mode, segments: 
       body = value ? JSON.stringify(JSON.parse(value)) : "{}";
     } catch { return Response.json({ error: "Request body must be JSON." }, { status: 400 }); }
   }
-  return forward(request, mode, `v1/conversations${segments.length ? "/" + segments.map(encodeURIComponent).join("/") : ""}${query.size ? `?${query}` : ""}`,
-    write ? { method: "POST", body, headers: { "Content-Type": "application/json" } } : {}, READ_TIMEOUT_MS,
-    type => type.includes("application/json") || (read && operation === "events" && type.startsWith("text/event-stream")));
+  const path = ["v1/conversations", ...segments.map(encodeURIComponent)].join("/") + query;
+  const init = write ? { method: "POST", body, headers: { "Content-Type": "application/json" } } : { method: request.method };
+  return forward(request, mode, path, init, type => json(type) || (read && operation === "events" && eventStream(type)));
 }
 
-export async function capabilitiesRoute(request: Request, mode: Mode) {
-  if (!(await allowedCaller(request, mode, sameOriginRead))) return forbidden();
-  return forward(request, mode, "v1/capabilities", {}, READ_TIMEOUT_MS, type => type.includes("application/json"));
-}
-
-/** The built chat and the assistant select the same local service during development. */
-export function conversationMode(request: Request): Mode {
-  return localDevelopment(request.headers) && process.env.NORI_LOCAL_AGENT_URL ? "local" : "hosted";
+export async function capabilitiesRoute(request: Request) {
+  if (!sameOriginRead(request)) return forbidden();
+  return forward(request, runtimeMode(request.headers), "v1/capabilities", {}, json);
 }

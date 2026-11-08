@@ -75,10 +75,10 @@ unpause verifies that migration remains complete.
 
 `make deploy` adds production workers from the Terraform state ([Delivery](../README.md#delivery)). `worker-release.py` below only prepares isolated candidates against local state.
 
-`terraform/worker-releases.json` retains all deployed pool and service image
-digests, service routing targets, and billing-alert settings. Pass the complete
-manifest to every plan. Never change an image behind a retained build ID or
-remove a retained target while pinned workflows or queued wakes need it.
+`terraform/worker-releases.json` is the retained manifest for local candidate
+preparation. Production releases carry forward the live Terraform state
+inventory. Never change an image behind a retained build ID or remove a
+retained target while pinned workflows or queued wakes need it.
 `worker_images` and `scalable_build_ids` preserve old pool resources and IAM;
 new releases are added only to `request_worker_images` and
 `request_worker_targets`. Neither preparation nor unpause enables old scalers.
@@ -189,8 +189,8 @@ plans or logs. The root `.env` remains the local source. Selected models:
 intent `jev-latest`, outer `gpt-6.1-sol` with low reasoning through the
 OpenAI platform API, and task worker `openai/gpt-6.1-terra` through OpenRouter Responses.
 
-New release targets set `per_user_settings=true`: computer and calendar account
-settings come from user rows. Retained builds keep their original environment,
+New release targets set `per_user_settings=true` so computer settings come
+from user rows. Retained builds keep their original environment,
 including the legacy calendar secret references. Their secret containers remain
 managed and protected; a normal release never retires them.
 
@@ -198,9 +198,9 @@ New release targets leave `jev_completion` disabled, because workers no longer
 call Jev to finish a task. Retained targets that enabled it keep `JEV_API_KEY`
 until their tasks drain, so adding a release doesn't change their credentials.
 
-New release targets also enable `capabilities` once `nori-brave-search-api-key`
-and the two `nori-google-calendar-client-*` secrets each have a version. Without them
-the release still deploys, and its tools report themselves unavailable. Add a
+New release targets enable `brave_search` when the latest version of
+`nori-brave-search-api-key` is enabled. Without it, the release deploys with web search
+unavailable. Add a
 version from the root `.env` without printing it:
 
 ```bash

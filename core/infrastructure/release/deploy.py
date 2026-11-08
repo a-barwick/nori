@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Deploy Nori to production from this Mac. See core/infrastructure/README.md.
 
-A deploy never opens admission, so nothing runs on new code until `make unpause`.
-That makes every failure safe to roll back automatically. An interrupted deploy
-keeps its progress; running `make deploy` again resumes it.
+A deploy keeps admission closed until `make unpause`. If interrupted, it keeps
+its progress for a retry or rollback.
 """
 import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
@@ -31,7 +31,7 @@ REGISTRY = "us-central1-docker.pkg.dev/bot-111549/nori-poc"
 STATE_BUCKET = "bot-111549-nori-ci-state"
 LOCK = "nori/deploy.lock"
 TERMINAL = {"completed", "cancelled", "failed"}
-CAPABILITY_SECRETS = ("nori-brave-search-api-key", "nori-google-calendar-client-id", "nori-google-calendar-client-secret")
+BRAVE_SEARCH_SECRET = "nori-brave-search-api-key"
 # Steps a rollback undoes. Images and the new worker service stay for the retry.
 UNDONE_BY_ROLLBACK = {"computer", "runtime", "web", "register", "current", "verify"}
 
@@ -90,8 +90,8 @@ def acquire_lock(commit):
             "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     try:
         return ops.api("POST", lock_url(upload=True), body)["generation"]
-    except RuntimeError as error:
-        if "HTTP 412" not in str(error):
+    except ops.APIError as error:
+        if error.status != 412:
             raise
         raise RuntimeError("Another deploy holds the lock, including for this commit. Run make deploy-unlock to inspect it; recover only after its owner has stopped.") from None
 
@@ -118,11 +118,12 @@ def refuse_open_work(c):
         cursor = page.get("nextPageToken", "")
         if not cursor:
             break
+    paused = ops.api("GET", ops.firestore(c, "system/control"))["fields"]["paused"].get("booleanValue", False)
     for owner in sorted(owners):
-        refuse_user_work(c, ops.firestore(c, "owners/" + quote(owner, safe="")))
+        refuse_user_work(ops.firestore(c, "owners/" + quote(owner, safe="")), paused)
 
 
-def refuse_user_work(c, root):
+def refuse_user_work(root, paused):
     control = ops.api("GET", root + "/conversation/control", allow404=True)
     if control:
         f = control.get("fields", {})
@@ -130,7 +131,6 @@ def refuse_user_work(c, root):
         # A failed turn consumes its attempt but leaves user_routed behind.
         # While paused, its saved input can survive a repair deployment. It is
         # retried only after a user follow-up; never mark it routed here.
-        paused = ops.api("GET", ops.firestore(c, "system/control"))["fields"]["paused"].get("booleanValue", False)
         routed_or_waiting = count("user_received") == count("user_routed") or (paused and count("protocol_version") == 2)
         require(count("received") == count("consumed") and routed_or_waiting and not f.get("active", {}).get("stringValue"),
                 "Nori has unprocessed messages. Wait for them to settle, then deploy again.")
@@ -148,11 +148,15 @@ def refuse_user_work(c, root):
 
 def init_terraform():
     # The app stack's directory is `app`, but its remote state prefix is still `nori/poc`. Changing the prefix would orphan the state.
-    for name, prefix in (("app", "nori/poc"), ("temporal", "nori/temporal")):
-        directory = CORE / "infrastructure" / name / "terraform"
-        (directory / "release_backend_override.tf").write_text('terraform {\n  backend "gcs" {}\n}\n')
+    for directory, prefix, state in ((ops.TF, "nori/poc", ops.STATE), (ops.TEMPORAL_TF, "nori/temporal", ops.TEMPORAL_STATE)):
+        override = directory / "release_backend_override.tf"
+        contents = 'terraform {\n  backend "gcs" {}\n}\n'
+        if not override.exists() or override.read_text() != contents:
+            with tempfile.NamedTemporaryFile("w", dir=directory, delete=False) as stream:
+                stream.write(contents)
+            Path(stream.name).replace(override)
         run(["terraform", f"-chdir={directory}", "init", "-input=false", "-reconfigure", f"-backend-config=bucket={STATE_BUCKET}", f"-backend-config=prefix={prefix}"])
-        require(json.loads(run(["terraform", f"-chdir={directory}", "output", "-json"])), f"{name} Terraform state is empty; refusing to continue")
+        require(ops.terraform_outputs(directory, state), f"{directory.parent.name} Terraform state is empty; refusing to continue")
 
 
 def build_image(name, file, context, commit, extra=()):
@@ -207,8 +211,8 @@ def read_previous(c):
     control = ops.api("GET", ops.firestore(c, "system/control"))
     vm = ops.api("GET", ops.vm_url())
     require(control.get("fields", {}).get("paused", {}).get("booleanValue") is True and vm["status"] == "TERMINATED", "Nori must be paused with its computer stopped")
-    web = ops.api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/services/{ops.WEB}")
-    runtime = ops.api("GET", "https://us-central1-aiplatform.googleapis.com/v1beta1/" + c["runtime_name"])
+    web = ops.api("GET", ops.web_resource())
+    runtime = ops.api("GET", ops.runtime_resource(c))
     items = {item["key"]: item["value"] for item in vm["metadata"].get("items", [])}
     return {"web": web["template"]["containers"][0]["image"], "runtime": runtime["spec"]["containerSpec"]["imageUri"],
             "runtime_deployment": ops.runtime_deployment(runtime), "worker": current_worker(),
@@ -223,40 +227,32 @@ def current_worker():
     return build
 
 
-def capability_secrets_ready():
-    """A secret reference without a version would stop the worker from starting."""
-    for secret in CAPABILITY_SECRETS:
-        try:
-            enabled = run(["gcloud", "--project", PROJECT, "secrets", "versions", "list", secret, "--filter=state=enabled", "--limit=1", "--format=value(name)"])
-        except RuntimeError:
-            enabled = ""
-        if not enabled.strip():
-            log(f"{secret} has no enabled version; web search and calendar stay unavailable in this release")
-            return False
-    return True
+def brave_search_ready():
+    """The worker binds `latest`, so an older enabled version does not suffice."""
+    try:
+        state = run(["gcloud", "--project", PROJECT, "secrets", "versions", "describe", "latest",
+                     "--secret=" + BRAVE_SEARCH_SECRET, "--format=value(state)"])
+    except RuntimeError:
+        state = ""
+    if state != "ENABLED":
+        log(f"{BRAVE_SEARCH_SECRET} has no readable enabled latest version; web search stays unavailable in this release")
+    return state == "ENABLED"
 
 
-def worker_vars(c, build, image):
+def worker_inventory():
     """Terraform state is the worker inventory, so every retained worker is carried forward."""
     state = json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json"]))
     resources = state["values"]["root_module"]["resources"]
     outputs = {key: value["value"] for key, value in state["values"]["outputs"].items()}
-    images = lambda kind, name: {r["index"]: r["values"]["template"][0]["containers"][0]["image"] for r in resources if r["type"] == kind and r["name"] == name}
-    services = images("google_cloud_run_v2_service", "worker")
+    def images(resource_type):
+        return {resource["index"]: resource["values"]["template"][0]["containers"][0]["image"]
+                for resource in resources if resource["type"] == resource_type and resource["name"] == "worker"}
+
+    services = images("google_cloud_run_v2_service")
     targets = {key: {k: v for k, v in value.items() if v is not None} for key, value in outputs["request_worker_targets"].items()}
     require(set(targets) == set(services), "Terraform worker outputs are incomplete; refresh the state first")
-    # A new worker keeps the Current worker's model. Only Austin changes models.
-    target = dict(targets[current_worker()])
-    target["capabilities"] = capability_secrets_ready()
-    target["per_user_settings"] = True
-    target["jev_completion"] = False
-    require(target["deployment_name"] == ops.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Current worker target is not production")
-    require(services.get(build, image) == image and targets.get(build, target) == target, "This build already exists with a different image or target")
-    services[build] = image
-    targets.setdefault(build, target)
-    return {"worker_images": images("google_cloud_run_v2_worker_pool", "worker"), "request_worker_images": services, "request_worker_targets": targets,
-            "scalable_build_ids": outputs["scalable_build_ids"],
-            "observability": outputs["observability_config"], "runtime_invoke_root": c["runtime_url"]}
+    return {"worker_images": images("google_cloud_run_v2_worker_pool"), "request_worker_images": services, "request_worker_targets": targets,
+            "scalable_build_ids": outputs["scalable_build_ids"], "observability": outputs["observability_config"]}
 
 
 def plan_changes(plan):
@@ -269,27 +265,43 @@ def plan_changes(plan):
             if resource["change"]["actions"] not in (["no-op"], ["read"])]
 
 
-def plan_worker(c, build, image):
-    variables, plan_file = DIR / "worker-vars.json", DIR / "worker.plan"
-    variables.write_text(json.dumps(worker_vars(c, build, image), indent=2))
-    run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "plan", "-input=false", "-lock-timeout=60s", f"-var-file={variables}", f"-out={plan_file}"])
-    plan_file.chmod(0o600)
-    return plan_changes(json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json", str(plan_file)]))), plan_file
+@contextmanager
+def plan_worker(c, build, image=None):
+    variables = worker_inventory()
+    services, targets = variables["request_worker_images"], variables["request_worker_targets"]
+    current = current_worker()
+    require(current in targets, "Current worker has no retained request-service target")
+    if build in targets:
+        require(image is None or services[build] == image, "This build already exists with a different image")
+    else:
+        # Only Austin changes models. A rehearsal can use Current's image as a stand-in.
+        targets[build] = {**targets[current], "capabilities": False, "brave_search": brave_search_ready(),
+                          "per_user_settings": True, "jev_completion": False}
+        services[build] = image or services[current]
+    target = targets[build]
+    require(target["deployment_name"] == ops.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Worker target is not production")
+    variables["runtime_invoke_root"] = c["runtime_url"]
+    # A rehearsal does not hold the deploy lock and must never replace its plan.
+    with tempfile.TemporaryDirectory(dir=DIR, prefix="worker-plan-") as scratch:
+        var_file, plan_file = Path(scratch) / "worker-vars.json", Path(scratch) / "worker.plan"
+        var_file.write_text(json.dumps(variables, indent=2))
+        run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "plan", "-input=false", "-lock-timeout=60s", f"-var-file={var_file}", f"-out={plan_file}"])
+        plan_file.chmod(0o600)
+        plan = json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json", str(plan_file)]))
+        yield plan_changes(plan), plan_file
 
 
-def ops_command(*args):
-    run([sys.executable, str(ops.ROOT / "ops.py"), *args], cwd=CORE)
-
-
-def register_worker(c, build):
+def register_worker(c, workers, build):
     """Have the worker check in with Temporal. A paused system refuses to run any task on this request."""
+    ops.queue_state(ops.worker_queues(workers), True)
+    ops.verify_worker_compatibility(workers)
+
     def registered():
         info = ops.version_info(build, missing_ok=True) or {}
         kinds = {str(q.get("type", "")).lower().removeprefix("task_queue_type_") for q in info.get("taskQueuesInfos", []) if q.get("name") == ops.TASK_QUEUE}
         return {"workflow", "activity"} <= kinds
     if registered():
         return
-    workers = ops.temporal_config()
     queue, root = workers["worker_wake_queue"], ops.production_workers(workers)[build]
     require(ops.api("GET", "https://cloudtasks.googleapis.com/v2/" + queue).get("state") == "PAUSED", "Worker registration requires a paused queue")
     name = f"{queue}/tasks/nori-deploy-{uuid.uuid4().hex}"
@@ -320,15 +332,15 @@ def register_worker(c, build):
             ops.api("DELETE", "https://cloudtasks.googleapis.com/v2/" + name, allow404=True)
 
 
-def verify(c, state):
+def verify(c, state, workers):
     previous = read_previous(c)  # Also proves Nori is still paused with its computer stopped.
     require(previous["web"] == state["web"] and previous["runtime"] == state["runtime"], "Live images do not match this deploy")
     require(all(previous["runtime_deployment"][key] == value for key, value in ops.runtime_settings().items()), "Live runtime capacity settings do not match this deploy")
     require(previous["worker"] == state["build"], "Temporal Current is not the new worker")
     require(previous["computer"]["computer-release-sha256"] == state["computer_sha256"], "The computer points at a different release")
-    web = ops.api("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/services/{ops.WEB}")
+    web = ops.api("GET", ops.web_resource())
     require(web.get("terminalCondition", {}).get("state") == "CONDITION_SUCCEEDED", "The web service is not ready")
-    ops.compatible_builds(ops.temporal_config())  # The same check unpause makes.
+    ops.compatible_builds(workers)
     end = time.monotonic() + 180
     while True:
         try:
@@ -344,10 +356,11 @@ def rollback(c, state):
     """Nothing has run on the new code while paused, so restoring all of it is safe."""
     previous = state.get("previous")
     attempted = set(state["done"]) | set(state.get("started", []))
+    workers = None
     if "pause" in attempted:
         # Pause can fail after changing admission or queues. Reconcile it before
         # touching releases, and verify live state before reporting recovery.
-        ops.pause(c)
+        workers = ops.pause(c)
         read_previous(c)
     if previous and UNDONE_BY_ROLLBACK & attempted:
         log("Restoring the previous release")
@@ -355,8 +368,8 @@ def rollback(c, state):
             ops.patch_runtime(c, previous["runtime"], previous["runtime_deployment"])
         else:
             # Allow recovery of progress saved before runtime settings were captured.
-            ops_command("deploy-runtime", previous["runtime"])
-        ops_command("deploy-web", previous["web"])
+            ops.deploy_runtime(c, workers or ops.temporal_config(), previous["runtime"])
+        ops.deploy_web(previous["web"])
         ops.metadata(previous["computer"])
         ops.temporal("set-current-version", "--deployment-name=" + ops.DEPLOYMENT, "--build-id=" + previous["worker"], "--allow-no-pollers", "--yes")
         restored = read_previous(c)
@@ -422,17 +435,19 @@ def deploy_locked(commit):
             save_state(state)
 
         def apply_worker():
-            changes, plan_file = plan_worker(c, state["build"], state["worker"])
-            log("Terraform changes: " + (", ".join(changes) or "none"))
-            run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "apply", "-input=false", str(plan_file)])
-            plan_file.unlink()
+            # Admission may have changed after the preflight and before pause completed.
+            refuse_open_work(c)
+            with plan_worker(c, state["build"], state["worker"]) as (changes, plan_file):
+                log("Terraform changes: " + (", ".join(changes) or "none"))
+                run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "apply", "-input=false", str(plan_file)])
         step("worker", apply_worker)
-        step("computer", lambda: ops_command("publish-computer", str(DIR / "computer-agent")))
-        step("runtime", lambda: ops_command("deploy-runtime", state["runtime"]))
-        step("web", lambda: ops_command("deploy-web", state["web"]))
-        step("register", lambda: (ops.temporal_unpause(), register_worker(c, state["build"])))
+        workers = ops.temporal_config()
+        step("computer", lambda: ops.publish_computer(c, DIR / "computer-agent"))
+        step("runtime", lambda: ops.deploy_runtime(c, workers, state["runtime"]))
+        step("web", lambda: ops.deploy_web(state["web"]))
+        step("register", lambda: register_worker(c, workers, state["build"]))
         step("current", lambda: ops.temporal("set-current-version", "--deployment-name=" + ops.DEPLOYMENT, "--build-id=" + state["build"], "--allow-no-pollers", "--yes"))
-        step("verify", lambda: verify(c, state))
+        step("verify", lambda: verify(c, state, workers))
     except Exception as error:
         log(f"Deploy failed: {error}")
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -463,13 +478,8 @@ def check(_args):
     log("Open work")
     refuse_open_work(c)
     log("Worker plan")
-    current = current_worker()
-    state = json.loads(run(["terraform", f"-chdir={ops.TEMPORAL_TF}", "show", "-json"]))
-    image = next(r["values"]["template"][0]["containers"][0]["image"] for r in state["values"]["root_module"]["resources"]
-                 if r["type"] == "google_cloud_run_v2_service" and r["name"] == "worker" and r["index"] == current)
-    changes, plan_file = plan_worker(c, "rel-" + commit[:12], image)
-    plan_file.unlink()
-    log("Terraform changes: " + (", ".join(changes) or "none"))
+    with plan_worker(c, "rel-" + commit[:12]) as (changes, _):
+        log("Terraform changes: " + (", ".join(changes) or "none"))
     log("Runtime health")
     ops.api("POST", c["runtime_url"].rstrip("/") + "/api/healthz", {})
     log("Ready to deploy. Nothing was changed.")

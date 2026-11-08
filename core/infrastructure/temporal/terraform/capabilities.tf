@@ -4,7 +4,6 @@ locals {
     GOOGLE_CALENDAR_CLIENT_ID     = "nori-google-calendar-client-id"
     GOOGLE_CALENDAR_CLIENT_SECRET = "nori-google-calendar-client-secret"
   }
-  # Retained workers still reference these containers. New per-user builds do not.
   retained_capability_secrets = merge(local.capability_secrets, {
     GOOGLE_CALENDAR_REFRESH_TOKEN = "nori-google-calendar-refresh-token"
     GOOGLE_CALENDAR_ACCOUNT       = "nori-google-calendar-account"
@@ -12,7 +11,6 @@ locals {
 }
 
 # Terraform owns only these containers and references, never credential payloads.
-# A release enables capabilities only once every container has a version.
 resource "google_secret_manager_secret" "capability" {
   for_each  = local.production ? local.retained_capability_secrets : {}
   secret_id = each.value

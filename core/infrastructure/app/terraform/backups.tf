@@ -1,5 +1,3 @@
-# Daily recovery copies of production's records and the computer's retained data
-# disk, with seven days of history. Deleting a source disk keeps its snapshots.
 resource "google_firestore_backup_schedule" "records" {
   count     = local.production ? 1 : 0
   project   = local.project

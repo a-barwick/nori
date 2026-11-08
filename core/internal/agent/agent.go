@@ -1,5 +1,3 @@
-// Package agent holds the inner task model contract and tool steps. Durable
-// sequencing lives in the Temporal workflow that calls them.
 package agent
 
 import (
@@ -16,14 +14,12 @@ import (
 )
 
 type Service struct {
-	UserFacts string
-	Store     state.Store
-	Model     Model
-	Computer  computer.Provider
-	// Capabilities is set once by the worker before it starts polling.
+	UserFacts    string
+	Store        state.Store
+	Model        Model
+	Computer     computer.Provider
 	Capabilities Capabilities
-	// HTTP carries the worker's own web requests, such as a search. It follows no redirects.
-	HTTP *http.Client
+	HTTP         *http.Client
 }
 
 func New(store state.Store, model Model, c computer.Provider) *Service {

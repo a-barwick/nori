@@ -1,4 +1,3 @@
-# These resources already exist. Import them; do not create duplicates.
 import {
   for_each = local.apis
   to       = google_project_service.api[each.value]

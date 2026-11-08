@@ -69,7 +69,6 @@ func (d *Database) GetResult(ctx context.Context, id string) (state.Result, erro
 	return result, doc.DataTo(&result)
 }
 
-// RecentResults lists the newest results first.
 func (d *Database) RecentResults(ctx context.Context, limit int) ([]state.Result, error) {
 	return documents[state.Result](d.results().OrderBy("created_at", docstore.Desc).Limit(limit).Documents(ctx))
 }

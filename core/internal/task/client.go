@@ -16,28 +16,19 @@ import (
 	"nori/internal/state"
 )
 
-var configured settings.Temporal
-
-// Configure sets the Temporal settings this process uses. Every process that dials Temporal calls it once at startup.
-func Configure(s settings.Temporal) { configured = s }
-
-// Queue is the task queue workflows and workers use.
-func Queue() string { return configured.TaskQueue }
-
 // Dial connects to Temporal. Outside local mode it needs the Temporal Cloud API
 // key, from TEMPORAL_API_KEY or from the secret named by
 // TEMPORAL_API_KEY_SECRET_VERSION, which secrets resolves. A deployed API can
 // carry a secret reference instead of a plaintext credential in its runtime
 // configuration or Terraform state. Workers may continue using their platform's
 // native TEMPORAL_API_KEY secret injection. Local mode never calls secrets.
-func Dial(ctx context.Context, secrets secret.Lookup) (client.Client, error) {
-	if err := configured.Validate(); err != nil {
+func Dial(ctx context.Context, config settings.Temporal, secrets secret.Lookup) (client.Client, error) {
+	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	address, namespace := configured.Address, configured.Namespace
-	options := client.Options{HostPort: address, Namespace: namespace}
-	if !configured.Local {
-		key, err := secret.Resolve(ctx, secrets, configured.APIKey, configured.APIKeySecret, "TEMPORAL_API_KEY_SECRET_VERSION")
+	options := client.Options{HostPort: config.Address, Namespace: config.Namespace}
+	if !config.Local {
+		key, err := secret.Resolve(ctx, secrets, config.APIKey, config.APIKeySecret, "TEMPORAL_API_KEY_SECRET_VERSION")
 		if err != nil {
 			return nil, err
 		}
@@ -47,25 +38,27 @@ func Dial(ctx context.Context, secrets secret.Lookup) (client.Client, error) {
 		options.ConnectionOptions.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
 		options.Credentials = client.NewAPIKeyStaticCredentials(key)
 	}
-	if configured.CloudRunID {
+	if config.CloudRunID {
 		options.Plugins = append(options.Plugins, cloudrunid.NewCloudRunIDPlugin())
 	}
 	return client.DialContext(ctx, options)
 }
 
-func (e *Engine) workflowID(id string) string { return dispatch.WorkflowID(e.UserID, id) }
+func (e *Engine) workflowID(id string) string { return dispatch.WorkflowID(e.userID, id) }
 
-// Engine runs the dispatch contract on a Temporal client.
 type Engine struct {
-	c      client.Client
-	UserID string
+	c          client.Client
+	userID     string
+	queue      string
+	deployment string
 }
 
 var _ dispatch.Orchestrator = (*Engine)(nil)
 
-func NewEngine(c client.Client, userID string) *Engine { return &Engine{c: c, UserID: userID} }
+func NewEngine(c client.Client, config settings.Temporal, userID string) *Engine {
+	return &Engine{c: c, userID: userID, queue: config.TaskQueue, deployment: config.EffectiveDeploymentName()}
+}
 
-// Close closes the Temporal client the Engine was built on.
 func (e *Engine) Close() { e.c.Close() }
 
 func (e *Engine) Signal(ctx context.Context, runID string, cmd state.Command) error {
@@ -74,7 +67,7 @@ func (e *Engine) Signal(ctx context.Context, runID string, cmd state.Command) er
 
 func (e *Engine) SignalOrStart(ctx context.Context, cmd state.Command) error {
 	options := client.StartWorkflowOptions{
-		ID: e.workflowID(cmd.RunID), TaskQueue: Queue(), WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+		ID: e.workflowID(cmd.RunID), TaskQueue: e.queue, WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 	}
 	_, err := e.c.SignalWithStartWorkflow(ctx, e.workflowID(cmd.RunID), Signal, cmd, options, WorkflowName, cmd.RunID, Checkpoint{})
 	return err

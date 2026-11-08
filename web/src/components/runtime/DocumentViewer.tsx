@@ -4,10 +4,9 @@ import { ArrowLeft, Download } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { Markdown } from "@/components/chat/Markdown";
 import { Button, IconButton } from "@/components/ui/primitives";
-import { firstSentence } from "@/lib/utils";
+import { documentTitle } from "@/lib/utils";
 import { shortDate } from "@/lib/time";
 
-/** A reading view of a saved reply; the conversation remains its source of truth. */
 export function DocumentViewer({
   document,
   onClose,
@@ -15,9 +14,7 @@ export function DocumentViewer({
   document: { body: string; at: number } | null;
   onClose: () => void;
 }) {
-  const title =
-    document?.body.match(/^#{1,3}\s+(.+)$/m)?.[1] ??
-    firstSentence(document?.body ?? "").slice(0, 48);
+  const title = documentTitle(document?.body ?? "");
   const download = () => {
     if (!document) return;
     const url = URL.createObjectURL(

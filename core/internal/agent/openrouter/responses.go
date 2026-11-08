@@ -1,6 +1,3 @@
-// Package openrouter is the task model adapter for OpenRouter's Responses API. It holds
-// every provider-specific detail: the endpoint, credentials, request and response formats,
-// price ceilings and error text.
 package openrouter
 
 import (
@@ -31,7 +28,6 @@ const (
 	stateFormat = "nori.responses"
 )
 
-// Client calls the Responses API once per Respond.
 type Client struct {
 	Key       string
 	ModelName string
@@ -51,7 +47,6 @@ func New(key, model string, meter usage.Meter) *Client {
 	}
 }
 
-// routing caps the price per million tokens that OpenRouter may route a request at.
 func routing() map[string]any {
 	return map[string]any{"max_price": map[string]float64{"prompt": 1, "completion": 5}, "require_parameters": true}
 }
@@ -276,7 +271,6 @@ func responseInput(messages []transcript.Message) ([]any, error) {
 	return input, nil
 }
 
-// responseSchema preserves nested object and array types for strict Responses tools.
 func responseSchema(schema *transcript.Schema) map[string]any {
 	if schema == nil {
 		return nil

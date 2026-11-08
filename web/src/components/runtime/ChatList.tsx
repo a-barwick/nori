@@ -5,7 +5,6 @@ import type { Summary } from "@/lib/chat/contract";
 import { separatorLabel } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
-/** The Chats tab: independent chats, newest first. */
 export function ChatList({ chats, openId, onOpen, onNew }: {
   chats: Summary[];
   openId?: string;

@@ -19,7 +19,6 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	platform.Configure(s)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	stopTelemetry := observability.Init(ctx, "nori-deliver", s)
@@ -58,7 +57,7 @@ func deliver(ctx context.Context, s settings.Settings, waker wake.Waker, row use
 	if e = control.Check(); e != nil {
 		return e
 	}
-	engine, e := platform.Engine(ctx, row.ID)
+	engine, e := platform.Engine(ctx, s, row.ID)
 	if e != nil {
 		return e
 	}

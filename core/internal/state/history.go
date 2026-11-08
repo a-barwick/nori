@@ -32,7 +32,6 @@ func ValidHistoryRef(ref string) bool {
 	return err == nil && len(decoded) == sha256.Size && ref == strings.ToLower(ref)
 }
 
-// HistoryID is the reference of a block with the given task, parent and payload.
 func HistoryID(runID, parent string, data []byte) string {
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(runID))
@@ -43,7 +42,6 @@ func HistoryID(runID, parent string, data []byte) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-// ValidHistoryLookup reports whether runID and ref can name a history block at all.
 func ValidHistoryLookup(runID, ref string) bool {
 	return ValidEvidenceID(runID) && ValidHistoryRef(ref)
 }
@@ -59,7 +57,6 @@ func ValidateSavedHistoryBlock(runID, ref string, block HistoryBlock) error {
 	return nil
 }
 
-// ValidateHistoryAppend checks an append request before anything is read.
 func ValidateHistoryAppend(runID, parent string, data []byte) error {
 	if !ValidEvidenceID(runID) || (parent != "" && !ValidHistoryRef(parent)) || len(data) == 0 || len(data) > MaxHistoryBlockBytes ||
 		!json.Valid(data) {
@@ -68,7 +65,6 @@ func ValidateHistoryAppend(runID, parent string, data []byte) error {
 	return nil
 }
 
-// NextHistoryBlock builds the block that extends parent (nil for the first block) with data, and its reference.
 func NextHistoryBlock(runID, parentRef string, parent *HistoryBlock, data []byte) (HistoryBlock, string, error) {
 	block := HistoryBlock{RunID: runID, Parent: parentRef, Data: bytes.Clone(data), Depth: 1, Bytes: len(data)}
 	if parent != nil {
@@ -102,7 +98,6 @@ func NewHistoryChain() *HistoryChain {
 	return &HistoryChain{blocks: [][]byte{}, seen: map[string]bool{}}
 }
 
-// Visit records that ref is about to be read.
 func (c *HistoryChain) Visit(ref string) error {
 	if c.seen[ref] || len(c.blocks) >= MaxHistoryBlocks {
 		return errors.New("invalid task history chain")
@@ -111,7 +106,6 @@ func (c *HistoryChain) Visit(ref string) error {
 	return nil
 }
 
-// Add takes the block just read and returns the reference of its parent, empty at the start of the history.
 func (c *HistoryChain) Add(block HistoryBlock) (string, error) {
 	if len(c.blocks) > 0 && (block.Depth != c.expectedDepth || block.Bytes != c.expectedBytes) {
 		return "", errors.New("task history chain metadata conflict")

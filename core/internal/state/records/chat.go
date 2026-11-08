@@ -32,17 +32,23 @@ type chatMessageRecord struct {
 	Attention bool `firestore:"attention"`
 }
 
-func (d *Database) readChat(tx *docstore.Transaction, id string, attention bool, ids []string) (state.Chat, bool, error) {
-	ref := d.chats().Doc(id)
+func readChatHeader(tx *docstore.Transaction, ref *docstore.DocumentRef) (state.Chat, error) {
 	doc, err := tx.Get(ref)
 	if notFound(err) {
-		return state.Chat{}, false, state.ErrNotFound
+		return state.Chat{}, state.ErrNotFound
 	}
 	if err != nil {
-		return state.Chat{}, false, err
+		return state.Chat{}, err
 	}
 	var c state.Chat
-	if err = doc.DataTo(&c); err != nil {
+	err = doc.DataTo(&c)
+	return c, err
+}
+
+func (d *Database) readChat(tx *docstore.Transaction, id string, attention bool, ids []string) (state.Chat, bool, error) {
+	ref := d.chats().Doc(id)
+	c, err := readChatHeader(tx, ref)
+	if err != nil {
 		return c, false, err
 	}
 	legacy := len(c.Messages) > 0
@@ -127,18 +133,47 @@ func (d *Database) Chat(ctx context.Context, id string) (c state.Chat, err error
 	return
 }
 
-func (d *Database) ChatMessages(ctx context.Context, id string, before int64) (page state.ChatMessagePage, err error) {
-	page.Messages = []state.ChatMessage{}
+func (d *Database) ChatMessage(ctx context.Context, id, messageID string) (message state.ChatMessage, err error) {
+	ref := d.chats().Doc(id)
 	err = d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
-		doc, e := tx.Get(d.chats().Doc(id))
-		if notFound(e) {
+		c, err := readChatHeader(tx, ref)
+		if err != nil {
+			return err
+		}
+		if len(c.Messages) > 0 {
+			for i, m := range c.Messages {
+				if m.ID == messageID {
+					m.Sequence = int64(i + 1)
+					message = m
+					return nil
+				}
+			}
 			return state.ErrNotFound
 		}
-		if e != nil {
-			return e
+		doc, err := tx.Get(ref.Collection("messages").Doc(messageID))
+		if notFound(err) {
+			return state.ErrNotFound
 		}
-		var c state.Chat
-		if e = doc.DataTo(&c); e != nil {
+		if err != nil {
+			return err
+		}
+		if err := doc.DataTo(&message); err != nil {
+			return err
+		}
+		if message.ID != messageID {
+			return state.ErrNotFound
+		}
+		return nil
+	}, docstore.ReadOnly)
+	return message, err
+}
+
+func (d *Database) ChatMessages(ctx context.Context, id string, before int64) (page state.ChatMessagePage, err error) {
+	page.Messages = []state.ChatMessage{}
+	ref := d.chats().Doc(id)
+	err = d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		c, e := readChatHeader(tx, ref)
+		if e != nil {
 			return e
 		}
 		messages := []state.ChatMessage{}
@@ -151,7 +186,7 @@ func (d *Database) ChatMessages(ctx context.Context, id string, before int64) (p
 			}
 			slices.Reverse(messages)
 		} else {
-			query := d.chats().Doc(id).Collection("messages").OrderBy("sequence", docstore.Desc).Limit(state.ChatPageSize + 1)
+			query := ref.Collection("messages").OrderBy("sequence", docstore.Desc).Limit(state.ChatPageSize + 1)
 			if before > 0 {
 				query = query.Where("sequence", "<", before)
 			}
@@ -250,7 +285,7 @@ func (d *Database) UpdateChat(ctx context.Context, id string, change func(*state
 			}
 		}
 		if startsTool {
-			doc, e := tx.Get(d.control())
+			doc, e := tx.Get(controlDoc(d.db))
 			if e != nil {
 				return e
 			}

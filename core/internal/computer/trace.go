@@ -10,9 +10,6 @@ import (
 	"nori/internal/observability"
 )
 
-// Traced records a computer.connect span around every connection attempt made
-// through p. Wire it once where the provider is chosen so adapters stay free of
-// telemetry.
 func Traced(p Provider) Provider { return traced{p} }
 
 type traced struct{ p Provider }

@@ -2,7 +2,6 @@ package state
 
 import "time"
 
-// TaskStepLimit bounds the steps returned for one task's detailed trace.
 const TaskStepLimit = 100
 
 // TaskStep records observed provider/tool activity. A missing cost or token

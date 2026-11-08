@@ -16,7 +16,6 @@ import (
 	"nori/internal/usage"
 )
 
-// Inspect sends one image and one question in a request of its own with no tools.
 func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out agent.Inspection, err error) {
 	if c.ModelName != selectedModel {
 		return out, errors.New("task model must be the selected openai/gpt-6.1-terra")

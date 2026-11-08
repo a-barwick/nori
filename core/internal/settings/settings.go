@@ -4,6 +4,8 @@
 package settings
 
 import (
+	"cmp"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -35,8 +37,6 @@ type Settings struct {
 	TimeZone string
 	// TaskBudgetUSD is recorded as the spending ceiling when a background task starts.
 	TaskBudgetUSD float64
-	// EnvFile is the configuration file Load read.
-	EnvFile       string
 	Observability Observability
 }
 
@@ -87,6 +87,10 @@ type Temporal struct {
 	Local, CloudRunID bool
 }
 
+func (s Temporal) EffectiveDeploymentName() string {
+	return cmp.Or(s.DeploymentName, "nori-task")
+}
+
 // Validate checks connection settings without opening a connection or resolving a secret.
 func (s Temporal) Validate() error {
 	for _, setting := range [][2]string{{"TEMPORAL_ADDRESS", s.Address}, {"TEMPORAL_NAMESPACE", s.Namespace}, {"TEMPORAL_TASK_QUEUE", s.TaskQueue}} {
@@ -104,9 +108,8 @@ type Wake struct {
 	// ConversationQueue and RuntimeURL are the hosted conversation wake. Caller is the service account of every
 	// wake.
 	ConversationQueue, RuntimeURL, Caller string
-	// WorkerServices is a JSON map of worker build to route, and WorkerQueue their wake queue. Emulator is a
-	// loopback Cloud Tasks emulator.
-	WorkerServices, WorkerQueue, Emulator string
+	WorkerServices                        map[string]string
+	WorkerQueue, Emulator                 string
 }
 
 type Worker struct {
@@ -152,7 +155,11 @@ func Load() (Settings, error) {
 		}
 	}
 	s := FromEnvironment()
-	s.EnvFile = file
+	if raw := os.Getenv("NORI_WORKER_SERVICES"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &s.Wake.WorkerServices); err != nil || len(s.Wake.WorkerServices) == 0 {
+			return Settings{}, fmt.Errorf("NORI_WORKER_SERVICES must be a nonempty JSON map of worker builds to service URLs")
+		}
+	}
 	switch s.Cloud {
 	case "gcp", "aws", "local":
 	default:
@@ -176,7 +183,7 @@ func Load() (Settings, error) {
 	return s, nil
 }
 
-// FromEnvironment reads the settings from the process environment alone, for a process that loads no file.
+// FromEnvironment supplies settings for the computer agent without loading a project env file.
 func FromEnvironment() Settings {
 	taskBudget, err := strconv.ParseFloat(get("NORI_TASK_BUDGET_USD", "1"), 64)
 	if err != nil {
@@ -222,7 +229,7 @@ func FromEnvironment() Settings {
 		Temporal: temporal,
 		Wake: Wake{
 			ConversationQueue: os.Getenv("NORI_WAKE_QUEUE"), RuntimeURL: os.Getenv("NORI_RUNTIME_URL"), Caller: os.Getenv("NORI_WAKE_SERVICE_ACCOUNT"),
-			WorkerServices: os.Getenv("NORI_WORKER_SERVICES"), WorkerQueue: os.Getenv("NORI_WORKER_WAKE_QUEUE"), Emulator: os.Getenv("CLOUD_TASKS_EMULATOR_HOST"),
+			WorkerQueue: os.Getenv("NORI_WORKER_WAKE_QUEUE"), Emulator: os.Getenv("CLOUD_TASKS_EMULATOR_HOST"),
 		},
 		Worker:        Worker{PollWindow: get("NORI_WORKER_POLL_WINDOW", "240s"), IdleWindow: get("NORI_WORKER_IDLE_WINDOW", "15s")},
 		SearchKey:     os.Getenv("BRAVE_SEARCH_API_KEY"),

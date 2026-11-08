@@ -86,7 +86,6 @@ func (r *Runner) planUserCommands(ctx context.Context, t *state.ConversationTurn
 				next++
 			}
 		}
-		// The commands and their visible explanation now share the same source.
 		reply.Text = plan.Text
 	}
 	return savedPlannedReply(reply), nil

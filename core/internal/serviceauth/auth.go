@@ -1,4 +1,3 @@
-// Package serviceauth authenticates trusted web/queue calls outside managed GCP IAM.
 package serviceauth
 
 import (

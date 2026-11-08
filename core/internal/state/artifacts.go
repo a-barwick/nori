@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// MaxArtifactBytes bounds one private artifact.
 const MaxArtifactBytes = 2 << 20
 
 // ArtifactStore persists the bytes of private PNG artifacts, one object per run and artifact ID. An implementation
@@ -31,7 +30,6 @@ func ValidateArtifactIDs(run, id string) error {
 	return nil
 }
 
-// ValidatePNG checks a write request.
 func ValidatePNG(run, id string, data []byte) error {
 	if err := ValidateArtifactIDs(run, id); err != nil {
 		return err
@@ -52,7 +50,6 @@ func ArtifactListed(run Run, id string) bool {
 	return false
 }
 
-// ErrFileExists is returned when a file key is already taken.
 var ErrFileExists = errors.New("file already exists")
 
 // ReadFile reads a stored file, refusing anything over the limit without reading it all.

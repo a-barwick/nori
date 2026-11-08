@@ -10,8 +10,7 @@ import (
 // ConversationSummary stands in for the turns that fell out of the outer model's recent window. It changes what the
 // model sees, never what is stored: every turn and message stays saved.
 type ConversationSummary struct {
-	// From is the context start the summary belongs to. When an operator starts a fresh context, a summary of the
-	// old one no longer applies.
+	// A summary applies only to the retained context cutoff it covers.
 	From time.Time `json:"from" firestore:"from"`
 	// Through is when the newest turn it covers started. Turns after it are replayed word for word.
 	Through   time.Time     `json:"through" firestore:"through"`
@@ -30,10 +29,8 @@ type SummaryItem struct {
 	Note    string `json:"note,omitempty" firestore:"note,omitempty"`
 }
 
-// SummaryKinds are the things a summary keeps word for word.
 var SummaryKinds = []string{"constraint", "correction", "preference", "approval", "open_question", "commitment", "decision", "fact"}
 
-// Limits on the outer model's view of the conversation.
 const (
 	// OuterInputBytes bounds every message one outer reply sends, other than its tool schema. RecentTurnLimit and
 	// RecentTurnBytes bound the turns replayed word for word after the summary.
@@ -54,12 +51,10 @@ const (
 	MaxSummaryGist  = 1500
 )
 
-// Applies reports whether a saved summary belongs to the context that starts at from.
 func (s ConversationSummary) Applies(from time.Time) bool {
 	return !s.Through.IsZero() && s.From.Equal(from)
 }
 
-// TurnBytes is how much a turn adds to the outer model's input.
 func TurnBytes(t ConversationTurn) int {
 	n := 0
 	for _, p := range t.Protocol {

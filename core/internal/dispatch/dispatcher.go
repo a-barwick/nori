@@ -17,13 +17,10 @@ import (
 
 var tracer = otel.Tracer("nori/task")
 
-// Steps selects which parts of a reconciliation pass run.
 type Steps uint8
 
 const (
-	// RepairClosed publishes the terminal state of tasks whose execution closed.
 	RepairClosed Steps = 1 << iota
-	// Commands delivers saved task commands to their executions.
 	Commands
 	// Publications wakes executions holding a finished result, once no chat
 	// input is waiting to be routed.
@@ -34,10 +31,6 @@ const (
 	ConversationWake
 )
 
-// Dispatcher runs one reconciliation pass over the gaps between Firestore and
-// the task engine. Every process that delivers commands calls it: the API after
-// accepting a command, the conversation wake handler, the worker loop and
-// nori-deliver. Callers choose Steps; the order below never changes.
 type Dispatcher struct {
 	UserID   string
 	Store    state.ConversationStore
@@ -71,8 +64,6 @@ func (d *Dispatcher) Reconcile(ctx context.Context, steps Steps) error {
 	return errors.Join(failures...)
 }
 
-// StopPaused completes an accepted Stop for a task that cannot run while
-// execution is paused. See Recovery.
 func (d *Dispatcher) StopPaused(ctx context.Context, runID string) (state.Run, error) {
 	return d.Recovery.StopPaused(ctx, runID)
 }
@@ -102,76 +93,58 @@ func (d *Dispatcher) deliverCommands(ctx context.Context) (resultErr error) {
 	var failures []error
 	requestDriven := d.Waker.WorkersNeedWake()
 	for _, cmd := range pending {
-		run, e := d.Store.GetRun(ctx, cmd.RunID)
-		if e != nil {
-			failures = append(failures, e)
-			continue
+		delivered, err := d.relayCommand(ctx, cmd, requestDriven)
+		if delivered {
+			err = d.Store.Delivered(ctx, cmd.ID)
 		}
-		if run.Status != state.RunRunning {
-			if run.CancelRequested && cmd.Kind == state.CommandStop {
-				// A paused Stop may already be persisted while its workflow waits.
-				// Retain delivery intent until it receives a wake or is absent.
-				e = d.Engine.Signal(ctx, cmd.RunID, cmd)
-				if e != nil && !errors.Is(e, ErrNoExecution) {
-					failures = append(failures, e)
-					continue
-				}
-				if e == nil && requestDriven {
-					control, err := d.Store.Control(ctx)
-					if err != nil {
-						failures = append(failures, err)
-						continue
-					}
-					// A paused Stop may have projected cancellation before its
-					// parked workflow drains. Keep this existing command intent
-					// until resume can durably enqueue the exact workflow wake.
-					if control.Paused {
-						continue
-					}
-					if err = d.wakeWorker(ctx, cmd.RunID); err != nil {
-						failures = append(failures, err)
-						continue
-					}
-				}
-			}
-			if e = d.Store.Delivered(ctx, cmd.ID); e != nil {
-				failures = append(failures, e)
-			}
-			continue
-		}
-		control, e := d.Store.Control(ctx)
-		if e != nil {
-			failures = append(failures, e)
-			continue
-		}
-		if e = control.Check(); e != nil {
-			// Stop can signal an existing workflow after pause; it must not start one.
-			if cmd.Kind == state.CommandStop {
-				e = d.Engine.Signal(ctx, cmd.RunID, cmd)
-			} else {
-				continue
-			}
-		} else {
-			e = d.Engine.SignalOrStart(ctx, cmd)
-		}
-		if e != nil {
-			failures = append(failures, fmt.Errorf("command %s delivery: %w", cmd.ID, e))
-			continue
-		}
-		if control.Paused && requestDriven {
-			continue
-		}
-		if !control.Paused {
-			if e = d.wakeWorker(ctx, cmd.RunID); e != nil {
-				failures = append(failures, e)
-				continue
-			}
-		}
-		if e = d.Store.Delivered(ctx, cmd.ID); e != nil {
-			failures = append(failures, e)
+		if err != nil {
+			failures = append(failures, err)
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func (d *Dispatcher) relayCommand(ctx context.Context, cmd state.Command, requestDriven bool) (bool, error) {
+	run, err := d.Store.GetRun(ctx, cmd.RunID)
+	if err != nil {
+		return false, err
+	}
+	terminal := run.Status != state.RunRunning
+	if terminal {
+		if !run.CancelRequested || cmd.Kind != state.CommandStop {
+			return true, nil
+		}
+		// Stop may have projected cancellation while its workflow was parked.
+		err = d.Engine.Signal(ctx, cmd.RunID, cmd)
+		if errors.Is(err, ErrNoExecution) {
+			return true, nil
+		}
+		if err != nil || !requestDriven {
+			return err == nil, err
+		}
+	}
+	control, err := d.Store.Control(ctx)
+	if err != nil {
+		return false, err
+	}
+	if control.Paused {
+		if terminal || cmd.Kind != state.CommandStop {
+			// A parked execution still needs its original delivery intent after resume.
+			return false, nil
+		}
+		// An accepted Stop can signal an existing execution without starting one.
+		if err := d.Engine.Signal(ctx, cmd.RunID, cmd); err != nil {
+			return false, fmt.Errorf("command %s delivery: %w", cmd.ID, err)
+		}
+		return !requestDriven, nil
+	}
+	if !terminal {
+		if err := d.Engine.SignalOrStart(ctx, cmd); err != nil {
+			return false, fmt.Errorf("command %s delivery: %w", cmd.ID, err)
+		}
+	}
+	err = d.wakeWorker(ctx, cmd.RunID)
+	return err == nil, err
 }
 
 // wakePublications delivers one durable wake for each held result. The generation
@@ -206,7 +179,6 @@ func (d *Dispatcher) wakePublications(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-// wakeConversation wakes the API for input that is saved but not being processed.
 func (d *Dispatcher) wakeConversation(ctx context.Context) error {
 	relay, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -215,7 +187,7 @@ func (d *Dispatcher) wakeConversation(ctx context.Context) error {
 		return err
 	}
 	now := time.Now()
-	if control.Received <= control.Consumed || (control.Active != "" && control.LeaseUntil.After(now)) {
+	if !control.Pending() || control.Processing(now) {
 		return nil
 	}
 	d.mu.Lock()
@@ -255,13 +227,10 @@ func (d *Dispatcher) Resume(ctx context.Context) error {
 		if run.Status != state.RunRunning {
 			continue
 		}
-		if err = d.Engine.Signal(ctx, run.ID, state.Command{RunID: run.ID, Kind: "resume"}); err != nil {
-			if !errors.Is(err, ErrNoExecution) {
-				failures = append(failures, err)
-			}
-		} else if err = d.wakeWorker(ctx, run.ID); err != nil {
+		signaled, err := d.resumeTask(ctx, run.ID)
+		if err != nil {
 			failures = append(failures, err)
-		} else {
+		} else if signaled {
 			seen[run.ID] = true
 		}
 	}
@@ -282,18 +251,26 @@ func (d *Dispatcher) recoverWakes(ctx context.Context, seen map[string]bool) err
 		if seen[runID] {
 			continue
 		}
-		if err := d.Engine.Signal(ctx, runID, state.Command{RunID: runID, Kind: "resume"}); err != nil {
-			if !errors.Is(err, ErrNoExecution) {
-				failures = append(failures, err)
-			}
-			continue
-		}
-		if err := d.wakeWorker(ctx, runID); err != nil {
+		signaled, err := d.resumeTask(ctx, runID)
+		if err != nil {
 			failures = append(failures, err)
 		}
-		seen[runID] = true
+		if signaled {
+			seen[runID] = true
+		}
 	}
 	return errors.Join(failures...)
+}
+
+func (d *Dispatcher) resumeTask(ctx context.Context, runID string) (signaled bool, err error) {
+	err = d.Engine.Signal(ctx, runID, state.Command{RunID: runID, Kind: "resume"})
+	if errors.Is(err, ErrNoExecution) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, d.wakeWorker(ctx, runID)
 }
 
 // wakeWorker asks the worker build that owns the task to poll for it. It does

@@ -20,34 +20,34 @@ func (e *Engine) WorkerBuild(ctx context.Context, id string) (string, error) {
 	v := execution.GetWorkflowExecutionInfo().GetVersioningInfo()
 	if override := v.GetVersioningOverride(); override != nil {
 		if pinned := override.GetPinned().GetVersion(); pinned != nil {
-			if pinned.GetDeploymentName() != deploymentName() || pinned.GetBuildId() == "" {
+			if pinned.GetDeploymentName() != e.deployment || pinned.GetBuildId() == "" {
 				return "", fmt.Errorf("unexpected pinned deployment override")
 			}
 			return pinned.GetBuildId(), nil
 		}
 		if pinned := override.GetPinnedVersion(); pinned != "" {
 			deployment, build, ok := strings.Cut(pinned, ".")
-			if !ok || deployment != deploymentName() || build == "" {
+			if !ok || deployment != e.deployment || build == "" {
 				return "", fmt.Errorf("unsupported pinned deployment version %q", pinned)
 			}
 			return build, nil
 		}
 	}
 	if version := v.GetDeploymentVersion(); version != nil {
-		if version.GetDeploymentName() != deploymentName() || version.GetBuildId() == "" {
+		if version.GetDeploymentName() != e.deployment || version.GetBuildId() == "" {
 			return "", fmt.Errorf("unexpected pinned worker deployment")
 		}
 		return version.GetBuildId(), nil
 	}
 	if version := v.GetVersion(); version != "" {
 		deployment, build, ok := strings.Cut(version, ".")
-		if !ok || deployment != deploymentName() || build == "" {
+		if !ok || deployment != e.deployment || build == "" {
 			return "", fmt.Errorf("unsupported retained worker version %q", version)
 		}
 		return build, nil
 	}
 	if version := v.GetDeployment(); version != nil {
-		if version.GetSeriesName() != deploymentName() || version.GetBuildId() == "" {
+		if version.GetSeriesName() != e.deployment || version.GetBuildId() == "" {
 			return "", fmt.Errorf("unexpected retained worker deployment")
 		}
 		return version.GetBuildId(), nil
@@ -65,7 +65,7 @@ func (e *Engine) WorkerBuild(ctx context.Context, id string) (string, error) {
 			return "", fmt.Errorf("existing workflow has no supported pinned worker version")
 		}
 	}
-	route, err := c.WorkerDeploymentClient().GetHandle(deploymentName()).Describe(ctx, client.WorkerDeploymentDescribeOptions{})
+	route, err := c.WorkerDeploymentClient().GetHandle(e.deployment).Describe(ctx, client.WorkerDeploymentDescribeOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -77,11 +77,4 @@ func (e *Engine) WorkerBuild(ctx context.Context, id string) (string, error) {
 		return "", fmt.Errorf("no current immutable worker version")
 	}
 	return version.BuildID, nil
-}
-
-func deploymentName() string {
-	if configured.DeploymentName != "" {
-		return configured.DeploymentName
-	}
-	return "nori-task"
 }

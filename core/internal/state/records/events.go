@@ -52,7 +52,6 @@ func readHead(doc *docstore.DocumentSnapshot, err error) (int64, error) {
 	return seq, nil
 }
 
-// add records one change. Repeats of the same record in a transaction are dropped.
 func (l *eventLog) add(kind, ref string) error {
 	key := [2]string{kind, ref}
 	if l.added[key] {
@@ -67,7 +66,6 @@ func (l *eventLog) add(kind, ref string) error {
 	return l.tx.Set(l.d.eventHead(), map[string]any{"seq": l.seq})
 }
 
-// EventPosition is the sequence of the newest event, or 0 when there are none yet.
 func (d *Database) EventPosition(ctx context.Context) (int64, error) {
 	return readHead(d.eventHead().Get(ctx))
 }
@@ -89,7 +87,6 @@ func (d *Database) WatchEvents(ctx context.Context, after int64, deliver func([]
 	})
 }
 
-// ConversationMessage reads one message for the stream.
 func (d *Database) ConversationMessage(ctx context.Context, id string) (state.Message, error) {
 	doc, err := d.messages().Doc(id).Get(ctx)
 	if notFound(err) {

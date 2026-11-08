@@ -62,7 +62,7 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 	if !cfg.Temporal.Local {
 		activities.Notify = waker.WakeConversation
 	}
-	entry := &userWorker{activities: activities, store: store, dispatcher: platform.Dispatcher(cfg, store, task.NewEngine(g.client, row.ID), waker, row.ID)}
+	entry := &userWorker{activities: activities, store: store, dispatcher: platform.Dispatcher(cfg, store, task.NewEngine(g.client, cfg.Temporal, row.ID), waker, row.ID)}
 	g.entries[row] = entry
 	return entry, nil
 }

@@ -57,6 +57,7 @@ func (s *Service) acquire(ctx context.Context, row users.User) (*App, func(), er
 				entry.app.Close()
 			}
 		}
+		app.handler = api.Handler(app.apiDeps())
 		entry = &userApp{row: row, app: app}
 		s.apps[row.ID] = entry
 	}
@@ -72,12 +73,12 @@ func (s *Service) acquire(ctx context.Context, row users.User) (*App, func(), er
 	}, nil
 }
 func (s *Service) Handler(local bool) http.Handler {
-	return api.UserHandler(s.Users, func(ctx context.Context, row users.User) (api.Deps, func(), error) {
+	return api.UserHandler(s.Users, func(ctx context.Context, row users.User) (api.UserRoutes, func(), error) {
 		app, release, err := s.acquire(ctx, row)
 		if err != nil {
-			return api.Deps{}, nil, err
+			return api.UserRoutes{}, nil, err
 		}
-		return app.API(), release, nil
+		return api.UserRoutes{Handler: app.handler, Resume: app.Resume}, release, nil
 	}, local, s.cfg.Models.Outer)
 }
 func (s *Service) Close() {
@@ -98,6 +99,14 @@ func (s *Service) LocalLoop(ctx context.Context, notifications <-chan struct{}) 
 	defer wg.Wait()
 	var mu sync.Mutex
 	running := map[string]bool{}
+	// A long assistant pass must not delay foreground chat recovery.
+	processors := []struct {
+		name string
+		run  func(*App, context.Context) error
+	}{
+		{"assistant", (*App).processAssistant},
+		{"chats", func(a *App, ctx context.Context) error { return a.Chats.Process(ctx) }},
+	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -106,12 +115,8 @@ func (s *Service) LocalLoop(ctx context.Context, notifications <-chan struct{}) 
 			log.Printf("user recovery: %v", err)
 		}
 		for _, row := range rows {
-			// Keep foreground chats independent of a long assistant processing pass.
-			for _, chats := range []bool{false, true} {
-				key := row.ID + "/assistant"
-				if chats {
-					key = row.ID + "/chats"
-				}
+			for _, processor := range processors {
+				key := row.ID + "/" + processor.name
 				mu.Lock()
 				if running[key] {
 					mu.Unlock()
@@ -120,7 +125,7 @@ func (s *Service) LocalLoop(ctx context.Context, notifications <-chan struct{}) 
 				running[key] = true
 				mu.Unlock()
 				wg.Add(1)
-				go func(row users.User, key string, chats bool) {
+				go func() {
 					defer wg.Done()
 					defer func() { mu.Lock(); delete(running, key); mu.Unlock() }()
 					pass, cancel := context.WithTimeout(ctx, 9*time.Minute)
@@ -128,16 +133,12 @@ func (s *Service) LocalLoop(ctx context.Context, notifications <-chan struct{}) 
 					app, release, err := s.acquire(pass, row)
 					if err == nil {
 						defer release()
-						if chats {
-							err = app.Chats.Process(pass)
-						} else {
-							err = app.process(pass, false)
-						}
+						err = processor.run(app, pass)
 					}
 					if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) {
 						log.Printf("user %s processing will retry: %v", row.ID, err)
 					}
-				}(row, key, chats)
+				}()
 			}
 		}
 		select {

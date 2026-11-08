@@ -1,4 +1,3 @@
-// Package ec2 reaches a retained EC2 computer through an SSM port-forwarding session.
 package ec2
 
 import (
@@ -35,9 +34,8 @@ func OpenHost(ctx context.Context, c Config) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewHost(sdk.NewFromConfig(cfg), c), nil
+	return &Host{api: sdk.NewFromConfig(cfg), cfg: c}, nil
 }
-func NewHost(api *sdk.Client, c Config) *Host { return &Host{api: api, cfg: c} }
 func (h *Host) State(ctx context.Context) (computer.State, error) {
 	out, err := h.api.DescribeInstances(ctx, &sdk.DescribeInstancesInput{InstanceIds: []string{h.cfg.Instance}})
 	if err != nil {

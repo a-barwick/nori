@@ -11,8 +11,6 @@ import (
 	"nori/internal/state"
 )
 
-// commandRequests validates the entire model batch before any command is accepted.
-// splitShows separates show_result actions, which start no task, from task commands.
 func splitShows(calls []ToolCall) ([]ToolCall, []string, error) {
 	commands := make([]ToolCall, 0, len(calls))
 	shows := []string{}
@@ -57,8 +55,7 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				QuestionID *string `json:"question_id"`
 				// Earlier files the task also needs. The current message's files go with it anyway.
 				Attachments []string `json:"attachments"`
-				// A saved result this task changes. The new result links to it.
-				Revises *string `json:"revises"`
+				Revises     *string  `json:"revises"`
 			}
 			if err := decodeCommandArguments(call.Function.Arguments, &args); err != nil {
 				return nil, err
@@ -142,8 +139,6 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 	return commands, nil
 }
 
-// A whole reply can assent; a word inside an unrelated request, quote, negation or
-// correction cannot. The model doesn't get to extract an approving fragment.
 func workRequests(inputs []state.ConversationInput) []WorkRequest {
 	requests := []WorkRequest{}
 	for _, input := range inputs {

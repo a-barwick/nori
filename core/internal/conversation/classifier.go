@@ -13,7 +13,6 @@ type IntentClassifier interface {
 	Classify(ctx context.Context, request ClassifyRequest) (Classification, error)
 }
 
-// ClassifyRequest carries one turn's inputs. The runner builds a fresh request for each call.
 type ClassifyRequest struct {
 	// Inputs is the batch the turn owns, in acceptance order.
 	Inputs []state.ConversationInput

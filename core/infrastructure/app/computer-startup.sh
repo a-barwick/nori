@@ -39,20 +39,19 @@ if ! [ -f vmlinux ]; then
   curl -fL --connect-timeout 10 --max-time 180 -o vmlinux https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/20261023-dd7c24b0d165-0/x86_64/vmlinux-6.1.188
 fi
 printf '%s  %s\n' fc7a33d23a629d64db61ddf12789c737c12edb1702a5ce9d5546b95ca21dc6ca vmlinux | sha256sum --check
-# The SHA is a release identity, never a credential. ADC token stays in host memory.
 release=$(attribute computer-release-object)
 checksum=$(attribute computer-release-sha256)
 [[ "$release" =~ ^[a-z0-9._-]+/releases/computer-agent-[a-f0-9]{64}$ ]]
 [[ "$checksum" =~ ^[a-f0-9]{64}$ ]]
 [ "${release##*-}" = "$checksum" ]
+# The host uses ADC for the download. Only the verified binary enters the guest.
 token=$(meta instance/service-accounts/default/token | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 curl -fLsS --max-time 120 -H "Authorization: Bearer $token" "https://storage.googleapis.com/$release" -o /usr/local/lib/nori-computer/computer-agent.download
 unset token
 printf '%s  %s\n' "$checksum" /usr/local/lib/nori-computer/computer-agent.download | sha256sum --check
 install -m 755 /usr/local/lib/nori-computer/computer-agent.download /usr/local/bin/computer-agent
 rm /usr/local/lib/nori-computer/computer-agent.download
-# Refuse blank, replaced, partial, or unexpectedly mounted retained filesystems.
-# Preserve the deployed attachment name and existing retained filesystem identity.
+# Preserve the deployed attachment name and filesystem identity.
 device=/dev/disk/by-id/google-bot-guest-data
 test -b "$device"
 [ "$(blkid -s TYPE -o value "$device")" = ext4 ]

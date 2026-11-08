@@ -21,9 +21,6 @@ owners/{owner}/
 ├─ conversation_attempts/ ← traces: model, hint, usage
 ├─ conversation/summary  ← earlier turns, with source quotes
 ├─ memories/              ← facts and preferences the user asked to save
-├─ proactive_checks/      ← calendar check runs
-├─ proactive_offers/      ← calendar offers and delivery state
-├─ proactive_days/        ← the calendar check's daily cost
 ├─ messages/              ← the visible messages, as typed parts
 ├─ events/                ← the ordered event log
 ├─ event_head/            ← the log's newest number
@@ -96,6 +93,6 @@ owners/{owner}/
 <tr><td>Saved result</td><td>Stable ID, task link, file details, version and delivery times.</td></tr>
 <tr><td>Write claim</td><td>The operation holds the exact saved action and its digest. One transaction changes ready to attempted before sending; uncertain outcomes remain available for recovery.</td></tr>
 </table></details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/state/</code> · <code>core/internal/state/firestore/</code> · <code>core/internal/state/gcs/</code> · <code>core/internal/state/localfs/</code> · <code>core/internal/usage/</code> · <code>core/internal/state/records/</code> · <code>core/internal/state/postgres/</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/dispatch/dispatcher.go</code> · <code>core/internal/task/client.go</code> · <code>core/internal/task/actions.go</code> · <code>core/internal/conversation/runner.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state/</code> · <code>core/internal/state/firestore/</code> · <code>core/internal/state/gcs/</code> · <code>core/internal/state/localfs/</code> · <code>core/internal/usage/</code> · <code>core/internal/state/records/</code> · <code>core/internal/state/postgres/</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/dispatch/dispatcher.go</code> · <code>core/internal/task/client.go</code> · <code>core/internal/conversation/runner.go</code></p></details>
 </body>
 </html>

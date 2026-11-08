@@ -17,30 +17,16 @@ import (
 	"nori/internal/state"
 )
 
-func toolEffect(name string) string {
-	switch name {
-	case "browser_navigate", "browser_screenshot", "web_search", "screenshot_inspect", "upload_open", "upload_inspect", "results_find", "result_read", "result_open", "job_status", "job_wait",
-		"memory_read", "conversation_find", "operation_read", "capability_load":
-		return "read"
-	case "job_stop", "result_save", "result_link":
-		// Stopping repeats safely, and so does saving a result, whose ID comes from its content. An unresolved write
-		// blocks neither, and a task limited to reads can't save a result.
-		return "control"
-	}
-	return "unknown"
-}
-
-// persistFunc saves a tool's outcome and output as the operation's result, even after the request was interrupted.
 type persistFunc func(outcome string, output map[string]any, cause error) (map[string]any, error)
 
 // durableTool records authority and outcomes independently of best-effort debug
 // traces. Retrying an activity is never a substitute for an operation receipt.
 func (a *Activities) durableTool(parent context.Context, in ToolInput) (result map[string]any, err error) {
 	evidence := a.Store
-	effect := toolEffect(in.Call.Name)
-	// A screenshot read is a paid model call whose interrupted cost can't be
-	// established, so a correction waits for it. Stop still cancels it.
-	ctx, done, run, err := a.bounded(parent, in.Step, effect == "read" && !agent.PaidRead(in.Call.Name))
+	policy := agent.TaskToolPolicy(in.Call.Name)
+	effect := policy.Effect
+	// A correction waits for paid model reads because interruption can lose the reported cost. Stop still cancels them.
+	ctx, done, run, err := a.bounded(parent, in.Step, effect == "read" && !policy.InterruptedCostUnknown)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +34,7 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	ctx, span := startActivity(ctx, "task.tool", "TOOL", run, in.Revision)
 	defer span.End()
 	span.SetAttributes(
-		attribute.String("tool.name", safeToolName(in.Call.Name)), attribute.String("nori.operation.id", in.OperationID),
+		attribute.String("tool.name", policy.Name), attribute.String("nori.operation.id", in.OperationID),
 		attribute.String("nori.operation.effect_class", effect),
 	)
 	records, err := evidence.Operations(ctx, in.RunID)
@@ -122,8 +108,8 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		return output, nil
 	}
 
-	if agent.RuntimeTool(in.Call.Name) {
-		return a.runtimeTool(ctx, in, &op, recovering != nil, persist)
+	if policy.Runtime {
+		return a.runtimeTool(ctx, in, &op, recovering != nil, policy, persist)
 	}
 	if recovering != nil {
 		return a.recoverComputerTool(ctx, in, op, effect, persist)
@@ -131,8 +117,6 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	return a.computerTool(ctx, in, &op, effect, persist)
 }
 
-// savedOperation finds this call's operation record. When the record already has a result, it returns that result,
-// so the call is never run twice.
 func (a *Activities) savedOperation(ctx context.Context, in ToolInput, records []state.OperationRecord) (*state.OperationRecord, map[string]any, error) {
 	for _, saved := range records {
 		if saved.ID != in.OperationID {
@@ -160,7 +144,6 @@ func (a *Activities) savedOperation(ctx context.Context, in ToolInput, records [
 	return nil, nil, nil
 }
 
-// unresolvedWriteBlock refuses any tool that could change something while an earlier write has no known result.
 func unresolvedWriteBlock(effect string, records []state.OperationRecord) map[string]any {
 	if effect == "read" || effect == "control" {
 		return nil
@@ -310,8 +293,6 @@ func (a *Activities) computerTool(ctx context.Context, in ToolInput, op *state.O
 	return nil, classified(errors.New("read attempts exhausted"))
 }
 
-// interruptedRead saves a read whose request ended, then reports whether a stop, a correction or the
-// interruption itself ended it. cancelErr is the result of cancelling the read on the computer.
 func (a *Activities) interruptedRead(ctx context.Context, in ToolInput, op *state.OperationRecord, cancelErr, callErr error, persist persistFunc) (map[string]any, error) {
 	outcome := "skipped"
 	if cancelErr != nil {

@@ -1,9 +1,8 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
-import type { List, Nodes, Paragraph, Root, RootContent } from "mdast";
+import type { List, Nodes, Root, RootContent } from "mdast";
 
-/** Pure markdown presentation: short replies are bubbles, structured replies are documents. */
 const PAGE_WORDS = 150;
 const MAX_BUBBLE_LIST_ITEMS = 5;
 const MAX_BUBBLE_CODE_LINES = 3;
@@ -30,76 +29,51 @@ function isSourceList(list: List, prev?: RootContent) {
   });
 }
 
-function structureReasons(tree: Root): string[] {
-  const reasons = new Set<string>();
-  const visit = (node: Nodes, depth: number, siblings?: RootContent[], index?: number) => {
-    switch (node.type) {
-      case "heading":
-        reasons.add("heading");
-        break;
-      case "table":
-        reasons.add("table");
-        break;
-      case "code":
-        if (node.value.split("\n").length > MAX_BUBBLE_CODE_LINES) reasons.add("code block");
-        break;
-      case "list": {
-        if (depth > 0) reasons.add("nested list");
-        if (node.children.length > MAX_BUBBLE_LIST_ITEMS) reasons.add("long list");
-        if (siblings && index !== undefined && isSourceList(node, siblings[index - 1])) reasons.add("source list");
-        node.children.forEach((item) => item.children.forEach((c) => visit(c, depth + 1)));
-        return;
-      }
-    }
-    if ("children" in node && node.type !== "listItem") {
-      const kids = node.children as RootContent[];
-      kids.forEach((c, i) => visit(c, depth, kids, i));
-    }
-  };
-  tree.children.forEach((c, i) => visit(c, 0, tree.children, i));
-  return [...reasons];
+function isStructured(node: Nodes, depth = 0, previous?: RootContent): boolean {
+  switch (node.type) {
+    case "heading":
+    case "table":
+      return true;
+    case "code":
+      return node.value.split("\n").length > MAX_BUBBLE_CODE_LINES;
+    case "list":
+      return depth > 0 || node.children.length > MAX_BUBBLE_LIST_ITEMS || isSourceList(node, previous) ||
+        node.children.some((item) => item.children.some((child) => isStructured(child, depth + 1)));
+    default:
+      if (!("children" in node) || node.type === "listItem") return false;
+      const children = node.children as RootContent[];
+      return children.some((child, index) => isStructured(child, depth, children[index - 1]));
+  }
 }
 
-interface Classified {
-  mode: "bubble" | "page";
-  /** The gist bubble that always precedes a page. */
-  cover?: string;
-  /** Bubble text, or the page body. */
-  body: string;
-  reasons: string[];
-}
+type Classified = { mode: "bubble"; body: string } | { mode: "page"; cover: string; body: string };
 
 const FALLBACK_COVER = "Here's the full write-up.";
 
-function isGist(p: Paragraph, source: string) {
-  const text = source.slice(p.position!.start.offset, p.position!.end.offset);
+function isGist(text: string) {
   const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean).length;
   return sentences <= 2 && text.split(/\s+/).length <= 45;
 }
 
 export function classify(markdown: string, forced?: "page" | "bubble"): Classified {
+  if (forced === "bubble") return { mode: "bubble", body: markdown };
   const tree = parse(markdown);
-  const reasons = structureReasons(tree);
-  const words = textOf(tree).split(/\s+/).filter((w) => /\w/.test(w)).length;
-  if (words > PAGE_WORDS) reasons.push(`${words} words`);
-
-  const mode = forced ?? (reasons.length ? "page" : "bubble");
-  if (mode === "bubble") return { mode, body: markdown, reasons };
+  if (!forced && !isStructured(tree) && textOf(tree).split(/\s+/).filter((word) => /\w/.test(word)).length <= PAGE_WORDS) {
+    return { mode: "bubble", body: markdown };
+  }
 
   const first = tree.children[0];
-  if (first?.type === "paragraph" && tree.children.length > 1 && isGist(first, markdown)) {
-    const cover = markdown.slice(first.position!.start.offset, first.position!.end.offset).trim();
-    const body = markdown.slice(first.position!.end.offset).trim();
-    return { mode, cover, body, reasons };
-  }
-  // One long opening paragraph: its first sentence is the gist.
   if (first?.type === "paragraph" && first.position) {
     const start = first.position.start.offset ?? 0;
-    const text = markdown.slice(start, first.position.end.offset);
+    const end = first.position.end.offset;
+    const text = markdown.slice(start, end);
+    if (tree.children.length > 1 && isGist(text)) {
+      return { mode: "page", cover: text.trim(), body: markdown.slice(end).trim() };
+    }
     const sentence = /^[^\n]*?[.!?](?=\s)/.exec(text)?.[0];
     if (sentence && sentence.split(/\s+/).length <= 30) {
-      return { mode, cover: sentence.trim(), body: markdown.slice(start + sentence.length).trim(), reasons };
+      return { mode: "page", cover: sentence.trim(), body: markdown.slice(start + sentence.length).trim() };
     }
   }
-  return { mode, cover: FALLBACK_COVER, body: markdown, reasons };
+  return { mode: "page", cover: FALLBACK_COVER, body: markdown };
 }

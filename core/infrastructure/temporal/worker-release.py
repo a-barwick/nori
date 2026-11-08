@@ -21,11 +21,11 @@ def run(args, **kwargs):
 
 def source_digest():
     digest = hashlib.sha256()
-    files = [CORE / "go.mod", CORE / "go.sum", ROOT / "Dockerfile.worker"]
+    files = [CORE / "go.mod", CORE / "go.sum", CORE / ".dockerignore", ROOT / "Dockerfile.worker"]
     for directory in (CORE / "cmd", CORE / "internal"):
-        files.extend(p for p in directory.rglob("*") if p.is_file() and p.suffix == ".go")
+        files.extend(p for p in directory.rglob("*") if p.is_file())
     for path in sorted(files):
-        digest.update(str(path.relative_to(CORE)).encode() + b"\0" + path.read_bytes() + b"\0")
+        digest.update(str(path.relative_to(CORE)).encode() + b"\0" + hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
 
 
@@ -46,7 +46,7 @@ def main():
     parser.add_argument("--wake-queue", default="nori-worker", help="shared production queue or a separate candidate queue")
     parser.add_argument("--builder", help="OCI-capable Docker Buildx builder (for example, a docker-container builder)")
     parser.add_argument("--image", help="already built immutable registry image URI; omit to prepare a local OCI archive")
-    parser.add_argument("--var-file", action="append", type=Path, default=[], help="additional Terraform configuration, e.g. the optional spend alert settings")
+    parser.add_argument("--var-file", action="append", type=Path, default=[], help="additional reviewed Terraform configuration")
     parser.add_argument("--state", type=Path, default=STATE)
     parser.add_argument("--output", type=Path, help="new owner-only directory; defaults beside external Terraform state")
     args = parser.parse_args()

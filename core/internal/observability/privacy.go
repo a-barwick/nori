@@ -8,14 +8,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// Init sets these from the process's settings.
 var (
 	sessionEnvironment = "development"
 	captureContent     bool
 	credentials        []string
 )
 
-// SessionID groups this single-owner application's AI spans without an email.
+// Group AI spans by deployment environment without exporting a user identifier.
 func SessionID() string {
 	return "nori-" + sessionEnvironment + "-conversation"
 }

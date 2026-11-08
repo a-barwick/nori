@@ -2,9 +2,7 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -16,7 +14,6 @@ import (
 	"nori/internal/state"
 )
 
-// ChatContract names the HTTP contract the chat client checks before it connects.
 const ChatContract = "nori-chat-2"
 
 func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
@@ -44,12 +41,12 @@ func (s *server) listChats(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
-		header := assistantHeader(presence.Conversation, position)
+		header := assistantHeader(&presence.Conversation, position)
 		header.Paused = &presence.Paused
 		rows = append(rows, header)
 	}
 	for _, c := range chats {
-		rows = append(rows, conversationHeader{ChatHeader: state.ChatHeader{ID: c.ID, Title: c.Title, Mode: c.Mode, ActiveTurn: c.ActiveTurn, UpdatedAt: c.UpdatedAt}, TurnPolicy: "reject_while_running"})
+		rows = append(rows, chatHeader(state.ChatHeader{ID: c.ID, Title: c.Title, Mode: c.Mode, ActiveTurn: c.ActiveTurn, UpdatedAt: c.UpdatedAt}))
 	}
 	writeJSON(w, 200, map[string]any{"conversations": rows})
 }
@@ -152,42 +149,39 @@ func (s *server) chatMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if r.PathValue("conversation") == "assistant" {
+	id := r.PathValue("conversation")
+	var view conversationView
+	var wakeErr error
+	if id == "assistant" {
 		session, err := s.Runner.HandleInput(r.Context(), conversation.Input{ID: body.ID, Message: body.Text, Attachments: body.Attachments})
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		view, err := s.assistantView(r.Context(), session)
+		view = assistantView(session)
+		wakeErr = s.ensureWake(r.Context(), session)
+	} else {
+		c, err := s.Chats.Accept(r.Context(), id, body.ID, body.Text, body.Attachments)
+		if errors.Is(err, state.ErrChatBusy) {
+			// A busy chat may have lost the wake that starts its saved turn.
+			if current, e := s.Chats.Store.Chat(r.Context(), id); e == nil {
+				s.repairWake(r.Context(), current)
+			}
+		}
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if err = s.ensureWake(r.Context(), session); err != nil {
-			writeJSON(w, 503, map[string]any{"accepted": true, "conversation": view, "error": "Message saved; retry with the same ID to confirm delivery."})
-			return
+		view = chatView(c)
+		if c.ActiveTurn != nil {
+			wakeErr = s.wakeConversation(r.Context())
 		}
-		writeJSON(w, 202, map[string]any{"turnId": body.ID, "conversation": view})
+	}
+	if wakeErr != nil {
+		writeJSON(w, 503, map[string]any{"accepted": true, "conversation": view, "error": "Message saved; retry with the same ID to confirm delivery."})
 		return
 	}
-	c, err := s.Chats.Accept(r.Context(), r.PathValue("conversation"), body.ID, body.Text, body.Attachments)
-	if errors.Is(err, state.ErrChatBusy) {
-		// The open turn may have lost its wake; a new message is a good moment to repair it.
-		if current, e := s.Chats.Store.Chat(r.Context(), r.PathValue("conversation")); e == nil {
-			s.repairWake(r.Context(), current)
-		}
-	}
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if c.ActiveTurn != nil {
-		if err = s.wakeConversation(r.Context()); err != nil {
-			writeJSON(w, 503, map[string]any{"error": "Message saved; retry with the same ID to confirm delivery.", "accepted": true, "conversation": chatView(c)})
-			return
-		}
-	}
-	writeJSON(w, 202, map[string]any{"turnId": body.ID, "conversation": chatView(c)})
+	writeJSON(w, 202, map[string]any{"turnId": body.ID, "conversation": view})
 }
 func (s *server) chatCancel(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -200,45 +194,38 @@ func (s *server) chatCancel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "Invalid turn ID."})
 		return
 	}
-	if r.PathValue("conversation") == "assistant" {
-		if err := s.Tasks.Store.CancelConversation(r.Context(), body.TurnID); err != nil {
-			writeError(w, err)
-			return
+	id := r.PathValue("conversation")
+	var view conversationView
+	var err error
+	if id == "assistant" {
+		if err = s.Tasks.Store.CancelConversation(r.Context(), body.TurnID); err == nil {
+			view, err = s.assistantSnapshot(r.Context(), "")
 		}
-		view, err := s.assistantSnapshot(r.Context(), "")
-		if err != nil {
-			writeError(w, err)
-			return
+	} else {
+		var c state.Chat
+		c, err = s.Chats.Cancel(r.Context(), id, body.TurnID)
+		if err == nil {
+			view = chatView(c)
 		}
-		if err = s.wakeConversation(r.Context()); err != nil {
-			writeJSON(w, 503, map[string]any{"accepted": true, "conversation": view, "error": "Stop is saved; delivery unavailable."})
-			return
-		}
-		writeJSON(w, 200, view)
-		return
 	}
-	c, err := s.Chats.Cancel(r.Context(), r.PathValue("conversation"), body.TurnID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	if err = s.wakeConversation(r.Context()); err != nil {
-		writeJSON(w, 503, map[string]any{"accepted": true, "conversation": chatView(c), "error": "Stop is saved; delivery unavailable."})
+		writeJSON(w, 503, map[string]any{"accepted": true, "conversation": view, "error": "Stop is saved; delivery unavailable."})
 		return
 	}
-	writeJSON(w, 200, chatView(c))
+	writeJSON(w, 200, view)
 }
 
-// chatEvents follows a chat's event log with a database listener, so an idle
-// stream costs nothing. Like the assistant's stream it ends before the web
-// service's request limit, and the client resumes from its last event.
 func (s *server) chatEvents(w http.ResponseWriter, r *http.Request) {
 	if r.PathValue("conversation") == "assistant" {
 		s.assistantEvents(w, r)
 		return
 	}
 	id := r.PathValue("conversation")
-	after, valid := conversationResumePosition(r)
+	after, _, valid := resumePosition(r)
 	if !valid {
 		writeJSON(w, 400, map[string]string{"error": "Invalid event position."})
 		return
@@ -249,75 +236,22 @@ func (s *server) chatEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if after > c.Position {
-		writeJSON(w, 400, map[string]string{"error": "Event position is ahead of the conversation."})
-		return
-	}
-	controller := http.NewResponseController(w)
-	_ = controller.SetWriteDeadline(time.Time{})
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(200)
-	send := func(value any, seq int64) error {
-		data, e := json.Marshal(value)
-		if e != nil {
-			return e
-		}
-		if _, e = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", seq, data); e != nil {
-			return e
-		}
-		return controller.Flush()
-	}
-	// A client too far behind reloads the snapshot instead of replaying every event.
-	if c.Position-after > state.ChatEventReplayLimit {
-		_ = send(conversationEvent{Seq: c.Position, Kind: "reset", Conversation: conversationHeader{ChatHeader: c.Header(), TurnPolicy: "reject_while_running"}, Messages: []messageView{}}, c.Position)
-		return
-	}
-	_ = controller.Flush()
-	s.repairWake(r.Context(), c)
-	ctx, cancel := context.WithTimeout(r.Context(), streamLifetime)
-	defer cancel()
-	batches := make(chan []state.ChatEvent)
-	failed := make(chan error, 1)
-	go func() {
-		failed <- s.Chats.Store.WatchChatEvents(ctx, id, after, func(batch []state.ChatEvent) error {
-			select {
-			case batches <- batch:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		})
-	}()
-	heartbeat := time.NewTicker(15 * time.Second)
-	defer heartbeat.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case err := <-failed:
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-				log.Printf("chat event stream ended: %v", err)
-			}
-			return
-		case <-heartbeat.C:
-			if _, e := io.WriteString(w, ": keepalive\n\n"); e != nil || controller.Flush() != nil {
-				return
-			}
-		case batch := <-batches:
-			for _, event := range batch {
-				if event.Seq <= after {
-					continue
-				}
-				if send(chatEventView(event), event.Seq) != nil {
-					return
-				}
-				after = event.Seq
-			}
-		}
-	}
+	streamConversation(w, r, after, conversationFeed[state.ChatEvent]{
+		header:    chatHeader(c.Header()),
+		limit:     state.ChatEventReplayLimit,
+		heartbeat: 15 * time.Second,
+		comment:   "keepalive",
+		onOpen:    func() { s.repairWake(r.Context(), c) },
+		watch: func(ctx context.Context, deliver func([]state.ChatEvent) error) error {
+			return s.Chats.Store.WatchChatEvents(ctx, id, after, deliver)
+		},
+		sequence: func(event state.ChatEvent) int64 { return event.Seq },
+		project: func(_ context.Context, event state.ChatEvent) (conversationEvent, error) {
+			return chatEventView(event), nil
+		},
+	})
 }
+
 func (s *server) chatUpload(w http.ResponseWriter, r *http.Request) {
 	if r.PathValue("conversation") == "assistant" {
 		s.upload(w, r)

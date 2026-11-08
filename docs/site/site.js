@@ -1,13 +1,11 @@
-// Shared page shell: navigation, the built/planned filter, the request map and the roadmap grid.
 const NAV = [
   ['Start', [['index', 'Overview'], ['product', 'What Nori should do'], ['request', 'Following a request']]],
   ['The loops', [['outer-loop', 'Outer loop'], ['classification', 'Classifying a message'], ['outer-model-failure', 'Outer model failure'], ['inner-loop', 'Inner loop'], ['transcript', 'Task transcript'], ['contract', 'How the loops talk'], ['tasks', 'Task lifecycle'], ['completion', 'Finishing a task']]],
-  ['Agent service', [['system', 'Service overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['tools', 'Tools'], ['catalog', 'Tool catalog'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['budgets', 'Budgets and controls'], ['observability', 'Observability'], ['deploy', 'Deployment'], ['authority', 'Approvals and writes'], ['proactive', 'Calendar offers'], ['schedules', 'Schedules']]],
+  ['Agent service', [['system', 'Service overview'], ['records', 'Records and delivery'], ['computer', 'Persistent computer'], ['tools', 'Tools'], ['catalog', 'Tool catalog'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['budgets', 'Budgets and controls'], ['observability', 'Observability'], ['deploy', 'Deployment'], ['authority', 'Tool authority']]],
   ['Clients', [['clients', 'Clients'], ['api', 'Service API'], ['web-client', 'Web client'], ['chat-client', 'Chats'], ['frontend', 'Web client architecture'], ['theme', 'Theme']]],
   ['Planned', [['roadmap', 'Roadmap']]],
-  ['Reference', [['scenarios', 'Scenarios'], ['decisions', 'Decisions'], ['open-questions', 'Open questions'], ['code', 'Code map'], ['words', 'Words we use'], ['reading', 'Reading list'], ['sources', 'Sources']]],
+  ['Reference', [['decisions', 'Decisions'], ['open-questions', 'Open questions'], ['code', 'Code map'], ['words', 'Words we use'], ['reading', 'Reading list'], ['sources', 'Sources']]],
 ];
-const PLANNED = NAV.find(([group]) => group === 'Planned')[1].map(([id]) => id).filter(id => id !== 'roadmap');
 
 document.addEventListener('DOMContentLoaded', () => document.querySelectorAll('table').forEach(table => {
   const names = [...(table.rows[0]?.querySelectorAll('th') || [])].map(th => th.textContent.trim());
@@ -20,13 +18,10 @@ const current = location.pathname.split('/').pop().replace('.html', '') || 'inde
 const flat = NAV.flatMap(([, pages]) => pages);
 const at = flat.findIndex(([id]) => id === current);
 
-// The tab icon
 document.head.insertAdjacentHTML('beforeend', '<link rel="icon" type="image/svg+xml" href="favicon.svg">');
 
-// Tab titles: Dokyu on the first page, Dokyu · Section on the rest
 document.title = current === 'index' ? 'Dokyu' : `Dokyu · ${document.title.split(' · ')[0]}`;
 
-// Layout
 const main = document.createElement('main');
 main.append(...document.body.childNodes);
 const rail = document.createElement('nav');
@@ -41,21 +36,14 @@ layout.className = 'layout';
 layout.append(rail, main);
 document.body.append(layout);
 
-// Previous and next
 const pager = document.createElement('div');
 pager.className = 'pager';
 const link = (page, label) => page ? `<a href="${page[0]}.html"><span>${label}</span>${page[1]}</a>` : '<i></i>';
 pager.innerHTML = link(flat[at - 1], 'Previous') + link(flat[at + 1], 'Next');
 main.append(pager);
 
-// Planned pages say so once at the top
-if (PLANNED.includes(current)) {
-  main.querySelector('.lede').insertAdjacentHTML('afterend', '<p class="planned-note"><span class="tag design" style="margin-left:0">planned, not built yet</span></p>');
-}
-
-// Built / planned filter, only on pages that mix the two
 const filtered = [...main.querySelectorAll('.designed, .in-review')];
-if (filtered.length && !PLANNED.includes(current)) {
+if (filtered.length) {
   const bar = document.createElement('div');
   bar.className = 'legend';
   bar.setAttribute('role', 'group');
@@ -87,7 +75,6 @@ if (filtered.length && !PLANNED.includes(current)) {
   setBar();
 }
 
-// Section IDs: every heading gets an ID and a copy-link icon on hover. Only the icon is interactive.
 const slug = text => text.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const LINK_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M6.5 9.5a3 3 0 0 0 4.4.1l2-2a3.1 3.1 0 0 0-4.4-4.4l-1 1"/><path d="M9.5 6.5a3 3 0 0 0-4.4-.1l-2 2a3.1 3.1 0 0 0 4.4 4.4l1-1"/></svg>';
 const DONE_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>';
@@ -101,7 +88,7 @@ const copyText = async text => {
   area.remove();
 };
 const usedIds = new Set();
-const heads = [...main.querySelectorAll('h1, h2, h3, .step .t, .scn > summary')].filter(h => h.matches('summary') || !h.closest('details'));
+const heads = [...main.querySelectorAll('h1, h2, h3, .step .t')].filter(h => !h.closest('details'));
 heads.forEach(head => {
   const nodes = [...head.childNodes];
   const end = nodes.findIndex(n => n.matches?.('.tag, a, .mono'));
@@ -131,7 +118,6 @@ heads.forEach(head => {
   head.insertBefore(copy, end < 0 ? null : nodes[end]);
 });
 
-// The rail lists the current page's sections and follows the scroll position
 const railHeads = heads.filter(h => h.matches('h2, .t'));
 const currentLink = rail.querySelector('a[aria-current]');
 if (railHeads.length > 1 && currentLink) {
@@ -169,7 +155,6 @@ const openLinked = () => {
 openLinked();
 addEventListener('hashchange', openLinked);
 
-// Data panels: simulated requests, responses and saved records behind a step or a table row
 const esc = text => String(text).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const json = value => esc(JSON.stringify(value, null, 2)).replace(/("(?:[^"\\]|\\.)*")(: )?/g, (_, str, colon) =>
   colon ? `<span class="k">${str}</span>: ` : `<span class="s">${str}</span>`);
@@ -213,7 +198,6 @@ main.querySelectorAll('tr[data-flow]').forEach(row => {
   row.cells[0].append(dataButton(open => { extra.hidden = !open; }));
 });
 
-// Request page: light up the systems the current step uses
 if (document.querySelector('.trace')) {
   const NAMES = { user: 'User', tasks: 'Cloud Tasks', outer: 'Outer loop', runtime: 'Runtime', firestore: 'Firestore',
     temporal: 'Temporal', models: 'Models', inner: 'Inner loop', computer: 'Computer' };
@@ -289,16 +273,4 @@ if (document.querySelector('.trace')) {
     if (i >= 0 && i !== last) { last = i; showStep(i); }
   };
   addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(follow); } }, { passive: true });
-}
-
-// Roadmap grid
-const road = document.getElementById('roadGrid');
-if (road && window.ROAD) {
-  road.innerHTML = window.ROAD.map(([n, t, d, tot, note]) =>
-    `<div class="mile${n === 4 ? ' now' : ''}${n >= 7 ? ' designed' : ''}">
-       <span class="mn">M${n}</span><span class="mt">${t}</span>
-       <span class="mp">${note}</span>
-       <div class="bar"><i style="width:${Math.round(d / tot * 100)}%"></i></div>
-       <span class="mp">${d}/${tot} done</span>
-     </div>`).join('');
 }

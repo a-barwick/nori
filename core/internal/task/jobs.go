@@ -39,7 +39,6 @@ func existingJobTool(name string) bool {
 	return name == "job_status" || name == "job_wait" || name == "job_stop"
 }
 
-// lostJob is the only supported answer about a job on a computer that isn't running.
 func lostJob(call transcript.ToolCall) map[string]any {
 	id, _ := call.Args["job_id"].(string)
 	return map[string]any{"job_id": id, "state": "lost", "reason": prompts.Runtime("jobs-the-computer-is-stopped-so-this-job-isn-t-running-and-i", nil)}
@@ -128,7 +127,7 @@ func (c *Checkpoint) awaitJob(ctx workflow.Context, wait func() error, id string
 		switch {
 		case superseded(err):
 			return false, nil
-		case applicationKind(err, "paused"):
+		case applicationKind(err, activityPaused):
 			if err = wait(); err != nil {
 				return false, err
 			}
@@ -146,13 +145,6 @@ func (c *Checkpoint) awaitJob(ctx workflow.Context, wait func() error, id string
 // JobWaitRef polls one job for at most one slice. It reports an end state the
 // workflow then records through the ordinary job_wait operation.
 func (a *Activities) JobWaitRef(parent context.Context, in JobWaitInput) (out JobWaitOutcome, err error) {
-	if a.Resolve != nil {
-		scoped, scopeErr := a.Resolve(parent)
-		if scopeErr != nil {
-			return JobWaitOutcome{}, scopeErr
-		}
-		return scoped.JobWaitRef(parent, in)
-	}
 	messages, err := a.history(parent, in.RunID, in.Ref)
 	if err != nil {
 		return out, classified(err)
@@ -249,15 +241,7 @@ func jobProgress(status map[string]any) string {
 	return text
 }
 
-// StopJobs ends every job this task owns. A stopped computer has no running jobs.
 func (a *Activities) StopJobs(ctx context.Context, id string) (err error) {
-	if a.Resolve != nil {
-		scoped, scopeErr := a.Resolve(ctx)
-		if scopeErr != nil {
-			return scopeErr
-		}
-		return scoped.StopJobs(ctx, id)
-	}
 	ctx, span := startActivity(ctx, "task.stop_jobs", "CHAIN", a.activityRun(ctx, id), 0)
 	defer func() { recordActivityFailure(ctx, err, "task.stop_jobs"); span.End() }()
 	return classified(stopTaskJobs(observability.SuppressErrorCapture(ctx), a.Agent.Computer, id))
@@ -282,10 +266,10 @@ func stopTaskJobs(ctx context.Context, config computer.Provider, id string) erro
 
 // runtimeTool runs a tool that needs no computer. It keeps the same operation
 // record as a computer tool and is never repeated automatically.
-func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.OperationRecord, recovering bool, persist persistFunc) (map[string]any, error) {
+func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.OperationRecord, recovering bool, policy agent.ToolPolicy, persist persistFunc) (map[string]any, error) {
 	if recovering {
 		// The earlier attempt may have been billed and its cost was not returned.
-		return persist("failed", map[string]any{"cost_unknown": agent.PaidRead(in.Call.Name), "cost_usd": recoveredCost(in.Call.Name)}, errors.New("the worker stopped before this read finished; it was not repeated"))
+		return persist("failed", map[string]any{"cost_unknown": policy.InterruptedCostUnknown, "cost_usd": policy.InterruptedCostUSD}, errors.New("the worker stopped before this read finished; it was not repeated"))
 	}
 	if _, err := a.Store.Guard(ctx, in.RunID, in.Revision); err != nil {
 		if _, saveErr := persist("skipped", nil, err); saveErr != nil {
@@ -310,11 +294,4 @@ func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.Op
 		return persist("failed", output, err)
 	}
 	return persist(toolOutcome(output), output, nil)
-}
-
-func recoveredCost(name string) float64 {
-	if name == "web_search" {
-		return agent.SearchCostUSD
-	}
-	return 0
 }

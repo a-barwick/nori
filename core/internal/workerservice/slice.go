@@ -11,10 +11,7 @@ import (
 	"nori/internal/wake"
 )
 
-// Worker is the running task poller as a slice sees it.
 type Worker interface {
-	// Activity reports every execution the worker has seen, how many activities
-	// are running, and how long it has been since one started or finished.
 	Activity() (workflowIDs []string, active int, quiet time.Duration)
 	// Stop stops polling and waits for running activities.
 	Stop()
@@ -26,11 +23,9 @@ type Worker interface {
 // unbounded slice polls until its process stops, which is how an always-on
 // worker runs.
 type Slice struct {
-	ID    string
-	Build string
-	// Known are the executions the waking request named.
-	Known []string
-	// Bounded makes the slice request-bound.
+	ID      string
+	Build   string
+	Known   []string
 	Bounded bool
 	// PollWindow ends a bounded slice's polling; IdleWindow is how long a bounded
 	// slice must be quiet before it checks whether it can exit.
@@ -38,7 +33,6 @@ type Slice struct {
 	Waker                  wake.Waker
 }
 
-// Poll limits ctx to the poll window. An unbounded slice polls until ctx ends.
 func (s *Slice) Poll(ctx context.Context) (context.Context, context.CancelFunc) {
 	if s.Bounded {
 		return context.WithTimeout(ctx, s.PollWindow)
@@ -184,7 +178,6 @@ func (s *Slice) Loop(ctx context.Context, w Worker, d Dispatch, steps dispatch.S
 	}
 }
 
-// Dispatch reconciles every user's tasks while a shared worker polls the queue.
 type Dispatch interface {
 	Control(context.Context) (state.Control, error)
 	Reconcile(context.Context, dispatch.Steps) error

@@ -41,10 +41,9 @@ type SummaryModel interface {
 	Respond(ctx context.Context, req agent.Request) (agent.Response, error)
 }
 
-// compactionPause is how long compaction waits after a failure before trying again on a later turn.
 const compactionPause = 10 * time.Minute
 
-// contextStart is the start of a fresh conversation context selected by the user.
+// Older records can carry an operator-set context cutoff. Respect it when replaying history.
 func (r *Runner) contextStart(ctx context.Context) (time.Time, error) {
 	control, _, err := r.tasks.Store.ConversationStatus(ctx)
 	if err != nil {
@@ -192,8 +191,6 @@ func (r *Runner) summarize(ctx context.Context, prompt string) ([]state.SummaryI
 	return args.Items, args.Gist, nil
 }
 
-// compactionTurn is what the summary model sees of one turn: the user's messages with their input IDs, task
-// notifications cut short, and Nori's published reply. It also returns the user's messages by input ID.
 func compactionTurn(t state.ConversationTurn) (map[string]any, map[string]string) {
 	users := map[string]string{}
 	messages := []map[string]string{}
@@ -216,7 +213,6 @@ func compactionTurn(t state.ConversationTurn) (map[string]any, map[string]string
 	return map[string]any{"started_at": t.StartedAt, "messages": messages}, users
 }
 
-// publishedReply is the last plain assistant text in a turn's protocol, or the text of a structured reply.
 func publishedReply(t state.ConversationTurn) string {
 	for i := len(t.Protocol) - 1; i >= 0; i-- {
 		var m struct {

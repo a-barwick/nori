@@ -28,7 +28,6 @@ func (s *Service) inspectScreenshot(ctx context.Context, run, artifactID, questi
 	return s.inspect(ctx, "artifact_id", artifactID, inspectInstruction, question, data, "image/png")
 }
 
-// inspect makes the no-tools model call for one image. idKey and id name the image in the result.
 func (s *Service) inspect(ctx context.Context, idKey, id, instruction, question string, data []byte, mediaType string) (result map[string]any, err error) {
 	provider, model := s.Model.Provider(), s.Model.Name()
 	ctx, span := otel.Tracer("nori/agent").Start(ctx, "inspect_screenshot "+model, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(

@@ -28,10 +28,10 @@ func register(ctx context.Context, s settings.Settings, cfg config) error {
 	if !paused {
 		return fmt.Errorf("registration requires paused execution admission")
 	}
-	c, err := task.Dial(ctx, platform.Secrets())
+	c, err := task.Dial(ctx, s.Temporal, platform.Secrets(s))
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	return taskworker.Register(ctx, c, cfg.deployment, cfg.build)
+	return taskworker.Register(ctx, c, s.Temporal.TaskQueue, cfg.deployment, cfg.build)
 }

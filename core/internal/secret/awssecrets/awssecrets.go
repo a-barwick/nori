@@ -1,4 +1,3 @@
-// Package awssecrets resolves AWS Secrets Manager names or ARNs.
 package awssecrets
 
 import (

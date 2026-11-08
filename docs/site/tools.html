@@ -25,10 +25,6 @@
 <section><h2>The tools</h2>
 <div class="card"><table><tr><th>Tool</th><th>Runs on</th><th>Type</th><th>Returns</th></tr>
 <tr><td>web_search</td><td>Worker</td><td>Read</td><td>Up to 8 results with URLs and any publication dates.</td></tr>
-<tr><td>calendar_read</td><td>Worker</td><td>Read</td><td>Events in a range of up to 31 days, and the account it read.</td></tr>
-<tr><td>calendar_create</td><td>Worker</td><td>Reversible write</td><td>After <a href="authority.html">approval</a>, the event ID and a read of the event.</td></tr>
-<tr><td>calendar_move</td><td>Worker</td><td>Reversible write</td><td>After approval, the event ID and a read of the new time.</td></tr>
-<tr><td>email_send</td><td>Worker</td><td>Sensitive send</td><td>After approval, the message ID and a read of the sent message.</td></tr>
 <tr><td>screenshot_inspect, upload_inspect</td><td>Worker</td><td>Read</td><td>The text answer to one question about a saved screenshot or attached image.</td></tr>
 <tr><td>browser_navigate</td><td>Computer</td><td>Read</td><td>The page title and visible text.</td></tr>
 <tr><td>browser_screenshot</td><td>Computer</td><td>Read</td><td>A reference to a saved PNG.</td></tr>
@@ -51,8 +47,6 @@
 <div class="card"><table class="tall"><tr><th>Tool</th><th>How the change is confirmed</th></tr>
 <tr><td>job_start</td><td>The wait returns the end state, exit code and output.</td></tr>
 <tr><td>shell</td><td>The exit code shows the command ran. A follow-up read shows its effect.</td></tr>
-<tr><td>calendar_create, calendar_move</td><td>The result has Google's status and the event ID, and a follow-up read shows the event.</td></tr>
-<tr><td>email_send</td><td>The result has Google's status and the message ID, and a follow-up read shows the sent message.</td></tr>
 </table></div></section>
 <section><h2>Long shell jobs</h2>
 <div class="states"><span class="state">running</span><span class="state-arrow">→</span><span class="state">finished</span><span class="state-arrow">or</span><span class="state">stopped</span><span class="state-arrow">or</span><span class="state">timed_out</span><span class="state-arrow">or</span><span class="state">lost</span></div>
@@ -60,7 +54,7 @@
 <section><h2>When a command fails</h2>
 <p>A failed command may have changed something, so it blocks later shell commands and jobs. The runtime asks the user, naming the command and exit code, and the answer releases the block. It doesn't block when the program never started or the task declared it read-only.</p>
 </section>
-<details class="more"><summary>Job limits, screenshots and calendar</summary>
+<details class="more"><summary>Job limits and screenshots</summary>
 <ul class="pts">
 <li>A job that can't start ends as failed_to_start, and a stop the guest can't confirm ends as stop_unconfirmed.</li>
 <li>A job can run for up to 60 minutes, and a task can have 4 running at once.</li>
@@ -69,10 +63,8 @@
 <li>If the computer restarts or stops, the job is killed and reported as lost, never as finished.</li>
 </ul>
 <p><code>screenshot_inspect</code> sends one saved image and one question to the task model in a separate call with no tools. Only the text answer joins the task's history, so text inside an image can't call a tool. The cost counts against the task's budget.</p>
-<p><code>nori-connect-calendar --user &lt;id&gt;</code> saves that user's Google refresh token and account in their users-table row, for calendar and email. The token stays server-side. <code>calendar_read</code> covers the primary calendar and up to 9 others selected in Google Calendar.</p>
-<p>If the account isn't connected or Google refuses the token, the calendar or email tool returns <code>available: false</code> and the task says so. An OAuth app in Google's testing state loses its refresh token after 7 days.</p>
 <p>Each search charges the task's budget $0.005, Brave's listed price on Oct 31, 2026.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code>, <code>catalog.go</code>, <code>uploads.go</code>, <code>results.go</code>, <code>search.go</code>, <code>calendar.go</code>, <code>calendar_write.go</code>, <code>gmail.go</code>, <code>writes.go</code>, <code>inspect.go</code>, <code>core/internal/computerd/jobs.go</code>, <code>core/internal/task/jobs.go</code>, <code>core/internal/task/tool_durable.go</code>, <code>core/internal/task/unresolved.go</code>, <code>core/internal/task/context.go</code>, <code>core/internal/agent/memory.go</code>, <code>core/cmd/nori-connect-calendar/main.go</code>.</p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code>, <code>catalog.go</code>, <code>uploads.go</code>, <code>results.go</code>, <code>search.go</code>, <code>inspect.go</code>, <code>core/internal/computerd/jobs.go</code>, <code>core/internal/task/jobs.go</code>, <code>core/internal/task/tool_durable.go</code>, <code>core/internal/task/unresolved.go</code>, <code>core/internal/task/context.go</code>, <code>core/internal/agent/memory.go</code>, .</p></details>
 </body>
 </html>

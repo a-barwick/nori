@@ -20,16 +20,13 @@ import (
 
 const (
 	computeScope = "https://www.googleapis.com/auth/compute"
-	// rpcPort is where computer-agent listens on the instance.
-	rpcPort = "8090"
+	rpcPort      = "8090"
 )
 
 // Config names the instance. Nothing defaults: any empty field fails the first
 // connection, so a process that never uses the computer does not need one.
 type Config struct{ Project, Zone, Instance string }
 
-// New returns a Provider for the instance. It starts a stopped instance on Open
-// and never on Attach.
 func New(c Config) computer.Provider {
 	return computer.Managed(func(ctx context.Context) (computer.Host, error) {
 		if c.Project == "" || c.Zone == "" || c.Instance == "" {

@@ -1,4 +1,3 @@
-// Package computerd implements the private computer RPC inside the retained guest.
 package computerd
 
 import (
@@ -18,11 +17,12 @@ import (
 	"sync"
 	"time"
 
+	"nori/internal/computer/rpc"
 	"nori/internal/observability"
 )
 
 const maxOutput = 64 << 10
-const maxScreenshot = 2 << 20
+const maxRPCRequest = 128 << 10
 
 var runPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$`)
 
@@ -55,37 +55,17 @@ func New(tasks string) (http.Handler, error) {
 	s := &server{tasks: tasks, browsers: make(map[string]*taskBrowser), screenshotGate: make(chan struct{}, 1), runs: make(map[string]*runState), activeReceipts: make(map[string]bool), readOperations: make(map[string]*readOperation), jobs: make(map[string]*activeJob)}
 	s.recoverJobs()
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		c, err := browser(ctx)
-		if err != nil {
-			http.Error(w, "browser not ready", http.StatusServiceUnavailable)
-			return
+	for pattern, route := range guestRoutes {
+		handle := func(w http.ResponseWriter, r *http.Request) { route.serve(s, w, r) }
+		if route.receipt != noReceipt {
+			handle = s.receipted(handle, route.receipt == interruptibleReceipt)
 		}
-		// Readiness validates the browser CDP connection without creating a task tab.
-		_ = c.conn.CloseNow()
-		respond(w, map[string]bool{"ready": true, "operation_receipts_v1": true, "browser_task_tabs_v1": true, "shell_jobs_v1": true, "files_v1": true})
-	})
-	mux.HandleFunc("POST /cancel", s.cancelRun)
-	mux.HandleFunc("POST /browser/close", s.closeTaskBrowser)
-	mux.HandleFunc("POST /exec", s.receipted(s.exec))
-	mux.HandleFunc("POST /navigate", s.receipted(s.navigate))
-	mux.HandleFunc("POST /screenshot", s.receipted(s.screenshot))
-	mux.HandleFunc("POST /job/start", s.receipted(s.startJob))
-	mux.HandleFunc("POST /file/put", s.putFile)
-	mux.HandleFunc("POST /file/get", s.getFile)
-	mux.HandleFunc("POST /job/status", s.jobStatus)
-	mux.HandleFunc("POST /job/stop", s.jobStop)
-	mux.HandleFunc("POST /job/stop-task", s.stopTaskJobs)
-	mux.HandleFunc("POST /operation", s.operationStatus)
-	mux.HandleFunc("POST /operation/cancel", s.cancelRead)
+		mux.HandleFunc(pattern, handle)
+	}
 	activity := &activityState{last: time.Now()}
-	// This endpoint is host-only: Proxy deliberately does not forward it.
 	mux.HandleFunc("GET /activity", func(w http.ResponseWriter, r *http.Request) {
 		activity.mu.Lock()
 		defer activity.mu.Unlock()
-		// A running job keeps the computer on even when no worker is polling it.
 		respond(w, map[string]any{"active": activity.active + s.runningJobs(), "idle_seconds": time.Since(activity.last).Seconds()})
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +86,51 @@ func New(tasks string) (http.Handler, error) {
 		// writing the operation receipt after a caller disconnects.
 		mux.ServeHTTP(w, r)
 	}), nil
+}
+
+type receiptMode int
+
+const (
+	noReceipt receiptMode = iota
+	durableReceipt
+	interruptibleReceipt
+)
+
+type guestRoute struct {
+	serve        func(*server, http.ResponseWriter, *http.Request)
+	receipt      receiptMode
+	requestLimit int64
+}
+
+// The host forwards exactly these guest routes. /activity is private to the host.
+var guestRoutes = map[string]guestRoute{
+	http.MethodGet + " " + rpc.HealthPath:        {serve: (*server).health},
+	http.MethodPost + " " + rpc.CancelPath:       {serve: (*server).cancelRun},
+	http.MethodPost + " " + rpc.CloseBrowserPath: {serve: (*server).closeTaskBrowser},
+	http.MethodPost + " " + rpc.ExecPath:         {serve: (*server).exec, receipt: durableReceipt},
+	http.MethodPost + " " + rpc.NavigatePath:     {serve: (*server).navigate, receipt: interruptibleReceipt},
+	http.MethodPost + " " + rpc.ScreenshotPath:   {serve: (*server).screenshot, receipt: interruptibleReceipt},
+	http.MethodPost + " " + rpc.StartJobPath:     {serve: (*server).startJob, receipt: durableReceipt},
+	http.MethodPost + " " + rpc.PutFilePath:      {serve: (*server).putFile, requestLimit: maxFileRequest},
+	http.MethodPost + " " + rpc.GetFilePath:      {serve: (*server).getFile},
+	http.MethodPost + " " + rpc.JobStatusPath:    {serve: (*server).jobStatus},
+	http.MethodPost + " " + rpc.StopJobPath:      {serve: (*server).jobStop},
+	http.MethodPost + " " + rpc.StopTaskJobsPath: {serve: (*server).stopTaskJobs},
+	http.MethodPost + " " + rpc.OperationPath:    {serve: (*server).operationStatus},
+	http.MethodPost + " " + rpc.CancelReadPath:   {serve: (*server).cancelRead},
+}
+
+func (*server) health(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	c, err := browser(ctx)
+	if err != nil {
+		http.Error(w, "browser not ready", http.StatusServiceUnavailable)
+		return
+	}
+	// Probe the CDP connection without creating a task tab.
+	_ = c.conn.CloseNow()
+	respond(w, rpc.Health{Ready: true, Receipts: true, TaskTabs: true, Jobs: true, Files: true})
 }
 
 type activityState struct {
@@ -130,7 +155,7 @@ func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle fu
 	p.Transport = &http.Transport{ResponseHeaderTimeout: 123 * time.Second}
 	p.ModifyResponse = func(response *http.Response) error {
 		// This admission signal belongs to the trusted host, never the guest.
-		response.Header.Del("Nori-Computer-Draining")
+		response.Header.Del(rpc.DrainingHeader)
 		return nil
 	}
 	activity := &activityState{last: time.Now()}
@@ -190,14 +215,15 @@ func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle fu
 		}
 	}()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !((r.Method == "GET" && r.URL.Path == "/healthz") || (r.Method == "POST" && (r.URL.Path == "/cancel" || r.URL.Path == "/browser/close" || r.URL.Path == "/exec" || r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" || r.URL.Path == "/operation" || r.URL.Path == "/operation/cancel" || r.URL.Path == "/job/start" || r.URL.Path == "/job/status" || r.URL.Path == "/job/stop" || r.URL.Path == "/job/stop-task" || r.URL.Path == "/file/put" || r.URL.Path == "/file/get"))) {
+		route, ok := guestRoutes[r.Method+" "+r.URL.Path]
+		if !ok {
 			http.NotFound(w, r)
 			return
 		}
 		activity.mu.Lock()
 		if activity.closing {
 			activity.mu.Unlock()
-			w.Header().Set("Nori-Computer-Draining", "true")
+			w.Header().Set(rpc.DrainingHeader, "true")
 			http.Error(w, "computer stopping after idle", http.StatusServiceUnavailable)
 			return
 		}
@@ -214,9 +240,9 @@ func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle fu
 				activity.mu.Unlock()
 			}
 		}()
-		limit := int64(128 << 10)
-		if r.URL.Path == "/file/put" {
-			limit = maxFileRequest
+		limit := route.requestLimit
+		if limit == 0 {
+			limit = maxRPCRequest
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		p.ServeHTTP(w, r)
@@ -224,7 +250,7 @@ func Proxy(ctx context.Context, guestURL *url.URL, idle time.Duration, onIdle fu
 }
 
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
-	if err := httpjson.Decode(w, r, value, 128<<10); err != nil {
+	if err := httpjson.Decode(w, r, value, maxRPCRequest); err != nil {
 		message := "invalid JSON request"
 		if errors.Is(err, httpjson.ErrMultiple) {
 			message = "one JSON object required"

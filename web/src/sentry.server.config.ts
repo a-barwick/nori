@@ -1,18 +1,4 @@
-import * as Sentry from "@sentry/nextjs";
-import { beforeBreadcrumb, beforeSend, beforeSendLog, beforeSendMetric, beforeSendSpan, dataCollection, protectEnvelopeHeaders, sampleRate, sampler } from "@/lib/observability/privacy";
+import { initServerObservability } from "@/lib/observability/config.server";
+import { ignoredRequestSpans } from "@/lib/observability/privacy";
 
-const dsn = process.env.SENTRY_WEB_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN;
-if (dsn) {
-  const client = Sentry.init({
-    dsn,
-    environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV,
-    release: process.env.SENTRY_RELEASE,
-    dataCollection,
-    tracesSampler: sampler(sampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE)),
-    // Upstream context is added explicitly to fresh headers in runtime/server.
-    tracePropagationTargets: [],
-    ignoreSpans: [/\/api\/(?:agent\/)?(?:health|session|observability)(?:[/?#\s]|$)/],
-    beforeBreadcrumb, beforeSend, beforeSendSpan, beforeSendLog, beforeSendMetric,
-  });
-  protectEnvelopeHeaders(client);
-}
+initServerObservability(ignoredRequestSpans);

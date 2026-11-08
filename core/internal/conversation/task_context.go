@@ -14,13 +14,12 @@ import (
 const taskContextLimit = 12 << 10
 
 type TaskContext struct {
-	ActiveTasks []*TaskContextRecord `json:"active_tasks"`
-	EventTasks  []*TaskContextRecord `json:"event_task_records"`
-	RecentTasks []*TaskContextRecord `json:"recent_task_records"`
-	// SavedResults lists the newest results, without their text.
-	SavedResults []SavedResult `json:"saved_results,omitempty"`
-	Truncated    bool          `json:"truncated"`
-	Instructions string        `json:"instructions"`
+	ActiveTasks  []*TaskContextRecord `json:"active_tasks"`
+	EventTasks   []*TaskContextRecord `json:"event_task_records"`
+	RecentTasks  []*TaskContextRecord `json:"recent_task_records"`
+	SavedResults []SavedResult        `json:"saved_results,omitempty"`
+	Truncated    bool                 `json:"truncated"`
+	Instructions string               `json:"instructions"`
 }
 
 // SavedResult is what the outer loop knows about a saved result. Titles came from task requests and tool calls, so
@@ -166,7 +165,6 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 	return result, err
 }
 
-// contextRecord reads one task and its accepted commands for the outer loop's context.
 func (t *Tasks) contextRecord(ctx context.Context, id string) (*TaskContextRecord, error) {
 	snapshot, err := t.Store.Reconcile(ctx, id)
 	if err != nil {
@@ -191,8 +189,6 @@ func (t *Tasks) contextRecord(ctx context.Context, id string) (*TaskContextRecor
 	return record, nil
 }
 
-// fitTaskContext shortens the context until it fits taskContextLimit: first old commands and task text, then
-// then whole commands.
 func fitTaskContext(result *TaskContext, records []*TaskContextRecord) error {
 	fits := func() bool { data, err := json.Marshal(*result); return err == nil && len(data) <= taskContextLimit }
 	if fits() {
@@ -243,7 +239,6 @@ func trimContextText(text *string, limit int, truncated *bool) {
 	*text, *truncated = (*text)[:limit], true
 }
 
-// trimRecordText shortens a record's text to limit bytes.
 func trimRecordText(record *TaskContextRecord, limit int) {
 	trimContextText(&record.Request, limit, &record.TextTruncated)
 	trimContextText(&record.Waiting, limit, &record.TextTruncated)

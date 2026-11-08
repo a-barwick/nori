@@ -1,58 +1,48 @@
-// HTTP contract between the Go service and Nori's Chats tab.
+import type { Attachment } from "../types";
+
 export const CONTRACT = 'nori-chat-2';
-export const PREFIX = '/v1';
-export type Attachment = { id: string; name: string; media_type: string; size: number };
+export const chatAPI = (path: string) => `/api/v1${path}`;
+export const conversationPath = (id: string) => `/conversations/${encodeURIComponent(id)}`;
 export type Capabilities = { contract: string; service: string; persistence?: string; provider?: string; model?: string; conversationModes: string[] };
 export type Operation = { id: string; call_id: string; name: string; effect_class: string; outcome: string; action?: { digest: string; text: string; spec: Record<string, string> }; result?: Record<string, unknown> };
 export type Message = { id: string; sequence: number; role: 'user' | 'assistant'; text: string; status: 'streaming' | 'completed' | 'cancelled' | 'failed'; attachments?: Attachment[]; operations?: Operation[] };
 export type Conversation = { id: string; title: string; mode: 'chat' | 'assistant'; messages: Message[]; activeTurn: string | null; position: number; nextBefore?: number; updatedAt?: string };
-export type Header = Omit<Conversation, 'messages' | 'nextBefore'>;
+type Header = Omit<Conversation, 'messages' | 'nextBefore'>;
 export type Summary = { id: string; title: string; mode: 'chat' | 'assistant'; activeTurn: string | null; updatedAt: string };
-// An event carries the conversation's header and only the messages that update added or changed.
-// `reset` means the client is too far behind to replay and should reload the snapshot.
-export type Event = { seq: number; kind: 'reply.updated' | 'turn.completed' | 'turn.cancelled' | 'turn.failed' | 'input.accepted' | 'tool.updated' | 'reset'; conversation: Header; messages: Message[] };
+type Event = { seq: number; kind: 'reply.updated' | 'turn.completed' | 'turn.cancelled' | 'turn.failed' | 'input.accepted' | 'tool.updated' | 'reset'; conversation: Header; messages: Message[] };
 
 export type MessagePage = { messages: Message[]; nextBefore?: number };
 
-/** The stream can't continue from this position; reload the snapshot. */
-export class StreamReset extends Error {}
+type Recovery = "snapshot" | "rewind";
 
-export async function request<T>(path: string, options: RequestInit = {}, base = '/api'): Promise<T> {
-  const response = await fetch(`${base}${PREFIX}${path}`, {
-    ...options, headers: { 'Content-Type': 'application/json', ...options.headers },
-    redirect: 'error', signal: options.signal ?? AbortSignal.timeout(10000),
+export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const timeout = AbortSignal.timeout(10_000);
+  const response = await fetch(chatAPI(path), {
+    ...options, headers: { 'Content-Type': 'application/json', ...options.headers }, redirect: 'error',
+    signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
   });
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new Error(`${data?.error || 'Request failed'} (${response.status})`);
   return data as T;
 }
 
-/** Applies one event to the conversation it follows. */
-export function apply(conversation: Conversation, event: Event): Conversation {
-  const messages = [...conversation.messages];
-  for (const message of event.messages) {
-    const index = messages.findIndex(m => m.id === message.id);
-    if (index >= 0) messages[index] = message; else messages.push(message);
-  }
-  messages.sort((a, b) => a.sequence - b.sequence);
-  return { ...conversation, ...event.conversation, messages };
+export function mergeMessages(older: Message[], newer: Message[]): Message[] {
+  const messages = new Map(older.map((message) => [message.id, message]));
+  for (const message of newer) messages.set(message.id, message);
+  return [...messages.values()].sort((a, b) => a.sequence - b.sequence);
 }
 
-/**
- * Reads one event stream from `after`. Returns when the server ends the stream (it does so before
- * the hosting request limit); throws StreamReset when the client must reload the snapshot.
- */
-export async function follow(id: string, after: number, signal: AbortSignal, receive: (event: Event) => void, base = '/api', opened?: () => void) {
-  const response = await fetch(`${base}${PREFIX}/conversations/${encodeURIComponent(id)}/events?after=${after}`, { signal, redirect: 'error' });
-  if (response.status === 400) throw new StreamReset('Event position is not valid here');
+async function follow(id: string, after: number, signal: AbortSignal, receive: (event: Event) => void, opened: () => void): Promise<Recovery | undefined> {
+  const response = await fetch(chatAPI(`${conversationPath(id)}/events?after=${after}`), { signal, redirect: 'error' });
+  if (response.status === 400) return "rewind";
   if (!response.ok || !response.headers.get('content-type')?.startsWith('text/event-stream') || !response.body) throw new Error('Event stream unavailable');
-  opened?.();
+  opened();
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) return after;
+      if (done) return;
       buffer += value.replace(/\r/g, '');
       let end: number;
       while ((end = buffer.indexOf('\n\n')) >= 0) {
@@ -62,9 +52,9 @@ export async function follow(id: string, after: number, signal: AbortSignal, rec
         if (!data) continue;
         const event: Event = JSON.parse(data);
         if (event.conversation.id !== id) throw new Error('Cross-conversation event');
-        if (event.kind === 'reset') throw new StreamReset('Too far behind to replay');
+        if (event.kind === 'reset') return "snapshot";
         if (!Number.isSafeInteger(event.seq) || event.seq <= after) continue;
-        if (event.seq !== after + 1) throw new StreamReset('Event gap');
+        if (event.seq !== after + 1) return "snapshot";
         after = event.seq;
         receive(event);
       }
@@ -75,32 +65,59 @@ export async function follow(id: string, after: number, signal: AbortSignal, rec
   }
 }
 
-const pause = (ms: number, signal: AbortSignal) => new Promise<void>(done => {
-  const timer = setTimeout(done, ms);
-  signal.addEventListener('abort', () => { clearTimeout(timer); done(); }, { once: true });
-});
+function pause(ms: number, signal: AbortSignal) {
+  if (signal.aborted) return;
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(done, ms);
+    signal.addEventListener('abort', done);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    }
+  });
+}
 
-/**
- * Keeps a conversation current until `signal` aborts: follows the stream, resumes when the server
- * ends it, reloads the snapshot after a reset or failure, and backs off while the service is unreachable.
- */
-export async function stay(start: Conversation, signal: AbortSignal, update: (c: Conversation, reset?: boolean) => void, connected: (on: boolean) => void, base = '/api') {
-  let current = start;
+type StreamCallbacks = {
+  update: (header: Header, messages: Message[]) => void;
+  recover: (snapshot: Conversation, recovery: Recovery) => void;
+  connected: (on: boolean) => void;
+};
+
+export async function stay(start: Conversation, signal: AbortSignal, { update, recover, connected }: StreamCallbacks) {
+  const id = start.id;
+  let after = start.position;
   let failures = 0;
+  let recovery: Recovery | undefined;
+  const backoff = () => {
+    connected(false);
+    return pause(Math.min(30_000, 500 * 2 ** ++failures), signal);
+  };
   while (!signal.aborted) {
-    try {
-      await follow(current.id, current.position, signal, event => { current = apply(current, event); update(current); }, base, () => { failures = 0; connected(true); });
-    } catch (error) {
-      if (signal.aborted) return;
-      if (!(error instanceof StreamReset)) {
-        failures++;
-        connected(false);
-        await pause(Math.min(30000, 500 * 2 ** failures), signal);
-      }
+    if (!recovery) {
       try {
-        current = await request<Conversation>(`/conversations/${current.id}`, { signal }, base);
-        update(current, true);
-      } catch { /* the next attempt retries */ }
+        recovery = await follow(id, after, signal, (event) => {
+          after = event.seq;
+          update(event.conversation, event.messages);
+        }, () => { failures = 0; connected(true); });
+        // A clean end before the hosting deadline resumes from the last event.
+        if (!recovery) continue;
+      } catch {
+        if (signal.aborted) return;
+        recovery = "snapshot";
+        await backoff();
+      }
+    }
+    if (signal.aborted) return;
+    try {
+      const snapshot = await request<Conversation>(conversationPath(id), { signal });
+      if (snapshot.id !== id) throw new Error("The service returned a different conversation.");
+      recover(snapshot, snapshot.position < after ? "rewind" : recovery);
+      after = snapshot.position;
+      recovery = undefined;
+    } catch {
+      if (signal.aborted) return;
+      await backoff();
     }
   }
 }

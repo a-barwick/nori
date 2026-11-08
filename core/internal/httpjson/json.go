@@ -1,4 +1,3 @@
-// Package httpjson decodes bounded HTTP request objects.
 package httpjson
 
 import (

@@ -29,22 +29,7 @@ import (
 	"nori/internal/users"
 )
 
-// StoreConfig selects the durable store a process opens.
-type StoreConfig struct {
-	Project  string
-	Database string
-	// ArtifactBucket holds artifact bytes in Cloud Storage. It is not required until an artifact is stored.
-	ArtifactBucket string
-}
-
-// OpenStore opens the durable store selected by this process's settings.
 func OpenStore(ctx context.Context, s settings.Settings, user users.User) (state.ConversationStore, error) {
-	return OpenStoreWith(ctx, s, StoreConfig{Project: s.Store.Project, Database: s.Store.Database, ArtifactBucket: s.Store.ArtifactBucket}, user)
-}
-
-// OpenStoreWith opens the selected document backend and artifact bytes in a local directory or Cloud Storage. The emulator
-// and local-artifact guards in s apply to every process.
-func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig, user users.User) (state.ConversationStore, error) {
 	if err := user.Validate(); err != nil {
 		return nil, err
 	}
@@ -58,7 +43,8 @@ func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig, us
 		}
 	}
 	var documents *records.Database
-	switch s.Store.Backend {
+	cfg := s.Store
+	switch cfg.Backend {
 	case "", "firestore":
 		if _, err = settings.Required("NORI_PROJECT_ID", cfg.Project); err != nil {
 			closeLocal()
@@ -68,22 +54,17 @@ func OpenStoreWith(ctx context.Context, s settings.Settings, cfg StoreConfig, us
 			closeLocal()
 			return nil, err
 		}
-		emulator := s.Store.StateEmulator
-		if emulator != "" && (!statefirestore.IsLoopback(emulator) || s.Store.FirestoreEmulator != "") {
+		emulator := cfg.StateEmulator
+		if emulator != "" && (!statefirestore.IsLoopback(emulator) || cfg.FirestoreEmulator != "") {
 			closeLocal()
 			return nil, fmt.Errorf("NORI_STATE_EMULATOR_HOST requires loopback and no FIRESTORE_EMULATOR_HOST")
 		}
-		documents, err = statefirestore.Open(ctx, statefirestore.Config{Project: cfg.Project, Database: cfg.Database, EmulatorAddress: emulator, TaskBudgetUSD: s.TaskBudgetUSD})
+		documents, err = statefirestore.Open(ctx, statefirestore.Config{Project: cfg.Project, Database: cfg.Database, EmulatorAddress: emulator}, user, s.TaskBudgetUSD)
 	case "postgres":
-		documents, err = postgres.Open(ctx, postgres.Config{URL: s.Store.PostgresURL, TaskBudgetUSD: s.TaskBudgetUSD})
+		documents, err = postgres.Open(ctx, cfg.PostgresURL, user, s.TaskBudgetUSD)
 	default:
 		err = fmt.Errorf("NORI_STORE_BACKEND must be firestore or postgres")
 	}
-	if err != nil {
-		closeLocal()
-		return nil, err
-	}
-	documents, err = documents.ForUser(user)
 	if err != nil {
 		closeLocal()
 		return nil, err

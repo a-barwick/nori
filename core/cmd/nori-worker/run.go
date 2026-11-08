@@ -36,14 +36,13 @@ func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker,
 	if paused {
 		return slice.Paused(ctx)
 	}
-	c, err := task.Dial(ctx, platform.Secrets())
+	c, err := task.Dial(ctx, s.Temporal, platform.Secrets(s))
 	if err != nil {
 		return err
 	}
 	defer c.Close()
 	group := &userWorkers{directory: directory, cfg: s, client: c, waker: waker, entries: map[users.User]*userWorker{}}
 	defer group.Close()
-	activities := &task.Activities{Resolve: group.Activity}
 	steps := dispatch.Commands | dispatch.Publications
 	if !s.Temporal.Local {
 		steps |= dispatch.ConversationWake
@@ -52,7 +51,9 @@ func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker,
 	if bounded {
 		stopTimeout = 5 * time.Minute
 	}
-	worker, err := taskworker.Start(c, taskworker.Options{Deployment: cfg.deployment, Build: cfg.build, StopTimeout: stopTimeout}, activities, known...)
+	worker, err := taskworker.Start(c, taskworker.Options{
+		TaskQueue: s.Temporal.TaskQueue, Deployment: cfg.deployment, Build: cfg.build, StopTimeout: stopTimeout,
+	}, group.Activity, known...)
 	if err != nil {
 		return err
 	}

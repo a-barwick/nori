@@ -24,7 +24,6 @@ const (
 	jevProvider = "typesafe"
 )
 
-// JevClassifier asks Jev which intents the current inputs contain.
 type JevClassifier struct {
 	key    string
 	Client *http.Client

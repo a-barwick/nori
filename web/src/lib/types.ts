@@ -9,54 +9,42 @@ export type SavedResult = {
   created_at: string; checked_at?: string; reported_at?: string; delivered_at?: string; message_id?: string;
 };
 export type Attachment = { id: string; name: string; media_type: string; size: number };
-/** A file picked in the composer, from the upload until the message is sent. */
 export type DraftFile = Attachment & { status: "uploading" | "ready" | "error"; error?: string; file: File };
-export type MarkState = "idle" | "attentive" | "thinking" | "writing" | "listening" | "pleased";
+export type MarkState = "idle" | "attentive" | "thinking";
 
-/** Saved runtime message; markdown structure selects bubble or document rendering. */
 export interface TextItem {
   id: string;
   sender: Sender;
   at: number;
-  kind: "text";
   text: string;
-  /** Text-part layout requested by the service, when it set one. */
   display?: Part["display"];
-  /** Non-text parts, shown under the text. */
   parts?: Part[];
   debug?: DebugInfo;
 }
 
-export type ThreadItem = TextItem;
 export interface Thread {
-  id: string;
   title: string;
-  kind: "main";
-  createdAt: number;
-  items: ThreadItem[];
+  items: TextItem[];
 }
 
 // Wire types for the Go runtime API. Field names match its JSON exactly.
 
 export type Message = { id: string; run_id: string; turn_id?: string; role: "user" | "assistant"; text: string; parts?: Part[]; result_ids?: string[]; created_at: string };
-export type RunEvent = { id?: string; sequence?: number; instruction_revision?: number; kind: string; text: string; created_at: string };
-export type TaskQuestion = { id: string; kind: "input" | "work"; text: string; call_id?: string; instruction_revision: number; resolved_by?: string };
-export type TaskHold = { id: string; task_id: string; question: string; status: "pending" | "ready" | "answered" | "failed"; answered_turn_id?: string; created_at: string };
-export type RunStatus = "running" | "completed" | "failed" | "cancelled";
+type RunEvent = { id?: string; sequence?: number; instruction_revision?: number; kind: string; text: string; created_at: string };
+type TaskQuestion = { id: string; kind: "input" | "work"; text: string; call_id?: string; instruction_revision: number; resolved_by?: string };
+type TaskHold = { id: string; task_id: string; question: string; status: "pending" | "ready" | "answered" | "failed"; answered_turn_id?: string; created_at: string };
+type RunStatus = "running" | "completed" | "failed" | "cancelled";
 export const taskControlKinds = ["steer", "answer", "stop"] as const;
-export type TaskControlKind = typeof taskControlKinds[number];
-export type CommandKind = TaskControlKind | "start" | "hold";
-export type TaskCommand = { interrupt?: boolean; id: string; run_id: string; kind: TaskControlKind; text?: string; question_id?: string };
-export type TaskCommandReceipt = TaskCommand & { position: number; revision: number };
+type TaskControlKind = typeof taskControlKinds[number];
+export type TaskCommand = { id: string; run_id: string; kind: TaskControlKind; text?: string; question_id?: string };
+type TaskCommandReceipt = TaskCommand & { position: number; revision: number };
 export type TaskCommandResponse = { command: TaskCommandReceipt; run: Run; accepted?: boolean; retryable?: boolean; error?: string };
-export type PendingTaskCommand = { command: TaskCommand; started: number; sending?: boolean; error?: string; accepted?: boolean; position?: number; rejected?: boolean };
+export type PendingTaskCommand = { command: TaskCommand; started: number; sending?: boolean; error?: string; accepted?: boolean; position?: number; rejected?: boolean; retryManually?: boolean };
 export type Artifact = { id: string; kind: "screenshot" };
 export type Run = {
   id: string;
   status: RunStatus;
   cancel_requested: boolean;
-  temporal?: boolean;
-  protocol_version?: number;
   request?: string;
   holds?: TaskHold[];
   position?: number;
@@ -66,19 +54,15 @@ export type Run = {
   revision?: number;
   incorporated?: number;
   waiting?: string;
-  /** Latest saved state of a running long job. */
   progress?: string;
   /** Model USD from reported token usage, and the configured task budget. */
   spent_usd?: number;
   /** Recorded spend is partial when at least one provider cost is unknown. */
   cost_unknown?: boolean;
   budget_usd?: number;
-  /** The task this one works for, and the cost of this task's own subtasks. */
   parent_id?: string;
   subtask_spent_usd?: number;
   started_at: string;
-  /** Legacy inline request deadline; durable tasks have no wall-clock deadline. */
-  deadline?: string;
   finished_at?: string;
   error?: string;
   events: RunEvent[] | null;
@@ -89,7 +73,7 @@ export type Usage = {
   input_tokens?: number; output_tokens?: number; total_tokens?: number;
   cost_usd?: number; cost_status: string; request_status: string; created_at: string;
 };
-export type ClassificationHint = { intent?: string; intents?: string[]; confidence?: number; available: boolean };
+type ClassificationHint = { intent?: string; intents?: string[]; confidence?: number; available: boolean };
 export type ConversationTrace = {
   id: string; turn_id: string; attempt: number; input_ids: string[]; model: string;
   status: "running" | "completed" | "superseded" | "error";
@@ -122,10 +106,9 @@ export type Session = {
   read_position?: ReadPosition;
 };
 
-/** Debug values come from saved provider/task records, never inferred reasoning. */
 export type DebugInfo = {
   run?: Run;
   turns?: ConversationTrace[];
   turnId?: string;
-  agentMode?: boolean;
+  agentMode: boolean;
 };

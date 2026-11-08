@@ -19,7 +19,7 @@ import (
 // by polling its task queues, then stops. It never enters the normal worker's
 // recovery or delivery loop and never constructs a model or computer client.
 // The version must not be current or ramping, and must not run any execution.
-func Register(ctx context.Context, c client.Client, deploymentName, build string) (result error) {
+func Register(ctx context.Context, c client.Client, taskQueue, deploymentName, build string) (result error) {
 	handle := c.WorkerDeploymentClient().GetHandle(deploymentName)
 	_, err := handle.DescribeVersion(ctx, client.WorkerDeploymentDescribeVersionOptions{BuildID: build})
 	var missing *serviceerror.NotFound
@@ -30,11 +30,11 @@ func Register(ctx context.Context, c client.Client, deploymentName, build string
 		return fmt.Errorf("registration requires a fresh deployment version")
 	}
 	guard := &registrationGuard{}
-	w := worker.New(c, task.Queue(), worker.Options{
+	w := worker.New(c, taskQueue, worker.Options{
 		Interceptors: []interceptor.WorkerInterceptor{guard}, WorkerStopTimeout: 5 * time.Second,
 		DeploymentOptions: deployment(deploymentName, build),
 	})
-	registerTask(w, &task.Activities{})
+	registerTask(w, func(context.Context) (*task.Activities, error) { return nil, errRegistrationActivity })
 	if err = w.Start(); err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func Register(ctx context.Context, c client.Client, deploymentName, build string
 			}
 			workflowQueue, activityQueue := false, false
 			for _, queue := range version.Info.TaskQueuesInfos {
-				if queue.Name == task.Queue() {
+				if queue.Name == taskQueue {
 					workflowQueue = workflowQueue || queue.Type == client.TaskQueueTypeWorkflow
 					activityQueue = activityQueue || queue.Type == client.TaskQueueTypeActivity
 				}
@@ -101,7 +101,9 @@ type registrationActivity struct {
 	guard *registrationGuard
 }
 
+var errRegistrationActivity = errors.New("registration cannot execute activities")
+
 func (r *registrationActivity) ExecuteActivity(context.Context, *interceptor.ExecuteActivityInput) (any, error) {
 	r.guard.unexpected.Store(true)
-	return nil, fmt.Errorf("registration cannot execute activities")
+	return nil, errRegistrationActivity
 }

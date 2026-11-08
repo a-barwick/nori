@@ -15,7 +15,7 @@ import (
 const WorkflowName = "nori-task-v3"
 const Signal = "task-command"
 
-func superseded(err error) bool { return applicationKind(err, "superseded") }
+func superseded(err error) bool { return applicationKind(err, activitySuperseded) }
 
 func applicationKind(err error, kind string) bool {
 	var application *temporal.ApplicationError
@@ -119,7 +119,6 @@ func (r *taskRun) step() Step { return Step{r.id, r.c.Revision} }
 
 func (r *taskRun) spend() { r.c.projectSpend(r.spending, r.id) }
 
-// wait blocks until the next task command arrives.
 func (r *taskRun) wait() error {
 	var command state.Command
 	r.signals.Receive(r.ctx, &command)
@@ -132,7 +131,7 @@ func (r *taskRun) boundary(err error) (bool, error) {
 	if superseded(err) {
 		return true, nil
 	}
-	if applicationKind(err, "paused") {
+	if applicationKind(err, activityPaused) {
 		if err := r.wait(); err != nil {
 			return false, err
 		}
@@ -141,7 +140,6 @@ func (r *taskRun) boundary(err error) (bool, error) {
 	return false, err
 }
 
-// cleanup projects spend and stops the computer once the task ends rather than continuing as new.
 func (r *taskRun) cleanup() error {
 	var a *Activities
 	cleanup, _ := workflow.NewDisconnectedContext(r.ctx)
@@ -160,12 +158,11 @@ func (r *taskRun) cleanup() error {
 	return err
 }
 
-// publish publishes the task's end, waiting while routing is pending.
 func (r *taskRun) publish(p RefPublication) error {
 	var a *Activities
 	for {
 		e := workflow.ExecuteActivity(r.quick, a.PublishRef, p).Get(r.ctx, &r.result)
-		if !applicationKind(e, "routing_pending") {
+		if !applicationKind(e, activityRoutingPending) {
 			return e
 		}
 		if e = r.wait(); e != nil {
@@ -174,7 +171,6 @@ func (r *taskRun) publish(p RefPublication) error {
 	}
 }
 
-// run takes model turns until the task ends, fails or continues as new, which it reports as true.
 func (r *taskRun) run() (bool, error) {
 	for turns := 0; ; turns++ {
 		if turns >= 32 {
@@ -187,8 +183,6 @@ func (r *taskRun) run() (bool, error) {
 	}
 }
 
-// turn syncs accepted input, asks open questions and otherwise handles one model
-// response. It reports true when the task has been published.
 func (r *taskRun) turn() (bool, error) {
 	var a *Activities
 	c := &r.c
@@ -241,7 +235,6 @@ func (r *taskRun) turn() (bool, error) {
 	return r.handleCalls(model.Calls, changed)
 }
 
-// ask stops the computer, publishes the open question once and waits for the next command.
 func (r *taskRun) ask() error {
 	var a *Activities
 	c := &r.c
@@ -258,7 +251,6 @@ func (r *taskRun) ask() error {
 	return r.wait()
 }
 
-// callStep is what handling one model call leaves for the model's remaining calls.
 type callStep int
 
 const (
@@ -346,7 +338,6 @@ func (r *taskRun) requestInput(call CallRef) error {
 	return nil
 }
 
-// complete checks a proposed completion and publishes the task when the check allows it.
 func (r *taskRun) complete(call CallRef) (callStep, error) {
 	var a *Activities
 	c := &r.c
@@ -384,7 +375,7 @@ func (r *taskRun) publishCompletion(call CallRef, check CompletionOutcome) (call
 	}
 	status := state.RunCompleted
 	if check.Action != "publish" {
-		status = "failed"
+		status = state.RunFailed
 	}
 	err := r.publish(RefPublication{
 		Publication: Publication{Step: r.step(), Status: status, Detail: check.Detail, StopConfirmed: true, Spent: c.Spent, CostUnknown: c.CostUnknown},
@@ -400,7 +391,6 @@ func (r *taskRun) publishCompletion(call CallRef, check CompletionOutcome) (call
 	})
 }
 
-// runTool runs a tool call, or saves a write for execution.
 func (r *taskRun) runTool(call CallRef) (callStep, error) {
 	var a *Activities
 	c := &r.c
@@ -415,7 +405,8 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 		return nextCall, err
 	}
 	// A tool the worker runs itself never touches the computer, so it leaves nothing to stop.
-	if !agent.RuntimeTool(call.Name) {
+	policy := agent.TaskToolPolicy(call.Name)
+	if !policy.Runtime {
 		if len(c.ComputerRevisions) == 0 || c.ComputerRevisions[len(c.ComputerRevisions)-1] != c.Revision {
 			c.ComputerRevisions = append(c.ComputerRevisions, c.Revision)
 		}
@@ -434,11 +425,9 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 		// A worker that died mid-call leaves a paid tool's cost open. Attempts are capped at 1.
 		var application *temporal.ApplicationError
 		if !errors.As(err, &application) {
-			switch call.Name {
-			case "screenshot_inspect", "upload_inspect":
-				c.CostUnknown = true
-			case "web_search":
-				c.Spent += agent.SearchCostUSD
+			c.CostUnknown = c.CostUnknown || policy.InterruptedCostUnknown
+			if policy.InterruptedCostUSD > 0 {
+				c.Spent += policy.InterruptedCostUSD
 			}
 		}
 		return nextCall, err
@@ -481,7 +470,6 @@ func (c *Checkpoint) stopComputer(w workflow.Context, id string) error {
 	return nil
 }
 
-// afterTool asks the user when a tool's result needs a decision, and reports whether it did.
 func (c *Checkpoint) afterTool(output RefToolOutcome, id string) bool {
 	switch {
 	case output.Outcome == "needs_input":
@@ -559,17 +547,17 @@ func (c *Checkpoint) publishFailure(ctx, stopCtx workflow.Context, id string, fa
 		failure = fmt.Errorf("computer stop could not be confirmed: %w", e)
 	}
 	status := state.RunFailed
-	if c.Stopped && (temporal.IsCanceledError(failure) || applicationKind(failure, "cancelled")) {
-		status = "cancelled"
+	if c.Stopped && (temporal.IsCanceledError(failure) || applicationKind(failure, activityCancelled)) {
+		status = state.RunCancelled
 	}
 	p := RefPublication{Publication: Publication{
 		Step: Step{id, c.Revision}, Status: status, Detail: failure.Error(), StopConfirmed: c.Stopped,
-		CostUnknown: c.CostUnknown, Spent: c.Spent, BypassRouting: !c.Stopped || status == "cancelled",
+		CostUnknown: c.CostUnknown, Spent: c.Spent, BypassRouting: !c.Stopped || status == state.RunCancelled,
 	}}
 	var publishErr error
 	for {
 		publishErr = workflow.ExecuteActivity(cleanup, a.PublishRef, p).Get(cleanup, &result)
-		if !applicationKind(publishErr, "routing_pending") {
+		if !applicationKind(publishErr, activityRoutingPending) {
 			break
 		}
 		if e := wait(); e != nil {

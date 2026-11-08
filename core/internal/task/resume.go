@@ -15,7 +15,7 @@ import (
 // disposable queue notifications from Temporal's durable state. It is never a
 // periodic controller and never changes an Activity retry policy.
 func (e *Engine) PendingWork(ctx context.Context) ([]string, error) {
-	query := "ExecutionStatus = 'Running' AND TaskQueue = '" + strings.ReplaceAll(Queue(), "'", "''") + "'"
+	query := "ExecutionStatus = 'Running' AND TaskQueue = '" + strings.ReplaceAll(e.queue, "'", "''") + "'"
 	request := &workflowservice.ListWorkflowExecutionsRequest{Query: query, PageSize: 100}
 	var ids []string
 	var failures []error
@@ -26,7 +26,7 @@ func (e *Engine) PendingWork(ctx context.Context) ([]string, error) {
 		}
 		for _, item := range page.GetExecutions() {
 			id := item.GetExecution().GetWorkflowId()
-			runID, ok := dispatch.RunID(e.UserID, id)
+			runID, ok := dispatch.RunID(e.userID, id)
 			if !ok || item.GetType().GetName() != WorkflowName {
 				continue
 			}
@@ -50,7 +50,7 @@ func (e *Engine) PendingWork(ctx context.Context) ([]string, error) {
 					deployment, _, _ = strings.Cut(version.GetVersion(), ".")
 				}
 			}
-			if deployment != "" && deployment != deploymentName() {
+			if deployment != "" && deployment != e.deployment {
 				continue
 			}
 			if d.GetPendingWorkflowTask() == nil && len(d.GetPendingActivities()) == 0 && len(d.GetPendingNexusOperations()) == 0 {

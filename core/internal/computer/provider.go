@@ -22,7 +22,6 @@ type Provider interface {
 
 var errNoProvider = errors.New("computer provider is not configured")
 
-// Open connects through p, starting the computer if needed.
 func Open(ctx context.Context, p Provider, run string) (*Client, error) {
 	if p == nil {
 		return nil, errNoProvider
@@ -30,7 +29,6 @@ func Open(ctx context.Context, p Provider, run string) (*Client, error) {
 	return p.Open(ctx, run)
 }
 
-// Attach connects through p without starting the computer.
 func Attach(ctx context.Context, p Provider, run string) (*Client, error) {
 	if p == nil {
 		return nil, errNoProvider

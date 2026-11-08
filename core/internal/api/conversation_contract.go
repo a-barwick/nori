@@ -79,14 +79,25 @@ func chatMessages(messages []state.ChatMessage) []messageView {
 		for _, a := range m.Attachments {
 			parts = append(parts, state.AttachmentPart(a))
 		}
-		operations := make([]operationView, 0, len(m.Operations))
-		for _, op := range m.Operations {
-			operations = append(operations, operationView{OperationRecord: op.OperationRecord, Owner: operationOwner{Type: "message", ID: m.ID}, Result: op.Result})
-		}
-		result = append(result, messageView{ID: m.ID, Role: m.Role, Text: m.Text, Status: m.Status, Parts: parts, Sequence: m.Sequence, Attachments: m.Attachments, Operations: operations})
+		result = append(result, messageView{
+			ID: m.ID, Role: m.Role, Text: m.Text, Status: m.Status, Parts: parts,
+			Sequence: m.Sequence, Attachments: m.Attachments, Operations: chatOperations(m),
+		})
 	}
 	return result
 }
+func chatOperations(message state.ChatMessage) []operationView {
+	ops := make([]operationView, 0, len(message.Operations))
+	for _, op := range message.Operations {
+		ops = append(ops, operationView{
+			OperationRecord: op.OperationRecord,
+			Owner:           operationOwner{Type: "message", ID: message.ID},
+			Result:          op.Result,
+		})
+	}
+	return ops
+}
+
 func assistantMessage(m state.Message) messageView {
 	m = m.WithParts()
 	status := m.Status
@@ -96,10 +107,13 @@ func assistantMessage(m state.Message) messageView {
 	return messageView{ID: m.ID, Role: m.Role, Text: m.Text, Status: status, Parts: m.Parts, TurnID: m.TurnID, CreatedAt: &m.CreatedAt, ResultIDs: m.ResultIDs}
 }
 func chatView(c state.Chat) conversationView {
-	return conversationView{conversationHeader: conversationHeader{ChatHeader: c.Header(), TurnPolicy: "reject_while_running"}, Messages: chatMessages(c.Messages), NextBefore: c.NextBefore, NextCursor: chatCursor(c.NextBefore)}
+	return conversationView{conversationHeader: chatHeader(c.Header()), Messages: chatMessages(c.Messages), NextBefore: c.NextBefore, NextCursor: chatCursor(c.NextBefore)}
+}
+func chatHeader(header state.ChatHeader) conversationHeader {
+	return conversationHeader{ChatHeader: header, TurnPolicy: "reject_while_running"}
 }
 func chatEventView(e state.ChatEvent) conversationEvent {
-	return conversationEvent{Seq: e.Seq, Kind: e.Kind, Conversation: conversationHeader{ChatHeader: e.Conversation, TurnPolicy: "reject_while_running"}, Messages: chatMessages(e.Messages)}
+	return conversationEvent{Seq: e.Seq, Kind: e.Kind, Conversation: chatHeader(e.Conversation), Messages: chatMessages(e.Messages)}
 }
 func (s *server) assistantSnapshot(ctx context.Context, before string) (conversationView, error) {
 	if len(before) > 256 || strings.Contains(before, "/") {
@@ -109,10 +123,10 @@ func (s *server) assistantSnapshot(ctx context.Context, before string) (conversa
 	if err != nil {
 		return conversationView{}, err
 	}
-	return s.assistantView(ctx, session)
+	return assistantView(session), nil
 }
-func (s *server) assistantView(ctx context.Context, session conversation.Session) (conversationView, error) {
-	v := conversationView{conversationHeader: assistantHeader(session.Conversation, session.Position)}
+func assistantView(session conversation.Session) conversationView {
+	v := conversationView{conversationHeader: assistantHeader(&session.Conversation, session.Position)}
 	v.Paused = &session.Paused
 	v.Messages = make([]messageView, 0, len(session.Messages))
 	v.NextCursor = session.NextCursor
@@ -120,19 +134,20 @@ func (s *server) assistantView(ctx context.Context, session conversation.Session
 	for _, m := range session.Messages {
 		v.Messages = append(v.Messages, assistantMessage(m))
 	}
-	return v, nil
+	return v
 }
-func assistantHeader(status conversation.ConversationStatus, position int64) conversationHeader {
-	var active *string
-	if status.TurnID != "" {
-		id := status.TurnID
-		active = &id
+func assistantHeader(status *conversation.ConversationStatus, position int64) conversationHeader {
+	header := conversationHeader{
+		ChatHeader: state.ChatHeader{ID: "assistant", Title: "Nori", Mode: "assistant", Position: position},
+		TurnPolicy: "fold_into_turn",
+		Status:     status,
 	}
-	return conversationHeader{ChatHeader: state.ChatHeader{ID: "assistant", Title: "Nori", Mode: "assistant", ActiveTurn: active, Position: position}, TurnPolicy: "fold_into_turn", Status: &status}
+	if status != nil && status.TurnID != "" {
+		header.ActiveTurn = &status.TurnID
+	}
+	return header
 }
 
-// Operations keep their durable owner: message for foreground chat, task for
-// assistant work. Their outcome, provider evidence and recovery fields are unchanged.
 func (s *server) conversationOperations(w http.ResponseWriter, r *http.Request) {
 	id, owner := r.PathValue("conversation"), r.URL.Query().Get("ownerId")
 	if !state.ValidEvidenceID(owner) {
@@ -150,26 +165,12 @@ func (s *server) conversationOperations(w http.ResponseWriter, r *http.Request) 
 			ops = append(ops, operationView{OperationRecord: op, Owner: operationOwner{Type: "task", ID: owner}})
 		}
 	} else {
-		c, err := s.Chats.Store.UpdateChat(r.Context(), id, func(*state.Chat) (string, error) { return "", nil }, owner)
+		message, err := s.Chats.Store.ChatMessage(r.Context(), id, owner)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		found := false
-		for _, m := range chatMessages(c.Messages) {
-			if m.ID == owner {
-				ops = m.Operations
-				found = true
-				break
-			}
-		}
-		if !found {
-			writeError(w, state.ErrNotFound)
-			return
-		}
-	}
-	if ops == nil {
-		ops = []operationView{}
+		ops = chatOperations(message)
 	}
 	writeJSON(w, 200, map[string]any{"operations": ops})
 }

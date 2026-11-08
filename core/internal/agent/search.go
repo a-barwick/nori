@@ -32,8 +32,6 @@ const (
 
 var snippetTags = regexp.MustCompile(`<[^>]*>`)
 
-// webSearch calls the provider directly so each search becomes an operation record
-// that a completion check can cite. It is never repeated automatically.
 func (s *Service) webSearch(ctx context.Context, query string) (map[string]any, error) {
 	if s.Capabilities.SearchKey == "" {
 		return map[string]any{"available": false, "reason": prompts.Runtime("search-web-search-has-no-api-key-configured-on-this-worker", nil)}, nil

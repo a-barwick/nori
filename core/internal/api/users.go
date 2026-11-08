@@ -8,11 +8,13 @@ import (
 	"nori/internal/users"
 )
 
-// UserHandler runs behind the runtime's service-account authentication. The web
-// server resolves a verified sign-in email here and forwards only that row's ID.
-// Browser headers and JSON never select a scope. Internal scheduler/resume calls
-// without a user deliberately fan out; ordinary routes require an explicit user.
-func UserHandler(directory users.Directory, open func(context.Context, users.User) (Deps, func(), error), local bool, model string) http.Handler {
+type UserRoutes struct {
+	Handler http.Handler
+	Resume  func(context.Context) error
+}
+
+// The authenticated web server supplies the resolved user ID. Only internal resume can fan out.
+func UserHandler(directory users.Directory, open func(context.Context, users.User) (UserRoutes, func(), error), local bool, model string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if local && (r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "") {
 			writeJSON(w, 403, map[string]string{"error": "Use the web server to access the runtime."})
@@ -52,15 +54,14 @@ func UserHandler(directory users.Directory, open func(context.Context, users.Use
 				writeError(w, err)
 				return
 			}
-			// Other users still resume when one fails.
 			failed := false
 			for _, row := range rows {
-				deps, release, err := open(r.Context(), row)
+				routes, release, err := open(r.Context(), row)
 				if err != nil {
 					failed = true
 					continue
 				}
-				err = deps.Ops.Resume(r.Context())
+				err = routes.Resume(r.Context())
 				release()
 				if err != nil {
 					failed = true
@@ -83,12 +84,12 @@ func UserHandler(directory users.Directory, open func(context.Context, users.Use
 			writeJSON(w, 403, map[string]string{"error": "A known user is required."})
 			return
 		}
-		deps, release, err := open(r.Context(), row)
+		routes, release, err := open(r.Context(), row)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 		defer release()
-		Handler(deps, local).ServeHTTP(w, r.WithContext(users.WithID(r.Context(), row.ID)))
+		routes.Handler.ServeHTTP(w, r.WithContext(users.WithID(r.Context(), row.ID)))
 	})
 }

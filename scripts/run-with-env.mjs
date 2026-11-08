@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// Keep the source of configuration singular without passing management keys
-// to applications. Values already supplied by the spend wrapper win.
 import { readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { spawn } from "node:child_process";

@@ -1,13 +1,7 @@
-import { conversationRoute, conversationMode } from "@/lib/runtime/forward";
+import { conversationRoute } from "@/lib/runtime/forward";
 
-export async function GET(request: Request, context: { params: Promise<{ path: string[] }> }) {
-  return conversationRoute(request, conversationMode(request), (await context.params).path);
+async function handle(request: Request, context: { params: Promise<{ path: string[] }> }) {
+  return conversationRoute(request, (await context.params).path);
 }
 
-export async function POST(request: Request, context: { params: Promise<{ path: string[] }> }) {
-  return conversationRoute(request, conversationMode(request), (await context.params).path);
-}
-
-export async function DELETE(request: Request, context: { params: Promise<{ path: string[] }> }) {
-  return conversationRoute(request, conversationMode(request), (await context.params).path);
-}
+export { handle as GET, handle as POST, handle as DELETE };

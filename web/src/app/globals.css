@@ -195,7 +195,6 @@
   }
 }
 
-/* ── Materials ────────────────────────────────────────────── */
 .glass {
   background: var(--glass-bg);
   -webkit-backdrop-filter: var(--glass-filter);
@@ -237,7 +236,6 @@
   background: linear-gradient(to bottom, transparent, var(--bg-canvas) 85%);
 }
 
-/* ── Motion ───────────────────────────────────────────────── */
 .t-fast {
   transition-duration: var(--dur-fast);
   transition-timing-function: var(--ease-standard);
@@ -327,7 +325,6 @@
   animation: signal-pulse 1.6s var(--ease-standard) infinite;
 }
 
-/* Radix-driven layers animate on data-state */
 .scrim[data-state="open"] {
   animation: fade-in var(--dur-fast) var(--ease-standard);
 }
@@ -346,7 +343,6 @@
   animation: fade-in 120ms var(--ease-standard);
 }
 
-/* Nori's mark states */
 .mark-eye {
   transform-box: fill-box;
   transform-origin: center;
@@ -358,28 +354,9 @@
 .mark-look {
   transition: transform 260ms var(--ease-out);
 }
-.mark[data-state="writing"] .mark-eyes {
-  animation: mark-write 1.8s var(--ease-standard) infinite;
-}
-.mark[data-state="writing"] .mark-body-group {
-  transform-box: view-box;
-  transform-origin: 50% 90%;
-  animation: mark-nod 1.8s var(--ease-standard) infinite;
-}
 .mark[data-state="thinking"] .mark-eyes {
   animation: mark-think 2s var(--ease-standard) infinite;
 }
-.mark[data-state="listening"] .mark-body-group {
-  transform-box: view-box;
-  transform-origin: 50% 92%;
-  animation: mark-lean 1.6s var(--ease-standard) infinite;
-}
-.mark[data-state="pleased"] .mark-body-group {
-  transform-box: view-box;
-  transform-origin: 50% 60%;
-  animation: mark-beat 520ms var(--ease-spring) 1;
-}
-
 @keyframes mark-think {
   0%,
   100% {
@@ -391,71 +368,6 @@
   65% {
     transform: translate(2.4px, -2.6px);
   }
-}
-
-@keyframes mark-write {
-  0%,
-  100% {
-    transform: translate(-2px, 2px);
-  }
-  50% {
-    transform: translate(2px, 2px);
-  }
-}
-
-@keyframes mark-nod {
-  0%,
-  100% {
-    transform: rotate(0deg);
-  }
-  50% {
-    transform: rotate(1.5deg);
-  }
-}
-
-@keyframes mark-lean {
-  0%,
-  100% {
-    transform: rotate(-6deg);
-  }
-  50% {
-    transform: rotate(-3deg);
-  }
-}
-
-@keyframes mark-beat {
-  0% {
-    transform: scale(1);
-  }
-  40% {
-    transform: scale(1.08);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-/* Artifact tile ⇄ viewer morph (lib/dom.ts) */
-::view-transition-group(artifact) {
-  animation-duration: 420ms;
-  animation-timing-function: cubic-bezier(0.15, 1, 0.4, 1);
-}
-::view-transition-old(artifact),
-::view-transition-new(artifact) {
-  height: 100%;
-  object-fit: cover;
-  object-position: top;
-}
-/* The tile hands off fast so the two never read as a double exposure */
-::view-transition-old(artifact) {
-  animation: fade-out 140ms var(--ease-standard) both;
-}
-::view-transition-new(artifact) {
-  animation: fade-in 220ms var(--ease-out) 60ms both;
-}
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 220ms;
 }
 
 /* ── Reduced motion: opacity only, the mark stays static ──── */

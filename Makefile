@@ -31,7 +31,6 @@ check:
 	$(MAKE) -C core check
 	cd web && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src
 
-# Production operations. See core/infrastructure/README.md.
 deploy deploy-check deploy-status deploy-rollback deploy-unlock:
 	python3 core/infrastructure/release/deploy.py $(patsubst deploy-%,%,$@)
 

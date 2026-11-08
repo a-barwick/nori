@@ -65,7 +65,6 @@ func (d *Database) writeMemoryChanges(
 	return nil
 }
 
-// ConversationSummary returns the saved summary, or a zero one.
 func (d *Database) ConversationSummary(ctx context.Context) (state.ConversationSummary, error) {
 	var s state.ConversationSummary
 	doc, err := d.summary().Get(ctx)
@@ -106,7 +105,6 @@ func (d *Database) ConversationTurnsAfter(ctx context.Context, after time.Time) 
 	return d.turnsAfter(ctx, after, docstore.Desc)
 }
 
-// OldestConversationTurnsAfter returns up to HistoryTurnsExamined turns that started after a time, oldest first.
 func (d *Database) OldestConversationTurnsAfter(ctx context.Context, after time.Time) ([]state.ConversationTurn, error) {
 	return d.turnsAfter(ctx, after, docstore.Asc)
 }

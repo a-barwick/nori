@@ -10,31 +10,30 @@ import { IconButton } from "@/components/ui/primitives";
 import { chatThread } from "@/lib/chat/thread";
 import { useChat } from "@/lib/chat/useChat";
 import { useHydrated, useWide } from "@/lib/hooks";
+import { runtimePath } from "@/lib/runtime/paths";
 import { useRuntime } from "@/lib/runtime/useRuntime";
-import type { Message, Part, Thread as Conversation, ThreadItem } from "@/lib/types";
+import type { Message, Part, Thread as Conversation, TextItem } from "@/lib/types";
 import { ChatList } from "./ChatList";
 import { DocumentViewer } from "./DocumentViewer";
 import { RuntimeComposer } from "./RuntimeComposer";
 import { TaskPanel, type PanelTab } from "./TaskPanel";
 
-/** Where a file part's bytes are. A link part already has its address. */
-function partURL(part: Part, api: string) {
-  if (part.type === "attachment" && part.id) return `${api}/v1/uploads/${part.id}`;
-  if ((part.type === "artifact" || part.type === "image") && part.id) return `${api}/v1/results/${part.id}/file`;
+function partURL(part: Part, agentMode: boolean) {
+  if (part.type === "attachment" && part.id) return runtimePath(agentMode, `v1/uploads/${part.id}`);
+  if ((part.type === "artifact" || part.type === "image") && part.id) return runtimePath(agentMode, `v1/results/${part.id}/file`);
   return part.url;
 }
 
-/** The service sends parts. Text parts become the message body and the others show under it. */
-function partsOf(message: Pick<Message, "text" | "parts">, api: string) {
+function partsOf(message: Pick<Message, "text" | "parts">, agentMode: boolean) {
   const parts: Part[] = message.parts?.length ? message.parts : [{ type: "text", text: message.text }];
   const text = parts.filter((part) => part.type === "text");
   return {
     text: text.map((part) => part.text ?? "").join("\n\n"), display: text.find((part) => part.display)?.display,
-    parts: parts.filter((part) => part.type !== "text").map((part) => ({ ...part, url: partURL(part, api) })),
+    parts: parts.filter((part) => part.type !== "text").map((part) => ({ ...part, url: partURL(part, agentMode) })),
   };
 }
 
-export function NoriApp({ agentMode = false }: { agentMode?: boolean }) {
+export function NoriApp({ agentMode }: { agentMode: boolean }) {
   const hydrated = useHydrated();
   if (!hydrated) return <div className="fixed inset-0 bg-canvas" />;
   return (
@@ -49,11 +48,10 @@ export function NoriApp({ agentMode = false }: { agentMode?: boolean }) {
 function RuntimeChat({ agentMode }: { agentMode: boolean }) {
   const runtime = useRuntime(agentMode);
   const chat = useChat();
-  // A chat restored from the address opens with its list showing. This renders only after hydration.
   const [tab, setTab] = useState<PanelTab>(() => new URL(window.location.href).searchParams.has("chat") ? "chats" : "activity");
   const [debug, setDebug] = useState(false);
   const {
-    session: liveSession,
+    session,
     pending,
     activeTasks,
     selected,
@@ -61,7 +59,6 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
     loading,
     error,
   } = runtime;
-  const session = liveSession;
   const wide = useWide();
   const [document, setDocument] = useState<{ body: string; at: number } | null>(
     null,
@@ -89,24 +86,23 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
   );
   const conversation = useMemo<Conversation>(() => {
     const generatedRequests = new Set(session?.dispatches?.map((dispatch) => `${dispatch.id}-user`));
-    const items: ThreadItem[] = (session?.messages ?? []).filter((message) => !(message.run_id && message.id === `${message.run_id}-user` && message.turn_id) && !generatedRequests.has(message.id)).map((message) => ({
+    const items: TextItem[] = (session?.messages ?? []).filter((message) => !(message.run_id && message.id === `${message.run_id}-user` && message.turn_id) && !generatedRequests.has(message.id)).map((message) => ({
       id: message.id,
-      kind: "text",
       sender: message.role === "user" ? "me" : "nori",
       at: Date.parse(message.created_at),
-      ...partsOf(message, agentMode ? "/api/agent" : "/api"),
+      ...partsOf(message, agentMode),
       debug: debug && message.role === "assistant"
         ? { run: session?.runs.find((run) => run.id === message.run_id), turns: session?.traces?.filter((trace) => trace.turn_id === (message.turn_id || message.id.replace(/-assistant$/, ""))), agentMode, turnId: message.turn_id }
         : undefined,
     }));
     for (const item of pending) {
       if (!session?.messages.some((message) => message.id === `${item.id}-user`)) items.push({
-        id: `${item.id}-user`, kind: "text", sender: "me", at: item.started,
-        ...partsOf({ text: item.text, parts: [{ type: "text", text: item.text }, ...(item.attachments ?? []).map((file) => ({ type: "attachment", ...file, fallback: `Attached file: ${file.name}` }))] }, agentMode ? "/api/agent" : "/api"),
+        id: `${item.id}-user`, sender: "me", at: item.started, text: item.text,
+        parts: item.attachments?.map((file) => ({ type: "attachment", ...file, url: runtimePath(agentMode, `v1/uploads/${file.id}`) })),
       });
     }
     items.sort((a, b) => a.at - b.at);
-    return { id: "runtime", title: "Nori", kind: "main", createdAt: items[0]?.at ?? 0, items };
+    return { title: "Nori", items };
   }, [session?.messages, session?.runs, session?.dispatches, session?.traces, pending, debug, agentMode]);
 
   const openChat = chat.current;
@@ -139,7 +135,6 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       onSelect={runtime.setSelectedId}
       onRefresh={() => void runtime.refreshHistory()}
       onClose={closePanel}
-      artifactEndpoint={agentMode ? "/api/agent/artifact" : undefined}
       debug={debug}
       agentMode={agentMode}
       commands={runtime.taskCommands}
@@ -192,8 +187,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
             onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
             status={chat.current?.activeTurn ? "Responding…" : undefined}
             onUnread={onUnread}
-            presence={false}
-            emptyMessage="What would you like to talk about?"
+            emptyMessage={chat.opening ? "Loading your conversation…" : "What would you like to talk about?"}
             hasOlder={!!chat.current?.nextBefore}
             loadingOlder={chat.loadingOlder}
             onLoadOlder={() => void chat.loadOlder()}
@@ -208,7 +202,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
           accept=".csv,text/csv"
           draft={chat.draft}
           setDraft={chat.setDraft}
-          disabled={chat.sending}
+          disabled={chat.sending || chat.opening}
           onSend={() => void chat.send()}
           onStop={chat.current?.activeTurn ? () => void chat.stop() : undefined}
           files={chat.files}
@@ -230,7 +224,6 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
             onUnread={onUnread}
             onShown={runtime.markShown}
             readPosition={session?.read_position}
-            presence={false}
             hasOlder={!!session?.next_cursor}
             loadingOlder={runtime.loadingOlder}
             onLoadOlder={() => void runtime.loadOlder()}
@@ -246,7 +239,8 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
         {pending.filter((item) => item.error).map((item) => (
           <div key={item.id} role="alert" className="mx-6 mb-2 rounded-tile bg-surface p-3 text-meta text-ink-2">
             Could not confirm “{item.text.slice(0, 80)}{item.text.length > 80 ? "…" : ""}”. {item.error}{" "}
-            <button type="button" className="font-medium text-accent-text hover:underline" onClick={() => void runtime.retry(item)}>Retry message</button>
+            <button type="button" className="font-medium text-accent-text hover:underline" disabled={loading} onClick={() => void runtime.retry(item)}>Retry message</button>{" "}
+            <button type="button" className="font-medium text-ink-2 hover:underline" onClick={() => runtime.dismissPending(item.id)}>Dismiss</button>
           </div>
         ))}
         {notice && (

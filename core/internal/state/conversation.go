@@ -37,8 +37,7 @@ type ConversationControl struct {
 	Fence        int64     `firestore:"fence"`
 	LeaseUntil   time.Time `firestore:"lease_until"`
 	LatestAt     time.Time `firestore:"latest_at"`
-	// ContextFrom is the time an operator started a fresh context. The outer model sees nothing from before it, and
-	// nothing is deleted.
+	// Retained operator-set cutoff for model history. The UI can still read earlier messages.
 	ContextFrom time.Time `firestore:"context_from,omitempty"`
 }
 
@@ -130,8 +129,13 @@ func (in ConversationInput) IsUser() bool {
 	return !in.Introduction && in.Event == nil
 }
 
-// RoutingPending reports whether accepted user input is still waiting for the outer loop to route it.
 func (c ConversationControl) RoutingPending() bool { return c.UserReceived > c.UserRouted }
+
+func (c ConversationControl) Pending() bool { return c.Received > c.Consumed }
+
+func (c ConversationControl) Processing(now time.Time) bool {
+	return c.Active != "" && c.LeaseUntil.After(now)
+}
 
 func userThrough(inputs []ConversationInput) int64 {
 	var through int64
@@ -274,8 +278,7 @@ func CanAcquire(c ConversationControl, now time.Time) error {
 	return nil
 }
 
-// Idle reports whether the conversation has no active turn and nothing waiting.
-func Idle(c ConversationControl) bool { return c.Active == "" && c.Received <= c.Consumed }
+func Idle(c ConversationControl) bool { return c.Active == "" && !c.Pending() }
 
 // NewTurn starts a turn over the waiting inputs. unresolved are earlier user inputs replayed ahead of them.
 func NewTurn(id string, inputs, unresolved []ConversationInput, c ConversationControl, now time.Time) ConversationTurn {
@@ -288,7 +291,6 @@ func NewTurn(id string, inputs, unresolved []ConversationInput, c ConversationCo
 	return t
 }
 
-// Lease gives owner the conversation under a new fence.
 func Lease(c ConversationControl, owner string, now time.Time) ConversationControl {
 	c.Owner = owner
 	c.Fence++
@@ -325,13 +327,11 @@ func RestartWait(c ConversationControl, t ConversationTurn, now time.Time) (rest
 	return wait <= 0, wait
 }
 
-// Restart is the outcome of folding the waiting inputs into a turn.
 type Restart struct {
 	Turn ConversationTurn
 	// Replaced is set when the turn took a new batch. When false the waiting suffix could not fit, and the turn only
 	// froze its original coverage.
-	Replaced bool
-	// Superseded is the finished record of the abandoned attempt, when there was one.
+	Replaced   bool
 	Superseded *ConversationAttempt
 }
 
@@ -461,5 +461,4 @@ func (w *HistoryWindow) Add(t ConversationTurn) bool {
 	return true
 }
 
-// Chronological returns the collected turns oldest first.
 func (w *HistoryWindow) Chronological() []ConversationTurn { return Chronological(w.Turns) }

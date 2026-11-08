@@ -31,9 +31,7 @@ func memoryMessage(memories []state.Memory) json.RawMessage {
 	return modelMessage(map[string]string{"role": "system", "content": content})
 }
 
-// summaryMessage shows the summary of the turns before the recent ones.
 func summaryMessage(s state.ConversationSummary) json.RawMessage {
-	// The keys say whose words each field is.
 	type shown struct {
 		Kind      string `json:"kind"`
 		UserWords string `json:"user_words"`
@@ -48,7 +46,6 @@ func summaryMessage(s state.ConversationSummary) json.RawMessage {
 	return modelMessage(map[string]string{"role": "system", "content": prompts.Runtime("summary", map[string]any{"Summary": string(data)})})
 }
 
-// splitMemory separates remember and forget actions, which the runtime applies itself, from task commands.
 func splitMemory(calls []ToolCall) ([]ToolCall, []memoryCall, error) {
 	commands := make([]ToolCall, 0, len(calls))
 	changes := []memoryCall{}
@@ -125,7 +122,6 @@ func memoryFailureText(changes []state.MemoryChange) string {
 	return ""
 }
 
-// memoryText acknowledges applied memory changes when the model wrote no reply text.
 func memoryText(changes []state.MemoryChange) string {
 	if len(changes) == 0 {
 		return ""

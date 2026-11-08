@@ -9,6 +9,7 @@ import type { MarkState } from "@/lib/types";
  * scaled), near-black navy and soft white fill. Reads as a silhouette at 20px.
  */
 
+const RICE = "M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z";
 const INK = { stroke: "var(--mark-ink)", strokeWidth: 1.75, strokeLinejoin: "round" as const };
 const FACE = { stroke: "var(--mark-ink)", strokeWidth: 2.6, strokeLinecap: "round" as const, fill: "none" };
 
@@ -25,16 +26,16 @@ function OnigiriBody(clip: string) {
     <>
       <defs>
         <clipPath id={clip}>
-          <path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" />
+          <path d={RICE} />
         </clipPath>
       </defs>
       <path
-        d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z"
+        d={RICE}
         fill="var(--mark-fill-soft)"
       />
       <rect x="30" y="61" width="36" height="30" rx="3" fill="var(--mark-fill)" clipPath={`url(#${clip})`} />
       <path
-        d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z"
+        d={RICE}
         fill="none"
         {...INK}
       />
@@ -107,24 +108,18 @@ function useLook(enabled: boolean, attentive: boolean) {
 export function NoriMark({
   size = 32,
   state,
-  className,
-  title,
   watch = false,
 }: {
   size?: number;
   state?: MarkState;
-  className?: string;
-  title?: string;
-  /** Follow the pointer with its eyes (the presence medallion only). */
   watch?: boolean;
 }) {
   const s = state ?? "idle";
   const clip = useId().replace(/:/g, "");
-  const blink = useBlink(s === "idle" || s === "attentive" || s === "writing");
+  const blink = useBlink(s === "idle" || s === "attentive");
   const { svg: svgRef, look: lookRef } = useLook(watch && s === "idle", watch && s === "attentive");
   const face = FACE_POS;
   const [lx, rx] = face.eyes;
-  const happy = s === "pleased";
 
   return (
     <svg
@@ -132,32 +127,21 @@ export function NoriMark({
       width={size}
       height={size}
       viewBox="0 0 96 96"
-      className={cn("mark shrink-0 overflow-visible", className)}
+      className="mark shrink-0 overflow-visible"
       data-state={s}
       data-blink={blink}
-      role={title ? "img" : undefined}
-      aria-label={title}
-      aria-hidden={title ? undefined : true}
+      aria-hidden
     >
       <g className="mark-body-group">
         {OnigiriBody(`clip-${clip}`)}
         <g ref={lookRef} className="mark-look">
-        <g className="mark-eyes">
-          {happy ? (
-            <>
-              <path d={`M${lx - 3.6} ${face.y + 1.5}Q${lx} ${face.y - 3.2} ${lx + 3.6} ${face.y + 1.5}`} {...FACE} />
-              <path d={`M${rx - 3.6} ${face.y + 1.5}Q${rx} ${face.y - 3.2} ${rx + 3.6} ${face.y + 1.5}`} {...FACE} />
-            </>
-          ) : (
-            <>
-              <ellipse className="mark-eye" cx={lx} cy={face.y} rx="3.4" ry="4" fill="var(--mark-ink)" />
-              <ellipse className="mark-eye" cx={rx} cy={face.y} rx="3.4" ry="4" fill="var(--mark-ink)" />
-            </>
-          )}
-        </g>
+          <g className="mark-eyes">
+            <ellipse className="mark-eye" cx={lx} cy={face.y} rx="3.4" ry="4" fill="var(--mark-ink)" />
+            <ellipse className="mark-eye" cx={rx} cy={face.y} rx="3.4" ry="4" fill="var(--mark-ink)" />
+          </g>
         </g>
         <path
-          d={happy ? `M43 ${face.mouthY - 0.5}Q48 ${face.mouthY + 5} 53 ${face.mouthY - 0.5}` : `M44 ${face.mouthY}Q48 ${face.mouthY + 3.6} 52 ${face.mouthY}`}
+          d={`M44 ${face.mouthY}Q48 ${face.mouthY + 3.6} 52 ${face.mouthY}`}
           {...FACE}
         />
       </g>
@@ -165,18 +149,15 @@ export function NoriMark({
   );
 }
 
-/** Keep avatar spacing consistent while letting the mark stand on its own. */
 export function Medallion({
   size,
   state,
   className,
-  children,
   watch,
 }: {
   size: number;
   state?: MarkState;
   className?: string;
-  children?: React.ReactNode;
   watch?: boolean;
 }) {
   return (
@@ -185,7 +166,6 @@ export function Medallion({
       style={{ width: size, height: size }}
     >
       <NoriMark size={Math.round(size * 0.9)} state={state} watch={watch} />
-      {children}
     </span>
   );
 }

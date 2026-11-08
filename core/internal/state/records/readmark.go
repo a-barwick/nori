@@ -12,7 +12,6 @@ func (d *Database) readMark() *docstore.DocumentRef {
 	return d.root().Collection("conversation").Doc("seen")
 }
 
-// ReadPosition returns the shared read position, or an empty mark before anything was read.
 func (d *Database) ReadPosition(ctx context.Context) (state.ReadMark, error) {
 	doc, err := d.readMark().Get(ctx)
 	if notFound(err) {

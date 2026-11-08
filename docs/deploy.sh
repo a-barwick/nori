@@ -1,6 +1,4 @@
 #!/bin/sh
-# Builds docs/site into an image and deploys it to the nori-docs Cloud Run service.
-# The service is public: anyone can read the site without signing in.
 set -eu
 
 project=bot-111549
@@ -13,9 +11,6 @@ cd "$(dirname "$0")"
 public=$(mktemp -d)
 trap 'rm -rf "$public"' EXIT
 python3 publish.py "$public"
-# The privacy policy and terms the Google sign-in screen links to. They aren't docs pages. They go at the root
-# with the other site files.
-cp legal/privacy.html legal/terms.html "$public/"
 docker build --platform linux/amd64 -f Dockerfile -t "$image" "$public"
 docker push "$image"
 

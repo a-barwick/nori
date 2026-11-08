@@ -1,8 +1,7 @@
 import { NoriApp } from "@/components/runtime/NoriApp";
+import { runtimeMode } from "@/lib/runtime/target";
+import { headers } from "next/headers";
 
-export default function ChatPage() {
-  if (process.env.NODE_ENV === "development" && process.env.NORI_LOCAL_AGENT_URL) {
-    return <NoriApp agentMode />;
-  }
-  return <NoriApp />;
+export default async function ChatPage() {
+  return <NoriApp agentMode={runtimeMode(await headers()) === "local"} />;
 }

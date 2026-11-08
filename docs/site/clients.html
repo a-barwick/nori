@@ -18,14 +18,14 @@
 <div class="arrow">↓ <span class="lbl">messages, file uploads and user decisions</span></div>
 <div class="node"><b>Next.js server</b><small>Resolves verified sign-in to a user and checks the origin for both.</small></div>
 <div class="arrow">↓ <span class="lbl">HTTP requests with server credentials</span></div>
-<div class="node outer"><b>Agent service</b><small>Runs turns, saves outcomes and enforces tool approvals.</small></div>
+<div class="node outer"><b>Agent service</b><small>Runs turns, saves outcomes and checks tool scope.</small></div>
 <div class="arrow">↓ <span class="lbl">saved messages, tasks and conversation changes</span></div>
 <div class="node"><b>Firestore</b><small>Keeps assistant records and separate chat records under that user.</small></div>
 </div></div>
 <section><h2>Each client</h2>
 <div class="card"><table class="tall"><tr><th>Client</th><th>Behavior</th><th>Pages</th></tr>
 <tr><td>Assistant</td><td>One conversation with background tasks, Activity and saved results.</td><td><a href="web-client.html">Web client</a>, <a href="frontend.html">Web client architecture</a></td></tr>
-<tr><td>Chats tab</td><td>Multiple chats with streamed text, CSV reading and tool approvals, opened from the side panel.</td><td><a href="chat-client.html">Chats</a></td></tr>
+<tr><td>Chats tab</td><td>Multiple chats with streamed text, CSV reading, opened from the side panel.</td><td><a href="chat-client.html">Chats</a></td></tr>
 <tr class="designed"><td>Native and CLI</td><td>Not built.</td><td>Platform sign-in, push and offline clients remain planned.</td></tr>
 </table></div>
 <p>The web client supports phone widths. Its side panel switches between Activity and Chats, and an open chat's back arrow returns to the assistant.</p>
@@ -34,14 +34,14 @@
 <div class="card"><table class="tall"><tr><th>Concern</th><th>Service</th><th>Client</th></tr>
 <tr><td>Messages</td><td>Saves IDs, text, order and reply state.</td><td>Sends the user's words and displays saved state.</td></tr>
 <tr><td>Model context</td><td>Builds each request from the permitted conversation and files.</td><td>Calls the service through its web server.</td></tr>
-<tr><td>Actions</td><td>Checks the exact saved approval and records the provider outcome.</td><td>Shows the action and submits the user's decision.</td></tr>
+<tr><td>Operations</td><td>Records the outcome and evidence for a tool call.</td><td>Shows saved results and operation evidence.</td></tr>
 <tr><td>Display</td><td>Returns snapshots and events.</td><td>Owns drafts, scrolling and open panels.</td></tr>
 </table></div>
 <p>“Check Saturday's weather in Tucson” can keep running as an assistant task while “Read this CSV” runs in a separate chat.</p>
 </section>
 <section><h2>Conversation boundaries</h2>
 <ul class="pts">
-<li>Chat messages, events, attachments and approvals belong to one conversation.</li>
+<li>Chat messages, events, attachments and operations belong to one conversation.</li>
 <li>New chats exclude assistant tasks, saved memories and other chats from model context.</li>
 <li>The assistant and chats use the same verified sign-in, user scope and configured providers.</li>
 </ul>

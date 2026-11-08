@@ -1,6 +1,3 @@
-// Package workerservice binds one worker lifetime, a slice, to an HTTP request.
-// Nothing here knows the engine behind the worker: handler.go is the request
-// surface, and slice.go is the lifecycle a request-bound worker follows.
 package workerservice
 
 import (

@@ -16,19 +16,13 @@ import (
 var files embed.FS
 
 var (
-	// Conversation is the outer loop's system prompt, and ConversationTools its task commands as a JSON tool list.
 	Conversation      = render("conversation")
 	ConversationTools = read("conversation-tools.json")
-	// Introduction asks the outer model to greet the user in a new conversation.
-	Introduction = render("introduction")
-	// Compaction tells the summary model what to keep from older turns.
-	Compaction = render("compaction")
-	// CommandPlan asks an independent model which task commands the current messages request.
-	CommandPlan = render("command-plan")
-	// TaskWorker is the inner loop's system prompt.
-	TaskWorker = render("task-worker")
-	// Chat is the independent chat's system prompt.
-	Chat = render("chat")
+	Introduction      = render("introduction")
+	Compaction        = render("compaction")
+	CommandPlan       = render("command-plan")
+	TaskWorker        = render("task-worker")
+	Chat              = render("chat")
 
 	taskTools = func() map[string]string {
 		entries, err := files.ReadDir("task-tools")

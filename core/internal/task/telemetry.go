@@ -47,7 +47,7 @@ func expectedBoundary(err error) bool {
 	var app *temporal.ApplicationError
 	if errors.As(err, &app) {
 		switch app.Type() {
-		case "superseded", "cancelled", "paused", "routing_pending":
+		case activitySuperseded, activityCancelled, activityPaused, activityRoutingPending:
 			return true
 		}
 	}
@@ -60,14 +60,5 @@ func (a *Activities) activityRun(_ context.Context, id string) state.Run { retur
 func recordActivityFailure(ctx context.Context, err error, operation string) {
 	if !expectedBoundary(err) && !errors.Is(ctx.Err(), context.Canceled) {
 		observability.RecordErrorCategory(ctx, operation, err)
-	}
-}
-
-func safeToolName(name string) string {
-	switch name {
-	case "shell", "browser_navigate", "browser_screenshot", "request_input", "request_work", "complete", "job_start", "job_status", "job_wait", "job_stop", "web_search", "screenshot_inspect", "upload_open", "upload_inspect", "result_save", "result_link", "results_find", "result_read", "result_open", "calendar_read":
-		return name
-	default:
-		return "unknown"
 	}
 }

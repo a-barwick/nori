@@ -1,4 +1,3 @@
-// Package secretmanager reads secrets from Google Secret Manager.
 package secretmanager
 
 import (

@@ -1,232 +1,288 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DraftFile } from "@/lib/types";
-import { CONTRACT, request, stay, type Capabilities, type Conversation, type MessagePage, type Summary } from "./contract";
+import { hasSubmission, messageTooLong } from "@/lib/submission";
+import type { Attachment, DraftFile } from "@/lib/types";
+import { useDraftFiles } from "@/lib/useDraftFiles";
+import {
+  CONTRACT, chatAPI, conversationPath, mergeMessages, request, stay,
+  type Capabilities, type Conversation, type MessagePage, type Summary,
+} from "./contract";
 
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const newest = (rows: Summary[]) => [...rows].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 
-/** The open chat lives in the address as `?chat=<id>`, so a reload returns to it. */
+type Selection = {
+  controller: AbortController;
+  id?: string;
+  conversation?: Conversation;
+  creating?: Promise<string | undefined>;
+  sending?: symbol;
+  loadingPage?: boolean;
+  timeline?: Timeline;
+};
+
+type Submission = { id: string; text: string; attachments: string[] };
+type Timeline = { position: number; submission?: Submission };
+
 function chatInAddress(id?: string) {
   const url = new URL(window.location.href);
   if (id) url.searchParams.set("chat", id); else url.searchParams.delete("chat");
   if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
 }
 
-/**
- * Independent chats: separate conversations with their own saved history, streamed replies,
- * CSV files and requested actions. They share the Go service with the assistant but not its history.
- */
+async function chatList(signal?: AbortSignal) {
+  const result = await request<{ conversations: Summary[] }>("/conversations", { signal });
+  return newest(result.conversations.filter((row) => row.mode === "chat"));
+}
+
 export function useChat() {
   const [chats, setChats] = useState<Summary[]>([]);
   const [current, setCurrent] = useState<Conversation | null>(null);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
-  const [files, setFiles] = useState<DraftFile[]>([]);
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(true);
   const [sending, setSending] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const loadingPage = useRef(false);
-  const currentRef = useRef<Conversation | null>(null);
-  const stream = useRef<AbortController | null>(null);
-  const generation = useRef(0);
-  const creating = useRef<Promise<string> | null>(null);
-  const retry = useRef<{ id: string; message: string; conversation: string; attachments: string[] } | null>(null);
+  const active = useRef<Selection | null>(null);
+  const timelines = useRef(new Map<string, Timeline>());
+  const { files, attach: attachFiles, retry: retryUpload, remove: removeFile, clear: clearFiles, invalidateUploads } = useDraftFiles();
 
-  const show = useCallback((c: Conversation, reset = false) => {
-    const shown = currentRef.current;
-    if (shown?.id === c.id && c.position < shown.position) return;
-    // Incoming snapshots/events contain a recent window. Keep pages the user
-    // already loaded, taking current values from the newer event position.
-    if (!reset && shown?.id === c.id) {
-      const messages = new Map(shown.messages.map(m => [m.id, m]));
-      for (const message of c.messages) messages.set(message.id, message);
-      c = { ...c, messages: [...messages.values()].sort((a, b) => a.sequence - b.sequence), nextBefore: shown.nextBefore };
-    }
-    currentRef.current = c;
-    setCurrent(c);
+  const show = useCallback((selection: Selection, snapshot: Conversation, update: "merge" | "snapshot" | "rewind" = "merge") => {
+    if (active.current !== selection || selection.controller.signal.aborted || snapshot.id !== selection.id) return;
+    const previous = selection.conversation;
+    if (update === "rewind") {
+      // A restored store can reuse positions. Old requests cannot update the replacement timeline.
+      selection.timeline = { position: snapshot.position, submission: selection.timeline?.submission };
+      timelines.current.set(snapshot.id, selection.timeline);
+      selection.sending = undefined;
+      selection.loadingPage = false;
+      setSending(false);
+      setLoadingOlder(false);
+      setError("");
+      invalidateUploads();
+    } else if (previous && snapshot.position < previous.position) return;
+    // Ordinary updates cover only recent or changed messages. Keep earlier pages until the stream resets.
+    const conversation = previous && update === "merge"
+      ? { ...snapshot, messages: mergeMessages(previous.messages, snapshot.messages), nextBefore: previous.nextBefore }
+      : snapshot;
+    if (selection.timeline) selection.timeline.position = conversation.position;
+    selection.conversation = conversation;
+    setCurrent(conversation);
     setChats((rows) => {
-      const row = rows.find((chat) => chat.id === c.id);
-      if (row && row.title === c.title && row.activeTurn === c.activeTurn && row.updatedAt === c.updatedAt) return rows;
-      return newest([{ id: c.id, title: c.title, mode: c.mode, activeTurn: c.activeTurn, updatedAt: c.updatedAt ?? new Date().toISOString() }, ...rows.filter((chat) => chat.id !== c.id)]);
+      const row = rows.find((chat) => chat.id === conversation.id);
+      if (row && row.title === conversation.title && row.activeTurn === conversation.activeTurn && row.updatedAt === conversation.updatedAt) return rows;
+      const { id, title, mode, activeTurn, updatedAt } = conversation;
+      return newest([{ id, title, mode, activeTurn, updatedAt: updatedAt ?? row?.updatedAt ?? new Date().toISOString() }, ...rows.filter((chat) => chat.id !== id)]);
     });
-  }, []);
+  }, [invalidateUploads]);
 
-  const disconnect = useCallback(() => {
-    generation.current++;
-    stream.current?.abort();
-    stream.current = null;
-  }, []);
+  const connect = useCallback((selection: Selection, snapshot: Conversation) => {
+    if (snapshot.id !== selection.id) throw new Error("The service returned a different conversation.");
+    selection.timeline = timelines.current.get(snapshot.id) ?? { position: snapshot.position };
+    timelines.current.set(snapshot.id, selection.timeline);
+    show(selection, snapshot, snapshot.position < selection.timeline.position ? "rewind" : "snapshot");
+    chatInAddress(snapshot.id);
+    setConnected(true);
+    void stay(snapshot, selection.controller.signal, {
+      update: (header, messages) => {
+        if (selection.conversation) show(selection, { ...selection.conversation, ...header, messages });
+      },
+      recover: (latest, recovery) => show(selection, latest, recovery),
+      connected: (value) => { if (active.current === selection) setConnected(value); },
+    });
+  }, [show]);
+
+  const choose = useCallback((nextOpen: boolean, id?: string) => {
+    active.current?.controller.abort();
+    const selection: Selection = { controller: new AbortController(), id };
+    active.current = selection;
+    setCurrent(null);
+    setOpen(nextOpen);
+    setOpening(!!id);
+    setSending(false);
+    setLoadingOlder(false);
+    setConnected(true);
+    setError("");
+    clearFiles();
+    if (!id) chatInAddress();
+    return selection;
+  }, [clearFiles]);
 
   const select = useCallback(async (id: string) => {
-    // Files picked in a new chat stay: they belong to the chat being created.
-    if (currentRef.current && currentRef.current.id !== id) setFiles([]);
-    disconnect();
-    const selected = generation.current;
-    setError("");
-    setOpen(true);
+    if (active.current?.id === id && active.current.conversation) return;
+    const selection = choose(true, id);
     try {
-      const snapshot = await request<Conversation>(`/conversations/${id}`);
-      if (selected !== generation.current) return;
-      currentRef.current = snapshot;
-      setCurrent(snapshot);
-      chatInAddress(id);
-      const controller = new AbortController();
-      stream.current = controller;
-      setConnected(true);
-      void stay(snapshot, controller.signal, (c, reset) => { if (selected === generation.current) show(c, reset); }, (on) => { if (selected === generation.current) setConnected(on); });
-    } catch (e) { if (selected === generation.current) setError(String(e)); }
-  }, [disconnect, show]);
+      const snapshot = await request<Conversation>(conversationPath(id), { signal: selection.controller.signal });
+      if (active.current === selection) connect(selection, snapshot);
+    } catch (error) {
+      if (active.current === selection) setError(String(error));
+    } finally {
+      if (active.current === selection) setOpening(false);
+    }
+  }, [choose, connect]);
 
   const refresh = useCallback(async () => {
-    try {
-      const result = await request<{ conversations: Summary[] }>("/conversations");
-      setChats(newest(result.conversations.filter((c) => c.mode === "chat")));
-    } catch (e) { setError(String(e)); }
+    try { setChats(await chatList()); }
+    catch (error) { setError(String(error)); }
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const startingSelection = active.current;
     void (async () => {
       try {
-        const capabilities = await request<Capabilities>("/capabilities");
+        const capabilities = await request<Capabilities>("/capabilities", { signal: controller.signal });
         if (capabilities.contract !== CONTRACT) throw new Error("The service uses an incompatible chat contract.");
-        const result = await request<{ conversations: Summary[] }>("/conversations");
-        const rows = newest(result.conversations.filter((c) => c.mode === "chat"));
+        const rows = await chatList(controller.signal);
+        if (controller.signal.aborted) return;
         setChats(rows);
+        if (active.current !== startingSelection) return;
         const saved = new URL(window.location.href).searchParams.get("chat");
-        if (saved && rows.some((c) => c.id === saved)) await select(saved);
+        if (saved && rows.some((chat) => chat.id === saved)) await select(saved);
         else if (saved) chatInAddress();
-      } catch (e) { setError(String(e)); }
+      } catch (error) {
+        if (!controller.signal.aborted) setError(String(error));
+      }
     })();
-    return disconnect;
-  }, [disconnect, select]);
+    return () => {
+      controller.abort();
+      active.current?.controller.abort();
+      active.current = null;
+    };
+  }, [select]);
 
-  /** A new chat is created when its first message or file is sent, so opening one never leaves empty chats. */
-  const startNew = useCallback(() => {
-    disconnect();
-    currentRef.current = null;
-    setCurrent(null);
-    setFiles([]);
-    setError("");
-    retry.current = null;
-    setOpen(true);
-    chatInAddress();
-  }, [disconnect]);
+  const startNew = () => choose(true);
+  const close = () => choose(false);
 
-  const close = useCallback(() => {
-    disconnect();
-    currentRef.current = null;
-    setCurrent(null);
-    setFiles([]);
-    setError("");
-    setOpen(false);
-    chatInAddress();
-  }, [disconnect]);
-
-  /** The open chat's ID, creating it first when this is a new chat. */
-  async function ensure() {
-    if (currentRef.current) return currentRef.current.id;
-    creating.current ??= (async () => {
-      const created = await request<Conversation>("/conversations", { method: "POST", body: "{}" });
-      await select(created.id);
+  // Start a persisted chat only when it has a message or an upload.
+  async function ensure(selection: Selection) {
+    if (selection.conversation) return selection.conversation.id;
+    if (selection.id) return;
+    selection.creating ??= (async () => {
+      const created = await request<Conversation>("/conversations", { method: "POST", body: "{}", signal: selection.controller.signal });
+      if (active.current !== selection) return;
+      selection.id = created.id;
+      connect(selection, created);
       return created.id;
-    })().finally(() => { creating.current = null; });
-    return creating.current;
+    })().finally(() => { selection.creating = undefined; });
+    return selection.creating;
   }
 
   async function send() {
-    const shown = currentRef.current;
-    const message = draft.trim();
-    if (shown?.activeTurn || sending || !message || files.some((file) => file.status !== "ready")) return;
+    const selection = active.current;
+    const text = draft.trim();
+    if (!selection || selection.sending || selection.conversation?.activeTurn || !hasSubmission(text, files)) return;
+    if (messageTooLong(text)) { setError("Please keep the message within 8,192 UTF-8 bytes."); return; }
+    const sending = Symbol();
+    selection.sending = sending;
     setSending(true);
     setError("");
     try {
-      const id = await ensure();
-      if (currentRef.current?.id !== id) return;
+      const id = await ensure(selection);
+      const timeline = selection.timeline;
+      if (!id || !timeline || active.current !== selection || selection.sending !== sending) return;
       const attachments = files.map((file) => file.id);
-      const last = retry.current;
-      if (!last || last.message !== message || last.conversation !== id || JSON.stringify(last.attachments) !== JSON.stringify(attachments))
-        retry.current = { id: crypto.randomUUID(), message, conversation: id, attachments };
-      const saved = await request<{ conversation: Conversation }>(`/conversations/${id}/messages`, { method: "POST", body: JSON.stringify({ id: retry.current!.id, text: message, ...(attachments.length ? { attachments } : {}) }) });
-      retry.current = null;
+      const previous = timeline.submission;
+      // A dropped response is ambiguous, so retry the same payload under the same ID.
+      const submission = previous && previous.text === text && previous.attachments.join(",") === attachments.join(",")
+        ? previous : { id: crypto.randomUUID(), text, attachments };
+      timeline.submission = submission;
+      const body = JSON.stringify({ id: submission.id, text, ...(attachments.length ? { attachments } : {}) });
+      const saved = await request<{ conversation: Conversation }>(`${conversationPath(id)}/messages`, { method: "POST", body });
+      if (timelines.current.get(id) !== timeline) return;
+      if (timeline.submission === submission) timeline.submission = undefined;
+      if (active.current !== selection) return;
       setDraft("");
-      setFiles([]);
-      if (currentRef.current?.id === id) show(saved.conversation);
-    } catch (e) { setError(`${String(e)}. Send again to retry the same message.`); }
-    finally { setSending(false); }
+      clearFiles();
+      show(selection, saved.conversation);
+    } catch (error) {
+      if (active.current === selection && selection.sending === sending) setError(`${String(error)}. Send again to retry the same message.`);
+    } finally {
+      if (selection.sending === sending) {
+        selection.sending = undefined;
+        if (active.current === selection) setSending(false);
+      }
+    }
   }
 
   async function loadOlder() {
-    const shown = currentRef.current;
-    if (!shown?.nextBefore || loadingPage.current) return;
-    const selected = generation.current;
-    loadingPage.current = true;
+    const selection = active.current;
+    const shown = selection?.conversation;
+    if (!selection || !shown?.nextBefore || selection.loadingPage) return;
+    const timeline = selection.timeline;
+    const currentTimeline = () => active.current === selection && selection.timeline === timeline;
+    selection.loadingPage = true;
     setLoadingOlder(true);
     setError("");
     try {
-      const page = await request<MessagePage>(`/conversations/${shown.id}/messages?before=${shown.nextBefore}`);
-      const latest = currentRef.current;
-      if (selected !== generation.current || latest?.id !== shown.id) return;
-      // A stream update may have arrived while the page was loading.
-      const messages = new Map(page.messages.map(m => [m.id, m]));
-      for (const message of latest.messages) messages.set(message.id, message);
-      const merged = { ...latest, nextBefore: page.nextBefore, messages: [...messages.values()].sort((a, b) => a.sequence - b.sequence) };
-      currentRef.current = merged;
-      setCurrent(merged);
-    } catch (e) { if (selected === generation.current) setError(String(e)); }
-    finally { loadingPage.current = false; setLoadingOlder(false); }
+      const page = await request<MessagePage>(`${conversationPath(shown.id)}/messages?before=${shown.nextBefore}`, { signal: selection.controller.signal });
+      const latest = selection.conversation;
+      if (!currentTimeline() || !latest || latest.nextBefore !== shown.nextBefore) return;
+      const conversation = { ...latest, nextBefore: page.nextBefore, messages: mergeMessages(page.messages, latest.messages) };
+      selection.conversation = conversation;
+      setCurrent(conversation);
+    } catch (error) {
+      if (currentTimeline()) setError(String(error));
+    } finally {
+      if (currentTimeline()) {
+        selection.loadingPage = false;
+        setLoadingOlder(false);
+      }
+    }
   }
 
   async function stop() {
-    const shown = currentRef.current;
-    if (!shown?.activeTurn) return;
-    try { show(await request<Conversation>(`/conversations/${shown.id}/cancel`, { method: "POST", body: JSON.stringify({ turnId: shown.activeTurn }) })); }
-    catch (e) { setError(String(e)); }
+    const selection = active.current;
+    const shown = selection?.conversation;
+    if (!selection || !shown?.activeTurn) return;
+    const timeline = selection.timeline;
+    try {
+      const latest = await request<Conversation>(`${conversationPath(shown.id)}/cancel`, { method: "POST", body: JSON.stringify({ turnId: shown.activeTurn }) });
+      if (selection.timeline === timeline) show(selection, latest);
+    } catch (error) {
+      if (active.current === selection && selection.timeline === timeline) setError(String(error));
+    }
   }
 
   async function remove() {
-    const shown = currentRef.current;
-    if (!shown || shown.activeTurn) return;
+    const selection = active.current;
+    const shown = selection?.conversation;
+    if (!selection || !shown || shown.activeTurn) return;
     if (!window.confirm(`Delete “${shown.title}” and its files? This can't be undone.`)) return;
+    const timeline = selection.timeline;
     try {
-      await request(`/conversations/${shown.id}`, { method: "DELETE" });
+      await request(conversationPath(shown.id), { method: "DELETE" });
+      if (timelines.current.get(shown.id) !== timeline) return;
+      timelines.current.delete(shown.id);
       setChats((rows) => rows.filter((chat) => chat.id !== shown.id));
-      close();
-    } catch (e) { setError(String(e)); }
+      if (active.current?.id === shown.id) close();
+    } catch (error) {
+      if (active.current === selection && selection.timeline === timeline) setError(String(error));
+    }
   }
 
-  // A retry keeps the same ID, so a file that did reach the service isn't stored twice.
   async function upload(item: DraftFile) {
-    setFiles((rows) => rows.map((file) => file.id === item.id ? { ...file, status: "uploading", error: undefined } : file));
-    try {
-      const id = await ensure();
-      const query = new URLSearchParams({ id: item.id, filename: item.name });
-      const response = await fetch(`/api/v1/conversations/${id}/uploads?${query}`, { method: "POST", headers: { "Content-Type": item.file.type || "text/csv" }, body: item.file, redirect: "error", signal: AbortSignal.timeout(30000) });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || `Upload failed (${response.status})`);
-      setFiles((rows) => currentRef.current?.id === id
-        ? rows.map((file) => file.id === item.id ? { ...file, ...result, status: "ready" } : file)
-        : rows.filter((file) => file.id !== item.id));
-    } catch (e) {
-      setFiles((rows) => rows.map((file) => file.id === item.id ? { ...file, status: "error", error: e instanceof Error ? e.message : "Upload failed. Try again." } : file));
-    }
-  }
-
-  function attach(picked: File[]) {
-    for (const file of picked) {
-      const item: DraftFile = { id: crypto.randomUUID(), name: file.name, media_type: file.type, size: file.size, status: "uploading", file };
-      if (file.size > MAX_FILE_BYTES) { setFiles((rows) => [...rows, { ...item, status: "error", error: "A file can be at most 10 MB." }]); continue; }
-      setFiles((rows) => [...rows, item]);
-      void upload(item);
-    }
+    const selection = active.current;
+    const timeline = selection?.timeline;
+    const id = selection && await ensure(selection);
+    if (!id || active.current !== selection || (timeline && timeline !== selection.timeline)) throw new Error("Chat changed before the file could be uploaded.");
+    const query = new URLSearchParams({ id: item.id, filename: item.name });
+    const response = await fetch(chatAPI(`${conversationPath(id)}/uploads?${query}`), {
+      method: "POST", headers: { "Content-Type": item.file.type || "text/csv" }, body: item.file, redirect: "error",
+      signal: AbortSignal.any([selection.controller.signal, AbortSignal.timeout(30_000)]),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result?.error || `Upload failed (${response.status})`);
+    return result as Attachment;
   }
 
   return {
-    chats, current, open, draft, setDraft, files, error, connected, sending,
-    refresh, select, startNew, close, send, stop, remove, attach, retryFile: upload,
-    loadOlder, loadingOlder,
-    removeFile: (id: string) => setFiles((rows) => rows.filter((file) => file.id !== id)),
+    chats, current, open, draft, setDraft, files, error, connected, sending, opening,
+    refresh, select, startNew, close, send, stop, remove,
+    attach: (picked: File[]) => attachFiles(picked, upload, setError),
+    retryFile: (item: DraftFile) => retryUpload(item, upload),
+    loadOlder, loadingOlder, removeFile,
   };
 }

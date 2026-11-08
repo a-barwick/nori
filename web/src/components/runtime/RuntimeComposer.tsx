@@ -2,11 +2,11 @@
 
 import { useLayoutEffect, useRef } from "react";
 import { ArrowDown, ArrowUp, Paperclip, RotateCw, Square, X } from "lucide-react";
+import { hasSubmission, MAX_FILE_BYTES, MAX_MESSAGE_BYTES } from "@/lib/submission";
 import type { DraftFile } from "@/lib/types";
 
 const ACCEPT = "image/png,image/jpeg,image/webp,application/pdf,text/csv,.csv";
 
-/** Chat composer: text, plus images, PDFs and CSV files. Each file uploads when it's picked. */
 export function RuntimeComposer({
   accept = ACCEPT,
   onStop,
@@ -21,9 +21,7 @@ export function RuntimeComposer({
   onRetryFile,
   onRemoveFile,
 }: {
-  /** File types the picker offers. */
   accept?: string;
-  /** While a reply streams, the send button stops it instead. */
   onStop?: () => void;
   draft: string;
   setDraft: (draft: string) => void;
@@ -38,7 +36,7 @@ export function RuntimeComposer({
 }) {
   const area = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const canSend = !disabled && files.every((file) => file.status === "ready") && (!!draft.trim() || files.length > 0);
+  const canSend = !disabled && !onStop && hasSubmission(draft, files);
   useLayoutEffect(() => {
     const el = area.current;
     if (!el) return;
@@ -72,7 +70,7 @@ export function RuntimeComposer({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            onSend();
+            if (canSend) onSend();
           }}
           className="glass t-fast rounded-[28px] p-3 transition-[border-color] focus-within:border-hairline-strong"
         >
@@ -83,7 +81,7 @@ export function RuntimeComposer({
                   <span className="min-w-0 truncate">{file.name}</span>
                   {file.status === "uploading" && <span className="shrink-0 text-ink-3">Uploading…</span>}
                   {file.status === "error" && <span className="min-w-0 truncate text-danger" role="alert">{file.error}</span>}
-                  {file.status === "error" && file.size <= 10 * 1024 * 1024 && <button type="button" aria-label={`Retry ${file.name}`} onClick={() => onRetryFile(file)}><RotateCw size={13} aria-hidden /></button>}
+                  {file.status === "error" && file.size <= MAX_FILE_BYTES && <button type="button" aria-label={`Retry ${file.name}`} onClick={() => onRetryFile(file)}><RotateCw size={13} aria-hidden /></button>}
                   <button type="button" aria-label={`Remove ${file.name}`} onClick={() => onRemoveFile(file.id)}><X size={13} aria-hidden /></button>
                 </li>
               ))}
@@ -115,7 +113,7 @@ export function RuntimeComposer({
               ref={area}
               rows={1}
               value={draft}
-              maxLength={8192}
+              maxLength={MAX_MESSAGE_BYTES}
               disabled={disabled}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
@@ -125,7 +123,7 @@ export function RuntimeComposer({
                   !e.nativeEvent.isComposing
                 ) {
                   e.preventDefault();
-                  onSend();
+                  if (canSend) onSend();
                 }
               }}
               placeholder="Ask Nori anything…"

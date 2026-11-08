@@ -1,23 +1,21 @@
 "use client";
 
-import { taskControlKinds } from "../types";
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import type { Span } from "@sentry/nextjs";
 import type { Attachment, DraftFile, Message, PendingTaskCommand, ReadPosition, Run, SavedResult, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
+import { taskControlKinds } from "@/lib/types";
+import { hasSubmission, messageTooLong } from "@/lib/submission";
+import { useDraftFiles } from "@/lib/useDraftFiles";
+import { runtimePath } from "./paths";
 
 class RequestError extends Error {
   constructor(message: string, readonly status: number, readonly details?: TaskCommandResponse) { super(message); }
 }
 
-function apiPath(agentMode: boolean, path: string) {
-  return `${agentMode ? "/api/agent" : "/api"}/${path}`;
-}
-
-/** Reads a JSON response, and throws a RequestError carrying the body when the status failed. */
 async function readJSON<T>(response: Response, failure = "Request failed"): Promise<T> {
-  const data = await response.json().catch(() => ({ error: "Nori returned an unreadable response." }));
+  const data = await response.json().catch(() => null);
+  if (data === null) throw new RequestError("Nori returned an unreadable response.", response.status);
   if (!response.ok) throw new RequestError(data.error || `${failure} (${response.status}).`, response.status, data);
   return data as T;
 }
@@ -31,29 +29,28 @@ async function post<T>(operation: string, payload: object, signal?: AbortSignal,
       headers.traceparent = `00-${context.traceId}-${context.spanId}-${context.traceFlags & 1 ? "01" : "00"}`;
     }
   }
-  const response = await fetch(apiPath(agentMode, operation), {
+  const response = await fetch(runtimePath(agentMode, operation), {
     method: "POST", headers, body: JSON.stringify(payload), cache: "no-store", signal,
   });
   return readJSON<T>(response);
 }
 
-/** `GET /api/v1/snapshot`: the state to start from, and the event log position to follow the stream from. */
 async function snapshot(before: string | undefined, signal: AbortSignal | undefined, agentMode: boolean): Promise<Session> {
   const query = before ? `?before=${encodeURIComponent(before)}` : "";
-  const response = await fetch(apiPath(agentMode, `v1/snapshot${query}`), { cache: "no-store", signal });
+  const response = await fetch(runtimePath(agentMode, `v1/snapshot${query}`), { cache: "no-store", signal });
   return readJSON<Session>(response);
 }
 
 // With nothing running, a visible tab drops its stream after this long, so an open tab doesn't hold the service awake.
 const STREAM_IDLE_MS = 5 * 60_000;
 type Presence = { conversation: NonNullable<Session["conversation"]>; paused: boolean };
-type Pending = { id: string; text: string; started: number; error?: string; attachments?: Attachment[] };
+type Pending = { id: string; text: string; started: number; error?: string; attachments?: Attachment[]; retryManually?: boolean };
+const TURN_ACCEPTANCE_UNKNOWN = "Message acceptance could not be confirmed.";
+const COMMAND_ACCEPTANCE_UNKNOWN = "Task command acceptance could not be confirmed.";
 
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_FILES = 10;
 async function uploadFile(item: DraftFile, agentMode: boolean): Promise<Attachment> {
   const query = new URLSearchParams({ id: item.id, filename: item.name });
-  const response = await fetch(apiPath(agentMode, `v1/uploads?${query}`), {
+  const response = await fetch(runtimePath(agentMode, `v1/uploads?${query}`), {
     method: "POST", body: item.file, cache: "no-store", headers: { "Content-Type": item.file.type || "application/octet-stream" },
   });
   return readJSON<Attachment>(response, "Upload failed");
@@ -80,7 +77,7 @@ function restoreTaskCommands(): PendingTaskCommand[] {
     return value.filter((item): item is PendingTaskCommand => item && typeof item.started === "number" &&
       typeof item.command?.id === "string" && /^[a-f0-9-]{36}$/.test(item.command.id) &&
       typeof item.command.run_id === "string" && taskControlKinds.includes(item.command.kind) &&
-      (item.command.text === undefined || (typeof item.command.text === "string" && new TextEncoder().encode(item.command.text).length <= 8192)) &&
+      (item.command.text === undefined || (typeof item.command.text === "string" && !messageTooLong(item.command.text))) &&
       (item.command.question_id === undefined || typeof item.command.question_id === "string"))
       .map((item) => ({ ...item, sending: false }));
   } catch { return []; }
@@ -96,7 +93,9 @@ function restorePending(): Pending[] {
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is Pending => item && typeof item.id === "string" &&
       /^[a-f0-9-]{36}$/.test(item.id) && typeof item.text === "string" &&
-      new TextEncoder().encode(item.text).length <= 8192 && typeof item.started === "number" && (item.attachments === undefined || Array.isArray(item.attachments))).slice(0, MAX_PENDING);
+      !messageTooLong(item.text) && typeof item.started === "number" && (item.attachments === undefined || Array.isArray(item.attachments)))
+      .slice(0, MAX_PENDING)
+      .map((item) => item.retryManually ? { ...item, error: TURN_ACCEPTANCE_UNKNOWN } : item);
   } catch { return []; }
 }
 const acknowledged = (data: Session, id: string) => data.conversation?.input_ids.includes(id) || data.messages.some((message) => message.id === `${id}-user`);
@@ -127,7 +126,7 @@ function mergeRuns(older: Run[], newer: Run[]): Run[] {
 export function useRuntime(agentMode = false) {
   const [session, setSession] = useState<Session>();
   const [draft, setDraftState] = useState("");
-  const [draftFiles, setDraftFiles] = useState<DraftFile[]>([]);
+  const { files: draftFiles, attach, retry, clear: clearFiles, remove: removeFile, invalidateUploads } = useDraftFiles();
   const draftValue = useRef("");
   const setDraft = (text: string) => { draftValue.current = text; setDraftState(text); };
   const [error, setError] = useState("");
@@ -153,13 +152,15 @@ export function useRuntime(agentMode = false) {
   const replyTimings = useRef(new Map<string, ReplyTiming>());
   const commandSubmissions = useRef(new Set<string>());
   const requestSerial = useRef(0);
+  const minimumSerial = useRef(0);
+  const replacingSnapshot = useRef(false);
   const appliedSerial = useRef(0);
   const appliedRevision = useRef(-1);
   const activeTasks = session?.runs.filter((run) => run.status === "running") ?? [];
   const selected = session?.runs.find((run) => run.id === selectedId) || activeTasks[0] || session?.runs[0];
   const tasksUnavailable = !!session?.paused;
   const conversationBusy = !!(session?.conversation?.pending || session?.conversation?.processing);
-  const taskActive = activeTasks.some((run) => run.cancel_requested) || (activeTasks.length > 0 && !tasksUnavailable) || taskCommands.some((item) => !item.rejected);
+  const taskActive = activeTasks.some((run) => run.cancel_requested) || (activeTasks.length > 0 && !tasksUnavailable) || taskCommands.some((item) => !item.rejected && !item.retryManually);
   const busy = taskActive || conversationBusy || pending.some((item) => !item.error);
   const started = !!session;
 
@@ -168,7 +169,7 @@ export function useRuntime(agentMode = false) {
     pendingRef.current = next;
     setPending(next);
     try {
-      if (next.length) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next.map(({ id, text, started, attachments }) => ({ id, text, started, attachments }))));
+      if (next.length) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next.map(({ id, text, started, attachments, retryManually }) => ({ id, text, started, attachments, retryManually }))));
       else sessionStorage.removeItem(STORAGE_KEY);
     } catch { /* Private browsing may disable storage; current-tab retries still work. */ }
   }, []);
@@ -184,12 +185,15 @@ export function useRuntime(agentMode = false) {
   }, []);
 
   const applySnapshot = useCallback((data: Session, serial: number) => {
+    if (serial < minimumSerial.current) return;
     const revision = data.conversation?.revision ?? 0;
-    if (revision < appliedRevision.current || (revision === appliedRevision.current && serial < appliedSerial.current)) return;
+    const replace = replacingSnapshot.current;
+    if (!replace && (revision < appliedRevision.current || (revision === appliedRevision.current && serial < appliedSerial.current))) return;
+    replacingSnapshot.current = false;
     appliedSerial.current = serial;
     appliedRevision.current = revision;
-    position.current = Math.max(position.current, data.position ?? 0);
-    setSession((current) => ({ ...data,
+    position.current = replace ? data.position ?? position.current : Math.max(position.current, data.position ?? 0);
+    setSession((current) => replace ? data : ({ ...data,
       messages: mergeById(current?.messages ?? [], data.messages).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
       runs: mergeRuns(current?.runs ?? [], data.runs),
       traces: mergeById(current?.traces ?? [], data.traces ?? []),
@@ -197,6 +201,7 @@ export function useRuntime(agentMode = false) {
       // Preserve pages already loaded while refreshing the newest page.
       next_cursor: current ? current.next_cursor : data.next_cursor,
     }));
+    if (replace) setLoading(false);
     updatePending((current) => current.filter((item) => !acknowledged(data, item.id)));
     updateTaskCommands((current) => current.filter((item) => !commandApplied(item, data.runs)));
   }, [updatePending, updateTaskCommands]);
@@ -240,13 +245,17 @@ export function useRuntime(agentMode = false) {
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const serial = ++requestSerial.current;
-    const data = await snapshot(undefined, signal, agentMode);
-    if (!signal?.aborted) { applySnapshot(data, serial); setStreamError(""); }
+    const data = await snapshot(undefined, signal, agentMode).catch((error) => {
+      if (serial >= minimumSerial.current) throw error;
+    });
+    if (!data || signal?.aborted || serial < minimumSerial.current) return;
+    applySnapshot(data, serial);
+    setStreamError("");
     return data;
   }, [agentMode, applySnapshot]);
 
   const submit = useCallback(async (item: Pending) => {
-    if (submissions.current.has(item.id)) return;
+    if (replacingSnapshot.current || submissions.current.has(item.id)) return;
     submissions.current.add(item.id);
     const controller = new AbortController();
     controllers.current.add(controller);
@@ -258,20 +267,24 @@ export function useRuntime(agentMode = false) {
     } catch (err) {
       if (!controller.signal.aborted) {
         // A dropped acceptance response is ambiguous. Keep the same UUID for retry.
-        updatePending((current) => current.map((entry) => entry.id === item.id ? { ...entry, error: err instanceof Error ? err.message : "Message acceptance could not be confirmed." } : entry));
+        const rejected = err instanceof RequestError && err.status >= 400 && err.status < 500 && err.status !== 429;
+        updatePending((current) => current.map((entry) => entry.id === item.id ? {
+          ...entry, retryManually: entry.retryManually || rejected,
+          error: err instanceof Error ? err.message : TURN_ACCEPTANCE_UNKNOWN,
+        } : entry));
         await refresh(controller.signal).catch(() => undefined);
       }
     } finally { controllers.current.delete(controller); submissions.current.delete(item.id); }
   }, [agentMode, applySnapshot, refresh, updatePending]);
 
   const submitTaskCommand = useCallback(async (item: PendingTaskCommand) => {
-    if (commandSubmissions.current.has(item.command.id)) return;
+    if (replacingSnapshot.current || commandSubmissions.current.has(item.command.id)) return;
     commandSubmissions.current.add(item.command.id);
     updateTaskCommands((current) => current.map((entry) => entry.command.id === item.command.id ? { ...entry, sending: true, error: undefined } : entry));
     const controller = new AbortController(); controllers.current.add(controller);
     try {
       const data = await post<TaskCommandResponse>("command", item.command, controller.signal, agentMode);
-      if (!data.command || data.command.id !== item.command.id || data.run?.id !== item.command.run_id) throw new Error("Task command acceptance could not be confirmed.");
+      if (!data.command || data.command.id !== item.command.id || data.run?.id !== item.command.run_id) throw new Error(COMMAND_ACCEPTANCE_UNKNOWN);
       if (!controller.signal.aborted) {
         setSession((current) => current ? { ...current, runs: mergeRuns(current.runs, [data.run]) } : current);
         updateTaskCommands((current) => current.filter((entry) => entry.command.id !== item.command.id));
@@ -284,42 +297,46 @@ export function useRuntime(agentMode = false) {
           ...entry, sending: false, accepted: receipt?.accepted || entry.accepted,
           position: receipt?.command?.position ?? entry.position,
           rejected: err instanceof RequestError && err.status >= 400 && err.status < 500,
-          error: receipt?.accepted ? "Accepted. Delivery to the task is still pending." : err instanceof Error ? err.message : "Task command could not be confirmed.",
+          error: receipt?.accepted ? "Accepted. Delivery to the task is still pending." : err instanceof Error ? err.message : COMMAND_ACCEPTANCE_UNKNOWN,
         } : entry));
       }
     } finally {
-      controllers.current.delete(controller); commandSubmissions.current.delete(item.command.id);
+      commandSubmissions.current.delete(item.command.id);
       if (!controller.signal.aborted) await refresh(controller.signal).catch(() => undefined);
+      controllers.current.delete(controller);
     }
   }, [agentMode, refresh, updateTaskCommands]);
+
+  const refreshAndRetry = useCallback(async (signal: AbortSignal) => {
+    const wasReplacing = replacingSnapshot.current;
+    const epoch = minimumSerial.current;
+    const data = await refresh(signal);
+    if (!data || signal.aborted || wasReplacing || epoch !== minimumSerial.current) return;
+    for (const item of pendingRef.current) if (!item.retryManually && !acknowledged(data, item.id)) void submit(item);
+    for (const item of taskCommandsRef.current) if (!item.retryManually && !item.rejected && !commandApplied(item, data.runs)) void submitTaskCommand(item);
+  }, [refresh, submit, submitTaskCommand]);
 
   useEffect(() => {
     const currentControllers = controllers.current;
     const currentTimings = replyTimings.current;
     for (const item of [...restoredTimings(), ...pendingRef.current]) beginTiming(item);
     const controller = new AbortController();
-    currentControllers.add(controller);
-    void refresh(controller.signal).then((data) => {
-      if (!controller.signal.aborted) {
-        for (const item of pendingRef.current) if (!acknowledged(data, item.id)) void submit(item);
-        for (const item of taskCommandsRef.current) if (!item.rejected && !commandApplied(item, data.runs)) void submitTaskCommand(item);
-      }
-    }).catch((err) => { if (!controller.signal.aborted) setError(err.message); })
-      .finally(() => { currentControllers.delete(controller); if (!controller.signal.aborted) setLoading(false); });
+    void refreshAndRetry(controller.signal).catch((err) => { if (!controller.signal.aborted) setError(err.message); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     const reconnect = () => {
       setVisible(!document.hidden);
-      if (!document.hidden) { setStreamAwake(true); setDeliveryRetry((attempt) => attempt + 1); }
-      if (!document.hidden) void refresh().then((data) => {
-        setError("");
-        for (const item of pendingRef.current) if (!acknowledged(data, item.id)) void submit(item);
-        for (const item of taskCommandsRef.current) if (!item.rejected && !commandApplied(item, data.runs)) void submitTaskCommand(item);
-      }).catch((err) => setError(err.message));
+      if (document.hidden) return;
+      setStreamAwake(true);
+      setDeliveryRetry((attempt) => attempt + 1);
+      void refreshAndRetry(controller.signal).then(() => { if (!controller.signal.aborted) setError(""); })
+        .catch((err) => { if (!controller.signal.aborted) setError(err.message); });
     };
     const wake = () => setStreamAwake(true);
     document.addEventListener("visibilitychange", reconnect);
     window.addEventListener("online", reconnect);
     window.addEventListener("focus", wake);
     return () => {
+      controller.abort();
       for (const active of currentControllers) active.abort();
       currentControllers.clear();
       for (const timing of currentTimings.values()) { clearTimeout(timing.timer); timing.span.setAttribute("nori.outcome", "unobserved"); timing.span.end(); }
@@ -328,7 +345,7 @@ export function useRuntime(agentMode = false) {
       window.removeEventListener("online", reconnect);
       window.removeEventListener("focus", wake);
     };
-  }, [refresh, submit, submitTaskCommand, beginTiming, finishTiming]);
+  }, [refreshAndRetry, beginTiming]);
 
   useEffect(() => {
     if (busy) { setStreamAwake(true); return; }
@@ -339,18 +356,20 @@ export function useRuntime(agentMode = false) {
   // Remember every reply exposed in this tab, independently of the shared read position. Reading a newer
   // reply (here or elsewhere) does not prove that an older reply's results were shown.
   const markShown = useCallback((ids: string[]) => {
-    if (document.hidden) return;
+    if (document.hidden || replacingSnapshot.current) return;
     setShownMessageIDs((current) => ids.every((id) => current.has(id)) ? current : new Set([...current, ...ids]));
   }, []);
 
   const reported = useRef(new Set<string>());
   useEffect(() => {
-    if (!session || !visible || document.hidden || !navigator.onLine) return;
+    if (!session || !visible || document.hidden || !navigator.onLine || replacingSnapshot.current) return;
     const reports = reported.current;
     const shown = new Set(session.messages.filter((message) => message.role === "assistant" && shownMessageIDs.has(message.id)).flatMap((message) => message.result_ids ?? []));
     const ids = (session.results ?? []).filter((result) => shown.has(result.id) && !result.delivered_at && !reports.has(result.id)).map((result) => result.id);
     if (!ids.length) return;
     const controller = new AbortController();
+    const requests = controllers.current;
+    requests.add(controller);
     let delivered = false;
     let timer: ReturnType<typeof setTimeout>;
     for (const id of ids) reports.add(id);
@@ -361,6 +380,7 @@ export function useRuntime(agentMode = false) {
     });
     return () => {
       controller.abort(); clearTimeout(timer);
+      requests.delete(controller);
       if (!delivered) for (const id of ids) reports.delete(id);
     };
   }, [session, shownMessageIDs, visible, agentMode, deliveryRetry]);
@@ -368,7 +388,7 @@ export function useRuntime(agentMode = false) {
   // The newest exposed reply advances the shared read position. Retries use the same message and the service's
   // mark only moves forward, including when another session has already read beyond this tab.
   useEffect(() => {
-    if (!visible || document.hidden || !navigator.onLine || !shownMessageID) return;
+    if (!visible || document.hidden || !navigator.onLine || !shownMessageID || replacingSnapshot.current) return;
     const messages = session?.messages ?? [];
     const shownIndex = messages.findIndex((message) => message.id === shownMessageID && message.role === "assistant");
     if (shownIndex < 0) return;
@@ -376,20 +396,23 @@ export function useRuntime(agentMode = false) {
     const readIndex = messages.findIndex((message) => message.id === read?.message_id);
     if (readIndex >= shownIndex || (readIndex < 0 && read?.message_id && Date.parse(read.through) >= Date.parse(messages[shownIndex].created_at))) return;
     const controller = new AbortController();
+    const requests = controllers.current;
+    requests.add(controller);
     let timer: ReturnType<typeof setTimeout>;
     void post<{ read_position: ReadPosition }>("seen", { message_id: shownMessageID }, controller.signal, agentMode).then((data) => {
       if (!controller.signal.aborted) setSession((current) => current && { ...current, read_position: mergeReadPosition(current.read_position, data.read_position) });
     }).catch(() => {
       if (!controller.signal.aborted) timer = setTimeout(() => setReadRetry((attempt) => attempt + 1), 5000);
     });
-    return () => { controller.abort(); clearTimeout(timer); };
+    return () => { controller.abort(); clearTimeout(timer); requests.delete(controller); };
   }, [session?.messages, session?.read_position, shownMessageID, visible, agentMode, readRetry]);
 
   // Follow the event log while the tab is visible. The browser reconnects by itself with Last-Event-ID after a stream
   // ends. It gives up only when a response isn't a stream, and then this reopens it from the last event.
   useEffect(() => {
     if (!started || !visible || !streamAwake) return;
-    let source: EventSource;
+    const controller = new AbortController();
+    let source: EventSource | undefined;
     let timer: ReturnType<typeof setTimeout>;
     let failures = 0;
     let stopped = false;
@@ -401,18 +424,30 @@ export function useRuntime(agentMode = false) {
       updatePending((current) => current.filter((item) => !conversation.input_ids.includes(item.id)));
       const now = conversation.pending || conversation.processing;
       // A finished turn's traces are in the snapshot. Read it once at the end of a turn, and never on a reconnect.
-      if (wasConversationBusy.current && !now) void refresh().catch(() => undefined);
+      if (wasConversationBusy.current && !now) void refresh(controller.signal).catch(() => undefined);
       wasConversationBusy.current = now;
     };
-    const open = () => {
-      source = new EventSource(apiPath(agentMode, `v1/events?after=${position.current}`));
-      const listen = <T,>(kind: string, apply: (value: T) => void) => source.addEventListener(kind, (event) => {
+    const reload = () => {
+      void refresh(controller.signal).then(() => {
+        if (!stopped) open();
+      }, () => { if (!stopped) timer = setTimeout(reload, 5000); });
+    };
+    function open() {
+      if (replacingSnapshot.current) { reload(); return; }
+      let streamPosition = position.current;
+      const stream = new EventSource(runtimePath(agentMode, `v1/events?after=${streamPosition}`));
+      source = stream;
+      const listen = <T,>(kind: string, apply: (value: T) => void) => stream.addEventListener(kind, (event) => {
+        if (stream !== source || stopped) return;
         const message = event as MessageEvent<string>;
         apply(JSON.parse(message.data) as T);
-        if (message.lastEventId) position.current = Number(message.lastEventId);
+        if (kind !== "reset" && message.lastEventId) {
+          streamPosition = Math.max(streamPosition, Number(message.lastEventId));
+          position.current = Math.max(position.current, streamPosition);
+        }
         failures = 0;
       });
-      source.onopen = () => setStreamError("");
+      stream.onopen = () => { if (!stopped && stream === source) setStreamError(""); };
       listen<{ message: Message }>("message", ({ message }) => {
         setSession((current) => current && { ...current, messages: mergeById(current.messages, [message]).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)) });
         updatePending((current) => current.filter((item) => message.id !== `${item.id}-user`));
@@ -432,38 +467,49 @@ export function useRuntime(agentMode = false) {
       listen<unknown>("unknown", () => undefined);
       // The log can't resume from this position, so start again from a snapshot.
       listen<{ position: number }>("reset", (value) => {
-        position.current = value.position;
-        source.close();
-        const reload = () => refresh().then(() => { if (!stopped) open(); }, () => { if (!stopped) timer = setTimeout(reload, 5000); });
-        void reload();
+        const rewind = value.position < streamPosition;
+        if (rewind) {
+          // After a store rewind, a higher revision or command position may belong to the retired history.
+          minimumSerial.current = requestSerial.current + 1;
+          replacingSnapshot.current = true;
+          wasConversationBusy.current = false;
+          for (const request of controllers.current) request.abort();
+          updatePending((items) => items.map((item) => ({ ...item, retryManually: true, error: TURN_ACCEPTANCE_UNKNOWN })));
+          updateTaskCommands((items) => items.map((item) => item.rejected ? item : {
+            ...item, sending: false, accepted: false, position: undefined, retryManually: true, error: COMMAND_ACCEPTANCE_UNKNOWN,
+          }));
+          reported.current = new Set();
+          setShownMessageIDs(new Set());
+          invalidateUploads();
+          setLoadingOlder(false);
+          setLoading(true);
+        }
+        position.current = rewind ? value.position : Math.max(position.current, value.position);
+        source = undefined;
+        stream.close();
+        reload();
       });
-      source.onerror = () => {
-        if (source.readyState !== EventSource.CLOSED) return;
+      stream.onerror = () => {
+        if (stream !== source || stopped || stream.readyState !== EventSource.CLOSED) return;
         failures++;
         if (failures >= 3) setStreamError("Live updates are reconnecting.");
         timer = setTimeout(open, Math.min(30_000, 1000 * 2 ** failures));
       };
-    };
+    }
     open();
-    return () => { stopped = true; source.close(); clearTimeout(timer); };
-  }, [started, visible, streamAwake, agentMode, refresh, updatePending, updateTaskCommands]);
+    return () => { stopped = true; controller.abort(); source?.close(); clearTimeout(timer); };
+  }, [started, visible, streamAwake, agentMode, refresh, updatePending, updateTaskCommands, invalidateUploads]);
 
   async function refreshHistory() {
     setError(""); setStreamError(""); setLoading(true);
     const controller = new AbortController(); controllers.current.add(controller);
-    try {
-      const data = await refresh(controller.signal);
-      if (!controller.signal.aborted) {
-        for (const item of pendingRef.current) if (!acknowledged(data, item.id)) void submit(item);
-        for (const item of taskCommandsRef.current) if (!item.rejected && !commandApplied(item, data.runs)) void submitTaskCommand(item);
-      }
-    }
+    try { await refreshAndRetry(controller.signal); }
     catch (err) { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "History unavailable."); }
     finally { controllers.current.delete(controller); if (!controller.signal.aborted) setLoading(false); }
   }
 
   async function loadOlder() {
-    if (!session?.next_cursor || loadingOlder) return;
+    if (replacingSnapshot.current || !session?.next_cursor || loadingOlder) return;
     setLoadingOlder(true);
     const controller = new AbortController(); controllers.current.add(controller);
     try {
@@ -479,44 +525,24 @@ export function useRuntime(agentMode = false) {
 
   async function send() {
     const text = draftValue.current.trim();
-    const ready = draftFiles.filter((file) => file.status === "ready");
-    if ((!text && !ready.length) || draftFiles.some((file) => file.status !== "ready") || !session || loading || session.conversation?.introducing) return;
-    if (new TextEncoder().encode(text).length > 8192) { setError("Please keep the message within 8,192 UTF-8 bytes."); return; }
+    if (replacingSnapshot.current || !hasSubmission(text, draftFiles) || !session || loading || session.conversation?.introducing) return;
+    if (messageTooLong(text)) { setError("Please keep the message within 8,192 UTF-8 bytes."); return; }
     if (pendingRef.current.length >= MAX_PENDING) { setError("Reconnect or retry your pending messages before sending more."); return; }
-    const item: Pending = { id: crypto.randomUUID(), text, started: Date.now(), ...(ready.length ? { attachments: ready.map(({ id, name, media_type, size }) => ({ id, name, media_type, size })) } : {}) };
+    const item: Pending = { id: crypto.randomUUID(), text, started: Date.now(), ...(draftFiles.length ? { attachments: draftFiles.map(({ id, name, media_type, size }) => ({ id, name, media_type, size })) } : {}) };
     beginTiming(item);
     Sentry.metrics.count("nori.submissions", 1, { attributes: { mode: agentMode ? "local" : "hosted" } });
     Sentry.addBreadcrumb({ category: "nori", message: "turn submitted" });
     updatePending((current) => [...current, item]);
-    setDraft(""); setError(""); setDraftFiles([]);
+    setDraft(""); setError(""); clearFiles();
     await submit(item);
   }
 
-  // A retry keeps the same ID, so a file that did reach the service isn't stored twice.
-  const sendFile = useCallback(async (item: DraftFile) => {
-    setDraftFiles((current) => current.map((file) => file.id === item.id ? { ...file, status: "uploading", error: undefined } : file));
-    try {
-      const saved = await uploadFile(item, agentMode);
-      setDraftFiles((current) => current.map((file) => file.id === item.id ? { ...file, ...saved, status: "ready" } : file));
-    } catch (err) {
-      setDraftFiles((current) => current.map((file) => file.id === item.id ? { ...file, status: "error", error: err instanceof Error ? err.message : "Upload failed. Try again." } : file));
-    }
-  }, [agentMode]);
-
-  function attachFiles(files: File[]) {
-    const room = MAX_FILES - draftFiles.length;
-    if (files.length > room) setError(`A message can have at most ${MAX_FILES} files.`);
-    for (const file of files.slice(0, Math.max(0, room))) {
-      const item: DraftFile = { id: crypto.randomUUID(), name: file.name, media_type: file.type, size: file.size, status: "uploading", file };
-      if (file.size > MAX_FILE_BYTES) { setDraftFiles((current) => [...current, { ...item, status: "error", error: "A file can be at most 10 MB." }]); continue; }
-      setDraftFiles((current) => [...current, item]);
-      void sendFile(item);
-    }
-  }
+  const upload = (item: DraftFile) => uploadFile(item, agentMode);
 
   async function commandTask(runId: string, kind: TaskCommand["kind"], text?: string, questionId?: string) {
+    if (replacingSnapshot.current) return;
     if (taskCommandsRef.current.some((item) => item.command.run_id === runId && (kind !== "stop" || item.command.kind === "stop"))) return;
-    if (text !== undefined && (!text.trim() || new TextEncoder().encode(text.trim()).length > 8192)) return;
+    if (text !== undefined && (!text.trim() || messageTooLong(text.trim()))) return;
     const command: TaskCommand = { id: crypto.randomUUID(), run_id: runId, kind,
       ...(text !== undefined ? { text: text.trim() } : {}), ...(questionId ? { question_id: questionId } : {}) };
     const item: PendingTaskCommand = { command, started: Date.now() };
@@ -529,9 +555,16 @@ export function useRuntime(agentMode = false) {
     updateTaskCommands((current) => current.filter((item) => item.command.id !== id || !item.rejected));
   }
 
-  return { session, draft, setDraft, draftFiles, attachFiles, retryFile: sendFile,
-    removeFile: (id: string) => setDraftFiles((current) => current.filter((file) => file.id !== id)), error: error || streamError, loading, loadingOlder, pending, selectedId, setSelectedId,
+  function dismissPending(id: string) {
+    if (submissions.current.has(id)) return;
+    updatePending((current) => current.filter((item) => item.id !== id || !item.error));
+    finishTiming(id, "unobserved");
+  }
+
+  return { session, draft, setDraft, draftFiles,
+    attachFiles: (files: File[]) => attach(files, upload, setError), retryFile: (item: DraftFile) => retry(item, upload),
+    removeFile, error: error || streamError, loading, loadingOlder, pending, setSelectedId,
     activeTasks, selected, tasksUnavailable, busy, conversationBusy, taskCommands, taskDrafts,
     setTaskDraft: (id: string, text: string) => setTaskDrafts((current) => ({ ...current, [id]: text })),
-    refreshHistory, loadOlder, send, retry: submit, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand, markShown };
+    refreshHistory, loadOlder, send, retry: submit, dismissPending, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand, markShown };
 }

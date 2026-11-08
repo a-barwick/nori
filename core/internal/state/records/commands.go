@@ -103,7 +103,7 @@ func (d *Database) admitCommandBatch(
 			return state.Control{}, err
 		}
 	}
-	doc, err := tx.Get(d.control())
+	doc, err := tx.Get(controlDoc(d.db))
 	if err != nil {
 		return state.Control{}, err
 	}

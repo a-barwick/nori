@@ -182,7 +182,6 @@ func (s *Service) resultRead(ctx context.Context, id string) (map[string]any, er
 	}, nil
 }
 
-// resultOpen copies a saved file into this task's folder, so a revision can start from it.
 func (s *Service) resultOpen(ctx context.Context, c *computer.Client, id string) (map[string]any, error) {
 	result, err := s.Store.GetResult(ctx, id)
 	if err != nil {

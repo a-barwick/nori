@@ -3,7 +3,6 @@ import Link from "next/link";
 import { Medallion } from "@/components/mark/NoriMark";
 import type { MarkState } from "@/lib/types";
 
-/** Framing for the live conversation: identity header over the app body. */
 export function NovaShell({ children, actions, state = "idle", status, onToggleActivity, activityOpen }: {
   children: ReactNode;
   actions?: ReactNode;

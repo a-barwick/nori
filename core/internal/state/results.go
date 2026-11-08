@@ -23,8 +23,7 @@ const (
 const (
 	// RecentResultLimit is how many results a snapshot and the outer loop's context list.
 	RecentResultLimit = 20
-	// MaxResultTitle limits a title in bytes.
-	MaxResultTitle = 200
+	MaxResultTitle    = 200
 )
 
 // Result is one saved output of a task. Its ID never changes. A revision is a new result that links to the one it
@@ -39,13 +38,11 @@ type Result struct {
 	Version      int    `json:"version" firestore:"version"`
 	Revises      string `json:"revises,omitempty" firestore:"revises,omitempty"`
 	SupersededBy string `json:"superseded_by,omitempty" firestore:"superseded_by,omitempty"`
-	// RunID and Revision are the task and instruction revision this answers.
-	RunID    string `json:"run_id" firestore:"run_id"`
-	Revision int64  `json:"revision" firestore:"revision"`
-	Kind     string `json:"kind" firestore:"kind"`
-	Title    string `json:"title" firestore:"title"`
-	// Text is an answer's text.
-	Text string `json:"text,omitempty" firestore:"text,omitempty"`
+	RunID        string `json:"run_id" firestore:"run_id"`
+	Revision     int64  `json:"revision" firestore:"revision"`
+	Kind         string `json:"kind" firestore:"kind"`
+	Title        string `json:"title" firestore:"title"`
+	Text         string `json:"text,omitempty" firestore:"text,omitempty"`
 	// Name, MediaType and Size describe a stored file. ArtifactID names a task's screenshot and URL a link.
 	Name       string `json:"name,omitempty" firestore:"name,omitempty"`
 	MediaType  string `json:"media_type,omitempty" firestore:"media_type,omitempty"`
@@ -66,10 +63,8 @@ type Result struct {
 	DeliveredAt *time.Time `json:"delivered_at,omitempty" firestore:"delivered_at,omitempty"`
 }
 
-// ResultKey names a result's file in the file store.
 func ResultKey(id string) string { return "results/" + id }
 
-// ResultDraft is what a task's completion adds to its saved answer.
 type ResultDraft struct {
 	Checked  bool
 	Evidence []string
@@ -85,7 +80,6 @@ func ResultID(parts ...string) string {
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("result:"+strings.Join(parts, ":"))).String()
 }
 
-// ResultTitle shortens a task's request to a title.
 func ResultTitle(request string) string {
 	title := strings.TrimSpace(strings.SplitN(strings.TrimSpace(request), "\n", 2)[0])
 	return clipBytes(title, 80)
@@ -101,13 +95,11 @@ func clipBytes(text string, limit int) string {
 	return text[:limit] + "…"
 }
 
-// Summary is a result without its full text, for lists.
 func (r Result) Summary() Result {
 	r.Text = clipBytes(r.Text, 500)
 	return r
 }
 
-// ValidLink accepts an http or https address.
 func ValidLink(address string) error {
 	parsed, err := url.Parse(address)
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || len(address) > 2048 {

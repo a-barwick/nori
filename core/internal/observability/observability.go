@@ -1,5 +1,3 @@
-// Package observability configures a single OpenTelemetry provider and routes
-// safe operational telemetry to Sentry and AI spans to Arize.
 package observability
 
 import (
@@ -200,7 +198,6 @@ func Init(ctx context.Context, service string, s settings.Settings) func(context
 	}
 }
 
-// TracingEnabled allows optional work solely for trace enrichment to be skipped.
 func TracingEnabled() bool { return tracingEnabled.Load() }
 
 type excludedRequestKey struct{}
@@ -276,7 +273,6 @@ func Flush(ctx context.Context) {
 	work.Wait()
 }
 
-// Shutdown gives process termination a short bounded opportunity to export.
 func Shutdown(stop func(context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

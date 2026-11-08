@@ -14,7 +14,6 @@ func (c Clock) location() *time.Location {
 	return c.Location
 }
 
-// timeContext is the current local time the outer model sees with each turn.
 func (c Clock) timeContext() string {
 	location := c.location()
 	return time.Now().In(location).Format("Monday, January 2, 2006 15:04 MST") + " (" + location.String() + ")"

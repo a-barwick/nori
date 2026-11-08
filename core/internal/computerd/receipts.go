@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"nori/internal/computer/rpc"
 )
 
 // Receipts live on the retained guest disk. They provide transport deduplication,
@@ -108,7 +110,7 @@ func (w *receiptResponse) Write(b []byte) (int, error) {
 	if w.status == 0 {
 		w.status = 200
 	}
-	if w.body.Len()+len(b) > maxScreenshot+4096 {
+	if w.body.Len()+len(b) > rpc.MaxScreenshot+4096 {
 		return 0, errors.New("receipt response too large")
 	}
 	return w.body.Write(b)
@@ -120,9 +122,9 @@ func sendReceipt(w http.ResponseWriter, r receipt) {
 	_, _ = w.Write(r.Body)
 }
 
-func (s *server) receipted(next http.HandlerFunc) http.HandlerFunc {
+func (s *server) receipted(next http.HandlerFunc, interruptible bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get("Nori-Operation-ID")
+		id := r.Header.Get(rpc.OperationIDHeader)
 		if id == "" {
 			next(w, r)
 			return
@@ -131,8 +133,8 @@ func (s *server) receipted(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "invalid operation ID", 400)
 			return
 		}
-		body, e := io.ReadAll(io.LimitReader(r.Body, (128<<10)+1))
-		if e != nil || len(body) > 128<<10 {
+		body, e := io.ReadAll(io.LimitReader(r.Body, maxRPCRequest+1))
+		if e != nil || len(body) > maxRPCRequest {
 			http.Error(w, "invalid body", 400)
 			return
 		}
@@ -175,7 +177,7 @@ func (s *server) receipted(next http.HandlerFunc) http.HandlerFunc {
 		s.receiptMu.Unlock()
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		response := &receiptResponse{header: make(http.Header)}
-		if r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" {
+		if interruptible {
 			ctx, cancel := context.WithCancel(r.Context())
 			op := &readOperation{run: input.RunID, cancel: cancel, done: make(chan struct{})}
 			s.receiptMu.Lock()
@@ -191,7 +193,7 @@ func (s *server) receipted(next http.HandlerFunc) http.HandlerFunc {
 			r = r.WithContext(ctx)
 		}
 		next(response, r)
-		if r.URL.Path == "/navigate" || r.URL.Path == "/screenshot" {
+		if interruptible {
 			rec.ReadOperation = true
 			s.runsMu.Lock()
 			run := s.runs[input.RunID]

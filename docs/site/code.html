@@ -21,14 +21,13 @@
       <tr><th>If you're looking for</th><th>Look in</th></tr>
           <tr><th colspan="2">Agent service <span class="mono">core/</span></th></tr>
           <tr><td>HTTP endpoints and input validation</td><td><span class="mono">core/internal/api/</span></td></tr>
-          <tr><td>Foreground chat turns, streaming, approval and context limits</td><td><span class="mono">core/internal/chat/service.go</span></td></tr>
+          <tr><td>Foreground chat turns, streaming and context limits</td><td><span class="mono">core/internal/chat/service.go</span></td></tr>
           <tr><td>Independent chat HTTP routes</td><td><span class="mono">core/internal/api/chat.go</span></td></tr>
           <tr><td>Chat snapshots, events and assigned uploads</td><td><span class="mono">core/internal/state/chat.go, state/firestore/chat.go</span></td></tr>
           <tr><td>How an assistant turn runs: leases, restarts, checkpoints</td><td><span class="mono">core/internal/conversation/runner.go, call.go</span></td></tr>
           <tr><td>The outer model contract and its tools</td><td><span class="mono">core/internal/conversation/model.go</span></td></tr>
           <tr><td>The OpenAI adapter for the outer model</td><td><span class="mono">core/internal/conversation/openai.go</span></td></tr>
           <tr><td><a href="classification.html">Jev classification</a>: the contract, then the Jev adapter</td><td><span class="mono">core/internal/conversation/classifier.go, jev.go</span></td></tr>
-          <tr><td>The <a href="proactive.html">calendar check</a>, offers and their delivery</td><td><span class="mono">core/internal/proactive/, core/internal/state/proactive.go</span></td></tr>
           <tr><td>Outer command validation</td><td><span class="mono">core/internal/conversation/commands.go</span></td></tr>
           <tr><td>Task and conversation records, store contracts and write rules</td><td><span class="mono">core/internal/state/</span></td></tr>
           <tr><td>Shared transactions for those records, with Firestore and Postgres adapters</td><td><span class="mono">core/internal/state/records/, firestore/, postgres/</span></td></tr>
@@ -46,9 +45,8 @@
           <tr><td>The inner model step and task tools</td><td><span class="mono">core/internal/agent/steps.go, agent.go</span></td></tr>
           <tr><td>The model contract and the OpenRouter adapter (<a href="transcript.html">Task transcript</a>)</td><td><span class="mono">core/internal/agent/model.go, agent/openrouter/</span></td></tr>
           <tr><td>Transcript types and their saved form</td><td><span class="mono">core/internal/transcript/</span></td></tr>
-          <tr><td>Search, calendar, screenshot reading and the catalog</td><td><span class="mono">core/internal/agent/search.go, calendar.go, inspect.go, catalog.go</span></td></tr>
+          <tr><td>Search, screenshot reading and tool policy</td><td><span class="mono">core/internal/agent/search.go, inspect.go, tools.go, catalog.go</span></td></tr>
           <tr><td>Waiting on and stopping long jobs</td><td><span class="mono">core/internal/task/jobs.go</span></td></tr>
-          <tr><td>Connecting the calendar</td><td><span class="mono">core/cmd/nori-connect-calendar</span></td></tr>
           <tr><td>Calling the computer: the guest client, the computer provider and its connection loop</td><td><span class="mono">core/internal/computer/computer.go, provider.go, managed.go</span></td></tr>
           <tr><td>Computer provider adapters for Compute Engine, EC2/SSM and a local computer</td><td><span class="mono">core/internal/computer/gce/, ec2/, local/</span></td></tr>
           <tr><td>Code that runs on the computer</td><td><span class="mono">core/internal/computerd/</span></td></tr>
@@ -80,7 +78,6 @@
       <li><code>nori-local</code> is the development API. It uses the same handler and adds a loop that runs every 2 seconds.</li>
       <li><code>nori-worker</code> is the Temporal worker that runs the inner loop.</li>
       <li><code>computer-agent</code> runs tools inside the Firecracker guest, or as a host proxy that forwards to the guest and stops the host when idle.</li>
-      <li><code>nori-connect-calendar</code> is a one-time command that connects the Google calendar and saves its token.</li>
       <li><code>nori-deliver</code> is a repair tool. It redelivers pending commands to Temporal and repairs the records of finished tasks.</li>
     </ul>
   </div>

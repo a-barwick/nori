@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"nori/internal/computer/rpc"
 )
 
 type page struct {
@@ -285,7 +287,7 @@ func (s *server) screenshot(w http.ResponseWriter, r *http.Request) {
 		// body too, so replay gives the model the same safe recovery result.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "browser_restarted"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": rpc.BrowserRestarted})
 		return
 	}
 	if err != nil {
@@ -318,7 +320,7 @@ func (s *server) screenshot(w http.ResponseWriter, r *http.Request) {
 		return c.call(ctx, "Page.captureScreenshot", map[string]any{"format": "png", "captureBeyondViewport": false}, &result)
 	}()
 	if err != nil {
-		log.Printf("browser screenshot failed task=%q run=%q operation=%q stage=%s elapsed=%s context_error=%v error=%.512q", req.TaskID, req.RunID, r.Header.Get("Nori-Operation-ID"), stage, time.Since(captureStarted).Round(time.Millisecond), ctx.Err(), err.Error())
+		log.Printf("browser screenshot failed task=%q run=%q operation=%q stage=%s elapsed=%s context_error=%v error=%.512q", req.TaskID, req.RunID, r.Header.Get(rpc.OperationIDHeader), stage, time.Since(captureStarted).Round(time.Millisecond), ctx.Err(), err.Error())
 		if stage == "queue" && errors.Is(err, context.Canceled) {
 			http.Error(w, "run canceled", 409)
 			return
@@ -326,12 +328,12 @@ func (s *server) screenshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "screenshot unavailable", 502)
 		return
 	}
-	if len(result.Data) > base64.StdEncoding.EncodedLen(maxScreenshot) {
+	if len(result.Data) > base64.StdEncoding.EncodedLen(rpc.MaxScreenshot) {
 		http.Error(w, "screenshot exceeds 2 MiB", 413)
 		return
 	}
 	png, err := base64.StdEncoding.DecodeString(result.Data)
-	if err != nil || len(png) > maxScreenshot {
+	if err != nil || len(png) > rpc.MaxScreenshot {
 		http.Error(w, "invalid screenshot", 502)
 		return
 	}

@@ -11,7 +11,6 @@ import (
 // receiver scope opened with platform.OpenStore(ctx, settings, user). There is no default user or mutable
 // current-user setting. Detached cleanup contexts keep that same scope. Control is the global operator pause.
 
-// RunStore reads and updates task records.
 type RunStore interface {
 	Control(ctx context.Context) (Control, error)
 	Session(ctx context.Context) (Session, error)
@@ -26,14 +25,11 @@ type RunStore interface {
 	GetResult(ctx context.Context, id string) (Result, error)
 	RecentResults(ctx context.Context, limit int) ([]Result, error)
 	RecentRuns(ctx context.Context, limit int) ([]Run, error)
-	// Memories, ConversationSummary and ConversationMessages let a task read saved memory and earlier conversation
-	// its own instructions don't carry.
 	Memories(ctx context.Context) ([]Memory, error)
 	ConversationSummary(ctx context.Context) (ConversationSummary, error)
 	ConversationMessages(ctx context.Context, before string) (messages []Message, next string, err error)
 }
 
-// Artifacts writes and reads private PNG artifacts by run and artifact ID.
 type Artifacts interface {
 	PutPNG(ctx context.Context, run, id string, data []byte) error
 	GetPNG(ctx context.Context, run, id string) ([]byte, error)
@@ -44,7 +40,6 @@ type Artifacts interface {
 	DeleteFile(ctx context.Context, key string) error
 }
 
-// Store is the run-state surface the agent steps use.
 type Store interface {
 	RunStore
 	Artifacts
@@ -74,9 +69,7 @@ type TaskDatabase interface {
 	RunStore
 	TaskEvidenceStore
 
-	// Accept admits one command; AcceptCommandBatch admits a whole batch atomically, optionally fenced by the
-	// conversation turn that produced it.
-	Accept(ctx context.Context, cmd Command) (Run, error)
+	// The optional fence ties acceptance to the conversation turn that produced the batch.
 	AcceptCommandBatch(ctx context.Context, commands []Command, fence *ConversationFence) ([]CommandReceipt, error)
 	// Pending lists accepted commands whose delivery to the worker is not confirmed; Delivered confirms one.
 	Pending(ctx context.Context) ([]Command, error)
@@ -95,7 +88,6 @@ type TaskDatabase interface {
 	ProjectQuestion(ctx context.Context, runID string, revision int64, question Question) error
 	Publish(ctx context.Context, req PublishRequest) (Run, error)
 
-	// Recovery queries.
 	OpenTasks(ctx context.Context) ([]Run, error)
 	PublicationTasks(ctx context.Context) ([]Run, error)
 	PublicationWoken(ctx context.Context, runID string, generation int64) error
@@ -108,7 +100,6 @@ type TaskDatabase interface {
 	TaskSteps(ctx context.Context, runID string) ([]TaskStep, error)
 }
 
-// TaskStore is what task activities use: the task documents plus artifacts.
 type TaskStore interface {
 	TaskDatabase
 	Artifacts
@@ -123,7 +114,6 @@ type Database interface {
 	Close() error
 }
 
-// ConversationDatabase is the conversation half of a document backend.
 type ConversationDatabase interface {
 	AcceptConversationInput(ctx context.Context, id, text string, attachments []string) error
 	CreateUpload(ctx context.Context, upload Upload) (Upload, error)

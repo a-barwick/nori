@@ -1,9 +1,9 @@
 import { classify } from "./hybrid";
 import { separatorLabel, minutes } from "./time";
-import type { Sender, TextItem, ThreadItem } from "./types";
+import type { Sender, TextItem } from "./types";
 
 export type Pos = "single" | "first" | "middle" | "last";
-export type GroupUnit = { type: "bubble"; key: string; item: TextItem; markdown: string };
+export type GroupUnit = { key: string; item: TextItem; markdown: string };
 export type Unit =
   | { type: "sep"; key: string; label: string }
   | { type: "group"; key: string; sender: Sender; units: GroupUnit[] }
@@ -12,8 +12,8 @@ export type Unit =
 const GROUP_WINDOW = minutes(3);
 const SEPARATOR_GAP = minutes(15);
 
-/** Group saved text messages; structured replies retain the document reading view. */
-export function buildUnits(items: ThreadItem[], now = Date.now()): Unit[] {
+export function buildUnits(items: TextItem[]): Unit[] {
+  const now = Date.now();
   const out: Unit[] = [];
   let group: Extract<Unit, { type: "group" }> | undefined;
   let prevAt = -Infinity;
@@ -24,12 +24,12 @@ export function buildUnits(items: ThreadItem[], now = Date.now()): Unit[] {
       group = undefined;
     }
     prevAt = item.at;
-    const classified = item.sender === "me" ? { mode: "bubble" as const, body: item.text, cover: undefined } : classify(item.text, item.display);
+    const classified = item.sender === "me" ? { mode: "bubble" as const, body: item.text } : classify(item.text, item.display);
     if (!group || group.sender !== item.sender || item.at - lastGroupAt > GROUP_WINDOW) {
       group = { type: "group", key: `g-${item.id}`, sender: item.sender, units: [] };
       out.push(group);
     }
-    group.units.push({ type: "bubble", key: item.id, item: classified.mode === "page" ? { ...item, debug: undefined } : item, markdown: classified.mode === "page" ? classified.cover! : classified.body });
+    group.units.push({ key: item.id, item: classified.mode === "page" ? { ...item, debug: undefined } : item, markdown: classified.mode === "page" ? classified.cover : classified.body });
     if (classified.mode === "page") {
       out.push({ type: "page", key: `${item.id}-page`, item, body: classified.body });
       group = undefined;
@@ -47,10 +47,10 @@ export function posOf(index: number, length: number): Pos {
 }
 
 /** Corner radii TL TR BR BL; the sender's side pinches where items touch. */
-export function corners(sender: Sender, pos: Pos, r = 22, pinch = 6) {
-  if (pos === "single") return `${r}px`;
-  const R = `${r}px`;
-  const P = `${pinch}px`;
+export function corners(sender: Sender, pos: Pos) {
+  const R = "22px";
+  const P = "6px";
+  if (pos === "single") return R;
   if (sender === "nori") {
     if (pos === "first") return `${R} ${R} ${R} ${P}`;
     if (pos === "middle") return `${P} ${R} ${R} ${P}`;

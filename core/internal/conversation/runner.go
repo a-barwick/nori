@@ -87,8 +87,7 @@ type Runner struct {
 	compactAfter time.Time
 	tasks        *Tasks
 	process      sync.Mutex
-	// Clock is the user's time zone.
-	Clock Clock
+	Clock        Clock
 }
 
 func New(model ReplyModel, classifier IntentClassifier, summarizer SummaryModel, tasks *Tasks) *Runner {

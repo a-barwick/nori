@@ -18,11 +18,11 @@ variable "request_worker_targets" {
     wake_queue_name     = string
     poll_window_seconds = optional(number, 240)
     firestore_database  = optional(string, "nori-poc")
-    # Retained binaries keep their original provider; new builds opt into Terra.
+    # Retained targets without a model field predate the move to OpenRouter.
     model_name = optional(string, "gemini-3.8-flash")
-    # Search and calendar credentials; retained builds keep their env.
-    capabilities = optional(bool, false)
-    # Only new builds read computer/calendar settings from user rows.
+    # Older pinned binaries still need their original calendar bindings.
+    capabilities      = optional(bool, false)
+    brave_search      = optional(bool, false)
     per_user_settings = optional(bool, false)
     # Preserve Jev references on retained binaries that used completion checks.
     jev_completion = optional(bool, false)
@@ -240,7 +240,10 @@ resource "google_cloud_run_v2_service" "worker" {
         }
       }
       dynamic "env" {
-        for_each = var.request_worker_targets[each.key].capabilities ? (var.request_worker_targets[each.key].per_user_settings ? local.capability_secrets : local.retained_capability_secrets) : {}
+        for_each = merge(
+          var.request_worker_targets[each.key].capabilities ? (var.request_worker_targets[each.key].per_user_settings ? local.capability_secrets : local.retained_capability_secrets) : {},
+          var.request_worker_targets[each.key].brave_search ? { BRAVE_SEARCH_API_KEY = local.capability_secrets.BRAVE_SEARCH_API_KEY } : {},
+        )
         content {
           name = env.key
           value_source {

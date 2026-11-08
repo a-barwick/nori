@@ -6,12 +6,7 @@ import (
 	"nori/internal/transcript"
 )
 
-// Model is the inner task model. An adapter owns everything particular to one provider:
-// endpoint, credentials, request and response formats, usage reporting and the text of
-// its errors. The agent and task packages see only the types below.
 type Model interface {
-	// Provider and Name identify the model in traces and cost records, for example
-	// "openrouter" and "openai/gpt-6.1-terra".
 	Provider() string
 	Name() string
 	// Respond makes exactly one model request. The caller owns retries and budgets.
@@ -24,7 +19,6 @@ type Model interface {
 	Inspect(ctx context.Context, req InspectRequest) (Inspection, error)
 }
 
-// Request is everything one model turn needs. Messages are the whole transcript so far.
 type Request struct {
 	Instructions    string
 	Messages        []transcript.Message
@@ -34,14 +28,12 @@ type Request struct {
 	Reasoning string
 }
 
-// Response is one model turn.
 type Response struct {
 	// Message is the turn as it is saved in the transcript: the provider's own state, then
 	// each tool call, then any visible text. Nil when the model returned nothing to save.
 	Message *transcript.Message
 	Calls   []transcript.ToolCall
-	// Answer is the visible text of a turn with no tool calls.
-	Answer string
+	Answer  string
 	// Usage is nil when the provider reported none. Cost is the provider-reported USD
 	// cost of this request, valid only when CostKnown is true.
 	Usage     *Usage
@@ -61,7 +53,6 @@ type Usage struct {
 	TotalTokens     int32
 }
 
-// InspectRequest asks a question about one PNG image.
 type InspectRequest struct {
 	Instructions    string
 	Question        string
@@ -70,7 +61,6 @@ type InspectRequest struct {
 	MaxOutputTokens int
 }
 
-// Inspection is the answer to an InspectRequest.
 type Inspection struct {
 	Observation string
 	// Sent is set once a request has left the process, so a missing cost means the request may

@@ -11,17 +11,13 @@ import (
 	"nori/internal/state"
 )
 
-// wakeConversation asks the API to process saved input. The deadline keeps a
-// slow queue from holding the request.
 func (s *server) wakeConversation(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.Waker.WakeConversation(ctx)
 }
 
-// ensureWake reconciles a durable input whose original enqueue was
-// interrupted. Queue notifications may duplicate; only the Firestore lease
-// can process a turn.
+// A saved input can outlive its enqueue. The conversation lease fences duplicate wakes.
 func (s *server) ensureWake(ctx context.Context, session conversation.Session) error {
 	if !session.Conversation.Pending && !session.Conversation.Processing {
 		return nil
@@ -39,7 +35,6 @@ func (s *server) session(w http.ResponseWriter, r *http.Request) {
 	s.writeSession(w, r, body.Before)
 }
 
-// snapshot is the session read a client starts from before it follows the stream.
 func (s *server) snapshot(w http.ResponseWriter, r *http.Request) {
 	s.writeSession(w, r, r.URL.Query().Get("before"))
 }

@@ -19,23 +19,33 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nori/internal/state/docstore"
 	"nori/internal/state/records"
+	"nori/internal/users"
 )
 
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-type Config struct {
-	URL           string
-	TaskBudgetUSD float64
+func Open(ctx context.Context, url string, user users.User, taskBudgetUSD float64) (*records.Database, error) {
+	b, err := openBackend(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	return records.New(b, user, taskBudgetUSD), nil
 }
-type Database = records.Database
-type Users = records.Users
 
-func Open(ctx context.Context, cfg Config) (*Database, error) {
-	if strings.TrimSpace(cfg.URL) == "" {
+func OpenUsers(ctx context.Context, url string) (*records.Users, error) {
+	b, err := openBackend(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	return records.NewUsers(b), nil
+}
+
+func openBackend(ctx context.Context, url string) (*backend, error) {
+	if strings.TrimSpace(url) == "" {
 		return nil, errors.New("NORI_POSTGRES_URL must be configured")
 	}
-	pool, e := pgxpool.New(ctx, cfg.URL)
+	pool, e := pgxpool.New(ctx, url)
 	if e != nil {
 		return nil, errors.New("invalid NORI_POSTGRES_URL")
 	}
@@ -48,14 +58,7 @@ func Open(ctx context.Context, cfg Config) (*Database, error) {
 		pool.Close()
 		return nil, fmt.Errorf("Postgres migration: %w", e)
 	}
-	return records.New(b, cfg.TaskBudgetUSD), nil
-}
-func OpenUsers(ctx context.Context, cfg Config) (*Users, error) {
-	d, e := Open(ctx, cfg)
-	if e != nil {
-		return nil, e
-	}
-	return records.NewUsers(d), nil
+	return b, nil
 }
 
 type backend struct{ pool *pgxpool.Pool }

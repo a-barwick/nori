@@ -38,7 +38,6 @@ func citedOutputs(ops []state.OperationRecord, evidence []string) (artifacts, re
 	return artifacts, results
 }
 
-// failedCommandLimit keeps a long script from filling the question.
 const failedCommandLimit = 500
 
 // failureCleared says why a failed call can't have changed anything, or "" when it might have.
@@ -70,8 +69,6 @@ func clearable(op state.OperationRecord) bool {
 		(op.Outcome == "failed" || op.Outcome == "uncertain")
 }
 
-// nameUnresolved returns the lines that name the task's unresolved operations for a question, and which of them an
-// answer releases. The runtime writes these lines because a model's question can leave the command out.
 func (a *Activities) nameUnresolved(ctx context.Context, runID string, messages []transcript.Message) (string, []string, error) {
 	ops, err := a.Store.Operations(ctx, runID)
 	if err != nil {

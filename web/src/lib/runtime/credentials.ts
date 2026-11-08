@@ -1,10 +1,14 @@
 import { GoogleAuth } from "google-auth-library";
 import { SignJWT } from "jose";
+import type { Mode } from "./target";
 
 const google = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
 
-/** Trusted service credentials, independent of the browser's sign-in token. */
-export async function runtimeAuthorization(): Promise<string> {
+export async function runtimeHeaders(mode: Mode): Promise<Record<string, string>> {
+  return mode === "hosted" ? { Authorization: await runtimeAuthorization() } : {};
+}
+
+async function runtimeAuthorization(): Promise<string> {
   const cloud = process.env.NORI_CLOUD || "gcp";
   if (cloud === "aws") {
     const key = new TextEncoder().encode(process.env.NORI_SERVICE_TOKEN_KEY || "");

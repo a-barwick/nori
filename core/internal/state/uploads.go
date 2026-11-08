@@ -2,6 +2,9 @@ package state
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path"
@@ -17,14 +20,11 @@ import (
 const (
 	// MaxUploadBytes is the size limit for one file. Agent Runtime accepted 16 MiB and refused 33 MiB in a probe.
 	MaxUploadBytes = 10 << 20
-	// MaxAttachments limits the files on one message.
 	MaxAttachments = 10
 )
 
-// ErrUploadType refuses a file whose bytes aren't an image, PDF or CSV, or don't match what the client declared.
 var ErrUploadType = errors.New("Only PNG, JPEG or WebP images, PDFs and CSV files can be attached")
 
-// ErrAttachmentMissing refuses a message that names an upload with no saved record.
 var ErrAttachmentMissing = errors.New("an attached file wasn't uploaded")
 
 // Attachment is what a message or task records about an uploaded file. Name came from the user's device, so it's
@@ -44,7 +44,32 @@ type Upload struct {
 	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
 }
 
-// UploadKey names an upload's bytes in the file store.
+// SaveUploadBytes saves the complete file before its caller commits metadata.
+func SaveUploadBytes(ctx context.Context, files Artifacts, key, id, name, declared string, data []byte) (Upload, error) {
+	name = CleanUploadName(name)
+	mediaType, err := SniffUpload(name, declared, data)
+	if err != nil {
+		return Upload{}, err
+	}
+	sum := sha256.Sum256(data)
+	upload := Upload{
+		Attachment: Attachment{ID: id, Name: name, MediaType: mediaType, Size: int64(len(data))},
+		SHA256:     hex.EncodeToString(sum[:]), CreatedAt: time.Now().UTC(),
+	}
+	err = files.PutFile(ctx, key, mediaType, data)
+	if !errors.Is(err, ErrFileExists) {
+		return upload, err
+	}
+	saved, err := files.GetFile(ctx, key)
+	if err != nil {
+		return upload, err
+	}
+	if !bytes.Equal(saved, data) {
+		return upload, ErrDuplicate
+	}
+	return upload, nil
+}
+
 func UploadKey(id string) string { return "uploads/" + id }
 
 var fileKey = regexp.MustCompile(`^(uploads|results)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -52,7 +77,6 @@ var fileKey = regexp.MustCompile(`^(uploads|results)/[0-9a-f]{8}-[0-9a-f]{4}-[0-
 // ValidFileKey requires one of the file store's known folders and a canonical UUID.
 func ValidFileKey(key string) bool { return fileKey.MatchString(key) }
 
-// ValidUploadID requires a canonical UUID.
 func ValidUploadID(id string) bool {
 	parsed, err := uuid.Parse(id)
 	return err == nil && parsed.String() == id
@@ -118,7 +142,6 @@ func ComputerFileName(a Attachment) string {
 	return a.ID[:8] + "-" + strings.TrimLeft(unsafeFileName.ReplaceAllString(a.Name, "_"), "._-")
 }
 
-// AttachmentPart is how an attachment appears in a message.
 func AttachmentPart(a Attachment) Part {
 	return Part{
 		Type: PartAttachment, ID: a.ID, Name: a.Name, MediaType: a.MediaType, Size: a.Size,
@@ -126,7 +149,6 @@ func AttachmentPart(a Attachment) Part {
 	}
 }
 
-// MergeAttachments adds attachments a list doesn't have yet, keeping their order.
 func MergeAttachments(list, added []Attachment) []Attachment {
 	for _, attachment := range added {
 		seen := false

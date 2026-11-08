@@ -127,7 +127,6 @@ func (s *server) readResultFile(w http.ResponseWriter, r *http.Request) {
 	serveFile(w, result.Name, result.MediaType, data)
 }
 
-// delivered records that a browser showed these results.
 func (s *server) delivered(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		IDs []string `json:"ids"`
@@ -154,7 +153,6 @@ func (s *server) delivered(w http.ResponseWriter, r *http.Request) {
 
 var messageID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,200}$`)
 
-// seen records the newest message a visible browser showed, so a notification for it isn't sent.
 func (s *server) seen(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		MessageID string `json:"message_id"`

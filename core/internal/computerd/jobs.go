@@ -399,7 +399,6 @@ func (s *server) jobStatusOf(record jobRecord, live *activeJob) map[string]any {
 	return result
 }
 
-// findJob reports a job only to the task that owns it.
 func (s *server) findJob(w http.ResponseWriter, jobID, taskID string) (jobRecord, *activeJob, bool) {
 	if !runPattern.MatchString(jobID) || !runPattern.MatchString(taskID) {
 		http.Error(w, "invalid job_id or task_id", 400)

@@ -27,8 +27,6 @@ export const metadata: Metadata = {
 export const instant = false;
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
-  // Read the promoted image's runtime settings, rather than freezing them into
-  // prerendered HTML during the image build.
   await connection();
   return (
     <html lang="en" className={`${figtree.variable} ${plexMono.variable} h-full`}

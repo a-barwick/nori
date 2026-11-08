@@ -1,5 +1,3 @@
-// Package secret resolves credentials that a deployment keeps in a secret store
-// instead of in plaintext configuration.
 package secret
 
 import (

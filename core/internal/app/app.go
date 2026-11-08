@@ -1,14 +1,12 @@
-// Package app assembles Nori's durable conversation and runs its outer work.
-// The hosted and local entrypoints share it; only their wake differs.
 package app
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
-	"nori/internal/agent"
 	"nori/internal/agent/openrouter"
 	"nori/internal/api"
 	"nori/internal/chat"
@@ -31,10 +29,9 @@ type App struct {
 	Waker      wake.Waker
 	Model      string
 	engine     dispatch.Orchestrator
+	handler    http.Handler
 }
 
-// Open uses the same durable outer loop in local and hosted entrypoints. waker is
-// how this process wakes itself and its workers.
 func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user users.User) (*App, error) {
 	cfg = platform.ForUser(cfg, user)
 	waker = wake.ForUser(waker, user.ID)
@@ -53,15 +50,13 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		store.Close()
 		return nil, fmt.Errorf("user time zone must be an IANA time zone")
 	}
-	tools := agent.New(store, nil, platform.Computer(cfg))
-	tools.UserFacts = user.Facts()
-	tools.Capabilities.Location = location
-	chats := chat.New(store, outer, tools)
+	userFacts := user.Facts()
+	chats := chat.New(store, outer, userFacts)
 	result := &App{Store: store, Features: cfg.Features, Chats: chats, Waker: waker, Model: model}
 	if cfg.Features.DisableBackgroundTasks {
 		return result, nil
 	}
-	engine, err := platform.Engine(ctx, user.ID)
+	engine, err := platform.Engine(ctx, cfg, user.ID)
 	if err != nil {
 		store.Close()
 		return nil, err
@@ -73,15 +68,14 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	}
 	dispatcher := platform.Dispatcher(cfg, store, engine, waker, user.ID)
 	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
-	// The conversation summary is written by the inner task model, through the same OpenRouter key the task worker uses.
+	// Compaction keeps a fixed model even when the task worker uses a different one.
 	summarizer := openrouter.New(cfg.Models.OpenRouterKey, "openai/gpt-6.1-terra", store)
-	tools.Model = summarizer
 	var classifier conversation.IntentClassifier
 	if !cfg.Features.DisableJev {
 		classifier = conversation.NewJevClassifier(cfg.Models.JevKey)
 	}
 	runner := conversation.New(outer, classifier, summarizer, tasks)
-	runner.UserFacts = user.Facts()
+	runner.UserFacts = userFacts
 	runner.Clock = conversation.Clock{Location: location}
 	result.Runner, result.Tasks, result.Dispatcher, result.engine = runner, tasks, dispatcher, engine
 	return result, nil
@@ -95,8 +89,7 @@ func (a *App) Close() {
 	a.Store.Close()
 }
 
-// API returns what the HTTP routes call into.
-func (a *App) API() api.Deps {
+func (a *App) apiDeps() api.Deps {
 	return api.Deps{Chats: a.Chats, Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features}
 }
 
@@ -107,12 +100,18 @@ func (a *App) Resume(ctx context.Context) error {
 	return a.Dispatcher.Resume(ctx)
 }
 
-func (a *App) Process(ctx context.Context) error { return a.process(ctx, true) }
-func (a *App) process(ctx context.Context, foreground bool) error {
+func (a *App) Process(ctx context.Context) error {
 	if a.Runner == nil {
-		if foreground {
-			return a.Chats.Process(ctx)
-		}
+		return a.Chats.Process(ctx)
+	}
+	chatDone := make(chan error, 1)
+	go func() { chatDone <- a.Chats.Process(ctx) }()
+	assistantErr := a.processAssistant(ctx)
+	return errors.Join(<-chatDone, assistantErr)
+}
+
+func (a *App) processAssistant(ctx context.Context) error {
+	if a.Runner == nil {
 		return nil
 	}
 	// A paused worker cannot finish a queued Stop. Retry only accepted Stop
@@ -137,19 +136,13 @@ func (a *App) process(ctx context.Context, foreground bool) error {
 			}
 		}
 	}
-	chatDone := make(chan error, 1)
-	if foreground {
-		go func() { chatDone <- a.Chats.Process(ctx) }()
-	} else {
-		chatDone <- nil
-	}
 	processErr := a.Runner.Process(ctx)
 	// Dispatch and explicit controls can outlive their first delivery attempt.
 	// Keep the queue notification until delivery is confirmed.
 	delivery, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	reconcileErr := a.Dispatcher.Reconcile(delivery, dispatch.Commands|dispatch.Publications)
-	return errors.Join(<-chatDone, stopErr, processErr, reconcileErr)
+	return errors.Join(stopErr, processErr, reconcileErr)
 }
 
 var _ api.Operations = (*App)(nil)

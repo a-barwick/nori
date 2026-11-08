@@ -14,21 +14,14 @@ import (
 	"nori/internal/state"
 )
 
-// Tasks delegates admission, command ordering, delivery and execution to the
-// existing task implementation. A dispatch ends at durable acceptance.
 type Tasks struct {
-	Store state.ConversationStore
-	// Dispatcher delivers accepted commands to their tasks. Harnesses that only
-	// exercise routing leave it nil, and delivery then waits for a real process.
+	Store      state.ConversationStore
 	Dispatcher *dispatch.Dispatcher
 }
 
 // deliver is the fast best-effort path after acceptance. The saved delivery
 // intent survives a failure here, so the worker or wake handler repairs it.
 func (t *Tasks) deliver(ctx context.Context) {
-	if t.Dispatcher == nil {
-		return
-	}
 	delivery, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := t.Dispatcher.Reconcile(delivery, dispatch.Commands); err != nil {
@@ -107,18 +100,15 @@ func (t *Tasks) Update(ctx context.Context, id, runID, message string) (state.Ru
 		return state.Run{}, err
 	}
 	command := state.Command{ID: id, RunID: runID, Kind: state.CommandSteer, Text: message}
-	if question := current.Question; question != nil && question.ResolvedBy == "" && question.Revision == current.Revision {
-		switch {
-		case question.Kind == "input" || question.Kind == state.QuestionWork:
-			command.Kind, command.QuestionID = "answer", question.ID
-		}
+	if question := current.Question; question != nil && question.ResolvedBy == "" && question.Revision == current.Revision &&
+		(question.Kind == "input" || question.Kind == state.QuestionWork) {
+		command.Kind, command.QuestionID = state.CommandAnswer, question.ID
 	}
-	run, err := t.Store.Accept(ctx, command)
+	receipts, err := t.AcceptBatch(ctx, []state.Command{command}, nil)
 	if err != nil {
 		return state.Run{}, err
 	}
-	t.deliver(ctx)
-	return run, nil
+	return receipts[0].Run, nil
 }
 
 func (t *Tasks) Cancel(ctx context.Context, id string) (state.Run, error) {
@@ -133,9 +123,6 @@ func (t *Tasks) Cancel(ctx context.Context, id string) (state.Run, error) {
 // Stop can finish a never-started task while its worker remains paused. This
 // only repairs terminal state and attaches for cleanup; it never starts compute.
 func (t *Tasks) repairPausedStops(ctx context.Context, receipts []state.CommandReceipt) {
-	if t.Dispatcher == nil {
-		return
-	}
 	stops := map[string]bool{}
 	for _, receipt := range receipts {
 		if receipt.Command.Kind == state.CommandStop {

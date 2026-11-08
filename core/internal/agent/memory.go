@@ -14,7 +14,6 @@ var memoryNote = prompts.Runtime("memory-note", nil)
 
 var conversationNote = prompts.Runtime("conversation-source-note", nil)
 
-// conversationPages bounds how far back conversation_find reads: MessagePageSize messages a page.
 const conversationPages = 6
 
 // memoryRead returns what the user asked Nori to remember and the summary of conversation older than the outer loop's
@@ -44,7 +43,6 @@ func (s *Service) memoryRead(ctx context.Context) (map[string]any, error) {
 	return out, nil
 }
 
-// conversationFind matches words against the newest saved conversation messages, like resultsFind does for results.
 func (s *Service) conversationFind(ctx context.Context, query string) (map[string]any, error) {
 	words := []string{}
 	for _, word := range strings.Fields(strings.ToLower(query)) {
@@ -96,9 +94,9 @@ func (s *Service) conversationFind(ctx context.Context, query string) (map[strin
 	return map[string]any{"messages": found, "note": conversationNote}, nil
 }
 
-// LoadedCapabilities lists the capabilities a task loaded with capability_load. The transcript is the record, so the
+// loadedCapabilities lists the capabilities a task loaded with capability_load. The transcript is the record, so the
 // set survives a restart and lasts for the rest of the task.
-func LoadedCapabilities(results []map[string]any) map[string]bool {
+func loadedCapabilities(results []map[string]any) map[string]bool {
 	loaded := map[string]bool{}
 	for _, output := range results {
 		switch names := output["loaded"].(type) {
@@ -122,7 +120,7 @@ func LoadedCapabilities(results []map[string]any) map[string]bool {
 func (s *Service) capabilityLoad(names []string) (map[string]any, error) {
 	byName := map[string]Capability{}
 	valid := []string{}
-	for _, capability := range s.Catalog() {
+	for _, capability := range s.catalog() {
 		if !capability.Default {
 			byName[strings.ToLower(capability.Name)] = capability
 			valid = append(valid, capability.Name)
@@ -137,7 +135,7 @@ func (s *Service) capabilityLoad(names []string) (map[string]any, error) {
 		}
 		loaded = append(loaded, capability.Name)
 		described = append(described, map[string]any{
-			"name": capability.Name, "tools": capability.Tools, "account": capability.Account, "availability": capability.Availability,
+			"name": capability.Name, "tools": capability.ToolList(), "account": capability.Account, "availability": capability.Availability,
 		})
 	}
 	return map[string]any{"loaded": loaded, "capabilities": described, "note": prompts.Runtime("memory-these-tools-are-available-from-your-next-step", nil)}, nil

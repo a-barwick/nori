@@ -8,10 +8,8 @@ import (
 )
 
 const (
-	// TaskBudgetUSD is the default task ceiling.
 	TaskBudgetUSD = 1.0
-	// MaxSubtasks bounds the subtasks one work request can start.
-	MaxSubtasks = 4
+	MaxSubtasks   = 4
 	// QuestionWork is the question a task parks on after request_work.
 	QuestionWork = "work"
 )
@@ -24,7 +22,6 @@ type SubtaskLink struct {
 	Status     RunStatus `json:"status" firestore:"status"`
 }
 
-// RunningSubtasks names the subtasks that haven't ended.
 func RunningSubtasks(run Run) []string {
 	ids := []string{}
 	for _, link := range run.Subtasks {
@@ -130,7 +127,6 @@ func addSubtaskCost(parent, before Run, spent float64, costUnknown bool) Run {
 	return parent
 }
 
-// RollUpSpend returns the parent after one subtask's cost projection.
 func RollUpSpend(parent, child Run, update SpendUpdate) Run {
 	spent, _, unknown := MergeSpend(child, update)
 	return addSubtaskCost(parent, child, spent, unknown)

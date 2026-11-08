@@ -44,7 +44,6 @@ type ChatOperation struct {
 	Result     map[string]any `json:"result,omitempty" firestore:"result,omitempty"`
 }
 
-// ChatSummary is one row of the conversation list.
 type ChatSummary struct {
 	ID         string    `json:"id" firestore:"id"`
 	Title      string    `json:"title" firestore:"title"`
@@ -53,7 +52,6 @@ type ChatSummary struct {
 	UpdatedAt  time.Time `json:"updatedAt" firestore:"updated_at"`
 }
 
-// ChatHeader is a conversation without its messages.
 type ChatHeader struct {
 	ID         string    `json:"id" firestore:"id"`
 	Title      string    `json:"title" firestore:"title"`
@@ -85,16 +83,13 @@ func (c Chat) Header() ChatHeader {
 	return ChatHeader{ID: c.ID, Title: c.Title, Mode: c.Mode, ActiveTurn: c.ActiveTurn, Position: c.Position, UpdatedAt: c.UpdatedAt}
 }
 
-// NeedsAttention is true while a turn is open or an attempted write has no recorded outcome.
 func (c Chat) NeedsAttention() bool {
 	if c.ActiveTurn != nil {
 		return true
 	}
 	for _, m := range c.Messages {
-		for _, op := range m.Operations {
-			if op.Action != nil && op.Outcome == "attempted" {
-				return true
-			}
+		if m.NeedsAttention() {
+			return true
 		}
 	}
 	return false
@@ -108,6 +103,7 @@ type ChatDatabase interface {
 	// ActiveChats returns chats with an open turn or an unresolved write.
 	ActiveChats(context.Context) ([]Chat, error)
 	Chat(context.Context, string) (Chat, error)
+	ChatMessage(ctx context.Context, id, messageID string) (ChatMessage, error)
 	// UpdateChat loads the latest page plus unresolved writes and explicitly requested message IDs.
 	UpdateChat(context.Context, string, func(*Chat) (string, error), ...string) (Chat, error)
 	ChatMessages(context.Context, string, int64) (ChatMessagePage, error)

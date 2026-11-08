@@ -79,7 +79,6 @@ Restart=no
 [Install]
 WantedBy=multi-user.target
 SERVICE
-# No fixture page, cookie, marker, or tool-persistence proof is baked in.
 chroot "$root" systemctl enable ssh systemd-networkd bot-browser
 chroot "$root" ssh-keygen -A
 chroot "$root" apt-get clean

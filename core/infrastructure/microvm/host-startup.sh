@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 exec > >(tee -a /var/log/nori-firecracker-smoke.log /dev/ttyS0) 2>&1
 trap 'status=$?; echo "NORI_FC_FAIL status=$status line=$LINENO"; exit "$status"' ERR
-mkdir /var/lib/nori-firecracker-smoke-started # Refuse a second host-startup run.
+mkdir /var/lib/nori-firecracker-smoke-started
 echo NORI_FC_BEGIN
 test "$(uname -m)" = x86_64
 modprobe kvm_intel
@@ -34,7 +34,6 @@ dpkg-query -W busybox-static
 file /bin/busybox | grep -E 'statically linked|static-pie linked'
 sha256sum /bin/busybox
 
-# Tiny distro-supplied static userspace, rather than a prebuilt third-party OS.
 mkdir -p rootfs/{bin,dev,proc,sys,tmp}
 cp /bin/busybox rootfs/bin/busybox
 ln -s busybox rootfs/bin/sh

@@ -12,8 +12,6 @@ import (
 func (r *Runner) Snapshot(ctx context.Context) (Session, error) { return r.SnapshotPage(ctx, "") }
 
 func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, error) {
-	// These projections are independent. Keep each read's result local until all
-	// finish so a slow history page does not serialize the other Firestore reads.
 	var native state.Session
 	var messages []Message
 	var next string
@@ -81,7 +79,7 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 		}
 		for i := range result.Messages {
 			for _, id := range a.InputIDs {
-				if result.Messages[i].ID == id+"-user" {
+				if result.Messages[i].ID == state.UserMessageID(id) {
 					result.Messages[i].TurnID = a.TurnID
 				}
 			}
@@ -95,8 +93,8 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 
 func conversationStatus(c state.ConversationControl, t *state.ConversationTurn) ConversationStatus {
 	status := ConversationStatus{
-		Introducing: c.Introducing, Pending: c.Received > c.Consumed, Processing: c.Active != "" && c.LeaseUntil.After(time.Now()),
-		Revision: c.Received, Consumed: c.Consumed, InputIDs: []string{}, RoutingBlocked: c.UserReceived > c.UserRouted,
+		Introducing: c.Introducing, Pending: c.Pending(), Processing: c.Processing(time.Now()),
+		Revision: c.Received, Consumed: c.Consumed, InputIDs: []string{}, RoutingBlocked: c.RoutingPending(),
 	}
 	if t != nil {
 		status.TurnID = t.ID
@@ -109,7 +107,6 @@ func conversationStatus(c state.ConversationControl, t *state.ConversationTurn) 
 	return status
 }
 
-// Presence is the small state the stream sends when the conversation or the pause changes.
 type Presence struct {
 	Conversation ConversationStatus `json:"conversation"`
 	Paused       bool               `json:"paused"`

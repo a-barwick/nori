@@ -6,22 +6,17 @@ import (
 	"time"
 )
 
-// State is the power state of a computer that a Host reports.
 type State int
 
 const (
-	// Stopped means the host has fully stopped. Nothing is running or flushing.
 	Stopped State = iota + 1
 	// Stopping means a stop is in progress. The guest may still be flushing to disk.
 	Stopping
-	// Starting means the computer is powering on or booting.
 	Starting
 	// Running means the computer is powered on. The guest RPC may not answer yet.
 	Running
 )
 
-// Host is what an adapter supplies when it can power the computer on and
-// observe its state. Managed turns a Host into a Provider.
 type Host interface {
 	// State reports the current power state. A state with no equivalent above,
 	// such as a suspended or repairing machine, is returned as an error and ends
@@ -30,9 +25,6 @@ type Host interface {
 	// Start powers on a Stopped computer. Starting one that another caller has
 	// already started is not an error.
 	Start(ctx context.Context) error
-	// Dial establishes the transport to the guest RPC of a Running computer.
-	// It does not check health. The transport must outlive ctx: it carries the
-	// client until the client is closed.
 	Dial(ctx context.Context) (Connection, error)
 }
 

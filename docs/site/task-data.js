@@ -14,7 +14,6 @@
   const CODE = { http: 'core/internal/api/http.go', state: 'core/internal/state/records/tasks.go', commands: 'core/internal/conversation/commands.go',
     call: 'core/internal/conversation/call.go', workflow: 'core/internal/task/workflow.go', steps: 'core/internal/agent/steps.go', events: 'core/internal/state/records/commands.go' };
 
-  // What the outer model sends, and what it gets back
   const toolFlow = (name, args, saved, note, rejected) => [
     { from: 'Outer model', to: 'Runtime', call: name, source: CODE.commands, note,
       response: { actions: [{ name, arguments: args }], text: '' } },
@@ -26,12 +25,10 @@
   const STALE = ['A rejection is saved as a command result, such as {"error": "question is no longer current"}. The turn itself doesn\'t fail.'];
   const NOT_OPEN = ['A rejection is saved as a command result, such as {"error": "task is not open"}. The turn itself doesn\'t fail.'];
 
-  // What a button in the task panel sends
   const panelFlow = (body, receipt, other) => ({ from: 'Browser', to: 'Go service', call: 'POST /api/command', source: CODE.http, request: body,
     response: { status: 202, body: receipt }, other });
   const COMMON = ['403 if the project is paused', '503 if it saved but the wake couldn\'t be confirmed. Retrying the same request is safe.'];
 
-  // The inbox record for each kind of event
   const event = (id, kind, sequence, fields, note) => [{ from: 'Task', to: 'Firestore', call: 'conversation_inputs/event-{id}', source: CODE.events, note,
     saved: { id: `event-${id}`, position: 14, created_at: TIME, event: { id, run_id: TASK, kind, sequence, instruction_revision: 2, ...fields, created_at: TIME } } }];
 
@@ -44,7 +41,6 @@
   ];
 
   window.FLOWS = {
-    // ---- Contract page: outer loop tools
     dispatch: toolFlow('dispatch', { request: REQUEST, for: null, question_id: null, attachments: [], revises: null }, command('start', { id: TASK, text: REQUEST, position: 1, revision: 1, source_input_ids: ['3f6c…'] }),
       'Every call in a response is validated before any is accepted, up to 16 calls.'),
     'tool-steer': toolFlow('steer', { run_id: TASK, text: 'After seven, please.', interrupt: false }, command('steer', { text: 'After seven, please.', revision: 2, source_input_ids: ['8d21…'] }),
@@ -55,14 +51,12 @@
       'Only when the user has said to keep going. It takes no text.', STALE),
     'tool-stop': toolFlow('stop', { run_id: TASK }, command('stop', { revision: 2 }), 'Other tasks carry on unchanged.', NOT_OPEN),
 
-    // ---- Contract page: inner loop control tool and events
     wait: askFlow,
     'event-needs_input': event(QUESTION_ID, 'needs_input', 1, { text: QUESTION, reason: 'input' }, 'A budget question looks the same, with its own ID such as …-budget-p3.'),
     'event-result': event(`${TASK}-terminal`, 'result', 2, { text: 'Saturday at 7:30 is open.', operation_refs: ['op-…'] }, 'A task has one final event, so its ID ends in -terminal.'),
     'event-failure': event(`${TASK}-terminal`, 'failure', 2, { reason: 'Model cost is unknown for a provider request; task stopped before further model calls.', operation_refs: ['op-…'] }, 'operation_refs lists what the task did before it failed.'),
     'event-stopped': event(`${TASK}-terminal`, 'stopped', 2, { reason: 'Stopped by the user.', operation_refs: ['op-…'] }, 'operation_refs lists effects that had already happened.'),
 
-    // ---- Task lifecycle page: commands
     start: [
       { from: 'Outer loop', to: 'Firestore', call: 'runs/{id}', source: CODE.state, note: 'This example starts from an outer-loop dispatch. The panel API has no start.',
         saved: run({ request: REQUEST, temporal: true, protocol_version: 2, workflow_version: 3, revision: 1, position: 1, started_at: TIME }) },
@@ -99,7 +93,6 @@
         saved: run({ status: 'cancelled', error: 'Stopped by the user.', cancel_requested: true, finished_at: TIME }) },
     ],
 
-    // ---- Task lifecycle page: moving between states
     'move-ask': askFlow,
     'move-budget': [
       { from: 'Workflow', to: 'Firestore', call: 'runs/{id}', source: CODE.workflow, note: 'The text is built from recorded facts, so asking costs no model call.',

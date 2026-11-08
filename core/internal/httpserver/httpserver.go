@@ -1,4 +1,3 @@
-// Package httpserver builds and runs the HTTP servers of Nori's processes.
 package httpserver
 
 import (
@@ -12,8 +11,6 @@ import (
 	"nori/internal/observability"
 )
 
-// New builds an HTTP server with Nori's request timeouts. Requests carry ctx,
-// so work they start is tied to the process, not to the client connection.
 func New(ctx context.Context, addr string, handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr: addr, Handler: observability.HTTPHandler(handler),
@@ -23,7 +20,6 @@ func New(ctx context.Context, addr string, handler http.Handler) *http.Server {
 	}
 }
 
-// Listen serves until ctx ends, then shuts down within the grace period.
 func Listen(ctx context.Context, server *http.Server, grace time.Duration) error {
 	serving := make(chan error, 1)
 	go func() { serving <- server.ListenAndServe() }()

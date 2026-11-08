@@ -30,7 +30,6 @@ const (
 	openAIModelName = "gpt-6.1-sol"
 )
 
-// OpenAIModel makes one Chat Completions request for a reply or independent command plan. It never executes a tool.
 type OpenAIModel struct {
 	name   string
 	key    string
@@ -123,7 +122,6 @@ func logRefusal(res *http.Response) {
 		h.Get("X-Ratelimit-Limit-Tokens"), h.Get("X-Ratelimit-Remaining-Tokens"), h.Get("X-Ratelimit-Reset-Tokens"))
 }
 
-// requestBody builds the Chat Completions request from the saved messages.
 func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span trace.Span) ([]byte, error) {
 	if m.name != openAIModelName {
 		return nil, errors.New("unsupported direct OpenAI conversation model")

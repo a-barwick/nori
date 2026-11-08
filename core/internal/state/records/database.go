@@ -10,7 +10,6 @@ import (
 	"nori/internal/users"
 )
 
-// Database implements state.Database using a transactional document backend.
 type Database struct {
 	db            *docstore.Client
 	taskBudgetUSD float64
@@ -19,22 +18,12 @@ type Database struct {
 
 var _ state.Database = (*Database)(nil)
 
-func New(backend docstore.Backend, taskBudgetUSD float64) *Database {
-	return &Database{db: docstore.New(backend), taskBudgetUSD: taskBudgetUSD}
+func New(backend docstore.Backend, user users.User, taskBudgetUSD float64) *Database {
+	return &Database{db: docstore.New(backend), user: user, taskBudgetUSD: taskBudgetUSD}
 }
 
 func (d *Database) Close() error { return d.db.Close() }
 
-// ForUser returns an immutable scope. Every document operation uses this receiver's user.
-// The returned scope borrows the client; only its owner closes it.
-func (d *Database) ForUser(user users.User) (*Database, error) {
-	if err := user.Validate(); err != nil {
-		return nil, err
-	}
-	scoped := *d
-	scoped.user = user
-	return &scoped, nil
-}
 func (d *Database) root() *docstore.DocumentRef {
 	if !users.ValidID(d.user.ID) {
 		panic("document store requires a user scope")
@@ -45,7 +34,9 @@ func (d *Database) runs() *docstore.CollectionRef     { return d.root().Collecti
 func (d *Database) messages() *docstore.CollectionRef { return d.root().Collection("messages") }
 func (d *Database) commands() *docstore.CollectionRef { return d.root().Collection("task_commands") }
 func (d *Database) usage() *docstore.CollectionRef    { return d.root().Collection("model_usage") }
-func (d *Database) control() *docstore.DocumentRef    { return d.db.Collection("system").Doc("control") }
+func controlDoc(db *docstore.Client) *docstore.DocumentRef {
+	return db.Collection("system").Doc("control")
+}
 func (d *Database) conversation() *docstore.DocumentRef {
 	return d.root().Collection("conversation").Doc("control")
 }
@@ -62,7 +53,6 @@ func (d *Database) conversationAttempts() *docstore.CollectionRef {
 func notFound(err error) bool { return errors.Is(err, docstore.ErrNotFound) }
 func isDone(err error) bool   { return errors.Is(err, docstore.Done) }
 
-// decodeRun maps a missing document to state.ErrNotFound.
 func decodeRun(doc *docstore.DocumentSnapshot, err error) (state.Run, error) {
 	if notFound(err) {
 		return state.Run{}, state.ErrNotFound
@@ -75,7 +65,6 @@ func decodeRun(doc *docstore.DocumentSnapshot, err error) (state.Run, error) {
 	return run, err
 }
 
-// documents decodes every remaining document of iter as T.
 func documents[T any](iter *docstore.DocumentIterator) ([]T, error) {
 	defer iter.Stop()
 	records := []T{}
@@ -111,7 +100,11 @@ func (d *Database) readConversation(tx *docstore.Transaction) (state.Conversatio
 }
 
 func (d *Database) Control(ctx context.Context) (state.Control, error) {
-	doc, err := d.control().Get(ctx)
+	return readControl(ctx, controlDoc(d.db))
+}
+
+func readControl(ctx context.Context, ref *docstore.DocumentRef) (state.Control, error) {
+	doc, err := ref.Get(ctx)
 	if err != nil {
 		return state.Control{}, err
 	}

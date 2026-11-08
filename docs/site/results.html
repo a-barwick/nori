@@ -35,7 +35,7 @@
 <div class="node computer"><b>Computer</b><small>Shell commands read PDFs and CSVs there, away from the worker's credentials.</small></div>
 </div></div>
 <p>A CSV must have a .csv name and UTF-8 text without NUL bytes. The upload check does not parse its rows.</p>
-<p>Both prompts mark file contents and names as untrusted data. Approvals still guard calendar and email writes. Shell has public internet, and only the prompt's instruction to treat a file as data guards against a hidden instruction there.</p></section>
+<p>Both prompts mark file contents and names as untrusted data. Shell has public internet, and only the prompt's instruction to treat a file as data guards against a hidden instruction there.</p></section>
 <section><h2>Where things live</h2>
 <div class="card"><table class="tall"><tr><th>Thing</th><th>Where</th></tr>
 <tr><td>Metadata and links</td><td>Firestore</td></tr><tr><td>Screenshots, attached files and saved files</td><td>Cloud Storage, in a private folder only the runtime can read</td></tr><tr><td>Task run history in Temporal</td><td>References only</td></tr><tr><td>Working files</td><td>The disk of Nori's Linux computer</td></tr></table>

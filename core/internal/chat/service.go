@@ -1,11 +1,7 @@
-// Package chat runs durable foreground turns alongside the existing assistant.
 package chat
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
@@ -18,6 +14,7 @@ import (
 	"nori/internal/conversation"
 	"nori/internal/prompts"
 	"nori/internal/state"
+	"nori/internal/usage"
 )
 
 const (
@@ -28,22 +25,31 @@ const (
 	maxSteps     = 8
 )
 
-type run struct {
-	turn   string
-	cancel context.CancelFunc
+type chatTurn struct{ chatID, turnID string }
+
+type Store interface {
+	state.ChatDatabase
+	state.Artifacts
+	usage.Meter
 }
 
 type Service struct {
-	Store   state.ConversationStore
-	Model   conversation.ReplyModel
-	Tools   *agent.Service
-	owner   string
-	mu      sync.Mutex
-	running map[string]run
+	Store     Store
+	model     conversation.ReplyModel
+	userFacts string
+	owner     string
+	mu        sync.Mutex
+	running   map[chatTurn]context.CancelFunc
+	runEnded  chan struct{}
+	closed    bool
+	wg        sync.WaitGroup
 }
 
-func New(store state.ConversationStore, model conversation.ReplyModel, tools *agent.Service) *Service {
-	return &Service{Store: store, Model: model, Tools: tools, owner: uuid.NewString(), running: map[string]run{}}
+func New(store Store, model conversation.ReplyModel, userFacts string) *Service {
+	return &Service{
+		Store: store, model: model, userFacts: userFacts, owner: uuid.NewString(),
+		running: map[chatTurn]context.CancelFunc{}, runEnded: make(chan struct{}),
+	}
 }
 
 func (s *Service) Create(ctx context.Context, title string) (state.Chat, error) {
@@ -58,7 +64,6 @@ func (s *Service) List(ctx context.Context) ([]state.ChatSummary, error) {
 	return s.Store.ChatSummaries(ctx)
 }
 
-// Delete removes an idle chat, its history and its files.
 func (s *Service) Delete(ctx context.Context, id string) error {
 	uploads, err := s.Store.DeleteChat(ctx, id)
 	for _, upload := range uploads {
@@ -79,8 +84,9 @@ func (s *Service) Accept(ctx context.Context, id, input, text string, attachment
 		assigned = append(assigned, u.Attachment)
 	}
 	return s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
+		userMessageID := state.UserMessageID(input)
 		for _, m := range c.Messages {
-			if m.ID == input+"-user" {
+			if m.ID == userMessageID {
 				if m.Text != text || !slices.Equal(m.Attachments, assigned) {
 					return "", state.ErrMessageConflict
 				}
@@ -102,14 +108,12 @@ func (s *Service) Accept(ctx context.Context, id, input, text string, attachment
 		c.ActiveTurn = &input
 		c.Started = ""
 		c.LeaseUntil = time.Time{}
-		c.Messages = append(c.Messages, state.ChatMessage{ID: input + "-user", Role: "user", Text: text, Status: "completed", Attachments: assigned}, state.ChatMessage{ID: input + "-assistant", Role: "assistant", Status: "streaming"})
+		c.Messages = append(c.Messages, state.ChatMessage{ID: userMessageID, Role: "user", Text: text, Status: "completed", Attachments: assigned}, state.ChatMessage{ID: state.AssistantMessageID(input), Role: "assistant", Status: "streaming"})
 		return "input.accepted", nil
-	}, input+"-user")
+	}, state.UserMessageID(input))
 }
 
-// Tick recovers durable accepted work even when the browser and request disappear.
-// Its lease fences concurrent service processes.
-func (s *Service) Tick(ctx context.Context) error {
+func (s *Service) scan(ctx context.Context) error {
 	chats, err := s.Store.ActiveChats(ctx)
 	if err != nil {
 		return err
@@ -125,46 +129,50 @@ func (s *Service) Tick(ctx context.Context) error {
 func (s *Service) launch(parent context.Context, id, turn string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if r, ok := s.running[id]; ok && r.turn == turn {
+	if s.closed {
+		return
+	}
+	key := chatTurn{id, turn}
+	if _, exists := s.running[key]; exists {
 		return
 	}
 	ctx, cancel := context.WithCancel(parent)
-	s.running[id] = run{turn: turn, cancel: cancel}
+	s.running[key] = cancel
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		defer func() {
 			cancel()
 			s.mu.Lock()
-			if s.running[id].turn == turn {
-				delete(s.running, id)
-			}
+			delete(s.running, key)
+			close(s.runEnded)
+			s.runEnded = make(chan struct{})
 			s.mu.Unlock()
 		}()
 		s.run(ctx, id, turn)
 	}()
 }
 
-// stop cancels the local run of one turn.
 func (s *Service) stop(id, turn string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if r, ok := s.running[id]; ok && r.turn == turn {
-		r.cancel()
+	if cancel := s.running[chatTurn{id, turn}]; cancel != nil {
+		cancel()
 	}
 }
 
 // Process runs the hosted wake. It returns ErrConversationBusy while any turn
 // still needs work, so the durable queue retries the wake.
 func (s *Service) Process(ctx context.Context) error {
-	if err := s.Tick(ctx); err != nil {
+	if err := s.scan(ctx); err != nil {
 		return err
 	}
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
 	scan := time.NewTicker(time.Second)
 	defer scan.Stop()
 	for {
 		s.mu.Lock()
 		n := len(s.running)
+		runEnded := s.runEnded
 		s.mu.Unlock()
 		if n == 0 {
 			chats, err := s.Store.ActiveChats(ctx)
@@ -182,25 +190,45 @@ func (s *Service) Process(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-scan.C:
-			if err := s.Tick(ctx); err != nil {
+			if err := s.scan(ctx); err != nil {
 				return err
 			}
-		case <-ticker.C:
+		case <-runEnded:
 		}
 	}
 }
 
 func (s *Service) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, r := range s.running {
-		r.cancel()
+	s.closed = true
+	for _, cancel := range s.running {
+		cancel()
 	}
+	s.mu.Unlock()
+	// Detached usage recording can still be using the store.
+	s.wg.Wait()
 }
 
-// owns reports whether this process still holds the turn's lease.
 func (s *Service) owns(c *state.Chat, turn string) bool {
 	return c.ActiveTurn != nil && *c.ActiveTurn == turn && c.Started == s.owner && c.LeaseUntil.After(time.Now())
+}
+
+func replyMessage(c *state.Chat, turn string) (*state.ChatMessage, error) {
+	id := state.AssistantMessageID(turn)
+	for i := len(c.Messages) - 1; i >= 0; i-- {
+		if c.Messages[i].ID == id {
+			return &c.Messages[i], nil
+		}
+	}
+	return nil, state.ErrNotFound
+}
+
+func endTurn(c *state.Chat, reply *state.ChatMessage, status string) string {
+	reply.Status = status
+	c.ActiveTurn = nil
+	c.Started = ""
+	c.LeaseUntil = time.Time{}
+	return "turn." + status
 }
 
 func (s *Service) update(ctx context.Context, id, turn, kind string, f func(*state.ChatMessage)) (state.Chat, error) {
@@ -208,7 +236,11 @@ func (s *Service) update(ctx context.Context, id, turn, kind string, f func(*sta
 		if !s.owns(c, turn) {
 			return "", state.ErrCancelled
 		}
-		f(&c.Messages[len(c.Messages)-1])
+		reply, err := replyMessage(c, turn)
+		if err != nil {
+			return "", err
+		}
+		f(reply)
 		c.LeaseUntil = time.Now().Add(turnLease)
 		return kind, nil
 	})
@@ -221,15 +253,14 @@ func (s *Service) finish(id, turn, status string) {
 		if !s.owns(c, turn) {
 			return "", nil
 		}
-		m := &c.Messages[len(c.Messages)-1]
-		m.Status = status
+		m, err := replyMessage(c, turn)
+		if err != nil {
+			return "", err
+		}
 		if status == "failed" && m.Text == "" {
 			m.Text = prompts.Runtime("chat-interrupted", nil)
 		}
-		c.ActiveTurn = nil
-		c.Started = ""
-		c.LeaseUntil = time.Time{}
-		return "turn." + status, nil
+		return endTurn(c, m, status), nil
 	})
 	if err != nil {
 		log.Printf("chat %s: saving the %s status of turn %s failed: %v", id, status, turn, err)
@@ -239,45 +270,39 @@ func (s *Service) finish(id, turn, status string) {
 func (s *Service) Cancel(ctx context.Context, id, turn string) (state.Chat, error) {
 	c, err := s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
 		if c.ActiveTurn == nil {
-			for _, m := range c.Messages {
-				if m.ID == turn+"-assistant" {
-					return "", nil
-				}
-			}
-			return "", state.ErrNotFound
+			_, err := replyMessage(c, turn)
+			return "", err
 		}
 		if *c.ActiveTurn != turn {
 			return "", state.ErrQuestionStale
 		}
-		m := &c.Messages[len(c.Messages)-1]
-		m.Status = "cancelled"
-		c.ActiveTurn = nil
-		c.Started = ""
-		c.LeaseUntil = time.Time{}
-		return "turn.cancelled", nil
-	}, turn+"-assistant")
+		m, err := replyMessage(c, turn)
+		if err != nil {
+			return "", err
+		}
+		return endTurn(c, m, "cancelled"), nil
+	}, state.AssistantMessageID(turn))
 	if err == nil {
 		s.stop(id, turn)
 	}
 	return c, err
 }
 
-// claim takes the turn's lease.
 func (s *Service) claim(ctx context.Context, id, turn string) (state.Chat, error) {
 	return s.Store.UpdateChat(ctx, id, func(c *state.Chat) (string, error) {
 		if c.ActiveTurn == nil || *c.ActiveTurn != turn {
 			return "", state.ErrCancelled
 		}
-		m := &c.Messages[len(c.Messages)-1]
+		m, err := replyMessage(c, turn)
+		if err != nil {
+			return "", err
+		}
 		if c.Started != "" {
 			if c.LeaseUntil.After(time.Now()) {
 				return "", state.ErrConversationBusy
 			}
 			// Another process started this reply and stopped. Its provider call is never repeated.
-			m.Status = "failed"
-			c.ActiveTurn = nil
-			c.Started = ""
-			return "turn.failed", nil
+			return endTurn(c, m, "failed"), nil
 		}
 		c.Started = s.owner
 		c.LeaseUntil = time.Now().Add(turnLease)
@@ -319,17 +344,15 @@ func (s *Service) run(ctx context.Context, id, turn string) {
 	s.finish(id, turn, "failed")
 }
 
-// heartbeat renews the turn's lease and stops the local run when another process
-// cancelled or took the turn. The returned function ends it.
 func (s *Service) heartbeat(ctx context.Context, id, turn string) func() {
-	stopped := make(chan struct{})
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-stopped:
-				return
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
@@ -340,7 +363,7 @@ func (s *Service) heartbeat(ctx context.Context, id, turn string) func() {
 			}
 		}
 	}()
-	return func() { close(stopped) }
+	return func() { cancel(); <-done }
 }
 
 func raw(role string, content any) json.RawMessage {
@@ -357,7 +380,7 @@ func history(c state.Chat, turn string) []json.RawMessage {
 	total := 0
 	for i := len(c.Messages) - 1; i >= 0 && len(groups) < historyMessages; i-- {
 		m := c.Messages[i]
-		if m.ID == turn+"-assistant" {
+		if m.ID == state.AssistantMessageID(turn) {
 			continue
 		}
 		group := []json.RawMessage{}
@@ -389,12 +412,10 @@ func history(c state.Chat, turn string) []json.RawMessage {
 	return messages
 }
 
-// respond makes one model call. Streamed text is saved at most every persistEvery;
-// the final text is saved by the caller.
 func (s *Service) respond(ctx context.Context, id, turn string, messages []json.RawMessage) (conversation.Reply, error) {
 	saved := time.Time{}
-	messages = append(append([]json.RawMessage{}, messages...), raw("system", "User details (data): "+s.Tools.UserFacts))
-	request := conversation.ReplyRequest{Messages: messages, NoDispatch: true, Foreground: true, Tools: toolSchemas(), Stream: func(text string) error {
+	messages = append(append([]json.RawMessage{}, messages...), raw("system", "User details (data): "+s.userFacts))
+	request := conversation.ReplyRequest{Messages: messages, NoDispatch: true, Foreground: true, Tools: uploadToolSchema, Stream: func(text string) error {
 		if time.Since(saved) < persistEvery {
 			return ctx.Err()
 		}
@@ -415,7 +436,7 @@ func (s *Service) respond(ctx context.Context, id, turn string, messages []json.
 		u.InputID = turn
 		return s.Store.RecordUsage(callctx, u)
 	}
-	reply, err := s.Model.Respond(ctx, request)
+	reply, err := s.model.Respond(ctx, request)
 	if reply.Usage.ID != "" && reply.Usage.RequestStatus != "not_sent" {
 		// The final usage must outlive a cancellation, including unknown costs.
 		save, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -426,8 +447,6 @@ func (s *Service) respond(ctx context.Context, id, turn string, messages []json.
 	return reply, err
 }
 
-// call runs one tool request. It returns the evidence for the next model step, or
-// false when the turn ended.
 func (s *Service) call(ctx context.Context, id, turn string, call conversation.ToolCall) (string, bool) {
 	var args map[string]any
 	if json.Unmarshal([]byte(call.Function.Arguments), &args) != nil || call.Function.Name != "upload_read" {
@@ -454,7 +473,6 @@ func (s *Service) call(ctx context.Context, id, turn string, call conversation.T
 	return prompts.Runtime("chat-tool-evidence", nil) + string(result), true
 }
 
-// readUpload reads only files assigned in this chat.
 func (s *Service) readUpload(ctx context.Context, id string, args map[string]any) (map[string]any, error) {
 	upload, _ := args["upload_id"].(string)
 	u, err := s.Store.ChatUpload(ctx, id, upload)
@@ -484,23 +502,8 @@ func (s *Service) SaveUpload(ctx context.Context, id, upload, name, declared str
 	if _, err := s.Store.Chat(ctx, id); err != nil {
 		return state.Upload{}, err
 	}
-	name = state.CleanUploadName(name)
-	kind, err := state.SniffUpload(name, declared, data)
+	u, err := state.SaveUploadBytes(ctx, s.Store, uploadKey(id, upload), upload, name, declared, data)
 	if err != nil {
-		return state.Upload{}, err
-	}
-	sum := sha256.Sum256(data)
-	u := state.Upload{Attachment: state.Attachment{ID: upload, Name: name, MediaType: kind, Size: int64(len(data))}, SHA256: hex.EncodeToString(sum[:]), CreatedAt: time.Now().UTC()}
-	err = s.Store.PutFile(ctx, uploadKey(id, upload), kind, data)
-	if errors.Is(err, state.ErrFileExists) {
-		saved, e := s.Store.GetFile(ctx, uploadKey(id, upload))
-		if e != nil {
-			return u, e
-		}
-		if !bytes.Equal(saved, data) {
-			return u, state.ErrDuplicate
-		}
-	} else if err != nil {
 		return u, err
 	}
 	return s.Store.CreateChatUpload(ctx, id, u)
@@ -515,19 +518,4 @@ func (s *Service) ReadUpload(ctx context.Context, id, upload string) (state.Uplo
 	return u, data, err
 }
 
-func toolSchemas() json.RawMessage {
-	// Same argument names and validation as the shared worker tool implementations.
-	schemas := []any{}
-	for _, t := range []struct {
-		Name string
-		Keys []string
-	}{{"upload_read", []string{"upload_id"}}} {
-		props := map[string]any{}
-		for _, key := range t.Keys {
-			props[key] = map[string]any{"type": "string"}
-		}
-		schemas = append(schemas, map[string]any{"type": "function", "function": map[string]any{"name": t.Name, "parameters": map[string]any{"type": "object", "properties": props, "required": t.Keys, "additionalProperties": false}}})
-	}
-	b, _ := json.Marshal(schemas)
-	return b
-}
+var uploadToolSchema = json.RawMessage(`[{"type":"function","function":{"name":"upload_read","parameters":{"type":"object","properties":{"upload_id":{"type":"string"}},"required":["upload_id"],"additionalProperties":false}}}]`)

@@ -15,8 +15,7 @@ const (
 	MaxCompletionChecks    = 512
 	MaxEvidenceRecordBytes = 128 << 10
 	MaxEvidenceReferences  = 256
-	// MaxSourceInputs bounds the exact conversation inputs one task cites.
-	MaxSourceInputs = 512
+	MaxSourceInputs        = 512
 )
 
 type OperationRecord struct {
@@ -29,13 +28,11 @@ type OperationRecord struct {
 	Revision    int64    `json:"revision" firestore:"revision"`
 	Attempt     int      `json:"attempt" firestore:"attempt"`
 	ArtifactIDs []string `json:"artifact_ids" firestore:"artifact_ids"`
-	// Action holds the exact write the runtime will send.
-	Action *Action `json:"action,omitempty" firestore:"action,omitempty"`
+	Action      *Action  `json:"action,omitempty" firestore:"action,omitempty"`
 	// Cleared says why a failed or uncertain operation no longer blocks later ones. The outcome and result stay as saved.
 	Cleared string `json:"cleared,omitempty" firestore:"cleared,omitempty"`
 }
 
-// Reasons an operation is cleared.
 const (
 	// ClearedDidNotRun is a command that never started.
 	ClearedDidNotRun = "did_not_run"
@@ -65,7 +62,6 @@ type CompletionCheck struct {
 	Proposal CompletionProposal `json:"proposal" firestore:"proposal"`
 }
 
-// ValidEvidenceID reports whether id is safe to use as a task, operation or input identifier.
 func ValidEvidenceID(id string) bool {
 	return id != "" && len(id) <= 256 && id != "." && id != ".." && !strings.ContainsAny(id, "/\\\x00")
 }
@@ -122,7 +118,6 @@ func validOperation(op OperationRecord) bool {
 	}
 }
 
-// CheckEvidenceCount rejects a saved counter that cannot be right.
 func CheckEvidenceCount(count int64) error {
 	if count < 0 {
 		return errors.New("invalid task evidence count")
@@ -195,9 +190,7 @@ func LateWriteEvent(run Run, saved *SavedOperation, op OperationRecord, now time
 	}, true
 }
 
-// OperationWrite says how an operation record is saved.
 type OperationWrite struct {
-	// Noop is set when the exact record was already saved.
 	Noop bool
 	// NewRecord is set when this is the first evidence for the operation, so it counts toward the task's cap.
 	NewRecord bool
@@ -232,7 +225,6 @@ func PlanOperation(saved *SavedOperation, op OperationRecord) (OperationWrite, e
 	if old.Cleared != "" && old.Cleared != op.Cleared {
 		return OperationWrite{}, errors.New("operation evidence identity conflict")
 	}
-	// Clearing adds one field to a settled record and changes nothing else on it.
 	if old.Cleared == "" && op.Cleared != "" && old.Outcome == op.Outcome && (op.Outcome == "failed" || op.Outcome == "uncertain") {
 		cleared := old
 		cleared.Cleared = op.Cleared
@@ -308,7 +300,6 @@ func CheckCompletionIdentity(saved, check CompletionCheck) error {
 	return errors.New("completion check identity conflict")
 }
 
-// SourceInputIDs lists the conversation inputs that a task's commands cite, without repeats.
 func SourceInputIDs(commands []Command) ([]string, error) {
 	seen := map[string]bool{}
 	ids := []string{}
@@ -330,13 +321,11 @@ func SourceInputIDs(commands []Command) ([]string, error) {
 	return ids, nil
 }
 
-// SourceInputs collects the exact user inputs a task cites.
 type SourceInputs struct {
 	inputs []ConversationInput
 	total  int
 }
 
-// Add takes one saved input. documentID is the ID of the document it was read from.
 func (s *SourceInputs) Add(documentID string, input ConversationInput) error {
 	if input.ID != documentID || !input.IsUser() {
 		return errors.New("invalid saved task source input")
@@ -349,7 +338,6 @@ func (s *SourceInputs) Add(documentID string, input ConversationInput) error {
 	return nil
 }
 
-// Inputs returns the collected inputs in conversation order.
 func (s *SourceInputs) Inputs() []ConversationInput {
 	inputs := append([]ConversationInput{}, s.inputs...)
 	sort.Slice(inputs, func(i, j int) bool {
@@ -398,7 +386,6 @@ func LastProposal(checks []CompletionCheck) (last CompletionCheck, ok bool) {
 	return last, true
 }
 
-// NewTaskOutcome starts the outcome for a proposal with its unmet items, bounded.
 func NewTaskOutcome(proposal CompletionCheck) TaskOutcome {
 	outcome := TaskOutcome{Unmet: proposal.Proposal.Unmet}
 	if len(outcome.Unmet) > maxOutcomeUnmet {
@@ -427,7 +414,6 @@ func CitedOperations(proposal CompletionCheck, ops []OperationRecord) []Operatio
 	return found
 }
 
-// FitEvidence shares the evidence byte bound equally among the cited results.
 func (o *TaskOutcome) FitEvidence() {
 	if len(o.Evidence) == 0 {
 		return

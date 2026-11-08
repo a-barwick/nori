@@ -28,7 +28,6 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	platform.Configure(s)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	stopTelemetry := observability.Init(ctx, "nori-worker", s)

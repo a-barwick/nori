@@ -30,7 +30,6 @@ export function rejectionHeaders(headers: Headers): Record<string, string> {
     "X-Nori-Rejection-Source": headers.get("x-nori-rejection-source") === "runtime" ? "runtime" : "upstream",
   };
   const retry = headers.get("retry-after") ?? "";
-  // Only bounded delay-seconds, never arbitrary header text.
   if (/^\d{1,6}$/.test(retry)) safe["Retry-After"] = retry;
   return safe;
 }

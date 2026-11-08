@@ -17,13 +17,10 @@ type ReplyModel interface {
 	Respond(ctx context.Context, request ReplyRequest) (Reply, error)
 }
 
-// ReplyRequest is everything one turn gives the model. The runner builds a fresh request for each call, so adapters
-// hold no per-call state.
 type ReplyRequest struct {
 	Messages []json.RawMessage
 	// Stream receives cumulative visible text; returning an error stops provider I/O.
-	Stream func(string) error
-	// Tools are server-selected foreground tool schemas.
+	Stream     func(string) error
 	Tools      json.RawMessage
 	Foreground bool
 	// CommandPlan independently plans dispatch/steer from user-authored context only.
@@ -42,7 +39,6 @@ type ReplyRequest struct {
 	RecordUsage func(context.Context, state.Usage) error
 }
 
-// WorkRequest is one task's open request_work question.
 type WorkRequest struct{ TaskID, QuestionID string }
 
 type ToolCall struct {

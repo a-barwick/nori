@@ -37,20 +37,9 @@ func proposal(call transcript.ToolCall) state.CompletionProposal {
 // CheckCompletion preserves instruction ordering and reports unresolved operations without
 // sending the model through a correction loop or asking the user to repair bookkeeping.
 func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (out CompletionOutcome, err error) {
-	if a.Resolve != nil {
-		scoped, scopeErr := a.Resolve(ctx)
-		if scopeErr != nil {
-			return CompletionOutcome{}, scopeErr
-		}
-		return scoped.CheckCompletion(ctx, in)
-	}
 	ctx, span := startActivity(ctx, "task.completion.check", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.completion.check"); span.End() }()
 	out.Ref = in.Ref
-	store, e := a.evidence()
-	if e != nil {
-		return out, classified(e)
-	}
 	messages, e := a.history(ctx, in.RunID, in.Ref)
 	if e != nil {
 		return out, classified(e)
@@ -72,7 +61,7 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 		out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{result})
 		return out, classified(e)
 	}
-	ops, e := store.Operations(ctx, in.RunID)
+	ops, e := a.Store.Operations(ctx, in.RunID)
 	if e != nil {
 		return out, classified(e)
 	}
@@ -83,7 +72,7 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 			check.Proposal.Unmet = append(check.Proposal.Unmet, prompts.Runtime("operation-unresolved", map[string]any{"Name": op.Name}))
 		}
 	}
-	if e = store.PutCompletionCheck(ctx, in.RunID, check); e != nil {
+	if e = a.Store.PutCompletionCheck(ctx, in.RunID, check); e != nil {
 		return out, classified(e)
 	}
 	out.Action = "publish"

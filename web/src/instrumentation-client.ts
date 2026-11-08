@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { beforeBreadcrumb, beforeSend, beforeSendLog, beforeSendMetric, beforeSendSpan, dataCollection, protectEnvelopeHeaders, sampleRate, sampler } from "@/lib/observability/privacy";
+import { ignoredRequestSpans, privacyOptions, protectEnvelopeHeaders } from "@/lib/observability/privacy";
 
 type BrowserConfig = { dsn?: string; environment?: string; release?: string; tracesSampleRate?: string };
 
@@ -56,14 +56,12 @@ async function initialize() {
       // The owner-protected first-party tunnel needs the app's IAP cookie.
       // Its route forwards only the envelope, never these request headers.
       transportOptions: { fetchOptions: { credentials: "same-origin" } },
-      dataCollection,
-      tracesSampler: sampler(sampleRate(config.tracesSampleRate)),
+      ...privacyOptions(config.tracesSampleRate),
       // Turn requests carry the explicit submit span. Automatic propagation
       // would otherwise attach baggage from a different active browser span.
       tracePropagationTargets: [/^\/api\/(?:agent\/)?(?:input|cancel|command|artifact|trace)$/],
       propagateTraceparent: true,
-      ignoreSpans: [/\/api\/(?:agent\/)?(?:health|session|observability)(?:[/?#\s]|$)/],
-      beforeBreadcrumb, beforeSend, beforeSendSpan, beforeSendLog, beforeSendMetric,
+      ignoreSpans: ignoredRequestSpans,
     });
     protectEnvelopeHeaders(client);
     initialized = !!client;

@@ -44,8 +44,6 @@ locals {
     ARIZE_OTLP_ENDPOINT        = var.observability.arize_endpoint
     NORI_ARIZE_CAPTURE_CONTENT = tostring(var.observability.arize_capture_content)
   }) : {}
-  # Agent Runtime rejects environment entries with an empty value. Omit
-  # optional settings so the SDK can use its own defaults.
   telemetry_env = { for name, value in local.telemetry_env_values : name => value if value != "" }
 }
 

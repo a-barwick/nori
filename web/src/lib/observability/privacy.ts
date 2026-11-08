@@ -55,7 +55,7 @@ export function protectEnvelopeHeaders(client: Client | undefined) {
 }
 
 // SDK 11 collects these categories by default, even without sendDefaultPii.
-export const dataCollection = {
+const dataCollection = {
   userInfo: false,
   cookies: false,
   httpHeaders: false,
@@ -91,13 +91,13 @@ const safeAttributes = (attributes: Record<string, unknown> = {}) => {
   return safe;
 };
 
-export function sampleRate(value?: string): number {
+function sampleRate(value?: string): number {
   if (!value?.trim()) return 0.05;
   const rate = Number(value);
   return Number.isFinite(rate) && rate >= 0 && rate <= 1 ? rate : 0.05;
 }
 
-export function sampler(rate: number) {
+function sampler(rate: number) {
   return (context: SamplingContext) => {
     const candidates = [context.normalizedRequest?.url, context.name,
       context.attributes["http.target"], context.attributes["url.path"], context.attributes["url.full"]];
@@ -106,12 +106,12 @@ export function sampler(rate: number) {
   };
 }
 
-export function beforeBreadcrumb(crumb: Breadcrumb): Breadcrumb | null {
+function beforeBreadcrumb(crumb: Breadcrumb): Breadcrumb | null {
   if (crumb.category !== "nori" || !["turn submitted", "reply received"].includes(crumb.message ?? "")) return null;
   return { category: "nori", message: crumb.message, timestamp: crumb.timestamp, level: crumb.level };
 }
 
-export function beforeSend(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
+function beforeSend(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
   if (!allow("errors", 50)) return null;
   // Exceptions can contain arbitrary server responses or user content. Preserve
   // the stack for diagnosis, but never send exception text or request details.
@@ -177,7 +177,7 @@ function safeSpanName(name: string): string {
   return "operation";
 }
 
-export function beforeSendSpan(span: StreamedSpan): StreamedSpan {
+function beforeSendSpan(span: StreamedSpan): StreamedSpan {
   const attrs: Record<string, unknown> = {};
   const options = getClient()?.getOptions();
   for (const [key, value] of Object.entries(span.attributes)) {
@@ -196,13 +196,22 @@ export function beforeSendSpan(span: StreamedSpan): StreamedSpan {
   return { ...span, name: safeSpanName(span.name), attributes: attrs, links: undefined };
 }
 
-export function beforeSendLog(log: Log): Log | null {
+function beforeSendLog(log: Log): Log | null {
   if (log.message !== "nori.runtime.unavailable" && log.message !== "nori.runtime.server_error") return null;
   if (!allow("logs", 100)) return null;
   return { ...log, attributes: safeAttributes(log.attributes) };
 }
 
-export function beforeSendMetric(metric: Metric): Metric | null {
+function beforeSendMetric(metric: Metric): Metric | null {
   if (!["nori.submit_to_reply", "nori.submit_to_terminal", "nori.submissions", "nori.reply.outcomes"].includes(metric.name) || !allow("metrics", 200)) return null;
   return { ...metric, attributes: safeAttributes(metric.attributes) };
+}
+
+export const ignoredRequestSpans = [/\/api\/(?:agent\/)?(?:health|session|observability)(?:[/?#\s]|$)/];
+
+export function privacyOptions(rate?: string) {
+  return {
+    dataCollection, tracesSampler: sampler(sampleRate(rate)),
+    beforeBreadcrumb, beforeSend, beforeSendSpan, beforeSendLog, beforeSendMetric,
+  };
 }

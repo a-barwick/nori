@@ -1,6 +1,3 @@
-// Package local reaches a computer RPC that is already listening on a loopback
-// address, such as cmd/computer-agent on a development machine. Nothing is
-// started, stopped or tunnelled.
 package local
 
 import (
@@ -21,7 +18,6 @@ func New(address string) computer.Provider { return provider{address} }
 
 type provider struct{ address string }
 
-// Open and Attach are the same: there is no power state to change.
 func (p provider) Open(ctx context.Context, run string) (*computer.Client, error) {
 	return connect(ctx, p.address, run)
 }
@@ -30,7 +26,6 @@ func (p provider) Attach(ctx context.Context, run string) (*computer.Client, err
 	return connect(ctx, p.address, run)
 }
 
-// Validate checks the configured origin without probing or starting the computer.
 func Validate(address string) error {
 	_, err := origin(address)
 	return err

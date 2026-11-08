@@ -9,14 +9,6 @@ import (
 	"nori/internal/state/docstore"
 )
 
-func (d *Database) Accept(ctx context.Context, cmd state.Command) (state.Run, error) {
-	receipts, err := d.AcceptCommandBatch(ctx, []state.Command{cmd}, nil)
-	if err != nil {
-		return state.Run{}, err
-	}
-	return receipts[0].Run, nil
-}
-
 // OpenTasks is operational state, independent of the bounded UI projection.
 func (d *Database) OpenTasks(ctx context.Context) ([]state.Run, error) {
 	return documents[state.Run](d.runs().Where("status", "==", "running").Documents(ctx))
@@ -86,7 +78,7 @@ func (d *Database) guard(tx *docstore.Transaction, runID string, revision int64)
 	if err = state.GuardRun(run, revision); err != nil {
 		return run, err
 	}
-	doc, err := tx.Get(d.control())
+	doc, err := tx.Get(controlDoc(d.db))
 	if err != nil {
 		return run, err
 	}
@@ -136,7 +128,6 @@ func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error 
 		if err = log.add(state.EventTask, req.RunID); err != nil {
 			return err
 		}
-		// A new projection supersedes the last job progress line.
 		return tx.Update(d.runs().Doc(req.RunID), []docstore.Update{
 			{Path: "waiting", Value: waiting}, {Path: "progress", Value: ""}, {Path: "events", Value: docstore.ArrayUnion(event)},
 		})
@@ -340,7 +331,6 @@ func (d *Database) publishReads(tx *docstore.Transaction, runID string, run stat
 	return in, nil
 }
 
-// stopSubtasks stops the running subtasks of a task that ended.
 func (d *Database) stopSubtasks(tx *docstore.Transaction, log *eventLog, children map[string]state.Run, runID string, now time.Time) error {
 	for id, child := range children {
 		stopped, stop, changed := state.StopSubtask(child, runID+":ended", now)

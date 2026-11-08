@@ -42,18 +42,15 @@ TOKEN = None
 SSL_CONTEXT = ssl.create_default_context(cafile="/etc/ssl/cert.pem") if sys.platform == "darwin" and Path("/etc/ssl/cert.pem").is_file() else ssl.create_default_context()
 
 
-def remaining(limit):
-    """Hosted releases share one deadline across subprocesses and API calls."""
-    deadline = os.environ.get("NORI_OPERATION_DEADLINE")
-    if deadline:
-        limit = min(limit, float(deadline) - time.time())
-    if limit <= 0:
-        raise TimeoutError("Operator operation deadline exceeded")
-    return limit
+class APIError(RuntimeError):
+    def __init__(self, method, url, status):
+        # Responses can contain IAP OAuth settings. Report the resource and status only.
+        super().__init__(f"{method} {url.split('?')[0]} failed: HTTP {status}")
+        self.status = status
 
 
 def command(args, **kwargs):
-    return subprocess.check_output(args, text=True, timeout=remaining(900), **kwargs).strip()
+    return subprocess.check_output(args, text=True, timeout=900, **kwargs).strip()
 
 
 def gcloud(*args):
@@ -67,7 +64,7 @@ def api(method, url, body=None, allow404=False, refresh=True):
     data = None if body is None else json.dumps(body).encode()
     req = Request(url, data=data, method=method, headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json", "x-goog-user-project": PROJECT})
     try:
-        with urlopen(req, timeout=remaining(135), context=SSL_CONTEXT) as res:
+        with urlopen(req, timeout=135, context=SSL_CONTEXT) as res:
             data = res.read()
             return json.loads(data) if data else {}
     except HTTPError as error:
@@ -76,8 +73,7 @@ def api(method, url, body=None, allow404=False, refresh=True):
             return api(method, url, body, allow404, refresh=False)
         if allow404 and error.code == 404:
             return None
-        # Never dump a response that might contain IAP OAuth settings.
-        raise RuntimeError(f"{method} {url.split('?')[0]} failed: HTTP {error.code}") from None
+        raise APIError(method, url, error.code) from None
 
 
 def state_args(state):
@@ -87,8 +83,13 @@ def state_args(state):
     return [] if backend == "gcs" else ["-state=" + str(state)]
 
 
+def terraform_outputs(directory, state):
+    result = command(["terraform", f"-chdir={directory}", "output", *state_args(state), "-json"])
+    return {key: output["value"] for key, output in json.loads(result).items()}
+
+
 def config():
-    value = {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TF}", "output", *state_args(STATE), "-json"])).items()}
+    value = terraform_outputs(TF, STATE)
     expected = "nori-poc" if ENVIRONMENT == "production" else "nori-sandbox"
     if value.get("firestore_database") != expected or value.get("artifact_bucket") != PROJECT + "-" + expected:
         raise RuntimeError("Application state does not match the selected environment")
@@ -120,7 +121,7 @@ def runtime_deployment(runtime):
 
 
 def patch_runtime(c, image, deployment):
-    base = f"https://{REGION}-aiplatform.googleapis.com/v1beta1/" + c["runtime_name"]
+    base = runtime_resource(c)
     mask = ",".join(["spec.containerSpec.imageUri", *("spec.deploymentSpec." + key for key in deployment)])
     operation(api("PATCH", base + "?updateMask=" + mask,
                   {"spec": {"containerSpec": {"imageUri": image}, "deploymentSpec": deployment}}), "vertex")
@@ -131,7 +132,7 @@ def patch_runtime(c, image, deployment):
 
 
 def temporal_config():
-    value = {k: v["value"] for k, v in json.loads(command(["terraform", f"-chdir={TEMPORAL_TF}", "output", *state_args(TEMPORAL_STATE), "-json"])).items()}
+    value = terraform_outputs(TEMPORAL_TF, TEMPORAL_STATE)
     expected = "nori-poc-runtime" if ENVIRONMENT == "production" else "nori-sandbox-runtime"
     if value.get("runner_service_account") != expected + "@" + PROJECT + ".iam.gserviceaccount.com":
         raise RuntimeError("Worker state does not match the selected environment")
@@ -140,7 +141,6 @@ def temporal_config():
 
 def temporal_env():
     env = os.environ.copy()
-    # Read the existing project env file in memory; never copy its credentials.
     env_file = Path(env.get("NORI_ENV_FILE", str(ROOT.parents[2] / ".env")))
     if env_file.is_file():
         for line in env_file.read_text().splitlines():
@@ -163,7 +163,7 @@ class VersionNotFound(RuntimeError):
 
 def temporal_command(*args):
     # Authentication is passed through the child environment, never argv/logs.
-    result = subprocess.run(["temporal", "--output=json", "--command-timeout=60s", *args], env=temporal_env(), text=True, capture_output=True, timeout=remaining(65))
+    result = subprocess.run(["temporal", "--output=json", "--command-timeout=60s", *args], env=temporal_env(), text=True, capture_output=True, timeout=65)
     if result.returncode:
         # Confirmed CLI response for a nonexistent registered version. Other
         # failures (including auth and unavailable service) remain failures.
@@ -229,7 +229,6 @@ def compatible_builds(t):
                 continue
         if versioning.get("versioningOverride") or version.get("deploymentName") != DEPLOYMENT or version.get("buildId") not in builds:
             raise RuntimeError("Open workflow uses an incompatible or unknown worker build: " + execution["workflowId"])
-    return builds
 
 
 def temporal_zero(t):
@@ -265,37 +264,27 @@ def production_workers(t):
     return services
 
 
-def worker_queue_names(t, all_queues=False):
-    if all_queues:
-        names = set(t.get("worker_wake_queues", {}).values())
-        names.update(t[key] for key in ("worker_wake_queue", "candidate_event_queue") if t.get(key))
-        return sorted(names)
-    return [t["worker_wake_queue"]] if t.get("worker_wake_queue") else []
+def worker_queues(t):
+    names = set(t.get("worker_wake_queues", {}).values())
+    names.update(t[key] for key in ("worker_wake_queue", "candidate_event_queue") if t.get(key))
+    return sorted(names)
 
 
 def queue_state(names, paused):
     failures = []
+    wanted = "PAUSED" if paused else "RUNNING"
     for name in names:
         try:
             url = "https://cloudtasks.googleapis.com/v2/" + name
-            wanted = "PAUSED" if paused else "RUNNING"
-            current = api("GET", url)
-            if current.get("state") != wanted:
-                api("POST", url + (":pause" if paused else ":resume"), {})
+            if api("GET", url).get("state") == wanted:
+                continue
+            api("POST", url + (":pause" if paused else ":resume"), {})
             if api("GET", url).get("state") != wanted:
                 raise RuntimeError("Wake queue did not reach " + wanted + ": " + name)
         except Exception as error:
             failures.append(str(error))
     if failures:
         raise RuntimeError("; ".join(failures))
-
-
-def worker_queue_state(t, paused, all_queues=False):
-    queue_state(worker_queue_names(t, all_queues), paused)
-
-
-def conversation_queue_state(c, paused):
-    queue_state([c["conversation_queue"]], paused)
 
 
 def wait_worker_requests(t):
@@ -306,7 +295,7 @@ def wait_worker_requests(t):
     while True:
         active = []
         ambiguous = []
-        for name in worker_queue_names(t, all_queues=True):
+        for name in worker_queues(t):
             token = ""
             while True:
                 query = {"pageSize": 1000}
@@ -333,11 +322,10 @@ def wait_worker_requests(t):
         time.sleep(3)
 
 
-def temporal_pause(t=None):
-    t = temporal_config() if t is None else t
+def drain_workers(t):
     failures = []
     try:
-        worker_queue_state(t, True, all_queues=True)
+        queue_state(worker_queues(t), True)
     except Exception as error:
         failures.append(str(error))
     # Remove the native scaler configuration first; a zero-count PATCH alone
@@ -345,7 +333,7 @@ def temporal_pause(t=None):
     for build in t["worker_pools"]:
         try:
             if not compute_config(version_info(build, missing_ok=True)):
-                continue # Already paused, or a staged pool preceding registration.
+                continue
             temporal("update-version-compute-config", "--deployment-name=" + DEPLOYMENT, "--build-id=" + build, "--remove")
             if compute_config(version_info(build, missing_ok=True)):
                 raise RuntimeError("Worker compute configuration still present: " + build)
@@ -370,12 +358,8 @@ def temporal_pause(t=None):
         raise RuntimeError("Worker pause incomplete: " + "; ".join(failures))
 
 
-def temporal_unpause():
-    t = temporal_config()
+def verify_worker_compatibility(t):
     compatible_builds(t)
-    # Keep all retained/candidate queues fenced while pending wakes are prepared.
-    # Only the production queue is resumed after admission opens successfully.
-    worker_queue_state(t, True, all_queues=True)
     for build in t["worker_pools"]:
         if compute_config(version_info(build, missing_ok=True)):
             raise RuntimeError("Retained pool scaler is still enabled; pause before request-worker rollout: " + build)
@@ -409,6 +393,14 @@ def vm_url():
     return f"https://compute.googleapis.com/compute/v1/projects/{PROJECT}/zones/{ZONE}/instances/{VM}"
 
 
+def runtime_resource(c):
+    return f"https://{REGION}-aiplatform.googleapis.com/v1beta1/" + c["runtime_name"]
+
+
+def web_resource():
+    return f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/{REGION}/services/{WEB}"
+
+
 def metadata(changes):
     current = api("GET", vm_url())["metadata"]
     values = {entry["key"]: entry["value"] for entry in current.get("items", [])}
@@ -427,23 +419,29 @@ def control(c, paused):
 
 def pause(c, worker_config=None):
     failures = []
+
+    def attempt(action):
+        try:
+            return action()
+        except Exception as error:
+            failures.append(str(error))
+
     # Fence delivery before paused handlers preserve successor wakes. Queue
     # creation remains available while paused; only dispatch is disabled.
-    for step in (lambda: conversation_queue_state(c, True),
-                 lambda: worker_queue_state(temporal_config() if worker_config is None else worker_config, True, all_queues=True),
-                 lambda: control(c, True), lambda: temporal_pause(worker_config), lambda: metadata({"computer-paused": "true"})):
-        try:
-            step()
-        except Exception as error:
-            failures.append(str(error))
+    attempt(lambda: queue_state([c["conversation_queue"]], True))
+    workers = worker_config if worker_config is not None else attempt(temporal_config)
+    if workers is not None:
+        attempt(lambda: queue_state(worker_queues(workers), True))
+    attempt(lambda: control(c, True))
+    if workers is not None:
+        attempt(lambda: drain_workers(workers))
+    attempt(lambda: metadata({"computer-paused": "true"}))
     if not failures:
-        try:
-            stop_vm()
-        except Exception as error:
-            failures.append(str(error))
+        attempt(stop_vm)
     if failures:
         raise RuntimeError("Pause incomplete; computer stop withheld when request drain is uncertain: " + "; ".join(failures))
     print("Paused: admission closed, conversation and worker queues paused, native scalers removed, retained pools at zero, computer stopped; waiting tasks preserved.")
+    return workers
 
 
 def stop_vm():
@@ -477,22 +475,71 @@ def clear_deadline():
 
 def unpause(c):
     verify_no_deadline()
+    workers = temporal_config()
     # Fence delivery before changing admission; accepted pending wakes remain
     # durable until routing is verified and the production queue is resumed.
-    conversation_queue_state(c, True)
-    worker_queue_state(temporal_config(), True, all_queues=True)
+    queue_state([c["conversation_queue"], *worker_queues(workers)], True)
     control(c, True)
     try:
-        temporal_unpause()
+        verify_worker_compatibility(workers)
         metadata({"computer-paused": "false"})
         control(c, False)
         api("POST", c["runtime_url"].rstrip("/") + "/api/resume", {})
-        worker_queue_state(temporal_config(), False)
-        conversation_queue_state(c, False)
+        queue_state([workers["worker_wake_queue"]], False)
+        queue_state([c["conversation_queue"]], False)
     except Exception:
-        pause(c)
+        pause(c, workers)
         raise
     print("Unpaused: tasks may run; the computer starts only when a tool needs it.")
+
+
+def publish_computer(c, binary):
+    binary = Path(binary).resolve()
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    object_name = "releases/computer-agent-" + digest
+    gcloud("storage", "cp", str(binary), f"gs://{c['artifact_bucket']}/{object_name}")
+    # Use Terraform's startup source to avoid drift on the next plan.
+    metadata({"computer-release-object": c["artifact_bucket"] + "/" + object_name, "computer-release-sha256": digest,
+              "startup-script": (ROOT / "computer-startup.sh").read_text()})
+    return digest
+
+
+def deploy_runtime(c, workers, image):
+    required = ("conversation_queue", "conversation_wake_service_account", "outer_model")
+    if any(not c.get(key) for key in required):
+        raise RuntimeError("Apply the conversation queue, IAM and secret-reference infrastructure before deploying the runtime")
+    current = api("GET", runtime_resource(c))
+    spec = current.get("spec", {}).get("deploymentSpec", {})
+    env = {entry["name"]: entry for entry in spec.get("env", [])}
+    env.update({key: {"name": key, "value": value} for key, value in {
+        "NORI_WORKER_SERVICES": json.dumps(production_workers(workers)),
+        "NORI_WORKER_WAKE_QUEUE": workers["worker_wake_queue"],
+        "NORI_AGENT_MODEL": c["outer_model"],
+        "NORI_WAKE_QUEUE": c["conversation_queue"],
+        "NORI_WAKE_SERVICE_ACCOUNT": c["conversation_wake_service_account"],
+        "NORI_RUNTIME_URL": c["runtime_url"],
+        "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",
+        "TEMPORAL_NAMESPACE": "quickstart-nori.qtjow",
+        "TEMPORAL_TASK_QUEUE": TASK_QUEUE,
+        "TEMPORAL_DEPLOYMENT_NAME": DEPLOYMENT,
+        "TEMPORAL_API_KEY_SECRET_VERSION": f"projects/{PROJECT}/secrets/nori-temporal-api-key/versions/latest",
+    }.items()})
+    env.pop("NORI_EXECUTION_MODE", None)
+    env.pop("OPENAI_API_KEY", None)
+    secret_env = {entry["name"]: entry for entry in spec.get("secretEnv", [])}
+    secret_env["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "secretRef": {
+        "secret": "nori-sandbox-openai-api-key" if ENVIRONMENT == "sandbox" else "nori-openai-api-key", "version": "latest"}}
+    if ENVIRONMENT == "sandbox":
+        env["NORI_ENVIRONMENT"] = {"name": "NORI_ENVIRONMENT", "value": "sandbox"}
+        env.pop("OPENROUTER_API_KEY", None)
+        env.pop("OPENROUTER_MANAGEMENT_KEY", None)
+        secret_env.pop("OPENROUTER_MANAGEMENT_KEY", None)
+        secret_env["OPENROUTER_API_KEY"] = {"name": "OPENROUTER_API_KEY", "secretRef": {"secret": "nori-sandbox-openrouter-api-key", "version": "latest"}}
+    patch_runtime(c, image, {**runtime_settings(), "env": list(env.values()), "secretEnv": list(secret_env.values())})
+
+
+def deploy_web(image):
+    return gcloud("run", "services", "update", WEB, "--region=" + REGION, "--image=" + image)
 
 
 def main():
@@ -512,57 +559,19 @@ def main():
         return
     c = config()
     if args.action == "publish-computer":
-        if not args.value: parser.error("publish-computer needs a built binary path")
-        binary = Path(args.value).resolve()
-        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-        object_name = "releases/computer-agent-" + digest
-        print(gcloud("storage", "cp", str(binary), f"gs://{c['artifact_bucket']}/{object_name}"))
-        # Terraform sets the same startup script from the same file, so this leaves no drift for its next plan.
-        metadata({"computer-release-object": c["artifact_bucket"] + "/" + object_name, "computer-release-sha256": digest,
-                  "startup-script": (ROOT / "computer-startup.sh").read_text()})
+        if not args.value:
+            parser.error("publish-computer needs a built binary path")
+        digest = publish_computer(c, args.value)
         print("Computer release " + digest + "; restart the stopped host on next use to install.")
     elif args.action == "deploy-runtime":
-        if not args.value: parser.error("deploy-runtime needs an immutable image URI")
-        required = ("conversation_queue", "conversation_wake_service_account", "outer_model")
-        if any(not c.get(key) for key in required):
-            raise RuntimeError("Apply the Milestone 2 queue, IAM and secret-reference infrastructure before deploying the runtime")
-        name = c["runtime_name"]
-        base = f"https://{REGION}-aiplatform.googleapis.com/v1beta1/{name}"
-        current = api("GET", base)
-        env = {entry["name"]: entry for entry in current.get("spec", {}).get("deploymentSpec", {}).get("env", [])}
-        workers = temporal_config()
-        services = production_workers(workers)
-        env.update({key: {"name": key, "value": value} for key, value in {
-            "NORI_WORKER_SERVICES": json.dumps(services),
-            "NORI_WORKER_WAKE_QUEUE": workers.get("worker_wake_queue", ""),
-            "NORI_AGENT_MODEL": c["outer_model"],
-            "NORI_WAKE_QUEUE": c["conversation_queue"],
-            "NORI_WAKE_SERVICE_ACCOUNT": c["conversation_wake_service_account"],
-            "NORI_RUNTIME_URL": c["runtime_url"],
-            "NORI_EXECUTION_MODE": "temporal",
-            "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",
-            "TEMPORAL_NAMESPACE": "quickstart-nori.qtjow",
-            "TEMPORAL_TASK_QUEUE": TASK_QUEUE,
-            "TEMPORAL_DEPLOYMENT_NAME": DEPLOYMENT,
-            "TEMPORAL_API_KEY_SECRET_VERSION": f"projects/{PROJECT}/secrets/nori-temporal-api-key/versions/latest",
-        }.items()})
-        env.pop("OPENAI_API_KEY", None)
-        secret_env = {entry["name"]: entry for entry in current.get("spec", {}).get("deploymentSpec", {}).get("secretEnv", [])}
-        secret_env["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "secretRef": {
-            "secret": "nori-sandbox-openai-api-key" if ENVIRONMENT == "sandbox" else "nori-openai-api-key", "version": "latest"}}
-        deployment = {**runtime_settings(), "env": list(env.values()), "secretEnv": list(secret_env.values())}
-        if ENVIRONMENT == "sandbox":
-            env["NORI_ENVIRONMENT"] = {"name": "NORI_ENVIRONMENT", "value": "sandbox"}
-            env.pop("OPENROUTER_API_KEY", None)
-            env.pop("OPENROUTER_MANAGEMENT_KEY", None)
-            secret_env.pop("OPENROUTER_MANAGEMENT_KEY", None)
-            secret_env["OPENROUTER_API_KEY"] = {"name": "OPENROUTER_API_KEY", "secretRef": {"secret": "nori-sandbox-openrouter-api-key", "version": "latest"}}
-            deployment.update(env=list(env.values()), secretEnv=list(secret_env.values()))
-        patch_runtime(c, args.value, deployment)
+        if not args.value:
+            parser.error("deploy-runtime needs an immutable image URI")
+        deploy_runtime(c, temporal_config(), args.value)
         print("Runtime image, environment and capacity settings updated and verified.")
     elif args.action == "deploy-web":
-        if not args.value: parser.error("deploy-web needs an immutable image URI")
-        print(gcloud("run", "services", "update", WEB, "--region=" + REGION, "--image=" + args.value))
+        if not args.value:
+            parser.error("deploy-web needs an immutable image URI")
+        print(deploy_web(args.value))
     elif args.action == "clear-deadline":
         clear_deadline()
     elif args.action == "unpause":

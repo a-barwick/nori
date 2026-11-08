@@ -17,7 +17,6 @@ function daysBetween(a: number, b: number) {
   return Math.round((startOfDay(b) - startOfDay(a)) / DAY);
 }
 
-/** "Today 9:15 AM", "Yesterday 8:31 AM", "Oct 22, 11:32 AM" */
 export function separatorLabel(t: number, now = Date.now()) {
   const diff = daysBetween(t, now);
   if (diff === 0) return `Today ${clock(t)}`;
