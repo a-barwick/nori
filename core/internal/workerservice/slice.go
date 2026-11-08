@@ -27,6 +27,7 @@ type Slice struct {
 	Build   string
 	Known   []string
 	Bounded bool
+	Steps   dispatch.Steps
 	// PollWindow ends a bounded slice's polling; IdleWindow is how long a bounded
 	// slice must be quiet before it checks whether it can exit.
 	PollWindow, IdleWindow time.Duration
@@ -93,7 +94,9 @@ func (s *Slice) Finish(w Worker, d Dispatch, result error) error {
 	// confirms the API wake, including outcomes committed after the last poll.
 	// Failure keeps the incoming queue notification retryable without changing
 	// the task's already committed success or question into a task failure.
-	result = errors.Join(result, d.Reconcile(check, dispatch.ConversationWake))
+	if s.Steps&dispatch.ConversationWake != 0 {
+		result = errors.Join(result, d.Reconcile(check, dispatch.ConversationWake))
+	}
 	control, err := d.Control(check)
 	if err != nil {
 		return errors.Join(result, err)
@@ -120,58 +123,60 @@ const (
 )
 
 // Loop reconciles while a worker polls: every tick it delivers saved commands
-// and wakes, every 30 seconds it also repairs closed executions. This process
-// never opens admission or resumes a paused task on its own. It returns nil when
-// ctx ends, control becomes unreadable, or a bounded slice has no work left.
+// and wakes, initially and every 30 seconds it also repairs closed executions.
+// This process never opens admission or resumes a paused task on its own.
+// Reconciliation failures keep a bounded request retryable when polling ends,
+// without cutting short polling for unrelated healthy executions.
 // On pause, an unfenced poller first settles admitted bookkeeping to a durable
 // wait or end. Admission guards prevent new execution while it does so.
-func (s *Slice) Loop(ctx context.Context, w Worker, d Dispatch, steps dispatch.Steps) error {
+func (s *Slice) Loop(ctx context.Context, w Worker, d Dispatch) error {
 	log.Printf("worker_slice slice=%s build=%s phase=polling poll_window=%s", s.ID, s.Build, s.PollWindow)
-	lastRepair := time.Now()
+	var lastRepair time.Time
+	var reconcileErr error
 	pausing := false
 	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return reconcileErr
 		}
-		pass := steps
+		pass := s.Steps
 		if time.Since(lastRepair) >= repairEvery {
 			lastRepair = time.Now()
 			pass |= dispatch.RepairClosed
 		}
 		if err := d.Reconcile(ctx, pass); err != nil && ctx.Err() == nil {
 			if s.Bounded {
-				// Reconciliation is work too. Quiet Temporal queues cannot
-				// acknowledge away a failed command relay or outcome wake.
-				return err
+				// Retain the failure even if later, narrower passes succeed.
+				// They may not retry the failed closed-execution repair.
+				reconcileErr = err
 			}
 			log.Printf("worker reconciliation: %v", err)
 		}
 		if quiet, err := s.Quiet(ctx, w, d); err != nil {
 			if ctx.Err() != nil {
-				return nil
+				return reconcileErr
 			}
-			return err
+			return errors.Join(reconcileErr, err)
 		} else if quiet {
-			return nil
+			return reconcileErr
 		}
 		select {
 		case <-ctx.Done():
-			return nil
+			return reconcileErr
 		case <-ticker.C:
 		}
 		control, err := d.Control(ctx)
 		if err != nil {
 			log.Print("control unavailable; worker exiting")
-			return nil
+			return reconcileErr
 		}
 		if err = control.Check(); err != nil {
 			// Request-bound workers retain their work for resume behind the native
 			// queue fence. An unfenced poller can first finish admitted bookkeeping.
 			if s.Bounded {
 				log.Print("execution paused; worker exiting without cancelling durable tasks")
-				return nil
+				return reconcileErr
 			}
 			if !pausing {
 				log.Print("execution paused; settling admitted work before stopping polling")

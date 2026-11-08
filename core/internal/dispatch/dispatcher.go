@@ -117,19 +117,10 @@ func (d *Dispatcher) deliverCommands(ctx context.Context) (resultErr error) {
 			groups[cmd.RunID] = append(groups[cmd.RunID], cmd)
 		}
 		for _, id := range order {
-			commands := groups[id]
-			notification := commands[0]
-			for _, cmd := range commands {
-				if cmd.Kind == state.CommandStop {
-					notification = cmd
-				}
-			}
-			delivered, err := d.relayCommand(ctx, notification, requestDriven)
-			if delivered {
-				for _, cmd := range commands {
-					if err := d.Store.Delivered(ctx, cmd.ID); err != nil {
-						failures = append(failures, err)
-					}
+			delivered, err := d.relayCommands(ctx, groups[id], requestDriven)
+			for _, cmd := range delivered {
+				if err := d.Store.Delivered(ctx, cmd.ID); err != nil {
+					failures = append(failures, err)
 				}
 			}
 			if err != nil {
@@ -148,48 +139,66 @@ func (d *Dispatcher) deliverCommands(ctx context.Context) (resultErr error) {
 	return errors.Join(failures...)
 }
 
-func (d *Dispatcher) relayCommand(ctx context.Context, cmd state.Command, requestDriven bool) (bool, error) {
+// relayCommands returns only the intents whose delivery was confirmed. A Stop
+// can reach a paused execution without delivering its grouped Start or Steers.
+func (d *Dispatcher) relayCommands(ctx context.Context, commands []state.Command, requestDriven bool) ([]state.Command, error) {
+	cmd := commands[0]
+	var stops []state.Command
+	for _, candidate := range commands {
+		if candidate.Kind == state.CommandStop {
+			cmd = candidate
+			stops = append(stops, candidate)
+		}
+	}
 	run, err := d.Store.GetRun(ctx, cmd.RunID)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	terminal := run.Status != state.RunRunning
 	notification := state.Command{RunID: cmd.RunID, Kind: "commands-ready"}
 	if terminal {
 		if !run.CancelRequested || cmd.Kind != state.CommandStop {
-			return true, nil
+			return commands, nil
 		}
 		// Stop may have projected cancellation while its workflow was parked.
 		err = d.Engine.Signal(ctx, cmd.RunID, notification)
 		if errors.Is(err, ErrNoExecution) {
-			return true, nil
+			return commands, nil
 		}
-		if err != nil || !requestDriven {
-			return err == nil, err
+		if err != nil {
+			return nil, err
+		}
+		if !requestDriven {
+			return commands, nil
 		}
 	}
 	control, err := d.Store.Control(ctx)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if control.Paused {
 		if terminal || cmd.Kind != state.CommandStop {
 			// A parked execution still needs its original delivery intent after resume.
-			return false, nil
+			return nil, nil
 		}
 		// An accepted Stop can signal an existing execution without starting one.
 		if err := d.Engine.Signal(ctx, cmd.RunID, notification); err != nil {
-			return false, fmt.Errorf("command %s delivery: %w", cmd.ID, err)
+			return nil, fmt.Errorf("command %s delivery: %w", cmd.ID, err)
 		}
-		return !requestDriven, nil
+		if requestDriven {
+			return nil, nil
+		}
+		return stops, nil
 	}
 	if !terminal {
 		if err := d.Engine.SignalOrStart(ctx, notification); err != nil {
-			return false, fmt.Errorf("command %s delivery: %w", cmd.ID, err)
+			return nil, fmt.Errorf("command %s delivery: %w", cmd.ID, err)
 		}
 	}
-	err = d.wakeWorker(ctx, cmd.RunID)
-	return err == nil, err
+	if err := d.wakeWorker(ctx, cmd.RunID); err != nil {
+		return nil, err
+	}
+	return commands, nil
 }
 
 // wakePublications delivers one durable wake for each held result. The generation
