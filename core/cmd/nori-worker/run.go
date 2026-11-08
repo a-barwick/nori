@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"nori/internal/dispatch"
@@ -18,9 +17,14 @@ import (
 // run is one worker lifetime. A bounded run belongs to one wake request and ends
 // when its build has no work left; an unbounded run polls until ctx ends.
 func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker, sliceID string, known []string, bounded bool) (result error) {
+	steps := dispatch.Commands | dispatch.Publications
+	if !s.Temporal.Local {
+		steps |= dispatch.ConversationWake
+	}
 	slice := &workerservice.Slice{
 		ID: sliceID, Build: cfg.build, Known: known, Bounded: bounded,
 		PollWindow: cfg.pollWindow, IdleWindow: cfg.idleWindow, Waker: waker,
+		Steps: steps,
 	}
 	ctx, cancel := slice.Poll(ctx)
 	defer cancel()
@@ -43,10 +47,6 @@ func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker,
 	defer c.Close()
 	group := &userWorkers{directory: directory, cfg: s, client: c, waker: waker, entries: map[users.User]*userWorker{}}
 	defer group.Close()
-	steps := dispatch.Commands | dispatch.Publications
-	if !s.Temporal.Local {
-		steps |= dispatch.ConversationWake
-	}
 	stopTimeout := 25 * time.Second
 	if bounded {
 		stopTimeout = 5 * time.Minute
@@ -58,11 +58,5 @@ func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker,
 		return err
 	}
 	defer func() { result = slice.Finish(worker, group, result) }()
-	if err = group.Reconcile(ctx, dispatch.RepairClosed); err != nil {
-		if bounded {
-			return err
-		}
-		log.Printf("worker reconciliation: %v", err)
-	}
-	return slice.Loop(ctx, worker, group, steps)
+	return slice.Loop(ctx, worker, group)
 }
