@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open questions · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Open questions</h1>
+<p class="lede">Design questions to revisit as Nori sees more use. Settled questions move to <a href="decisions.html">Decisions</a>.</p>
+<section><h2>Tasks</h2>
+<div class="card"><table class="tall">
+<tr><th>Question</th><th>What to check</th></tr>
+<tr><td>How should Nori detect a stalled task?</td><td>Choose when to surface a stall while giving tasks time to wait for input or a long operation.</td></tr>
+<tr><td>How often does a finished answer overstate what the task found?</td><td>Compare finished answers with the results they cite. See <a href="completion.html">Finishing a task</a>.</td></tr>
+<tr><td>Do the default budget and execution limits fit longer tasks?</td><td>Review spending, runtime and retry behavior. See <a href="budgets.html">Budgets and controls</a> and <a href="inner-loop.html">Inner loop</a>.</td></tr>
+</table></div>
+</section>
+<section><h2>Conversation and memory</h2>
+<div class="card"><table class="tall">
+<tr><th>Question</th><th>What to check</th></tr>
+<tr><td>How should Jev's question wording change?</td><td>Compare <a href="classification.html">saved intent hints</a> with the user's request, including simple factual questions and corrections.</td></tr>
+<tr><td>How much history should each loop receive?</td><td>Measure omitted context and model cost before changing the limits in <a href="memory.html">Memory and context</a> and <a href="transcript.html">Task transcript</a>.</td></tr>
+</table></div>
+</section>
+<section><h2>Clients and operations</h2>
+<div class="card"><table class="tall">
+<tr><th>Question</th><th>What to check</th></tr>
+<tr><td>How should a native client sign in and revoke access?</td><td>Define the device and sign-in flows when adding a <a href="clients.html">native client</a>.</td></tr>
+<tr><td>How much do cold starts and scale-in cost?</td><td>Measure latency and spending on the deployed request path.</td></tr>
+</table></div>
+</section>
+</body>
+</html>

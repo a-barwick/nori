@@ -48,10 +48,14 @@ func loadConfig(s settings.Settings) (config, error) {
 		if _, err := settings.Required("TEMPORAL_DEPLOYMENT_NAME", s.Temporal.DeploymentName); err != nil {
 			return config{}, err
 		}
-		if len(s.Wake.WorkerServices) == 0 {
+		services, err := s.Wake.WorkerServices()
+		if err != nil {
+			return config{}, err
+		}
+		if len(services) == 0 {
 			return config{}, &settings.MissingError{Name: "NORI_WORKER_SERVICES"}
 		}
-		if _, err := settings.Required("NORI_WORKER_SERVICES route for TEMPORAL_BUILD_ID", s.Wake.WorkerServices[s.Temporal.BuildID]); err != nil {
+		if _, err := settings.Required("NORI_WORKER_SERVICES route for TEMPORAL_BUILD_ID", services[s.Temporal.BuildID]); err != nil {
 			return config{}, err
 		}
 	}

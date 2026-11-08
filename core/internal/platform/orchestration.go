@@ -24,7 +24,7 @@ import (
 // NORI_WAKE_SERVICE_ACCOUNT names the caller of both. TEMPORAL_LOCAL=true admits
 // loopback targets, and CLOUD_TASKS_EMULATOR_HOST selects a loopback emulator.
 func Waker(ctx context.Context, s settings.Settings, withConversation bool) (wake.Waker, error) {
-	if s.Cloud == "local" || (!withConversation && len(s.Wake.WorkerServices) == 0) {
+	if s.Cloud == "local" {
 		return wake.Disabled{}, nil
 	}
 	if s.Cloud == "aws" {
@@ -32,7 +32,17 @@ func Waker(ctx context.Context, s settings.Settings, withConversation bool) (wak
 		if err != nil {
 			return nil, err
 		}
+		if !withConversation && len(cfg.Workers) == 0 {
+			return wake.Disabled{}, nil
+		}
 		return awssqs.Open(ctx, cfg)
+	}
+	services, err := s.Wake.WorkerServices()
+	if err != nil {
+		return nil, err
+	}
+	if !withConversation && len(services) == 0 {
+		return wake.Disabled{}, nil
 	}
 	cfg := cloudtasks.Config{Local: s.Temporal.Local}
 	caller := s.Wake.Caller
@@ -41,7 +51,7 @@ func Waker(ctx context.Context, s settings.Settings, withConversation bool) (wak
 			Queue: s.Wake.ConversationQueue, InvokeRoot: s.Wake.RuntimeURL, Caller: caller,
 		}
 	}
-	if services := s.Wake.WorkerServices; len(services) != 0 {
+	if len(services) != 0 {
 		cfg.Workers = &cloudtasks.Workers{Queue: s.Wake.WorkerQueue, Caller: caller, Services: services}
 		cfg.Emulator = s.Wake.Emulator
 	}
@@ -65,7 +75,11 @@ func Secrets(s settings.Settings) secret.Lookup {
 }
 
 func AWSWakes(s settings.Settings, withConversation bool) (awssqs.Config, error) {
-	cfg := awssqs.Config{Region: s.AWS.Region, QueueURL: s.AWS.WakeQueueURL, Auth: s.ServiceAuth, Local: s.Temporal.Local, Workers: s.Wake.WorkerServices}
+	services, err := s.Wake.WorkerServices()
+	if err != nil {
+		return awssqs.Config{}, err
+	}
+	cfg := awssqs.Config{Region: s.AWS.Region, QueueURL: s.AWS.WakeQueueURL, Auth: s.ServiceAuth, Local: s.Temporal.Local, Workers: services}
 	if withConversation {
 		if s.Wake.RuntimeURL == "" {
 			return cfg, fmt.Errorf("NORI_RUNTIME_URL must be configured")

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/joho/godotenv"
 	"nori/internal/serviceauth"
@@ -108,8 +109,32 @@ type Wake struct {
 	// ConversationQueue and RuntimeURL are the hosted conversation wake. Caller is the service account of every
 	// wake.
 	ConversationQueue, RuntimeURL, Caller string
-	WorkerServices                        map[string]string
 	WorkerQueue, Emulator                 string
+	workerServices                        func() (map[string]string, error)
+}
+
+func (w Wake) WorkerServices() (map[string]string, error) {
+	if w.workerServices == nil {
+		return nil, nil
+	}
+	return w.workerServices()
+}
+
+func wakeFromEnvironment() Wake {
+	w := Wake{
+		ConversationQueue: os.Getenv("NORI_WAKE_QUEUE"), RuntimeURL: os.Getenv("NORI_RUNTIME_URL"), Caller: os.Getenv("NORI_WAKE_SERVICE_ACCOUNT"),
+		WorkerQueue: os.Getenv("NORI_WORKER_WAKE_QUEUE"), Emulator: os.Getenv("CLOUD_TASKS_EMULATOR_HOST"),
+	}
+	if raw := os.Getenv("NORI_WORKER_SERVICES"); raw != "" {
+		w.workerServices = sync.OnceValues(func() (map[string]string, error) {
+			var routes map[string]string
+			if err := json.Unmarshal([]byte(raw), &routes); err != nil || len(routes) == 0 {
+				return nil, fmt.Errorf("NORI_WORKER_SERVICES must be a nonempty JSON map of worker builds to service URLs")
+			}
+			return routes, nil
+		})
+	}
+	return w
 }
 
 type Worker struct {
@@ -155,11 +180,6 @@ func Load() (Settings, error) {
 		}
 	}
 	s := FromEnvironment()
-	if raw := os.Getenv("NORI_WORKER_SERVICES"); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &s.Wake.WorkerServices); err != nil || len(s.Wake.WorkerServices) == 0 {
-			return Settings{}, fmt.Errorf("NORI_WORKER_SERVICES must be a nonempty JSON map of worker builds to service URLs")
-		}
-	}
 	switch s.Cloud {
 	case "gcp", "aws", "local":
 	default:
@@ -223,14 +243,11 @@ func FromEnvironment() Settings {
 			OpenAIKey: os.Getenv("OPENAI_API_KEY"), JevKey: os.Getenv("JEV_API_KEY"), OpenRouterKey: os.Getenv("OPENROUTER_API_KEY"),
 			Outer: get("NORI_AGENT_MODEL", "gpt-6.1-sol"), Inner: get("MODEL_NAME", "openai/gpt-6.1-terra"),
 		},
-		Store:    store,
-		Metering: usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN")},
-		Computer: Computer{},
-		Temporal: temporal,
-		Wake: Wake{
-			ConversationQueue: os.Getenv("NORI_WAKE_QUEUE"), RuntimeURL: os.Getenv("NORI_RUNTIME_URL"), Caller: os.Getenv("NORI_WAKE_SERVICE_ACCOUNT"),
-			WorkerQueue: os.Getenv("NORI_WORKER_WAKE_QUEUE"), Emulator: os.Getenv("CLOUD_TASKS_EMULATOR_HOST"),
-		},
+		Store:         store,
+		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN")},
+		Computer:      Computer{},
+		Temporal:      temporal,
+		Wake:          wakeFromEnvironment(),
 		Worker:        Worker{PollWindow: get("NORI_WORKER_POLL_WINDOW", "240s"), IdleWindow: get("NORI_WORKER_IDLE_WINDOW", "15s")},
 		SearchKey:     os.Getenv("BRAVE_SEARCH_API_KEY"),
 		TaskBudgetUSD: taskBudget,
