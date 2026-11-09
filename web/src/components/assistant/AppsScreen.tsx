@@ -339,7 +339,7 @@ export function PluginDetailScreen({ id }: { id: string }) {
     </Section>
     {!!item.diagnostics?.length && <Section title="Diagnostics"><pre className="overflow-x-auto rounded-card bg-fill-1 p-3 font-mono text-mono-data whitespace-pre-wrap">{item.diagnostics.join("\n")}</pre></Section>}
     {!!item.history?.length && <Section title="History"><Rows>{item.history.slice().reverse().map((event, index) => <Row key={index} title={`${event.event[0].toUpperCase()}${event.event.slice(1)}${event.version ? ` ${event.version}` : ""}`} detail={relative(event.at)}
-      trailing={event.version && event.version !== item.package.version && !earlier.has(event.version) ? undefined : event.version && event.version !== item.package.version ? <Button size="sm" variant="quiet" disabled={!!action.pending} onClick={() => void act({ action: "rollback", version: event.version }, "rollback")}>Roll back to this</Button> : undefined} />)}</Rows></Section>}
+      trailing={event.version && event.version !== item.package.version && !earlier.has(event.version) ? undefined : event.version && event.version !== item.package.version ? <Button size="sm" variant="quiet" disabled={!!action.pending} onClick={() => void act({ action: "rollback", version: event.version }, "rollback")}>Use this version</Button> : undefined} />)}</Rows></Section>}
     <Section title="Manage"><div className="flex flex-wrap gap-2">
       <Button onClick={() => void act({ action: item.enabled ? "disable" : "enable" }, "toggle")} disabled={!!action.pending}>{item.enabled ? "Turn off" : "Turn on"}</Button>
       <Button className="text-danger!" variant="quiet" onClick={() => void loadReview()} disabled={!!action.pending}>Uninstall…</Button>
