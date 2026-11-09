@@ -553,14 +553,18 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 		if answer.DefaultPurpose != "" {
 			a.rememberDefault(r.Context(), answer.DefaultPurpose, answer.DefaultConnection)
 		}
-		if err := a.Answer(r.Context(), answer.CommandID, answer.TaskID, answer.Question, answer.Text); err != nil &&
-			!errors.Is(err, state.ErrQuestionStale) && !errors.Is(err, state.ErrBusy) && !errors.Is(err, state.ErrDuplicate) {
-			// The resolution is saved; delivery of the answer is repaired by retrying this same request.
+		err := a.Answer(r.Context(), answer.CommandID, answer.TaskID, answer.Question, answer.Text)
+		switch {
+		case err == nil || errors.Is(err, state.ErrDuplicate) || errors.Is(err, state.ErrBusy):
+			a.Permissions.MarkDelivered(r.Context(), id)
+		case errors.Is(err, state.ErrQuestionStale):
+			// The task has not published this question yet. The resolution and its exact answer are saved and the
+			// delivery pass retries until the task asks it, so the answer is never lost.
+		default:
 			writeJSON(w, 503, apiError{Error: "Your answer is saved; delivering it to the task failed. Retry to finish.", Code: "delivery_pending",
 				Retryable: true, Accepted: true, RequestID: requestID})
 			return
 		}
-		a.Permissions.MarkDelivered(r.Context(), id)
 	}
 	writeReceipt(w, receipt)
 }

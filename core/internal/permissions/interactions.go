@@ -54,6 +54,7 @@ type stored struct {
 	CommandAccepted bool   `json:"command_accepted,omitempty"`
 	// AnswerText is the exact answer command text, so a retried response delivers the identical command.
 	AnswerText      string `json:"answer_text,omitempty"`
+	AnswerID        string `json:"answer_command_id,omitempty"`
 	RememberDefault bool   `json:"remember_default,omitempty"`
 	Purpose         string `json:"purpose,omitempty"`
 }
@@ -241,6 +242,7 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 			i.Status, i.Resolution, i.ResolvedAt = "resolved", &resolution, &now
 			body.Interaction = i
 			body.AnswerText = text
+			body.AnswerID = uuid.NewSHA1(uuid.NameSpaceOID, []byte("interaction-answer:"+requestID)).String()
 			next, err := state.NewResource(CollectionInteractions, id, current.Revision+1, body, map[string]string{"task_id": i.TaskID, "status": "resolved", "kind": i.Kind}, now)
 			if err != nil {
 				return state.MutationResult{}, err
@@ -330,4 +332,24 @@ func (s *Service) UnperformedApprovals(ctx context.Context, runID string, revisi
 		out = append(out, summary)
 	}
 	return out, nil
+}
+
+// UndeliveredAnswers lists resolved interactions whose answer command has not been accepted yet, for example
+// because the user answered before the task published its question. Delivery is retried until it is accepted.
+func (s *Service) UndeliveredAnswers(ctx context.Context) ([]Answer, []string, error) {
+	page, _, err := s.Store.Resources(ctx, CollectionInteractions, map[string]string{"status": "resolved"}, "", 200)
+	if err != nil {
+		return nil, nil, err
+	}
+	var answers []Answer
+	var ids []string
+	for _, r := range page {
+		i, body, err := decodeInteraction(r)
+		if err != nil || body.CommandAccepted || body.AnswerText == "" || body.AnswerID == "" || i.TaskID == "" {
+			continue
+		}
+		answers = append(answers, Answer{CommandID: body.AnswerID, TaskID: i.TaskID, Question: questionID(i), Text: body.AnswerText})
+		ids = append(ids, i.ID)
+	}
+	return answers, ids, nil
 }

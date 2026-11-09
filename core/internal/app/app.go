@@ -195,7 +195,32 @@ func (a *App) Schedule(ctx context.Context) error {
 		return nil
 	}
 	_, err := a.Scheduler.Tick(ctx)
-	return errors.Join(err, a.Chats.DeliverTasks(ctx, a.Store.GetRun))
+	return errors.Join(err, a.Chats.DeliverTasks(ctx, a.Store.GetRun), a.deliverAnswers(ctx))
+}
+
+// deliverAnswers retries answer commands for interactions resolved before their task asked. An answer for a task
+// that ended or moved to a newer instruction is retired: the newer revision supersedes it.
+func (a *App) deliverAnswers(ctx context.Context) error {
+	if a.Assistant == nil || a.Assistant.Permissions == nil || a.Assistant.Answer == nil {
+		return nil
+	}
+	answers, ids, err := a.Assistant.Permissions.UndeliveredAnswers(ctx)
+	if err != nil {
+		return err
+	}
+	for i, answer := range answers {
+		err := a.Assistant.Answer(ctx, answer.CommandID, answer.TaskID, answer.Question, answer.Text)
+		if errors.Is(err, state.ErrQuestionStale) {
+			run, runErr := a.Store.GetRun(ctx, answer.TaskID)
+			if runErr == nil && run.Status == state.RunRunning && (run.Question == nil || run.Question.ID == answer.Question) {
+				continue
+			}
+		}
+		if err == nil || errors.Is(err, state.ErrDuplicate) || errors.Is(err, state.ErrQuestionStale) || errors.Is(err, state.ErrBusy) {
+			a.Assistant.Permissions.MarkDelivered(ctx, ids[i])
+		}
+	}
+	return nil
 }
 
 func (a *App) processAssistant(ctx context.Context) error {
