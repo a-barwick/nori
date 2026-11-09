@@ -1,6 +1,83 @@
 {
  "exchanges": [
   {
+   "name": "token-exchange-b",
+   "method": "POST",
+   "host": "oauth2.googleapis.com",
+   "path": "/token",
+   "body_contains": [
+    "grant_type=authorization_code",
+    "code=recorded-code-2"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "access_token": "recorded-access-token-b",
+     "expires_in": 3599,
+     "refresh_token": "recorded-refresh-token-b",
+     "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.readonly",
+     "token_type": "Bearer",
+     "id_token": "recorded"
+    }
+   }
+  },
+  {
+   "name": "token-refresh-b",
+   "method": "POST",
+   "host": "oauth2.googleapis.com",
+   "path": "/token",
+   "body_contains": [
+    "grant_type=refresh_token",
+    "recorded-refresh-token-b"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "access_token": "recorded-access-token-b2",
+     "expires_in": 3599,
+     "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.readonly",
+     "token_type": "Bearer"
+    }
+   }
+  },
+  {
+   "name": "userinfo-b",
+   "method": "GET",
+   "host": "openidconnect.googleapis.com",
+   "path": "/v1/userinfo",
+   "headers": {
+    "Authorization": "Bearer recorded-access-token-b"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "sub": "100000000000000000002",
+     "email": "recorded.work@example.com",
+     "email_verified": true
+    }
+   }
+  },
+  {
+   "name": "token-exchange-mail",
+   "method": "POST",
+   "host": "oauth2.googleapis.com",
+   "path": "/token",
+   "body_contains": [
+    "grant_type=authorization_code",
+    "code=recorded-mail-code"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "access_token": "recorded-access-token",
+     "expires_in": 3599,
+     "refresh_token": "recorded-refresh-token",
+     "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.send",
+     "token_type": "Bearer"
+    }
+   }
+  },
+  {
    "name": "token-exchange-drive",
    "method": "POST",
    "host": "oauth2.googleapis.com",
@@ -55,6 +132,27 @@
      "error_description": "Bad Request"
     }
    }
+  },
+  {
+   "name": "token-refresh-mail",
+   "method": "POST",
+   "host": "oauth2.googleapis.com",
+   "path": "/token",
+   "body_contains": [
+    "grant_type=refresh_token"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "access_token": "recorded-access-token-2",
+     "expires_in": 3599,
+     "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.send",
+     "token_type": "Bearer"
+    }
+   },
+   "after": [
+    "token-exchange-mail"
+   ]
   },
   {
    "name": "token-refresh-drive",
