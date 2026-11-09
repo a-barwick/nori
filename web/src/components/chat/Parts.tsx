@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { CardView } from "@/components/assistant/CardView";
+import type { CardPart } from "@/lib/contracts/assistant";
 import type { Part } from "@/lib/types";
 import { useBlobURL } from "@/lib/useBlobURL";
 
@@ -41,6 +43,7 @@ function PartView({ part }: { part: Part }) {
   if (part.type === "link" && part.url && /^https?:\/\//.test(part.url)) return <a href={part.url} target="_blank" rel="noreferrer noopener" className="break-words text-meta underline">{part.name ?? part.url}</a>;
   if (["attachment", "artifact", "image"].includes(part.type) && part.url) return <FilePart part={part} url={part.url} />;
   if (part.type === "action") return <details className="text-caption text-ink-3"><summary className="cursor-pointer">{part.name}</summary><p className="mt-1 whitespace-pre-wrap break-words">{part.text}</p></details>;
+  if (part.type === "card" && part.resource && part.kind && part.fallback !== undefined) return <CardView part={part as CardPart} />;
   if (part.type === "note") return <p className="text-caption text-ink-3">{part.text}</p>;
   return part.fallback ? <p className="text-body">{part.fallback}</p> : null;
 }

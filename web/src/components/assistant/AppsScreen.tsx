@@ -177,7 +177,7 @@ function ConnectionCard({ connection, integration }: { connection: Connection; i
 function Disconnect({ connection, onDisconnect, busy }: { connection: Connection; onDisconnect: (value: Record<string, unknown>) => void; busy: boolean }) {
   const [deleteImported, setDeleteImported] = useState(false);
   return <Confirm danger title={`Disconnect ${connection.account.label}?`} confirm="Disconnect" onConfirm={() => onDisconnect({ action: "disconnect", purge_cache: true, delete_imported_content: deleteImported })}
-    trigger={<Button variant="quiet" size="sm" disabled={busy} className="text-danger">{busy ? "Disconnecting…" : "Disconnect"}</Button>}
+    trigger={<Button variant="quiet" size="sm" disabled={busy} className="text-danger!">{busy ? "Disconnecting…" : "Disconnect"}</Button>}
     body={<div className="space-y-3">
       <p>Nori stops using this account right away. Results you saved stay in Library, marked as copies. Work already sent can’t be undone.</p>
       <label className="flex items-start gap-2 text-ink"><input type="checkbox" className="mt-1 accent-[var(--accent)]" checked={deleteImported} onChange={(event) => setDeleteImported(event.target.checked)} />Also delete content imported from this account</label>
@@ -299,7 +299,7 @@ export function PluginDetailScreen({ id }: { id: string }) {
         <h3 className="text-row font-semibold">{review.version ? `Changes in ${review.version}` : "Before you uninstall"}</h3>
         <ReviewList data={review.data} />
         <div className="mt-4 flex gap-2">{review.version ? <Button variant="primary" onClick={() => void act({ action: "update", version: review.version }, "update")}>{action.pending === "update" ? "Updating…" : review.data.access_added.length ? "Allow and update" : "Update"}</Button>
-          : <Button variant="primary" className="bg-danger hover:bg-danger" onClick={() => void act({ action: "uninstall" }, "uninstall")}>{action.pending === "uninstall" ? "Uninstalling…" : "Uninstall"}</Button>}
+          : <Button variant="primary" className="bg-danger! hover:bg-danger!" onClick={() => void act({ action: "uninstall" }, "uninstall")}>{action.pending === "uninstall" ? "Uninstalling…" : "Uninstall"}</Button>}
           <Button variant="quiet" onClick={() => setReview(undefined)}>Cancel</Button></div>
       </div>}
     </Section>
@@ -311,7 +311,7 @@ export function PluginDetailScreen({ id }: { id: string }) {
     {!!item.history?.length && <Section title="History"><Rows>{item.history.slice().reverse().map((event, index) => <Row key={index} title={`${event.event[0].toUpperCase()}${event.event.slice(1)}${event.version ? ` ${event.version}` : ""}`} detail={relative(event.at)} />)}</Rows></Section>}
     <Section title="Manage"><div className="flex flex-wrap gap-2">
       <Button onClick={() => void act({ action: item.enabled ? "disable" : "enable" }, "toggle")} disabled={!!action.pending}>{item.enabled ? "Turn off" : "Turn on"}</Button>
-      <Button className="text-danger" variant="quiet" onClick={() => void loadReview()} disabled={!!action.pending}>Uninstall…</Button>
+      <Button className="text-danger!" variant="quiet" onClick={() => void loadReview()} disabled={!!action.pending}>Uninstall…</Button>
     </div></Section>
   </Screen>;
 }

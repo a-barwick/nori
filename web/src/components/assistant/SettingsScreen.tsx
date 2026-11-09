@@ -66,7 +66,7 @@ function Permissions() {
     {groups.map((group) => group.rules.length > 0 && <Section key={group.title} title={group.title}><Rows>{group.rules.map((rule) => <li key={rule.id} id={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
       <span className="min-w-0 flex-1">
         <span className="block text-row font-medium">{rule.summary ?? rule.title ?? "Permission"}</span>
-        <span className="mt-0.5 block text-meta text-ink-2">{[rule.action_classes.map((effect) => EFFECT_LABEL[effect]).join(", "), rule.connection_ids.map((id) => id === "*" ? "any account" : account(id)?.account.label ?? id).join(", "), rule.recipients?.length ? `to ${rule.recipients.join(", ")}` : "", rule.expires_at ? `until ${when(rule.expires_at)}` : "", rule.max_operations ? `up to ${rule.max_operations} times` : ""].filter(Boolean).join(" · ")}</span>
+        <span className="mt-0.5 block text-meta text-ink-2">{[rule.action_classes.map((effect) => EFFECT_LABEL[effect]).join(", "), rule.connection_ids.map((id) => id === "*" ? "any account" : account(id)?.title ?? id).join(", "), rule.recipients?.length ? `to ${rule.recipients.join(", ")}` : "", rule.expires_at ? `until ${when(rule.expires_at)}` : "", rule.max_operations ? `up to ${rule.max_operations} times` : ""].filter(Boolean).join(" · ")}</span>
         {rule.automation_id && <Link href={`/routines/${encodeURIComponent(rule.automation_id)}`} className="text-meta text-accent-text hover:underline">Routine</Link>}
         {rule.goal_id && <Link href={`/goals/${encodeURIComponent(rule.goal_id)}`} className="text-meta text-accent-text hover:underline">Goal</Link>}
       </span>
@@ -197,7 +197,7 @@ function Memory() {
         <span className="min-w-0 flex-1"><span className="block text-body">{fact.text}</span>
           <span className="block text-meta text-ink-3">Saved {relative(fact.created_at)}{fact.origin.conversation_id ? " from chat" : fact.origin.task_id ? " during a task" : ""}{fact.scope === "chat" ? " · this chat only" : ""}</span></span>
         <Button size="sm" variant="quiet" onClick={() => { setEditing(fact.id); setText(fact.text); }}>Edit</Button>
-        <Confirm title="Forget this?" body="Nori stops using it. Chats where it came up stay as they are." confirm="Forget" onConfirm={() => void forget(fact)} trigger={<Button size="sm" variant="quiet" className="text-danger" disabled={action.pending === fact.id}>Forget</Button>} />
+        <Confirm title="Forget this?" body="Nori stops using it. Chats where it came up stay as they are." confirm="Forget" onConfirm={() => void forget(fact)} trigger={<Button size="sm" variant="quiet" className="text-danger!" disabled={action.pending === fact.id}>Forget</Button>} />
       </div>}
     </li>)}</Rows> : <Empty>Nori remembers only what you ask it to. Say “remember that…” in Chat.</Empty>}
   </>;

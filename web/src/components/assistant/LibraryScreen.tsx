@@ -162,7 +162,7 @@ export function LibraryDetailScreen({ id }: { id: string }) {
         </dl>
       </Section>
       {live && <Section><Confirm danger title="Delete this?" confirm="Delete" onConfirm={() => void act({ action: "delete", scope: "all_versions" }, "delete")}
-        body={item.delete_effect ?? "Removes it and its versions from Nori."} trigger={<Button variant="quiet" className="text-danger" disabled={!!action.pending}>Delete</Button>} /></Section>}
+        body={item.delete_effect ?? "Removes it and its versions from Nori."} trigger={<Button variant="quiet" className="text-danger!" disabled={!!action.pending}>Delete</Button>} /></Section>}
     </Screen>
   );
 }

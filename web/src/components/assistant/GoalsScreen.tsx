@@ -93,7 +93,7 @@ export function GoalDetailScreen({ id }: { id: string }) {
           trigger={<Button variant={allMet ? "primary" : "neutral"} disabled={!!action.pending}>Mark done</Button>}
           body={<div className="space-y-3">{!allMet && <p>Some criteria aren’t met yet.</p>}{item.linked.automation_ids.length > 0 && <label className="flex items-start gap-2 text-ink"><input type="checkbox" className="mt-1 accent-[var(--accent)]" checked={keepMonitors} onChange={(event) => setKeepMonitors(event.target.checked)} />Keep its routines running</label>}{!item.linked.automation_ids.length && allMet && <p>Nori stops following up.</p>}</div>} />
         <Confirm danger title="Drop this goal?" confirm="Drop goal" body="Nori stops following up and its routines stop. Saved results stay in Library." onConfirm={() => void act({ action: "abandon" }, "abandon")}
-          trigger={<Button variant="quiet" className="text-danger" disabled={!!action.pending}>Drop</Button>} />
+          trigger={<Button variant="quiet" className="text-danger!" disabled={!!action.pending}>Drop</Button>} />
       </div></Section>}
     </Screen>
   );

@@ -1,7 +1,9 @@
 export type Sender = "nori" | "me";
 
 /** One piece of a message. A client that doesn't know the type shows `fallback`. */
-export type Part = { type: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number; url?: string };
+export type Part = { type: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number; url?: string;
+  /** Card parts (contract CardPart): a typed reference to server state. */
+  schema_version?: number; kind?: string; resource?: { kind: string; id: string; revision?: number }; actions?: string[] };
 /** A saved output of a task. Created, checked, reported and delivered are separate facts. */
 export type SavedResult = {
   id: string; root_id: string; version: number; revises?: string; superseded_by?: string; run_id: string; kind: "answer" | "file" | "screenshot" | "link";

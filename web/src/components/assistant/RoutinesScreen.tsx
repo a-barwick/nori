@@ -95,7 +95,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
         </DropdownMenu.Root>}
         <Link href={`/routines/${encodeURIComponent(id)}/edit`} className="inline-flex h-9 items-center rounded-full px-4 text-row-title font-medium text-ink shadow-[inset_0_0_0_1px_var(--hairline-strong)] hover:bg-fill-1">Edit</Link>
         <Confirm danger title="Cancel this routine?" body="It won’t run again. Its history stays here. Work already started keeps going until you stop it in Work." confirm="Cancel routine" onConfirm={() => void act({ action: "cancel" }, "cancel")}
-          trigger={<Button variant="quiet" className="text-danger" disabled={!!action.pending}>Cancel routine</Button>} />
+          trigger={<Button variant="quiet" className="text-danger!" disabled={!!action.pending}>Cancel routine</Button>} />
       </div>}
       <Section title="What it does">
         <p className="rounded-card border border-hairline bg-surface p-4 text-body whitespace-pre-wrap">{item.instruction}</p>
