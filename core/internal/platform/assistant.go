@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"log"
 	"nori/internal/connectors/replay"
 	"sync"
 
@@ -119,7 +120,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		},
 	}
 	nori.Register(adapters, nori.Adapter{Scheduler: sched, Unattended: s.Connections.UnattendedWrites})
-	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: map[string][]string{}}
+	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: localCommands(s)}
 	// MCP targets are "<server>/<tool>", so the adapter serves every MCP prefix.
 	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
 	pluginService := &plugins.Service{Store: store, MCP: servers, Builtin: plugins.Builtin}
@@ -130,4 +131,15 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		Sessions: &computersession.Service{Store: store, Runs: tasks, Provider: Computer(s), Permissions: perms},
 		Tools:    extensions.Sources{nori.Source{}, conn, servers, pluginService},
 	}, nil
+}
+
+// localCommands are the declared stdio MCP commands, honoured only on the local development stack.
+func localCommands(s settings.Settings) map[string][]string {
+	if s.Cloud != "local" {
+		return map[string][]string{}
+	}
+	if len(s.Connections.MCPCommands) > 0 {
+		log.Printf("local stdio MCP commands declared: %d", len(s.Connections.MCPCommands))
+	}
+	return s.Connections.MCPCommands
 }
