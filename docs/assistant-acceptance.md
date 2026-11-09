@@ -164,6 +164,16 @@ temporal worker deployment set-current-version --address 127.0.0.1:17233 -n nori
 
 Running workflows stay pinned to the build that started them; only new tasks move to the new current version.
 
+More users, created the same way: C `33333333-3333-4333-8333-333333333333` (`integration-c@nori.local`, `-local-computer-url http://127.0.0.1:8097`) for computer work, and scenario users `44444444-4444-4444-8444-444444444444` and `55555555-5555-4555-8555-555555555555` (`scenario-a@`, `scenario-b@nori.local`) that only `contracts-check -live` uses, so scenario leftovers stay out of the users exercised in the UI.
+
+Local computer for user C: build `computer-agent` for the container (`GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o <dir>/computer-agent ./cmd/computer-agent`), put beside it a `start.sh` that runs headless Chromium with `--remote-debugging-port=9222` in the background and then `exec /nori/computer-agent -listen 0.0.0.0:8090 -tasks /workspace/tasks`, and run it in the existing `bot-computer:local-v1` image:
+
+```bash
+docker run -d --name nori-integration-computer --restart unless-stopped --shm-size 1g -p 127.0.0.1:8097:8090 -v <dir>:/nori:ro --entrypoint /nori/start.sh bot-computer:local-v1
+```
+
+Connections need `NORI_CREDENTIAL_STORE=local` (an interim local store under `NORI_LOCAL_ARTIFACT_DIR`, refused outside `NORI_CLOUD=local`, pending D1) and `NORI_OAUTH_REDIRECT_URL=http://127.0.0.1:3213/api/v1/connections/oauth/callback` on core and worker.
+
 Core is addressed per user as `http://127.0.0.1:8083/users/<id>/v1/...`; requests carrying `Origin` or `Sec-Fetch-Site` are refused, so browsers go through the web server.
 
 Web (from `web/`):
