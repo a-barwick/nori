@@ -54,7 +54,7 @@ export function CardView({ part }: { part: CardPart }) {
     case "connection": {
       const connection = data as Connection;
       const state = connectionState(connection);
-      return <Shell href={`/apps/${encodeURIComponent(connection.integration_id)}`} title={`${connection.title} · ${connection.account.label}`} detail={connection.health.message} pill={<Pill tone={state.tone}>{state.label}</Pill>} />;
+      return <Shell href={`/apps/${encodeURIComponent(connection.integration_id)}`} title={[connection.title, connection.account?.label].filter(Boolean).join(" · ")} detail={connection.health.message} pill={<Pill tone={state.tone}>{state.label}</Pill>} />;
     }
     case "installation": {
       const installation = data as Installation;

@@ -78,7 +78,7 @@ function Catalog() {
     {attention.length > 0 && <Section title="Needs attention"><Rows>{attention.map((connection) => {
       const state = connectionState(connection);
       const integration = items?.find((item) => item.id === connection.integration_id);
-      return <Row key={connection.id} href={`/apps/${encodeURIComponent(connection.integration_id)}`} leading={<AppIcon icon={integration?.icon} size={36} />} title={`${integration?.title ?? connection.title} · ${connection.account.label}`} detail={connection.health.message} trailing={<Pill tone={state.tone}>{state.label}</Pill>} />;
+      return <Row key={connection.id} href={`/apps/${encodeURIComponent(connection.integration_id)}`} leading={<AppIcon icon={integration?.icon} size={36} />} title={[integration?.title ?? connection.title, connection.account?.label].filter(Boolean).join(" · ")} detail={connection.health.message} trailing={<Pill tone={state.tone}>{state.label}</Pill>} />;
     })}</Rows></Section>}
     <Section title={attention.length ? "All apps" : undefined}>
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -143,22 +143,22 @@ function ConnectionCard({ connection, integration }: { connection: Connection; i
   const action = useAction();
   const state = connectionState(connection);
   const [open, setOpen] = useState(false);
-  const recovery = connection.health.recovery;
+  const recovery = connection.status === "not_connected" || connection.status === "disconnected" ? "connect" : connection.health.recovery;
   const returnTo = `/apps/${encodeURIComponent(integration.id)}`;
   const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
     await mutate(`/connections/${encodeURIComponent(connection.id)}/actions`, { request_id: newRequestID(), expected_revision: connection.revision, value });
     invalidate("/connections", "/integrations", "/assistant/summary");
   });
   return (
-    <article className="rounded-card border border-hairline bg-surface" aria-label={connection.account.label}>
+    <article className="rounded-card border border-hairline bg-surface" aria-label={connection.account?.label ?? integration.title}>
       <div className="flex flex-wrap items-center gap-3 p-4">
-        <span className="min-w-0 flex-1"><span className="block text-row font-semibold">{connection.account.label}</span>
+        <span className="min-w-0 flex-1"><span className="block text-row font-semibold">{connection.account?.label ?? integration.title}</span>
           <span className="block text-meta text-ink-2">{connection.health.message || (connection.health.last_success_at ? `Last used ${relative(connection.health.last_success_at)}` : connection.title)}</span></span>
         <Pill tone={state.tone}>{state.label}</Pill>
       </div>
       {(recovery === "repair" || recovery === "connect" || recovery === "request_access") && <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-4 py-3">
         <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => void action.run("repair", () => startSignIn(connection, recovery === "connect" ? "connect" : "repair", returnTo, recovery === "request_access" ? connection.capabilities : undefined))}>
-          <KeyRound size={14} aria-hidden />{action.pending === "repair" ? "Opening sign-in…" : recovery === "request_access" ? "Allow more access" : "Sign in again"}</Button>
+          <KeyRound size={14} aria-hidden />{action.pending === "repair" ? "Opening sign-in…" : recovery === "request_access" ? "Allow more access" : connection.account ? "Sign in again" : "Sign in"}</Button>
         {!!connection.missing_scopes?.length && <span className="text-meta text-ink-2">Missing: {connection.missing_scopes.join(", ")}</span>}
       </div>}
       {recovery === "wait" && connection.health.retry_after && <p className="border-t border-hairline px-4 py-3 text-meta text-ink-2">Nori will try again {relative(connection.health.retry_after)}.</p>}
@@ -176,7 +176,7 @@ function ConnectionCard({ connection, integration }: { connection: Connection; i
 
 function Disconnect({ connection, onDisconnect, busy }: { connection: Connection; onDisconnect: (value: Record<string, unknown>) => void; busy: boolean }) {
   const [deleteImported, setDeleteImported] = useState(false);
-  return <Confirm danger title={`Disconnect ${connection.account.label}?`} confirm="Disconnect" onConfirm={() => onDisconnect({ action: "disconnect", purge_cache: true, delete_imported_content: deleteImported })}
+  return <Confirm danger title={`Disconnect ${connection.account?.label ?? connection.title}?`} confirm="Disconnect" onConfirm={() => onDisconnect({ action: "disconnect", purge_cache: true, delete_imported_content: deleteImported })}
     trigger={<Button variant="quiet" size="sm" disabled={busy} className="text-danger!">{busy ? "Disconnecting…" : "Disconnect"}</Button>}
     body={<div className="space-y-3">
       <p>Nori stops using this account right away. Results you saved stay in Library, marked as copies. Work already sent can’t be undone.</p>

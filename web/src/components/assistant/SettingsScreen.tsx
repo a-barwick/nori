@@ -94,11 +94,11 @@ function NewRule({ connections, onDone }: { connections: Connection[]; onDone: (
     invalidate("/permissions"); onDone();
   });
   const selected = connections.find((connection) => connection.id === account);
-  const example = `${effect === "allow" ? "Nori may" : "Nori will never"} ${classes.map((effectClass) => ({ read: "read", reversible_write: "make undoable changes", sensitive_send: "send", unknown: "use unknown tools", control: "" }[effectClass])).join(" or ")} with ${selected?.account.label ?? "this account"}${classes.includes("sensitive_send") && recipients ? ` to ${recipients}` : ""}${effect === "allow" ? " without asking" : ""}.`;
+  const example = `${effect === "allow" ? "Nori may" : "Nori will never"} ${classes.map((effectClass) => ({ read: "read", reversible_write: "make undoable changes", sensitive_send: "send", unknown: "use unknown tools", control: "" }[effectClass])).join(" or ")} with ${selected?.account?.label ?? "this account"}${classes.includes("sensitive_send") && recipients ? ` to ${recipients}` : ""}${effect === "allow" ? " without asking" : ""}.`;
   return <form className="space-y-4 rounded-card border border-hairline-strong p-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
     <div className="flex flex-wrap gap-3">
       <Field label="Rule"><select value={effect} onChange={(event) => setEffect(event.target.value as "allow" | "deny")} className={cn(inputClass, "w-auto")}><option value="allow">Allow without asking</option><option value="deny">Never allow</option></select></Field>
-      <Field label="Account"><select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputClass, "w-auto")}>{connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.title} · {connection.account.label}</option>)}</select></Field>
+      <Field label="Account"><select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputClass, "w-auto")}>{connections.map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}</select></Field>
     </div>
     <fieldset><legend className="mb-1.5 text-meta font-medium">Actions</legend><div className="flex flex-wrap gap-2">{(["read", "reversible_write", "sensitive_send"] as const).map((effectClass) => <label key={effectClass} className={cn("flex min-h-11 items-center gap-2 rounded-full border px-3 text-meta", classes.includes(effectClass) ? "border-accent bg-accent-subtle" : "border-hairline")}>
       <input type="checkbox" className="accent-[var(--accent)]" checked={classes.includes(effectClass)} onChange={() => setClasses(classes.includes(effectClass) ? classes.filter((other) => other !== effectClass) : [...classes, effectClass])} />{EFFECT_LABEL[effectClass]}</label>)}</div></fieldset>
@@ -173,7 +173,7 @@ function AccountDefaults({ defaults, onChange }: { defaults: Record<string, stri
   return <fieldset><legend className="mb-1.5 text-meta font-medium">Default accounts</legend>
     <ul className="space-y-2">{purposes.map((purpose) => <li key={purpose} className="flex flex-wrap items-center gap-3"><span className="w-40 text-body">{label[purpose] ?? purpose}</span>
       <select aria-label={label[purpose] ?? purpose} value={defaults[purpose]} onChange={(event) => onChange({ ...defaults, [purpose]: event.target.value })} className={cn(inputClass, "w-auto")}>
-        {(connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected").map((connection) => <option key={connection.id} value={connection.id}>{connection.title} · {connection.account.label}</option>)}
+        {(connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected").map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}
       </select></li>)}</ul>
   </fieldset>;
 }
@@ -227,7 +227,7 @@ function ActionHistory() {
   const operations = useResource<List<Operation>>(`/operations${account ? `?connection_id=${encodeURIComponent(account)}` : ""}`, { poll: 30_000 });
   return <>
     <label className="mb-4 flex items-center gap-2 text-meta"><span className="text-ink-2">Account</span>
-      <select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputClass, "w-auto")}><option value="">All accounts</option>{(connections.data?.items ?? []).map((connection) => <option key={connection.id} value={connection.id}>{connection.title} · {connection.account.label}</option>)}</select></label>
+      <select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputClass, "w-auto")}><option value="">All accounts</option>{(connections.data?.items ?? []).map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}</select></label>
     {operations.loading ? <Loading /> : operations.error ? <Failure error={operations.error} onRetry={() => void operations.reload()} /> : operations.data?.items.length ? <>
       <OperationRows operations={operations.data.items} />
     </> : <Empty>No actions yet.</Empty>}

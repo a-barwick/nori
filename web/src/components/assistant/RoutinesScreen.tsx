@@ -245,7 +245,7 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
         <fieldset>
           <legend className="mb-1.5 text-meta font-medium">Accounts it can use</legend>
           {writable.length ? <div className="flex flex-wrap gap-2">{writable.map((connection) => <label key={connection.id} className={cn("flex min-h-11 cursor-pointer items-center gap-2 rounded-full border px-3 text-meta", accounts.includes(connection.id) ? "border-accent bg-accent-subtle" : "border-hairline")}>
-            <input type="checkbox" className="accent-[var(--accent)]" checked={accounts.includes(connection.id)} onChange={() => setAccounts(accounts.includes(connection.id) ? accounts.filter((other) => other !== connection.id) : [...accounts, connection.id])} />{connection.title} · {connection.account.label}</label>)}</div>
+            <input type="checkbox" className="accent-[var(--accent)]" checked={accounts.includes(connection.id)} onChange={() => setAccounts(accounts.includes(connection.id) ? accounts.filter((other) => other !== connection.id) : [...accounts, connection.id])} />{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</label>)}</div>
             : <p className="text-meta text-ink-2">No connected accounts. <Link href="/apps" className="text-accent-text hover:underline">Connect one</Link>.</p>}
         </fieldset>
         <fieldset className="space-y-2">
