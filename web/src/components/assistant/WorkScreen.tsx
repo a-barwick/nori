@@ -134,7 +134,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
   const pendingInteractions = detail.interactions.filter((interaction) => interaction.status === "pending");
   const tooLong = messageTooLong(draft.trim());
   const sending = commands.some((command) => command.command.kind === "steer" && !command.error);
-  const line = item.status === "running" ? item.progress || "Working on it." : item.status === "completed" ? (item.operations.uncertain ? "Finished, but one action isn’t confirmed yet." : "Done.") : item.status === "failed" ? item.error?.message || "This task failed." : "Stopped.";
+  const line = item.status === "running" && item.cancel_requested ? "Stopping." : item.status === "running" ? item.progress || "Working on it." : item.status === "completed" ? (item.operations.uncertain ? "Finished, but one action isn’t confirmed yet." : "Done.") : item.status === "failed" ? item.error?.message || "This task failed." : "Stopped.";
 
   return (
     <Screen title={item.title} back="/work" line={line} actions={<><Pill tone={pill.tone}>{pill.label}</Pill><RefreshButton onClick={() => void reload()} /></>}>
@@ -168,7 +168,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
           <dt className="text-ink-3">Started</dt><dd>{when(item.started_at)}</dd>
           {item.finished_at && <><dt className="text-ink-3">Finished</dt><dd>{when(item.finished_at)}</dd></>}
           <dt className="text-ink-3">From</dt><dd>{item.origin.kind === "automation" && item.origin.automation_id ? <Link className="text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.origin.automation_id)}`}>A routine</Link> : item.origin.kind === "goal" && item.origin.goal_id ? <Link className="text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.origin.goal_id)}`}>A goal</Link> : <Link className="text-accent-text hover:underline" href="/">Chat</Link>}</dd>
-          <dt className="text-ink-3">Cost</dt><dd>{item.cost.status === "known" ? money(item.cost.amount_usd) : item.cost.status === "unknown" ? `${item.cost.amount_usd !== undefined ? `${money(item.cost.amount_usd)} so far, ` : ""}some costs unknown` : "None"}{item.cost.budget_usd ? ` of ${money(item.cost.budget_usd)}` : ""}</dd>
+          <dt className="text-ink-3">Cost</dt><dd>{[item.cost.status === "known" ? money(item.cost.amount_usd) : item.cost.status === "unknown" ? (item.cost.amount_usd ? `At least ${money(item.cost.amount_usd)}` : "Not known yet") : "None", item.cost.budget_usd ? `budget ${money(item.cost.budget_usd)}` : ""].filter(Boolean).join(" · ")}</dd>
           {item.parent_task_id && <><dt className="text-ink-3">Part of</dt><dd><Link className="text-accent-text hover:underline" href={`/work/${encodeURIComponent(item.parent_task_id)}`}>Parent task</Link></dd></>}
         </dl>
       </Section>

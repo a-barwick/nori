@@ -17,6 +17,8 @@ type Assistant = {
   capabilities?: Capabilities;
   /** True when the live core advertises this route family (or fixture mode is on). */
   has: (feature: AssistantFeature) => boolean;
+  /** False until the core's capabilities have loaded (or failed), so screens don't claim a feature is missing. */
+  ready: boolean;
   debug: boolean;
   setDebug: (on: boolean) => void;
 };
@@ -28,13 +30,14 @@ export function AssistantProvider({ agentMode, children }: { agentMode: boolean;
   const runtime = useRuntime(agentMode);
   const chat = useChat();
   const [fixtures] = useState(fixtureMode);
-  const { data: capabilities } = useResource<Capabilities>("/capabilities", { poll: 120_000 });
+  const { data: capabilities, error: capabilitiesError } = useResource<Capabilities>("/capabilities", { poll: 120_000 });
+  const ready = fixtures || !!capabilities || !!capabilitiesError;
   const [debug, setDebugState] = useState(() => { try { return localStorage.getItem(DEBUG_KEY) === "1"; } catch { return false; } });
   const value = useMemo<Assistant>(() => ({
-    agentMode, fixtures, runtime, chat, capabilities, debug,
+    agentMode, fixtures, runtime, chat, capabilities, debug, ready,
     has: (feature) => fixtures || !!capabilities?.assistant_features?.[feature],
     setDebug: (on) => { setDebugState(on); try { if (on) localStorage.setItem(DEBUG_KEY, "1"); else localStorage.removeItem(DEBUG_KEY); } catch { /* storage off */ } },
-  }), [agentMode, fixtures, runtime, chat, capabilities, debug]);
+  }), [agentMode, fixtures, runtime, chat, capabilities, debug, ready]);
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;
 }
 

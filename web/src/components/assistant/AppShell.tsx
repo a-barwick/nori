@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MotionConfig } from "motion/react";
 import { Dialog, Tooltip } from "radix-ui";
 import { FolderOpen, LayoutGrid, ListChecks, MessageCircle, MoreHorizontal, Monitor, Repeat, Settings, Target, X } from "lucide-react";
@@ -34,6 +34,19 @@ function Frame({ children }: { children: ReactNode }) {
   const summary = useSummary();
   const path = usePathname();
   const [more, setMore] = useState(false);
+  const previous = useRef(path);
+  // After navigation, move focus to the new screen's title so keyboard and screen-reader users land on it.
+  useEffect(() => {
+    if (previous.current === path) return;
+    previous.current = path;
+    const frame = requestAnimationFrame(() => {
+      const heading = document.querySelector<HTMLElement>("main h1");
+      if (!heading) return;
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [path]);
   const waiting = summary.needs_you ?? 0;
   const { session, loading, error, busy } = runtime;
   const items: NavItem[] = [

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog } from "radix-ui";
-import { Activity, ArrowLeft, RefreshCw, Trash2 } from "lucide-react";
+import { Activity, ArrowLeft, RefreshCw, Trash2, Volume2, VolumeX } from "lucide-react";
+import { useSpeech } from "@/lib/assistant/voice";
 import { Thread } from "@/components/chat/Thread";
 import { IconButton } from "@/components/ui/primitives";
 import { chatThread } from "@/lib/chat/thread";
@@ -59,6 +60,14 @@ export function ChatScreen() {
       wide ? setDockOpen((open) => !open) : setOverlayOpen((open) => !open),
     [wide],
   );
+  const speech = useSpeech();
+  const lastReply = session?.messages.findLast((message) => message.role === "assistant");
+  const spoken = useRef<string | undefined>(lastReply?.id);
+  useEffect(() => {
+    if (!lastReply || spoken.current === lastReply.id) return;
+    spoken.current = lastReply.id;
+    speech.say(lastReply.text);
+  }, [lastReply, speech]);
   const [unread, setUnread] = useState<{ count: number; jump: () => void }>({
     count: 0,
     jump: () => {},
@@ -140,6 +149,9 @@ export function ChatScreen() {
   return (
     <>
     <div className="nori-chat-toolbar flex shrink-0 items-center justify-end gap-2 px-4 pt-3">
+      {speech.supported && <IconButton label={speech.on ? "Stop reading replies aloud" : "Read replies aloud"} size={32} active={speech.on} aria-pressed={speech.on} onClick={() => speech.setOn(!speech.on)}>
+        {speech.on ? <Volume2 size={16} strokeWidth={1.5} /> : <VolumeX size={16} strokeWidth={1.5} />}
+      </IconButton>}
       <IconButton label={loading ? "Loading history" : "Refresh history"} size={32} disabled={loading} onClick={() => void runtime.refreshHistory()}>
         <RefreshCw size={16} strokeWidth={1.5} />
       </IconButton>
@@ -241,6 +253,7 @@ export function ChatScreen() {
           </div>
         )}
         <RuntimeComposer
+          onDictationStart={speech.interrupt}
           draft={runtime.draft}
           setDraft={runtime.setDraft}
           disabled={!session || loading || !!session.conversation?.introducing}
