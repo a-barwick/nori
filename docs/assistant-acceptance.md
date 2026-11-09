@@ -9,10 +9,10 @@ Statuses: **not started**; **locally verified (recorded provider)** (exercised e
 | Status | Count |
 | --- | --- |
 | blocked | 2 |
-| implemented | 26 |
-| locally verified | 6 |
-| locally verified (recorded provider) | 2 |
-| not started | 8 |
+| implemented | 23 |
+| locally verified | 10 |
+| locally verified (recorded provider) | 3 |
+| not started | 6 |
 
 ## Matrix
 
