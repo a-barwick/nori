@@ -1,5 +1,5 @@
 {
-  "revision": "r2.9",
+  "revision": "r2.10",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -1122,6 +1122,28 @@
       "file": "fixtures/common/api-error.subscription-expired.valid.json",
       "schema": "common.schema.json#/$defs/APIError",
       "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection-action.app-password.valid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection-action.app-password-repair.valid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection-action.password-without-username.invalid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionAction",
+      "valid": false,
+      "note": "username and password travel together"
+    },
+    {
+      "file": "fixtures/connections/connection.leaks-password.invalid.json",
+      "schema": "connections.schema.json#/$defs/Connection",
+      "valid": false,
+      "note": "an app-specific password is write-only"
     }
   ]
 }
