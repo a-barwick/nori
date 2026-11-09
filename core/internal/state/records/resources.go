@@ -184,6 +184,10 @@ func (d *Database) Mutate(ctx context.Context, m state.Mutation) (state.Mutation
 		revision := int64(0)
 		if current != nil {
 			revision = current.Revision
+		} else if m.ExpectedRevision > 0 {
+			// A change to something that does not exist (or belongs to another user) is not found, never a
+			// revision conflict.
+			return state.ErrNotFound
 		}
 		if !m.SkipRevisionCheck && revision != m.ExpectedRevision {
 			return state.ErrRevisionConflict
