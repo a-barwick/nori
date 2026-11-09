@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Permissions and approvals · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Permissions and approvals</h1>
+<p class="lede">What lets a call reach an account, when the user is asked, and why an old approval can never authorize a changed action.</p>
+<div class="card"><p><span class="say me">Create a planning sync on Tuesday at 3 and invite guest@example.com.</span></p>
+<div class="flow">
+<div class="node inner"><b>Tool executor</b><small>Prepares the action: account, calendar, time, attendees. A digest covers exactly these.</small></div>
+<div class="arrow">↓ <span class="lbl">a send to someone else needs approval</span></div>
+<div class="node"><b>Approval</b><small>Shows the account, the calendar, the recipients and that Google will email the guest.</small></div>
+<div class="arrow">↓ <span class="lbl">approve, naming the digest</span></div>
+<div class="node computer"><b>Google</b><small>One insert with an id derived from the action.</small></div>
+</div></div>
+<section><h2>What decides a call</h2>
+<p>Installing a package or connecting an account grants nothing. Each call is checked against the account's granted scopes, the user's rules, the task's own instructions and the deployment's limits. Rules list exactly which tools, accounts, resources, action types and recipients they cover; an empty list covers nothing, and a deny always wins. A tool that does not declare a trusted effect is treated as unknown and needs explicit permission.</p>
+<div class="card"><table><tr><th>Effect</th><th>Examples</th><th>Default</th></tr>
+<tr><td>Read</td><td>Search, agenda, read mail</td><td>Allowed when the account is connected</td></tr>
+<tr><td>Reversible write</td><td>Event without guests, draft</td><td>Allowed for the user's own direct request</td></tr>
+<tr><td>Send</td><td>Invitations, email send</td><td>Asks, under the interim setting</td></tr>
+<tr><td>Unknown</td><td>MCP and package tools, shell</td><td>Needs an approval or a rule</td></tr>
+</table>
+<p class="note">Whether an automation may send or write without asking is still the user's decision; until then it asks.</p></div>
+</section>
+<section><h2>Approvals stay bound to what they approve</h2>
+<p>An approval names the task, its instruction revision and the action digest. A correction to the task supersedes the open approval in the same step that advances the revision, and the replacement shows the changed action. Approving the old one returns a conflict with the current state, and an old digest never matches the new action. Declining writes nothing.</p>
+<p>After an approval, the task repeats the call. The idempotency key comes from the task, its revision and the action, not from the call, so an unchanged repeat matches the approval and reuses the same provider key: one approval, one write. A changed repeat is a different action and is asked about again.</p>
+<p>The answer, the resolution and the command that resumes the task are saved together. If the answer arrives before the task is waiting for it, the command waits and is delivered when the task asks.</p>
+</section>
+<section><h2>Questions, sign-in and takeover</h2>
+<p>Questions, account choices, sign-in requests and computer takeovers use the same interaction record: it has a revision, it expires, and a response must name the revision it answers. Work lists every open interaction under Needs you.</p>
+</section>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apps and extensions · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Apps and extensions</h1>
+<p class="lede">How Nori learns about tools, connects the user's accounts, and runs calls against Google, MCP servers and installed packages.</p>
+<div class="card"><div class="flow">
+<div class="node"><b>Extension registry</b><small>Versioned tool definitions: schema, binding, policy and a content digest.</small></div>
+<div class="arrow">↓ <span class="lbl">definitions, filtered by installation and permission</span></div>
+<div class="node"><b>Available tools</b><small>What the task model is offered, with each tool's availability for this user.</small></div>
+<div class="arrow">↓ <span class="lbl">a call pinned to one definition and digest</span></div>
+<div class="node inner"><b>Tool executor</b><small>Validates arguments, checks permission, records the attempt, then dispatches.</small></div>
+<div class="arrow">↓ <span class="lbl">one account's credentials, scoped to the call</span></div>
+<div class="node computer"><b>App connector, MCP client or sandbox</b><small>Talks to the provider and returns provider evidence.</small></div>
+</div></div>
+<section><h2>Registry</h2>
+<p>Every tool, built in or contributed, is a definition with a stable id, a model-facing name, its input schema, a binding to the code that runs it, and a policy: effect, where it runs, retry behaviour and timeout. A digest covers everything that changes what a call does. The model name must match <code>^[A-Za-z0-9_-]{1,64}$</code>; built-in names cannot be claimed by packages.</p>
+<p>When the task model asks for a tool, the activity resolves the definition and records it with the call in the workflow history. The workflow itself never looks anything up in the registry, so a history replays with the definition it was recorded with even after a package changes. Calls recorded before pinning existed still replay through the old name-based policy.</p>
+</section>
+<section><h2>Connections</h2>
+<p>A connection is one account at one provider: its identity, the scopes granted, the resources the user selected (for example two calendars), its health, and a revision. Several accounts per integration are allowed. Which account Nori uses by default for a purpose, such as creating events, is a user preference rather than a property of the connection.</p>
+<div class="card"><table><tr><th>Step</th><th>What happens</th></tr>
+<tr><td>Connect</td><td>Returns a one-time sign-in attempt bound to the user and the integration, with PKCE and state. Only the scopes for the requested purposes are asked for.</td></tr>
+<tr><td>Callback</td><td>Found by state within the signed-in user only. A cancelled or replayed callback creates nothing new. The browser returns to a path inside the web app.</td></tr>
+<tr><td>Use</td><td>The executor asks Connections for a client for exactly one account. A failed write is never retried on another account.</td></tr>
+<tr><td>Disconnect</td><td>Closes new calls first, then revokes at the provider. Saved results keep their source as a copy.</td></tr>
+</table>
+<p class="note">Health is one of ready, needs sign-in, needs more access, revoked, rate limited, temporarily failing, provider unavailable or credential store unavailable, each with a repair action.</p></div>
+<p class="designed">Where account credentials are kept in production is not decided yet. Local development uses an encrypted file store that refuses to run outside the local cloud setting.</p>
+</section>
+<section><h2>Google</h2>
+<p>Calendar list, events, free/busy, create, update, cancel and respond; ICS preview and import; Gmail search, read, drafts and send; contacts lookup. Event creation uses an id derived from the action, so a retry after a lost response finds the event instead of creating a second one, and an uncertain write is read back before anyone is asked.</p>
+<p class="designed">Outlook and Microsoft 365, iCloud, HEY, Drive, OneDrive, Dropbox, Notion, Linear, GitHub, Slack and Teams have no connector yet.</p>
+</section>
+<section><h2>MCP</h2>
+<p>Remote MCP servers over Streamable HTTP, added by the user or by a package. Discovery runs outside the workflow; each discovered tool becomes a definition named <code>mcp/&lt;server&gt;/&lt;tool&gt;</code> with its own digest. A server's tool annotations are advisory, so MCP tools are treated as effect unknown and need an approval or an allow rule. A token for a server is written once and never returned.</p>
+<p class="designed">MCP sign-in with OAuth, managed stdio servers, resources, prompts and interactive requests are not built.</p>
+<p>Nori also answers MCP at <code>POST /mcp</code> for the user's own external clients. Each client gets a token shown once, scoped to read or to read and change; changes keep their request ids, so a retried submit returns the same task.</p>
+</section>
+<section><h2>Plugins and skills</h2>
+<p>A package has a manifest naming what it contributes and the access it needs. Installing a package grants nothing on its own. An update that asks for more access is refused until the user approves it; the review shows tools, schemas and access added or removed. Packages can be pinned, rolled back and removed; history from removed packages stays readable.</p>
+<p>A skill is saved instructions with inputs and the tools it expects. Editing a skill makes a new version. Skills carry no account access.</p>
+<p>Executable package tools run on the computer in a sandbox with memory, process and CPU limits, separate user, network, mount and IPC namespaces, and a deadline. If the computer cannot provide that isolation, the call fails and says so.</p>
+</section>
+</body>
+</html>
