@@ -367,6 +367,18 @@ func (a *Assistant) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, apiError{Error: "This sign-in link is incomplete.", Code: "validation_failed"})
 		return
 	}
+	// The same redirect URL serves MCP server sign-in; an MCP attempt owns its state, otherwise Connections does.
+	if a.MCP != nil {
+		location, err := a.MCP.Callback(r.Context(), state, code, providerError)
+		if err == nil {
+			http.Redirect(w, r, location, http.StatusSeeOther)
+			return
+		}
+		if !errors.Is(err, mcp.ErrNotMCPAttempt) {
+			writeAPIError(w, err, "", nil)
+			return
+		}
+	}
 	location, err := a.Connections.Callback(r.Context(), state, code, providerError)
 	if errors.Is(err, connections.ErrAttemptInvalid) {
 		http.Redirect(w, r, "/apps?result=failed", http.StatusSeeOther)

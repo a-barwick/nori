@@ -155,7 +155,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		},
 	}
 	nori.Register(adapters, nori.Adapter{Scheduler: sched, Unattended: s.Connections.UnattendedWrites})
-	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: localCommands(s)}
+	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: localCommands(s), RedirectURL: s.Connections.RedirectURL}
 	// MCP targets are "<server>/<tool>", so the adapter serves every MCP prefix.
 	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
 	pluginService := &plugins.Service{Store: store, MCP: servers, Builtin: plugins.Builtin}
