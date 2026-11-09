@@ -1019,11 +1019,23 @@ func (s *Service) ReportSuccess(ctx context.Context, id string) {
 	if err != nil {
 		return
 	}
-	if record.Health.Code == HealthReady && record.Health.LastSuccessAt != nil && s.now().Sub(*record.Health.LastSuccessAt) < 10*time.Minute {
+	if record.Health.Code == HealthReady && record.Status == StatusConnected && record.Health.LastSuccessAt != nil && s.now().Sub(*record.Health.LastSuccessAt) < 10*time.Minute {
 		return
 	}
 	now := s.now()
-	record.Health = Health{CheckedAt: &now, Code: HealthReady, Recovery: "none", LastSuccessAt: &now}
+	if missing := missingScopes(record.DesiredScopes, record.GrantedScopes); record.Status == StatusAttention && len(missing) > 0 {
+		// A working call doesn't grant the access that is still missing.
+		if record.Health.Code == HealthNeedsMoreAccess && record.Health.LastSuccessAt != nil && now.Sub(*record.Health.LastSuccessAt) < 10*time.Minute {
+			return
+		}
+		record.Health = Health{CheckedAt: &now, Code: HealthNeedsMoreAccess, Recovery: "request_access", Message: "Some requested access was not granted.", LastSuccessAt: &now}
+	} else {
+		record.Health = Health{CheckedAt: &now, Code: HealthReady, Recovery: "none", LastSuccessAt: &now}
+		if record.Status == StatusAttention {
+			// The account works again with everything it asked for.
+			record.Status = StatusConnected
+		}
+	}
 	next, err := state.NewResource(CollectionConnections, id, 0, record, recordIndex(record), now)
 	if err == nil {
 		_, _ = s.Store.PutResource(ctx, next, r.Revision)
