@@ -29,7 +29,8 @@ core:
 
 check:
 	$(MAKE) -C core check
-	cd web && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src
+	cd core && go run ./cmd/contracts-check -emit-ts ../web/src/lib/contracts/fixtures.check.ts
+	cd web && node scripts/contract-types.mjs --check && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src
 
 deploy deploy-check deploy-status deploy-rollback deploy-unlock:
 	python3 core/infrastructure/release/deploy.py $(patsubst deploy-%,%,$@)

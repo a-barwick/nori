@@ -1,0 +1,16 @@
+{
+  "id": "cs_1",
+  "revision": 4,
+  "task_id": "task_9",
+  "task_title": "Book the dentist",
+  "availability": "busy",
+  "controller": "user",
+  "lease": {
+    "id": "lease_2",
+    "holder": "user",
+    "expires_at": "2026-11-09T09:10:00Z"
+  },
+  "waiting_task_ids": [
+    "task_11"
+  ]
+}

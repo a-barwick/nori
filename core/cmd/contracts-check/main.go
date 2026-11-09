@@ -8,6 +8,7 @@
 //
 //	go run ./cmd/contracts-check            # from core/
 //	go run ./cmd/contracts-check -root ../contracts/assistant -strict
+//	go run ./cmd/contracts-check -live http://127.0.0.1:8083   # also run scenarios against a core
 package main
 
 import (
@@ -63,6 +64,9 @@ func (l dirLoader) Load(rawURL string) (any, error) {
 func main() {
 	root := flag.String("root", "", "path to contracts/assistant (default: found by walking up from the working directory)")
 	strict := flag.Bool("strict", false, "fail when a $defs entry has no fixture")
+	live := flag.String("live", "", "run scenarios against this core base URL (e.g. http://127.0.0.1:8083)")
+	emit := flag.String("emit-ts", "", "write every valid fixture as a typed TypeScript literal to this file")
+	only := flag.String("only", "", "with -live, run only scenarios whose file name contains this text")
 	flag.Parse()
 	dir := *root
 	if dir == "" {
@@ -136,6 +140,26 @@ func main() {
 			fmt.Printf("FAIL %s: expected invalid against %s but validated\n", fx.File, fx.Schema)
 		}
 	}
+	compile := func(ref string) (*jsonschema.Schema, error) {
+		return compiler.Compile("https://" + schemaHost + "/assistant/" + ref)
+	}
+	scenarioFiles, scenarios, err := loadScenarios(dir)
+	if err != nil {
+		failures++
+		fmt.Printf("FAIL scenarios: %v\n", err)
+	}
+	failures += checkScenariosOffline(scenarioFiles, scenarios, compile)
+	if *live != "" {
+		failures += runScenariosLive(*live, scenarioFiles, scenarios, compile, *only)
+	}
+	if *emit != "" {
+		if err := emitTS(dir, *emit, idx.Fixtures); err != nil {
+			failures++
+			fmt.Printf("FAIL emit-ts: %v\n", err)
+		}
+	}
+	histories, replayFailures := replayHistories(dir)
+	failures += replayFailures
 	var uncovered []string
 	for d, covered := range defs {
 		if !covered {
@@ -146,7 +170,7 @@ func main() {
 	for _, d := range uncovered {
 		fmt.Printf("WARN no fixture for %s\n", d)
 	}
-	fmt.Printf("contracts %s: %d schemas, %d fixtures, %d failures, %d definitions without fixtures\n", idx.Revision, len(files), len(idx.Fixtures), failures, len(uncovered))
+	fmt.Printf("contracts %s: %d schemas, %d fixtures, %d scenarios, %d histories replayed, %d failures, %d definitions without fixtures\n", idx.Revision, len(files), len(idx.Fixtures), len(scenarios), histories, failures, len(uncovered))
 	if failures > 0 || (*strict && len(uncovered) > 0) {
 		os.Exit(1)
 	}

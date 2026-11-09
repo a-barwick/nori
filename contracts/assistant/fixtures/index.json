@@ -1,5 +1,5 @@
 {
-  "revision": "r1",
+  "revision": "r2",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -742,7 +742,7 @@
       "file": "fixtures/execution/operation-projection.existing-wire.valid.json",
       "schema": "execution.schema.json#/$defs/OperationProjection",
       "valid": true,
-      "note": "today's operationView shape (embedded OperationRecord + owner) validates unchanged (I5); replace with a capture from the local stack"
+      "note": "Captured from GET /v1/conversations/assistant/operations on the local stack at ed6b020 (I5): today's wire shape validates unchanged"
     },
     {
       "file": "fixtures/automations/automation-preview.dst.valid.json",
@@ -793,6 +793,133 @@
       "schema": "tools.schema.json#/$defs/ToolDefinition",
       "valid": false,
       "note": "location drives computer revisions in the workflow (B2)"
+    },
+    {
+      "file": "fixtures/common/api-error.revision-conflict.valid.json",
+      "schema": "common.schema.json#/$defs/APIError",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/work-detail.events.valid.json",
+      "schema": "execution.schema.json#/$defs/WorkDetail",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/work-detail.too-many-events.invalid.json",
+      "schema": "execution.schema.json#/$defs/WorkDetail",
+      "valid": false,
+      "note": "at most the latest 50 events"
+    },
+    {
+      "file": "fixtures/library/library-item-change.valid.json",
+      "schema": "library.schema.json#/$defs/LibraryItemChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/library-action.export.valid.json",
+      "schema": "library.schema.json#/$defs/LibraryAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/library-action.delete-no-scope.invalid.json",
+      "schema": "library.schema.json#/$defs/LibraryAction",
+      "valid": false,
+      "note": "delete names its scope"
+    },
+    {
+      "file": "fixtures/library/library-action.revise.valid.json",
+      "schema": "library.schema.json#/$defs/LibraryAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/memory-fact.valid.json",
+      "schema": "library.schema.json#/$defs/MemoryFact",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/memory-action.forget.valid.json",
+      "schema": "library.schema.json#/$defs/MemoryAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/memory-change.extra-field.invalid.json",
+      "schema": "library.schema.json#/$defs/MemoryFactChange",
+      "valid": false,
+      "note": "only the text is editable"
+    },
+    {
+      "file": "fixtures/library/inbox-item.valid.json",
+      "schema": "library.schema.json#/$defs/InboxItem",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/inbox-item.url-link.invalid.json",
+      "schema": "library.schema.json#/$defs/InboxItem",
+      "valid": false,
+      "note": "deep links name a resource kind, never a URL"
+    },
+    {
+      "file": "fixtures/library/upload-accept.extensions.valid.json",
+      "schema": "library.schema.json#/$defs/UploadAccept",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/catalog-entry.valid.json",
+      "schema": "plugins.schema.json#/$defs/CatalogEntry",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/installation-create.valid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationCreateChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/installation-review.valid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationReview",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-server-change.http.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServerChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-server-change.literal-env.invalid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServerChange",
+      "valid": false,
+      "note": "configuration names secret references, never literal values"
+    },
+    {
+      "file": "fixtures/plugins/mcp-server-change.stdio-without-command.invalid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServerChange",
+      "valid": false,
+      "note": "stdio needs a declared command reference"
+    },
+    {
+      "file": "fixtures/plugins/mcp-server-action.set-exposure.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServerAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-server-tool.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServerTool",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/skill-change.valid.json",
+      "schema": "plugins.schema.json#/$defs/SkillChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/skill-change.grants-connection.invalid.json",
+      "schema": "plugins.schema.json#/$defs/SkillChange",
+      "valid": false,
+      "note": "a skill never carries account access"
+    },
+    {
+      "file": "fixtures/plugins/computer-session.waiting.valid.json",
+      "schema": "plugins.schema.json#/$defs/ComputerSession",
+      "valid": true
     }
   ]
 }

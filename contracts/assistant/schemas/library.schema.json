@@ -242,6 +242,17 @@
         },
         "data": {
           "description": "Typed domain object for saved event/mail/availability results, discriminated by data_kind"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "preview_text": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "delete_effect": {
+          "type": "string",
+          "description": "Server-stated effect of delete, e.g. that the provider copy stays with the provider"
         }
       },
       "allOf": [
@@ -501,6 +512,13 @@
         "max_bytes": {
           "type": "integer",
           "minimum": 1
+        },
+        "extensions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\.[a-z0-9]{1,8}$"
+          }
         }
       },
       "additionalProperties": false
@@ -538,6 +556,288 @@
         }
       },
       "additionalProperties": false
+    },
+    "LibraryItemEditable": {
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "collection": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "LibraryItemChange": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Change"
+        },
+        {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/LibraryItemEditable"
+            }
+          }
+        }
+      ]
+    },
+    "LibraryAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "action",
+                    "instruction"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "revise"
+                    },
+                    "instruction": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8192
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action",
+                    "format"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "export"
+                    },
+                    "format": {
+                      "enum": [
+                        "md",
+                        "pdf",
+                        "docx",
+                        "csv",
+                        "ics",
+                        "original"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action",
+                    "scope"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "delete"
+                    },
+                    "scope": {
+                      "enum": [
+                        "version",
+                        "all_versions"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "MemoryFact": {
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "text",
+        "scope",
+        "origin",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "enum": [
+            "user",
+            "chat"
+          ]
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "conversation_id": {
+              "type": "string"
+            },
+            "message_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "updated_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      }
+    },
+    "MemoryFactEditable": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "MemoryFactChange": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Change"
+        },
+        {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/MemoryFactEditable"
+            }
+          }
+        }
+      ]
+    },
+    "MemoryAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "type": "object",
+              "required": [
+                "action"
+              ],
+              "properties": {
+                "action": {
+                  "const": "forget"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "description": "Forgetting stops future use of the fact; it does not delete transcripts or external documents, and the receipt says only what was done."
+    },
+    "InboxItem": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "body",
+        "link",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "delivery_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "link": {
+          "type": "object",
+          "required": [
+            "kind",
+            "id"
+          ],
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/CardPart/properties/resource/properties/kind"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "$ref": "common.schema.json#/$defs/Revision"
+            }
+          },
+          "additionalProperties": false
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "acknowledged_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      }
+    },
+    "InboxAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "type": "object",
+              "required": [
+                "action"
+              ],
+              "properties": {
+                "action": {
+                  "const": "acknowledge"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
     }
   }
 }

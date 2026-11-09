@@ -410,7 +410,7 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 		return nextCall, err
 	}
 	// A tool the worker runs itself never touches the computer, so it leaves nothing to stop.
-	policy := agent.TaskToolPolicy(call.Name)
+	policy := agent.PolicyFor(call.Name, call.Exec)
 	if !policy.Runtime {
 		if len(c.ComputerRevisions) == 0 || c.ComputerRevisions[len(c.ComputerRevisions)-1] != c.Revision {
 			c.ComputerRevisions = append(c.ComputerRevisions, c.Revision)
@@ -420,7 +420,7 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 	c.JobsStarted = c.JobsStarted || call.Name == "job_start"
 	var output RefToolOutcome
 	err = workflow.ExecuteActivity(r.recovering, a.ToolRef, RefToolInput{
-		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.Inherited,
+		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.Inherited, Exec: call.Exec,
 	}).Get(r.ctx, &output)
 	retry, err = r.boundary(err)
 	if retry {

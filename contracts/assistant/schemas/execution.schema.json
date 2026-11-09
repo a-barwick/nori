@@ -515,6 +515,45 @@
           "items": {
             "$ref": "permissions.schema.json#/$defs/Interaction"
           }
+        },
+        "result": {
+          "type": "string",
+          "description": "Run.result, the task's final answer (F20)"
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "description": "Latest 50 run events, newest last"
+        },
+        "events_truncated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "RunEvent": {
+      "description": "Existing state.RunEvent shape",
+      "type": "object",
+      "required": [
+        "kind",
+        "text",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
         }
       }
     }

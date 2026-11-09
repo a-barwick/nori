@@ -2,7 +2,7 @@
 
 Shared JSON Schema 2020-12 definitions and fixtures for the boundaries in [the contract baseline](../../docs/assistant-contract-baseline.md). Backend validates Go runtime values against these schemas, the web client generates its TypeScript types from them, and the integration stream keeps the fixtures and the checker current.
 
-Current encoding: **r1**. It applies the agreed recommendations from the three r0 reviews (`docs/assistant-r0-review-*.md`): backend B1–B10, frontend F1–F11 and F13 with the preferences shape and readable rule summaries, integration I4–I6. Queued for r2: frontend F12, the rest of F14, F15–F19, and the scenario fixtures and live mode (I1). A revision is accepted when each affected consumer acknowledges its commit in [the coordination record](../../docs/assistant-coordination.md).
+Current encoding: **r2**. r1 applied the agreed recommendations from the three r0 reviews (`docs/assistant-r0-review-*.md`): backend B1–B10, frontend F1–F11 and F13 with the preferences shape and readable rule summaries, integration I4–I6. r2 adds frontend F12 (Library mutations), F14 (memory, inbox), F15 (upload extensions), F16–F19 (plugin catalog, install and review, MCP server management, skill editing, computer session queue), F20 (Work detail result and events), the mutation routes and error codes below, and the scenario format. A revision is accepted when each affected consumer acknowledges its commit in [the coordination record](../../docs/assistant-coordination.md).
 
 ## Layout
 
@@ -22,11 +22,40 @@ Current encoding: **r1**. It applies the agreed recommendations from the three r
 
 Relative `$ref` values resolve against the `$id` host `contracts.nori.local`, which the checker maps to `schemas/`. Nothing is fetched over the network.
 
+## Routes and errors (r2)
+
+Core paths after the user-scoping wrapper; the browser reaches them as `/api/v1/...` through `assistantRoute` in `web/src/lib/runtime/forward.ts`.
+
+| Operation | Request | Success |
+| --- | --- | --- |
+| Create in a family | `POST /v1/{family}` with `Change`, `expected_revision: 0` | `201` receipt |
+| Update | `PUT /v1/{family}/{id}` with `Change` | `200` receipt |
+| Command action | `POST /v1/{family}/{id}/actions` with `ActionRequest` | `200` applied or `202` queued receipt |
+| Answer an interaction | `POST /v1/interactions/{id}/responses` with `InteractionResponse` | `200` receipt |
+| Preferences | `PUT /v1/preferences` with `PreferencesChange` | `200` receipt |
+| Automation preview | `POST /v1/automations/preview` with an `AutomationEditable` body, no request id | `200` `AutomationPreview` |
+| OAuth callback | `GET /v1/connections/oauth/callback?state&code\|error` | `303` to the attempt's relative `return_to` |
+| Receipt lookup | `GET /v1/mutations/{request_id}` | `200` receipt or `404` |
+
+Errors use `APIError` with `code` from `ErrorCode`: `revision_conflict` and `interaction_stale` (`409`, with `current` holding the latest projection), `idempotency_conflict` (`409`, no `current`), `validation_failed` (`400`), `not_found` (`404`, also for another owner's id), `credential_store_unavailable` and `provider_unavailable` (`503`). A `503` may still carry `accepted: true` and the receipt.
+
+## Scenarios
+
+`scenarios/*.json` are ordered request/response sequences for the baseline's verification obligations. Each has `name`, `obligation`, optional `note` and `requires` (feature names from `/v1/capabilities.assistant_features`; `-live` skips the scenario until they are advertised), `users` (name to user id) and `steps`. A step has `name`, `user`, `method`, `path`, optional `body` and `body_schema`, `expect` and `capture`. `expect` holds `status` (allowed codes), `schema` for the response, `resource_schema` for a receipt's `resource`, `match` (JSON pointer to expected value), `absent` (pointers that must not exist), `count` (`"<pointer>|key=value"` to a number of matching array elements) and `same_as` (an earlier step whose response must be identical). `capture` maps a variable to a response pointer. Placeholders: `${uuid:name}` (one fresh UUID per name per run, so a retry reuses it), `${var:name}` (a captured value), `${user:name}`. A pointer segment `[key=value]` selects an array element. A step may `wait` by repeating until a pointer matches.
+
+`histories/*.json` are Temporal histories retained from earlier builds. The checker replays each against the task workflow compiled into it.
+
 ## Check
 
 ```bash
 cd core && go run ./cmd/contracts-check
 ```
+
+```bash
+cd core && go run ./cmd/contracts-check -live http://127.0.0.1:8083
+```
+
+`make check` runs the checker, regenerates `web/src/lib/contracts/fixtures.check.ts` (`-emit-ts`) and type-checks it.
 
 `-strict` also fails when a `$defs` entry has no fixture. The checker is the first compatibility check; Go struct round-trips and generated TypeScript types are added by their owners against the same fixtures.
 
