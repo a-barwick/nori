@@ -1,13 +1,78 @@
 {
   "exchanges": [
     {
+      "name": "insert-dinner-ok",
+      "method": "POST",
+      "host": "www.googleapis.com",
+      "path": "/calendar/v3/calendars/primary/events",
+      "body_contains": [
+        "Lilla Tavern"
+      ],
+      "response": {
+        "status": 200,
+        "body": {
+          "kind": "calendar#event",
+          "id": "recordeddinner",
+          "status": "confirmed",
+          "etag": "\"3400000000000010\"",
+          "htmlLink": "https://www.google.com/calendar/event?eid=dinner",
+          "summary": "Dinner at Lilla Tavern",
+          "location": "418 Pine Street, Seattle",
+          "start": {
+            "dateTime": "2026-11-13T19:30:00-08:00",
+            "timeZone": "America/Los_Angeles"
+          },
+          "end": {
+            "dateTime": "2026-11-13T21:00:00-08:00",
+            "timeZone": "America/Los_Angeles"
+          },
+          "organizer": {
+            "email": "recorded.user@example.com",
+            "self": true
+          }
+        }
+      }
+    },
+    {
+      "name": "get-dinner",
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/calendar/v3/calendars/primary/events/*",
+      "after": [
+        "insert-dinner-ok"
+      ],
+      "response": {
+        "status": 200,
+        "body": {
+          "kind": "calendar#event",
+          "id": "recordeddinner",
+          "status": "confirmed",
+          "etag": "\"3400000000000010\"",
+          "htmlLink": "https://www.google.com/calendar/event?eid=dinner",
+          "summary": "Dinner at Lilla Tavern",
+          "location": "418 Pine Street, Seattle",
+          "start": {
+            "dateTime": "2026-11-13T19:30:00-08:00",
+            "timeZone": "America/Los_Angeles"
+          },
+          "end": {
+            "dateTime": "2026-11-13T21:00:00-08:00",
+            "timeZone": "America/Los_Angeles"
+          },
+          "organizer": {
+            "email": "recorded.user@example.com",
+            "self": true
+          }
+        }
+      }
+    },
+    {
       "name": "insert-run-ok",
       "method": "POST",
       "host": "www.googleapis.com",
       "path": "/calendar/v3/calendars/primary/events",
       "body_contains": [
-        "Recorded run",
-        "Lilla Tavern"
+        "Recorded run"
       ],
       "response": {
         "status": 200,
