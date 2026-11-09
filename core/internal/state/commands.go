@@ -47,7 +47,10 @@ type Command struct {
 	Attachments    []Attachment `json:"attachments,omitempty" firestore:"attachments,omitempty"`
 	Revises        string       `json:"revises,omitempty" firestore:"revises,omitempty"`
 	// Origin is recorded on the task a start command creates.
-	Origin    *TaskOrigin `json:"origin,omitempty" firestore:"origin,omitempty"`
+	Origin *TaskOrigin `json:"origin,omitempty" firestore:"origin,omitempty"`
+	// BudgetUSD lowers a started task's spending ceiling, for example to an automation's budget. It never raises
+	// the deployment's ceiling.
+	BudgetUSD float64     `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
 	ID        string      `json:"id" firestore:"id"`
 	RunID     string      `json:"run_id" firestore:"run_id"`
 	ParentID  string      `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
@@ -76,7 +79,7 @@ const (
 func SameCommand(a, b Command) bool {
 	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID &&
 		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs) &&
-		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises && sameOrigin(a.Origin, b.Origin)
+		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises && sameOrigin(a.Origin, b.Origin) && a.BudgetUSD == b.BudgetUSD
 }
 
 func sameOrigin(a, b *TaskOrigin) bool {
@@ -299,6 +302,9 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 		ID: cmd.RunID, Request: cmd.Text, Status: RunRunning,
 		StartedAt: p.now, Budget: p.taskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
 		TraceContext: p.traceContext, OriginTraceContext: p.traceContext, Revises: cmd.Revises, Origin: cmd.Origin,
+	}
+	if cmd.BudgetUSD > 0 && cmd.BudgetUSD < run.Budget {
+		run.Budget = cmd.BudgetUSD
 	}
 	if cmd.ParentID != "" {
 		parent, question, err := linkSubtask(p.runs[cmd.ParentID], p.exists[cmd.ParentID], cmd, p.opened)

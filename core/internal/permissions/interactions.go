@@ -144,7 +144,7 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 	var answer *Answer
 	receipt, err := s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "POST", Target: "/v1/interactions/" + id + "/responses", ExpectedRevision: expected,
-		Payload: response, Collection: CollectionInteractions, ID: id,
+		Payload: response, Collection: CollectionInteractions, ID: id, SkipRevisionCheck: true,
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
 			if current == nil {
 				return state.MutationResult{}, state.ErrNotFound
@@ -153,8 +153,12 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 			if err != nil {
 				return state.MutationResult{}, err
 			}
+			// A resolved, expired or superseded interaction is stale whatever revision the client read.
 			if i.Status != "pending" {
 				return state.MutationResult{}, ErrInteractionStale
+			}
+			if current.Revision != expected {
+				return state.MutationResult{}, state.ErrRevisionConflict
 			}
 			now := s.now()
 			resolution := Resolution{Kind: response.Kind, At: now}

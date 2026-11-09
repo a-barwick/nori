@@ -49,31 +49,40 @@ func (d *Database) supersedeInteractions(tx *docstore.Transaction, pending []pen
 	now := time.Now().UTC()
 	for _, p := range pending {
 		run, ok := batch.Runs[p.runID]
-		if !ok || run.Revision == before[p.runID] {
-			continue
-		}
-		if _, ok := answered[p.resource.ID]; ok {
+		_, isAnswered := answered[p.resource.ID]
+		if !ok || run.Revision == before[p.runID] && !isAnswered {
 			continue
 		}
 		var body map[string]any
 		if err := json.Unmarshal(p.resource.Body, &body); err != nil {
 			return err
 		}
-		body["status"] = "superseded"
-		body["resolution"] = "superseded"
-		body["resolved_at"] = now.Format(time.RFC3339Nano)
-		for _, cmd := range commands {
-			if cmd.RunID == p.runID {
-				body["superseded_by"] = cmd.ID
+		status := "superseded"
+		if commandID, ok := answered[p.resource.ID]; ok {
+			// Answered through the task's answer command (for example in chat): resolved, not superseded.
+			status = "resolved"
+			for _, cmd := range commands {
+				if cmd.ID == commandID {
+					body["resolution"] = map[string]any{"kind": "answer", "text": cmd.Text, "at": now.Format(time.RFC3339Nano)}
+				}
+			}
+		} else {
+			delete(body, "resolution")
+			for _, cmd := range commands {
+				if cmd.RunID == p.runID {
+					body["superseded_by"] = cmd.ID
+				}
 			}
 		}
+		body["status"] = status
+		body["resolved_at"] = now.Format(time.RFC3339Nano)
 		next := p.resource
 		next.Revision++
 		next.Index = map[string]string{}
 		for key, value := range p.resource.Index {
 			next.Index[key] = value
 		}
-		next.Index["status"] = "superseded"
+		next.Index["status"] = status
 		data, err := json.Marshal(body)
 		if err != nil {
 			return err

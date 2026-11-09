@@ -99,7 +99,11 @@ func (g Integration) Revoke(ctx context.Context, token *oauth2.Token) error {
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://oauth2.googleapis.com/revoke", strings.NewReader(url.Values{"token": {value}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	client := http.DefaultClient
+	if configured, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && configured != nil {
+		client = configured
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

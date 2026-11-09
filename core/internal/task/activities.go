@@ -20,6 +20,7 @@ import (
 	"nori/internal/dispatch"
 	"nori/internal/extensions"
 	"nori/internal/observability"
+	"nori/internal/permissions"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
@@ -376,6 +377,21 @@ func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) 
 	defer func() { recordActivityFailure(ctx, err, "task.question"); span.End() }()
 	if err := a.Store.ProjectQuestion(ctx, p.RunID, p.Revision, p.Question); err != nil {
 		return classified(err)
+	}
+	// Every task question is also an Interaction, so it stays readable after it is answered or superseded.
+	// Approvals and account choices were opened by the executor under the same ID and are left as they are.
+	if a.Executor != nil && a.Executor.Permissions != nil {
+		revision := p.Revision
+		title := ""
+		if run, err := a.Store.GetRun(ctx, p.RunID); err == nil {
+			title = clip(run.Request, 200)
+		}
+		if _, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
+			ID: p.Question.ID, TaskID: p.RunID, InstructionRevision: &revision, Kind: "question", Prompt: p.Question.Text,
+			Payload: json.RawMessage(`{"input":"text"}`), LegacyQuestionID: p.Question.ID, TaskTitle: title,
+		}, ""); err != nil {
+			return classified(err)
+		}
 	}
 	return nil
 }

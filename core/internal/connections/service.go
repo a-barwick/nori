@@ -54,6 +54,10 @@ type Service struct {
 	// RedirectURL is the externally reachable OAuth callback, through the web proxy.
 	RedirectURL string
 	Now         func() time.Time
+	// Transport, when set, carries every provider request this service makes or hands out (token exchange, refresh,
+	// identity, revocation and the clients adapters receive). Only local development sets it, to replay recorded
+	// provider exchanges.
+	Transport http.RoundTripper
 	// Cleanup runs connector-specific cleanup after disconnect, such as dropping sync caches (D4 flags).
 	Cleanup []func(ctx context.Context, connectionID string, purgeCache, deleteImported bool) error
 }
@@ -69,6 +73,14 @@ func New(store state.ResourceStore, credentials secret.CredentialStore, redirect
 }
 
 const attemptLifetime = 15 * time.Minute
+
+// providerContext routes oauth2's requests through the configured transport.
+func (s *Service) providerContext(ctx context.Context) context.Context {
+	if s.Transport == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: s.Transport, Timeout: 30 * time.Second})
+}
 
 func (s *Service) now() time.Time { return s.Now().UTC() }
 
@@ -556,7 +568,7 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 		return finish("failed", ErrNotConfigured.Error())
 	}
 	config.Scopes = a.Scopes
-	exchange, cancel := context.WithTimeout(ctx, 20*time.Second)
+	exchange, cancel := context.WithTimeout(s.providerContext(ctx), 20*time.Second)
 	defer cancel()
 	token, err := config.Exchange(exchange, code, oauth2.VerifierOption(a.Verifier))
 	if err != nil {
@@ -760,7 +772,7 @@ func (s *Service) finishDisconnect(ctx context.Context, id string, action Action
 		if credential, err := s.Credentials.Get(ctx, id); err == nil {
 			var token oauth2.Token
 			if json.Unmarshal(credential.Data, &token) == nil {
-				revoke, cancel := context.WithTimeout(ctx, 15*time.Second)
+				revoke, cancel := context.WithTimeout(s.providerContext(ctx), 15*time.Second)
 				if err := integration.Revoke(revoke, &token); err != nil {
 					problems = append(problems, "The provider did not confirm revocation; remove Nori's access in the account's security settings.")
 				}
@@ -851,7 +863,7 @@ func (s *Service) Grant(ctx context.Context, id string) (Grant, error) {
 			_ = json.Unmarshal(credential.Data, &token)
 		}
 		if !token.Valid() {
-			refresh, cancel := context.WithTimeout(ctx, 20*time.Second)
+			refresh, cancel := context.WithTimeout(s.providerContext(ctx), 20*time.Second)
 			fresh, err := config.TokenSource(refresh, &token).Token()
 			cancel()
 			if err != nil {
@@ -874,7 +886,7 @@ func (s *Service) Grant(ctx context.Context, id string) (Grant, error) {
 			token = *fresh
 		}
 	}
-	client := config.Client(context.WithoutCancel(ctx), &token)
+	client := config.Client(s.providerContext(context.WithoutCancel(ctx)), &token)
 	client.Timeout = 30 * time.Second
 	return Grant{Connection: record, Revision: r.Revision, Client: client, Token: &token}, nil
 }
