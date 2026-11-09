@@ -123,6 +123,18 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, recovering 
 	if err != nil {
 		return nil, nil, err
 	}
+	// An adapter that needs the user to sign in first (an OAuth MCP server) asks from the task, which resumes when the
+	// sign-in completes.
+	if checker, ok := adapter.(invoke.SignInChecker); ok && !recovering && a.Executor.Permissions != nil {
+		start, err := checker.SignInNeeded(ctx, invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args}, "/work/"+in.RunID)
+		if err != nil {
+			return nil, denial(in, effect, "failed", "The server needs sign-in, which could not start: "+err.Error(), map[string]any{"recovery": "sign_in"}), nil
+		}
+		if start != nil {
+			out, err := a.signInStarted(ctx, in, run, *start)
+			return nil, out, err
+		}
+	}
 	zone := ""
 	if a.Executor.Connections != nil {
 		if prefs, _, err := a.Executor.Connections.Preferences(ctx); err == nil {
@@ -349,6 +361,24 @@ func (a *Activities) signIn(ctx context.Context, in ToolInput, run state.Run, re
 	}
 	return denial(in, effect, "needs_interaction", "The account must sign in again before this can run.", map[string]any{
 		"interaction_id": interaction.ID, "interaction_kind": "sign_in", "prompt": prompt, "connection_id": record.ID,
+	}), nil
+}
+
+// signInStarted opens a sign_in interaction for a sign-in an adapter already started.
+func (a *Activities) signInStarted(ctx context.Context, in ToolInput, run state.Run, start invoke.SignInStart) (map[string]any, error) {
+	revision := in.Revision
+	prompt := fmt.Sprintf("Sign in to %s so Nori can continue this task.", start.Label)
+	data, _ := json.Marshal(map[string]any{"auth": "oauth", "integration_id": start.IntegrationID, "connection_id": start.ConnectionID,
+		"auth_attempt_id": start.AttemptID, "authorize_url": start.AuthorizeURL, "expires_at": start.ExpiresAt, "return_to": "/work/" + in.RunID})
+	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
+		ID: interactionID("int_", in.OperationID, "sign_in:"+start.ConnectionID), TaskID: in.RunID, InstructionRevision: &revision,
+		Kind: "sign_in", Prompt: prompt, Payload: data, TaskTitle: clip(run.Request, 200),
+	}, "")
+	if err != nil {
+		return nil, err
+	}
+	return denial(in, string(in.Exec.Policy.Effect), "needs_interaction", "The server needs sign-in before this can run.", map[string]any{
+		"interaction_id": interaction.ID, "interaction_kind": "sign_in", "prompt": prompt, "connection_id": start.ConnectionID,
 	}), nil
 }
 

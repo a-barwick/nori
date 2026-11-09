@@ -127,7 +127,9 @@ type Service struct {
 	// UnattendedWrites is the D2 interim mechanism for automation-origin writes: "confirm_writes" (default until
 	// Austin decides) turns them into interactions; "require_rule" denies them without a matching rule.
 	UnattendedWrites string
-	// UserSends says how a user-requested sensitive send is treated without a rule: "ask" (default) or "allow".
+	// UserSends says how a sensitive send in a task the user asked for directly is treated without a rule: "allow"
+	// (the default, D2: a direct explicit request authorizes its action) or "ask". Unattended automation runs follow
+	// UnattendedWrites instead, and unknown-effect tools always ask.
 	UserSends string
 	Now       func() time.Time
 }
