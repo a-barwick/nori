@@ -167,6 +167,16 @@
             "required": [
               "authorization_epoch"
             ]
+          },
+          {
+            "required": [
+              "password"
+            ]
+          },
+          {
+            "required": [
+              "username"
+            ]
           }
         ]
       }
@@ -242,9 +252,29 @@
                       "type": "string",
                       "pattern": "^/([^/].*)?$",
                       "description": "Relative path inside the web app"
+                    },
+                    "username": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 320,
+                      "description": "App-password integrations only (Integration.auth app_password): the account name, such as an Apple ID. Write-only."
+                    },
+                    "password": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "description": "App-password integrations only: an app-specific password. Write-only: stored as the credential, never returned or kept in receipts. A rejected pair answers 400 validation_failed and changes nothing."
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "dependentRequired": {
+                    "username": [
+                      "password"
+                    ],
+                    "password": [
+                      "username"
+                    ]
+                  }
                 },
                 {
                   "type": "object",
@@ -264,9 +294,29 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "username": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 320,
+                      "description": "App-password integrations only (Integration.auth app_password): the account name, such as an Apple ID. Write-only."
+                    },
+                    "password": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "description": "App-password integrations only: an app-specific password. Write-only: stored as the credential, never returned or kept in receipts. A rejected pair answers 400 validation_failed and changes nothing."
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "dependentRequired": {
+                    "username": [
+                      "password"
+                    ],
+                    "password": [
+                      "username"
+                    ]
+                  }
                 },
                 {
                   "type": "object",

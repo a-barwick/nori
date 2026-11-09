@@ -2716,3 +2716,26 @@ export const fx_common_api_error_subscription_expired_valid: APIError = {
   }
 };
 
+// fixtures/connections/connection-action.app-password.valid.json
+export const fx_connections_connection_action_app_password_valid: ConnectionAction = {
+  "request_id": "7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "expected_revision": 1,
+  "value": {
+    "action": "connect",
+    "username": "recorded.user@icloud.com",
+    "password": "abcd-efgh-ijkl-mnop",
+    "return_to": "/apps"
+  }
+};
+
+// fixtures/connections/connection-action.app-password-repair.valid.json
+export const fx_connections_connection_action_app_password_repair_valid: ConnectionAction = {
+  "request_id": "8d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+  "expected_revision": 4,
+  "value": {
+    "action": "repair",
+    "username": "recorded.user@icloud.com",
+    "password": "qrst-uvwx-yzab-cdef"
+  }
+};
+

@@ -109,15 +109,15 @@ type Editable struct {
 
 // Action is the contract ConnectionAction value.
 type Action struct {
-	Action                string   `json:"action"`
-	Capabilities          []string `json:"capabilities,omitempty"`
-	ReturnTo              string   `json:"return_to,omitempty"`
-	PurgeCache            bool     `json:"purge_cache,omitempty"`
+	Action       string   `json:"action"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	ReturnTo     string   `json:"return_to,omitempty"`
+	PurgeCache   bool     `json:"purge_cache,omitempty"`
 	// Username and Password connect an app-password integration (connect or repair). Write-only: stored as the
 	// credential and never returned.
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
-	DeleteImportedContent bool     `json:"delete_imported_content,omitempty"`
+	Username              string `json:"username,omitempty"`
+	Password              string `json:"password,omitempty"`
+	DeleteImportedContent bool   `json:"delete_imported_content,omitempty"`
 }
 
 // AuthAttempt is the contract AuthAttempt.
