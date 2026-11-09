@@ -544,8 +544,9 @@ func (s *Service) activate(ctx context.Context, installID string, m Manifest) {
 			if auth == "" {
 				auth = "none"
 			}
-			receipt, err := s.MCP.Save(ctx, "", uuid.NewSHA1(uuid.NameSpaceOID, []byte(installID+":"+c.Server.Name+":"+m.Package.Version)).String(), 0,
-				mcp.Editable{Name: c.Server.Name, Transport: "http", Endpoint: c.Server.Endpoint, Auth: auth, Enabled: true, Exposure: mcp.Exposure{Default: "discoverable"}})
+			receipt, err := s.MCP.SaveFrom(ctx, "", uuid.NewSHA1(uuid.NameSpaceOID, []byte(installID+":"+c.Server.Name+":"+m.Package.Version)).String(), 0,
+				mcp.Editable{Name: c.Server.Name, Transport: "http", Endpoint: c.Server.Endpoint, Auth: auth, Enabled: true, Exposure: mcp.Exposure{Default: "discoverable"}},
+				mcp.Source{Kind: "installation", InstallationID: installID})
 			if err != nil {
 				diagnostics = append(diagnostics, "MCP server "+c.Server.Name+": "+err.Error())
 				continue

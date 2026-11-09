@@ -46,7 +46,7 @@ var specs = []spec{
 			"attendees": {"type": "array", "items": {"type": "string"}, "maxItems": 20}
 		}, "required": ["time_min", "time_max"], "additionalProperties": false}`},
 	{"calendar_event_create", "Create a calendar event", "calendar", "calendar.write", "google.calendar/events.insert", "reversible_write", "provider_key",
-		"Create an event on one calendar. Inviting attendees notifies them unless send_updates is none. The result is read back from Google before it is reported.",
+		"Create an event on one calendar. Inviting attendees notifies them unless send_updates is none. The result is read back from Google before it is reported. For events from an uploaded .ics file, use calendar_ics_import instead.",
 		`{"type": "object", "properties": {` + account + `, "calendar_id": {"type": "string", "description": "Default: the account's primary calendar"},
 			"title": {"type": "string", "minLength": 1, "maxLength": 1024}, ` + timeFields + `,
 			"location": {"type": "string", "maxLength": 1024}, "description": {"type": "string", "maxLength": 8192},
@@ -77,7 +77,7 @@ var specs = []spec{
 		"Show the events in an uploaded .ics calendar file the task was given, and which already exist on the target calendar. An imported file is not a live calendar connection.",
 		`{"type": "object", "properties": {` + account + `, "upload_id": {"type": "string"}, "calendar_id": {"type": "string"}}, "required": ["upload_id"], "additionalProperties": false}`},
 	{"calendar_ics_import", "Import an ICS file", "calendar", "calendar.write", "google.calendar/ics.import", "reversible_write", "provider_key",
-		"Import the events of an uploaded .ics file into one calendar without sending invitations. Events that already exist (same iCalUID) are updated, not duplicated. Preview first.",
+		"The way to add events from an uploaded .ics file: imports them into one calendar without sending invitations, keeping each event's iCalUID so an event that already exists is updated, not duplicated. Preview first with calendar_ics_preview. Each imported event is read back from Google before it is reported. Do not recreate .ics events with calendar_event_create.",
 		`{"type": "object", "properties": {` + account + `, "upload_id": {"type": "string"}, "calendar_id": {"type": "string"}}, "required": ["upload_id"], "additionalProperties": false}`},
 	{"mail_search", "Search email", "mail", "mail.read", "google.mail/messages.search", "read", "safe",
 		"Search the connected Gmail account with Gmail query syntax (from:, to:, subject:, after:, has:attachment). Returns snippets, not full messages.",

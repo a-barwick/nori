@@ -248,6 +248,12 @@ func (s *Service) validate(value Editable) error {
 
 // Save creates or replaces a server configuration. Credentials are never part of it.
 func (s *Service) Save(ctx context.Context, id, requestID string, expected int64, value Editable) (state.MutationReceipt, error) {
+	return s.SaveFrom(ctx, id, requestID, expected, value, Source{})
+}
+
+// SaveFrom saves a server and records where it came from; a package installation names itself, so the server is not
+// shown as added by the user. An empty source keeps an existing server's source, or marks a new one as the user's.
+func (s *Service) SaveFrom(ctx context.Context, id, requestID string, expected int64, value Editable, source Source) (state.MutationReceipt, error) {
 	if err := s.validate(value); err != nil {
 		return state.MutationReceipt{}, err
 	}
@@ -271,6 +277,9 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 					// A different server: forget what was discovered so stale definitions cannot be offered.
 					server.Tools, server.Observed = nil, Observed{Status: "disconnected"}
 				}
+			}
+			if source.Kind != "" {
+				server.Source = source
 			}
 			server.Name, server.Transport, server.Endpoint, server.Enabled, server.Exposure = value.Name, value.Transport, value.Endpoint, value.Enabled, value.Exposure
 			server.Auth, server.CommandRef = value.Auth, value.CommandRef
