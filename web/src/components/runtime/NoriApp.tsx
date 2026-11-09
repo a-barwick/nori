@@ -6,7 +6,7 @@ import { Activity, ArrowLeft, RefreshCw, Trash2, Volume2, VolumeX } from "lucide
 import { useSpeech } from "@/lib/assistant/voice";
 import { Thread } from "@/components/chat/Thread";
 import { IconButton } from "@/components/ui/primitives";
-import { chatThread } from "@/lib/chat/thread";
+import { chatThread, withReceipt } from "@/lib/chat/thread";
 import { useAssistant } from "@/lib/assistant/context";
 import { useWide } from "@/lib/hooks";
 import { runtimePath } from "@/lib/runtime/paths";
@@ -105,7 +105,7 @@ export function ChatScreen() {
   }, [session?.messages, session?.runs, session?.dispatches, session?.traces, session?.conversation?.pending, session?.conversation?.processing, pending, debug, agentMode]);
 
   const openChat = chat.current;
-  const chatConversation = useMemo(() => chatThread(openChat), [openChat]);
+  const chatConversation = useMemo(() => withReceipt(chatThread(openChat), chat.outgoing, !!openChat?.activeTurn), [openChat, chat.outgoing]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

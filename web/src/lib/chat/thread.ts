@@ -31,3 +31,14 @@ export function chatThread(chat: Conversation | null): Thread {
   }
   return { title: chat.title, items };
 }
+
+/** Marks the user's latest message: sending until the core saves it, then saved until a reply starts. */
+export function withReceipt(thread: Thread, outgoing: { text: string; at: number } | undefined, replying: boolean): Thread {
+  const items = thread.items.map((item) => ({ ...item }));
+  if (outgoing) {
+    items.push({ id: "outgoing", sender: "me", at: Math.max(outgoing.at, items.at(-1)?.at ?? 0), text: outgoing.text, receipt: "sending" });
+  } else if (replying && items.at(-1)?.sender === "me") {
+    items[items.length - 1].receipt = "saved";
+  }
+  return { ...thread, items };
+}
