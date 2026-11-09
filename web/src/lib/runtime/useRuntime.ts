@@ -57,6 +57,7 @@ async function uploadFile(item: DraftFile, agentMode: boolean): Promise<Attachme
 }
 type ReplyTiming = { started: number; span: Span; timer: ReturnType<typeof setTimeout> };
 const STORAGE_KEY = "nori-pending-turns-v1";
+const DRAFT_KEY = "nori-draft-assistant-v1";
 const MAX_PENDING = 20;
 const TIMING_STORAGE_KEY = "nori-reply-timings-v1";
 function saveTimings(timings: Map<string, ReplyTiming>) {
@@ -125,10 +126,14 @@ function mergeRuns(older: Run[], newer: Run[]): Run[] {
 
 export function useRuntime(agentMode = false) {
   const [session, setSession] = useState<Session>();
-  const [draft, setDraftState] = useState("");
+  // The unsent draft survives reloads and reconnects; it is cleared when the message is accepted for sending.
+  const [draft, setDraftState] = useState(() => { try { return localStorage.getItem(DRAFT_KEY) ?? ""; } catch { return ""; } });
   const { files: draftFiles, attach, retry, clear: clearFiles, remove: removeFile, invalidateUploads } = useDraftFiles();
-  const draftValue = useRef("");
-  const setDraft = (text: string) => { draftValue.current = text; setDraftState(text); };
+  const draftValue = useRef(draft);
+  const setDraft = (text: string) => {
+    draftValue.current = text; setDraftState(text);
+    try { if (text) localStorage.setItem(DRAFT_KEY, text); else localStorage.removeItem(DRAFT_KEY); } catch { /* storage off */ }
+  };
   const [error, setError] = useState("");
   const [streamError, setStreamError] = useState("");
   const [streamAwake, setStreamAwake] = useState(true);

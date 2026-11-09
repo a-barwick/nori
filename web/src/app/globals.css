@@ -460,3 +460,5 @@ button.nova-assistant-name:hover { background: var(--fill-1); }
 @media (max-width: 600px) {
   .nori-screen { padding-left: 18px; padding-right: 18px; padding-top: 20px; }
 }
+
+main h1[tabindex="-1"]:focus, main h1[tabindex="-1"]:focus-visible { outline: none; }
