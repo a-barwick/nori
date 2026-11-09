@@ -12,9 +12,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"google.golang.org/api/googleapi"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"nori/internal/observability"
 	"nori/internal/users"
@@ -137,6 +141,33 @@ func (w *Waker) WakeConversation(ctx context.Context) error {
 	})
 	if err != nil {
 		observability.RecordErrorCategory(ctx, "wake.conversation", err)
+	}
+	return err
+}
+
+// WakeConversationAt schedules a conversation wake at a future time. The task name derives from the user and the
+// minute, so repeated arming for the same due time collapses into one task.
+func (w *Waker) WakeConversationAt(ctx context.Context, at time.Time) error {
+	id := users.ID(ctx)
+	if !users.ValidID(id) {
+		return fmt.Errorf("conversation wake requires a user")
+	}
+	if w.conversation == nil {
+		return wake.ErrNotConfigured
+	}
+	c := w.conversation
+	at = at.UTC().Truncate(time.Minute).Add(time.Minute)
+	name := fmt.Sprintf("%s/tasks/due-%s-%d", c.queue, strings.ReplaceAll(id, "-", ""), at.Unix())
+	err := w.create(ctx, c.queue, &cloudtasks.Task{
+		Name: name, ScheduleTime: at.Format(time.RFC3339), DispatchDeadline: "600s",
+		HttpRequest: &cloudtasks.HttpRequest{
+			Url: userURL(c.url, id), HttpMethod: "POST", Headers: requestHeaders(ctx), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
+			OauthToken: &cloudtasks.OAuthToken{ServiceAccountEmail: c.caller, Scope: "https://www.googleapis.com/auth/cloud-platform"},
+		},
+	})
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) && apiErr.Code == http.StatusConflict {
+		return nil
 	}
 	return err
 }

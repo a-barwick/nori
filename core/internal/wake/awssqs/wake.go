@@ -12,6 +12,7 @@ import (
 	"nori/internal/users"
 	"nori/internal/wake"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -121,6 +122,19 @@ func (w *Waker) send(ctx context.Context, m Message) error {
 func (w *Waker) WakeConversation(ctx context.Context) error {
 	return w.send(ctx, w.message(ctx, "conversation"))
 }
+
+// WakeConversationAt delays a conversation wake. SQS delays at most 15 minutes, so a farther due time arrives as a
+// hop: the woken pass finds nothing due yet and arms the next wake.
+func (w *Waker) WakeConversationAt(ctx context.Context, at time.Time) error {
+	body, err := w.body(w.message(ctx, "conversation"))
+	if err != nil {
+		return err
+	}
+	delay := int32(min(max(time.Until(at).Seconds()+1, 0), 900))
+	_, err = w.queue.SendMessage(ctx, &sqs.SendMessageInput{QueueUrl: aws.String(w.cfg.QueueURL), MessageBody: aws.String(body), DelaySeconds: delay})
+	return err
+}
+
 func (w *Waker) WakeWorker(ctx context.Context, build string, ids ...string) error {
 	if !w.WorkersNeedWake() {
 		return nil

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"nori/internal/connections"
+	"nori/internal/connectors/mcp"
 	"nori/internal/extensions"
 	"nori/internal/permissions"
 	"nori/internal/scheduler"
@@ -39,6 +40,7 @@ type Assistant struct {
 	Features map[string]bool
 	// Scheduler serves automations, goals, delivery destinations and the inbox.
 	Scheduler        *scheduler.Service
+	MCP              *mcp.Service
 	UnattendedWrites string
 	// NextScheduled and InboxUnread feed the summary badges once the Scheduler and inbox exist.
 	NextScheduled func(ctx context.Context) *time.Time
@@ -164,6 +166,9 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/memory/{id}/actions", jsonBody(a.memoryAction))
 	if a.Scheduler != nil {
 		a.registerScheduling(mux)
+	}
+	if a.MCP != nil {
+		a.registerMCP(mux)
 	}
 	for _, extra := range a.Extra {
 		extra(mux, a)
@@ -519,7 +524,7 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 			a.rememberDefault(r.Context(), answer.DefaultPurpose, answer.DefaultConnection)
 		}
 		if err := a.Answer(r.Context(), answer.CommandID, answer.TaskID, answer.Question, answer.Text); err != nil &&
-			!errors.Is(err, state.ErrQuestionStale) && !errors.Is(err, state.ErrBusy) {
+			!errors.Is(err, state.ErrQuestionStale) && !errors.Is(err, state.ErrBusy) && !errors.Is(err, state.ErrDuplicate) {
 			// The resolution is saved; delivery of the answer is repaired by retrying this same request.
 			writeJSON(w, 503, apiError{Error: "Your answer is saved; delivering it to the task failed. Retry to finish.", Code: "delivery_pending",
 				Retryable: true, Accepted: true, RequestID: requestID})
