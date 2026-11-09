@@ -65,6 +65,7 @@ func main() {
 	root := flag.String("root", "", "path to contracts/assistant (default: found by walking up from the working directory)")
 	strict := flag.Bool("strict", false, "fail when a $defs entry has no fixture")
 	live := flag.String("live", "", "run scenarios against this core base URL (e.g. http://127.0.0.1:8083)")
+	emit := flag.String("emit-ts", "", "write every valid fixture as a typed TypeScript literal to this file")
 	only := flag.String("only", "", "with -live, run only scenarios whose file name contains this text")
 	flag.Parse()
 	dir := *root
@@ -150,6 +151,12 @@ func main() {
 	failures += checkScenariosOffline(scenarioFiles, scenarios, compile)
 	if *live != "" {
 		failures += runScenariosLive(*live, scenarioFiles, scenarios, compile, *only)
+	}
+	if *emit != "" {
+		if err := emitTS(dir, *emit, idx.Fixtures); err != nil {
+			failures++
+			fmt.Printf("FAIL emit-ts: %v\n", err)
+		}
 	}
 	histories, replayFailures := replayHistories(dir)
 	failures += replayFailures
