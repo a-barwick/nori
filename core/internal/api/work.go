@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"context"
+	"encoding/json"
 	"github.com/google/uuid"
 	"net/http"
 	"time"
@@ -65,6 +66,7 @@ type workItem struct {
 }
 
 type workEvent struct {
+	ID        string    `json:"id,omitempty"`
 	Kind      string    `json:"kind"`
 	Text      string    `json:"text"`
 	CreatedAt time.Time `json:"created_at"`
@@ -83,13 +85,17 @@ type workDetail struct {
 // references. Raw arguments and authority references stay private.
 type operationProjection struct {
 	state.OperationRecord
-	Owner           operationOwner `json:"owner"`
-	AccountSummary  string         `json:"account_summary,omitempty"`
-	ActionSummary   string         `json:"action_summary,omitempty"`
-	AuthoritySource string         `json:"authority_source,omitempty"`
-	BindingDigest   string         `json:"binding_digest,omitempty"`
-	ReceiptURL      string         `json:"receipt_url,omitempty"`
-	TaskTitle       string         `json:"task_title,omitempty"`
+	Owner           operationOwner  `json:"owner"`
+	AccountSummary  string          `json:"account_summary,omitempty"`
+	ActionSummary   string          `json:"action_summary,omitempty"`
+	AuthoritySource string          `json:"authority_source,omitempty"`
+	BindingDigest   string          `json:"binding_digest,omitempty"`
+	ReceiptURL      string          `json:"receipt_url,omitempty"`
+	TaskTitle       string          `json:"task_title,omitempty"`
+	ResultIDs       []string        `json:"result_ids,omitempty"`
+	Cost            json.RawMessage `json:"cost,omitempty"`
+	CreatedAt       *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt       *time.Time      `json:"updated_at,omitempty"`
 }
 
 func originOf(run state.Run) workOrigin {

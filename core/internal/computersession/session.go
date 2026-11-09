@@ -49,6 +49,7 @@ type Session struct {
 	Controller     string     `json:"controller"`
 	Lease          *Lease     `json:"lease,omitempty"`
 	BlockedReason  string     `json:"blocked_reason,omitempty"`
+	ScreenURL      string     `json:"screen_url,omitempty"`
 	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
 	WaitingTaskIDs []string   `json:"waiting_task_ids,omitempty"`
 	TaskTitle      string     `json:"task_title,omitempty"`
