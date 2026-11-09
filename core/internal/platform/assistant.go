@@ -11,6 +11,7 @@ import (
 	"nori/internal/connectors/google"
 	"nori/internal/connectors/mcp"
 	"nori/internal/connectors/nori"
+	"nori/internal/connectors/plugin"
 	"nori/internal/extensions"
 	"nori/internal/invoke"
 	"nori/internal/permissions"
@@ -121,10 +122,12 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: map[string][]string{}}
 	// MCP targets are "<server>/<tool>", so the adapter serves every MCP prefix.
 	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
+	pluginService := &plugins.Service{Store: store, MCP: servers, Builtin: plugins.Builtin}
+	plugin.Register(adapters, plugin.Adapter{Plugins: pluginService, Computer: Computer(s)})
 	return &AssistantServices{
 		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched, MCP: servers,
-		Plugins:  &plugins.Service{Store: store, MCP: servers, Builtin: plugins.Builtin},
+		Plugins:  pluginService,
 		Sessions: &computersession.Service{Store: store, Runs: tasks, Provider: Computer(s), Permissions: perms},
-		Tools:    extensions.Sources{nori.Source{}, conn, servers},
+		Tools:    extensions.Sources{nori.Source{}, conn, servers, pluginService},
 	}, nil
 }

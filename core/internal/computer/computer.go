@@ -25,6 +25,7 @@ type Client struct {
 	receipts  bool
 	taskTabs  bool
 	jobs      bool
+	sandbox   bool
 	files     bool
 	operation string
 	taskID    string
@@ -86,7 +87,7 @@ func (c *Client) Probe(ctx context.Context) (rpc.Health, error) {
 	if decodeErr != nil {
 		return rpc.Health{}, fmt.Errorf("%w: %v", ErrUnhealthy, decodeErr)
 	}
-	c.receipts, c.taskTabs, c.jobs, c.files = health.Receipts, health.TaskTabs, health.Jobs, health.Files
+	c.receipts, c.taskTabs, c.jobs, c.files, c.sandbox = health.Receipts, health.TaskTabs, health.Jobs, health.Files, health.Sandbox
 	return health, nil
 }
 
@@ -321,3 +322,18 @@ func (c *Client) RequireReceipts() error {
 
 // SetRun selects another cancellation scope on the same cleanup tunnel.
 func (c *Client) SetRun(id string) { c.run = id }
+
+// SandboxRun runs a packaged program in the guest's sandbox. It fails when the guest cannot enforce the limits.
+func (c *Client) SandboxRun(ctx context.Context, req rpc.SandboxRequest) (rpc.SandboxResult, error) {
+	var result rpc.SandboxResult
+	if !c.sandbox {
+		return result, errors.New("this computer cannot run sandboxed packages")
+	}
+	req.TaskID = c.taskID
+	data, err := c.post(ctx, rpc.SandboxRunPath, req, 512<<10)
+	if err != nil {
+		return result, err
+	}
+	err = json.Unmarshal(data, &result)
+	return result, err
+}

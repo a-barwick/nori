@@ -65,6 +65,9 @@ func view(r state.Resource) (SkillView, error) {
 	if err := r.Decode(&doc); err != nil {
 		return SkillView{}, err
 	}
+	if doc.Skill.Ref.Digest == "" {
+		doc.Skill.Ref.Digest = skillDigest(doc.Skill)
+	}
 	return SkillView{Skill: doc.Skill, ID: r.ID, Revision: r.Revision, InstallationID: doc.InstallationID, Enabled: !doc.Disabled}, nil
 }
 

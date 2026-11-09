@@ -17,3 +17,10 @@ func (*operationGroup) attributes() *syscall.SysProcAttr { return nil }
 func (*operationGroup) kill() error                      { return errors.New("Linux cgroups unavailable") }
 func (*operationGroup) stop(context.Context) error       { return errors.New("Linux cgroups unavailable") }
 func (*operationGroup) close()                           {}
+
+func newLimitedGroup(int, int, int) (*operationGroup, error) {
+	return nil, errors.New("sandboxing requires Linux")
+}
+func (*operationGroup) oomKilled() bool                      { return false }
+func sandboxAttributes(*operationGroup) *syscall.SysProcAttr { return nil }
+func sandboxSupported() bool                                 { return false }
