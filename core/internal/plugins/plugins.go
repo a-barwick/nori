@@ -92,11 +92,25 @@ type Manifest struct {
 	} `json:"dependencies,omitempty"`
 	Contributions   []Contribution `json:"contributions"`
 	RequestedAccess Access         `json:"requested_access"`
-	Executor        *struct {
-		Kind string `json:"kind"`
-	} `json:"executor,omitempty"`
-	Uninstall string `json:"uninstall,omitempty"`
+	Executor        *Executor      `json:"executor,omitempty"`
+	// Files holds an executable package's program text (isolated executor only), bounded in size.
+	Files     map[string]string `json:"files,omitempty"`
+	Uninstall string            `json:"uninstall,omitempty"`
 }
+
+// Executor declares how a package's tools run. Only "isolated" runs code, in the Computer runtime's sandbox.
+type Executor struct {
+	Kind    string `json:"kind"`
+	Runtime string `json:"runtime,omitempty"`
+	Entry   string `json:"entry,omitempty"`
+	Limits  *struct {
+		MemoryMB int `json:"memory_mb,omitempty"`
+		CPUMS    int `json:"cpu_ms,omitempty"`
+		WallMS   int `json:"wall_ms,omitempty"`
+	} `json:"limits,omitempty"`
+}
+
+var runtimes = map[string][]string{"python3": {"python3"}, "node": {"node"}, "sh": {"/bin/sh"}}
 
 type packageDoc struct {
 	Manifest Manifest `json:"manifest"`
@@ -111,8 +125,19 @@ func Validate(m Manifest) (string, error) {
 	if m.SchemaVersion < 1 || !packageID.MatchString(m.Package.ID) || m.Package.Version == "" || m.Publisher["id"] == nil || m.ContractVersion == "" {
 		return "", fmt.Errorf("%w: the manifest needs a schema version, a publisher/package id, a version, a publisher and a contract version", state.ErrInvalidResource)
 	}
-	if m.Executor != nil && m.Executor.Kind == "isolated" {
-		return "", ErrUnsupported
+	isolated := m.Executor != nil && m.Executor.Kind == "isolated"
+	if isolated {
+		size := 0
+		for name, content := range m.Files {
+			size += len(name) + len(content)
+		}
+		if _, ok := runtimes[m.Executor.Runtime]; !ok || m.Files[m.Executor.Entry] == "" || size > 256<<10 || m.Executor.Limits == nil || m.Executor.Limits.WallMS <= 0 {
+			return "", fmt.Errorf("%w: an executable package needs a runtime (python3, node, sh), its entry file, limits and at most 256 KiB of files", state.ErrInvalidResource)
+		}
+		// The sandbox enforces no network; a package that asks for hosts cannot be honestly constrained yet.
+		if len(m.RequestedAccess.Network) > 0 {
+			return "", fmt.Errorf("%w: sandboxed packages run without network; host allowlists are not enforceable yet", ErrUnsupported)
+		}
 	}
 	for _, c := range m.Contributions {
 		switch c.Kind {
@@ -136,7 +161,12 @@ func Validate(m Manifest) (string, error) {
 			if extensions.Reserved[d.ModelName] || d.Policy.Effect == extensions.EffectControl {
 				return "", fmt.Errorf("%w: a package cannot claim %s or control effects", state.ErrInvalidResource, d.ModelName)
 			}
-			return "", ErrUnsupported
+			if !isolated {
+				return "", ErrUnsupported
+			}
+			if !extensions.ValidModelName(d.ModelName) || len(d.InputSchema) == 0 {
+				return "", fmt.Errorf("%w: a package tool needs a valid model name and an input schema", state.ErrInvalidResource)
+			}
 		case "hook":
 			return "", fmt.Errorf("%w: package hooks need isolated execution", ErrUnsupported)
 		default:
@@ -148,7 +178,7 @@ func Validate(m Manifest) (string, error) {
 			return "", fmt.Errorf("%w: a package cannot request control authority", state.ErrInvalidResource)
 		}
 	}
-	data, _ := json.Marshal(m.Contributions)
+	data, _ := json.Marshal([]any{m.Contributions, m.Executor, m.Files})
 	sum := sha256.Sum256(append(data, []byte(m.Package.ID+"@"+m.Package.Version)...))
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
@@ -685,18 +715,18 @@ func (s *Service) deactivate(ctx context.Context, installID string, serverIDs []
 		}
 	}
 	if remove {
-		r, err := s.Store.Resource(ctx, CollectionInstallations, installID)
-		if err != nil {
-			return
-		}
-		var doc installationDoc
-		if r.Decode(&doc) == nil {
-			doc.State = "disabled"
-			doc.History = append(doc.History, HistoryEntry{At: s.now(), Event: "uninstalled", Version: doc.Package.Version})
-			if next, err := state.NewResource(CollectionInstallations, installID, 0, doc, r.Index, s.now()); err == nil {
-				_, _ = s.Store.PutResource(ctx, next, r.Revision)
-			}
-		}
+		// Uninstalled packages leave the installation list; operations and results they produced stay readable.
+		_, _ = s.Store.Mutate(ctx, state.Mutation{
+			RequestID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("uninstall:"+installID)).String(), Method: "UNINSTALL", Target: installID,
+			Payload: installID, Collection: CollectionInstallations, ID: installID, SkipRevisionCheck: true,
+			Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
+				if current == nil {
+					return state.MutationResult{}, state.ErrNotFound
+				}
+				return state.MutationResult{Deletes: []state.ResourceKey{{Collection: CollectionInstallations, ID: installID}},
+					Receipt: state.MutationReceipt{Status: "applied", Resource: current.Body}}, nil
+			},
+		})
 	}
 }
 
@@ -705,4 +735,84 @@ func fallback(value, other string) string {
 		return other
 	}
 	return value
+}
+
+// Inventory implements extensions.Source: tools of ready, enabled installations whose package runs isolated. A
+// package's own effect claim is not trusted: its tools are unknown-effect and need explicit authority.
+func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
+	installs, err := s.Installations(ctx)
+	if err != nil {
+		return extensions.Inventory{}, err
+	}
+	var inventory extensions.Inventory
+	for _, inst := range installs {
+		if !inst.Enabled || inst.State != "ready" {
+			continue
+		}
+		doc, err := s.find(ctx, inst.Package.ID, inst.Package.Version)
+		if err != nil || doc.Manifest.Executor == nil || doc.Manifest.Executor.Kind != "isolated" {
+			continue
+		}
+		for _, d := range s.ToolDefinitions(inst.ID, doc.Manifest) {
+			inventory.Definitions = append(inventory.Definitions, d)
+		}
+		inventory.Capabilities = append(inventory.Capabilities, extensions.CapabilityState{Capability: "plugin_" + slugify(inst.Package.ID),
+			Title: fallback(doc.Manifest.Title, inst.Package.ID) + " (plugin)", Account: "Runs in the computer's sandbox without network", Availability: "Installed", Ready: true})
+	}
+	return inventory, nil
+}
+
+// ToolDefinitions seals a package version's tool contributions as registry definitions bound to the installation.
+func (s *Service) ToolDefinitions(installID string, m Manifest) []extensions.Definition {
+	var out []extensions.Definition
+	limits := m.Executor.Limits
+	for _, c := range m.Contributions {
+		if c.Kind != "tool" {
+			continue
+		}
+		var declared extensions.Definition
+		if json.Unmarshal(c.Tool, &declared) != nil {
+			continue
+		}
+		timeout := max(min(limits.WallMS+5000, 300_000), 1000)
+		d, err := extensions.Seal(extensions.Definition{
+			Ref:       extensions.DefinitionRef{ID: "plugin/" + slugify(m.Package.ID) + "/" + slugify(declared.ModelName), Version: m.Package.Version},
+			Extension: extensions.DefinitionRef{ID: "plugin/" + slugify(m.Package.ID), Version: m.Package.Version},
+			ModelName: declared.ModelName, Title: fallback(declared.Title, declared.ModelName), Description: declared.Description,
+			Capability: "plugin_" + slugify(m.Package.ID), CapabilityTitle: fallback(m.Title, m.Package.ID) + " (plugin)",
+			InputSchema: declared.InputSchema, OutputSchema: declared.OutputSchema,
+			Binding:  extensions.Binding{Adapter: extensions.AdapterPlugin, Target: installID + "/" + declared.ModelName, Version: m.Package.Version},
+			Policy:   extensions.Policy{Effect: extensions.EffectUnknown, Retry: "reconcile_only", TimeoutMS: timeout, Location: extensions.LocationComputer},
+			Exposure: extensions.ExposureDiscoverable,
+		})
+		if err == nil {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// Program returns what the sandbox runs for an installation's tool: the argument vector, files and limits.
+func (s *Service) Program(ctx context.Context, installID string) (argv []string, files map[string]string, memoryMB, wallMS int, err error) {
+	inst, err := s.Installation(ctx, installID)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
+	if !inst.Enabled || inst.State != "ready" {
+		return nil, nil, 0, 0, fmt.Errorf("the plugin is %s", inst.State)
+	}
+	doc, err := s.find(ctx, inst.Package.ID, inst.Package.Version)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
+	e := doc.Manifest.Executor
+	if e == nil || e.Kind != "isolated" {
+		return nil, nil, 0, 0, ErrUnsupported
+	}
+	argv = append(append([]string{}, runtimes[e.Runtime]...), e.Entry)
+	memoryMB = 256
+	if e.Limits.MemoryMB > 0 {
+		memoryMB = e.Limits.MemoryMB
+	}
+	return argv, doc.Manifest.Files, memoryMB, e.Limits.WallMS, nil
 }

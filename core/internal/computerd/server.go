@@ -118,6 +118,7 @@ var guestRoutes = map[string]guestRoute{
 	http.MethodPost + " " + rpc.StopTaskJobsPath: {serve: (*server).stopTaskJobs},
 	http.MethodPost + " " + rpc.OperationPath:    {serve: (*server).operationStatus},
 	http.MethodPost + " " + rpc.CancelReadPath:   {serve: (*server).cancelRead},
+	http.MethodPost + " " + rpc.SandboxRunPath:   {serve: (*server).sandboxRun, receipt: durableReceipt, requestLimit: maxFileRequest},
 }
 
 func (*server) health(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +131,7 @@ func (*server) health(w http.ResponseWriter, r *http.Request) {
 	}
 	// Probe the CDP connection without creating a task tab.
 	_ = c.conn.CloseNow()
-	respond(w, rpc.Health{Ready: true, Receipts: true, TaskTabs: true, Jobs: true, Files: true})
+	respond(w, rpc.Health{Ready: true, Receipts: true, TaskTabs: true, Jobs: true, Files: true, Sandbox: sandboxSupported()})
 }
 
 type activityState struct {

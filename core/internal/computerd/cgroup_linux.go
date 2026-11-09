@@ -87,3 +87,53 @@ func (g *operationGroup) stop(ctx context.Context) error {
 	}
 }
 func (g *operationGroup) close() { _ = g.file.Close(); _ = os.Remove(g.path) }
+
+// newLimitedGroup creates an operation group with memory, process and CPU limits written before any process joins.
+func newLimitedGroup(memoryMB, pids, cpuPercent int) (*operationGroup, error) {
+	group, err := newOperationGroup()
+	if err != nil {
+		return nil, err
+	}
+	write := func(name, value string) error {
+		return os.WriteFile(filepath.Join(group.path, name), []byte(value), 0600)
+	}
+	memoryMB = max(min(memoryMB, 4096), 16)
+	pids = max(min(pids, 256), 1)
+	cpuPercent = max(min(cpuPercent, 100), 5)
+	if err = errors.Join(write("memory.max", fmt.Sprint(memoryMB<<20)), write("memory.swap.max", "0"),
+		write("pids.max", fmt.Sprint(pids)), write("cpu.max", fmt.Sprintf("%d 100000", cpuPercent*1000))); err != nil {
+		group.close()
+		return nil, fmt.Errorf("cgroup controllers are not delegated: %w", err)
+	}
+	return group, nil
+}
+
+func (g *operationGroup) oomKilled() bool {
+	data, err := os.ReadFile(filepath.Join(g.path, "memory.events"))
+	return err == nil && !strings.Contains(string(data), "oom_kill 0")
+}
+
+// sandboxAttributes places the process in the limited group and in new user, network, mount and IPC namespaces: it
+// keeps only loopback networking and its own user mapping.
+func sandboxAttributes(g *operationGroup) *syscall.SysProcAttr {
+	uid, gid := os.Getuid(), os.Getgid()
+	return &syscall.SysProcAttr{
+		UseCgroupFD: true, CgroupFD: int(g.file.Fd()), Setpgid: true,
+		Cloneflags:                 syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET | syscall.CLONE_NEWNS | syscall.CLONE_NEWIPC,
+		UidMappings:                []syscall.SysProcIDMap{{ContainerID: uid, HostID: uid, Size: 1}},
+		GidMappings:                []syscall.SysProcIDMap{{ContainerID: gid, HostID: gid, Size: 1}},
+		GidMappingsEnableSetgroups: false,
+	}
+}
+
+func sandboxSupported() bool {
+	if _, err := os.Stat("/proc/self/ns/user"); err != nil {
+		return false
+	}
+	group, err := newOperationGroup()
+	if err != nil {
+		return false
+	}
+	defer group.close()
+	return true
+}
