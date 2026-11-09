@@ -284,14 +284,36 @@ func (d *Database) ReadTaskOutcome(ctx context.Context, runID string) (state.Tas
 	if err != nil {
 		return state.TaskOutcome{}, err
 	}
-	for _, op := range state.CitedOperations(proposal, ops) {
-		blocks, err := d.ReadHistory(ctx, runID, op.ResultRef)
-		if err != nil {
-			return state.TaskOutcome{}, err
+	cite := func(owner string, ops []state.OperationRecord) error {
+		for _, op := range state.CitedOperations(proposal, ops) {
+			blocks, err := d.ReadHistory(ctx, owner, op.ResultRef)
+			if err != nil {
+				return err
+			}
+			outcome.Evidence = append(outcome.Evidence, state.CitedResult{
+				Operation: op.ID, Tool: op.Name, Result: string(bytes.Join(blocks, []byte("\n"))),
+			})
 		}
-		outcome.Evidence = append(outcome.Evidence, state.CitedResult{
-			Operation: op.ID, Tool: op.Name, Result: string(bytes.Join(blocks, []byte("\n"))),
-		})
+		return nil
+	}
+	if err := cite(runID, ops); err != nil {
+		return state.TaskOutcome{}, err
+	}
+	// A continuation can cite results the task it continues saved.
+	if run, err := d.GetRun(ctx, runID); err == nil {
+		for hops := 0; hops < 8 && run.Origin != nil && run.Origin.ContinuesTaskID != ""; hops++ {
+			previous := run.Origin.ContinuesTaskID
+			earlier, err := d.Operations(ctx, previous)
+			if err != nil {
+				break
+			}
+			if err := cite(previous, earlier); err != nil {
+				return state.TaskOutcome{}, err
+			}
+			if run, err = d.GetRun(ctx, previous); err != nil {
+				break
+			}
+		}
 	}
 	outcome.FitEvidence()
 	return outcome, nil

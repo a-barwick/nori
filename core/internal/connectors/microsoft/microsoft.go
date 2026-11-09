@@ -183,7 +183,11 @@ func do(ctx context.Context, client *http.Client, method, address string, body a
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(data, &e)
-		return resp.Header, classify(&graphError{Status: resp.StatusCode, Code: e.Error.Code, Msg: e.Error.Message})
+		err := classify(&graphError{Status: resp.StatusCode, Code: e.Error.Code, Msg: e.Error.Message})
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+			err = &invoke.TemporaryError{After: invoke.RetryAfter(resp.Header.Get("Retry-After")), Err: err}
+		}
+		return resp.Header, err
 	}
 	if out != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, out); err != nil {

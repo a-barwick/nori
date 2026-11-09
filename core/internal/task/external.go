@@ -350,6 +350,25 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	result := plan.adapter.Execute(callCtx, plan.call, plan.prepared)
 	cancel()
+	// A safe read refused with 429 or 503 is retried a bounded number of times, honouring Retry-After up to a cap.
+	// Writes are never retried here: a refusal that arrives after a partial effect is settled by reconciliation.
+	for retry := 1; retry <= 2 && in.Exec.Policy.Retry == "safe" && result.Err != nil && ctx.Err() == nil; retry++ {
+		var temporary *invoke.TemporaryError
+		if !errors.As(result.Err, &temporary) {
+			break
+		}
+		wait := min(max(temporary.After, time.Duration(retry*retry)*time.Second), 20*time.Second)
+		select {
+		case <-ctx.Done():
+		case <-time.After(wait):
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
+		result = plan.adapter.Execute(callCtx, plan.call, plan.prepared)
+		cancel()
+	}
 	if result.Outcome == "" {
 		result.Outcome = "confirmed"
 		if result.Err != nil {

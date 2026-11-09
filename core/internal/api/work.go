@@ -460,6 +460,16 @@ func (a *Assistant) continueWork(w http.ResponseWriter, r *http.Request, request
 	taskID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("continue:"+requestID)).String()
 	request := "Continue this earlier task, which stopped before it finished (" + clip(previous.Error, 300) + "). Original request: " + previous.Request +
 		"\nIts saved results are available through results_find. Do not repeat external actions it already completed; check the previous task's operations first."
+	if earlier, err := a.Store.Operations(r.Context(), previous.ID); err == nil && len(earlier) > 0 {
+		request += "\nIts operations (read one with operation_read; cite these IDs as evidence instead of redoing them):"
+		for i, op := range earlier {
+			if i == 40 {
+				request += "\n- …"
+				break
+			}
+			request += "\n- " + op.ID + " " + op.Name + " (" + op.Outcome + ")"
+		}
+	}
 	run, err := a.Continue(r.Context(), taskID, previous.ID, clip(request, state.MaxMessageBytes-64), budget)
 	if err != nil && !errors.Is(err, state.ErrDuplicate) {
 		writeAPIError(w, err, requestID, nil)
