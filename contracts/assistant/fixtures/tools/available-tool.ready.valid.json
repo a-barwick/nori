@@ -10,5 +10,7 @@
     "conn_google_personal",
     "conn_google_work"
   ],
-  "availability": "ready"
+  "availability": "ready",
+  "capability": "calendar",
+  "integration_id": "google_calendar"
 }

@@ -1,0 +1,15 @@
+{
+  "id": "op_1",
+  "call_id": "call_1",
+  "name": "web_search",
+  "effect_class": "read",
+  "outcome": "confirmed",
+  "result_ref": "",
+  "revision": 1,
+  "attempt": 1,
+  "artifact_ids": null,
+  "owner": {
+    "type": "task",
+    "id": "task_1"
+  }
+}

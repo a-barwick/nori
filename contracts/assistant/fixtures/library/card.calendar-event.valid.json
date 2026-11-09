@@ -3,8 +3,9 @@
   "schema_version": 1,
   "kind": "calendar_event",
   "resource": {
-    "kind": "calendar_event",
-    "id": "conn_google_personal/evt_123"
+    "kind": "result",
+    "id": "res_evt_123",
+    "revision": 1
   },
   "actions": [
     "open"

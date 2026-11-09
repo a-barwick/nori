@@ -1,0 +1,18 @@
+{
+  "id": "int_5",
+  "revision": 1,
+  "kind": "approval",
+  "status": "pending",
+  "prompt": "Send?",
+  "action_digest": "sha256:a",
+  "payload": {
+    "action_digest": "sha256:b",
+    "summary": "s",
+    "effect": "sensitive_send",
+    "account": {
+      "connection_id": "c",
+      "label": "l"
+    },
+    "resources": []
+  }
+}
