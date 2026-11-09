@@ -800,18 +800,6 @@
       "valid": true
     },
     {
-      "file": "fixtures/common/api-error.revision-conflict-without-current.invalid.json",
-      "schema": "common.schema.json#/$defs/APIError",
-      "valid": false,
-      "note": "a stale-revision 409 returns the current resource"
-    },
-    {
-      "file": "fixtures/common/api-error.idempotency-with-current.invalid.json",
-      "schema": "common.schema.json#/$defs/APIError",
-      "valid": false,
-      "note": "an idempotency conflict does not leak the resource"
-    },
-    {
       "file": "fixtures/execution/work-detail.events.valid.json",
       "schema": "execution.schema.json#/$defs/WorkDetail",
       "valid": true

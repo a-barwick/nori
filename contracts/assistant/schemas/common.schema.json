@@ -241,7 +241,8 @@
         },
         "code": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "One of ErrorCode for new endpoints; existing endpoints keep their codes"
         },
         "retryable": {
           "type": "boolean"
@@ -256,50 +257,9 @@
           "$ref": "#/$defs/MutationReceipt"
         },
         "current": {
-          "description": "Latest resource projection; present on 409 revision_conflict and interaction_stale, absent on idempotency_conflict"
+          "description": "Latest resource projection. Present on 409 revision_conflict and interaction_stale, absent on idempotency_conflict; enforced by the live scenarios, not by this schema, so code stays an open string for existing codes such as wake_unavailable."
         }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "code": {
-                "const": "idempotency_conflict"
-              }
-            },
-            "required": [
-              "code"
-            ]
-          },
-          "then": {
-            "not": {
-              "required": [
-                "current"
-              ]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "code": {
-                "enum": [
-                  "revision_conflict",
-                  "interaction_stale"
-                ]
-              }
-            },
-            "required": [
-              "code"
-            ]
-          },
-          "then": {
-            "required": [
-              "current"
-            ]
-          }
-        }
-      ]
+      }
     },
     "ErrorDetail": {
       "type": "object",

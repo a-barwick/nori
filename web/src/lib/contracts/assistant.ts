@@ -271,15 +271,15 @@ export type MutationReceipt = ({
 });
 export type APIError = {
   error: string;
+  /** One of ErrorCode for new endpoints; existing endpoints keep their codes */
+  code: string;
   retryable: boolean;
   accepted: boolean;
   request_id?: UUID;
   receipt?: MutationReceipt;
-  /** Latest resource projection; present on 409 revision_conflict and interaction_stale, absent on idempotency_conflict */
+  /** Latest resource projection. Present on 409 revision_conflict and interaction_stale, absent on idempotency_conflict; enforced by the live scenarios, not by this schema, so code stays an open string for existing codes such as wake_unavailable. */
   current?: unknown;
-} & ({
-  code: "idempotency_conflict";
-});
+};
 export type ErrorDetail = {
   code: string;
   message: string;
