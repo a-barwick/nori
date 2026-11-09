@@ -188,7 +188,7 @@ export function ChatScreen() {
           </div>
         )}
         <RuntimeComposer
-          accept=".csv,text/csv"
+          accept={uploadAccept}
           draft={chat.draft}
           setDraft={chat.setDraft}
           disabled={chat.sending || chat.opening}
