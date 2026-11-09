@@ -42,6 +42,8 @@ type Exchange struct {
 	Host         string            `json:"host"`
 	Path         string            `json:"path"` // exact, or a prefix ending in "*"
 	Query        map[string]string `json:"query,omitempty"`
+	QueryPrefix  map[string]string `json:"query_prefix,omitempty"` // each named query value must start with this
+	Headers      map[string]string `json:"headers,omitempty"`      // each named request header must start with this
 	BodyContains []string          `json:"body_contains,omitempty"`
 	BasicAuth    *BasicAuth        `json:"basic_auth,omitempty"` // the request must carry exactly these credentials
 	// Capture saves the matched request under a name so a later response can echo it: {{capture:NAME.path}} is the
@@ -243,6 +245,16 @@ func (t *Transport) matches(x *Exchange, req *http.Request, body []byte) bool {
 	q := req.URL.Query()
 	for k, v := range x.Query {
 		if q.Get(k) != v {
+			return false
+		}
+	}
+	for k, v := range x.QueryPrefix {
+		if !strings.HasPrefix(q.Get(k), v) {
+			return false
+		}
+	}
+	for k, v := range x.Headers {
+		if !strings.HasPrefix(req.Header.Get(k), v) {
 			return false
 		}
 	}

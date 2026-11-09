@@ -1,6 +1,143 @@
 {
  "exchanges": [
   {
+   "name": "b-calendar-list",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/users/me/calendarList",
+   "headers": {
+    "Authorization": "Bearer recorded-access-token-b"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#calendarList",
+     "items": [
+      {
+       "kind": "calendar#calendarListEntry",
+       "id": "recorded.work@example.com",
+       "summary": "recorded.work@example.com",
+       "primary": true,
+       "accessRole": "owner",
+       "selected": true,
+       "timeZone": "America/Los_Angeles"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "b-events-wed-401",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events",
+   "headers": {
+    "Authorization": "Bearer recorded-access-token-b"
+   },
+   "query_prefix": {
+    "timeMin": "2026-11-18"
+   },
+   "times": 1,
+   "response": {
+    "status": 401,
+    "body": {
+     "error": {
+      "code": 401,
+      "message": "Request had invalid authentication credentials.",
+      "errors": [
+       {
+        "domain": "global",
+        "reason": "authError",
+        "message": "Invalid Credentials"
+       }
+      ],
+      "status": "UNAUTHENTICATED"
+     }
+    }
+   }
+  },
+  {
+   "name": "b-events-wed",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events",
+   "headers": {
+    "Authorization": "Bearer recorded-access-token-b"
+   },
+   "query_prefix": {
+    "timeMin": "2026-11-18"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#events",
+     "summary": "recorded.user@example.com",
+     "timeZone": "America/Los_Angeles",
+     "items": [
+      {
+       "kind": "calendar#event",
+       "id": "recworkwed",
+       "status": "confirmed",
+       "etag": "\"3500000000000002\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=recworkwed",
+       "summary": "Vendor call",
+       "start": {
+        "dateTime": "2026-11-18T14:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-18T14:30:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "recorded.work@example.com",
+        "self": true
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "b-events",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events",
+   "headers": {
+    "Authorization": "Bearer recorded-access-token-b"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#events",
+     "summary": "recorded.user@example.com",
+     "timeZone": "America/Los_Angeles",
+     "items": [
+      {
+       "kind": "calendar#event",
+       "id": "recworkplan",
+       "status": "confirmed",
+       "etag": "\"3500000000000001\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=recworkplan",
+       "summary": "Quarterly planning",
+       "start": {
+        "dateTime": "2026-11-16T10:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-16T11:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "recorded.work@example.com",
+        "self": true
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
    "name": "insert-dinner-ok",
    "method": "POST",
    "host": "www.googleapis.com",
@@ -459,6 +596,713 @@
       "email": "recorded.user@example.com",
       "self": true
      }
+    }
+   }
+  },
+  {
+   "name": "events-fri-13",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events",
+   "query_prefix": {
+    "timeMin": "2026-11-13"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#events",
+     "summary": "recorded.user@example.com",
+     "timeZone": "America/Los_Angeles",
+     "items": [
+      {
+       "kind": "calendar#event",
+       "id": "recordedevt3",
+       "status": "confirmed",
+       "etag": "\"3400000000000004\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=r3",
+       "summary": "Book club",
+       "start": {
+        "dateTime": "2026-11-13T18:30:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-13T20:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "recorded.user@example.com",
+        "self": true
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "events-weekend-14",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events",
+   "query_prefix": {
+    "timeMin": "2026-11-14"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#events",
+     "summary": "recorded.user@example.com",
+     "timeZone": "America/Los_Angeles",
+     "items": [
+      {
+       "kind": "calendar#event",
+       "id": "recordedevt2",
+       "status": "confirmed",
+       "etag": "\"3400000000000002\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=r2",
+       "summary": "Weekend hike",
+       "start": {
+        "date": "2026-11-14"
+       },
+       "end": {
+        "date": "2026-11-15"
+       },
+       "organizer": {
+        "email": "recorded.user@example.com",
+        "self": true
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "events-mon-16-after-changes",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events",
+   "query_prefix": {
+    "timeMin": "2026-11-16"
+   },
+   "after": [
+    "patch-lunch-move"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#events",
+     "summary": "recorded.user@example.com",
+     "timeZone": "America/Los_Angeles",
+     "items": [
+      {
+       "kind": "calendar#event",
+       "id": "recstandup_20261116T170000Z",
+       "status": "confirmed",
+       "etag": "\"3400000000000031\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=recstandup_20261116T170000Z",
+       "summary": "Team standup",
+       "start": {
+        "dateTime": "2026-11-16T09:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-16T09:15:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "recorded.user@example.com",
+        "self": true
+       },
+       "recurringEventId": "recstandup",
+       "originalStartTime": {
+        "dateTime": "2026-11-16T09:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "iCalUID": "recstandup@google.com"
+      },
+      {
+       "kind": "calendar#event",
+       "id": "reclunch",
+       "status": "confirmed",
+       "etag": "\"3400000000000041\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=reclunch",
+       "summary": "Lunch with Priya",
+       "start": {
+        "dateTime": "2026-11-16T13:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-16T14:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "recorded.user@example.com",
+        "self": true
+       },
+       "location": "Cafe Vita"
+      },
+      {
+       "kind": "calendar#event",
+       "id": "recdesign",
+       "status": "confirmed",
+       "etag": "\"3400000000000050\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=recdesign",
+       "summary": "Design review",
+       "start": {
+        "dateTime": "2026-11-16T15:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-16T16:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "lead@example.com",
+        "displayName": "Team lead"
+       },
+       "attendees": [
+        {
+         "email": "lead@example.com",
+         "organizer": true,
+         "responseStatus": "accepted"
+        },
+        {
+         "email": "recorded.user@example.com",
+         "self": true,
+         "responseStatus": "needsAction"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "events-mon-16",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events",
+   "query_prefix": {
+    "timeMin": "2026-11-16"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#events",
+     "summary": "recorded.user@example.com",
+     "timeZone": "America/Los_Angeles",
+     "items": [
+      {
+       "kind": "calendar#event",
+       "id": "recstandup_20261116T170000Z",
+       "status": "confirmed",
+       "etag": "\"3400000000000031\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=recstandup_20261116T170000Z",
+       "summary": "Team standup",
+       "start": {
+        "dateTime": "2026-11-16T09:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-16T09:15:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "recorded.user@example.com",
+        "self": true
+       },
+       "recurringEventId": "recstandup",
+       "originalStartTime": {
+        "dateTime": "2026-11-16T09:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "iCalUID": "recstandup@google.com"
+      },
+      {
+       "kind": "calendar#event",
+       "id": "reclunch",
+       "status": "confirmed",
+       "etag": "\"3400000000000040\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=reclunch",
+       "summary": "Lunch with Priya",
+       "start": {
+        "dateTime": "2026-11-16T12:30:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-16T13:30:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "recorded.user@example.com",
+        "self": true
+       },
+       "location": "Cafe Vita"
+      },
+      {
+       "kind": "calendar#event",
+       "id": "recdesign",
+       "status": "confirmed",
+       "etag": "\"3400000000000050\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=recdesign",
+       "summary": "Design review",
+       "start": {
+        "dateTime": "2026-11-16T15:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-16T16:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "lead@example.com",
+        "displayName": "Team lead"
+       },
+       "attendees": [
+        {
+         "email": "lead@example.com",
+         "organizer": true,
+         "responseStatus": "accepted"
+        },
+        {
+         "email": "recorded.user@example.com",
+         "self": true,
+         "responseStatus": "needsAction"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "patch-lunch-move",
+   "method": "PATCH",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/reclunch",
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "reclunch",
+     "status": "confirmed",
+     "etag": "\"3400000000000041\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=reclunch",
+     "summary": "Lunch with Priya",
+     "start": {
+      "dateTime": "2026-11-16T13:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-16T14:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "recorded.user@example.com",
+      "self": true
+     },
+     "location": "Cafe Vita"
+    }
+   }
+  },
+  {
+   "name": "get-lunch-moved",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/reclunch",
+   "after": [
+    "patch-lunch-move"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "reclunch",
+     "status": "confirmed",
+     "etag": "\"3400000000000041\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=reclunch",
+     "summary": "Lunch with Priya",
+     "start": {
+      "dateTime": "2026-11-16T13:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-16T14:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "recorded.user@example.com",
+      "self": true
+     },
+     "location": "Cafe Vita"
+    }
+   }
+  },
+  {
+   "name": "get-lunch",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/reclunch",
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "reclunch",
+     "status": "confirmed",
+     "etag": "\"3400000000000040\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=reclunch",
+     "summary": "Lunch with Priya",
+     "start": {
+      "dateTime": "2026-11-16T12:30:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-16T13:30:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "recorded.user@example.com",
+      "self": true
+     },
+     "location": "Cafe Vita"
+    }
+   }
+  },
+  {
+   "name": "patch-design-rsvp",
+   "method": "PATCH",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/recdesign",
+   "body_contains": [
+    "accepted"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "recdesign",
+     "status": "confirmed",
+     "etag": "\"3400000000000051\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=recdesign",
+     "summary": "Design review",
+     "start": {
+      "dateTime": "2026-11-16T15:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-16T16:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "lead@example.com",
+      "displayName": "Team lead"
+     },
+     "attendees": [
+      {
+       "email": "lead@example.com",
+       "organizer": true,
+       "responseStatus": "accepted"
+      },
+      {
+       "email": "recorded.user@example.com",
+       "self": true,
+       "responseStatus": "accepted"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "get-design-accepted",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/recdesign",
+   "after": [
+    "patch-design-rsvp"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "recdesign",
+     "status": "confirmed",
+     "etag": "\"3400000000000051\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=recdesign",
+     "summary": "Design review",
+     "start": {
+      "dateTime": "2026-11-16T15:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-16T16:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "lead@example.com",
+      "displayName": "Team lead"
+     },
+     "attendees": [
+      {
+       "email": "lead@example.com",
+       "organizer": true,
+       "responseStatus": "accepted"
+      },
+      {
+       "email": "recorded.user@example.com",
+       "self": true,
+       "responseStatus": "accepted"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "get-design",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/recdesign",
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "recdesign",
+     "status": "confirmed",
+     "etag": "\"3400000000000050\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=recdesign",
+     "summary": "Design review",
+     "start": {
+      "dateTime": "2026-11-16T15:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-16T16:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "lead@example.com",
+      "displayName": "Team lead"
+     },
+     "attendees": [
+      {
+       "email": "lead@example.com",
+       "organizer": true,
+       "responseStatus": "accepted"
+      },
+      {
+       "email": "recorded.user@example.com",
+       "self": true,
+       "responseStatus": "needsAction"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "patch-standup-instance",
+   "method": "PATCH",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/recstandup_20261116T170000Z",
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "recstandup_20261116T170000Z",
+     "status": "confirmed",
+     "etag": "\"3400000000000032\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=recstandup_20261116T170000Z",
+     "summary": "Team standup",
+     "start": {
+      "dateTime": "2026-11-16T09:30:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-16T09:45:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "recorded.user@example.com",
+      "self": true
+     },
+     "recurringEventId": "recstandup",
+     "originalStartTime": {
+      "dateTime": "2026-11-16T09:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "iCalUID": "recstandup@google.com"
+    }
+   }
+  },
+  {
+   "name": "get-standup-instance-moved",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/recstandup_20261116T170000Z",
+   "after": [
+    "patch-standup-instance"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "recstandup_20261116T170000Z",
+     "status": "confirmed",
+     "etag": "\"3400000000000032\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=recstandup_20261116T170000Z",
+     "summary": "Team standup",
+     "start": {
+      "dateTime": "2026-11-16T09:30:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-16T09:45:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "recorded.user@example.com",
+      "self": true
+     },
+     "recurringEventId": "recstandup",
+     "originalStartTime": {
+      "dateTime": "2026-11-16T09:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "iCalUID": "recstandup@google.com"
+    }
+   }
+  },
+  {
+   "name": "get-standup-instance",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/recstandup_20261116T170000Z",
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "recstandup_20261116T170000Z",
+     "status": "confirmed",
+     "etag": "\"3400000000000031\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=recstandup_20261116T170000Z",
+     "summary": "Team standup",
+     "start": {
+      "dateTime": "2026-11-16T09:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-16T09:15:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "recorded.user@example.com",
+      "self": true
+     },
+     "recurringEventId": "recstandup",
+     "originalStartTime": {
+      "dateTime": "2026-11-16T09:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "iCalUID": "recstandup@google.com"
+    }
+   }
+  },
+  {
+   "name": "patch-standup-series",
+   "method": "PATCH",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/recstandup",
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "recstandup",
+     "status": "confirmed",
+     "etag": "\"3400000000000033\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=recstandup",
+     "summary": "Team sync",
+     "start": {
+      "dateTime": "2026-11-09T09:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-09T09:15:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "recorded.user@example.com",
+      "self": true
+     },
+     "recurrence": [
+      "RRULE:FREQ=WEEKLY;BYDAY=MO"
+     ],
+     "iCalUID": "recstandup@google.com"
+    }
+   }
+  },
+  {
+   "name": "get-standup-series-renamed",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/recstandup",
+   "after": [
+    "patch-standup-series"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "recstandup",
+     "status": "confirmed",
+     "etag": "\"3400000000000033\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=recstandup",
+     "summary": "Team sync",
+     "start": {
+      "dateTime": "2026-11-09T09:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-09T09:15:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "recorded.user@example.com",
+      "self": true
+     },
+     "recurrence": [
+      "RRULE:FREQ=WEEKLY;BYDAY=MO"
+     ],
+     "iCalUID": "recstandup@google.com"
+    }
+   }
+  },
+  {
+   "name": "get-standup-series",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/recstandup",
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "recstandup",
+     "status": "confirmed",
+     "etag": "\"3400000000000030\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=recstandup",
+     "summary": "Team standup",
+     "start": {
+      "dateTime": "2026-11-09T09:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-09T09:15:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "recorded.user@example.com",
+      "self": true
+     },
+     "recurrence": [
+      "RRULE:FREQ=WEEKLY;BYDAY=MO"
+     ],
+     "iCalUID": "recstandup@google.com"
     }
    }
   },
