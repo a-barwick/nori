@@ -52,7 +52,6 @@
         "revision",
         "integration_id",
         "title",
-        "account",
         "status",
         "granted_scopes",
         "selected_resource_ids",
@@ -88,7 +87,8 @@
               "type": "string"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "description": "Absent until the first successful sign-in identifies the provider account (r2.2); never an empty placeholder"
         },
         "status": {
           "$ref": "#/$defs/ConnectionStatus"
