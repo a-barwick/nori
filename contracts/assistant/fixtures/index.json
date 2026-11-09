@@ -1,5 +1,5 @@
 {
-  "revision": "r2.4",
+  "revision": "r2.5",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -981,6 +981,50 @@
       "schema": "plugins.schema.json#/$defs/SkillView",
       "valid": false,
       "note": "a definition ref always names its content digest"
+    },
+    {
+      "file": "fixtures/plugins/mcp-client.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPClient",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-client.leaks-token.invalid.json",
+      "schema": "plugins.schema.json#/$defs/MCPClient",
+      "valid": false,
+      "note": "the projection never carries the token"
+    },
+    {
+      "file": "fixtures/plugins/mcp-client.leaks-hash.invalid.json",
+      "schema": "plugins.schema.json#/$defs/MCPClient",
+      "valid": false,
+      "note": "or its hash"
+    },
+    {
+      "file": "fixtures/plugins/mcp-client-change.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPClientChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-client-change.update.invalid.json",
+      "schema": "plugins.schema.json#/$defs/MCPClientChange",
+      "valid": false,
+      "note": "create only"
+    },
+    {
+      "file": "fixtures/plugins/mcp-client-change.no-scopes.invalid.json",
+      "schema": "plugins.schema.json#/$defs/MCPClientChange",
+      "valid": false,
+      "note": "at least one scope"
+    },
+    {
+      "file": "fixtures/plugins/mcp-client-created.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPClientCreated",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-client-action.revoke.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPClientAction",
+      "valid": true
     }
   ]
 }
