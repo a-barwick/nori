@@ -12,13 +12,6 @@ import (
 	"nori/internal/state"
 )
 
-// Channel delivers to one kind of destination. Accepted means the transport took the message; it is not proof the
-// user read it.
-type Channel interface {
-	Send(ctx context.Context, destination Destination, title, body string, link InboxLink, attemptID string) (receipt string, err error)
-	SupportsReceipts() bool
-}
-
 // ErrNoTransport reports a channel whose provider is not configured in this deployment.
 var ErrNoTransport = errors.New("no provider is configured for this delivery channel")
 
@@ -53,7 +46,8 @@ func (s *Service) deliver(ctx context.Context, a stored, o occurrenceDoc, run st
 			continue
 		}
 		now := s.now()
-		d := Delivery{ID: id, OccurrenceID: o.ID, ResultIDs: results, TaskID: run.ID, DestinationID: destinationID, State: "pending", CreatedAt: &now}
+		d := deliveryDoc{Delivery: Delivery{ID: id, OccurrenceID: o.ID, ResultIDs: results, TaskID: run.ID, DestinationID: destinationID, State: "pending", CreatedAt: &now},
+			Title: title, Body: clip(body, 2000)}
 		destination, err := s.Destination(ctx, destinationID)
 		if err != nil {
 			d.State, d.Error = "failed", &ErrorDetail{Code: "destination_missing", Message: "The destination no longer exists."}
@@ -71,9 +65,17 @@ func (s *Service) deliver(ctx context.Context, a stored, o occurrenceDoc, run st
 			d.State, d.Error = "failed", &ErrorDetail{Code: "destination_unverified", Message: "This destination has not been verified."}
 		} else {
 			if deferred := quietUntil(destination.QuietHours, now); deferred != nil {
+				// Quiet hours defer the message; the scheduler sends it when they end.
 				d.ScheduledFor = deferred
+				if s.Arm != nil {
+					s.Arm(ctx, *deferred)
+				}
+			} else {
+				s.sendDelivery(ctx, &d, destination, Message{Title: d.Title, Body: d.Body, URL: d.URL})
+				if d.State == "pending" && d.ScheduledFor != nil && s.Arm != nil {
+					s.Arm(ctx, *d.ScheduledFor)
+				}
 			}
-			d.State, d.Error = "failed", &ErrorDetail{Code: "no_transport", Message: ErrNoTransport.Error()}
 		}
 		d.UpdatedAt = &now
 		resource, err := state.NewResource(CollectionDeliveries, id, 0, d, map[string]string{"occurrence_id": o.ID, "state": d.State}, now)
@@ -164,13 +166,24 @@ func (s *Service) Destinations(ctx context.Context) ([]Destination, error) {
 	return out, nil
 }
 
-// DestinationEditable enrolls a push or email destination. It starts unverified; verification needs the channel's
-// provider, which is not configured until Austin supplies one.
+// DestinationEditable enrolls a push or email destination. It starts unverified until the user enters the code
+// sent through the channel. Address (email) and Subscription (push) are write-only: they are stored with the
+// credentials and never returned.
 type DestinationEditable struct {
-	Channel    string      `json:"channel"`
-	Label      string      `json:"label"`
-	Address    string      `json:"address,omitempty"`
-	QuietHours *QuietHours `json:"quiet_hours,omitempty"`
+	Channel      string            `json:"channel"`
+	Label        string            `json:"label"`
+	Address      string            `json:"address,omitempty"`
+	Subscription *PushSubscription `json:"subscription,omitempty"`
+	QuietHours   *QuietHours       `json:"quiet_hours,omitempty"`
+}
+
+// PushSubscription is the browser's PushSubscription.toJSON() shape.
+type PushSubscription struct {
+	Endpoint string `json:"endpoint"`
+	Keys     struct {
+		P256dh string `json:"p256dh"`
+		Auth   string `json:"auth"`
+	} `json:"keys"`
 }
 
 func (s *Service) SaveDestination(ctx context.Context, id, requestID string, expected int64, value DestinationEditable) (state.MutationReceipt, error) {
@@ -181,7 +194,19 @@ func (s *Service) SaveDestination(ctx context.Context, id, requestID string, exp
 	if id == "" {
 		id = "dest_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte("destination:"+requestID)).String(), "-", "")[:20]
 		method, target, status = "POST", "/v1/delivery-destinations", 201
+		if value.Address == "" && value.Subscription == nil {
+			return state.MutationReceipt{}, fmt.Errorf("%w: a new destination needs an email address or a push subscription", state.ErrInvalidResource)
+		}
 	}
+	// A new address is stored before the resource and must be verified again.
+	reenrolled := value.Address != "" || value.Subscription != nil
+	if reenrolled {
+		if err := s.enroll(ctx, id, value.Channel, value); err != nil {
+			return state.MutationReceipt{}, err
+		}
+	}
+	// The receipt payload must not carry the private address.
+	value.Address, value.Subscription = "", nil
 	return s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: method, Target: target, ExpectedRevision: expected, Payload: value, Collection: CollectionDestinations, ID: id,
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
@@ -191,7 +216,7 @@ func (s *Service) SaveDestination(ctx context.Context, id, requestID string, exp
 				revision = current.Revision + 1
 				var old Destination
 				_ = current.Decode(&old)
-				if old.Channel == value.Channel {
+				if old.Channel == value.Channel && !reenrolled {
 					d.Status = old.Status
 				}
 			}
@@ -213,6 +238,9 @@ func (s *Service) RemoveDestination(ctx context.Context, id, requestID string, e
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
 			if current == nil {
 				return state.MutationResult{}, state.ErrNotFound
+			}
+			if s.Targets != nil {
+				_ = s.Targets.Delete(ctx, targetKey(id))
 			}
 			return state.MutationResult{Deletes: []state.ResourceKey{{Collection: CollectionDestinations, ID: id}},
 				Receipt: state.MutationReceipt{Status: "applied", Resource: current.Body, HTTPStatus: 200}}, nil

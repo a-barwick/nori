@@ -56,6 +56,8 @@ type Assistant struct {
 	Plugins          *plugins.Service
 	Computer         *computersession.Service
 	UnattendedWrites string
+	// PushPublicKey is the VAPID public key, set only when push delivery is configured.
+	PushPublicKey string
 	// NextScheduled and InboxUnread feed the summary badges once the Scheduler and inbox exist.
 	NextScheduled func(ctx context.Context) *time.Time
 	InboxUnread   func(ctx context.Context) int
@@ -88,6 +90,12 @@ func writeAPIError(w http.ResponseWriter, err error, requestID string, current a
 		status, code, message, retryable = 400, "validation_failed", err.Error(), false
 	case errors.Is(err, secret.ErrCredentialUnavailable):
 		status, code, message, retryable = 503, "credential_store_unavailable", err.Error(), false
+	case errors.Is(err, scheduler.ErrVerificationFailed), errors.Is(err, scheduler.ErrTargetInvalid):
+		status, code, message, retryable = 400, "validation_failed", err.Error(), false
+	case errors.Is(err, scheduler.ErrNoTransport), errors.Is(err, scheduler.ErrRetryLater):
+		status, code, message, retryable = 503, "provider_unavailable", err.Error(), errors.Is(err, scheduler.ErrRetryLater)
+	case errors.Is(err, scheduler.ErrTargetExpired):
+		status, code, message, retryable = 409, "subscription_expired", err.Error(), false
 	case errors.Is(err, connections.ErrNotConfigured):
 		status, code, message, retryable = 503, "provider_unavailable", err.Error(), false
 	case errors.Is(err, connections.ErrNotConnected):

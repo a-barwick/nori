@@ -957,7 +957,9 @@ func (s *Service) Select(ctx context.Context, integrationID, purpose, requested 
 	var eligible []int
 	connected := false
 	for i, record := range records {
-		if record.IntegrationID != integrationID || record.Status != StatusConnected {
+		// An account missing some requested access still works for the capabilities it did grant.
+		usable := record.Status == StatusConnected || record.Status == StatusAttention && record.Health.Code == HealthNeedsMoreAccess
+		if record.IntegrationID != integrationID || !usable {
 			continue
 		}
 		connected = true
