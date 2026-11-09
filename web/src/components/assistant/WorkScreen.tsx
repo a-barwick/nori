@@ -13,6 +13,7 @@ import { invalidate, useAction, useResource } from "@/lib/assistant/useResource"
 import type { Automation, ComputerSession, Interaction, LibraryItem, OperationProjection, WorkItem } from "@/lib/contracts/assistant";
 import { MAX_MESSAGE_BYTES, messageTooLong } from "@/lib/submission";
 import { cn } from "@/lib/utils";
+import { Markdown } from "@/components/chat/Markdown";
 import { InteractionCard } from "./InteractionCard";
 import { Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, Tabs, type Tone } from "./ui";
 
@@ -116,10 +117,16 @@ const CLEARED: Record<string, { tone: Tone; label: string }> = {
 const AUTHORITY: Record<string, string> = { user_request: "you asked", permission_rule: "a permission rule", automation: "a routine", approval: "your approval", internal: "Nori" };
 const RECOVERY: Record<string, string> = { reconciling: "checking with the provider", needs_review: "needs your review", resolved: "resolved" };
 
+/** Plain names for built-in steps that carry no action summary. */
+const BUILTIN: Record<string, string> = { upload_open: "Opened an attached file" };
+
+/** Steps worth showing: checking which tools are ready is bookkeeping, not an action. */
+export const shownOperations = <T extends { name: string }>(operations: T[]) => operations.filter((operation) => operation.name !== "capability_load");
+
 export function OperationRows({ operations }: { operations: (OperationProjection & { recovery?: string; task_title?: string })[] }) {
   return <Rows label="Actions">{operations.map((operation) => {
     const outcome = (operation.cleared && CLEARED[operation.cleared]) || OUTCOME[operation.outcome] || { tone: "neutral" as Tone, label: operation.outcome };
-    return <Row key={operation.id} title={operation.action_summary || operation.name}
+    return <Row key={operation.id} title={operation.action_summary || BUILTIN[operation.name] || operation.name}
       detail={[operation.account_summary, operation.authority_source && `because ${AUTHORITY[operation.authority_source]}`, operation.recovery && RECOVERY[operation.recovery], operation.created_at && relative(operation.created_at)].filter(Boolean).join(" · ")}
       trailing={<>{operation.receipt_url && /^https:\/\//.test(operation.receipt_url) && <a href={operation.receipt_url} target="_blank" rel="noreferrer noopener" className="text-meta font-medium text-accent-text hover:underline">Open</a>}<Pill tone={outcome.tone}>{outcome.label}</Pill></>} />;
   })}</Rows>;
@@ -155,6 +162,8 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
   const continuedBy = (work.items ?? []).filter((other) => other.origin.continues_task_id === taskID);
   const item = detail?.item;
   const results = useResource<{ items: LibraryItem[] }>(has("library") && item?.result_ids.length ? `/library?task_id=${encodeURIComponent(taskID)}` : null, { poll: 0 });
+  // The list is filtered here as well: the server may return more than this task saved.
+  const saved = (results.data?.items ?? []).filter((result) => item?.result_ids.includes(result.id));
   const commands = runtime.taskCommands.filter((command) => command.command.run_id === taskID);
   const [draft, setDraft] = useState("");
   if (loading) return <Screen title="Task" back="/work"><Loading /></Screen>;
@@ -184,10 +193,10 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
       </Section>}
       {item.status === "running" && item.cancel_requested && <div className="mt-6"><Notice>Stopping. Work already done stays done; anything unconfirmed stays marked.</Notice></div>}
       {live && item.status === "failed" && !continuedBy.length && <Continue item={item} />}
-      {detail.result && <Section title={item.status === "failed" ? "Partial answer" : "Result"}><div className="rounded-card border border-hairline bg-surface p-4 text-body whitespace-pre-wrap [overflow-wrap:anywhere]">{detail.result}</div></Section>}
-      {(results.data?.items.length ?? 0) > 0 && <Section title="Saved"><Rows>{results.data!.items.map((result) => <Row key={result.id} href={`/library/${encodeURIComponent(result.id)}`} title={result.title} detail={result.version > 1 ? `Version ${result.version}` : undefined} />)}</Rows></Section>}
+      {detail.result && <Section title={item.status === "failed" ? "Partial answer" : "Result"}><div className="rounded-card border border-hairline bg-surface p-4 text-body [overflow-wrap:anywhere]"><Markdown variant="page">{detail.result}</Markdown></div></Section>}
+      {saved.length > 0 && <Section title="Saved"><Rows>{saved.map((result) => <Row key={result.id} href={`/library/${encodeURIComponent(result.id)}`} title={result.title} detail={result.version > 1 ? `Version ${result.version}` : undefined} />)}</Rows></Section>}
       {!has("library") && item.result_ids.length > 0 && <Section title="Saved"><Rows>{item.result_ids.map((id) => { const saved = runtime.session?.results?.find((result) => result.id === id); return <Row key={id} href={`/library/${encodeURIComponent(id)}`} title={saved?.title ?? "Saved result"} />; })}</Rows></Section>}
-      {detail.operations.length > 0 && <Section title="Actions"><OperationRows operations={detail.operations} /></Section>}
+      {shownOperations(detail.operations).length > 0 && <Section title="Actions"><OperationRows operations={shownOperations(detail.operations)} /></Section>}
       {!!detail.events?.length && <Section title="Activity">
         <ol className="space-y-3 border-l border-hairline pl-4">{detail.events.map((event, index) => <li key={`${event.created_at}-${index}`} className="relative">
           <span aria-hidden className="absolute top-1.5 -left-[21px] size-2.5 rounded-full border-2 border-surface bg-hairline-strong" />

@@ -11,7 +11,7 @@ import { EFFECT_LABEL, relative, when } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Connection, DeliveryDestination, MCPClient, MCPClientCreated, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
-import { OperationRows } from "./WorkScreen";
+import { OperationRows, shownOperations } from "./WorkScreen";
 import { Confirm, Empty, NoriLine, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section } from "./ui";
 
 type List<T> = { items: T[] };
@@ -152,8 +152,8 @@ function PreferencesEditor({ current, onSaved }: { current: Preferences; onSaved
     </div>
     <fieldset><legend className="mb-1.5 text-meta font-medium">Working hours</legend>
       <ul className="space-y-1">{[1, 2, 3, 4, 5, 6, 0].map((day) => { const entry = hours(day); return <li key={day} className="flex min-h-11 items-center gap-3">
-        <label className="flex w-20 shrink-0 items-center gap-2 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={!!entry} onChange={(event) => setHours(day, event.target.checked ? { start: "09:00", end: "17:30" } : undefined)} />{DAYS[day]}</label>
-        {entry && <span className="flex min-w-0 items-center gap-2"><input aria-label={`${DAYS[day]} start`} type="time" value={entry.start} onChange={(event) => setHours(day, { start: event.target.value, end: entry.end })} className={cn(inputBase, "w-[7.5rem] min-w-0 px-2 py-1.5")} /><span className="text-ink-3" aria-hidden>–</span><input aria-label={`${DAYS[day]} end`} type="time" value={entry.end} onChange={(event) => setHours(day, { start: entry.start, end: event.target.value })} className={cn(inputBase, "w-[7.5rem] min-w-0 px-2 py-1.5")} /></span>}
+        <label className="flex w-16 shrink-0 items-center gap-2 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={!!entry} onChange={(event) => setHours(day, event.target.checked ? { start: "09:00", end: "17:30" } : undefined)} />{DAYS[day]}</label>
+        {entry && <span className="flex min-w-0 flex-1 items-center gap-2"><input aria-label={`${DAYS[day]} start`} type="time" value={entry.start} onChange={(event) => setHours(day, { start: event.target.value, end: entry.end })} className={cn(inputBase, "w-full max-w-[8.75rem] min-w-0 flex-1 px-2 py-1.5")} /><span className="text-ink-3" aria-hidden>–</span><input aria-label={`${DAYS[day]} end`} type="time" value={entry.end} onChange={(event) => setHours(day, { start: entry.start, end: event.target.value })} className={cn(inputBase, "w-full max-w-[8.75rem] min-w-0 flex-1 px-2 py-1.5")} /></span>}
       </li>; })}</ul>
     </fieldset>
     <div className="flex flex-wrap gap-4">
@@ -310,8 +310,8 @@ function ActionHistory() {
   return <>
     <label className="mb-4 flex items-center gap-2 text-meta"><span className="text-ink-2">Account</span>
       <select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputBase, "w-auto")}><option value="">All accounts</option>{(connections.data?.items ?? []).map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}</select></label>
-    {operations.loading ? <Loading /> : operations.error ? <Failure error={operations.error} onRetry={() => void operations.reload()} /> : operations.data?.items.length ? <>
-      <OperationRows operations={operations.data.items} />
+    {operations.loading ? <Loading /> : operations.error ? <Failure error={operations.error} onRetry={() => void operations.reload()} /> : operations.data && shownOperations(operations.data.items).length ? <>
+      <OperationRows operations={shownOperations(operations.data.items)} />
     </> : <Empty>No actions yet.</Empty>}
   </>;
 }
