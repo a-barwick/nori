@@ -5,7 +5,7 @@
   "users": {"a": "44444444-4444-4444-8444-444444444444", "b": "55555555-5555-4555-8555-555555555555"},
   "steps": [
     {"name": "catalog", "user": "a", "method": "GET", "path": "/v1/plugins/catalog",
-     "expect": {"status": [200], "schema": "common.schema.json#/$defs/ListResponse", "items_schema": "plugins.schema.json#/$defs/CatalogEntry", "count": {"/items|latest_version=1.1.0": 1}}},
+     "expect": {"status": [200], "schema": "common.schema.json#/$defs/ListResponse", "items_schema": "plugins.schema.json#/$defs/CatalogEntry", "match": {"/items/[title=Morning briefing]/latest_version": "1.1.0", "/items/[title=Morning briefing]/package/id": "nori/morning-briefing"}}},
     {"name": "catalog-entry-shape", "user": "a", "method": "GET", "path": "/v1/plugins/catalog?q=morning",
      "expect": {"status": [200], "match": {"/items/0/package/id": "nori/morning-briefing"}}},
     {"name": "install", "user": "a", "method": "POST", "path": "/v1/plugins/installations", "body_schema": "plugins.schema.json#/$defs/InstallationCreateChange",
