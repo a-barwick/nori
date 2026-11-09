@@ -90,6 +90,8 @@ These four remain Austin's decisions. On 2026-11-09 the coordinator wrongly reco
 | D3 | Missed automation runs | r0: catch up the latest read or summary run, deliver reminders only inside their window, expire unattended writes outside it, show missed work. Alternative: replay every missed occurrence. | `missed_run` is required on every definition, so the API has no default; the creation screen shows the choice in plain words with no preselection until Austin decides. |
 | D4 | What disconnect retains | r0: keep saved items and history, stop access, purge caches, offer separate deletion of imported content. Alternative: delete all copied content on disconnect. | `purge_cache` and `delete_imported_content` are explicit flags, both false by default; admission closes first regardless. |
 | D-050 | integration, real sign-in | integration (fixed) | No real OAuth sign-in could complete through the web proxy: the same-origin check ran before the callback, so the provider's cross-site navigation got 403. | fixed at `1d7be22`: only a top-level navigation is accepted at the callback; core still validates state and PKCE |
+| D-051 | frontend, A15 | backend | One calendar source without a working provider (iCloud with no recording) failed the whole agenda instead of reporting that source as unavailable and showing the rest. | open |
+| D-052 | frontend, A18 | backend or integration | A recorded "Book club" event renders at 2:30 am; a time-zone or all-day handling error in the event or the recording. | open, owner to be determined by reproduction |
 
 ## Disagreements
 
