@@ -17,6 +17,7 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 	}
 	var receipts []state.CommandReceipt
 	traceContext := observability.InjectTrace(ctx)
+	budget := d.preferredTaskBudget(ctx)
 	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		receipts = make([]state.CommandReceipt, 0, len(commands))
 		batch, err := d.readCommandBatch(tx, commands)
@@ -37,7 +38,7 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 		if err != nil {
 			return err
 		}
-		prepared, err := batch.Prepare(commands, control, time.Now().UTC(), traceContext, d.taskBudgetUSD)
+		prepared, err := batch.Prepare(commands, control, time.Now().UTC(), traceContext, budget)
 		receipts = prepared.Receipts
 		if err != nil {
 			return err
@@ -221,4 +222,22 @@ func (d *Database) appendTaskEvent(tx *docstore.Transaction, run state.Run, even
 		return false, err
 	}
 	return true, tx.Create(ref, input)
+}
+
+// preferredTaskBudget is the user's saved per-task budget (Preferences.budgets.task_usd), bounded like an explicit
+// continuation's, or the deployment default when none is saved.
+func (d *Database) preferredTaskBudget(ctx context.Context) float64 {
+	r, err := d.Resource(ctx, "preferences", "preferences")
+	if err != nil {
+		return d.taskBudgetUSD
+	}
+	var prefs struct {
+		Budgets struct {
+			TaskUSD float64 `json:"task_usd"`
+		} `json:"budgets"`
+	}
+	if r.Decode(&prefs) != nil || prefs.Budgets.TaskUSD <= 0 {
+		return d.taskBudgetUSD
+	}
+	return min(prefs.Budgets.TaskUSD, state.MaxContinuationBudgetUSD)
 }

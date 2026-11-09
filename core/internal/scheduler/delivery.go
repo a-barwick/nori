@@ -179,7 +179,8 @@ type DestinationEditable struct {
 
 // PushSubscription is the browser's PushSubscription.toJSON() shape.
 type PushSubscription struct {
-	Endpoint string `json:"endpoint"`
+	Endpoint       string   `json:"endpoint"`
+	ExpirationTime *float64 `json:"expirationTime,omitempty"`
 	Keys     struct {
 		P256dh string `json:"p256dh"`
 		Auth   string `json:"auth"`

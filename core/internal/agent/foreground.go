@@ -29,3 +29,28 @@ func ReadAttachedCSV(a state.Attachment, data []byte) (map[string]any, error) {
 	}
 	return map[string]any{"upload_id": a.ID, "name": a.Name, "rows": records, "note": uploadNote}, nil
 }
+
+// ReadAttached reads a text attachment in the foreground: CSV as rows, other text (calendar files, plain text,
+// Markdown) as text, so a side chat reads the same files a task reads with upload_read_text.
+func ReadAttached(a state.Attachment, data []byte) (map[string]any, error) {
+	if a.MediaType == "text/csv" {
+		return ReadAttachedCSV(a, data)
+	}
+	if !strings.HasPrefix(a.MediaType, "text/") {
+		return ReadAttachedCSV(a, data) // explains which files can be read here
+	}
+	const limit = 64 << 10
+	text := data
+	truncated := len(text) > limit
+	if truncated {
+		text = text[:limit]
+	}
+	out := map[string]any{"upload_id": a.ID, "name": a.Name, "media_type": a.MediaType, "text": strings.ToValidUTF8(string(text), ""), "note": uploadNote}
+	if truncated {
+		out["truncated"] = true
+	}
+	if a.MediaType == "text/calendar" {
+		out["calendar_note"] = "This is an uploaded calendar file. Checking it against a calendar or importing it runs as a task with the calendar tools."
+	}
+	return out, nil
+}

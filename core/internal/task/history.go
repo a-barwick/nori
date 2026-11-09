@@ -72,6 +72,8 @@ type RefModelOutcome struct {
 	NotSent   bool
 	Failure   string
 	Invalid   bool
+	// Interrupted marks a request whose worker stopped before its result was saved; the task may ask again.
+	Interrupted bool `json:",omitempty"`
 }
 type RefToolInput struct {
 	Step

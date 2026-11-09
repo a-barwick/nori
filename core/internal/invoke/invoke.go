@@ -10,8 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"nori/internal/connections"
 	"nori/internal/extensions"
@@ -106,6 +109,30 @@ func (r *Registry) Lookup(binding extensions.Binding) (Adapter, bool) {
 
 // Validation errors are the caller's fault and are never sent to the provider.
 var ErrInvalidArguments = errors.New("invalid arguments")
+
+// TemporaryError is a provider refusal worth retrying after a pause, such as 429 or 503. After is the provider's
+// Retry-After when it sent one.
+type TemporaryError struct {
+	After time.Duration
+	Err   error
+}
+
+func (e *TemporaryError) Error() string { return e.Err.Error() }
+func (e *TemporaryError) Unwrap() error { return e.Err }
+
+// RetryAfter parses a Retry-After header in seconds or as an HTTP date; zero when absent or unparseable.
+func RetryAfter(value string) time.Duration {
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if at, err := http.ParseTime(value); err == nil {
+		return max(time.Until(at), 0)
+	}
+	return 0
+}
 
 // Digest binds an approval to the exact action: the pinned definition, the account and its authorization epoch,
 // the normalized parameters, targets, recipients and the provider precondition. A display label is not part of it.

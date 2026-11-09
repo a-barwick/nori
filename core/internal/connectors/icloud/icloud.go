@@ -45,8 +45,8 @@ func (Integration) Info() connections.Info {
 		Capabilities: []connections.Capability{
 			{ID: "calendar.read", Title: "See calendars and events", Effect: "read", Supported: true},
 			{ID: "calendar.write", Title: "Create and delete events", Effect: "reversible_write", Supported: true},
-			{ID: "mail.read", Title: "iCloud Mail", Effect: "read", Supported: false, Reason: "iCloud Mail is IMAP only; not built."},
-			{ID: "contacts.read", Title: "iCloud Contacts", Effect: "read", Supported: false, Reason: "CardDAV is not built yet."},
+			{ID: "mail.read", Title: "iCloud Mail", Effect: "read", Supported: false, Reason: "Nori can't read or send iCloud Mail yet; only iCloud Calendar is available."},
+			{ID: "contacts.read", Title: "iCloud Contacts", Effect: "read", Supported: false, Reason: "Nori can't look up iCloud Contacts yet."},
 		},
 	}
 }

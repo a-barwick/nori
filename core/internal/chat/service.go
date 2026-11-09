@@ -563,7 +563,7 @@ func (s *Service) readUpload(ctx context.Context, id, upload string) (map[string
 	if err != nil {
 		return nil, err
 	}
-	return agent.ReadAttachedCSV(u.Attachment, data)
+	return agent.ReadAttached(u.Attachment, data)
 }
 
 func boundedResult(result map[string]any) map[string]any {

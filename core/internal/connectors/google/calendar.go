@@ -178,7 +178,11 @@ func (calendarAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Pr
 		for _, id := range calendars {
 			resources = append(resources, calendarRef(conn, id))
 		}
-		return invoke.Prepared{Summary: fmt.Sprintf("Read calendar %s from %s to %s", operation, minTime, maxTime), Effect: extensions.EffectRead,
+		verb := "Read calendar events"
+		if operation == "freebusy" {
+			verb = "Check availability"
+		}
+		return invoke.Prepared{Summary: fmt.Sprintf("%s from %s to %s", verb, plainTime(minTime), plainTime(maxTime)), Effect: extensions.EffectRead,
 			Resources: resources, Spec: map[string]string{"time_min": minTime, "time_max": maxTime, "calendars": strings.Join(calendars, ",")}}, nil
 	case "events.get":
 		return invoke.Prepared{Summary: "Read an event", Effect: extensions.EffectRead,
@@ -861,4 +865,16 @@ func respondEvent(ctx context.Context, service *calendar.Service, call invoke.Ca
 		return invoke.Result{Outcome: "uncertain", Err: classify(err)}
 	}
 	return readBack(ctx, service, call, spec["calendar"], spec["target"], "Replied "+spec["response"]+" to")
+}
+
+// plainTime writes an RFC 3339 instant the way a person reads it, e.g. "Mon 9 Nov 2026, 08:00 UTC".
+func plainTime(value string) string {
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return value
+	}
+	if t.Hour() == 0 && t.Minute() == 0 {
+		return t.Format("Mon 2 Jan 2006")
+	}
+	return t.Format("Mon 2 Jan 2006, 15:04 MST")
 }

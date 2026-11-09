@@ -137,7 +137,9 @@ func classify(err error) error {
 		case apiErr.Code == http.StatusForbidden && strings.Contains(strings.ToLower(apiErr.Message), "insufficient"):
 			return fmt.Errorf("%w: %s", connections.ErrInsufficientScope, apiErr.Message)
 		case apiErr.Code == http.StatusTooManyRequests || apiErr.Code == http.StatusForbidden && strings.Contains(apiErr.Message, "ate Limit"):
-			return fmt.Errorf("%w: %s", connections.ErrRateLimited, apiErr.Message)
+			return &invoke.TemporaryError{After: invoke.RetryAfter(apiErr.Header.Get("Retry-After")), Err: fmt.Errorf("%w: %s", connections.ErrRateLimited, apiErr.Message)}
+		case apiErr.Code == http.StatusServiceUnavailable || apiErr.Code == http.StatusBadGateway:
+			return &invoke.TemporaryError{After: invoke.RetryAfter(apiErr.Header.Get("Retry-After")), Err: fmt.Errorf("google returned %d: %s", apiErr.Code, apiErr.Message)}
 		}
 		return fmt.Errorf("google returned %d: %s", apiErr.Code, apiErr.Message)
 	}

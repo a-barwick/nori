@@ -24,9 +24,11 @@ type libraryOverlay struct {
 }
 
 type provenance struct {
-	Content     string     `json:"content"`
-	SourceURL   string     `json:"source_url,omitempty"`
-	RetrievedAt *time.Time `json:"retrieved_at,omitempty"`
+	Content          string          `json:"content"`
+	Source           json.RawMessage `json:"source,omitempty"`
+	SourceURL        string          `json:"source_url,omitempty"`
+	RetrievedAt      *time.Time      `json:"retrieved_at,omitempty"`
+	ConnectionStatus string          `json:"connection_status,omitempty"`
 }
 
 type libraryItem struct {
@@ -42,7 +44,15 @@ type libraryItem struct {
 	Size         int64      `json:"size,omitempty"`
 	URL          string     `json:"url,omitempty"`
 	TaskID       string     `json:"task_id,omitempty"`
-	Provenance   provenance `json:"provenance"`
+	// Contract fields the server does not populate yet; declared so round-trips keep them.
+	AutomationID   string          `json:"automation_id,omitempty"`
+	ConversationID string          `json:"conversation_id,omitempty"`
+	GoalID         string          `json:"goal_id,omitempty"`
+	Data           json.RawMessage `json:"data,omitempty"`
+	DataKind       string          `json:"data_kind,omitempty"`
+	DeleteEffect   string          `json:"delete_effect,omitempty"`
+	PreviewText    string          `json:"preview_text,omitempty"`
+	Provenance     provenance      `json:"provenance"`
 	IndexStatus  string     `json:"index_status,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    *time.Time `json:"updated_at,omitempty"`

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"context"
+	"encoding/json"
 	"github.com/google/uuid"
 	"net/http"
 	"time"
@@ -65,6 +66,7 @@ type workItem struct {
 }
 
 type workEvent struct {
+	ID        string    `json:"id,omitempty"`
 	Kind      string    `json:"kind"`
 	Text      string    `json:"text"`
 	CreatedAt time.Time `json:"created_at"`
@@ -83,13 +85,17 @@ type workDetail struct {
 // references. Raw arguments and authority references stay private.
 type operationProjection struct {
 	state.OperationRecord
-	Owner           operationOwner `json:"owner"`
-	AccountSummary  string         `json:"account_summary,omitempty"`
-	ActionSummary   string         `json:"action_summary,omitempty"`
-	AuthoritySource string         `json:"authority_source,omitempty"`
-	BindingDigest   string         `json:"binding_digest,omitempty"`
-	ReceiptURL      string         `json:"receipt_url,omitempty"`
-	TaskTitle       string         `json:"task_title,omitempty"`
+	Owner           operationOwner  `json:"owner"`
+	AccountSummary  string          `json:"account_summary,omitempty"`
+	ActionSummary   string          `json:"action_summary,omitempty"`
+	AuthoritySource string          `json:"authority_source,omitempty"`
+	BindingDigest   string          `json:"binding_digest,omitempty"`
+	ReceiptURL      string          `json:"receipt_url,omitempty"`
+	TaskTitle       string          `json:"task_title,omitempty"`
+	ResultIDs       []string        `json:"result_ids,omitempty"`
+	Cost            json.RawMessage `json:"cost,omitempty"`
+	CreatedAt       *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt       *time.Time      `json:"updated_at,omitempty"`
 }
 
 func originOf(run state.Run) workOrigin {
@@ -460,6 +466,16 @@ func (a *Assistant) continueWork(w http.ResponseWriter, r *http.Request, request
 	taskID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("continue:"+requestID)).String()
 	request := "Continue this earlier task, which stopped before it finished (" + clip(previous.Error, 300) + "). Original request: " + previous.Request +
 		"\nIts saved results are available through results_find. Do not repeat external actions it already completed; check the previous task's operations first."
+	if earlier, err := a.Store.Operations(r.Context(), previous.ID); err == nil && len(earlier) > 0 {
+		request += "\nIts operations (read one with operation_read; cite these IDs as evidence instead of redoing them):"
+		for i, op := range earlier {
+			if i == 40 {
+				request += "\n- …"
+				break
+			}
+			request += "\n- " + op.ID + " " + op.Name + " (" + op.Outcome + ")"
+		}
+	}
 	run, err := a.Continue(r.Context(), taskID, previous.ID, clip(request, state.MaxMessageBytes-64), budget)
 	if err != nil && !errors.Is(err, state.ErrDuplicate) {
 		writeAPIError(w, err, requestID, nil)

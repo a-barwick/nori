@@ -71,6 +71,8 @@ type apiError struct {
 	Accepted  bool            `json:"accepted"`
 	RequestID string          `json:"request_id,omitempty"`
 	Current   json.RawMessage `json:"current,omitempty"`
+	// Receipt is the saved mutation when the change was accepted but a follow-up step failed.
+	Receipt json.RawMessage `json:"receipt,omitempty"`
 }
 
 func writeAPIError(w http.ResponseWriter, err error, requestID string, current any) {

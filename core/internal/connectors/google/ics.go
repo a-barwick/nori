@@ -233,6 +233,10 @@ func icsImport(ctx context.Context, service *calendar.Service, call invoke.Call,
 			return invoke.Result{Outcome: outcome, Err: fmt.Errorf("imported %d of %d events, then: %v", len(imported), len(events), classify(err)),
 				Content: map[string]any{"imported": imported}, ProviderRefs: refs}
 		}
+		// Report the event as Google now has it, not the import response.
+		if got, err := service.Events.Get(p.Spec["calendar"], created.Id).Context(ctx).Do(); err == nil {
+			created = got
+		}
 		imported = append(imported, projectEvent(created, connectionID(call), p.Spec["calendar"]))
 		refs = append(refs, eventRef(call, created))
 	}
