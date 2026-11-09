@@ -41,7 +41,7 @@ var specs = []spec{
 		"Ask the user to take over the computer to sign in, solve a check or act where Nori is blocked. Never type passwords yourself. The task waits until the user resumes it, then re-check the browser.",
 		`{"type": "object", "properties": {"reason": {"enum": ["sign_in", "captcha", "blocked"]}, "message": {"type": "string", "maxLength": 500}}, "required": ["reason", "message"], "additionalProperties": false}`},
 	{"automation_create", "Create a reminder, routine or monitor", "nori_automations", "Reminders and routines", "nori.automations/create", "reversible_write", "provider_key",
-		"Create a one-time reminder, a recurring routine, an event-relative reminder or a bounded monitor that runs the instruction at its schedule and delivers the result to the user's inbox. missed_run says what happens to runs Nori could not make: skip, latest or all; state the choice to the user. Defaults to choose unless the user says otherwise: latest for routines that read or summarize; for reminders, latest within an execution window (an hour unless set); skip for anything that changes or sends, so a missed write or send expires instead of running late. Requested standing authority for changes or sends while the user is away is shown to the user for approval.",
+		"Create a one-time reminder, a recurring routine, an event-relative reminder or a bounded monitor that runs the instruction at its schedule and delivers the result to the user's inbox. missed_run says what happens to runs Nori could not make: skip, latest or all. There is no default: ask the user or take it from what they said, and state the choice. Things to weigh: catching up with the latest run suits reading or summarizing routines; a reminder that missed its time may still be useful within a window (execution_window_seconds); a missed run that changes or sends something usually should not run late (skip). Requested standing authority for changes or sends while the user is away is shown to the user for approval.",
 		`{"type": "object", "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 200}, "instruction": {"type": "string", "minLength": 1, "maxLength": 6000}, ` + triggerSchema + `,
 			"missed_run": {"enum": ["skip", "latest", "all"]}, "execution_window_seconds": {"type": "integer", "minimum": 0}, "max_active_runs": {"type": "integer", "minimum": 1, "maximum": 10},
 			"budget_usd": {"type": "number", "minimum": 0, "maximum": 20}, "connection_ids": {"type": "array", "items": {"type": "string"}}, "destination_ids": {"type": "array", "items": {"type": "string"}},
@@ -125,7 +125,6 @@ func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared
 		if value.MaxActiveRuns == 0 {
 			value.MaxActiveRuns = 1
 		}
-		creationDefaults(&value)
 		preview, err := a.Scheduler.Preview(ctx, value, a.Unattended)
 		if err != nil {
 			return invoke.Prepared{}, fmt.Errorf("%w: %v", invoke.ErrInvalidArguments, err)
@@ -167,7 +166,6 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepare
 		if value.MaxActiveRuns == 0 {
 			value.MaxActiveRuns = 1
 		}
-		creationDefaults(&value)
 		if value.BudgetUSD == 0 {
 			value.BudgetUSD = 1
 		}
@@ -295,12 +293,3 @@ func (Source) Inventory(context.Context) (extensions.Inventory, error) {
 }
 
 func parseInstant(value string) (time.Time, error) { return time.Parse(time.RFC3339, value) }
-
-// creationDefaults applies the decided per-kind defaults (D3): a reminder that missed its time still fires within an
-// hour unless the user chose a window. missed_run itself stays an explicit choice on every definition.
-func creationDefaults(value *scheduler.Editable) {
-	reminder := value.Trigger.Kind == "once" || value.Trigger.Kind == "event_relative"
-	if reminder && value.ExecutionWindowSeconds == 0 {
-		value.ExecutionWindowSeconds = 3600
-	}
-}

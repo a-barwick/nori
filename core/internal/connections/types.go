@@ -112,8 +112,7 @@ type Action struct {
 	Action       string   `json:"action"`
 	Capabilities []string `json:"capabilities,omitempty"`
 	ReturnTo     string   `json:"return_to,omitempty"`
-	// PurgeCache defaults to true when absent (D4): disconnecting drops Nori's cached copy of the account's data.
-	PurgeCache *bool `json:"purge_cache,omitempty"`
+	PurgeCache   bool     `json:"purge_cache,omitempty"`
 	// Username and Password connect an app-password integration (connect or repair). Write-only: stored as the
 	// credential and never returned.
 	Username              string `json:"username,omitempty"`
