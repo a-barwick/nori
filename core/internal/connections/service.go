@@ -501,7 +501,9 @@ func (s *Service) scopesFor(integration Integration, capabilities []string, reco
 
 func (s *Service) connect(ctx context.Context, id, requestID string, expected int64, action Action) (state.MutationReceipt, error) {
 	if saved, err := s.Store.Receipt(ctx, requestID); err == nil {
-		return s.replay(ctx, saved, state.Mutation{RequestID: requestID, Method: "POST", Target: "/v1/connections/" + id + "/actions", ExpectedRevision: expected, Payload: action})
+		bound := action
+		bound.Password = "" // receipts never hold the password
+		return s.replay(ctx, saved, state.Mutation{RequestID: requestID, Method: "POST", Target: "/v1/connections/" + id + "/actions", ExpectedRevision: expected, Payload: bound})
 	}
 	record, current, err := s.record(ctx, id)
 	if err != nil {

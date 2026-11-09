@@ -10,6 +10,7 @@ import (
 	"nori/internal/computersession"
 	"nori/internal/connections"
 	"nori/internal/connectors/google"
+	"nori/internal/connectors/icloud"
 	"nori/internal/connectors/mcp"
 	"nori/internal/connectors/microsoft"
 	"nori/internal/connectors/nori"
@@ -87,8 +88,9 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	adapters := invoke.NewRegistry()
 	google.Register(adapters)
 	microsoft.Register(adapters)
+	icloud.Register(adapters)
 	integrations := []connections.Integration{google.Integration{ClientID: s.Connections.GoogleClientID, ClientSecret: s.Connections.GoogleClientSecret},
-		microsoft.Integration{ClientID: s.Connections.MicrosoftClientID, ClientSecret: s.Connections.MicrosoftClientSecret}}
+		microsoft.Integration{ClientID: s.Connections.MicrosoftClientID, ClientSecret: s.Connections.MicrosoftClientSecret}, icloud.Integration{}}
 	conn := connections.New(store, credentials, s.Connections.RedirectURL, integrations...)
 	if s.Connections.ProviderReplay != "" {
 		if s.Cloud != "local" {

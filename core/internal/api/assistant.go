@@ -90,6 +90,8 @@ func writeAPIError(w http.ResponseWriter, err error, requestID string, current a
 		status, code, message, retryable = 400, "validation_failed", err.Error(), false
 	case errors.Is(err, secret.ErrCredentialUnavailable):
 		status, code, message, retryable = 503, "credential_store_unavailable", err.Error(), false
+	case errors.Is(err, connections.ErrBadPassword):
+		status, code, message, retryable = 400, "validation_failed", "The provider rejected the Apple ID or app-specific password. Create a new app-specific password and try again.", false
 	case errors.Is(err, scheduler.ErrVerificationFailed), errors.Is(err, scheduler.ErrTargetInvalid):
 		status, code, message, retryable = 400, "validation_failed", err.Error(), false
 	case errors.Is(err, scheduler.ErrNoTransport), errors.Is(err, scheduler.ErrRetryLater):
