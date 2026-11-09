@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -219,16 +220,43 @@ func (a *Assistant) register(mux *http.ServeMux) {
 }
 
 func (a *Assistant) integrations(w http.ResponseWriter, r *http.Request) {
-	entries, err := a.Connections.Catalog(r.Context(), r.URL.Query().Get("q"), r.URL.Query().Get("category"))
+	query, category := r.URL.Query().Get("q"), r.URL.Query().Get("category")
+	entries, err := a.Connections.Catalog(r.Context(), query, category)
 	if err != nil {
 		writeAPIError(w, err, "", nil)
 		return
+	}
+	// Packages that contribute an MCP server appear beside the native connectors.
+	if a.Plugins != nil {
+		packaged, err := a.Plugins.IntegrationEntries(r.Context())
+		if err == nil {
+			q := strings.ToLower(strings.TrimSpace(query))
+			for _, e := range packaged {
+				if category != "" && !slices.Contains(e.Categories, category) {
+					continue
+				}
+				if q != "" && !strings.Contains(strings.ToLower(e.Title+" "+e.Description+" "+strings.Join(e.Categories, " ")), q) {
+					continue
+				}
+				entries = append(entries, e)
+			}
+		}
 	}
 	writeJSON(w, 200, list[connections.IntegrationEntry]{Items: entries})
 }
 
 func (a *Assistant) integration(w http.ResponseWriter, r *http.Request) {
 	entry, err := a.Connections.Integration(r.Context(), r.PathValue("id"))
+	if errors.Is(err, state.ErrNotFound) && a.Plugins != nil {
+		if packaged, perr := a.Plugins.IntegrationEntries(r.Context()); perr == nil {
+			for _, e := range packaged {
+				if e.ID == r.PathValue("id") {
+					writeJSON(w, 200, e)
+					return
+				}
+			}
+		}
+	}
 	if err != nil {
 		writeAPIError(w, err, "", nil)
 		return
