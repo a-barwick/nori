@@ -8,8 +8,7 @@ import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative, when } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
-import type { MCPClient } from "@/lib/contracts/pending";
-import type { Connection, DeliveryDestination, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
+import type { Connection, DeliveryDestination, MCPClient, MCPClientCreated, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { OperationRows } from "./WorkScreen";
 import { Confirm, Empty, NoriLine, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section } from "./ui";
@@ -245,7 +244,7 @@ function Clients() {
   const [created, setCreated] = useState<{ name: string; token: string }>();
   const [copied, setCopied] = useState(false);
   const create = () => action.run("create", async () => {
-    const receipt = await mutate<MCPClient>("/mcp-clients", { request_id: newRequestID(), expected_revision: 0, value: { name: name.trim(), scopes: mutateScope ? ["read", "mutate"] : ["read"] } }) as { resource: MCPClient; token?: string };
+    const receipt = await mutate<MCPClient>("/mcp-clients", { request_id: newRequestID(), expected_revision: 0, value: { name: name.trim(), scopes: mutateScope ? ["read", "mutate"] : ["read"] } }) as unknown as Partial<MCPClientCreated> & { resource: MCPClient };
     if (receipt.token) setCreated({ name: receipt.resource.name, token: receipt.token });
     setName(""); setMutateScope(false); invalidate("/mcp-clients");
   }, "Client added.");
