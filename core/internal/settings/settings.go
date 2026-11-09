@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -56,6 +57,9 @@ type Connections struct {
 	// ProviderReplay names a directory of recorded provider responses (internal/connectors/replay). Local development
 	// only: platform refuses it unless NORI_CLOUD=local, and no provider is contacted while it is set.
 	ProviderReplay string
+	// MCPCommands declares local stdio MCP servers by command_ref → argument vector (NORI_MCP_COMMANDS, a JSON
+	// object). Honoured only with NORI_CLOUD=local; requests name a command_ref, never a command line.
+	MCPCommands map[string][]string
 }
 
 // Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
@@ -239,6 +243,7 @@ func connectionsFromEnvironment(localArtifacts string) Connections {
 		RedirectURL: os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
 		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"), UserSends: get("NORI_USER_SENDS", "ask"),
 		ProviderReplay: os.Getenv("NORI_PROVIDER_REPLAY"),
+		MCPCommands:    mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
 	}
 }
 
@@ -345,4 +350,21 @@ func loadFile(path string) error {
 		}
 	}
 	return nil
+}
+
+func mcpCommands(raw string) map[string][]string {
+	commands := map[string][]string{}
+	if raw == "" {
+		return commands
+	}
+	if err := json.Unmarshal([]byte(raw), &commands); err != nil {
+		log.Printf("NORI_MCP_COMMANDS is not a JSON object of command_ref to argument arrays; no stdio servers are declared")
+		return map[string][]string{}
+	}
+	for ref, argv := range commands {
+		if len(argv) == 0 {
+			delete(commands, ref)
+		}
+	}
+	return commands
 }
