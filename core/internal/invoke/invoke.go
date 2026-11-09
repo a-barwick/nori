@@ -57,6 +57,9 @@ type Result struct {
 	CostUSD      float64
 	CostUnknown  bool
 	Err          error
+	// Cleared, set with a failed or uncertain outcome, says why the call can't have changed anything (a
+	// state.Cleared* value), so it doesn't block later calls or need the user's answer.
+	Cleared string
 }
 
 type Adapter interface {

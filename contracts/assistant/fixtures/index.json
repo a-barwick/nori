@@ -1,5 +1,5 @@
 {
-  "revision": "r2.6",
+  "revision": "r2.7",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -1036,6 +1036,17 @@
       "schema": "execution.schema.json#/$defs/WorkItem",
       "valid": false,
       "note": "origin fields are closed"
+    },
+    {
+      "file": "fixtures/execution/operation-projection.contained.valid.json",
+      "schema": "execution.schema.json#/$defs/OperationProjection",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/operation-projection.unknown-cleared.invalid.json",
+      "schema": "execution.schema.json#/$defs/OperationProjection",
+      "valid": false,
+      "note": "cleared is a closed set"
     }
   ]
 }
