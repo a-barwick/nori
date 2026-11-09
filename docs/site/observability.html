@@ -78,6 +78,10 @@
 </table>
 </div>
 </details>
+<section><h2>Diagnostics and feedback</h2>
+<p><code>GET /v1/diagnostics</code> lists the user's problems that need repair: a task stuck behind an answer that never reached it, a write with an unknown outcome, cleanup that never finished, a missed wake, a failed delivery, a connection or MCP server that needs attention, a plugin problem. Each names its task, operation or connection and, where one exists, the repair to run through <code>POST /v1/diagnostics/actions</code>; repairs go through the same records and commands as normal work.</p>
+<p>Feedback (wrong result, wrong action, too slow, missing capability, broken connection) is saved with the task's operations, status and spend, so it points at the evidence without the user finding trace ids.</p>
+</section>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/observability</code> · <code>core/internal/conversation/telemetry.go</code> · <code>core/internal/task/telemetry.go</code> · <code>core/internal/state/records/tasks.go</code> · <code>core/internal/computer/computer.go</code> · <code>core/internal/computer/trace.go</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/infrastructure/app/terraform/observability.tf</code> · <code>web/src/lib/observability</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/app/sentry-tunnel/route.ts</code> · <code>web/src/components/dev/DebugBlock.tsx</code></p></details>
 </body>
 </html>

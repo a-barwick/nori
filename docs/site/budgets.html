@@ -31,6 +31,9 @@
 <p>Database recording always remains enabled. If host admission fails, no provider call is sent and the local record becomes <code>not_sent</code>. If final delivery fails, Nori logs the request ID and retains the result and local usage record. There is no delivery retry queue; a host can reconcile from those records. Pending records after a process crash remain explicitly unresolved.</p>
 <p>The task workflow still enforces its spending ceiling between calls. Ordinary project keys are used; there are no temporary keys, reservations, daily or monthly development caps, or per-chat grants. The configured model roles and reasoning settings are unchanged.</p>
 </section>
+<section><h2>Continuing after the limit</h2>
+<p>A task that reaches its spending limit stops with its work and results saved and says it is incomplete. From Work the user can continue it with a new limit: that starts a new task linked to the stopped one, titled after the original request, and the stopped task shows what continued it. A continuation can raise the limit (up to $50); ordinary tasks can only lower it.</p>
+</section>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/usage/</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/settings/settings.go</code> · <code>core/internal/task/workflow.go</code> · <code>core/internal/state/subtasks.go</code></p></details>
 </body>
 </html>

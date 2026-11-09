@@ -46,7 +46,9 @@
 <section><h2>Plugins and skills</h2>
 <p>A package has a manifest naming what it contributes and the access it needs. Installing a package grants nothing on its own. An update that asks for more access is refused until the user approves it; the review shows tools, schemas and access added or removed. Packages can be pinned, rolled back and removed; history from removed packages stays readable.</p>
 <p>A skill is saved instructions with inputs and the tools it expects. Editing a skill makes a new version. Skills carry no account access.</p>
-<p>Executable package tools run on the computer in a sandbox with memory, process and CPU limits, separate user, network, mount and IPC namespaces, and a deadline. If the computer cannot provide that isolation, the call fails and says so.</p>
+<p>Executable package tools run on the computer in a sandbox with memory, process and CPU limits, separate user, network, mount and IPC namespaces, and a deadline. If the computer cannot provide that isolation, the call fails and says so. A failure inside the sandbox (deadline, memory limit, nonzero exit) is recorded as failed and does not block later calls.</p>
+<p>Package hooks run in the same sandbox, only for the package's own tools, within a deadline (2 seconds by default, at most 10). A pre-invocation hook can refuse a call but cannot change approved arguments; a result hook can reshape what the model sees while the recorded outcome stays as it was.</p>
+<p class="designed">Context, progress and task-lifecycle hooks are not supported yet.</p>
 </section>
 </body>
 </html>
