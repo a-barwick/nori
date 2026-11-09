@@ -67,12 +67,15 @@ Mechanisms for all four are built configurable. No recommendation is adopted as 
 | Backend | `8de4158` | W1: `internal/extensions` registry (definitions, digests, canonical schema validation, model projection, reserved names, snapshots, search); every built-in migrated as a `nori/builtin/*` definition; `CallRef.Exec` pinning with name-based fallback for old histories; additive `OperationRecord` references. Coordinator spot-check: no registry reference in `task/workflow.go`; `history.go` imports only the `Exec` type and `finishModelRound` runs on the activity side. | merged into the integration branch as `4143e92`; `make check` green; replay evidence recorded at `381d8ad` under A40: histories from `ed6b020` (no pinned execution metadata) and `4143e92` (pinned on every call) both replay against the compiled workflow, a tampered copy fails as expected |
 | Frontend | `dc6d7d2` | Generated TypeScript types from the r1 schemas, fixture mode, navigation shell; web on port 3213 renders chat and Work against the integration core through the proxy as a test user. | merged into the integration branch |
 | Integration | `381d8ad` | `contracts-check` runs live scenarios with `-live` (owner isolation and same-id retry pass against core 8083 with two users), replays every history under `contracts/assistant/histories`, emits every valid fixture as a typed TS literal; `make check` runs all of it plus the generated-type freshness check. Acceptance runbook fixed: `nori-local` does not host the task worker, which needs `TEMPORAL_BUILD_ID` and a set-current-version call. | landed |
+| Integration | after `9983f4d` | Recovery checks locally verified at `e680c6f`: worker stopped mid-task for 30 s and restarted (task completed, six operations each at attempt 1, no duplicates); core stopped mid-task (worker finished the workflow, result delivered once after core restart, four operations each at attempt 1). | landed |
+
+Acceptance status at this point: A40 implemented (old and pinned histories replay; dynamic-call history and rollback still to do). Every other row is not started, pending backend W2 and W3 routes and the remaining frontend screens. Integration is waiting on backend's W2/W3 commit with live endpoints for the connection, stale-approval and owner-forgery scenarios, and on backend's confirmation of the r2 path and error code list.
 
 ## Defects
 
 | ID | Found by | Owner | Description | Status |
 | --- | --- | --- | --- | --- |
-| D-001 | integration, pre-existing at `ed6b020` | backend | With the computer disabled, browser tools are still offered to the model, and a failed cleanup leaves the run open forever. | open, sent to backend |
+| D-001 | integration, pre-existing at `ed6b020` | backend | With the computer disabled, browser tools are still offered to the model, and a failed cleanup leaves the run open forever. | fixed by backend at `67e01b3`, merged as `e680c6f`, verified by integration: the stuck run settles to failed on the next terminal-recovery pass |
 
 ## Disagreements
 
