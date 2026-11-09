@@ -208,7 +208,7 @@ function Notifications() {
   const inbox = useResource<List<InboxItem>>("/inbox", { poll: 30_000 });
   const preferences = useResource<Preferences>("/preferences", { poll: 0 });
   const action = useAction();
-  const acknowledge = (item: InboxItem) => action.run(item.id, async () => { await mutate(`/inbox/${encodeURIComponent(item.id)}/actions`, { request_id: newRequestID(), expected_revision: 0, value: { action: "acknowledge" } }); invalidate("/inbox", "/assistant/summary"); });
+  const acknowledge = (item: InboxItem) => action.run(item.id, async () => { await mutate(`/inbox/${encodeURIComponent(item.id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "acknowledge" } }); invalidate("/inbox", "/assistant/summary"); });
   const hrefFor = (link: InboxItem["link"]) => ({ interaction: "/work?tab=needs_you", task: `/work/${encodeURIComponent(link.id)}`, result: `/library/${encodeURIComponent(link.id)}`, automation: `/routines/${encodeURIComponent(link.id)}`, goal: `/goals/${encodeURIComponent(link.id)}`, connection: "/apps", installation: "/apps?tab=plugins", computer_session: `/computer?session=${encodeURIComponent(link.id)}` } as Record<string, string>)[link.kind] ?? "/";
   return <>
     <Section title="Where Nori reaches you">{destinations.loading ? <Loading /> : <Rows>{(destinations.data?.items ?? []).map((destination) => <Row key={destination.id} title={destination.label}

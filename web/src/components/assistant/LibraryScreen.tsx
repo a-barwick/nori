@@ -21,9 +21,6 @@ type List<T> = { items: T[] };
 type Kind = "all" | "documents" | "files" | "events" | "messages";
 const GROUP: Record<BaseItem["kind"], Kind> = { answer: "documents", report: "documents", document: "documents", file: "files", screenshot: "files", link: "documents", event: "events", message: "messages" };
 
-// LibraryItem has no resource revision in r1; until r2 adds one, the version guards edits.
-const revisionOf = (item: LibraryItem) => (item as LibraryItem & { revision?: number }).revision ?? item.version;
-
 function KindIcon({ item }: { item: Pick<BaseItem, "kind" | "media_type"> }) {
   const Icon = item.kind === "event" ? Calendar : item.kind === "message" ? Mail : item.kind === "link" ? Link2 : item.kind === "screenshot" || item.media_type?.startsWith("image/") ? ImageIcon : FileText;
   return <span className="grid size-9 shrink-0 place-items-center rounded-tile bg-fill-1 text-ink-2"><Icon size={18} strokeWidth={1.75} aria-hidden /></span>;
@@ -118,13 +115,13 @@ export function LibraryDetailScreen({ id }: { id: string }) {
   if (live ? remote.loading : legacy.loading) return <Screen title="Saved" back="/library"><Loading /></Screen>;
   if (!item) return <Screen title="Saved" back="/library">{remote.error ? <Failure error={remote.error} /> : <Empty action={<Link href="/library" className="text-meta font-medium text-accent-text hover:underline">Back to Library</Link>}>This isn’t in your Library. It may have been deleted.</Empty>}</Screen>;
   const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
-    const receipt = await mutate<LibraryItem>(`/library/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: revisionOf(item), value });
+    const receipt = await mutate<LibraryItem>(`/library/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value });
     invalidate("/library");
     if (value.action === "delete") router.push("/library");
     else if (receipt.status === "queued" && receipt.work?.task_id) router.push(`/work/${encodeURIComponent(receipt.work.task_id)}`);
   });
   const rename = () => action.run("rename", async () => {
-    await mutate(`/library/${encodeURIComponent(id)}`, { request_id: newRequestID(), expected_revision: revisionOf(item), value: { title: title.trim(), ...(item.collection ? { collection: item.collection } : {}) } }, "PUT");
+    await mutate(`/library/${encodeURIComponent(id)}`, { request_id: newRequestID(), expected_revision: item.revision, value: { title: title.trim(), ...(item.collection ? { collection: item.collection } : {}) } }, "PUT");
     setRenaming(false); invalidate("/library");
   });
   const fileURL = item.url && (item.url.startsWith("/") || /^https:\/\//.test(item.url)) ? item.url : undefined;
