@@ -34,6 +34,9 @@ const triggerSchema = `"trigger": {"type": "object", "description": "One of: {ki
 	"required": ["kind"]}`
 
 var specs = []spec{
+	{"upload_read_text", "Read a text attachment", "nori_files", "Attached text files", "nori.uploads/read", "read", "safe",
+		"Read the text of a CSV, ICS calendar, plain-text or Markdown file this task was given, without the computer. Use it to list a calendar file's events or summarize a document; it changes nothing.",
+		`{"type": "object", "properties": {"upload_id": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}}, "required": ["upload_id"], "additionalProperties": false}`},
 	{"computer_request_takeover", "Ask the user to take over the computer", "nori_computer", "Computer", "nori.computer/handoff", "read", "safe",
 		"Ask the user to take over the computer to sign in, solve a check or act where Nori is blocked. Never type passwords yourself. The task waits until the user resumes it, then re-check the browser.",
 		`{"type": "object", "properties": {"reason": {"enum": ["sign_in", "captcha", "blocked"]}, "message": {"type": "string", "maxLength": 500}}, "required": ["reason", "message"], "additionalProperties": false}`},
@@ -141,6 +144,8 @@ func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared
 		return invoke.Prepared{Summary: fmt.Sprintf("%s automation %s", invoke.String(call.Args, "action"), invoke.String(call.Args, "automation_id")), Effect: extensions.EffectReversibleWrite, Spec: spec}, nil
 	case "nori.goals/create":
 		return invoke.Prepared{Summary: "Adopt the goal " + invoke.String(call.Args, "title"), Effect: extensions.EffectReversibleWrite, Spec: spec}, nil
+	case "nori.uploads/read":
+		return invoke.Prepared{Summary: "Read an attached file", Effect: extensions.EffectRead, Spec: spec}, nil
 	case "nori.goals/progress":
 		return invoke.Prepared{Summary: "Record progress on goal " + invoke.String(call.Args, "goal_id"), Effect: extensions.EffectReversibleWrite, Spec: spec}, nil
 	}
@@ -172,6 +177,28 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepare
 		_ = json.Unmarshal(receipt.Resource, &created)
 		return invoke.Result{Outcome: "confirmed", Content: map[string]any{"automation": created,
 			"summary": fmt.Sprintf("Saved %q; next run %v. The user can see and change it in Routines.", created.Title, created.NextAt)}}
+	case "nori.uploads/read":
+		if call.Upload == nil {
+			return failed(errors.New("attachments are not available here"))
+		}
+		name, mediaType, data, err := call.Upload(ctx, invoke.String(call.Args, "upload_id"))
+		if err != nil {
+			return failed(err)
+		}
+		if !strings.HasPrefix(mediaType, "text/") {
+			return failed(fmt.Errorf("%s is %s, not a text file; images use upload_inspect and PDFs need the computer", name, mediaType))
+		}
+		offset := min(invoke.Int(call.Args, "offset", 0), len(data))
+		const page = 32 << 10
+		end := min(offset+page, len(data))
+		content := map[string]any{"name": name, "media_type": mediaType, "text": strings.ToValidUTF8(string(data[offset:end]), ""), "bytes": len(data)}
+		if end < len(data) {
+			content["next_offset"] = end
+		}
+		if mediaType == "text/calendar" {
+			content["note"] = "This is an uploaded calendar file, not a live calendar. Importing it is a separate action."
+		}
+		return invoke.Result{Outcome: "confirmed", Content: content}
 	case "nori.automations/list":
 		list, err := a.Scheduler.List(ctx, invoke.String(call.Args, "status"))
 		if err != nil {
@@ -250,6 +277,7 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepare
 func Register(registry *invoke.Registry, adapter Adapter) {
 	registry.Register(extensions.AdapterNative, "nori.automations", adapter)
 	registry.Register(extensions.AdapterNative, "nori.goals", adapter)
+	registry.Register(extensions.AdapterNative, "nori.uploads", adapter)
 }
 
 // Source offers the first-party tools as a registry inventory.
@@ -259,6 +287,7 @@ func (Source) Inventory(context.Context) (extensions.Inventory, error) {
 	return extensions.Inventory{Definitions: Definitions, Capabilities: []extensions.CapabilityState{
 		{Capability: "nori_automations", Title: "Reminders and routines", Account: "Nori", Availability: "Available", Ready: true},
 		{Capability: "nori_goals", Title: "Goals", Account: "Nori", Availability: "Available", Ready: true},
+		{Capability: "nori_files", Title: "Attached text files", Account: "Nori", Availability: "Available", Ready: true},
 		{Capability: "nori_computer", Title: "Computer", Account: "Nori", Availability: "Available when the computer is enabled", Ready: true},
 	}}, nil
 }

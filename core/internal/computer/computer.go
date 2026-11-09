@@ -26,6 +26,7 @@ type Client struct {
 	taskTabs  bool
 	jobs      bool
 	sandbox   bool
+	reopen    bool
 	files     bool
 	operation string
 	taskID    string
@@ -88,6 +89,7 @@ func (c *Client) Probe(ctx context.Context) (rpc.Health, error) {
 		return rpc.Health{}, fmt.Errorf("%w: %v", ErrUnhealthy, decodeErr)
 	}
 	c.receipts, c.taskTabs, c.jobs, c.files, c.sandbox = health.Receipts, health.TaskTabs, health.Jobs, health.Files, health.Sandbox
+	c.reopen = health.Reopen
 	return health, nil
 }
 
@@ -336,4 +338,14 @@ func (c *Client) SandboxRun(ctx context.Context, req rpc.SandboxRequest) (rpc.Sa
 	}
 	err = json.Unmarshal(data, &result)
 	return result, err
+}
+
+// Reopen makes a run that was stopped while waiting accept operations again. Guests without the capability keep
+// the earlier behavior.
+func (c *Client) Reopen(ctx context.Context) error {
+	if !c.reopen {
+		return nil
+	}
+	_, err := c.post(ctx, rpc.ReopenRunPath, map[string]any{"run_id": c.run}, 4<<10)
+	return err
 }

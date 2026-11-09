@@ -16,6 +16,7 @@ const (
 	OperationPath     = "/operation"
 	CancelReadPath    = "/operation/cancel"
 	SandboxRunPath    = "/sandbox/run"
+	ReopenRunPath     = "/run/reopen"
 	OperationIDHeader = "Nori-Operation-ID"
 	DrainingHeader    = "Nori-Computer-Draining"
 	BrowserRestarted  = "browser_restarted"
@@ -29,6 +30,7 @@ type Health struct {
 	Jobs     bool `json:"shell_jobs_v1"`
 	Files    bool `json:"files_v1"`
 	Sandbox  bool `json:"sandbox_v1"`
+	Reopen   bool `json:"run_reopen_v1"`
 }
 
 // SandboxRequest runs one packaged program with enforced limits and no network.
