@@ -73,6 +73,12 @@ var specs = []spec{
 		`{"type": "object", "properties": {` + account + `, "calendar_id": {"type": "string"}, "event_id": {"type": "string"},
 			"response": {"enum": ["accepted", "declined", "tentative"]}, "comment": {"type": "string", "maxLength": 1000}
 		}, "required": ["calendar_id", "event_id", "response"], "additionalProperties": false}`},
+	{"calendar_ics_preview", "Preview an ICS file", "calendar", "calendar.read", "google.calendar/ics.preview", "read", "safe",
+		"Show the events in an uploaded .ics calendar file the task was given, and which already exist on the target calendar. An imported file is not a live calendar connection.",
+		`{"type": "object", "properties": {` + account + `, "upload_id": {"type": "string"}, "calendar_id": {"type": "string"}}, "required": ["upload_id"], "additionalProperties": false}`},
+	{"calendar_ics_import", "Import an ICS file", "calendar", "calendar.write", "google.calendar/ics.import", "reversible_write", "provider_key",
+		"Import the events of an uploaded .ics file into one calendar without sending invitations. Events that already exist (same iCalUID) are updated, not duplicated. Preview first.",
+		`{"type": "object", "properties": {` + account + `, "upload_id": {"type": "string"}, "calendar_id": {"type": "string"}}, "required": ["upload_id"], "additionalProperties": false}`},
 	{"mail_search", "Search email", "mail", "mail.read", "google.mail/messages.search", "read", "safe",
 		"Search the connected Gmail account with Gmail query syntax (from:, to:, subject:, after:, has:attachment). Returns snippets, not full messages.",
 		`{"type": "object", "properties": {` + account + `, "query": {"type": "string", "minLength": 1, "maxLength": 500}, "max_results": {"type": "integer", "minimum": 1, "maximum": 50}}, "required": ["query"], "additionalProperties": false}`},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"go.temporal.io/sdk/activity"
@@ -65,6 +66,10 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 		return nil, err
 	}
 	service.Extensions = services.Tools
+	service.Hidden = func(ctx context.Context, id string) bool {
+		r, err := store.Resource(ctx, "library_overlay", id)
+		return err == nil && strings.Contains(string(r.Body), `"deleted_at"`)
+	}
 	activities := &task.Activities{Agent: service, Store: store, Executor: &task.Executor{
 		Adapters: services.Adapters, Connections: services.Connections, Permissions: services.Permissions,
 	}}

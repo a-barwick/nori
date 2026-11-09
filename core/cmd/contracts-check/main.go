@@ -66,6 +66,7 @@ func main() {
 	strict := flag.Bool("strict", false, "fail when a $defs entry has no fixture")
 	live := flag.String("live", "", "run scenarios against this core base URL (e.g. http://127.0.0.1:8083)")
 	emit := flag.String("emit-ts", "", "write every valid fixture as a typed TypeScript literal to this file")
+	recorded := flag.Bool("recorded", false, "with -live, also run scenarios that require core started with NORI_PROVIDER_REPLAY")
 	only := flag.String("only", "", "with -live, run only scenarios whose file name contains this text")
 	flag.Parse()
 	dir := *root
@@ -150,7 +151,7 @@ func main() {
 	}
 	failures += checkScenariosOffline(scenarioFiles, scenarios, compile)
 	if *live != "" {
-		failures += runScenariosLive(*live, scenarioFiles, scenarios, compile, *only)
+		failures += runScenariosLive(*live, scenarioFiles, scenarios, compile, *only, *recorded)
 	}
 	if *emit != "" {
 		if err := emitTS(dir, *emit, idx.Fixtures); err != nil {

@@ -808,8 +808,22 @@
                 "additionalProperties": false
               },
               "description": "Redacted"
+            },
+            "credential": {
+              "enum": [
+                "missing",
+                "present"
+              ],
+              "description": "Whether a configured credential is stored; never its value"
             }
           }
+        },
+        "auth": {
+          "enum": [
+            "none",
+            "oauth",
+            "configured"
+          ]
         }
       },
       "not": {
@@ -827,6 +841,11 @@
           {
             "required": [
               "headers"
+            ]
+          },
+          {
+            "required": [
+              "credential"
             ]
           }
         ]
@@ -1584,6 +1603,25 @@
         }
       ],
       "description": "Each accepted change creates a new Skill.ref.version; earlier versions stay readable for runs that used them."
+    },
+    "MCPCredentialInput": {
+      "description": "POST /v1/mcp/{id}/credential (r2.3). Write-only; the receipt's resource is the MCPServer and never echoes the token. Custody stays behind D1.",
+      "type": "object",
+      "required": [
+        "request_id",
+        "token"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

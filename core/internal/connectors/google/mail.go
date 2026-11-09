@@ -173,13 +173,13 @@ func (mailAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepar
 		if operation == "drafts.update" {
 			verb = "Edit draft"
 		}
-		return invoke.Prepared{
+		return preparedWithKeys{
 			Summary: fmt.Sprintf("%s %q to %s (not sent)", verb, invoke.String(args, "subject"), strings.Join(recipients, ", ")),
 			Effect:  extensions.EffectReversibleWrite, Recipients: recipients,
 			Spec: map[string]string{"to": strings.Join(to, ","), "cc": strings.Join(cc, ","), "bcc": strings.Join(bcc, ","),
 				"subject": invoke.String(args, "subject"), "body_sha256": hex.EncodeToString(sum[:]), "reply_to": invoke.String(args, "reply_to_message_id"),
-				"mode": invoke.String(args, "mode"), "draft": invoke.String(args, "draft_id"), "message_id": messageID(call.OperationID)},
-		}, nil
+				"mode": invoke.String(args, "mode"), "draft": invoke.String(args, "draft_id")},
+		}.withKey("message_id", call), nil
 	case "drafts.send":
 		service, err := gmailService(ctx, call)
 		if err != nil {
@@ -394,7 +394,7 @@ func saveDraft(ctx context.Context, service *gmail.Service, call invoke.Call, p 
 			fmt.Fprintf(&raw, "%s: %s\r\n", strings.ToUpper(name[:1])+name[1:], strings.Join(list, ", "))
 		}
 	}
-	fmt.Fprintf(&raw, "Subject: %s\r\nMessage-ID: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n", encodeHeader(subject), p.Spec["message_id"])
+	fmt.Fprintf(&raw, "Subject: %s\r\nMessage-ID: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n", encodeHeader(subject), p.Keys["message_id"])
 	if inReplyTo != "" {
 		fmt.Fprintf(&raw, "In-Reply-To: %s\r\nReferences: %s\r\n", inReplyTo, references)
 	}
@@ -445,7 +445,7 @@ func (a mailAdapter) Reconcile(ctx context.Context, call invoke.Call, p invoke.P
 	_, operation, _ := strings.Cut(call.Exec.Binding.Target, "/")
 	switch operation {
 	case "drafts.create":
-		drafts, err := service.Users.Drafts.List("me").Q("rfc822msgid:" + strings.Trim(p.Spec["message_id"], "<>")).Context(ctx).Do()
+		drafts, err := service.Users.Drafts.List("me").Q("rfc822msgid:" + strings.Trim(p.Keys["message_id"], "<>")).Context(ctx).Do()
 		if err != nil {
 			return invoke.Result{}, false
 		}

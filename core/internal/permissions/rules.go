@@ -110,7 +110,7 @@ func Summarize(r RuleEditable) string {
 		text += ", to " + list(r.Recipients, "anyone", "")
 	}
 	if r.AutomationID != "" {
-		text += ", only for automation " + r.AutomationID
+		text += ", only for this automation"
 	}
 	if r.MaxOperations > 0 {
 		text += fmt.Sprintf(", at most %d times", r.MaxOperations)

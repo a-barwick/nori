@@ -132,6 +132,24 @@ func calendarRef(connectionID, id string) state.ProviderRef {
 	return state.ProviderRef{ConnectionID: connectionID, Kind: "calendar", ProviderID: id}
 }
 
+// preparedWithKeys adds provider idempotency keys derived from the prepared action.
+type preparedWithKeys invoke.Prepared
+
+func (p preparedWithKeys) withKey(name string, call invoke.Call) invoke.Prepared {
+	prepared := invoke.Prepared(p)
+	key := invoke.ActionKey(call, prepared.Spec)
+	if prepared.Keys == nil {
+		prepared.Keys = map[string]string{}
+	}
+	switch name {
+	case "event_id":
+		prepared.Keys[name] = eventID(key)
+	case "message_id":
+		prepared.Keys[name] = messageID(key)
+	}
+	return prepared
+}
+
 func connectionID(call invoke.Call) string {
 	if call.Grant == nil {
 		return ""
@@ -169,6 +187,8 @@ func (calendarAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Pr
 		return prepareInsert(call)
 	case "events.patch", "events.delete", "events.respond":
 		return prepareChange(ctx, call, operation)
+	case "ics.preview", "ics.import":
+		return prepareICS(ctx, call, operation)
 	}
 	return invoke.Prepared{}, fmt.Errorf("%w: unknown calendar operation", invoke.ErrInvalidArguments)
 }
@@ -223,16 +243,16 @@ func prepareInsert(call invoke.Call) (invoke.Prepared, error) {
 	if len(attendees) > 0 {
 		summary += ", inviting " + strings.Join(attendees, ", ")
 	}
-	return invoke.Prepared{
+	return preparedWithKeys{
 		Summary: summary, Effect: effect, Recipients: attendees, MaterialEffects: notifyText(updates, len(attendees)),
 		Resources: []state.ProviderRef{calendarRef(connectionID(call), calendarID)},
 		Spec: map[string]string{
 			"calendar": calendarID, "title": title, "time": when.String(), "start": invoke.String(args, "start"), "end": invoke.String(args, "end"),
 			"timezone": invoke.String(args, "timezone"), "location": invoke.String(args, "location"), "description": invoke.String(args, "description"),
 			"attendees": strings.Join(attendees, ","), "recurrence": strings.Join(invoke.Strings(args, "recurrence"), "\n"), "send_updates": updates,
-			"meeting_link": fmt.Sprint(invoke.Bool(args, "add_meeting_link")), "event_id": eventID(call.OperationID),
+			"meeting_link": fmt.Sprint(invoke.Bool(args, "add_meeting_link")),
 		},
-	}, nil
+	}.withKey("event_id", call), nil
 }
 
 // prepareChange reads the event's current state, so the change is bound to the provider revision it was prepared
@@ -360,6 +380,14 @@ func (a calendarAdapter) Execute(ctx context.Context, call invoke.Call, p invoke
 		return deleteEvent(ctx, service, call, p)
 	case "events.respond":
 		return respondEvent(ctx, service, call, p)
+	case "ics.preview":
+		content, _, err := icsPreview(ctx, service, call, p.Spec["calendar"])
+		if err != nil {
+			return invoke.Result{Outcome: "failed", Err: err}
+		}
+		return invoke.Result{Outcome: "confirmed", Content: content}
+	case "ics.import":
+		return icsImport(ctx, service, call, p)
 	}
 	return invoke.Result{Outcome: "failed", Err: errors.New("unknown calendar operation")}
 }
@@ -537,7 +565,7 @@ func insertEvent(ctx context.Context, service *calendar.Service, call invoke.Cal
 	if err != nil {
 		return invoke.Result{Outcome: "failed", Err: err}
 	}
-	event := &calendar.Event{Id: p.Spec["event_id"], Summary: p.Spec["title"], Location: p.Spec["location"], Description: p.Spec["description"]}
+	event := &calendar.Event{Id: p.Keys["event_id"], Summary: p.Spec["title"], Location: p.Spec["location"], Description: p.Spec["description"]}
 	when.apply(event)
 	for _, email := range invoke.Strings(args, "attendees") {
 		event.Attendees = append(event.Attendees, &calendar.EventAttendee{Email: email})
@@ -546,14 +574,14 @@ func insertEvent(ctx context.Context, service *calendar.Service, call invoke.Cal
 	request := service.Events.Insert(p.Spec["calendar"], event).SendUpdates(p.Spec["send_updates"]).Context(ctx)
 	if p.Spec["meeting_link"] == "true" {
 		event.ConferenceData = &calendar.ConferenceData{CreateRequest: &calendar.CreateConferenceRequest{
-			RequestId: p.Spec["event_id"], ConferenceSolutionKey: &calendar.ConferenceSolutionKey{Type: "hangoutsMeet"}}}
+			RequestId: p.Keys["event_id"], ConferenceSolutionKey: &calendar.ConferenceSolutionKey{Type: "hangoutsMeet"}}}
 		request = request.ConferenceDataVersion(1)
 	}
 	created, err := request.Do()
 	var apiErr *googleapi.Error
 	if errors.As(err, &apiErr) && apiErr.Code == http.StatusConflict {
 		// The event ID is ours, so a conflict means an earlier attempt created it.
-		created, err = service.Events.Get(p.Spec["calendar"], p.Spec["event_id"]).Context(ctx).Do()
+		created, err = service.Events.Get(p.Spec["calendar"], p.Keys["event_id"]).Context(ctx).Do()
 	}
 	if err != nil {
 		if definite(err) {
@@ -585,7 +613,7 @@ func (a calendarAdapter) Reconcile(ctx context.Context, call invoke.Call, p invo
 	_, operation, _ := strings.Cut(call.Exec.Binding.Target, "/")
 	switch operation {
 	case "events.insert":
-		event, err := service.Events.Get(p.Spec["calendar"], p.Spec["event_id"]).Context(ctx).Do()
+		event, err := service.Events.Get(p.Spec["calendar"], p.Keys["event_id"]).Context(ctx).Do()
 		var apiErr *googleapi.Error
 		if errors.As(err, &apiErr) && apiErr.Code == http.StatusNotFound {
 			return invoke.Result{Outcome: "failed", Err: errors.New("the interrupted attempt did not create the event")}, true

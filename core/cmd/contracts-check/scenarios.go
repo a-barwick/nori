@@ -15,6 +15,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -45,7 +46,7 @@ type step struct {
 	Body       json.RawMessage   `json:"body,omitempty"`
 	BodySchema string            `json:"body_schema,omitempty"`
 	Expect     expectation       `json:"expect"`
-	Capture    map[string]string `json:"capture,omitempty"` // variable -> JSON pointer into the response
+	Capture    map[string]string `json:"capture,omitempty"` // variable -> JSON pointer into the response; "<pointer>#query:<name>" takes a query parameter of the URL found there
 	Wait       *wait             `json:"wait,omitempty"`
 }
 
@@ -56,6 +57,7 @@ type expectation struct {
 	Match          map[string]json.RawMessage `json:"match,omitempty"`           // JSON pointer -> expected value
 	Absent         []string                   `json:"absent,omitempty"`          // JSON pointers that must not exist
 	SameAs         string                     `json:"same_as,omitempty"`         // earlier step whose response body must be identical
+	Headers        map[string]string          `json:"headers,omitempty"`         // header -> substring the value must contain
 	Count          map[string]int             `json:"count,omitempty"`           // JSON pointer to an array -> exact length
 }
 
@@ -209,9 +211,12 @@ func validateBytes(compile func(string) (*jsonschema.Schema, error), ref string,
 }
 
 // runScenariosLive executes every scenario against base (e.g. http://127.0.0.1:8083).
-func runScenariosLive(base string, files []string, scs []scenario, compile func(string) (*jsonschema.Schema, error), only string) int {
-	client := &http.Client{Timeout: 30 * time.Second}
+func runScenariosLive(base string, files []string, scs []scenario, compile func(string) (*jsonschema.Schema, error), only string, recorded bool) int {
+	// Redirects are responses to check (the OAuth callback answers 303), not to follow.
+	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	features := liveFeatures(client, base, scs)
+	// recorded_provider marks scenarios that need core started with NORI_PROVIDER_REPLAY; the core cannot advertise it.
+	features["recorded_provider"] = recorded
 	failures := 0
 	for i, sc := range scs {
 		name := strings.TrimSuffix(filepath.Base(files[i]), ".json")
@@ -290,15 +295,16 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 		}
 		body = []byte(s)
 	}
-	url := strings.TrimRight(base, "/") + "/users/" + sc.Users[st.User] + path
+	target := strings.TrimRight(base, "/") + "/users/" + sc.Users[st.User] + path
 	deadline := time.Now()
 	if st.Wait != nil {
 		deadline = deadline.Add(time.Duration(st.Wait.Seconds) * time.Second)
 	}
 	var status int
 	var got []byte
+	var header http.Header
 	for {
-		req, err := http.NewRequest(st.Method, url, bytes.NewReader(body))
+		req, err := http.NewRequest(st.Method, target, bytes.NewReader(body))
 		if err != nil {
 			return err
 		}
@@ -312,6 +318,7 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 		got, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
 		status = resp.StatusCode
+		header = resp.Header
 		if st.Wait == nil || time.Now().After(deadline) {
 			break
 		}
@@ -392,7 +399,17 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 			return fmt.Errorf("response differs from step %s:\n  then %s\n  now  %s", st.Expect.SameAs, truncate(prev), truncate(got))
 		}
 	}
-	for k, p := range st.Capture {
+	for name, want := range st.Expect.Headers {
+		w, err := r.expand(want, sc.Users)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(header.Get(name), w) {
+			return fmt.Errorf("header %s = %q, want it to contain %q", name, header.Get(name), w)
+		}
+	}
+	for k, spec := range st.Capture {
+		p, param, isQuery := strings.Cut(spec, "#query:")
 		v, ok := pointer(got, p)
 		if !ok {
 			return fmt.Errorf("capture %s: %s missing", k, p)
@@ -400,6 +417,13 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 		var s string
 		if json.Unmarshal(v, &s) != nil {
 			s = string(v)
+		}
+		if isQuery {
+			u, err := url.Parse(s)
+			if err != nil || u.Query().Get(param) == "" {
+				return fmt.Errorf("capture %s: no query parameter %s in %s", k, param, s)
+			}
+			s = u.Query().Get(param)
 		}
 		r.vars[k] = s
 	}

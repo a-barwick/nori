@@ -3,10 +3,12 @@ package platform
 import (
 	"context"
 	"fmt"
+	"nori/internal/connectors/replay"
 	"sync"
 
 	"nori/internal/connections"
 	"nori/internal/connectors/google"
+	"nori/internal/connectors/mcp"
 	"nori/internal/connectors/nori"
 	"nori/internal/extensions"
 	"nori/internal/invoke"
@@ -26,6 +28,7 @@ type AssistantServices struct {
 	Permissions *permissions.Service
 	Adapters    *invoke.Registry
 	Scheduler   *scheduler.Service
+	MCP         *mcp.Service
 	// Tools is the inventory the agent and the API offer: connected App connectors and Nori's own tools.
 	Tools extensions.Source
 }
@@ -77,6 +80,16 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	google.Register(adapters)
 	integrations := []connections.Integration{google.Integration{ClientID: s.Connections.GoogleClientID, ClientSecret: s.Connections.GoogleClientSecret}}
 	conn := connections.New(store, credentials, s.Connections.RedirectURL, integrations...)
+	if s.Connections.ProviderReplay != "" {
+		if s.Cloud != "local" {
+			return nil, fmt.Errorf("NORI_PROVIDER_REPLAY is for local development only and requires NORI_CLOUD=local")
+		}
+		transport, err := replay.Shared(s.Connections.ProviderReplay, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		conn.Transport = transport
+	}
 	perms := &permissions.Service{Store: store, UnattendedWrites: s.Connections.UnattendedWrites, UserSends: s.Connections.UserSends}
 	sched := &scheduler.Service{Store: store, Tasks: tasks, Permissions: perms, Events: google.EventSource{Connections: conn},
 		Results: func(ctx context.Context, taskID string) []string {
@@ -101,8 +114,11 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		},
 	}
 	nori.Register(adapters, nori.Adapter{Scheduler: sched, Unattended: s.Connections.UnattendedWrites})
+	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: map[string][]string{}}
+	// MCP targets are "<server>/<tool>", so the adapter serves every MCP prefix.
+	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
 	return &AssistantServices{
-		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched,
-		Tools: extensions.Sources{nori.Source{}, conn},
+		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched, MCP: servers,
+		Tools: extensions.Sources{nori.Source{}, conn, servers},
 	}, nil
 }

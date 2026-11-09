@@ -23,6 +23,8 @@ type Service struct {
 	HTTP         *http.Client
 	// Extensions supplies the user's current tools beyond the engine's own. Nil offers built-ins only.
 	Extensions extensions.Source
+	// Hidden reports results the user deleted from the Library; result tools treat them as absent.
+	Hidden func(ctx context.Context, resultID string) bool
 }
 
 func New(store state.Store, model Model, c computer.Provider) *Service {

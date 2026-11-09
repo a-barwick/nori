@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -51,6 +52,8 @@ type stored struct {
 	Interaction
 	ConnectionID    string `json:"private_connection_id,omitempty"`
 	CommandAccepted bool   `json:"command_accepted,omitempty"`
+	// AnswerText is the exact answer command text, so a retried response delivers the identical command.
+	AnswerText      string `json:"answer_text,omitempty"`
 	RememberDefault bool   `json:"remember_default,omitempty"`
 	Purpose         string `json:"purpose,omitempty"`
 }
@@ -96,10 +99,37 @@ func (s *Service) Open(ctx context.Context, i Interaction, purpose string) (Inte
 	if err != nil {
 		return Interaction{}, err
 	}
-	if _, err = s.Store.PutResource(ctx, r, 0); err != nil && !errors.Is(err, state.ErrRevisionConflict) {
+	created, err := s.Store.PutResource(ctx, r, 0)
+	if err != nil && !errors.Is(err, state.ErrRevisionConflict) {
 		return Interaction{}, err
 	}
+	if err == nil && created.Revision == 1 && i.TaskID != "" {
+		s.linkSuperseded(ctx, i)
+	}
 	return s.Interaction(ctx, i.ID)
+}
+
+// linkSuperseded points interactions of the same task and kind that a correction superseded at the new one, so a
+// client holding a stale card can jump to its replacement.
+func (s *Service) linkSuperseded(ctx context.Context, replacement Interaction) {
+	page, _, err := s.Store.Resources(ctx, CollectionInteractions, map[string]string{"task_id": replacement.TaskID, "status": "superseded"}, "", 50)
+	if err != nil {
+		return
+	}
+	for _, r := range page {
+		var body map[string]any
+		if r.Decode(&body) != nil || body["kind"] != replacement.Kind {
+			continue
+		}
+		if linked, _ := body["superseded_by"].(string); strings.HasPrefix(linked, "int_") || linked == replacement.ID {
+			continue
+		}
+		body["superseded_by"] = replacement.ID
+		next, err := state.NewResource(CollectionInteractions, r.ID, 0, body, r.Index, s.now())
+		if err == nil {
+			_, _ = s.Store.PutResource(ctx, next, r.Revision)
+		}
+	}
 }
 
 func (s *Service) Interaction(ctx context.Context, id string) (Interaction, error) {
@@ -207,6 +237,7 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 			}
 			i.Status, i.Resolution, i.ResolvedAt = "resolved", &resolution, &now
 			body.Interaction = i
+			body.AnswerText = text
 			next, err := state.NewResource(CollectionInteractions, id, current.Revision+1, body, map[string]string{"task_id": i.TaskID, "status": "resolved", "kind": i.Kind}, now)
 			if err != nil {
 				return state.MutationResult{}, err
@@ -231,15 +262,12 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 	}
 	if answer == nil {
 		// A retried request: rebuild the same answer intent so delivery can be repeated idempotently.
-		var i Interaction
-		if json.Unmarshal(receipt.Resource, &i) == nil && i.TaskID != "" && i.Resolution != nil {
-			saved, _ := s.Interaction(ctx, id)
-			text := i.Resolution.Text
-			if text == "" {
-				text = "The user responded: " + i.Resolution.Kind
+		if r, err := s.Store.Resource(ctx, CollectionInteractions, id); err == nil {
+			saved, body, err := decodeInteraction(r)
+			if err == nil && saved.TaskID != "" && !body.CommandAccepted && body.AnswerText != "" {
+				answer = &Answer{CommandID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("interaction-answer:"+requestID)).String(),
+					TaskID: saved.TaskID, Question: questionID(saved), Text: body.AnswerText}
 			}
-			answer = &Answer{CommandID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("interaction-answer:"+requestID)).String(),
-				TaskID: i.TaskID, Question: questionID(saved), Text: text}
 		}
 	}
 	return receipt, answer, nil
@@ -277,4 +305,26 @@ func (s *Service) MarkDelivered(ctx context.Context, id string) {
 	if err == nil {
 		_, _ = s.Store.PutResource(ctx, next, r.Revision)
 	}
+}
+
+// UnperformedApprovals lists actions the user approved for a task revision that no admitted operation attempted,
+// so a task cannot finish as if an approved action had happened.
+func (s *Service) UnperformedApprovals(ctx context.Context, runID string, revision int64, attempted map[string]bool) ([]string, error) {
+	page, _, err := s.Store.Resources(ctx, CollectionApprovals, map[string]string{"task_id": runID}, "", 200)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range page {
+		var a approval
+		if r.Decode(&a) != nil || a.Decision != "approve" || a.Revision != revision || attempted[a.Digest] {
+			continue
+		}
+		summary := "an approved action"
+		if i, err := s.Interaction(ctx, a.Interaction); err == nil {
+			summary = i.Prompt
+		}
+		out = append(out, summary)
+	}
+	return out, nil
 }

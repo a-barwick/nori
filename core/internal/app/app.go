@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -67,10 +68,11 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	result.Scheduler = services.Scheduler
 	result.Assistant = &api.Assistant{
 		Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
-		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites,
+		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, MCP: services.MCP,
 		Features: map[string]bool{"integrations": true, "connections": true, "interactions": true, "permissions": true,
 			"preferences": true, "work": !cfg.Features.DisableBackgroundTasks, "operations": true,
-			"automations": !cfg.Features.DisableBackgroundTasks, "goals": true, "inbox": true},
+			"automations": !cfg.Features.DisableBackgroundTasks, "goals": true, "inbox": true,
+			"library": true, "search": true, "memory": true, "mcp": true},
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 	}
 	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
@@ -108,8 +110,28 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		_, err := tasks.AcceptBatch(ctx, []state.Command{{ID: commandID, RunID: taskID, Kind: state.CommandAnswer, QuestionID: questionID, Text: text}}, nil)
 		return err
 	}
+	services.Scheduler.Arm = func(ctx context.Context, at time.Time) {
+		if err := wake.At(ctx, waker, at); err != nil && !errors.Is(err, wake.ErrNotConfigured) {
+			log.Printf("scheduler: due-time wake could not be armed; the next pass repairs it: %v", err)
+		}
+	}
 	services.Scheduler.Accept = func(ctx context.Context, cmd state.Command) (state.Run, error) {
 		receipts, err := tasks.AcceptBatch(ctx, []state.Command{cmd}, nil)
+		if err != nil {
+			return state.Run{}, err
+		}
+		return receipts[0].Run, nil
+	}
+	chats.StartTask = func(ctx context.Context, commandID, chatID, messageID, request string) (state.Run, error) {
+		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: commandID, RunID: commandID, Kind: state.CommandStart, Text: request,
+			Origin: &state.TaskOrigin{ConversationID: chatID, MessageID: messageID}}}, nil)
+		if err != nil {
+			return state.Run{}, err
+		}
+		return receipts[0].Run, nil
+	}
+	result.Assistant.Revise = func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error) {
+		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: taskID, RunID: taskID, Kind: state.CommandStart, Text: instruction, Revises: resultID}}, nil)
 		if err != nil {
 			return state.Run{}, err
 		}
@@ -137,11 +159,12 @@ func (a *App) apiDeps() api.Deps {
 	return api.Deps{Chats: a.Chats, Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features, Assistant: a.Assistant}
 }
 
+// Resume repairs delivery and, through the same fan-out, any due automation work whose wake was lost.
 func (a *App) Resume(ctx context.Context) error {
 	if a.Dispatcher == nil {
 		return nil
 	}
-	return a.Dispatcher.Resume(ctx)
+	return errors.Join(a.Dispatcher.Resume(ctx), a.Schedule(ctx))
 }
 
 func (a *App) RepairWake(ctx context.Context) error { return a.WakeRepair.Repair(ctx) }
@@ -172,7 +195,7 @@ func (a *App) Schedule(ctx context.Context) error {
 		return nil
 	}
 	_, err := a.Scheduler.Tick(ctx)
-	return err
+	return errors.Join(err, a.Chats.DeliverTasks(ctx, a.Store.GetRun))
 }
 
 func (a *App) processAssistant(ctx context.Context) error {

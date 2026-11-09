@@ -35,6 +35,9 @@ func (s *Service) Tick(ctx context.Context) (*time.Time, error) {
 	if err := s.drain(ctx, now); err != nil {
 		return earliest, err
 	}
+	if earliest != nil && s.Arm != nil {
+		s.Arm(ctx, *earliest)
+	}
 	return earliest, nil
 }
 

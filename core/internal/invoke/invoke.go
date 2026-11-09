@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -29,6 +30,8 @@ type Call struct {
 	Grant *connections.Grant
 	// Progress reports a short progress line for long calls; it may be nil.
 	Progress func(text string)
+	// Upload reads a file the task was given, by upload ID; it refuses files the task was not given.
+	Upload func(ctx context.Context, id string) (name, mediaType string, data []byte, err error)
 }
 
 // Prepared is the normalized action. Preparing makes no external writes.
@@ -40,6 +43,9 @@ type Prepared struct {
 	Precondition    string
 	Spec            map[string]string
 	MaterialEffects []string
+	// Keys are provider idempotency keys derived from the action, such as a client-chosen event ID. They are not
+	// part of the approval digest: an approved action re-called unchanged must match its approval.
+	Keys map[string]string
 }
 
 // Result is what the provider showed. The executor maps it onto the operation ledger.
@@ -87,7 +93,11 @@ func (r *Registry) Lookup(binding extensions.Binding) (Adapter, bool) {
 		return nil, false
 	}
 	prefix, _, _ := strings.Cut(binding.Target, "/")
-	adapter, ok := r.adapters[key(binding.Adapter, prefix)]
+	if adapter, ok := r.adapters[key(binding.Adapter, prefix)]; ok {
+		return adapter, true
+	}
+	// An adapter registered with an empty prefix serves every target of its kind.
+	adapter, ok := r.adapters[key(binding.Adapter, "")]
 	return adapter, ok
 }
 
@@ -115,6 +125,23 @@ func Digest(call Call, connectionID string, epoch int64, p Prepared) string {
 	data, _ := json.Marshal([]any{call.Exec.Tool.ID, call.Exec.Tool.Digest, connectionID, epoch, spec, resources, recipients, p.Precondition, p.Effect})
 	sum := sha256.Sum256(data)
 	return "act_" + hex.EncodeToString(sum[:20])
+}
+
+// ActionKey identifies an action within one task revision independently of the call that made it: the same task,
+// revision, tool and normalized parameters give the same key, so a re-call after approval reuses the provider
+// idempotency key instead of creating a duplicate.
+func ActionKey(call Call, spec map[string]string) string {
+	keys := make([]string, 0, len(spec))
+	for k := range spec {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := []string{call.RunID, fmt.Sprint(call.Revision), call.Exec.Tool.ID}
+	for _, k := range keys {
+		parts = append(parts, k+"="+spec[k])
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])
 }
 
 // String reads a string argument.

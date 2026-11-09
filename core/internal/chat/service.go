@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,9 @@ type Store interface {
 }
 
 type Service struct {
+	// StartTask accepts durable task work for a chat through the assistant's task engine, with the chat as origin.
+	// Nil leaves the chat without background work.
+	StartTask func(ctx context.Context, commandID, chatID, messageID, request string) (state.Run, error)
 	Store     Store
 	model     conversation.ReplyModel
 	userFacts string
@@ -451,6 +455,9 @@ func (s *Service) generate(ctx context.Context, id, turn string) (state.Chat, er
 		return c, err
 	}
 	operationID := uuid.NewString()
+	if len(reply.Calls) == 1 && reply.Calls[0].Function.Name == "start_task" {
+		return s.startTask(ctx, id, turn, c, reply.Calls[0].ID, reply.Calls[0].Function.Arguments)
+	}
 	return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
 		if len(reply.Calls) == 0 {
 			m.Text = reply.Text
@@ -592,3 +599,92 @@ func (s *Service) ReadUpload(ctx context.Context, id, upload string) (state.Uplo
 }
 
 var chatToolSchema = json.RawMessage(prompts.ChatTools)
+
+// startTask hands a chat request to the durable task engine. The same tools, authority and operation records as the
+// main assistant apply; the chat records the task as a submitted operation and its result is appended when it ends.
+func (s *Service) startTask(ctx context.Context, id, turn string, c state.Chat, callID, arguments string) (state.Chat, error) {
+	var args struct {
+		Request string `json:"request"`
+	}
+	if s.StartTask == nil || json.Unmarshal([]byte(arguments), &args) != nil || strings.TrimSpace(args.Request) == "" || len(args.Request) > state.MaxMessageBytes-16 {
+		return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
+			m.Text = "Background work is not available here right now."
+			return endTurn(c, m, "failed"), nil
+		})
+	}
+	messageID := ""
+	if len(c.Messages) > 0 {
+		messageID = c.Messages[len(c.Messages)-1].ID
+	}
+	commandID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("chat-task:"+id+":"+turn+":"+callID)).String()
+	run, err := s.StartTask(ctx, commandID, id, messageID, args.Request)
+	if err != nil && !errors.Is(err, state.ErrDuplicate) {
+		return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
+			m.Text = "The task could not be started: " + err.Error()
+			return endTurn(c, m, "failed"), nil
+		})
+	}
+	taskID := run.ID
+	if taskID == "" {
+		taskID = commandID
+	}
+	return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
+		c.Checkpoint.ModelPending = false
+		m.Operations = append(m.Operations, state.ChatOperation{Arguments: arguments, Result: map[string]any{"task_id": taskID},
+			OperationRecord: state.OperationRecord{ID: "chat-task-" + commandID, CallID: callID, Name: "start_task", EffectClass: "control", Outcome: "submitted", Attempt: 1}})
+		m.Text = "I started this as a task. Its progress is in Work, and its result will appear here."
+		return endTurn(c, m, "completed"), nil
+	})
+}
+
+// DeliverTasks appends the results of finished chat tasks to the chats that started them, once each.
+func (s *Service) DeliverTasks(ctx context.Context, run func(context.Context, string) (state.Run, error)) error {
+	summaries, err := s.Store.ChatSummaries(ctx)
+	if err != nil {
+		return err
+	}
+	for _, summary := range summaries {
+		c, err := s.Store.Chat(ctx, summary.ID)
+		if err != nil {
+			continue
+		}
+		for _, m := range c.Messages {
+			for _, op := range m.Operations {
+				if op.Name != "start_task" || op.Outcome != "submitted" {
+					continue
+				}
+				taskID, _ := op.Result["task_id"].(string)
+				task, err := run(ctx, taskID)
+				if err != nil || task.Status == state.RunRunning {
+					continue
+				}
+				text := task.Result
+				switch task.Status {
+				case state.RunFailed:
+					text = "The task did not finish: " + task.Error
+				case state.RunCancelled:
+					text = "The task was stopped."
+				}
+				messageID, opID := m.ID, op.ID
+				_, _ = s.Store.UpdateChat(ctx, summary.ID, func(c *state.Chat) (string, error) {
+					for i := range c.Messages {
+						if c.Messages[i].ID != messageID {
+							continue
+						}
+						for j := range c.Messages[i].Operations {
+							o := &c.Messages[i].Operations[j]
+							if o.ID == opID && o.Outcome == "submitted" {
+								o.Outcome = "confirmed"
+								c.Messages = append(c.Messages, state.ChatMessage{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("chat-task-result:"+opID)).String(),
+									Role: "assistant", Text: text, Status: "completed"})
+								return "reply.updated", nil
+							}
+						}
+					}
+					return "", nil
+				}, messageID)
+			}
+		}
+	}
+	return nil
+}

@@ -53,6 +53,9 @@ type Connections struct {
 	CredentialStore, CredentialDir string
 	// UnattendedWrites and UserSends are the interim D2 mechanisms; see internal/permissions.
 	UnattendedWrites, UserSends string
+	// ProviderReplay names a directory of recorded provider responses (internal/connectors/replay). Local development
+	// only: platform refuses it unless NORI_CLOUD=local, and no provider is contacted while it is set.
+	ProviderReplay string
 }
 
 // Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
@@ -235,6 +238,7 @@ func connectionsFromEnvironment(localArtifacts string) Connections {
 		GoogleClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), GoogleClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
 		RedirectURL: os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
 		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"), UserSends: get("NORI_USER_SENDS", "ask"),
+		ProviderReplay: os.Getenv("NORI_PROVIDER_REPLAY"),
 	}
 }
 
