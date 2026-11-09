@@ -205,6 +205,10 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 				}
 				resolution.Text, text = response.Text, response.Text
 			case (response.Kind == "approve" || response.Kind == "decline") && i.Kind == "approval":
+				// A missing digest is a malformed request; a different one means the action changed since it was shown.
+				if response.ActionDigest == "" {
+					return state.MutationResult{}, fmt.Errorf("%w: approve and decline need the action_digest that was shown", state.ErrInvalidResource)
+				}
 				if response.ActionDigest != i.ActionDigest {
 					return state.MutationResult{}, ErrInteractionStale
 				}
