@@ -109,9 +109,13 @@ func (s *Service) record(ctx context.Context, id string) (Record, state.Resource
 // Project builds the public connection view.
 func (s *Service) Project(record Record, r state.Resource, prefs Preferences) Projection {
 	p := Projection{
-		ID: record.ID, Revision: r.Revision, IntegrationID: record.IntegrationID, Title: record.Title, Account: record.Account,
+		ID: record.ID, Revision: r.Revision, IntegrationID: record.IntegrationID, Title: record.Title,
 		Status: record.Status, GrantedScopes: nonNil(record.GrantedScopes), SelectedResourceIDs: nonNil(record.SelectedResourceIDs),
 		Health: record.Health, Defaults: []string{}, Capabilities: record.Capabilities,
+	}
+	if record.Account.ProviderID != "" {
+		account := record.Account
+		p.Account = &account
 	}
 	if !r.CreatedAt.IsZero() {
 		created, updated := r.CreatedAt, r.UpdatedAt
