@@ -268,7 +268,7 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
             <input type="checkbox" className="accent-[var(--accent)]" checked={chosenTargets.includes(destination.id)} onChange={() => setTargets(chosenTargets.includes(destination.id) ? chosenTargets.filter((other) => other !== destination.id) : [...chosenTargets, destination.id])} />{destination.label}{destination.status !== "verified" ? " (not verified)" : ""}</label>)}</div>
         </fieldset>
         <div className="flex flex-wrap gap-4">
-          <Field label="Budget per run (USD)"><input type="number" min={0} step={0.1} value={budget} onChange={(event) => setBudget(event.target.value)} className={cn(inputBase, "w-32")} /></Field>
+          <Field label="Budget per run (USD)"><input type="number" min={0} step="any" value={budget} onChange={(event) => setBudget(event.target.value)} className={cn(inputBase, "w-32")} /></Field>
           <Field label="Stop after (optional)"><input type="date" value={endAt} onChange={(event) => setEndAt(event.target.value)} className={cn(inputBase, "w-auto")} /></Field>
         </div>
         {(preview || previewError) && <section aria-label="Preview" aria-live="polite" className="rounded-card border border-hairline-strong bg-fill-1 p-4">

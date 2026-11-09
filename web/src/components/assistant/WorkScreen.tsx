@@ -135,7 +135,7 @@ function Continue({ item }: { item: WorkItem }) {
   }, "Continuing in a new task.");
   return <Section title="Continue">
     <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); void go(); }}>
-      {limited && <Field label="New spending limit (USD)"><input type="number" min={0.1} step={0.5} value={budget} onChange={(event) => setBudget(event.target.value)} className={cn(inputBase, "w-32")} /></Field>}
+      {limited && <Field label="New spending limit (USD)"><input type="number" min={0.01} step="any" value={budget} onChange={(event) => setBudget(event.target.value)} className={cn(inputBase, "w-32")} /></Field>}
       <Button type="submit" variant="primary" disabled={!!action.pending || (limited && !(Number(budget) > 0))}>{action.pending ? "Starting…" : "Continue this task"}</Button>
     </form>
     {action.error && <div className="mt-2"><Notice tone="danger">{action.error}</Notice></div>}
