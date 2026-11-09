@@ -66,7 +66,11 @@ type wait struct {
 	Seconds int             `json:"seconds"`
 }
 
-var varPattern = regexp.MustCompile(`\$\{([a-z]+):?([A-Za-z0-9_]*)\}`)
+var (
+	varPattern = regexp.MustCompile(`\$\{([a-z]+):?([A-Za-z0-9_]*)\}`)
+	// intPattern is a quoted "${int:name}": it expands to the captured value without quotes, for numbers.
+	intPattern = regexp.MustCompile(`"\$\{int:([A-Za-z0-9_]+)\}"`)
+)
 
 type run struct {
 	vars      map[string]string
@@ -79,6 +83,14 @@ func newRun() *run { return &run{vars: map[string]string{}, responses: map[strin
 // ${var:name} (a captured value) and ${user:name} (a scenario user id).
 func (r *run) expand(s string, users map[string]string) (string, error) {
 	var err error
+	s = intPattern.ReplaceAllStringFunc(s, func(m string) string {
+		name := intPattern.FindStringSubmatch(m)[1]
+		v, ok := r.vars[name]
+		if !ok {
+			err = fmt.Errorf("variable %s not captured yet", name)
+		}
+		return v
+	})
 	out := varPattern.ReplaceAllStringFunc(s, func(m string) string {
 		g := varPattern.FindStringSubmatch(m)
 		switch g[1] {
@@ -144,7 +156,7 @@ func checkScenariosOffline(files []string, scs []scenario, compile func(string) 
 		r := newRun()
 		for _, st := range sc.Steps {
 			for k := range st.Capture {
-				r.vars[k] = "captured-" + k
+				r.vars[k] = "1"
 			}
 		}
 		if len(sc.Steps) == 0 {
