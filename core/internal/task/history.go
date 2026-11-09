@@ -412,7 +412,8 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 		return out, classified(e)
 	}
 	var result map[string]any
-	if in.ReadOnly && agent.PolicyFor(call.Name, in.Exec).Effect != "read" {
+	// A compose call carries the read-only limit to each nested call instead.
+	if in.ReadOnly && call.Name != "compose" && agent.PolicyFor(call.Name, in.Exec).Effect != "read" {
 		result = map[string]any{
 			"outcome":      "needs_input",
 			"error":        prompts.Runtime("reads-only", nil),
@@ -420,7 +421,7 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 			"operation_id": in.OperationID,
 		}
 	} else {
-		result, e = a.durableTool(ctx, ToolInput{Step: in.Step, OperationID: in.OperationID, Call: call, Exec: in.Exec})
+		result, e = a.durableTool(ctx, ToolInput{Step: in.Step, OperationID: in.OperationID, Call: call, Exec: in.Exec, ReadOnly: in.ReadOnly})
 		if e != nil {
 			return out, e
 		}

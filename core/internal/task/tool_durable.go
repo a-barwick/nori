@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"nori/internal/agent"
 	"nori/internal/computer"
+	"nori/internal/extensions"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -56,6 +58,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		attribute.String("tool.name", policy.Name), attribute.String("nori.operation.id", in.OperationID),
 		attribute.String("nori.operation.effect_class", effect),
 	)
+	if in.ParentOperationID != "" {
+		span.SetAttributes(attribute.String("nori.operation.parent_id", in.ParentOperationID))
+	}
 	until := receiptDeadline(parent)
 	var plan *externalPlan
 	if in.Exec != nil && !in.Exec.Builtin {
@@ -68,7 +73,13 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			return stop, err
 		} else {
 			effect = string(plan.prepared.Effect)
-			span.SetAttributes(attribute.String("nori.tool.definition", in.Exec.Tool.ID), attribute.String("nori.tool.digest", in.Exec.Tool.Digest))
+			span.SetAttributes(attribute.String("nori.tool.definition", in.Exec.Tool.ID), attribute.String("nori.tool.digest", in.Exec.Tool.Digest),
+				attribute.String("nori.tool.version", in.Exec.Tool.Version), attribute.String("nori.binding.adapter", string(in.Exec.Binding.Adapter)))
+			if in.Exec.Binding.Adapter == extensions.AdapterPlugin {
+				// A plugin binding's version is its package version; its target starts with the installation.
+				installation, _, _ := strings.Cut(in.Exec.Binding.Target, "/")
+				span.SetAttributes(attribute.String("nori.package.version", in.Exec.Binding.Version), attribute.String("nori.package.installation", installation))
+			}
 			if plan.call.Grant != nil {
 				span.SetAttributes(attribute.String("nori.connection.id", plan.call.Grant.Connection.ID))
 			}
@@ -93,7 +104,7 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	}
 	op := state.OperationRecord{
 		ID: in.OperationID, CallID: in.Call.ID, Name: in.Call.Name, Revision: in.Revision,
-		EffectClass: effect, Outcome: "pending", RecoveryUntil: until,
+		EffectClass: effect, Outcome: "pending", RecoveryUntil: until, ParentOperationID: in.ParentOperationID,
 	}
 	if in.Exec != nil {
 		op.Tool = &state.DefinitionRef{ID: in.Exec.Tool.ID, Version: in.Exec.Tool.Version, Digest: in.Exec.Tool.Digest}
@@ -171,6 +182,10 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 
 	if plan != nil {
 		return a.runExternal(ctx, in, &op, recovering != nil, plan, persist)
+	}
+	if policy.Runtime && in.Call.Name == "compose" {
+		// Running a compose call again is safe: nested calls reuse their saved results.
+		return a.composeTool(ctx, in, persist)
 	}
 	if policy.Runtime {
 		return a.runtimeTool(ctx, in, &op, recovering != nil, policy, persist)

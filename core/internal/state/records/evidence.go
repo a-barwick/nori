@@ -129,6 +129,22 @@ func (d *Database) putOperation(ctx context.Context, runID string, op state.Oper
 		if op.Cleared != "" {
 			data["cleared"] = op.Cleared
 		}
+		// Identity and provenance fields are fixed once recorded (PlanOperation checks them), so they must be saved.
+		if op.Tool != nil {
+			data["tool"] = op.Tool
+		}
+		if op.ConnectionID != "" {
+			data["connection_id"] = op.ConnectionID
+		}
+		if op.AuthorityRef != "" {
+			data["authority_ref"] = op.AuthorityRef
+		}
+		if op.ParentOperationID != "" {
+			data["parent_operation_id"] = op.ParentOperationID
+		}
+		if len(op.ProviderRefs) > 0 {
+			data["provider_refs"] = op.ProviderRefs
+		}
 		if err := tx.Set(ref, data, docstore.MergeAll); err != nil {
 			return err
 		}

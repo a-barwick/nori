@@ -108,6 +108,7 @@ var taskToolDefinitions = func() []taskToolDefinition {
 		defineTaskTool("task_history_read", params("history_ref", "before", "offset"), memoryCapability, runtimeRead),
 		defineTaskTool("operation_read", params("operation_id"), memoryCapability, runtimeRead),
 		defineTaskTool("capability_load", capabilities, "", runtimeRead),
+		defineTaskTool("compose", params("script"), "", runtimeControl),
 		requestInput,
 		requestWork,
 	}
@@ -258,6 +259,11 @@ func ValidateCalls(calls []transcript.ToolCall, wait, work bool, snapshot *exten
 			id, _ := call.Args["operation_id"].(string)
 			if id == "" || len(id) > 256 {
 				return errors.New(prompts.Runtime("tool-operation-read-needs-the-operation-id-an-omitted-output-names", nil))
+			}
+		case "compose":
+			script, _ := call.Args["script"].(string)
+			if strings.TrimSpace(script) == "" || len(script) > 64<<10 {
+				return errors.New("compose needs a script of 1-65536 bytes")
 			}
 		case "capability_load":
 			names, ok := call.Args["names"].([]any)

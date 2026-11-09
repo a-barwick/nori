@@ -58,6 +58,10 @@ type ToolInput struct {
 	OperationID string
 	Call        transcript.ToolCall
 	Exec        *extensions.Exec `json:",omitempty"`
+	// ReadOnly limits a compose call's nested calls to reads; ParentOperationID names the compose call a nested
+	// call belongs to.
+	ReadOnly          bool   `json:",omitempty"`
+	ParentOperationID string `json:",omitempty"`
 }
 type Publication struct {
 	Step
