@@ -34,6 +34,8 @@ type Assistant struct {
 	Tools func(ctx context.Context) (*extensions.Snapshot, []extensions.CapabilityState)
 	// Answer accepts a task answer command (the existing durable acceptance path).
 	Answer func(ctx context.Context, commandID, taskID, questionID, text string) error
+	// Chats enables searching separate chats.
+	Chats any
 	// Revise starts a task that revises a saved result, keeping its earlier versions.
 	Revise func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error)
 	// Submit starts a task from an external client through normal acceptance.
