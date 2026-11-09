@@ -348,8 +348,8 @@ export function PluginDetailScreen({ id }: { id: string }) {
       {entry.description && <p className="mt-1 text-meta text-ink-3">{entry.description}</p>}</Section>}
     <Section title="Access">
       <p className="text-body text-ink-2">{item.approved_access.action_classes.length ? `May ${item.approved_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}` : "No account access"}{item.approved_access.connection_types.length ? ` with ${item.approved_access.connection_types.join(", ")} accounts you connect.` : "."}</p>
-      {(item.approved_access as Access).network?.length ? <p className="mt-1 text-meta text-ink-2">Reaches {(item.approved_access as Access).network!.join(", ")}.</p> : null}
-      {(item.approved_access as Access).filesystem?.length ? <p className="mt-1 text-meta text-ink-2">Reads files in {(item.approved_access as Access).filesystem!.join(", ")}.</p> : null}
+      {item.approved_access.network?.length ? <p className="mt-1 text-meta text-ink-2">Reaches {item.approved_access.network!.join(", ")}.</p> : null}
+      {item.approved_access.filesystem?.length ? <p className="mt-1 text-meta text-ink-2">Reads files in {item.approved_access.filesystem!.join(", ")}.</p> : null}
       {item.required_connection_types?.length ? <p className="mt-1 text-meta text-ink-3">Needs a connected {item.required_connection_types.join(", ")} account.</p> : null}
     </Section>
     {!!item.diagnostics?.length && <Section title="Diagnostics"><pre className="overflow-x-auto rounded-card bg-fill-1 p-3 font-mono text-mono-data whitespace-pre-wrap">{item.diagnostics.join("\n")}</pre></Section>}
@@ -366,7 +366,7 @@ export function PluginDetailScreen({ id }: { id: string }) {
   </Screen>;
 }
 
-type Access = Installation["approved_access"] & { network?: string[]; filesystem?: string[] };
+type Access = Installation["approved_access"];
 
 /** The access an update or rollback needs approved: what the installation has, plus what the review says is new. */
 function approvedFor(current: Access, review: InstallationReview): Access {
