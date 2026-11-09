@@ -30,6 +30,8 @@ type Checkpoint struct {
 	Spent, Budget         float64
 	CostUnknown           bool
 	Models, Tools, Checks int
+	// ModelRetries counts model requests asked again after a worker stopped mid-request.
+	ModelRetries int `json:",omitempty"`
 	Question              *state.Question
 	QuestionPublished     bool
 	ComputerRevisions     []int64
@@ -540,6 +542,12 @@ func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string)
 	c.CostUnknown = c.CostUnknown || (!model.CostKnown && !model.NotSent)
 	c.Ref = model.Ref
 	c.projectSpend(spending, id)
+	// A worker that stopped mid-request (a deploy or graceful stop) leaves no answer; asking again is a read whose
+	// lost cost is already counted as unknown. Histories recorded before this flag existed never set it.
+	if model.Interrupted && c.ModelRetries < 2 {
+		c.ModelRetries++
+		return c.callModel(ctx, quick, spending, id)
+	}
 	if model.Failure != "" {
 		err = errors.New(model.Failure)
 		return model, err

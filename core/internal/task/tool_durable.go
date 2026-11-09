@@ -35,7 +35,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	err = a.waitForReceipt(parent, in.RunID, func() (time.Time, error) {
 		var err error
 		recovering, saved, err = a.savedOperation(parent, in)
-		if recovering != nil {
+		// A safe read can run again at once: if an earlier attempt is still alive and settles first, its result is
+		// reused. Anything else waits for the earlier attempt's receipt window.
+		if recovering != nil && !(effect == "read" && in.Exec != nil && in.Exec.Policy.Retry == "safe") {
 			return recovering.RecoveryUntil, err
 		}
 		return time.Time{}, err
