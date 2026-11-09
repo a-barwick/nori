@@ -34,8 +34,12 @@ type Assistant struct {
 	Tools func(ctx context.Context) (*extensions.Snapshot, []extensions.CapabilityState)
 	// Answer accepts a task answer command (the existing durable acceptance path).
 	Answer func(ctx context.Context, commandID, taskID, questionID, text string) error
+	// Chats enables searching separate chats.
+	Chats any
 	// Revise starts a task that revises a saved result, keeping its earlier versions.
 	Revise func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error)
+	// Submit starts a task from an external client through normal acceptance.
+	Submit func(ctx context.Context, taskID, request string) (state.Run, error)
 	// Stop accepts a task stop command.
 	Stop func(ctx context.Context, commandID, taskID string) (state.Run, error)
 	// Features lists the route families that are live.
@@ -179,6 +183,10 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	if a.Plugins != nil {
 		a.registerPlugins(mux)
 	}
+	mux.HandleFunc("GET /v1/mcp-clients", a.mcpClients)
+	mux.HandleFunc("POST /v1/mcp-clients", jsonBody(a.createMCPClient))
+	mux.HandleFunc("POST /v1/mcp-clients/{id}/actions", jsonBody(a.mcpClientAction))
+	mux.HandleFunc("POST /v1/nori-mcp", a.noriMCP)
 	if a.Computer != nil {
 		mux.HandleFunc("GET /v1/computer/sessions", a.computerSessions)
 		mux.HandleFunc("GET /v1/computer/sessions/{id}", a.computerSession)

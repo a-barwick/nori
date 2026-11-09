@@ -2,6 +2,8 @@ package plugins
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -26,6 +28,13 @@ type SkillView struct {
 	Enabled        bool   `json:"enabled"`
 }
 
+// skillDigest identifies a skill version's content.
+func skillDigest(skill Skill) string {
+	data, _ := json.Marshal([]any{skill.Ref.ID, skill.Ref.Version, skill.Title, skill.Description, skill.Instructions, skill.Inputs, skill.RequiredToolIDs, skill.Examples, skill.Scope})
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func skillKey(ref string) string {
 	return "skl_" + strings.NewReplacer("/", "__", ".", "_").Replace(ref)
 }
@@ -37,6 +46,7 @@ func (s *Service) putSkill(ctx context.Context, skill Skill, installationID stri
 	if skill.RequiredToolIDs == nil {
 		skill.RequiredToolIDs = []string{}
 	}
+	skill.Ref.Digest = skillDigest(skill)
 	key := skillKey(skill.Ref.ID)
 	r, err := state.NewResource(CollectionSkills, key, 0, skillDoc{Skill: skill, InstallationID: installationID}, map[string]string{"installation_id": installationID}, s.now())
 	if err != nil {
@@ -122,6 +132,7 @@ func (s *Service) SaveSkill(ctx context.Context, id, requestID string, expected 
 			if skill.Inputs == nil {
 				skill.Inputs = map[string]any{"type": "object"}
 			}
+			skill.Ref.Digest = skillDigest(skill)
 			r, err := state.NewResource(CollectionSkills, id, revision, skillDoc{Skill: skill}, map[string]string{"installation_id": ""}, s.now())
 			if err != nil {
 				return state.MutationResult{}, err

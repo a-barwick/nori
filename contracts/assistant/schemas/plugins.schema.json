@@ -1652,6 +1652,163 @@
           }
         }
       ]
+    },
+    "MCPClient": {
+      "description": "An external MCP client allowed to call Nori's MCP endpoint (A13, r2.5). Never carries the token or its hash.",
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "name",
+        "scopes",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "read",
+              "mutate"
+            ]
+          }
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "revoked_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "last_used_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "token"
+            ]
+          },
+          {
+            "required": [
+              "token_hash"
+            ]
+          }
+        ]
+      }
+    },
+    "MCPClientEditable": {
+      "type": "object",
+      "required": [
+        "name",
+        "scopes"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "read",
+              "mutate"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "MCPClientChange": {
+      "description": "Create only (expected_revision 0).",
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Change"
+        },
+        {
+          "properties": {
+            "expected_revision": {
+              "const": 0
+            },
+            "value": {
+              "$ref": "#/$defs/MCPClientEditable"
+            }
+          }
+        }
+      ]
+    },
+    "MCPClientCreated": {
+      "description": "The first response to a create carries the token once; an idempotent retry returns the plain MutationReceipt without it.",
+      "type": "object",
+      "required": [
+        "request_id",
+        "accepted",
+        "status",
+        "resource",
+        "token"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "accepted": {
+          "const": true
+        },
+        "status": {
+          "const": "applied"
+        },
+        "resource": {
+          "$ref": "#/$defs/MCPClient"
+        },
+        "token": {
+          "type": "string",
+          "pattern": "^nori_[0-9a-f-]{36}_[A-Za-z0-9_-]{43}$"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "MCPClientAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "type": "object",
+              "required": [
+                "action"
+              ],
+              "properties": {
+                "action": {
+                  "const": "revoke"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
     }
   }
 }
