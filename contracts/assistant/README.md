@@ -72,3 +72,5 @@ cd core && go run ./cmd/contracts-check -live http://127.0.0.1:8083
 ## Changing a contract
 
 Propose the change with the contract ID and the encoding revision, the consumer need, the schema diff, affected consumers and stored histories, compatibility consequences, and the fixtures that prove it. One editor lands the schema and fixture change in one commit; consumers acknowledge that commit in the coordination record. Chat alone does not amend a contract.
+
+`recordings/<provider>/*.json` are hand-written provider exchanges for the local replay transport (`NORI_PROVIDER_REPLAY=<repo>/contracts/assistant/recordings`, local stack only). An exchange matches on method, host, path (exact or prefix `*`), query, `body_contains` (all must appear) and optional `basic_auth` (made-up credentials, never real ones); `after`, `times`, `delay_ms` and `drop` order and shape replies. `recordings/samples/` holds files to upload in recorded workflows.
