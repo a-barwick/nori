@@ -20,6 +20,8 @@ type workOrigin struct {
 	AutomationID   string `json:"automation_id,omitempty"`
 	OccurrenceID   string `json:"occurrence_id,omitempty"`
 	GoalID         string `json:"goal_id,omitempty"`
+	// ContinuesTaskID names the task this one explicitly continues (proposed for the contract in r2.6).
+	ContinuesTaskID string `json:"continues_task_id,omitempty"`
 }
 
 type workOperations struct {
@@ -104,7 +106,11 @@ func originOf(run state.Run) workOrigin {
 	if conversation == "" {
 		conversation = "assistant"
 	}
-	return workOrigin{Kind: "conversation", ConversationID: conversation, MessageID: o.MessageID}
+	kind := "conversation"
+	if conversation == "external" {
+		kind = "external"
+	}
+	return workOrigin{Kind: kind, ConversationID: conversation, MessageID: o.MessageID, ContinuesTaskID: o.ContinuesTaskID}
 }
 
 func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.OperationRecord, pending []string, results []string) workItem {

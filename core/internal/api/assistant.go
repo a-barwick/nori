@@ -38,6 +38,8 @@ type Assistant struct {
 	Chats any
 	// Revise starts a task that revises a saved result, keeping its earlier versions.
 	Revise func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error)
+	// DeliverAnswers retries answers recorded for interactions that never reached their task.
+	DeliverAnswers func(ctx context.Context) error
 	// Resume repairs command delivery and worker wakes, and runs a scheduler pass.
 	Resume func(ctx context.Context) error
 	// Continue starts a task that explicitly continues one that stopped, for example at its budget.
