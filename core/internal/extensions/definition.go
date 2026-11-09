@@ -111,11 +111,14 @@ type Definition struct {
 	InputSchema  json.RawMessage `json:"input_schema"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 	// ModelSchemaTransform records the projection applied for the model provider; empty means none was needed.
-	ModelSchemaTransform string   `json:"model_schema_transform,omitempty"`
-	Binding              Binding  `json:"binding"`
-	ConnectionType       string   `json:"connection_type,omitempty"`
-	Policy               Policy   `json:"policy"`
-	Exposure             Exposure `json:"exposure"`
+	ModelSchemaTransform string  `json:"model_schema_transform,omitempty"`
+	Binding              Binding `json:"binding"`
+	ConnectionType       string  `json:"connection_type,omitempty"`
+	// RequiredCapability is the connection purpose a call needs, such as calendar.write. Account choice and the
+	// connection's grant are checked against it.
+	RequiredCapability string   `json:"required_capability,omitempty"`
+	Policy             Policy   `json:"policy"`
+	Exposure           Exposure `json:"exposure"`
 }
 
 // Builtin reports whether the definition is compiled into the engine.
@@ -123,15 +126,16 @@ func (d Definition) Builtin() bool { return d.Extension.ID == BuiltinExtension }
 
 // Exec is the bounded execution metadata a model call is pinned to in workflow history.
 type Exec struct {
-	Tool           DefinitionRef `json:"tool"`
-	Builtin        bool          `json:"builtin,omitempty"`
-	Binding        Binding       `json:"binding"`
-	ConnectionType string        `json:"connection_type,omitempty"`
-	Policy         Policy        `json:"policy"`
+	Tool               DefinitionRef `json:"tool"`
+	Builtin            bool          `json:"builtin,omitempty"`
+	Binding            Binding       `json:"binding"`
+	ConnectionType     string        `json:"connection_type,omitempty"`
+	RequiredCapability string        `json:"required_capability,omitempty"`
+	Policy             Policy        `json:"policy"`
 }
 
 func (d Definition) Exec() Exec {
-	return Exec{Tool: d.Ref, Builtin: d.Builtin(), Binding: d.Binding, ConnectionType: d.ConnectionType, Policy: d.Policy}
+	return Exec{Tool: d.Ref, Builtin: d.Builtin(), Binding: d.Binding, ConnectionType: d.ConnectionType, RequiredCapability: d.RequiredCapability, Policy: d.Policy}
 }
 
 var modelName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -248,7 +252,7 @@ func Digest(d Definition) (string, error) {
 	data, err := json.Marshal(map[string]any{
 		"id": d.Ref.ID, "version": d.Ref.Version, "extension": d.Extension.ID + "@" + d.Extension.Version,
 		"model_name": d.ModelName, "description": d.Description, "input_schema": input, "output_schema": output,
-		"binding": d.Binding, "connection_type": d.ConnectionType, "policy": d.Policy,
+		"binding": d.Binding, "connection_type": d.ConnectionType, "required_capability": d.RequiredCapability, "policy": d.Policy,
 	})
 	if err != nil {
 		return "", err

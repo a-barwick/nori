@@ -23,7 +23,10 @@ const (
 	MaxAttachments = 10
 )
 
-var ErrUploadType = errors.New("Only PNG, JPEG or WebP images, PDFs and CSV files can be attached")
+var ErrUploadType = errors.New("Only PNG, JPEG or WebP images, PDFs, CSV, ICS calendar, text and Markdown files can be attached")
+
+// UploadMediaTypes are the types SniffUpload accepts, with the file extensions that select the text types.
+var UploadMediaTypes = []string{"image/png", "image/jpeg", "image/webp", "application/pdf", "text/csv", "text/calendar", "text/plain", "text/markdown"}
 
 var ErrAttachmentMissing = errors.New("an attached file wasn't uploaded")
 
@@ -101,12 +104,18 @@ func SniffUpload(name, declared string, data []byte) (string, error) {
 		found = "application/pdf"
 	case strings.EqualFold(path.Ext(name), ".csv") && utf8.Valid(data) && !bytes.ContainsRune(data, 0):
 		found = "text/csv"
+	case strings.EqualFold(path.Ext(name), ".ics") && utf8.Valid(data) && bytes.HasPrefix(bytes.TrimSpace(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))), []byte("BEGIN:VCALENDAR")):
+		found = "text/calendar"
+	case (strings.EqualFold(path.Ext(name), ".md") || strings.EqualFold(path.Ext(name), ".markdown")) && utf8.Valid(data) && !bytes.ContainsRune(data, 0):
+		found = "text/markdown"
+	case strings.EqualFold(path.Ext(name), ".txt") && utf8.Valid(data) && !bytes.ContainsRune(data, 0):
+		found = "text/plain"
 	}
 	if found == "" {
 		return "", ErrUploadType
 	}
 	// Browsers report CSV in several ways, and the name and bytes already decided it.
-	if declared != found && found != "text/csv" && declared != "application/octet-stream" && declared != "" {
+	if declared != found && !strings.HasPrefix(found, "text/") && declared != "application/octet-stream" && declared != "" {
 		return "", fmt.Errorf("%w: the file's contents don't match its type", ErrUploadType)
 	}
 	return found, nil

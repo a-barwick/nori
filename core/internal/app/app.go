@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"nori/internal/agent"
 	"nori/internal/agent/responses"
 	"nori/internal/api"
 	"nori/internal/chat"
@@ -31,6 +32,7 @@ type App struct {
 	Model      string
 	engine     dispatch.Orchestrator
 	handler    http.Handler
+	Assistant  *api.Assistant
 }
 
 func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user users.User) (*App, error) {
@@ -54,6 +56,17 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	userFacts := user.Facts()
 	chats := chat.New(store, outer, userFacts)
 	result := &App{Store: store, Features: cfg.Features, Chats: chats, Waker: waker, Model: model}
+	services, err := platform.Assistant(cfg, user, store)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	toolSource := &agent.Service{Extensions: services.Connections, Computer: platform.Computer(cfg)}
+	result.Assistant = &api.Assistant{
+		Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
+		Features: map[string]bool{"integrations": true, "connections": true, "interactions": true, "permissions": true,
+			"preferences": true, "work": !cfg.Features.DisableBackgroundTasks, "operations": true},
+	}
 	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
 	if cfg.Features.DisableBackgroundTasks {
 		return result, nil
@@ -85,6 +98,17 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	runner.UserFacts = userFacts
 	runner.Clock = conversation.Clock{Location: location}
 	result.Runner, result.Tasks, result.Dispatcher, result.engine = runner, tasks, dispatcher, engine
+	result.Assistant.Answer = func(ctx context.Context, commandID, taskID, questionID, text string) error {
+		_, err := tasks.AcceptBatch(ctx, []state.Command{{ID: commandID, RunID: taskID, Kind: state.CommandAnswer, QuestionID: questionID, Text: text}}, nil)
+		return err
+	}
+	result.Assistant.Stop = func(ctx context.Context, commandID, taskID string) (state.Run, error) {
+		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: commandID, RunID: taskID, Kind: state.CommandStop}}, nil)
+		if err != nil {
+			return state.Run{}, err
+		}
+		return receipts[0].Run, nil
+	}
 	return result, nil
 }
 
@@ -97,7 +121,7 @@ func (a *App) Close() {
 }
 
 func (a *App) apiDeps() api.Deps {
-	return api.Deps{Chats: a.Chats, Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features}
+	return api.Deps{Chats: a.Chats, Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features, Assistant: a.Assistant}
 }
 
 func (a *App) Resume(ctx context.Context) error {

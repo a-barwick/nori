@@ -119,6 +119,7 @@ type Database interface {
 	ChatDatabase
 	TaskDatabase
 	ConversationDatabase
+	ResourceStore
 	// WorkVersion returns an opaque identity for pending API work, or empty when
 	// none needs a wake. tasks=false excludes assistant/task work in chat-only mode.
 	WorkVersion(ctx context.Context, tasks bool) (string, error)

@@ -23,6 +23,16 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 		if err != nil {
 			return err
 		}
+		before := map[string]int64{}
+		runIDs := []string{}
+		for id, run := range batch.Runs {
+			before[id] = run.Revision
+			runIDs = append(runIDs, id)
+		}
+		pending, err := d.readPendingInteractions(tx, runIDs)
+		if err != nil {
+			return err
+		}
 		control, err := d.admitCommandBatch(tx, commands, batch, fence)
 		if err != nil {
 			return err
@@ -32,7 +42,10 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 		if err != nil {
 			return err
 		}
-		return d.writeCommandBatch(tx, batch, prepared, traceContext)
+		if err = d.writeCommandBatch(tx, batch, prepared, traceContext); err != nil {
+			return err
+		}
+		return d.supersedeInteractions(tx, pending, before, batch, commands)
 	})
 	return receipts, err
 }
