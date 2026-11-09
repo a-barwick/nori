@@ -108,11 +108,14 @@ const OUTCOME: Record<string, { tone: Tone; label: string }> = {
   skipped: { tone: "neutral", label: "Skipped" }, voided: { tone: "neutral", label: "Cancelled before running" },
 };
 
-export function OperationRows({ operations }: { operations: OperationProjection[] }) {
+const AUTHORITY: Record<string, string> = { user_request: "you asked", permission_rule: "a permission rule", automation: "a routine", approval: "your approval", internal: "Nori" };
+const RECOVERY: Record<string, string> = { reconciling: "checking with the provider", needs_review: "needs your review", resolved: "resolved" };
+
+export function OperationRows({ operations }: { operations: (OperationProjection & { recovery?: string; task_title?: string })[] }) {
   return <Rows label="Actions">{operations.map((operation) => {
     const outcome = OUTCOME[operation.outcome] ?? { tone: "neutral" as Tone, label: operation.outcome };
     return <Row key={operation.id} title={operation.action_summary || operation.name}
-      detail={[operation.account_summary, operation.created_at && relative(operation.created_at)].filter(Boolean).join(" · ")}
+      detail={[operation.account_summary, operation.authority_source && `because ${AUTHORITY[operation.authority_source]}`, operation.recovery && RECOVERY[operation.recovery], operation.created_at && relative(operation.created_at)].filter(Boolean).join(" · ")}
       trailing={<>{operation.receipt_url && /^https:\/\//.test(operation.receipt_url) && <a href={operation.receipt_url} target="_blank" rel="noreferrer noopener" className="text-meta font-medium text-accent-text hover:underline">Open</a>}<Pill tone={outcome.tone}>{outcome.label}</Pill></>} />;
   })}</Rows>;
 }

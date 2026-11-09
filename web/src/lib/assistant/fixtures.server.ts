@@ -20,7 +20,7 @@ type Store = {
 
 function seed(): Store {
   const google = fixture("connections/connection.needs-attention.valid.json");
-  const work = { ...fixture("connections/connection.connected.valid.json") };
+  const work = { ...fixture("connections/connection.connected.valid.json"), id: "conn_google_work", title: "Work Google", account: { provider_id: "acct_work", label: "you@work.example" }, defaults: [] } as Doc;
   const automations = ["recurring", "once", "event-relative", "watch"].map((name) => {
     const { authority_ref: _ref, ...rest } = fixture(`automations/automation.${name}.valid.json`);
     void _ref;
@@ -370,8 +370,8 @@ export async function fixtureWrite(method: string, segments: string[], body: Doc
   }
   const item = items.find((doc) => route.id(doc) === id);
   if (!item) return error(404, "not_found", "This is no longer available.");
-  if (expected !== item.revision) return error(409, "revision_conflict", "This changed somewhere else. Showing the latest version.", { current: item });
-  const bump = () => { item.revision = (item.revision as number) + 1; item.updated_at = now(); };
+  if (expected !== (item.revision ?? item.version)) return error(409, "revision_conflict", "This changed somewhere else. Showing the latest version.", { current: item });
+  const bump = () => { if (item.revision !== undefined) item.revision = (item.revision as number) + 1; item.updated_at = now(); };
   if (sub === "actions") {
     const action = value.action as string;
     if (head === "connections") {
@@ -432,8 +432,9 @@ export function fixturePreview(body: Doc) {
   const classes = (authority?.action_classes as string[]) ?? ["read"];
   return json({
     next_runs: runs, timezone: trigger?.timezone ?? "Europe/London",
-    proposed_rules: classes.map((cls) => ({ effect: "allow", tool_ids: [], connection_ids: value.connection_ids ?? [], resource_ids: [], action_classes: [cls], summary: { read: "Read from the selected accounts", reversible_write: "Make changes it can undo, such as drafts and calendar edits", sensitive_send: "Send messages or invitations without asking", unknown: "Use tools whose effect is unknown", control: "" }[cls] ?? cls })),
+    proposed_rules: classes.map((cls) => ({ effect: "allow", tool_ids: [], connection_ids: value.connection_ids ?? [], resource_ids: [], action_classes: [cls] })),
+    authority_summary: classes.map((cls) => ({ read: "read from the selected accounts", reversible_write: "make changes it can undo", sensitive_send: "send messages and invitations", unknown: "use tools of unknown effect", control: "" }[cls] ?? cls)).join(", ").replace(/^./, (c) => c.toUpperCase()) + ".",
     missed_run_explanation: { latest: "If Nori is offline at the scheduled time, it runs once when it is back.", skip: "If Nori is offline at the scheduled time, that run is skipped and shown in history.", all: "If Nori is offline, every missed run happens when it is back." }[value.missed_run as string] ?? "",
-    warnings: classes.includes("sensitive_send") ? [{ code: "unattended_send", message: "This routine can send without asking you first." }] : [],
+    warnings: classes.includes("sensitive_send") ? [{ code: "unattended_send_requires_rule", message: "This routine can send without asking you first." }] : [],
   });
 }
