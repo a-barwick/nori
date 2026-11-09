@@ -1,0 +1,28 @@
+{
+  "task_id": "task_10",
+  "title": "Send the update",
+  "status": "completed",
+  "bucket": "finished",
+  "instruction_revision": 1,
+  "origin": {
+    "kind": "automation",
+    "automation_id": "auto_1",
+    "occurrence_id": "occ_1"
+  },
+  "interaction_ids": [],
+  "operations": {
+    "total": 2,
+    "uncertain": 1,
+    "failed": 0,
+    "submitted": 0
+  },
+  "result_ids": [
+    "res_2"
+  ],
+  "cost": {
+    "status": "unknown"
+  },
+  "started_at": "2026-11-09T09:00:00Z",
+  "finished_at": "2026-11-09T09:02:00Z",
+  "cancel_requested": false
+}

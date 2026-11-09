@@ -1,0 +1,28 @@
+{
+  "id": "mcp_linear",
+  "title": "Linear",
+  "description": "Linear through its MCP server.",
+  "categories": [
+    "projects"
+  ],
+  "source": "mcp",
+  "installation_id": "inst_linear",
+  "auth": "oauth",
+  "multiple_accounts": false,
+  "purposes": [
+    {
+      "id": "projects.read",
+      "title": "Read issues"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "projects.read",
+      "title": "Read issues",
+      "effect": "read",
+      "supported": true
+    }
+  ],
+  "availability": "available",
+  "connection_ids": []
+}

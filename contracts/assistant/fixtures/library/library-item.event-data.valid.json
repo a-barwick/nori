@@ -1,0 +1,69 @@
+{
+  "id": "res_evt_123",
+  "root_id": "res_evt_123",
+  "version": 1,
+  "kind": "event",
+  "title": "Dentist",
+  "created_at": "2026-11-09T09:00:00Z",
+  "provenance": {
+    "content": "live",
+    "source": {
+      "connection_id": "conn_google_personal",
+      "kind": "calendar_event",
+      "provider_id": "evt_123",
+      "provider_revision": "etag-9"
+    },
+    "connection_status": "connected"
+  },
+  "data_kind": "calendar_event",
+  "data": {
+    "ref": {
+      "connection_id": "conn_google_personal",
+      "kind": "calendar_event",
+      "provider_id": "evt_123",
+      "provider_revision": "etag-9"
+    },
+    "calendar": {
+      "connection_id": "conn_google_personal",
+      "kind": "calendar",
+      "provider_id": "primary",
+      "provider_revision": "etag-7"
+    },
+    "title": "Dentist",
+    "time": {
+      "kind": "timed",
+      "start": "2026-11-11T10:00:00Z",
+      "end": "2026-11-11T10:30:00Z",
+      "timezone": "Europe/London"
+    },
+    "location": "12 High St",
+    "attendees": [
+      {
+        "email": "personal@example.com",
+        "role": "organizer",
+        "response": "accepted",
+        "self": true
+      },
+      {
+        "email": "alex@example.com",
+        "name": "Alex Kim",
+        "role": "required",
+        "response": "needs_action"
+      }
+    ],
+    "status": "confirmed",
+    "source_url": "https://calendar.google.com/event?eid=abc",
+    "imported_from": "live",
+    "supports": {
+      "update": true,
+      "cancel": true,
+      "invite": true,
+      "rsvp": true,
+      "recurrence_scopes": [
+        "instance",
+        "following",
+        "series"
+      ]
+    }
+  }
+}

@@ -9,5 +9,7 @@
   "connection_ids": [],
   "availability": "needs_connection",
   "reason_code": "no_google_account",
-  "recovery": "connect"
+  "recovery": "connect",
+  "capability": "calendar",
+  "integration_id": "google_calendar"
 }

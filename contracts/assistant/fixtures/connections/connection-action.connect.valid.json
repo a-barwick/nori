@@ -4,8 +4,9 @@
   "value": {
     "action": "connect",
     "return_to": "/apps/google",
-    "requested_scopes": [
-      "calendar.events"
+    "capabilities": [
+      "calendar.read",
+      "calendar.write"
     ]
   }
 }

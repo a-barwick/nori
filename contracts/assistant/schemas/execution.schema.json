@@ -7,78 +7,516 @@
     "Invocation": {
       "x-visibility": "private",
       "type": "object",
-      "required": ["task_id", "instruction_revision", "operation_id", "call_id", "tool", "binding_digest", "arguments_ref", "arguments_digest", "authority_ref"],
+      "required": [
+        "task_id",
+        "instruction_revision",
+        "operation_id",
+        "call_id",
+        "tool",
+        "binding_digest",
+        "authority_ref"
+      ],
       "properties": {
-        "task_id": {"type": "string", "minLength": 1},
-        "instruction_revision": {"type": "integer", "minimum": 0},
-        "operation_id": {"type": "string", "minLength": 1},
-        "call_id": {"type": "string", "minLength": 1},
-        "tool": {"$ref": "common.schema.json#/$defs/DefinitionRef"},
-        "binding_digest": {"type": "string", "minLength": 1},
-        "connection_id": {"$ref": "common.schema.json#/$defs/ID"},
-        "arguments_ref": {"type": "string", "minLength": 1},
-        "arguments_digest": {"type": "string", "minLength": 1},
-        "authority_ref": {"type": "string", "minLength": 1},
-        "parent_operation_id": {"type": "string"}
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instruction_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "call_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/DefinitionRef"
+        },
+        "binding_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "connection_id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "arguments_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arguments_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parent_operation_id": {
+          "type": "string"
+        }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Private. Arguments live in the history chain addressed by ToolRef; the prepared action digest is OperationRecord.action.digest (B4)."
     },
     "PreparedAction": {
       "x-visibility": "private",
       "type": "object",
-      "required": ["digest", "summary", "effect", "resources"],
+      "required": [
+        "digest",
+        "summary",
+        "effect",
+        "resources"
+      ],
       "properties": {
-        "digest": {"type": "string", "minLength": 1},
-        "summary": {"type": "string"},
-        "effect": {"$ref": "common.schema.json#/$defs/Effect"},
-        "resources": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ResourceRef"}},
-        "recipients": {"type": "array", "items": {"type": "string"}},
-        "provider_precondition": {"type": "string"}
+        "digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "effect": {
+          "$ref": "common.schema.json#/$defs/Effect"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "recipients": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provider_precondition": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
     "AdapterResult": {
       "x-visibility": "private",
       "type": "object",
-      "required": ["outcome", "content", "result_ids", "provider_refs", "cost"],
+      "required": [
+        "outcome",
+        "content",
+        "result_ids",
+        "provider_refs",
+        "cost"
+      ],
       "properties": {
-        "outcome": {"enum": ["confirmed", "failed", "submitted", "uncertain"]},
-        "content": {"$ref": "common.schema.json#/$defs/JSON"},
-        "result_ids": {"type": "array", "items": {"type": "string"}},
-        "provider_refs": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ResourceRef"}},
-        "cost": {"$ref": "common.schema.json#/$defs/Cost"},
-        "error": {"$ref": "common.schema.json#/$defs/ErrorDetail"}
+        "outcome": {
+          "enum": [
+            "confirmed",
+            "failed",
+            "submitted",
+            "uncertain"
+          ]
+        },
+        "content": {
+          "$ref": "common.schema.json#/$defs/JSON"
+        },
+        "result_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provider_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "cost": {
+          "$ref": "common.schema.json#/$defs/Cost"
+        },
+        "error": {
+          "$ref": "common.schema.json#/$defs/ErrorDetail"
+        }
       },
       "additionalProperties": false
     },
     "OperationProjection": {
-      "description": "Public, readable view of an operation. Keeps the existing outcome vocabulary; adds readable account/action summaries. Raw arguments and credentials stay private.",
+      "description": "Public view of an operation. Extends the existing operationView wire shape (embedded state.OperationRecord plus owner and result, core/internal/api/conversation_contract.go) without renaming: revision is the instruction revision (I5). New fields are optional. Raw arguments and credentials stay private.",
       "type": "object",
-      "required": ["id", "task_id", "instruction_revision", "name", "effect_class", "outcome"],
+      "required": [
+        "id",
+        "call_id",
+        "name",
+        "effect_class",
+        "outcome",
+        "revision"
+      ],
       "properties": {
-        "id": {"type": "string", "minLength": 1},
-        "task_id": {"type": "string", "minLength": 1},
-        "instruction_revision": {"type": "integer", "minimum": 0},
-        "call_id": {"type": "string"},
-        "name": {"type": "string", "minLength": 1},
-        "tool": {"$ref": "common.schema.json#/$defs/DefinitionRef"},
-        "effect_class": {"$ref": "common.schema.json#/$defs/Effect"},
-        "outcome": {"$ref": "common.schema.json#/$defs/Outcome"},
-        "cleared": {"enum": ["did_not_run", "read_only", "answered"]},
-        "connection_id": {"$ref": "common.schema.json#/$defs/ID"},
-        "account_summary": {"type": "string"},
-        "action_summary": {"type": "string"},
-        "authority_source": {"enum": ["user_request", "permission_rule", "automation", "approval", "internal"]},
-        "provider_refs": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ResourceRef"}},
-        "receipt_url": {"type": "string"},
-        "result_ids": {"type": "array", "items": {"type": "string"}},
-        "parent_operation_id": {"type": "string"},
-        "cost": {"$ref": "common.schema.json#/$defs/Cost"},
-        "created_at": {"$ref": "common.schema.json#/$defs/Instant"},
-        "updated_at": {"$ref": "common.schema.json#/$defs/Instant"},
-        "error": {"$ref": "common.schema.json#/$defs/ErrorDetail"}
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/DefinitionRef"
+        },
+        "effect_class": {
+          "$ref": "common.schema.json#/$defs/Effect"
+        },
+        "outcome": {
+          "$ref": "common.schema.json#/$defs/Outcome"
+        },
+        "cleared": {
+          "enum": [
+            "",
+            "did_not_run",
+            "read_only",
+            "answered"
+          ]
+        },
+        "connection_id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "account_summary": {
+          "type": "string"
+        },
+        "action_summary": {
+          "type": "string"
+        },
+        "authority_source": {
+          "enum": [
+            "user_request",
+            "permission_rule",
+            "automation",
+            "approval",
+            "internal"
+          ]
+        },
+        "provider_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ResourceRef"
+          }
+        },
+        "receipt_url": {
+          "type": "string"
+        },
+        "result_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent_operation_id": {
+          "type": "string"
+        },
+        "cost": {
+          "$ref": "common.schema.json#/$defs/Cost"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "updated_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "error": {
+          "$ref": "common.schema.json#/$defs/ErrorDetail"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Instruction revision (existing name)"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "result_ref": {
+          "type": "string"
+        },
+        "artifact_ids": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "action": {
+          "type": "object",
+          "required": [
+            "digest",
+            "text"
+          ],
+          "properties": {
+            "digest": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "spec": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "owner": {
+          "type": "object",
+          "required": [
+            "type",
+            "id"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "task",
+                "message"
+              ]
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "object"
+        },
+        "binding_digest": {
+          "type": "string"
+        },
+        "task_title": {
+          "type": "string"
+        },
+        "recovery": {
+          "enum": [
+            "none",
+            "reconciling",
+            "needs_review",
+            "resolved"
+          ]
+        }
       },
-      "not": {"anyOf": [{"required": ["arguments"]}, {"required": ["credential_ref"]}, {"required": ["authority_ref"]}]}
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "arguments"
+            ]
+          },
+          {
+            "required": [
+              "credential_ref"
+            ]
+          },
+          {
+            "required": [
+              "authority_ref"
+            ]
+          }
+        ]
+      }
+    },
+    "WorkItem": {
+      "description": "Work projection over state.Run (F2). GET /v1/work?bucket=&cursor=. Old runs map to origin conversation 'assistant'. Scheduled work is /v1/automations?status=enabled.",
+      "type": "object",
+      "required": [
+        "task_id",
+        "title",
+        "status",
+        "bucket",
+        "instruction_revision",
+        "origin",
+        "interaction_ids",
+        "operations",
+        "result_ids",
+        "cost",
+        "started_at",
+        "cancel_requested"
+      ],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "bucket": {
+          "enum": [
+            "needs_you",
+            "working",
+            "finished"
+          ]
+        },
+        "instruction_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "origin": {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "conversation",
+                "automation",
+                "goal",
+                "external"
+              ]
+            },
+            "conversation_id": {
+              "type": "string"
+            },
+            "message_id": {
+              "type": "string"
+            },
+            "automation_id": {
+              "$ref": "common.schema.json#/$defs/ID"
+            },
+            "occurrence_id": {
+              "type": "string"
+            },
+            "goal_id": {
+              "$ref": "common.schema.json#/$defs/ID"
+            }
+          },
+          "additionalProperties": false
+        },
+        "interaction_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "progress": {
+          "type": "string"
+        },
+        "operations": {
+          "type": "object",
+          "required": [
+            "total",
+            "uncertain",
+            "failed",
+            "submitted"
+          ],
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "uncertain": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "submitted": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "result_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cost": {
+          "type": "object",
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "amount_usd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "status": {
+              "enum": [
+                "known",
+                "unknown",
+                "not_applicable"
+              ]
+            },
+            "budget_usd": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "parent_task_id": {
+          "type": "string"
+        },
+        "started_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "finished_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "cancel_requested": {
+          "type": "boolean"
+        },
+        "error": {
+          "$ref": "common.schema.json#/$defs/ErrorDetail"
+        }
+      }
+    },
+    "WorkDetail": {
+      "type": "object",
+      "required": [
+        "item",
+        "operations",
+        "interactions"
+      ],
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/WorkItem"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OperationProjection"
+          }
+        },
+        "interactions": {
+          "type": "array",
+          "items": {
+            "$ref": "permissions.schema.json#/$defs/Interaction"
+          }
+        }
+      }
     }
   }
 }
