@@ -168,3 +168,55 @@ export async function capabilitiesRoute(request: Request) {
   if (!sameOriginRead(request)) return forbidden();
   return forward(request, runtimeMode(request.headers), "v1/capabilities", {}, json);
 }
+
+// Assistant management API (contract r1+). Each family is an explicit allowlist; the
+// browser never chooses an arbitrary upstream path.
+const ASSISTANT_FAMILIES = new Set([
+  "integrations", "connections", "interactions", "work", "automations", "goals", "library", "search", "permissions",
+  "preferences", "delivery-destinations", "plugins", "mcp", "computer", "assistant", "mutations", "operations", "memory",
+  "inbox", "skills", "tools",
+]);
+const SEGMENT = /^[A-Za-z0-9._:@-]{1,200}$/;
+
+export async function assistantRoute(request: Request, family: string, segments: string[]) {
+  const mode = runtimeMode(request.headers);
+  if (!ASSISTANT_FAMILIES.has(family) || segments.length > 4 || !segments.every((segment) => SEGMENT.test(segment))) return notFound();
+  const read = request.method === "GET";
+  if (!read && !["POST", "PUT", "DELETE"].includes(request.method)) return notFound();
+  if (!allowedCaller(request, mode, read ? sameOriginRead : sameOrigin)) return forbidden();
+  const incoming = new URL(request.url).searchParams;
+  const path = ["v1", family, ...segments].map(encodeURIComponent).join("/") + (incoming.size ? `?${incoming}` : "");
+  if (family === "connections" && segments.join("/") === "oauth/callback") return oauthCallback(request, mode, path);
+  let body: string | undefined;
+  if (!read) {
+    if (Number(request.headers.get("content-length") ?? 0) > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
+    try {
+      const value = await request.text();
+      if (new TextEncoder().encode(value).length > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
+      body = value ? JSON.stringify(JSON.parse(value)) : "{}";
+    } catch { return Response.json({ error: "Request body must be JSON." }, { status: 400 }); }
+  }
+  const init: RequestInit = read ? {} : { method: request.method, body, headers: { "Content-Type": "application/json" } };
+  return forward(request, mode, path, init, (type) => json(type) || (read && family === "library" && /^(application\/(pdf|octet-stream)|image\/|text\/)/.test(type)));
+}
+
+// The provider redirects the browser here. Core validates state within this user only and
+// answers 303 to the attempt's relative return_to; only a relative Location is passed on.
+async function oauthCallback(request: Request, mode: Mode, path: string) {
+  const target = runtimeTarget(mode);
+  if (target instanceof Response) return target;
+  const user = await resolveUser(request.headers, target);
+  if ("status" in user) return accessFailureResponse(user);
+  try {
+    const upstream = await fetch(new URL(`users/${encodeURIComponent(user.userID)}/${path}`, user.base), {
+      headers: { ...await runtimeHeaders(mode), ...upstreamTraceHeaders(request) }, redirect: "manual", cache: "no-store",
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
+    });
+    void upstream.body?.cancel().catch(() => undefined);
+    const location = upstream.headers.get("location") ?? "";
+    const safe = location.startsWith("/") && !location.startsWith("//") ? location : "/apps?result=failed";
+    return new Response(null, { status: 303, headers: { Location: safe, "Cache-Control": "no-store" } });
+  } catch {
+    return new Response(null, { status: 303, headers: { Location: "/apps?result=failed", "Cache-Control": "no-store" } });
+  }
+}
