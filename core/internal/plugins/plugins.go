@@ -441,6 +441,16 @@ func covers(approved, requested Access) []string {
 			missing = append(missing, "action:"+c)
 		}
 	}
+	for _, h := range requested.Network {
+		if !slices.Contains(approved.Network, h) {
+			missing = append(missing, "network:"+h)
+		}
+	}
+	for _, f := range requested.Filesystem {
+		if !slices.Contains(approved.Filesystem, f) {
+			missing = append(missing, "filesystem:"+f)
+		}
+	}
 	return missing
 }
 
