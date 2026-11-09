@@ -244,11 +244,11 @@ export async function fixtureGET(segments: string[], url: URL) {
       return json(item);
     }
   }
-  if (head === "mcp" && id === "servers") {
-    if (!sub) return list(collections.mcp, url);
-    const item = collections.mcp.find((doc) => doc.id === sub);
+  if (head === "mcp") {
+    if (!id) return list(collections.mcp, url);
+    const item = collections.mcp.find((doc) => doc.id === id);
     if (!item) return error(404, "not_found", "Not found.");
-    if (segments[3] === "tools") return json({ items: ["issues.search", "issues.create", "issues.update", "projects.list"].map((name) => ({ name: `linear.${name}`, title: name.replace(".", " "), exposure: ((item.exposure as Doc)?.overrides as Doc | undefined)?.[`linear.${name}`] ?? (item.exposure as Doc)?.default ?? "discoverable", definition: { id: `acme/linear/${name}`, version: "0.4.1", digest: "sha256:x" }, availability: "ready" })) });
+    if (sub === "tools") return json({ items: ["issues.search", "issues.create", "issues.update", "projects.list"].map((name) => ({ name: `linear.${name}`, title: name.replace(".", " "), exposure: ((item.exposure as Doc)?.overrides as Doc | undefined)?.[`linear.${name}`] ?? (item.exposure as Doc)?.default ?? "discoverable", definition: { id: `acme/linear/${name}`, version: "0.4.1", digest: "sha256:x" }, availability: "ready" })) });
     return json(item);
   }
   if (head === "computer" && id === "sessions") return sub ? json(collections.computer.find((doc) => doc.id === sub) ?? null, collections.computer.some((doc) => doc.id === sub) ? 200 : 404) : list(collections.computer, url);
@@ -335,8 +335,15 @@ export async function fixtureWrite(method: string, segments: string[], body: Doc
       ...(action === "update" || action === "rollback" ? { package: { ...(item.package as Doc), version: value.version }, available_version: action === "update" ? undefined : item.available_version, history: [...(item.history as Doc[]), { at: now(), event: action === "update" ? "updated" : "rolled back", version: value.version }] } : {}) });
     return applied(item);
   }
-  if (head === "mcp" && id === "servers" && sub) {
-    const item = collections.mcp.find((doc) => doc.id === sub);
+  if (head === "mcp" && !id) {
+    if (expected !== 0) return error(400, "validation_failed", "expected_revision must be 0 for a new server.");
+    const created: Doc = { ...value, id: `mcp_${Date.now().toString(36)}`, revision: 1, source: { kind: "user" }, observed: { status: value.enabled ? "connecting" : "disabled" } };
+    collections.mcp.push(created);
+    return applied(created);
+  }
+  if (head === "mcp" && id && sub === "credential") return json({ ok: true });
+  if (head === "mcp" && id && sub === "actions") {
+    const item = collections.mcp.find((doc) => doc.id === id);
     if (!item) return error(404, "not_found", "Not found.");
     const action = value.action as string;
     if (action === "set_exposure") item.exposure = { ...(item.exposure as Doc), overrides: { ...(((item.exposure as Doc)?.overrides as Doc) ?? {}), [value.tool as string]: value.exposure } };

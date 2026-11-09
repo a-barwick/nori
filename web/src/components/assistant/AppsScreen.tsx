@@ -13,7 +13,7 @@ import type { AuthAttempt, Connection, HealthCode, Integration, MCPServer, Prefe
 import type { CatalogEntry, Installation, InstallationReview, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { safeAuthorizeURL } from "./InteractionCard";
-import { Confirm, Empty, Failure, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, Tabs, type Tone } from "./ui";
+import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, Tabs, type Tone } from "./ui";
 
 type List<T> = { items: T[] };
 const ICONS: Record<string, typeof Plug> = { calendar: Calendar, mail: Mail, list: ListTodo, folder: Folder, message: MessageSquare };
@@ -332,12 +332,46 @@ function ReviewList({ data }: { data: InstallationReview }) {
 }
 
 function MCPServers() {
-  const servers = useResource<List<MCPServer>>("/mcp/servers", { poll: 15_000 });
+  const servers = useResource<List<MCPServer>>("/mcp", { poll: 15_000 });
+  const [adding, setAdding] = useState(false);
   if (servers.loading) return <Loading />;
   const items = servers.data?.items ?? [];
-  return <Section>{items.length ? <Rows>{items.map((server) => <Row key={server.id} href={`/apps/mcp/${encodeURIComponent(server.id)}`} leading={<span className="grid size-9 place-items-center rounded-tile bg-fill-1"><Server size={18} aria-hidden /></span>}
-    title={server.name} detail={`${server.transport === "http" ? "Remote" : "Runs on Nori’s computer"}${server.observed.tool_count !== undefined ? ` · ${server.observed.tool_count} tools` : ""}${server.observed.error ? ` · ${server.observed.error.message}` : ""}`}
-    trailing={<MCPStatus server={server} />} />)}</Rows> : <Empty>No MCP servers yet. Plugins that include one add it here.</Empty>}</Section>;
+  return <>
+    <Section actions={!adding ? <Button size="sm" variant="primary" onClick={() => setAdding(true)}><Plus size={15} aria-hidden />Add server</Button> : undefined}>
+      {adding && <div className="mb-4"><NewMCPServer onDone={() => setAdding(false)} /></div>}
+      {items.length ? <Rows>{items.map((server) => <Row key={server.id} href={`/apps/mcp/${encodeURIComponent(server.id)}`} leading={<span className="grid size-9 place-items-center rounded-tile bg-fill-1"><Server size={18} aria-hidden /></span>}
+        title={server.name} detail={`${server.transport === "http" ? "Remote" : "Runs on Nori’s computer"}${server.observed.tool_count !== undefined ? ` · ${server.observed.tool_count} tools` : ""}${server.observed.error ? ` · ${server.observed.error.message}` : ""}`}
+        trailing={<MCPStatus server={server} />} />)}</Rows> : !adding && <Empty>No MCP servers yet.</Empty>}
+    </Section>
+  </>;
+}
+
+function NewMCPServer({ onDone }: { onDone: () => void }) {
+  const router = useRouter();
+  const action = useAction();
+  const [name, setName] = useState("");
+  const [endpoint, setEndpoint] = useState("");
+  const [auth, setAuth] = useState<"none" | "oauth" | "configured">("none");
+  const [exposure, setExposure] = useState<"direct" | "discoverable">("discoverable");
+  const validEndpoint = /^https:\/\/[^\s]+$/.test(endpoint.trim());
+  const save = () => action.run("save", async () => {
+    const receipt = await mutate<MCPServer>("/mcp", { request_id: newRequestID(), expected_revision: 0, value: { name: name.trim(), transport: "http", endpoint: endpoint.trim(), auth, enabled: true, exposure: { default: exposure } } });
+    invalidate("/mcp", "/integrations");
+    router.push(`/apps/mcp/${encodeURIComponent((receipt.resource as MCPServer).id)}`);
+  });
+  return <form className="space-y-4 rounded-card border border-hairline-strong p-4" onSubmit={(event) => { event.preventDefault(); if (name.trim() && validEndpoint) void save(); }}>
+    <div className="flex flex-wrap gap-3">
+      <Field label="Name"><input value={name} onChange={(event) => setName(event.target.value)} className={cn(inputBase, "w-56")} placeholder="Home notes" required /></Field>
+      <Field label="Server URL"><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} className={cn(inputBase, "w-96 max-w-full")} placeholder="https://mcp.example.com/mcp" inputMode="url" required /></Field>
+    </div>
+    <div className="flex flex-wrap gap-3">
+      <Field label="Sign-in"><select value={auth} onChange={(event) => setAuth(event.target.value as typeof auth)} className={cn(inputBase, "w-auto")}><option value="none">None</option><option value="oauth">Sign in with the server</option><option value="configured">Access token</option></select></Field>
+      <Field label="Tools"><select value={exposure} onChange={(event) => setExposure(event.target.value as typeof exposure)} className={cn(inputBase, "w-auto")}><option value="discoverable">When relevant</option><option value="direct">Always available</option></select></Field>
+    </div>
+    {endpoint && !validEndpoint && <p role="alert" className="text-meta text-danger">Use an https:// address.</p>}
+    {action.error && <Notice tone="danger">{action.error}</Notice>}
+    <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!name.trim() || !validEndpoint || !!action.pending}>{action.pending ? "Adding…" : "Add server"}</Button><Button variant="quiet" onClick={onDone}>Cancel</Button></div>
+  </form>;
 }
 
 function MCPStatus({ server }: { server: MCPServer }) {
@@ -347,15 +381,15 @@ function MCPStatus({ server }: { server: MCPServer }) {
 }
 
 export function MCPDetailScreen({ id }: { id: string }) {
-  const server = useResource<MCPServer>(`/mcp/servers/${encodeURIComponent(id)}`, { poll: 5_000 });
-  const tools = useResource<List<MCPTool>>(`/mcp/servers/${encodeURIComponent(id)}/tools`, { poll: 0 });
+  const server = useResource<MCPServer>(`/mcp/${encodeURIComponent(id)}`, { poll: 5_000 });
+  const tools = useResource<List<MCPTool>>(`/mcp/${encodeURIComponent(id)}/tools`, { poll: 0 });
   const action = useAction();
   const item = server.data;
   if (server.loading) return <Screen title="MCP server" back="/apps?tab=mcp"><Loading /></Screen>;
   if (!item) return <Screen title="MCP server" back="/apps?tab=mcp"><Failure error={server.error ?? "Not found."} /></Screen>;
   const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
-    const receipt = await mutate<MCPServer>(`/mcp/servers/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value });
-    server.apply(receipt.resource as MCPServer); invalidate(`/mcp/servers/${encodeURIComponent(id)}/tools`);
+    const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value });
+    server.apply(receipt.resource as MCPServer); invalidate(`/mcp/${encodeURIComponent(id)}/tools`);
   });
   const observed = item.observed;
   return <Screen title={item.name} back="/apps?tab=mcp" line={observed.error?.message ?? (observed.status === "connected" ? `Connected${observed.last_success_at ? `, last call ${relative(observed.last_success_at)}` : ""}.` : undefined)}
