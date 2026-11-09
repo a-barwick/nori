@@ -110,6 +110,12 @@ func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.Operati
 		Origin: originOf(run), InteractionIDs: pending, Progress: run.Progress, ResultIDs: results,
 		ParentTaskID: run.ParentID, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, CancelRequested: run.CancelRequested,
 	}
+	if item.Origin.Kind == "automation" && a.Scheduler != nil {
+		// Show the routine's own title, not the scheduled instruction text the task was given.
+		if automation, err := a.Scheduler.Get(ctx, item.Origin.AutomationID); err == nil {
+			item.Title = automation.Title
+		}
+	}
 	if item.InteractionIDs == nil {
 		item.InteractionIDs = []string{}
 	}

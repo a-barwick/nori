@@ -72,7 +72,11 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, recovering 
 	if err != nil {
 		return nil, nil, err
 	}
-	call := invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args}
+	call := invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args,
+		Upload: func(ctx context.Context, id string) (string, string, []byte, error) {
+			attachment, data, err := a.Agent.TaskUpload(ctx, in.RunID, id)
+			return attachment.Name, attachment.MediaType, data, err
+		}}
 	connectionID, epoch := "", int64(0)
 	if in.Exec.ConnectionType != "" {
 		if a.Executor.Connections == nil {
@@ -301,6 +305,17 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 	if ctx.Err() != nil && result.Outcome == "failed" && in.Exec.Policy.Effect != "read" {
 		// Cancellation or a timeout is not proof the provider did nothing.
 		result.Outcome = "uncertain"
+	}
+	if result.Outcome == "uncertain" {
+		// A lost response is resolved by reading provider state before anyone is asked; it is never resent.
+		if reconciler, ok := plan.adapter.(invoke.Reconciler); ok {
+			check, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+			reconciled, ok := reconciler.Reconcile(check, plan.call, plan.prepared)
+			cancel()
+			if ok {
+				result = reconciled
+			}
+		}
 	}
 	return settle(result)
 }

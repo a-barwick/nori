@@ -30,6 +30,8 @@ type Call struct {
 	Grant *connections.Grant
 	// Progress reports a short progress line for long calls; it may be nil.
 	Progress func(text string)
+	// Upload reads a file the task was given, by upload ID; it refuses files the task was not given.
+	Upload func(ctx context.Context, id string) (name, mediaType string, data []byte, err error)
 }
 
 // Prepared is the normalized action. Preparing makes no external writes.

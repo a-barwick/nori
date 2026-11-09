@@ -122,6 +122,14 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		}
 		return receipts[0].Run, nil
 	}
+	chats.StartTask = func(ctx context.Context, commandID, chatID, messageID, request string) (state.Run, error) {
+		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: commandID, RunID: commandID, Kind: state.CommandStart, Text: request,
+			Origin: &state.TaskOrigin{ConversationID: chatID, MessageID: messageID}}}, nil)
+		if err != nil {
+			return state.Run{}, err
+		}
+		return receipts[0].Run, nil
+	}
 	result.Assistant.Revise = func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error) {
 		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: taskID, RunID: taskID, Kind: state.CommandStart, Text: instruction, Revises: resultID}}, nil)
 		if err != nil {
@@ -187,7 +195,7 @@ func (a *App) Schedule(ctx context.Context) error {
 		return nil
 	}
 	_, err := a.Scheduler.Tick(ctx)
-	return err
+	return errors.Join(err, a.Chats.DeliverTasks(ctx, a.Store.GetRun))
 }
 
 func (a *App) processAssistant(ctx context.Context) error {
