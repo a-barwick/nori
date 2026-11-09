@@ -4,6 +4,8 @@ Nori's contracts are distributed across Go packages, HTTP handlers, TypeScript c
 
 This map identifies locations and ownership, not new schemas, field lists, endpoint designs, or migration decisions. It accompanies the [complete implementation plan](assistant-integration-plan.md). Paths are relative to the repository; the inspected baseline is `c53931359ac2e0f95dacb5368c517cb3cde976a9`.
 
+The separate [contract baseline draft](assistant-contract-baseline.md) now proposes shapes and behavior for these boundaries. It distinguishes existing behavior from recommended additions and flags decisions for Austin; this map remains the current-code location reference.
+
 ## The main frontend/backend boundaries
 
 Two API/client surfaces coexist. The main assistant runtime uses the runtime API and its TypeScript definitions. The unified conversation API has a separate projection and client contract, used by the separate-chat client. Changes to one do not automatically update the other. The unified API can also project assistant conversations; its existence does not mean the main runtime UI has migrated to it.
@@ -73,6 +75,6 @@ Some of these are internal Go boundaries; others need synchronized Go/TypeScript
 
 [API documentation](site/api.html), [execution contract](site/contract.html), [records](site/records.html), [authority](site/authority.html), [tasks](site/tasks.html), [computer](site/computer.html), [catalog](site/catalog.html), and [tools](site/tools.html) explain intended behavior and implementation. They are useful references, not generated specifications guaranteeing that Go and TypeScript agree.
 
-The next contract discussion should address the shared seams first: application API/projections/events; registry-to-adapter invocation; connection/authority-to-execution; rich results and pending interactions; schedule-to-task/delivery; and computer/process ownership. For each, identify its editor, consumers, current source locations, and compatibility obligations before specifying the shape. Internal implementation details can remain with their owning engineer.
+The contract baseline draft addresses application API/projections/events; registry-to-adapter invocation; connection/authority-to-execution; rich results and pending interactions; schedule-to-task/delivery; and computer/process ownership. Independent engineering review should check each proposed shape against the definitions and consumers here. Internal implementation details remain with their owning engineer.
 
 This location audit creates no new API, schema, package, migration, or thread. Any disagreement about the subsequent contracts follows the plan's Austin-guided decision process.

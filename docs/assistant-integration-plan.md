@@ -10,6 +10,8 @@ Austin has accepted the architecture. The detailed feature contracts below are t
 
 Implementation uses four independent Codex threads: Astra High for coordination and three GPT-6.1 Sol Max threads for backend, frontend, and integration/verification. Engineers own their work and can challenge the plan. Any Astra–Sol disagreement is surfaced to Austin for guidance; neither model has a casting vote. The [coordination model and launch prompt](#four-thread-coordination-and-launch-prompt) define this arrangement. The [contract location map](assistant-contract-locations.md) identifies existing boundaries and the places where new work must connect, without specifying new contract shapes.
 
+The [contract baseline draft](assistant-contract-baseline.md) proposes the shared shapes, API behavior, compatibility rules, and ownership for implementation. Its D1–D4 decision table identifies the choices requiring Austin's guidance. The draft is not yet an accepted contract or an implementation claim.
+
 The source assessment uses Nori at `c539313` and Pi at `415be829`. Competitor findings come from the live Grok Bot, Muse, and Nori walkthroughs in this conversation. The [original audit](https://chatgpt.com/space/page_d55906d0d9c48191b7afd321f251cde9) supplies the 44-item feature inventory. Application code and production are unchanged.
 
 ## Finished product
@@ -335,7 +337,7 @@ Action history shows which account/service was used, what changed, the authority
 
 ## Data API and frontend contracts
 
-The records below describe proposed product requirements, not agreed wire schemas. Establish their actual contract shapes separately. See the [contract location map](assistant-contract-locations.md) for current definitions, consumers, and missing boundaries.
+The records below describe proposed product requirements, not agreed wire schemas. The [contract baseline draft](assistant-contract-baseline.md) proposes the shared shapes and semantics; the [contract location map](assistant-contract-locations.md) identifies current definitions, consumers, and missing boundaries.
 
 Use the existing storage/application boundaries for these records:
 
@@ -392,7 +394,7 @@ Backend and frontend proceed concurrently against the agreed contract baseline. 
 
 ### Establish and evolve the shared baseline
 
-The current task locates contracts only. Contract shapes are subsequent design work; do not infer that this location audit approves payloads, schema formats, or migrations. Before parallel implementation depends on a new shared boundary, establish an explicit baseline for it, using the existing definitions where they suffice. Preparing that baseline is dependency work for the full plan, not a reduced product release.
+The location audit is complete, and [baseline r0](assistant-contract-baseline.md) now proposes contract shapes and semantics. It remains a draft requiring independent engineering review and Austin's guidance on its flagged decisions. Before parallel implementation depends on a new shared boundary, record an explicit accepted baseline for it, using the existing definitions where they suffice. Preparing that baseline is dependency work for the full plan, not a reduced product release.
 
 Keep accepted contracts, decisions, ownership, and compatibility evidence in the repository. Use commit references to identify the exact revision a consumer implements. Chat carries proposals and discussion; it does not silently amend the baseline. Record the four thread IDs, worktree/branch locations, baseline revision, and active dependency requests in a small coordination record when the threads are actually launched. There is no need to build a coordination service.
 
@@ -415,7 +417,7 @@ This is human-guided parallel development. The coordination thread is active whe
 The following is a future launch prompt for Austin to send after the initial shared contract baseline has been established. Saving this prompt does not launch threads or authorize current implementation. At launch, resolve the document paths against the Nori checkout and record the exact baseline commit.
 
 ```text
-Implement the complete Nori assistant integration plan in docs/assistant-integration-plan.md. Read docs/assistant-contract-locations.md, all applicable AGENTS.md instructions, and the accepted shared contract baseline before dispatching dependent work. Preserve the complete scope and acceptance matrix; do not substitute an incremental product or silently defer requirements.
+Implement the complete Nori assistant integration plan in docs/assistant-integration-plan.md. Read docs/assistant-contract-locations.md, docs/assistant-contract-baseline.md, all applicable AGENTS.md instructions, and the accepted shared contract baseline commit before dispatching dependent work. Distinguish accepted contracts from draft proposals and pending decisions; the existence of a draft is not approval. Preserve the complete scope and acceptance matrix; do not substitute an incremental product or silently defer requirements.
 
 Create four independent Codex threads, not subagents:
 1. Coordination: gpt-6-astra, high reasoning.
@@ -551,6 +553,8 @@ The plan is complete only when the required workstreams and acceptance cases are
 ## Implementation decisions to resolve
 
 The architecture and full scope do not depend on repeated approval of each workstream. These are concrete implementation choices with recommended defaults or genuine external prerequisites.
+
+The [baseline decision table](assistant-contract-baseline.md#decisions-for-austin) tracks the pending user choices: credential custody, automation authority, missed runs, and disconnect retention. Technical recommendations below remain subject to independent engineering review and the disagreement process.
 
 | Decision | Recommendation and resolution |
 | --- | --- |
