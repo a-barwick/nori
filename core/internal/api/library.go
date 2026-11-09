@@ -32,18 +32,18 @@ type provenance struct {
 }
 
 type libraryItem struct {
-	ID           string     `json:"id"`
-	RootID       string     `json:"root_id"`
-	Version      int        `json:"version"`
-	Revises      string     `json:"revises,omitempty"`
-	SupersededBy string     `json:"superseded_by,omitempty"`
-	Kind         string     `json:"kind"`
-	Title        string     `json:"title"`
-	Name         string     `json:"name,omitempty"`
-	MediaType    string     `json:"media_type,omitempty"`
-	Size         int64      `json:"size,omitempty"`
-	URL          string     `json:"url,omitempty"`
-	TaskID       string     `json:"task_id,omitempty"`
+	ID           string `json:"id"`
+	RootID       string `json:"root_id"`
+	Version      int    `json:"version"`
+	Revises      string `json:"revises,omitempty"`
+	SupersededBy string `json:"superseded_by,omitempty"`
+	Kind         string `json:"kind"`
+	Title        string `json:"title"`
+	Name         string `json:"name,omitempty"`
+	MediaType    string `json:"media_type,omitempty"`
+	Size         int64  `json:"size,omitempty"`
+	URL          string `json:"url,omitempty"`
+	TaskID       string `json:"task_id,omitempty"`
 	// Contract fields the server does not populate yet; declared so round-trips keep them.
 	AutomationID   string          `json:"automation_id,omitempty"`
 	ConversationID string          `json:"conversation_id,omitempty"`
@@ -53,12 +53,12 @@ type libraryItem struct {
 	DeleteEffect   string          `json:"delete_effect,omitempty"`
 	PreviewText    string          `json:"preview_text,omitempty"`
 	Provenance     provenance      `json:"provenance"`
-	IndexStatus  string     `json:"index_status,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
-	Collection   string     `json:"collection,omitempty"`
-	Revision     int64      `json:"revision"`
+	IndexStatus    string          `json:"index_status,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      *time.Time      `json:"updated_at,omitempty"`
+	DeletedAt      *time.Time      `json:"deleted_at,omitempty"`
+	Collection     string          `json:"collection,omitempty"`
+	Revision       int64           `json:"revision"`
 }
 
 var libraryKinds = map[string]string{"answer": "answer", "file": "file", "screenshot": "screenshot", "link": "link", "document": "document", "report": "report"}

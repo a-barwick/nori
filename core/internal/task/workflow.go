@@ -31,12 +31,12 @@ type Checkpoint struct {
 	CostUnknown           bool
 	Models, Tools, Checks int
 	// ModelRetries counts model requests asked again after a worker stopped mid-request.
-	ModelRetries int `json:",omitempty"`
-	Question              *state.Question
-	QuestionPublished     bool
-	ComputerRevisions     []int64
-	Stopped               bool
-	Request               string
+	ModelRetries      int `json:",omitempty"`
+	Question          *state.Question
+	QuestionPublished bool
+	ComputerRevisions []int64
+	Stopped           bool
+	Request           string
 	// Jobs are started and not yet observed ended. They outlive a revision, so
 	// only terminal cleanup stops them, not a correction or a question.
 	Jobs        []string
