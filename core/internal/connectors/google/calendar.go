@@ -187,6 +187,8 @@ func (calendarAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Pr
 		return prepareInsert(call)
 	case "events.patch", "events.delete", "events.respond":
 		return prepareChange(ctx, call, operation)
+	case "ics.preview", "ics.import":
+		return prepareICS(ctx, call, operation)
 	}
 	return invoke.Prepared{}, fmt.Errorf("%w: unknown calendar operation", invoke.ErrInvalidArguments)
 }
@@ -378,6 +380,14 @@ func (a calendarAdapter) Execute(ctx context.Context, call invoke.Call, p invoke
 		return deleteEvent(ctx, service, call, p)
 	case "events.respond":
 		return respondEvent(ctx, service, call, p)
+	case "ics.preview":
+		content, _, err := icsPreview(ctx, service, call, p.Spec["calendar"])
+		if err != nil {
+			return invoke.Result{Outcome: "failed", Err: err}
+		}
+		return invoke.Result{Outcome: "confirmed", Content: content}
+	case "ics.import":
+		return icsImport(ctx, service, call, p)
 	}
 	return invoke.Result{Outcome: "failed", Err: errors.New("unknown calendar operation")}
 }
