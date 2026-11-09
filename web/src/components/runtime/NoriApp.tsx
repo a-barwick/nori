@@ -202,6 +202,7 @@ export function ChatScreen() {
           onJump={unread.jump}
         />
       </main> : <main className="relative flex min-w-0 flex-1 flex-col overflow-clip" aria-label="Chat">
+        <h1 className="sr-only">Chat</h1>
         <div className="min-h-0 flex-1">
           <Thread
             conversation={conversation}
