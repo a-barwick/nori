@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { mutate, newRequestID } from "@/lib/assistant/api";
 import { AlertTriangle, Square } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
@@ -168,7 +168,15 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
   const saved = (results.data?.items ?? []).filter((result) => item?.result_ids.includes(result.id));
   const commands = runtime.taskCommands.filter((command) => command.command.run_id === taskID);
   const [draft, setDraft] = useState("");
-  if (loading) return <Screen title="Task" back="/work"><Loading /></Screen>;
+  // A task opened right after it starts (Run now, a chat hand-off) can take a moment to appear in Work.
+  const [retries, setRetries] = useState(0);
+  const settling = !item && !!error && retries < 12;
+  useEffect(() => {
+    if (!settling) return;
+    const timer = setTimeout(() => { setRetries((count) => count + 1); void reload(); }, 1_500);
+    return () => clearTimeout(timer);
+  }, [settling, retries, reload]);
+  if (loading || settling) return <Screen title="Task" back="/work"><Loading /></Screen>;
   if (!item) return <Screen title="Task" back="/work">{error ? <Failure error={error} onRetry={() => void reload()} /> : <Empty action={<Link href="/work" className="text-meta font-medium text-accent-text hover:underline">Back to Work</Link>}>This task isn’t in your recent work.</Empty>}</Screen>;
   const pill = statusPill(item);
   const running = item.status === "running" && !item.cancel_requested;
@@ -213,7 +221,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
         <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
           <dt className="text-ink-3">Started</dt><dd>{when(item.started_at)}</dd>
           {item.finished_at && <><dt className="text-ink-3">Finished</dt><dd>{when(item.finished_at)}</dd></>}
-          <dt className="text-ink-3">From</dt><dd>{item.origin.kind === "automation" && item.origin.automation_id ? <Link className="text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.origin.automation_id)}`}>A automation</Link> : item.origin.kind === "goal" && item.origin.goal_id ? <Link className="text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.origin.goal_id)}`}>A goal</Link> : item.origin.kind === "external" ? "Another app" : <Link className="text-accent-text hover:underline" href={item.origin.conversation_id && item.origin.conversation_id !== "assistant" ? `/?chat=${encodeURIComponent(item.origin.conversation_id)}` : "/"}>Chat</Link>}</dd>
+          <dt className="text-ink-3">From</dt><dd>{item.origin.kind === "automation" && item.origin.automation_id ? <Link className="text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.origin.automation_id)}`}>An automation</Link> : item.origin.kind === "goal" && item.origin.goal_id ? <Link className="text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.origin.goal_id)}`}>A goal</Link> : item.origin.kind === "external" ? "Another app" : <Link className="text-accent-text hover:underline" href={item.origin.conversation_id && item.origin.conversation_id !== "assistant" ? `/?chat=${encodeURIComponent(item.origin.conversation_id)}` : "/"}>Chat</Link>}</dd>
           {continuedBy.length > 0 && <><dt className="text-ink-3">Continued by</dt><dd className="flex flex-col">{continuedBy.map((other) => <Link key={other.task_id} className="text-accent-text hover:underline" href={`/work/${encodeURIComponent(other.task_id)}`}>{other.status === "running" ? "A task in progress" : `A later task (${statusPill(other).label.toLowerCase()})`}</Link>)}</dd></>}
           {item.origin.continues_task_id && <><dt className="text-ink-3">Continues</dt><dd><Link className="text-accent-text hover:underline" href={`/work/${encodeURIComponent(item.origin.continues_task_id)}`}>The earlier task</Link></dd></>}
           <dt className="text-ink-3">Cost</dt><dd>{[item.cost.status === "known" ? money(item.cost.amount_usd) : item.cost.status === "unknown" ? (item.cost.amount_usd ? `At least ${money(item.cost.amount_usd)}` : "Not known yet") : "None", item.cost.budget_usd ? `budget ${money(item.cost.budget_usd)}` : ""].filter(Boolean).join(" · ")}</dd>
