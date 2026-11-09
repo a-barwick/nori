@@ -34,6 +34,20 @@ Sessions message each other directly by name for work coordination. The coordina
 
 Ownership is a default. Rebalance when a stream is the bottleneck; agree before editing another stream's active files.
 
+## Rebalancing of 2026-11-09
+
+Austin forwarded an external review of the work so far. Its substance, accepted by the coordinator: the execution machinery (compose crashes, pinned definitions, sandbox limits, rollback) has more evidence than the everyday assistant experience; several rows read verified with open subrequirements; and unfinished engineering was accepted as "blocked" when only credentials are legitimate blockers. The coordinator owns the last point: hosted stdio MCP egress enforcement and MCP OAuth were accepted as beyond this pass.
+
+Allocation from here, with backend's and frontend's original lists complete:
+
+| Stream | Added implementation ownership |
+| --- | --- |
+| Backend | MCP OAuth (authorization code with PKCE, protected-resource metadata discovery, dynamic client registration where a server offers it, sign-in interaction, refresh through the credential interface); sandbox egress allowlist for declared hosts, deny by default, refused when unenforceable (A07, A10 hosted); repair-and-resume: an authentication failure inside a task raises a sign-in interaction bound to that task and the callback resumes the same task; hosted due-time wake adapters behind the wake interface (Cloud Tasks schedule, SQS delay) verified against the local emulator; acknowledgement before the outer model answers. Direct explicit requests authorize the action they name without a second approval, as the accepted plan states; the confirm-writes interim applies only to unattended automation occurrences, which is what D2 decides. |
+| Frontend | Repair-and-resume from within the task card; acknowledgement within a second with the model's reply as first progress; joint journey exercise with integration from the screens on recordings: two accounts, agenda then "also Monday", move an event, RSVP, recurrence scope, email search to reply to send, event-relative reminder after a move, account repair mid-task. |
+| Integration | Ledger hygiene first: every verified row with open subrequirements split and stated plainly, stale statements removed, documentation only when a capability changed; then joint journeys with frontend; recordings for a second Google account; hosted-sleep mode for due-time wake (worker not polling, wake through the emulator); targeted regression scenarios for the defects already found. |
+
+User-only blockers, consolidated: D1–D4; permission to store a real Google refresh token in the local vault for a sign-in; a VAPID key pair in `.env`; a mail provider and its SMTP credentials; a Microsoft Entra app registration; a test Apple ID with an app-specific password; the phone test over Tailscale; typing once in the backend and integration sessions to lift their messaging pause. Everything else listed as blocked before this date is engineering and is reassigned above.
+
 ## Contract revisions
 
 | Revision | Status | Commit | Acknowledged by |
