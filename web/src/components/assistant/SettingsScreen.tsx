@@ -2,19 +2,19 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Bell, Bug, History, Brain, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Bell, Bug, Check, Copy, History, Brain, KeyRound, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative, when } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
-import type { Connection, DeliveryDestination, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
+import type { Connection, DeliveryDestination, MCPClient, MCPClientCreated, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { OperationRows } from "./WorkScreen";
 import { Confirm, Empty, NoriLine, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section } from "./ui";
 
 type List<T> = { items: T[] };
-export type SettingsSection = "permissions" | "preferences" | "memory" | "notifications" | "history" | "diagnostics";
+export type SettingsSection = "permissions" | "preferences" | "memory" | "notifications" | "history" | "clients" | "diagnostics";
 
 const SECTIONS: { id: SettingsSection; title: string; icon: typeof Bell; feature?: Parameters<ReturnType<typeof useAssistant>["has"]>[0] }[] = [
   { id: "permissions", title: "Permissions", icon: ShieldCheck, feature: "permissions" },
@@ -22,6 +22,7 @@ const SECTIONS: { id: SettingsSection; title: string; icon: typeof Bell; feature
   { id: "memory", title: "Memory", icon: Brain, feature: "memory" },
   { id: "notifications", title: "Notifications", icon: Bell, feature: "preferences" },
   { id: "history", title: "Action history", icon: History, feature: "operations" },
+  { id: "clients", title: "Connected clients", icon: KeyRound, feature: "mcp" },
   { id: "diagnostics", title: "Diagnostics", icon: Bug },
 ];
 
@@ -38,7 +39,7 @@ export function SettingsScreen({ section }: { section: SettingsSection }) {
   const meta = SECTIONS.find((item) => item.id === section)!;
   if (meta.feature && !has(meta.feature)) return <Screen title={meta.title} back="/settings"><NotYet what={meta.title} /></Screen>;
   return <Screen title={meta.title} back="/settings">
-    {section === "permissions" ? <Permissions /> : section === "preferences" ? <PreferencesForm /> : section === "memory" ? <Memory /> : section === "notifications" ? <Notifications /> : section === "history" ? <ActionHistory /> : <Diagnostics />}
+    {section === "permissions" ? <Permissions /> : section === "preferences" ? <PreferencesForm /> : section === "memory" ? <Memory /> : section === "notifications" ? <Notifications /> : section === "history" ? <ActionHistory /> : section === "clients" ? <Clients /> : <Diagnostics />}
   </Screen>;
 }
 
@@ -149,9 +150,9 @@ function PreferencesEditor({ current, onSaved }: { current: Preferences; onSaved
       <Field label="Language and region"><input value={value.locale ?? ""} onChange={(event) => setValue({ ...value, locale: event.target.value })} className={cn(inputBase, "w-32")} placeholder="en-GB" /></Field>
     </div>
     <fieldset><legend className="mb-1.5 text-meta font-medium">Working hours</legend>
-      <ul className="space-y-1">{[1, 2, 3, 4, 5, 6, 0].map((day) => { const entry = hours(day); return <li key={day} className="flex min-h-11 flex-wrap items-center gap-3">
-        <label className="flex w-24 items-center gap-2 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={!!entry} onChange={(event) => setHours(day, event.target.checked ? { start: "09:00", end: "17:30" } : undefined)} />{DAYS[day]}</label>
-        {entry && <><input aria-label={`${DAYS[day]} start`} type="time" value={entry.start} onChange={(event) => setHours(day, { start: event.target.value, end: entry.end })} className={cn(inputBase, "w-auto py-1.5")} /><span className="text-ink-3">–</span><input aria-label={`${DAYS[day]} end`} type="time" value={entry.end} onChange={(event) => setHours(day, { start: entry.start, end: event.target.value })} className={cn(inputBase, "w-auto py-1.5")} /></>}
+      <ul className="space-y-1">{[1, 2, 3, 4, 5, 6, 0].map((day) => { const entry = hours(day); return <li key={day} className="flex min-h-11 items-center gap-3">
+        <label className="flex w-20 shrink-0 items-center gap-2 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={!!entry} onChange={(event) => setHours(day, event.target.checked ? { start: "09:00", end: "17:30" } : undefined)} />{DAYS[day]}</label>
+        {entry && <span className="flex min-w-0 items-center gap-2"><input aria-label={`${DAYS[day]} start`} type="time" value={entry.start} onChange={(event) => setHours(day, { start: event.target.value, end: entry.end })} className={cn(inputBase, "w-[7.5rem] min-w-0 px-2 py-1.5")} /><span className="text-ink-3" aria-hidden>–</span><input aria-label={`${DAYS[day]} end`} type="time" value={entry.end} onChange={(event) => setHours(day, { start: entry.start, end: event.target.value })} className={cn(inputBase, "w-[7.5rem] min-w-0 px-2 py-1.5")} /></span>}
       </li>; })}</ul>
     </fieldset>
     <div className="flex flex-wrap gap-4">
@@ -231,6 +232,50 @@ function ActionHistory() {
     {operations.loading ? <Loading /> : operations.error ? <Failure error={operations.error} onRetry={() => void operations.reload()} /> : operations.data?.items.length ? <>
       <OperationRows operations={operations.data.items} />
     </> : <Empty>No actions yet.</Empty>}
+  </>;
+}
+
+/** Other apps (MCP clients) that reach this Nori with a token. The token is shown once and never stored here. */
+function Clients() {
+  const clients = useResource<List<MCPClient>>("/mcp-clients", { poll: 30_000 });
+  const action = useAction();
+  const [name, setName] = useState("");
+  const [mutateScope, setMutateScope] = useState(false);
+  const [created, setCreated] = useState<{ name: string; token: string }>();
+  const [copied, setCopied] = useState(false);
+  const create = () => action.run("create", async () => {
+    const receipt = await mutate<MCPClient>("/mcp-clients", { request_id: newRequestID(), expected_revision: 0, value: { name: name.trim(), scopes: mutateScope ? ["read", "mutate"] : ["read"] } }) as unknown as Partial<MCPClientCreated> & { resource: MCPClient };
+    if (receipt.token) setCreated({ name: receipt.resource.name, token: receipt.token });
+    setName(""); setMutateScope(false); invalidate("/mcp-clients");
+  }, "Client added.");
+  const revoke = (client: MCPClient) => action.run(client.id, async () => {
+    await mutate(`/mcp-clients/${encodeURIComponent(client.id)}/actions`, { request_id: newRequestID(), expected_revision: client.revision, value: { action: "revoke" } });
+    invalidate("/mcp-clients");
+  }, "Access removed.");
+  const active = (clients.data?.items ?? []).filter((client) => !client.revoked_at);
+  return <>
+    <NoriLine>Apps you add here can reach your Nori over MCP with their own token.</NoriLine>
+    {created && <div className="mt-6 rounded-card border border-hairline-strong bg-fill-1 p-4" role="status">
+      <p className="text-row font-semibold">Token for {created.name}</p>
+      <p className="mt-1 text-meta text-ink-2">Copy it into the app now. Nori won’t show it again.</p>
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <code className="min-w-0 flex-1 rounded-tile bg-surface px-3 py-2 font-mono text-mono-data break-all">{created.token}</code>
+        <Button size="sm" onClick={() => { void navigator.clipboard?.writeText(created.token); setCopied(true); }}>{copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}{copied ? "Copied" : "Copy"}</Button>
+        <Button size="sm" variant="quiet" onClick={() => { setCreated(undefined); setCopied(false); }}>Done</Button>
+      </div>
+    </div>}
+    <Section title="Add a client"><form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); if (name.trim()) void create(); }}>
+      <Field label="Name"><input value={name} onChange={(event) => setName(event.target.value)} maxLength={100} className={cn(inputBase, "w-64 max-w-full")} placeholder="Laptop editor" /></Field>
+      <label className="flex min-h-11 items-center gap-2 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={mutateScope} onChange={(event) => setMutateScope(event.target.checked)} />Can start work and answer questions</label>
+      <Button type="submit" variant="primary" disabled={!name.trim() || !!action.pending}>{action.pending === "create" ? "Adding…" : "Add"}</Button>
+    </form></Section>
+    {action.error && <div className="mt-4"><Notice tone="danger">{action.error}</Notice></div>}
+    <Section title="Clients">{clients.loading ? <Loading /> : active.length ? <Rows>{active.map((client) => <li key={client.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+      <span className="min-w-0 flex-1"><span className="block text-row font-medium">{client.name}</span>
+        <span className="block text-meta text-ink-2">{client.scopes.includes("mutate") ? "Reads and starts work" : "Reads only"} · {client.last_used_at ? `last used ${relative(client.last_used_at)}` : "not used yet"}</span></span>
+      <Confirm danger title={`Remove access for ${client.name}?`} body="Its token stops working right away." confirm="Remove access" onConfirm={() => void revoke(client)}
+        trigger={<Button size="sm" variant="quiet" className="text-danger!" disabled={action.pending === client.id}>Remove access</Button>} />
+    </li>)}</Rows> : <Empty>No clients yet.</Empty>}</Section>
   </>;
 }
 

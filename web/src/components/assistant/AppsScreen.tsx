@@ -244,7 +244,7 @@ function Plugins() {
       const entry = catalog.data?.items.find((item) => item.package.id === installation.package.id);
       return <Row key={installation.id} href={`/apps/plugins/${encodeURIComponent(installation.id)}`} leading={<AppIcon icon="list" size={36} />} title={entry?.title ?? installation.package.id}
         detail={`Version ${installation.package.version}${installation.pinned ? " · pinned" : ""}${installation.available_version ? ` · ${installation.available_version} available` : ""}`}
-        trailing={<Pill tone={installation.state === "ready" ? "ok" : installation.state === "failed" ? "danger" : "neutral"}>{installation.state === "ready" ? (installation.enabled ? "On" : "Off") : installation.state}</Pill>} />;
+        trailing={<Pill tone={installation.state === "failed" ? "danger" : installation.enabled && installation.state === "ready" ? "ok" : "neutral"}>{INSTALL_STATE[installation.state] ?? (installation.enabled ? "On" : "Off")}</Pill>} />;
     })}</Rows></Section>}
     <Section title="Catalog" actions={<PackageUpload onUploaded={() => void catalog.reload()} />}>
       <label className="relative mb-4 block"><span className="sr-only">Search plugins</span><Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-3" aria-hidden />
@@ -273,6 +273,8 @@ function PackageUpload({ onUploaded }: { onUploaded: () => void }) {
     <Button size="sm" onClick={() => picker.current?.click()} disabled={!!action.pending}><Upload size={14} aria-hidden />{action.pending ? "Checking…" : "Upload package"}</Button>
   </span>;
 }
+
+const INSTALL_STATE: Partial<Record<Installation["state"], string>> = { installing: "Installing", updating: "Updating", disabling: "Turning off", disabled: "Off", removing: "Removing", failed: "Failed" };
 
 function PluginCard({ entry }: { entry: CatalogEntry }) {
   const action = useAction();

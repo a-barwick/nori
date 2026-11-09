@@ -41,6 +41,8 @@ export function NoriLine({ children, className }: { children: ReactNode; classNa
   );
 }
 
+export { announce } from "@/lib/assistant/announce";
+
 export function Section({ title, children, actions, className }: { title?: string; children: ReactNode; actions?: ReactNode; className?: string }) {
   return (
     <section className={cn("mt-8 first:mt-0", className)} aria-label={title}>
@@ -166,8 +168,18 @@ export const inputBase = "rounded-tile border border-hairline bg-surface px-3 py
 export const inputClass = `w-full ${inputBase}`;
 
 export function Tabs<T extends string>({ value, onChange, items, label }: { value: T; onChange: (value: T) => void; items: { id: T; label: string; count?: number }[]; label: string }) {
-  return <div role="tablist" aria-label={label} className="scrollbar-quiet -mx-1 mb-4 flex gap-1 overflow-x-auto px-1">
-    {items.map((item) => <button key={item.id} type="button" role="tab" aria-selected={value === item.id} onClick={() => onChange(item.id)}
+  // Arrow keys move between tabs, as in any tab list.
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const index = items.findIndex((item) => item.id === value);
+    const next = event.key === "ArrowRight" ? index + 1 : event.key === "ArrowLeft" ? index - 1 : event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : -2;
+    if (next === -2) return;
+    event.preventDefault();
+    const target = items[(next + items.length) % items.length];
+    onChange(target.id);
+    requestAnimationFrame(() => event.currentTarget?.querySelector<HTMLElement>(`[data-tab="${target.id}"]`)?.focus());
+  };
+  return <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className="scrollbar-quiet -mx-1 mb-4 flex gap-1 overflow-x-auto px-1">
+    {items.map((item) => <button key={item.id} data-tab={item.id} tabIndex={value === item.id ? 0 : -1} type="button" role="tab" aria-selected={value === item.id} onClick={() => onChange(item.id)}
       className={cn("inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-meta font-medium", value === item.id ? "bg-ink text-surface" : "text-ink-2 hover:bg-fill-1 hover:text-ink")}>
       {item.label}{item.count ? <span className={cn("text-caption", value === item.id ? "text-surface/70" : "text-ink-3")}>{item.count}</span> : null}
     </button>)}

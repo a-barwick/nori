@@ -9,3 +9,4 @@ export type Capabilities = {
   features?: Record<string, boolean>;
 } & Partial<AssistantCapabilities>;
 export type AssistantFeature = keyof AssistantCapabilities["assistant_features"];
+

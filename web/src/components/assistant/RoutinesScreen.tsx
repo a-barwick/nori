@@ -31,8 +31,8 @@ function snoozeOptions(): [string, string][] {
   return [["For an hour", new Date(Date.now() + 3_600_000).toISOString()], ["Until tomorrow", at(1, 8)], ["Until next week", at(monday, 8)]];
 }
 
-function stateOf(item: Automation) {
-  if (item.status === "enabled" && item.snoozed_until && Date.parse(item.snoozed_until) > Date.now()) return { tone: "neutral" as Tone, label: `Snoozed until ${when(item.snoozed_until)}` };
+function stateOf(item: Automation, long = false) {
+  if (item.status === "enabled" && item.snoozed_until && Date.parse(item.snoozed_until) > Date.now()) return { tone: "neutral" as Tone, label: long ? `Snoozed until ${when(item.snoozed_until)}` : "Snoozed" };
   return STATUS[item.status];
 }
 
@@ -78,8 +78,8 @@ export function RoutineDetailScreen({ id }: { id: string }) {
       if (error instanceof APIError && error.stale && error.body?.current) routine.apply(error.body.current as Automation);
       throw error;
     }
-  });
-  const state = stateOf(item);
+  }, ({ pause: "Routine paused.", resume: "Routine resumed.", snooze: "Routine snoozed.", cancel: "Routine cancelled.", run_now: "Run started." } as Record<string, string>)[value.action as string]);
+  const state = stateOf(item, true);
   const destinationLabel = (destinationID: string) => destinations.data?.items.find((destination) => destination.id === destinationID)?.label ?? "a destination";
   return (
     <Screen title={item.title} back="/routines" line={item.status === "enabled" && item.next_at ? `Next run ${when(item.next_at, item.trigger.kind === "recurring" ? item.trigger.timezone : undefined)}.` : item.status === "paused" ? "Paused. Nothing runs until you resume it." : "Cancelled."}
