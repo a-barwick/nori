@@ -18,9 +18,9 @@ Statuses: **not started**; **implemented** (code merged into the integration bra
 
 | ID | Scenario | Status | Evidence | Needs (credential, account or decision) |
 | --- | --- | --- | --- | --- |
-| A01 | New user connects several accounts | not started | | Google: Austin signs in at the browser; Google OAuth client must list a redirect URI for `http://localhost:3213`. Microsoft Graph app registration. iCloud app-specific password for a test Apple account. D1 for storing real credentials beyond the interim local store. |
-| A02 | Cancel, repeat, replay sign-in callback | not started | | Local verification possible with a recorded callback; provider leg needs the Google sign-in above. |
-| A03 | Expired/revoked/insufficient access | not started | | Provider leg needs a Google grant Austin can revoke at myaccount.google.com. |
+| A01 | New user connects several accounts | not started | | Google: blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console. Microsoft Graph app registration. iCloud app-specific password for a test Apple account. D1 for storing real credentials beyond the interim local store. |
+| A02 | Cancel, repeat, replay sign-in callback | not started | | Local verification possible with a recorded callback; provider leg blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console. |
+| A03 | Expired/revoked/insufficient access | not started | | Provider leg blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console; then Austin revokes the grant at myaccount.google.com. |
 | A04 | Capability-only request forbids private reads | not started | | None beyond implementation; verified from operation records showing no read calls. |
 | A05 | Install/configure a plugin | not started | | None. |
 | A06 | Update/pin/rollback/uninstall | not started | | None. |
@@ -32,16 +32,16 @@ Statuses: **not started**; **implemented** (code merged into the integration bra
 | A12 | MCP resources/prompts/interactive requests | not started | | None for local. |
 | A13 | Nori MCP endpoint | not started | | An external MCP client (local). |
 | A14 | Nested calls/programmatic composition | not started | | None. |
-| A15 | Multi-calendar agenda and natural follow-up | not started | | Google sign-in (Austin) with two calendars; Microsoft and iCloud as in A01. |
+| A15 | Multi-calendar agenda and natural follow-up | not started | | Google: blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console, with two calendars on the account; Microsoft and iCloud as in A01. |
 | A16 | Availability/conflicts | not started | | As A15. |
 | A17 | Create/update/cancel/invite/RSVP | not started | | As A15, plus a second test account to receive invitations. |
 | A18 | Recurrence and time semantics | not started | | As A15. |
 | A19 | Calendar synchronization and ICS | not started | | As A15; push channels need a public HTTPS callback, which the local stack lacks, so local uses polling/incremental sync and records that limit. |
-| A20 | Email search/read/attachments | not started | | HEY: access path for the user's HEY account (not Gmail as a substitute). Gmail: Google sign-in with mail scopes. Outlook: Microsoft Graph registration. |
+| A20 | Email search/read/attachments | not started | | HEY: access path for the user's HEY account (not Gmail as a substitute). Gmail: blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console, with mail scopes. Outlook: Microsoft Graph registration. |
 | A21 | Draft/reply/forward/send | not started | | As A20; sends go only to test recipients Austin names. |
 | A22 | Email organization and contacts | not started | | As A20. |
 | A23 | Cross-app reservation workflow | not started | | Calendar and email providers above. |
-| A24 | Files/projects/messaging connectors | not started | | Google Drive (Google sign-in), OneDrive, Dropbox, Notion, Linear, GitHub, Slack, Teams: a token, app registration or MCP OAuth for each. |
+| A24 | Files/projects/messaging connectors | not started | | Google Drive (blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console), OneDrive, Dropbox, Notion, Linear, GitHub, Slack, Teams: a token, app registration or MCP OAuth for each. |
 | A25 | One-time and recurring reminders | not started | | Push provider credentials for closed-app delivery; in-app delivery verifiable locally. D2 interim for unattended writes. |
 | A26 | Edit/cancel/snooze and duplicate wakes | not started | | None. |
 | A27 | Event-relative reminders | not started | | Calendar provider (A15). |

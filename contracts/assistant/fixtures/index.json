@@ -742,7 +742,7 @@
       "file": "fixtures/execution/operation-projection.existing-wire.valid.json",
       "schema": "execution.schema.json#/$defs/OperationProjection",
       "valid": true,
-      "note": "today's operationView shape (embedded OperationRecord + owner) validates unchanged (I5); replace with a capture from the local stack"
+      "note": "Captured from GET /v1/conversations/assistant/operations on the local stack at ed6b020 (I5): today's wire shape validates unchanged"
     },
     {
       "file": "fixtures/automations/automation-preview.dst.valid.json",
