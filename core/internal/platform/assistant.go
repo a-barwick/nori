@@ -12,6 +12,7 @@ import (
 	"nori/internal/extensions"
 	"nori/internal/invoke"
 	"nori/internal/permissions"
+	"nori/internal/plugins"
 	"nori/internal/scheduler"
 	"nori/internal/secret"
 	"nori/internal/secret/localvault"
@@ -28,6 +29,7 @@ type AssistantServices struct {
 	Adapters    *invoke.Registry
 	Scheduler   *scheduler.Service
 	MCP         *mcp.Service
+	Plugins     *plugins.Service
 	// Tools is the inventory the agent and the API offer: connected App connectors and Nori's own tools.
 	Tools extensions.Source
 }
@@ -108,6 +110,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
 	return &AssistantServices{
 		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched, MCP: servers,
-		Tools: extensions.Sources{nori.Source{}, conn, servers},
+		Plugins: &plugins.Service{Store: store, MCP: servers, Builtin: plugins.Builtin},
+		Tools:   extensions.Sources{nori.Source{}, conn, servers},
 	}, nil
 }

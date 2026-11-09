@@ -68,11 +68,11 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	result.Scheduler = services.Scheduler
 	result.Assistant = &api.Assistant{
 		Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
-		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, MCP: services.MCP,
+		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, MCP: services.MCP, Plugins: services.Plugins,
 		Features: map[string]bool{"integrations": true, "connections": true, "interactions": true, "permissions": true,
 			"preferences": true, "work": !cfg.Features.DisableBackgroundTasks, "operations": true,
 			"automations": !cfg.Features.DisableBackgroundTasks, "goals": true, "inbox": true,
-			"library": true, "search": true, "memory": true, "mcp": true},
+			"library": true, "search": true, "memory": true, "mcp": true, "plugins": true, "skills": true},
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 	}
 	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
