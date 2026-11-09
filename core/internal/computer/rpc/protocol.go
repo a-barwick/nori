@@ -35,6 +35,7 @@ type Health struct {
 
 // SandboxRequest runs one packaged program with enforced limits and no network.
 type SandboxRequest struct {
+	RunID    string            `json:"run_id"`
 	TaskID   string            `json:"task_id"`
 	Argv     []string          `json:"argv"`
 	Stdin    string            `json:"stdin"`

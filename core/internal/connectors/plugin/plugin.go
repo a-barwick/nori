@@ -50,12 +50,20 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, p invoke.Prepare
 	}
 	defer client.Close()
 	client.SetTaskID(call.RunID)
+	// A question or approval stopped this run's computer scope; reopen the drained run before the call.
+	if err := client.Reopen(ctx); err != nil {
+		return invoke.Result{Outcome: "failed", Err: fmt.Errorf("the computer did not accept the run: %w", err)}
+	}
 	client.SetOperation(call.OperationID)
 	stdin, _ := json.Marshal(map[string]any{"tool": p.Spec["tool"], "arguments": call.Args})
 	result, err := client.SandboxRun(ctx, rpc.SandboxRequest{Argv: argv, Stdin: string(stdin), Files: files, MemoryMB: memoryMB, Pids: 32, CPUPct: 50, WallMS: wallMS, Network: "none"})
 	if err != nil {
+		// A refusal by the guest (bad request, cancelled run, limits unavailable, program not started) proves the
+		// program did not run; only a lost response leaves the outcome unknown.
 		outcome := "uncertain"
-		if strings.Contains(err.Error(), "cannot run sandboxed") || strings.Contains(err.Error(), "limits could not be applied") {
+		var rpcErr *computer.RPCError
+		if errors.As(err, &rpcErr) && rpcErr.Status >= 400 && rpcErr.Status < 500 || errors.As(err, &rpcErr) && rpcErr.Status == 503 ||
+			strings.Contains(err.Error(), "cannot run sandboxed") {
 			outcome = "failed"
 		}
 		return invoke.Result{Outcome: outcome, Err: err}

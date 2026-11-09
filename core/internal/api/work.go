@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"strings"
 
 	"context"
 	"github.com/google/uuid"
@@ -123,6 +124,18 @@ func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.Operati
 		// Show the routine's own title, not the scheduled instruction text the task was given.
 		if automation, err := a.Scheduler.Get(ctx, item.Origin.AutomationID); err == nil {
 			item.Title = automation.Title
+		}
+	}
+	if item.Origin.ContinuesTaskID != "" {
+		// Show what is being continued, not the continuation instruction the task was given.
+		if previous, err := a.Store.GetRun(ctx, item.Origin.ContinuesTaskID); err == nil {
+			title := clip(previous.Request, 190)
+			if previous.Origin != nil && previous.Origin.AutomationID != "" && a.Scheduler != nil {
+				if automation, err := a.Scheduler.Get(ctx, previous.Origin.AutomationID); err == nil {
+					title = automation.Title
+				}
+			}
+			item.Title = "Continue: " + strings.TrimPrefix(title, "Continue: ")
 		}
 	}
 	if item.InteractionIDs == nil {

@@ -56,7 +56,7 @@ func redact(text string) string {
 // clock deadline, a minimal environment and no network. It refuses to run when any limit cannot be applied.
 func (s *server) sandboxRun(w http.ResponseWriter, r *http.Request) {
 	var req rpc.SandboxRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Argv) == 0 || req.TaskID == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Argv) == 0 || req.TaskID == "" || req.RunID == "" {
 		http.Error(w, "sandbox run needs a task and a program", 400)
 		return
 	}
@@ -95,8 +95,15 @@ func (s *server) sandboxRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer group.close()
+	// The run's cancellation (Stop, a correction) ends the program like the deadline does.
+	operation, finish, err := s.begin(r.Context(), req.RunID)
+	if err != nil {
+		http.Error(w, "run canceled", 409)
+		return
+	}
+	defer finish()
 	wall := time.Duration(max(min(req.WallMS, 300_000), 100)) * time.Millisecond
-	ctx, cancel := context.WithTimeout(r.Context(), wall)
+	ctx, cancel := context.WithTimeout(operation, wall)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, req.Argv[0], req.Argv[1:]...)
 	cmd.Dir = root
