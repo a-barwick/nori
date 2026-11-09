@@ -114,6 +114,8 @@ type TaskOrigin struct {
 	AutomationID   string `json:"automation_id,omitempty" firestore:"automation_id,omitempty"`
 	OccurrenceID   string `json:"occurrence_id,omitempty" firestore:"occurrence_id,omitempty"`
 	GoalID         string `json:"goal_id,omitempty" firestore:"goal_id,omitempty"`
+	// ContinuesTaskID names the task this one explicitly continues after it stopped, for example at its budget.
+	ContinuesTaskID string `json:"continues_task_id,omitempty" firestore:"continues_task_id,omitempty"`
 }
 
 // TaskEvent is a task outcome or need that the outer loop reads from the conversation inbox.
