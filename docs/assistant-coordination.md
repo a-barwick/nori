@@ -47,6 +47,7 @@ Ownership is a default. Rebalance when a stream is the bottleneck; agree before 
 | r2.3 | published by integration: `MCPCredentialInput` as the write-only body of `POST /v1/mcp/{id}/credential`; `MCPServer` projects its auth mode and whether a configured credential is present, never the credential; recorded Google runs gain a clean insert for repeated approval runs. | `338676c` on `claude/nori-assistant-integration-bd1278` | backend: implemented at `a6c0e65`, acknowledged; frontend: merged at `a8eb84c`, adopted at `7b10730`, acknowledged. r2.3 is the accepted contract. |
 | r2.4 | published by integration, proposed by frontend: `SkillView` = `Skill` plus `id`, `revision`, `enabled` and `installation_id` for read-only plugin skills; `assistant_features.skills`. Backend already serves the shape. Checker reproduced by the coordinator. | `1bc295b` on `claude/nori-assistant-integration-bd1278` | frontend: merged at `8067e25`, adopted at `7dc6ff6`, acknowledged; backend: merged, acknowledged. r2.4 is the accepted contract. |
 | r2.5 | published by integration, proposed by backend, agreed by frontend: `MCPClient` never carries the token or its hash; create-only `MCPClientChange`; `MCPClientCreated` returns the one-time token; `MCPClientAction` revoke; routes `/v1/mcp-clients`; the Nori MCP endpoint is `POST /mcp` on core. Checker reproduced by the coordinator. | `425bbeb` on `claude/nori-assistant-integration-bd1278` | backend: acknowledged; frontend: merged at `ce0ae11`, adopted at `a477508`, acknowledged. r2.5 is the accepted contract. |
+| r2.6 | published by integration: optional `WorkItem.origin.continues_task_id` for tasks started by the continue action, which backend serves after D-022. Additive. Checker reproduced by the coordinator. | `127514f` on `claude/nori-assistant-integration-bd1278` | pending backend and frontend |
 
 Reviews: backend `8c22c80` (`docs/assistant-r0-review-backend.md`), frontend `061cd76` (`docs/assistant-r0-review-frontend.md`), integration `3f49ccd` (`docs/assistant-r0-review-integration.md`), each on its own branch.
 
@@ -92,6 +93,7 @@ Remaining backend scope after `26ee755`: W13 computer sessions and takeover, the
 | Integration | `7bcc744` | Acceptance matrix re-baselined against the merged branch at `f405d42`: 26 implemented, 8 locally verified (2 with the recorded provider), 2 blocked (A07 needs isolated package execution; A24 needs provider credentials), 8 not started (A10 stdio, A12 MCP resources and prompts, A14 nested calls, A41 budgets and feedback, A42 phone, A44, and two more). A36 and A37 locally verified; A05, A06 and A08 locally verified by scenario. | landed |
 | Backend | `2dad57b` | Isolated execution for executable packages (A07): a computerd sandbox with cgroup memory, pid and CPU limits, a wall deadline, new user, network, mount and IPC namespaces, a minimal environment, bounded and redacted output, and refusal to run when limits cannot be applied. D-016 and D-017 at `648ebbd`. Not yet done from that slice: extension hooks, and managed stdio MCP servers on the hosted computer, because stdio servers usually need network and the sandbox denies it; stdio remains local-stack only for now. W15 is next. | implemented; awaiting integration merge and the A07 scenario |
 | Frontend | `a477508` | Settings, Connected clients over the r2.5 shapes. A13 evidence from the screen against a live core: a read-only client is created, the token is shown once and never appears in browser storage or after reload; `POST /mcp` initialize with that token answers 200; after Remove access the same request answers 401. | implemented, locally verified; awaiting integration merge |
+| Integration | `47c5381` and after | A13 and A34 locally verified: MCP client tokens with scope filtering, idempotent submit, revoke and forged user both answer 401; takeover gating and lease checks, and after D-018 the resumed task used the browser and completed. A36 revise produced version 2; A37 verified after D-017. A41 exercised, found D-022 and D-023, both fixed and merged, re-check pending. A07 blocked until the guest sandbox works; after D-019 the guest reports `sandbox_v1` and the first sandboxed run is in flight. W16 documentation: new `docs/site/apps.html`, `permissions.html`, `schedules.html` rewritten as Automations, and a takeover section in `computer.html`, unbuilt parts marked designed. | landed |
 
 ## Design decisions recorded
 
@@ -125,6 +127,12 @@ Remaining backend scope after `26ee755`: W13 computer sessions and takeover, the
 | D-016 | integration | backend | Search did not cover side chats and matched too loosely. | fixed, verified at `f221fe9` |
 | D-017 | integration | backend | A forgotten memory was still claimed. | fixed, verified at `f221fe9` |
 | D-015 | integration | backend | Plugin skills report an empty `ref.digest`. | fully fixed at `2dad57b`: skills saved earlier get their digest computed on read |
+| D-018 | integration, A34 | backend | Resume after takeover did not let the task use the browser. | fixed, verified |
+| D-019 | integration, A07 | backend | The guest did not report sandbox support. | fixed; guest reports `sandbox_v1`; first run in flight |
+| D-020 | integration | backend | The browser could not name a page heading. | fix merged, re-check pending |
+| D-021 | integration | backend | Reported directly to backend. | fix merged, re-check pending |
+| D-022 | integration, A41 | backend | Continue ignored the new budget, no link to the continued task, and "$0.00" wording. | fixed and merged, re-check pending |
+| D-023 | integration, A41 | backend | Feedback lacked evidence references. | fixed and merged, re-check pending |
 
 ## Disagreements
 
