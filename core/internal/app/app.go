@@ -227,14 +227,20 @@ func (a *App) deliverAnswers(ctx context.Context) error {
 		return err
 	}
 	for i, answer := range answers {
+		run, runErr := a.Store.GetRun(ctx, answer.TaskID)
+		waiting := runErr == nil && run.Status == state.RunRunning && run.Question != nil && run.Question.ID == answer.Question && run.Question.ResolvedBy == ""
+		if answer.Recheck && !waiting {
+			// Recorded as delivered and the task is not waiting on it: nothing to repair.
+			continue
+		}
 		err := a.Assistant.Answer(ctx, answer.CommandID, answer.TaskID, answer.Question, answer.Text)
-		if errors.Is(err, state.ErrQuestionStale) {
-			run, runErr := a.Store.GetRun(ctx, answer.TaskID)
-			if runErr == nil && run.Status == state.RunRunning && (run.Question == nil || run.Question.ID == answer.Question) {
+		if errors.Is(err, state.ErrQuestionStale) || errors.Is(err, state.ErrBusy) {
+			// Still running: the task has not asked yet or is mid-step, so try again on the next pass.
+			if current, e := a.Store.GetRun(ctx, answer.TaskID); e == nil && current.Status == state.RunRunning && (current.Question == nil || current.Question.ID == answer.Question) {
 				continue
 			}
 		}
-		if err == nil || errors.Is(err, state.ErrDuplicate) || errors.Is(err, state.ErrQuestionStale) || errors.Is(err, state.ErrBusy) {
+		if (err == nil || errors.Is(err, state.ErrDuplicate) || errors.Is(err, state.ErrQuestionStale) || errors.Is(err, state.ErrBusy)) && !answer.Recheck {
 			a.Assistant.Permissions.MarkDelivered(ctx, ids[i])
 		}
 	}

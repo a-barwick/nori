@@ -72,8 +72,10 @@ func (a *Assistant) computerAction(w http.ResponseWriter, r *http.Request) {
 			if saved, err := a.Permissions.Interaction(r.Context(), interaction); err == nil && saved.Status == "pending" {
 				_, answer, err := a.Permissions.Respond(r.Context(), interaction, newRequestIDFrom(requestID), saved.Revision, permissionsResume(value.LeaseID))
 				if err == nil && answer != nil {
-					_ = a.Answer(r.Context(), answer.CommandID, answer.TaskID, answer.Question, answer.Text)
-					a.Permissions.MarkDelivered(r.Context(), interaction)
+					// An answer the task did not accept yet stays for the delivery pass.
+					if err := a.Answer(r.Context(), answer.CommandID, answer.TaskID, answer.Question, answer.Text); err == nil || errors.Is(err, state.ErrDuplicate) {
+						a.Permissions.MarkDelivered(r.Context(), interaction)
+					}
 				}
 			}
 		}
