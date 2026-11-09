@@ -422,6 +422,25 @@ func (s *Service) decodeInstallation(ctx context.Context, r state.Resource) (ins
 	return doc, nil
 }
 
+// ServerSources maps each MCP server a package installation contributed to that installation.
+func (s *Service) ServerSources(ctx context.Context) (map[string]string, error) {
+	page, _, err := s.Store.Resources(ctx, CollectionInstallations, nil, "", 200)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, r := range page {
+		var doc installationDoc
+		if r.Decode(&doc) != nil {
+			continue
+		}
+		for _, id := range doc.ServerIDs {
+			out[id] = r.ID
+		}
+	}
+	return out, nil
+}
+
 func (s *Service) Installation(ctx context.Context, id string) (Installation, error) {
 	r, err := s.Store.Resource(ctx, CollectionInstallations, id)
 	if err != nil {

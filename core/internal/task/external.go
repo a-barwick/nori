@@ -123,7 +123,13 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, recovering 
 	if err != nil {
 		return nil, nil, err
 	}
-	call := invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args,
+	zone := ""
+	if a.Executor.Connections != nil {
+		if prefs, _, err := a.Executor.Connections.Preferences(ctx); err == nil {
+			zone = prefs.Timezone
+		}
+	}
+	call := invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args, TimeZone: zone,
 		Upload: func(ctx context.Context, id string) (string, string, []byte, error) {
 			attachment, data, err := a.Agent.TaskUpload(ctx, in.RunID, id)
 			return attachment.Name, attachment.MediaType, data, err

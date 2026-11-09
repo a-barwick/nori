@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -32,7 +33,27 @@ func (a *Assistant) mcpServers(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, err, "", nil)
 		return
 	}
+	sources := a.serverSources(r.Context())
+	for i := range items {
+		applySource(&items[i], sources)
+	}
 	writeJSON(w, 200, list[mcp.Server]{Items: items})
+}
+
+// serverSources maps MCP servers to the package installations that contributed them, so a server saved before
+// installations recorded themselves still names its package.
+func (a *Assistant) serverSources(ctx context.Context) map[string]string {
+	if a.Plugins == nil {
+		return nil
+	}
+	sources, _ := a.Plugins.ServerSources(ctx)
+	return sources
+}
+
+func applySource(server *mcp.Server, sources map[string]string) {
+	if installation, ok := sources[server.ID]; ok && server.Source.Kind != "installation" {
+		server.Source = mcp.Source{Kind: "installation", InstallationID: installation}
+	}
 }
 
 func (a *Assistant) mcpServer(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +62,7 @@ func (a *Assistant) mcpServer(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, err, "", nil)
 		return
 	}
+	applySource(&item, a.serverSources(r.Context()))
 	writeJSON(w, 200, item)
 }
 

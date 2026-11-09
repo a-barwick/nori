@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"nori/internal/state"
@@ -32,18 +33,18 @@ type provenance struct {
 }
 
 type libraryItem struct {
-	ID           string     `json:"id"`
-	RootID       string     `json:"root_id"`
-	Version      int        `json:"version"`
-	Revises      string     `json:"revises,omitempty"`
-	SupersededBy string     `json:"superseded_by,omitempty"`
-	Kind         string     `json:"kind"`
-	Title        string     `json:"title"`
-	Name         string     `json:"name,omitempty"`
-	MediaType    string     `json:"media_type,omitempty"`
-	Size         int64      `json:"size,omitempty"`
-	URL          string     `json:"url,omitempty"`
-	TaskID       string     `json:"task_id,omitempty"`
+	ID           string `json:"id"`
+	RootID       string `json:"root_id"`
+	Version      int    `json:"version"`
+	Revises      string `json:"revises,omitempty"`
+	SupersededBy string `json:"superseded_by,omitempty"`
+	Kind         string `json:"kind"`
+	Title        string `json:"title"`
+	Name         string `json:"name,omitempty"`
+	MediaType    string `json:"media_type,omitempty"`
+	Size         int64  `json:"size,omitempty"`
+	URL          string `json:"url,omitempty"`
+	TaskID       string `json:"task_id,omitempty"`
 	// Contract fields the server does not populate yet; declared so round-trips keep them.
 	AutomationID   string          `json:"automation_id,omitempty"`
 	ConversationID string          `json:"conversation_id,omitempty"`
@@ -53,12 +54,12 @@ type libraryItem struct {
 	DeleteEffect   string          `json:"delete_effect,omitempty"`
 	PreviewText    string          `json:"preview_text,omitempty"`
 	Provenance     provenance      `json:"provenance"`
-	IndexStatus  string     `json:"index_status,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
-	Collection   string     `json:"collection,omitempty"`
-	Revision     int64      `json:"revision"`
+	IndexStatus    string          `json:"index_status,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      *time.Time      `json:"updated_at,omitempty"`
+	DeletedAt      *time.Time      `json:"deleted_at,omitempty"`
+	Collection     string          `json:"collection,omitempty"`
+	Revision       int64           `json:"revision"`
 }
 
 var libraryKinds = map[string]string{"answer": "answer", "file": "file", "screenshot": "screenshot", "link": "link", "document": "document", "report": "report"}
@@ -103,6 +104,14 @@ func (a *Assistant) libraryItem(result state.Result, overlay *state.Resource) li
 	if result.Kind == "file" && result.Text == "" {
 		item.IndexStatus = "unsupported"
 	}
+	if result.Text != "" {
+		item.PreviewText = clipRunes(result.Text, 2048)
+	}
+	// What deleting does, stated by the server: Nori's copy goes; anything the item points to stays where it is.
+	item.DeleteEffect = "Removes it from your Library and search. The task that made it keeps its record."
+	if result.URL != "" {
+		item.DeleteEffect = "Removes it from your Library and search. The linked page or file stays where it is."
+	}
 	if overlay != nil {
 		var o libraryOverlay
 		if overlay.Decode(&o) == nil {
@@ -141,6 +150,7 @@ func (a *Assistant) libraryItems(ctx context.Context) ([]libraryItem, map[string
 			items = append(items, item)
 		}
 	}
+	a.withOrigins(ctx, items)
 	return items, byID, nil
 }
 
@@ -189,7 +199,9 @@ func (a *Assistant) libraryEntry(ctx context.Context, id string) (libraryItem, e
 	if r, err := a.Store.Resource(ctx, collectionLibrary, id); err == nil {
 		overlay = &r
 	}
-	return a.libraryItem(result, overlay), nil
+	items := []libraryItem{a.libraryItem(result, overlay)}
+	a.withOrigins(ctx, items)
+	return items[0], nil
 }
 
 func (a *Assistant) libraryGet(w http.ResponseWriter, r *http.Request) {
@@ -606,4 +618,38 @@ func (a *Assistant) memoryAction(w http.ResponseWriter, r *http.Request) {
 	}
 	data, _ := json.Marshal(map[string]any{"forgotten": memoryView(m), "note": "Nori will no longer use this. Conversation history and external documents are unchanged."})
 	writeJSON(w, 200, state.MutationReceipt{RequestID: requestID, Accepted: true, Status: "applied", Resource: data})
+}
+
+func clipRunes(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut]
+}
+
+// withOrigins fills each item's chat, routine and goal from the task that made it, reading each task once.
+func (a *Assistant) withOrigins(ctx context.Context, items []libraryItem) {
+	runs := map[string]*state.Run{}
+	for i := range items {
+		id := items[i].TaskID
+		if id == "" {
+			continue
+		}
+		run, seen := runs[id]
+		if !seen {
+			if r, err := a.Store.GetRun(ctx, id); err == nil {
+				run = &r
+			}
+			runs[id] = run
+		}
+		if run == nil {
+			continue
+		}
+		origin := originOf(*run)
+		items[i].ConversationID, items[i].AutomationID, items[i].GoalID = origin.ConversationID, origin.AutomationID, origin.GoalID
+	}
 }

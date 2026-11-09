@@ -139,9 +139,11 @@ func icsTime(params, value string) (*calendar.EventDateTime, error) {
 	return &calendar.EventDateTime{DateTime: t.Format(time.RFC3339), TimeZone: loc.String()}, nil
 }
 
-func describe(e icsEvent) string {
-	when := e.Start.DateTime + e.Start.Date
-	return fmt.Sprintf("%s (%s)", e.Summary, when)
+func describe(e icsEvent, zone string) string {
+	if e.Start.Date != "" {
+		return fmt.Sprintf("%s (%s, all day)", e.Summary, invoke.HumanTime(e.Start.Date, zone))
+	}
+	return fmt.Sprintf("%s (%s)", e.Summary, invoke.HumanTime(e.Start.DateTime, zone))
 }
 
 // readICS loads and parses an uploaded calendar file the task was given.
@@ -199,7 +201,7 @@ func prepareICS(ctx context.Context, call invoke.Call, operation string) (invoke
 	}
 	var titles []string
 	for _, e := range events {
-		titles = append(titles, describe(e))
+		titles = append(titles, describe(e, call.TimeZone))
 	}
 	return invoke.Prepared{
 		Summary: fmt.Sprintf("Import %d events from %s into %s: %s", len(events), name, calendarID, strings.Join(titles, "; ")),
