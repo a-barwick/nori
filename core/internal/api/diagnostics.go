@@ -212,6 +212,30 @@ func (a *Assistant) feedback(w http.ResponseWriter, r *http.Request) {
 			ids = append(ids, op.ID)
 		}
 		evidence["operation_ids"], evidence["status"], evidence["spend_usd"] = ids, run.Status, run.Spent+run.SubtaskSpent
+		if run.Origin != nil {
+			for key, value := range map[string]string{"automation_id": run.Origin.AutomationID, "occurrence_id": run.Origin.OccurrenceID, "goal_id": run.Origin.GoalID} {
+				if value != "" {
+					evidence[key] = value
+				}
+			}
+		}
+		for _, op := range ops {
+			if op.ID != value.OperationID {
+				continue
+			}
+			// The operation's provenance: which definition and version ran, under which account and parent.
+			detail := map[string]any{"name": op.Name, "outcome": op.Outcome, "effect_class": op.EffectClass}
+			if op.Tool != nil {
+				detail["tool"] = op.Tool
+			}
+			if op.ConnectionID != "" {
+				detail["connection_id"] = op.ConnectionID
+			}
+			if op.ParentOperationID != "" {
+				detail["parent_operation_id"] = op.ParentOperationID
+			}
+			evidence["operation"] = detail
+		}
 		for _, context := range []map[string]string{run.OriginTraceContext, run.TraceContext} {
 			if parts := strings.Split(context["traceparent"], "-"); len(parts) == 4 {
 				evidence["trace_id"] = parts[1]
