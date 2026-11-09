@@ -105,6 +105,15 @@ func (s *Service) resultsFind(ctx context.Context, query string) (map[string]any
 	if err != nil {
 		return nil, err
 	}
+	if s.Hidden != nil {
+		visible := results[:0]
+		for _, result := range results {
+			if !s.Hidden(ctx, result.ID) {
+				visible = append(visible, result)
+			}
+		}
+		results = visible
+	}
 	runs, err := s.Store.RecentRuns(ctx, resultSearchRuns)
 	if err != nil {
 		return nil, err
@@ -173,6 +182,9 @@ func snippet(text string) string {
 
 func (s *Service) resultRead(ctx context.Context, id string) (map[string]any, error) {
 	result, err := s.Store.GetResult(ctx, id)
+	if err == nil && s.Hidden != nil && s.Hidden(ctx, id) {
+		err = state.ErrNotFound
+	}
 	if err != nil {
 		return nil, errors.New(prompts.Runtime("tool-no-saved-result-has-that-result-id", nil))
 	}
@@ -184,6 +196,9 @@ func (s *Service) resultRead(ctx context.Context, id string) (map[string]any, er
 
 func (s *Service) resultOpen(ctx context.Context, c *computer.Client, id string) (map[string]any, error) {
 	result, err := s.Store.GetResult(ctx, id)
+	if err == nil && s.Hidden != nil && s.Hidden(ctx, id) {
+		err = state.ErrNotFound
+	}
 	if err != nil {
 		return nil, errors.New(prompts.Runtime("tool-no-saved-result-has-that-result-id", nil))
 	}

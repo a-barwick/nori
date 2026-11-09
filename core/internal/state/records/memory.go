@@ -155,3 +155,54 @@ func (d *Database) ReadConversationMessage(ctx context.Context, id string) (stat
 	}
 	return message, nil
 }
+
+// EditMemory replaces a memory's text if it has not changed since updatedAt (the client's revision).
+func (d *Database) EditMemory(ctx context.Context, id string, expectedUpdated int64, text string) (state.Memory, error) {
+	var out state.Memory
+	if len(text) == 0 || len(text) > state.MaxMemoryText {
+		return out, state.ErrInvalidResource
+	}
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		doc, err := tx.Get(d.memories().Doc(id))
+		if notFound(err) {
+			return state.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var m state.Memory
+		if err = doc.DataTo(&m); err != nil {
+			return err
+		}
+		if m.UpdatedAt.UnixMilli() != expectedUpdated {
+			return state.ErrRevisionConflict
+		}
+		m.Text, m.UpdatedAt = text, time.Now().UTC()
+		out = m
+		return tx.Set(d.memories().Doc(id), m)
+	})
+	return out, err
+}
+
+// ForgetMemory deletes a memory if it has not changed since updatedAt. It removes the memory from future use; it
+// does not touch transcripts.
+func (d *Database) ForgetMemory(ctx context.Context, id string, expectedUpdated int64) (state.Memory, error) {
+	var out state.Memory
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		doc, err := tx.Get(d.memories().Doc(id))
+		if notFound(err) {
+			return state.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err = doc.DataTo(&out); err != nil {
+			return err
+		}
+		if out.UpdatedAt.UnixMilli() != expectedUpdated {
+			return state.ErrRevisionConflict
+		}
+		return tx.Delete(d.memories().Doc(id))
+	})
+	return out, err
+}

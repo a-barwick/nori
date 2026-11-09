@@ -31,6 +31,8 @@ type Assistant struct {
 	Tools func(ctx context.Context) (*extensions.Snapshot, []extensions.CapabilityState)
 	// Answer accepts a task answer command (the existing durable acceptance path).
 	Answer func(ctx context.Context, commandID, taskID, questionID, text string) error
+	// Revise starts a task that revises a saved result, keeping its earlier versions.
+	Revise func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error)
 	// Stop accepts a task stop command.
 	Stop func(ctx context.Context, commandID, taskID string) (state.Run, error)
 	// Features lists the route families that are live.
@@ -150,6 +152,16 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/work/{task_id}/actions", jsonBody(a.workAction))
 	mux.HandleFunc("GET /v1/operations", a.operations)
 	mux.HandleFunc("GET /v1/assistant/summary", a.summary)
+	mux.HandleFunc("GET /v1/library", a.library)
+	mux.HandleFunc("GET /v1/library/{id}", a.libraryGet)
+	mux.HandleFunc("PUT /v1/library/{id}", jsonBody(a.libraryRename))
+	mux.HandleFunc("GET /v1/library/{id}/versions", a.libraryVersions)
+	mux.HandleFunc("GET /v1/library/{id}/file", a.libraryFile)
+	mux.HandleFunc("POST /v1/library/{id}/actions", jsonBody(a.libraryAction))
+	mux.HandleFunc("GET /v1/search", a.search)
+	mux.HandleFunc("GET /v1/memory", a.memory)
+	mux.HandleFunc("PUT /v1/memory/{id}", jsonBody(a.editMemory))
+	mux.HandleFunc("POST /v1/memory/{id}/actions", jsonBody(a.memoryAction))
 	if a.Scheduler != nil {
 		a.registerScheduling(mux)
 	}
