@@ -24,6 +24,8 @@ type Deps struct {
 	Tasks    *conversation.Tasks
 	Waker    wake.Waker
 	Ops      Operations
+	// Assistant serves the /v1 management routes. Nil leaves them unregistered.
+	Assistant *Assistant
 }
 
 type Operations interface {
@@ -64,6 +66,9 @@ func Handler(deps Deps) http.Handler {
 		mux.HandleFunc("GET /v1/conversations/{conversation}/events", s.conversationRoute(s.chatEvents))
 		mux.HandleFunc("POST /v1/conversations/{conversation}/uploads", s.conversationRoute(s.chatUpload))
 		mux.HandleFunc("GET /v1/conversations/{conversation}/uploads/{id}", s.conversationRoute(s.chatReadUpload))
+	}
+	if s.Assistant != nil {
+		s.Assistant.register(mux)
 	}
 	mux.HandleFunc("POST /api/process", jsonBody(s.process))
 	mux.HandleFunc("POST /api/resume", jsonBody(s.resume))

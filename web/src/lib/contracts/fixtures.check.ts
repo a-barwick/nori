@@ -1024,7 +1024,8 @@ export const fx_library_library_item_copied_valid: LibraryItem = {
     "retrieved_at": "2026-11-10T07:31:00Z"
   },
   "index_status": "indexed",
-  "created_at": "2026-11-10T07:31:40Z"
+  "created_at": "2026-11-10T07:31:40Z",
+  "revision": 1
 };
 
 // fixtures/library/library-item.copied-from-disconnected.valid.json
@@ -1045,7 +1046,8 @@ export const fx_library_library_item_copied_from_disconnected_valid: LibraryItem
     "retrieved_at": "2026-11-09T09:00:00Z",
     "connection_status": "disconnected"
   },
-  "created_at": "2026-11-09T09:00:00Z"
+  "created_at": "2026-11-09T09:00:00Z",
+  "revision": 1
 };
 
 // fixtures/library/search-response.valid.json
@@ -2072,7 +2074,8 @@ export const fx_library_library_item_event_data_valid: LibraryItem = {
         "series"
       ]
     }
-  }
+  },
+  "revision": 1
 };
 
 // fixtures/library/search-hit.task-jump.valid.json
@@ -2208,7 +2211,8 @@ export const fx_library_inbox_item_valid: InboxItem = {
     "kind": "automation",
     "id": "auto_2"
   },
-  "created_at": "2026-11-09T09:00:00Z"
+  "created_at": "2026-11-09T09:00:00Z",
+  "revision": 1
 };
 
 // fixtures/library/upload-accept.extensions.valid.json
@@ -2252,7 +2256,11 @@ export const fx_plugins_catalog_entry_valid: CatalogEntry = {
     "action_classes": [
       "read",
       "reversible_write"
-    ]
+    ],
+    "network": [
+      "api.linear.app"
+    ],
+    "filesystem": []
   },
   "contributions_summary": {
     "tools": 12,

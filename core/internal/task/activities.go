@@ -29,6 +29,9 @@ import (
 type Activities struct {
 	Agent *agent.Service
 	Store state.TaskStore
+	// Executor runs registry tools through App connectors, the MCP client and plugin executors. Nil leaves them
+	// unavailable.
+	Executor *Executor
 }
 type Step struct {
 	RunID    string

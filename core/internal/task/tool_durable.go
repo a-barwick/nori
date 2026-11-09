@@ -57,6 +57,19 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		attribute.String("nori.operation.effect_class", effect),
 	)
 	until := receiptDeadline(parent)
+	var plan *externalPlan
+	if in.Exec != nil && !in.Exec.Builtin {
+		var stop map[string]any
+		plan, stop, err = a.planExternal(ctx, in, recovering != nil)
+		if recovering != nil && (err != nil || stop != nil) {
+			// The account or implementation is no longer usable; recovery can only settle what is known.
+			plan, err = &externalPlan{}, nil
+		} else if err != nil || stop != nil {
+			return stop, err
+		} else {
+			effect = string(plan.prepared.Effect)
+		}
+	}
 	if recovering == nil {
 		if blocked, err := a.unresolvedWriteBlock(ctx, in.RunID, effect); err != nil || blocked != nil {
 			return blocked, err
@@ -75,6 +88,13 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	}
 	if in.Exec != nil {
 		op.Tool = &state.DefinitionRef{ID: in.Exec.Tool.ID, Version: in.Exec.Tool.Version, Digest: in.Exec.Tool.Digest}
+	}
+	if plan != nil {
+		op.Action = &state.Action{Digest: plan.digest, Text: clip(plan.prepared.Summary, 2000), Spec: plan.prepared.Spec}
+		op.AuthorityRef = plan.authority.AuthorityRef
+		if plan.call.Grant != nil {
+			op.ConnectionID = plan.call.Grant.Connection.ID
+		}
 	}
 	if recovering != nil {
 		op = *recovering
@@ -140,6 +160,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		return output, nil
 	}
 
+	if plan != nil {
+		return a.runExternal(ctx, in, &op, recovering != nil, plan, persist)
+	}
 	if policy.Runtime {
 		return a.runtimeTool(ctx, in, &op, recovering != nil, policy, persist)
 	}
