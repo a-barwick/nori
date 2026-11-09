@@ -70,7 +70,7 @@ Each is run on the local integration stack and recorded here with what could not
 | Check | Status | Evidence |
 | --- | --- | --- |
 | Kill and restart the worker mid-task | locally verified | 2026-11-08 at `e680c6f`: task `2321c723` (six sequential web searches) stopped after 4 confirmed operations, worker down 30 s (run stayed `running`, no progress), restarted on the same build `int-e680c6f`. The in-flight workflow task timed out once and was retried; the task completed with 6 operations, each `attempt: 1`, no duplicate operation ids, and the expected result. |
-| Kill and restart core mid-task | not started | |
+| Kill and restart core mid-task | locally verified | 2026-11-08 at `e680c6f`: task `aa217d42` (four sequential web searches) running with 2 operations done; core (`nori-local`) stopped at 00:56:45. The worker finished the workflow while core was down. After core restarted, the result was delivered to the assistant conversation once (one assistant message at 00:57:38), with 4 operations, each `attempt: 1`. |
 | Lost wake and duplicate wake | not started | Duplicate submission only: scenario `conversation-message-retry` passes live (same message id twice gives the same active turn and one user message). A real lost wake (wake failure after acceptance) is not exercised yet. |
 | Stale approval after a correction | not started | |
 | Revoke during execution | not started | |
