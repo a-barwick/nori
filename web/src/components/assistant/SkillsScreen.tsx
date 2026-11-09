@@ -8,8 +8,7 @@ import { Button } from "@/components/ui/primitives";
 import { mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
-import type { SkillEditable } from "@/lib/contracts/assistant";
-import type { SkillView } from "@/lib/contracts/pending";
+import type { SkillEditable, SkillView } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section } from "./ui";
 
