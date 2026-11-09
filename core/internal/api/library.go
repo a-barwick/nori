@@ -156,6 +156,9 @@ func (a *Assistant) library(w http.ResponseWriter, r *http.Request) {
 		if kind := q.Get("kind"); kind != "" && item.Kind != kind {
 			continue
 		}
+		if task := q.Get("task_id"); task != "" && item.TaskID != task {
+			continue
+		}
 		if q.Get("versions") != "all" && item.SupersededBy != "" {
 			continue
 		}

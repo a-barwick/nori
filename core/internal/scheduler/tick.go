@@ -352,7 +352,8 @@ func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc,
 	if status != "completed" {
 		failure = &ErrorDetail{Code: "task_" + status, Message: clip(run.Error, 1000)}
 	}
-	quiet := o.Monitor && strings.HasPrefix(summary, NoChange)
+	// A monitor stays quiet when it found nothing, or when it found exactly what it already reported last time.
+	quiet := o.Monitor && status == "completed" && (strings.HasPrefix(summary, NoChange) || sameFinding(summary, a.Checkpoint))
 	if !quiet {
 		results := []string{}
 		if s.Results != nil {
@@ -368,6 +369,12 @@ func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc,
 		}
 	}
 	return s.settle(ctx, r, o, status, "", clip(summary, 2000), failure)
+}
+
+// sameFinding compares two monitor findings ignoring case and spacing.
+func sameFinding(a, b string) bool {
+	norm := func(t string) string { return strings.ToLower(strings.Join(strings.Fields(t), " ")) }
+	return b != "" && norm(clip(a, 2000)) == norm(b)
 }
 
 func (s *Service) checkpoint(ctx context.Context, id, summary string) {

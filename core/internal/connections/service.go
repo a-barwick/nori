@@ -1061,7 +1061,7 @@ func (s *Service) Select(ctx context.Context, integrationID, purpose, requested 
 	connected := false
 	for i, record := range records {
 		// An account missing some requested access still works for the capabilities it did grant.
-		usable := record.Status == StatusConnected || record.Status == StatusAttention && record.Health.Code == HealthNeedsMoreAccess
+		usable, _ := usableRecord(record)
 		if record.IntegrationID != integrationID || !usable {
 			continue
 		}
@@ -1105,6 +1105,19 @@ func (s *Service) Select(ctx context.Context, integrationID, purpose, requested 
 	return Record{}, 0, choice
 }
 
+// usableRecord says whether an account can serve calls for the capabilities it granted, and whether some requested
+// access is missing. Besides connected accounts this covers needs_attention accounts whose credential works: those
+// missing access, and those saved with a ready health code before success kept the missing-access state.
+func usableRecord(record Record) (usable, partial bool) {
+	if record.Status == StatusConnected {
+		return true, false
+	}
+	if record.Status == StatusAttention && (record.Health.Code == HealthNeedsMoreAccess || record.Health.Code == HealthReady) {
+		return true, record.Health.Code == HealthNeedsMoreAccess || len(missingScopes(record.DesiredScopes, record.GrantedScopes)) > 0
+	}
+	return false, false
+}
+
 // Inventory implements extensions.Source: the tools of connected integrations, plus a capability entry for every
 // catalog integration so the assistant can explain what is and is not connected without reading account content.
 func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
@@ -1121,9 +1134,9 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 			if record.IntegrationID != id {
 				continue
 			}
-			partial := record.Status == StatusAttention && record.Health.Code == HealthNeedsMoreAccess
+			usable, partial := usableRecord(record)
 			switch {
-			case record.Status == StatusConnected || partial:
+			case usable:
 				// An account missing some access still serves what it granted; the missing part is listed below.
 				labels = append(labels, record.Account.Label)
 				if partial {
