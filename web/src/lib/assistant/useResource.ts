@@ -83,7 +83,7 @@ export function useResource<T>(path: string | null, { poll = 15_000 }: { poll?: 
 export function useAction() {
   const [state, setState] = useState<{ pending?: string; error?: string }>({});
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const run = useCallback(async <T,>(name: string, action: () => Promise<T>): Promise<T | undefined> => {
     setState({ pending: name });
     try {

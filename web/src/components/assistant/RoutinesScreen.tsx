@@ -63,6 +63,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
   const destinations = useResource<List<DeliveryDestination>>("/delivery-destinations", { poll: 0 });
   const action = useAction();
   const router = useRouter();
+  const [started, setStarted] = useState(false);
   const item = routine.data;
   if (routine.loading) return <Screen title="Routine" back="/routines"><Loading /></Screen>;
   if (!item) return <Screen title="Routine" back="/routines"><Failure error={routine.error ?? "This routine doesn’t exist."} /></Screen>;
@@ -72,6 +73,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
       routine.apply(receipt.resource as Automation);
       invalidate("/automations", "/work", "/assistant/summary");
       if (receipt.status === "queued" && receipt.work?.task_id) router.push(`/work/${encodeURIComponent(receipt.work.task_id)}`);
+      else if (value.action === "run_now") { setStarted(true); void occurrences.reload(); }
     } catch (error) {
       if (error instanceof APIError && error.stale && error.body?.current) routine.apply(error.body.current as Automation);
       throw error;
@@ -83,6 +85,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
     <Screen title={item.title} back="/routines" line={item.status === "enabled" && item.next_at ? `Next run ${when(item.next_at, item.trigger.kind === "recurring" ? item.trigger.timezone : undefined)}.` : item.status === "paused" ? "Paused. Nothing runs until you resume it." : "Cancelled."}
       actions={<><Pill tone={state.tone}>{state.label}</Pill><RefreshButton onClick={() => { void routine.reload(); void occurrences.reload(); }} /></>}>
       {action.error && <div className="mb-4"><Notice tone="danger">{action.error}</Notice></div>}
+      {started && !action.error && <div className="mb-4"><Notice tone="accent">Starting a run now. It shows in History and Work when it begins.</Notice></div>}
       {item.status !== "cancelled" && <div className="flex flex-wrap gap-2">
         <Button variant="primary" disabled={!!action.pending} onClick={() => void act({ action: "run_now" }, "run")}><Zap size={15} aria-hidden />{action.pending === "run" ? "Starting…" : "Run now"}</Button>
         {item.status === "enabled" ? <Button disabled={!!action.pending} onClick={() => void act({ action: "pause" }, "pause")}><Pause size={14} aria-hidden />Pause</Button>
