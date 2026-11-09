@@ -67,6 +67,9 @@ type TaskSnapshot struct {
 	Commands []Command
 }
 
+// MaxContinuationBudgetUSD bounds the budget a user can give an explicit continuation.
+const MaxContinuationBudgetUSD = 50.0
+
 const (
 	MaxCommandBatch = 32
 	// MaxTaskCommands bounds the commands one task accepts, other than a stop.
@@ -305,6 +308,11 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 	}
 	if cmd.BudgetUSD > 0 && cmd.BudgetUSD < run.Budget {
 		run.Budget = cmd.BudgetUSD
+	}
+	// An explicit continuation is the user's own decision to spend more on the job; it may raise the ceiling up to
+	// MaxContinuationBudgetUSD.
+	if cmd.Origin != nil && cmd.Origin.ContinuesTaskID != "" && cmd.BudgetUSD > run.Budget {
+		run.Budget = min(cmd.BudgetUSD, MaxContinuationBudgetUSD)
 	}
 	if cmd.ParentID != "" {
 		parent, question, err := linkSubtask(p.runs[cmd.ParentID], p.exists[cmd.ParentID], cmd, p.opened)

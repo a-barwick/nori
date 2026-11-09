@@ -345,8 +345,26 @@ func (s *Service) UndeliveredAnswers(ctx context.Context) ([]Answer, []string, e
 	var ids []string
 	for _, r := range page {
 		i, body, err := decodeInteraction(r)
-		if err != nil || body.CommandAccepted || body.AnswerText == "" || body.AnswerID == "" || i.TaskID == "" {
+		if err != nil || body.CommandAccepted || i.TaskID == "" {
 			continue
+		}
+		if body.AnswerText == "" || body.AnswerID == "" {
+			// Resolved before answers were saved with the resolution: rebuild the same answer from the resolution.
+			if i.Resolution == nil {
+				continue
+			}
+			body.AnswerID = uuid.NewSHA1(uuid.NameSpaceOID, []byte("interaction-answer-legacy:"+i.ID)).String()
+			switch i.Resolution.Kind {
+			case "approve":
+				body.AnswerText = "The user approved this exact action; retry the same call unchanged: " + i.Prompt
+			case "decline":
+				body.AnswerText = "The user declined this action. Do not attempt it; report what was not done: " + i.Prompt
+			default:
+				body.AnswerText = i.Resolution.Text
+			}
+			if body.AnswerText == "" {
+				continue
+			}
 		}
 		answers = append(answers, Answer{CommandID: body.AnswerID, TaskID: i.TaskID, Question: questionID(i), Text: body.AnswerText})
 		ids = append(ids, i.ID)

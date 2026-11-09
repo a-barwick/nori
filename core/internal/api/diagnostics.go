@@ -41,9 +41,21 @@ func (a *Assistant) diagnosticsList(ctx context.Context) ([]diagnostic, error) {
 			out = append(out, diagnostic{Kind: "stuck_task", Severity: "warning", Subject: map[string]any{"task_id": run.ID}, Since: &started,
 				Message: "Accepted commands have not reached the task. Delivery or the worker may be stalled.", Repair: "resume_delivery"})
 		}
-		if run.CleanupPending {
-			out = append(out, diagnostic{Kind: "cleanup_pending", Severity: "info", Subject: map[string]any{"task_id": run.ID},
-				Message: "The task's computer cleanup has not been confirmed: " + run.CleanupError})
+		if run.CleanupPending && run.Status != state.RunRunning && (run.CleanupError != "" || run.FinishedAt != nil && now.Sub(*run.FinishedAt) > 30*time.Minute) {
+			message := "The task's computer cleanup has not been confirmed."
+			if run.CleanupError != "" {
+				message += " " + run.CleanupError
+			}
+			out = append(out, diagnostic{Kind: "cleanup_pending", Severity: "info", Subject: map[string]any{"task_id": run.ID}, Message: message, Repair: "resume_delivery"})
+		}
+		if run.Status == state.RunRunning && run.Question != nil && run.Question.ResolvedBy == "" {
+			if interaction, err := a.Permissions.Interaction(ctx, run.Question.ID); err == nil && interaction.Status == "resolved" {
+				out = append(out, diagnostic{Kind: "stuck_task", Severity: "error", Subject: map[string]any{"task_id": run.ID, "interaction_id": interaction.ID},
+					Message: "The user answered this task's question, but the answer has not reached the task.", Repair: "deliver_answers"})
+			} else if run.Question.Revision == run.Revision && now.Sub(started) > 24*time.Hour {
+				out = append(out, diagnostic{Kind: "waiting_on_user", Severity: "info", Subject: map[string]any{"task_id": run.ID, "interaction_id": run.Question.ID},
+					Message: "The task has been waiting for the user's answer for over a day."})
+			}
 		}
 		ops, err := a.Store.Operations(ctx, run.ID)
 		if err != nil {
@@ -141,6 +153,12 @@ func (a *Assistant) diagnosticsAction(w http.ResponseWriter, r *http.Request) {
 		} else {
 			err = a.Resume(r.Context())
 		}
+	case "deliver_answers":
+		if a.DeliverAnswers == nil {
+			err = state.ErrInvalidResource
+		} else {
+			err = a.DeliverAnswers(r.Context())
+		}
 	case "run_scheduler":
 		if a.Scheduler == nil {
 			err = state.ErrInvalidResource
@@ -193,14 +211,20 @@ func (a *Assistant) feedback(w http.ResponseWriter, r *http.Request) {
 		for _, op := range ops {
 			ids = append(ids, op.ID)
 		}
-		evidence["operation_ids"], evidence["status"], evidence["spent_usd"] = ids, run.Status, run.Spent
-		if trace := run.OriginTraceContext["traceparent"]; trace != "" {
-			evidence["trace"] = strings.Split(trace, "-")[1]
+		evidence["operation_ids"], evidence["status"], evidence["spend_usd"] = ids, run.Status, run.Spent+run.SubtaskSpent
+		for _, context := range []map[string]string{run.OriginTraceContext, run.TraceContext} {
+			if parts := strings.Split(context["traceparent"], "-"); len(parts) == 4 {
+				evidence["trace_id"] = parts[1]
+				break
+			}
 		}
 	}
 	id := "fb_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte("feedback:"+requestID)).String(), "-", "")[:20]
 	record := map[string]any{"id": id, "kind": value.Kind, "task_id": value.TaskID, "operation_id": value.OperationID,
 		"connection_id": value.ConnectionID, "text": clip(value.Text, 4000), "evidence": evidence, "created_at": time.Now().UTC()}
+	for key, v := range evidence {
+		record[key] = v
+	}
 	receipt, err := a.Store.Mutate(r.Context(), state.Mutation{RequestID: requestID, Method: "POST", Target: "/v1/feedback", Payload: value,
 		Collection: collectionFeedback, ID: id,
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {

@@ -131,6 +131,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		return receipts[0].Run, nil
 	}
 	result.Assistant.Resume = result.Resume
+	result.Assistant.DeliverAnswers = result.deliverAnswers
 	result.Assistant.Continue = func(ctx context.Context, taskID, previous, request string, budget float64) (state.Run, error) {
 		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: taskID, RunID: taskID, Kind: state.CommandStart, Text: request, BudgetUSD: budget,
 			Origin: &state.TaskOrigin{ConversationID: "assistant", ContinuesTaskID: previous}}}, nil)
