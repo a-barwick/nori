@@ -115,6 +115,18 @@ go run ./cmd/nori-user -id 11111111-1111-4111-8111-111111111111 -email integrati
 go run ./cmd/nori-user -id 22222222-2222-4222-8222-222222222222 -email integration-b@nori.local -name "Integration B" -timezone UTC
 ```
 
+Task worker (from `core/`, same environment without `PORT`). `nori-local` does not run Temporal workers, so tasks sit at `WorkflowTaskScheduled` until one polls. Workers use Worker Deployment versioning: give each build its own id and make it current:
+
+```bash
+TEMPORAL_BUILD_ID=int-$(git rev-parse --short HEAD) go run ./cmd/nori-worker
+```
+
+```bash
+temporal worker deployment set-current-version --address 127.0.0.1:17233 -n nori-integration --deployment-name nori-task --build-id int-<sha> --yes
+```
+
+Running workflows stay pinned to the build that started them; only new tasks move to the new current version.
+
 Core is addressed per user as `http://127.0.0.1:8083/users/<id>/v1/...`; requests carrying `Origin` or `Sec-Fetch-Site` are refused, so browsers go through the web server.
 
 Web (from `web/`):
