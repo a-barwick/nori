@@ -573,7 +573,10 @@ func (s *Service) connect(ctx context.Context, id, requestID string, expected in
 			if record.Status == StatusDisconnecting {
 				return state.MutationResult{}, ErrInvalidAction
 			}
-			if record.Status != StatusConnected {
+			// Only a first sign-in shows as connecting. An account that already signed in keeps its state while it asks
+			// for more access or signs in again, so declining leaves it as it was (needs_more_access stays a working,
+			// partially granted account) instead of looking broken.
+			if record.Status != StatusConnected && record.Account.ProviderID == "" {
 				record.Status = StatusConnecting
 			}
 			record.DesiredScopes = scopes
