@@ -24,7 +24,7 @@ type persistFunc func(outcome string, output map[string]any, cause error) (map[s
 // traces. Retrying an activity is never a substitute for an operation receipt.
 func (a *Activities) durableTool(parent context.Context, in ToolInput) (result map[string]any, err error) {
 	evidence := a.Store
-	policy := agent.TaskToolPolicy(in.Call.Name)
+	policy := agent.PolicyFor(in.Call.Name, in.Exec)
 	effect := policy.Effect
 	// A settled result remains evidence after a correction. Reuse it before
 	// applying the current revision and pause checks to any further work.
@@ -72,6 +72,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	op := state.OperationRecord{
 		ID: in.OperationID, CallID: in.Call.ID, Name: in.Call.Name, Revision: in.Revision,
 		EffectClass: effect, Outcome: "pending", RecoveryUntil: until,
+	}
+	if in.Exec != nil {
+		op.Tool = &state.DefinitionRef{ID: in.Exec.Tool.ID, Version: in.Exec.Tool.Version, Digest: in.Exec.Tool.Digest}
 	}
 	if recovering != nil {
 		op = *recovering

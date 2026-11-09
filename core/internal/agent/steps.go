@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"nori/internal/extensions"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/transcript"
@@ -86,17 +87,20 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 		}
 		span.End()
 	}()
-	catalog := s.catalog()
-	return s.Model.Respond(ctx, Request{
+	snapshot, dynamic := s.Tools(ctx)
+	catalog := s.catalog(dynamic, snapshot)
+	resp, err = s.Model.Respond(ctx, Request{
 		Instructions:    prompts.TaskWorker + "\nUser details (data): " + s.UserFacts + "\n" + s.catalogInstruction(catalog),
 		Messages:        messages,
-		Tools:           offeredTools(catalog, messages, wait, work),
+		Tools:           offeredTools(catalog, snapshot, messages, wait, work),
 		MaxOutputTokens: modelOutputTokenLimit,
 	})
+	resp.Tools = snapshot
+	return resp, err
 }
 
 // Leaving a schema out shortens the request. Execution still checks every call.
-func offeredTools(catalog []Capability, messages []transcript.Message, wait, work bool) []transcript.Tool {
+func offeredTools(catalog []Capability, snapshot *extensions.Snapshot, messages []transcript.Message, wait, work bool) []transcript.Tool {
 	results := []map[string]any{}
 	for _, message := range messages {
 		for _, part := range message.Parts {
@@ -116,6 +120,14 @@ func offeredTools(catalog []Capability, messages []transcript.Message, wait, wor
 	for _, definition := range taskToolDefinitions {
 		if definition.access <= access && (definition.capability == "" || loaded[definition.capability]) {
 			selected = append(selected, definition.Tool)
+		}
+	}
+	for _, d := range snapshot.Definitions() {
+		if d.Builtin() || (d.Exposure != extensions.ExposureDirect && !(d.Exposure == extensions.ExposureDiscoverable && loaded[d.CapabilityTitle])) {
+			continue
+		}
+		if tool, ok := modelTool(d); ok {
+			selected = append(selected, tool)
 		}
 	}
 	return selected

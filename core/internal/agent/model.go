@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 
+	"nori/internal/extensions"
 	"nori/internal/transcript"
 )
 
@@ -42,6 +43,9 @@ type Response struct {
 	// NotSent confirms the adapter stopped before dispatch, so missing cost is not
 	// uncertain billing. False stays conservative for older saved activity results.
 	NotSent bool
+	// Tools is the definition snapshot this request offered. Calls are validated and pinned against it. It is not
+	// serialized: workflow history keeps each call's pinned execution metadata instead.
+	Tools *extensions.Snapshot `json:"-"`
 }
 
 // Usage counts tokens for one request. OutputTokens excludes ReasoningTokens.
