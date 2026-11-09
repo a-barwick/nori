@@ -1,0 +1,16 @@
+{
+  "id": "47e5eee4-m2-t3",
+  "call_id": "call_PkF1OXEp17gbYRyrW4pNc0L2",
+  "name": "text_stats",
+  "effect_class": "unknown",
+  "outcome": "failed",
+  "result_ref": "8cdaae2746815800f3d241f2fcf31d89791c631c6f5c33fbe355bd0afe4123fe",
+  "revision": 1,
+  "attempt": 1,
+  "artifact_ids": null,
+  "owner": {
+    "type": "task",
+    "id": "47e5eee4-1df8-54e2-ab11-54a27b2b19f5"
+  },
+  "cleared": "ignored"
+}

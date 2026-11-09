@@ -180,8 +180,10 @@
             "",
             "did_not_run",
             "read_only",
-            "answered"
-          ]
+            "answered",
+            "contained"
+          ],
+          "description": "Why a failed or uncertain operation no longer blocks later commands. contained (r2.7): a sandboxed package call failed inside its sandbox and cannot have changed anything outside it."
         },
         "connection_id": {
           "$ref": "common.schema.json#/$defs/ID"
