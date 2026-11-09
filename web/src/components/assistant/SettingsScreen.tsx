@@ -156,8 +156,8 @@ function PreferencesEditor({ current, onSaved }: { current: Preferences; onSaved
       </li>; })}</ul>
     </fieldset>
     <div className="flex flex-wrap gap-4">
-      <Field label="Budget per task (USD)"><input type="number" min={0} step={0.5} value={value.budgets.task_usd} onChange={(event) => setValue({ ...value, budgets: { ...value.budgets, task_usd: Number(event.target.value) } })} className={cn(inputBase, "w-32")} /></Field>
-      <Field label="Monthly limit (USD)"><input type="number" min={0} step={5} value={value.budgets.monthly_usd ?? ""} onChange={(event) => setValue({ ...value, budgets: { ...value.budgets, monthly_usd: event.target.value ? Number(event.target.value) : undefined } })} className={cn(inputBase, "w-32")} /></Field>
+      <Field label="Budget per task (USD)"><input type="number" min={0} step="any" value={value.budgets.task_usd} onChange={(event) => setValue({ ...value, budgets: { ...value.budgets, task_usd: Number(event.target.value) } })} className={cn(inputBase, "w-32")} /></Field>
+      <Field label="Monthly limit (USD)"><input type="number" min={0} step="any" value={value.budgets.monthly_usd ?? ""} onChange={(event) => setValue({ ...value, budgets: { ...value.budgets, monthly_usd: event.target.value ? Number(event.target.value) : undefined } })} className={cn(inputBase, "w-32")} /></Field>
       <Field label="Dictation language"><input value={value.input?.dictation_language ?? ""} onChange={(event) => setValue({ ...value, input: { ...value.input, dictation_language: event.target.value || undefined } })} className={cn(inputBase, "w-32")} placeholder="en-GB" /></Field>
     </div>
     <AccountDefaults defaults={value.account_defaults} onChange={(account_defaults) => setValue({ ...value, account_defaults })} />
