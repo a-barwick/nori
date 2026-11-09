@@ -13,7 +13,7 @@ import { cadence, money, relative, when } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Automation, AutomationEditable, AutomationPreview, Connection, DeliveryDestination, Effect, MissedRun, Occurrence, PermissionRule, Preferences, Trigger } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
-import { Confirm, Empty, Failure, Field, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, type Tone } from "./ui";
+import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, type Tone } from "./ui";
 
 type List<T> = { items: T[] };
 
@@ -232,12 +232,12 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
         {special ? <Notice>{cadence(existing!.trigger)}. Change this kind of trigger by asking Nori in Chat.</Notice> : <fieldset>
           <legend className="mb-1.5 text-meta font-medium">When</legend>
           <div className="flex flex-wrap gap-2">
-            <select aria-label="How often" value={frequency} onChange={(event) => setFrequency(event.target.value as Frequency)} className={cn(inputClass, "w-auto")}>
+            <select aria-label="How often" value={frequency} onChange={(event) => setFrequency(event.target.value as Frequency)} className={cn(inputBase, "w-auto")}>
               <option value="once">Once</option><option value="daily">Every day</option><option value="weekdays">Weekdays</option><option value="weekly">Certain days</option><option value="monthly">Monthly</option>
             </select>
-            <input aria-label={frequency === "once" ? "Date" : "Starting"} type="date" value={date} onChange={(event) => setDate(event.target.value)} className={cn(inputClass, "w-auto")} />
-            <input aria-label="Time" type="time" value={time} onChange={(event) => setTime(event.target.value)} className={cn(inputClass, "w-auto")} />
-            {frequency !== "once" && <input aria-label="Time zone" value={zone} onChange={(event) => setTimezone(event.target.value)} className={cn(inputClass, "w-56")} />}
+            <input aria-label={frequency === "once" ? "Date" : "Starting"} type="date" value={date} onChange={(event) => setDate(event.target.value)} className={cn(inputBase, "w-auto")} />
+            <input aria-label="Time" type="time" value={time} onChange={(event) => setTime(event.target.value)} className={cn(inputBase, "w-auto")} />
+            {frequency !== "once" && <input aria-label="Time zone" value={zone} onChange={(event) => setTimezone(event.target.value)} className={cn(inputBase, "w-56")} />}
           </div>
           {frequency === "weekly" && <div className="mt-2 flex flex-wrap gap-1" role="group" aria-label="Days">{WEEKDAYS.map(([code, label]) => <button key={code} type="button" aria-pressed={days.includes(code)} onClick={() => setDays(days.includes(code) ? days.filter((day) => day !== code) : [...days, code])}
             className={cn("h-11 min-w-11 rounded-full px-3 text-meta font-medium", days.includes(code) ? "bg-ink text-surface" : "bg-fill-1 text-ink-2")}>{label}</button>)}</div>}
@@ -265,8 +265,8 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
             <input type="checkbox" className="accent-[var(--accent)]" checked={chosenTargets.includes(destination.id)} onChange={() => setTargets(chosenTargets.includes(destination.id) ? chosenTargets.filter((other) => other !== destination.id) : [...chosenTargets, destination.id])} />{destination.label}{destination.status !== "verified" ? " (not verified)" : ""}</label>)}</div>
         </fieldset>
         <div className="flex flex-wrap gap-4">
-          <Field label="Budget per run (USD)"><input type="number" min={0} step={0.1} value={budget} onChange={(event) => setBudget(event.target.value)} className={cn(inputClass, "w-32")} /></Field>
-          <Field label="Stop after (optional)"><input type="date" value={endAt} onChange={(event) => setEndAt(event.target.value)} className={cn(inputClass, "w-auto")} /></Field>
+          <Field label="Budget per run (USD)"><input type="number" min={0} step={0.1} value={budget} onChange={(event) => setBudget(event.target.value)} className={cn(inputBase, "w-32")} /></Field>
+          <Field label="Stop after (optional)"><input type="date" value={endAt} onChange={(event) => setEndAt(event.target.value)} className={cn(inputBase, "w-auto")} /></Field>
         </div>
         {(preview || previewError) && <section aria-label="Preview" aria-live="polite" className="rounded-card border border-hairline-strong bg-fill-1 p-4">
           {previewError ? <p className="text-meta text-danger">{previewError}</p> : preview && <>

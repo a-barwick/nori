@@ -11,7 +11,7 @@ import { day, relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Automation, Goal, GoalEditable, LibraryItem, WorkItem } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
-import { Confirm, Empty, Failure, Field, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, type Tone } from "./ui";
+import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, type Tone } from "./ui";
 
 type List<T> = { items: T[] };
 const STATUS: Record<Goal["status"], { tone: Tone; label: string }> = { active: { tone: "accent", label: "Active" }, paused: { tone: "neutral", label: "Paused" }, completed: { tone: "ok", label: "Done" }, abandoned: { tone: "neutral", label: "Dropped" } };
@@ -136,8 +136,8 @@ function GoalEditor({ existing }: { existing?: Goal }) {
           <Button size="sm" variant="quiet" className="mt-2" onClick={() => setCriteria([...criteria, { text: "" }])}><Plus size={14} aria-hidden />Add</Button>
         </fieldset>
         <div className="flex flex-wrap gap-4">
-          <Field label="By (optional)"><input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} className={cn(inputClass, "w-auto")} /></Field>
-          <Field label="Follow-up"><select value={followUp} onChange={(event) => setFollowUp(event.target.value as typeof followUp)} className={cn(inputClass, "w-auto")}>
+          <Field label="By (optional)"><input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} className={cn(inputBase, "w-auto")} /></Field>
+          <Field label="Follow-up"><select value={followUp} onChange={(event) => setFollowUp(event.target.value as typeof followUp)} className={cn(inputBase, "w-auto")}>
             <option value="remind">Remind me</option><option value="monitor">Watch for changes</option><option value="none">Nothing</option></select></Field>
         </div>
         {action.error && <Notice tone="danger">{action.error}</Notice>}
