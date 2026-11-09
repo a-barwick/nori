@@ -48,6 +48,7 @@ Ownership is a default. Rebalance when a stream is the bottleneck; agree before 
 | r2.4 | published by integration, proposed by frontend: `SkillView` = `Skill` plus `id`, `revision`, `enabled` and `installation_id` for read-only plugin skills; `assistant_features.skills`. Backend already serves the shape. Checker reproduced by the coordinator. | `1bc295b` on `claude/nori-assistant-integration-bd1278` | frontend: merged at `8067e25`, adopted at `7dc6ff6`, acknowledged; backend: merged, acknowledged. r2.4 is the accepted contract. |
 | r2.5 | published by integration, proposed by backend, agreed by frontend: `MCPClient` never carries the token or its hash; create-only `MCPClientChange`; `MCPClientCreated` returns the one-time token; `MCPClientAction` revoke; routes `/v1/mcp-clients`; the Nori MCP endpoint is `POST /mcp` on core. Checker reproduced by the coordinator. | `425bbeb` on `claude/nori-assistant-integration-bd1278` | backend: acknowledged; frontend: merged at `ce0ae11`, adopted at `a477508`, acknowledged. r2.5 is the accepted contract. |
 | r2.6 | published by integration: optional `WorkItem.origin.continues_task_id` for tasks started by the continue action, which backend serves after D-022. Additive. Checker reproduced by the coordinator. | `127514f` on `claude/nori-assistant-integration-bd1278` | backend: merged, acknowledged (projects it at `4e165e1`); frontend: merged, adopted at `43d308a`, acknowledged. r2.6 is the accepted contract. |
+| r2.7 | published by integration: `OperationProjection.cleared` gains `contained`, marking package failures the sandbox contained (D-026). Additive; r1's closed enum would have rejected it. Checker reproduced by the coordinator. | `ab5318e` on `claude/nori-assistant-integration-bd1278` | pending backend and frontend |
 
 Reviews: backend `8c22c80` (`docs/assistant-r0-review-backend.md`), frontend `061cd76` (`docs/assistant-r0-review-frontend.md`), integration `3f49ccd` (`docs/assistant-r0-review-integration.md`), each on its own branch.
 
@@ -97,6 +98,7 @@ Remaining backend scope after `26ee755`: W13 computer sessions and takeover, the
 | Frontend | `43d308a` | Work detail offers "Continue this task" on a failed task, with a new spending-limit field when the stop was a spending limit, opens the new task and shows the link back; origin kind `external` reads "Another app". Verified live: continuing returned 202 with the new task id and the new task links back. | implemented, locally verified; awaiting integration merge |
 | Backend | `0b70977`, `04d3b48`, `e5f9ced` | D-013 (cited results stay in the outer loop's task context) and D-025; plugin pre-invocation and result hooks run in the sandbox under deadlines; chained continuation titles. A14 nested calls next. | implemented; awaiting integration merge |
 | Integration | `dd3cd6d` | Frontend's latest merged; acceptance counts 24 implemented, 10 locally verified, 7 not started, 3 blocked. | landed |
+| Integration | after `9b60831` | A07 locally verified. A44 exercised on the recorded provider with its stopping point recorded (files and tasks connectors, push and email transport, a real provider and a real due time). A23 reservation recipe locally verified (recorded). Scheduler race: three simultaneous slots across two cores produced one occurrence, one task and one delivery each (A26). Disconnect retention per flag: access closed, revoke called, saved items kept; the flags are indistinguishable without imported content. In flight: revoke during execution, lease expiry. Still to do: registry update after a pinned call and the dynamic-call history (A40), cold-path latency, rollback rehearsal, docs for hooks, diagnostics and continuations. | landed |
 
 ## Design decisions recorded
 
@@ -133,11 +135,12 @@ Remaining backend scope after `26ee755`: W13 computer sessions and takeover, the
 | D-018 | integration, A34 | backend | Resume after takeover did not let the task use the browser. | fixed, verified |
 | D-019 | integration, A07 | backend | The guest did not report sandbox support. | fixed; guest reports `sandbox_v1`. A07 sandbox run: a normal call completed; an infinite loop was stopped at the 5-second limit; a 512 MB allocation was stopped at the 64 MB limit; each attempt recorded its own operation outcome |
 | D-020 | integration | backend | The browser could not name a page heading. | fix merged, re-check pending |
-| D-021 | integration | backend | Reported directly to backend. | fix merged, re-check pending |
-| D-022 | integration, A41 | backend | Continue ignored the new budget, no link to the continued task, and "$0.00" wording. | fixed and merged, re-check pending |
-| D-023 | integration, A41 | backend | Feedback lacked evidence references. | fixed and merged, re-check pending |
+| D-021 | integration | backend | A task stuck waiting for an answer that was never recorded is not repaired: the deliver-answers repair reports applied but the run-8 task stays stuck with no answer command. | fix merged but re-check failed for its case; reported back to backend |
+| D-022 | integration, A41 | backend | Continue ignored the new budget, no link to the continued task, and "$0.00" wording. | verified live by frontend on the integration core |
+| D-023 | integration, A41 | backend | Feedback lacked evidence references. | verified: feedback carries status, spend and operation ids |
 | D-024 | frontend, A41 | backend | A continued task's `WorkItem.title` is the internal instruction text rather than a user-facing title. | fixed at `e5f9ced`: a continuation is titled by the root task it continues; awaiting integration merge |
 | D-025 | integration | backend | The untaken branch of a conditional request was listed as unmet. | fixed at `0b70977`, awaiting integration merge |
+| D-026 | integration, A07 | backend | Sandbox-contained package failures were not distinguishable in the operation record. | fixed at `9bd0438` with r2.7 `cleared: contained` |
 
 ## Disagreements
 
