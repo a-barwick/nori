@@ -1,0 +1,30 @@
+{
+  "task_id": "task_9",
+  "title": "Book the dentist",
+  "status": "running",
+  "bucket": "needs_you",
+  "instruction_revision": 3,
+  "origin": {
+    "kind": "conversation",
+    "conversation_id": "assistant",
+    "message_id": "msg_1"
+  },
+  "interaction_ids": [
+    "int_5"
+  ],
+  "progress": "Waiting for approval to send the invite",
+  "operations": {
+    "total": 3,
+    "uncertain": 0,
+    "failed": 0,
+    "submitted": 0
+  },
+  "result_ids": [],
+  "cost": {
+    "amount_usd": 0.04,
+    "status": "known",
+    "budget_usd": 1
+  },
+  "started_at": "2026-11-09T09:00:00Z",
+  "cancel_requested": false
+}

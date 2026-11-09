@@ -1,5 +1,5 @@
 {
-  "revision": "r0-draft",
+  "revision": "r1",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -579,6 +579,220 @@
       "file": "fixtures/domain/contact-candidate.valid.json",
       "schema": "domain.schema.json#/$defs/ContactCandidate",
       "valid": true
+    },
+    {
+      "file": "fixtures/common/assistant-summary.valid.json",
+      "schema": "common.schema.json#/$defs/AssistantSummary",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/capabilities.valid.json",
+      "schema": "common.schema.json#/$defs/AssistantCapabilities",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/preferences.valid.json",
+      "schema": "common.schema.json#/$defs/Preferences",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/preferences-change.valid.json",
+      "schema": "common.schema.json#/$defs/PreferencesChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/receipt.queued-with-auth.valid.json",
+      "schema": "common.schema.json#/$defs/MutationReceipt",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/integration.ready.valid.json",
+      "schema": "connections.schema.json#/$defs/Integration",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/integration.blocked.valid.json",
+      "schema": "connections.schema.json#/$defs/Integration",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/integration.mcp.valid.json",
+      "schema": "connections.schema.json#/$defs/Integration",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/integration.leaks-client-secret.invalid.json",
+      "schema": "connections.schema.json#/$defs/Integration",
+      "valid": false,
+      "note": "Catalog entries never carry application credentials"
+    },
+    {
+      "file": "fixtures/connections/connection-action.connect-absolute-return.invalid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionAction",
+      "valid": false,
+      "note": "return_to must be a relative path inside the web app (open redirect)"
+    },
+    {
+      "file": "fixtures/connections/connection-action.connect-protocol-relative.invalid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionAction",
+      "valid": false,
+      "note": "protocol-relative return_to is an open redirect"
+    },
+    {
+      "file": "fixtures/connections/connection-action.disconnect-flags.valid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/oauth-callback.valid.json",
+      "schema": "connections.schema.json#/$defs/OAuthCallback",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/oauth-callback.cancelled.valid.json",
+      "schema": "connections.schema.json#/$defs/OAuthCallback",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/oauth-callback.no-state.invalid.json",
+      "schema": "connections.schema.json#/$defs/OAuthCallback",
+      "valid": false,
+      "note": "callback without state cannot be bound to an attempt"
+    },
+    {
+      "file": "fixtures/connections/connection.health-repair.valid.json",
+      "schema": "connections.schema.json#/$defs/Connection",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection.health-free-code.invalid.json",
+      "schema": "connections.schema.json#/$defs/Connection",
+      "valid": false,
+      "note": "health code is a closed enum (F11)"
+    },
+    {
+      "file": "fixtures/connections/connection-change.owner-id.invalid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionChange",
+      "valid": false,
+      "note": "owner is never client-supplied"
+    },
+    {
+      "file": "fixtures/connections/connection-change.defaults.invalid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionChange",
+      "valid": false,
+      "note": "defaults move to Preferences.account_defaults (B8)"
+    },
+    {
+      "file": "fixtures/automations/automation-change.owner-id.invalid.json",
+      "schema": "automations.schema.json#/$defs/AutomationChange",
+      "valid": false,
+      "note": "owner is never client-supplied"
+    },
+    {
+      "file": "fixtures/permissions/rule-change.owner-id.invalid.json",
+      "schema": "permissions.schema.json#/$defs/PermissionRuleChange",
+      "valid": false,
+      "note": "owner is never client-supplied"
+    },
+    {
+      "file": "fixtures/permissions/response.owner-id.invalid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": false,
+      "note": "owner is never client-supplied"
+    },
+    {
+      "file": "fixtures/permissions/response.authority-ref.invalid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": false,
+      "note": "authority is server-issued"
+    },
+    {
+      "file": "fixtures/permissions/response.empty-digest.invalid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": false,
+      "note": "an approval must name the exact action"
+    },
+    {
+      "file": "fixtures/permissions/interaction.payload-digest.invalid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": false,
+      "note": "the digest has one source of truth (F10)"
+    },
+    {
+      "file": "fixtures/permissions/interaction.superseded.valid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/rule.with-summary.valid.json",
+      "schema": "permissions.schema.json#/$defs/PermissionRule",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/work-item.needs-you.valid.json",
+      "schema": "execution.schema.json#/$defs/WorkItem",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/work-item.uncertain.valid.json",
+      "schema": "execution.schema.json#/$defs/WorkItem",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/operation-projection.existing-wire.valid.json",
+      "schema": "execution.schema.json#/$defs/OperationProjection",
+      "valid": true,
+      "note": "today's operationView shape (embedded OperationRecord + owner) validates unchanged (I5); replace with a capture from the local stack"
+    },
+    {
+      "file": "fixtures/automations/automation-preview.dst.valid.json",
+      "schema": "automations.schema.json#/$defs/AutomationPreview",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/occurrence.skipped.valid.json",
+      "schema": "automations.schema.json#/$defs/Occurrence",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/automation.authority-ref.invalid.json",
+      "schema": "automations.schema.json#/$defs/Automation",
+      "valid": false,
+      "note": "projections never carry authority references (B5)"
+    },
+    {
+      "file": "fixtures/library/card.unknown-resource-kind.invalid.json",
+      "schema": "library.schema.json#/$defs/CardPart",
+      "valid": false,
+      "note": "resource kind must map to a read route (F8)"
+    },
+    {
+      "file": "fixtures/library/library-item.event-data.valid.json",
+      "schema": "library.schema.json#/$defs/LibraryItem",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/library-item.data-without-kind.invalid.json",
+      "schema": "library.schema.json#/$defs/LibraryItem",
+      "valid": false,
+      "note": "data needs its discriminator"
+    },
+    {
+      "file": "fixtures/library/search-hit.task-jump.valid.json",
+      "schema": "library.schema.json#/$defs/SearchHit",
+      "valid": true
+    },
+    {
+      "file": "fixtures/tools/tool-definition.dotted-model-name.invalid.json",
+      "schema": "tools.schema.json#/$defs/ToolDefinition",
+      "valid": false,
+      "note": "OpenAI rejects '.' in function names (B1)"
+    },
+    {
+      "file": "fixtures/tools/tool-definition.missing-location.invalid.json",
+      "schema": "tools.schema.json#/$defs/ToolDefinition",
+      "valid": false,
+      "note": "location drives computer revisions in the workflow (B2)"
     }
   ]
 }

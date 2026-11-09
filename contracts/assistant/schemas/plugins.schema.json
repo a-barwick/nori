@@ -1045,7 +1045,7 @@
       ]
     },
     "ReservedToolName": {
-      "description": "Runtime orchestration names (task and conversation tools at the baseline commit). External definitions cannot claim them or another provider's tool name.",
+      "description": "Runtime orchestration names that no external definition can claim. Built-in model names are also protected by the uniqueness rule on ToolDefinition.model_name (B10).",
       "enum": [
         "complete",
         "request_input",
@@ -1062,7 +1062,10 @@
         "remember",
         "show_result",
         "steer",
-        "stop"
+        "stop",
+        "operation_read",
+        "task_history_read",
+        "tool_search"
       ]
     }
   }

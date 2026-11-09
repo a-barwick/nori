@@ -1,7 +1,5 @@
 {
   "id": "op_42",
-  "task_id": "task_9",
-  "instruction_revision": 3,
   "call_id": "call_7",
   "name": "calendar_create_event",
   "tool": {
@@ -31,5 +29,21 @@
     "status": "not_applicable"
   },
   "created_at": "2026-11-09T09:00:00Z",
-  "updated_at": "2026-11-09T10:00:00Z"
+  "updated_at": "2026-11-09T10:00:00Z",
+  "revision": 3,
+  "owner": {
+    "type": "task",
+    "id": "task_9"
+  },
+  "attempt": 1,
+  "result_ref": "",
+  "artifact_ids": [],
+  "action": {
+    "digest": "sha256:act1",
+    "text": "Create 'Dentist' and invite alex@example.com",
+    "spec": {
+      "calendar": "primary"
+    }
+  },
+  "binding_digest": "sha256:b1"
 }

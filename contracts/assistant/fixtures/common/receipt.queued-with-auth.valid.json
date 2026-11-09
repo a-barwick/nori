@@ -1,0 +1,15 @@
+{
+  "request_id": "6f1c2a8e-4b7d-4c1e-9a2f-0d3e5b7c9a11",
+  "accepted": true,
+  "status": "queued",
+  "resource": {
+    "id": "conn_google_personal",
+    "revision": 1,
+    "status": "connecting"
+  },
+  "auth": {
+    "id": "att_7",
+    "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=example&state=opaque",
+    "expires_at": "2026-11-09T09:10:00Z"
+  }
+}

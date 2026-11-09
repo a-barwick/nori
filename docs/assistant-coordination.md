@@ -9,18 +9,18 @@ Compact record for the parallel implementation of [the assistant integration pla
 | Application code the plan and baseline inspected | `c539313` |
 | Plan, location map and architecture diagram | `0d7655c` |
 | Contract baseline draft r0 (docs only) | `2a5d5bd` |
-| Shared starting commit: r0 encoded as schemas, fixtures and checker, plus this record | recorded below under Sessions once the sessions are cut from it |
+| Shared starting commit: r0 encoded as schemas, fixtures and checker, plus this record | `ed6b020` |
 
 ## Sessions
 
-Three implementation sessions and one coordination session. Each implementation session has its own Git worktree and branch cut from the shared starting commit. Session ids, branches and the verified model and effort are filled in by the coordinator when the sessions start.
+Three implementation sessions and one coordination session. Each implementation session has its own Git worktree and branch cut from the shared starting commit. Started 2026-11-09 from `ed6b020`. Model and effort below were read back from each session after start, not assumed.
 
 | Role | Session | Branch | Model and effort |
 | --- | --- | --- | --- |
 | Coordination | this session, `claude/nori-assistant-integration-25ae45` | holds the starting commit and this record | Fable 5.1, high |
-| Backend | pending | pending | requested Opus 5.5, high |
-| Frontend | pending | pending | requested Opus 5.5, high |
-| Integration and verification | pending | pending; this is the integration branch and the branch the final pull request comes from | requested Opus 5.5, high |
+| Backend | `local_2b3a2cfd-108c-4e88-b9dc-d21728d7ce72`, name `nori-backend`, worktree `.claude/worktrees/nori-assistant-backend-9c520e` | `claude/nori-assistant-backend-9c520e` | Opus 5.5 (`claude-opus-5-5`), high, verified |
+| Frontend | `local_cdc50588-45ab-4501-8a8d-e492526d9c73`, name `nori-frontend`, worktree `.claude/worktrees/nori-assistant-frontend-78149f` | `claude/nori-assistant-frontend-78149f` | Opus 5.5 (`claude-opus-5-5`), high, verified |
+| Integration and verification | `local_99b4c3ec-3499-4da1-b738-f8de9cae938b`, name `nori-integration`, worktree `.claude/worktrees/nori-assistant-integration-bd1278` | `claude/nori-assistant-integration-bd1278`; this is the integration branch and the branch the final pull request comes from | Opus 5.5 (`claude-opus-5-5`), high, verified |
 
 Sessions message each other directly by name for work coordination. The coordinator is a peer, not an approver. Disagreements that are not settled by evidence go to Austin through the coordination session; they are listed under Pending below until resolved.
 
@@ -39,7 +39,7 @@ Ownership is a default. Rebalance when a stream is the bottleneck; agree before 
 | Revision | Status | Commit | Acknowledged by |
 | --- | --- | --- | --- |
 | r0 (docs) | draft, under independent review by all three streams | `2a5d5bd` | none |
-| r0-draft encoding (`contracts/assistant`) | draft transcription of r0; the review's concrete object | starting commit | none |
+| r0-draft encoding (`contracts/assistant`) | draft transcription of r0; the review's concrete object | `ed6b020` | none |
 | r1 | not yet proposed; will carry the compatible recommendations from the three reviews | | |
 
 A revision is accepted when its schema and fixture change is committed by one editor and each affected consumer records the commit it adopted here.

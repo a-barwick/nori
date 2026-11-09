@@ -2,7 +2,7 @@
 
 Shared JSON Schema 2020-12 definitions and fixtures for the boundaries in [the contract baseline](../../docs/assistant-contract-baseline.md). Backend validates Go runtime values against these schemas, the web client generates its TypeScript types from them, and the integration stream keeps the fixtures and the checker current.
 
-Current encoding: **r0-draft**. It transcribes baseline r0 as written. No revision is accepted yet; acceptance is recorded in [the coordination record](../../docs/assistant-coordination.md), by commit.
+Current encoding: **r1**. It applies the agreed recommendations from the three r0 reviews (`docs/assistant-r0-review-*.md`): backend B1–B10, frontend F1–F11 and F13 with the preferences shape and readable rule summaries, integration I4–I6. Queued for r2: frontend F12, the rest of F14, F15–F19, and the scenario fixtures and live mode (I1). A revision is accepted when each affected consumer acknowledges its commit in [the coordination record](../../docs/assistant-coordination.md).
 
 ## Layout
 
@@ -32,7 +32,10 @@ cd core && go run ./cmd/contracts-check
 
 ## Conventions carried from the baseline
 
-- Request schemas (`Change`, `ActionRequest`, `*Editable`, responses) reject unknown fields. Resource projections tolerate additive fields.
+- Request schemas (`Change`, `ActionRequest`, `*Editable`, responses) reject unknown fields, so an `owner_id` or `authority_ref` in a request is invalid. Resource projections tolerate additive fields.
+- `OperationProjection` extends today's operation wire shape (embedded `state.OperationRecord` plus `owner`); `revision` there is the instruction revision.
+- Account defaults live in `Preferences.account_defaults`; `Connection.defaults` is derived and read-only.
+- `return_to` values are relative paths inside the web app.
 - Projections never carry tokens, credential references, raw arguments or authority references; the schemas say so with `not` clauses and the invalid fixtures prove it.
 - Existing names stay: operation outcomes, `SavedResult` fields, task command kinds, `instruction_revision`.
 - `authority_ref` is server-issued. A request that supplies one is invalid.

@@ -1,0 +1,33 @@
+{
+  "id": "conn_google_work",
+  "revision": 7,
+  "integration_id": "google_calendar",
+  "title": "Work calendar",
+  "account": {
+    "provider_id": "1093",
+    "label": "work@example.com"
+  },
+  "status": "needs_attention",
+  "granted_scopes": [
+    "https://www.googleapis.com/auth/calendar.readonly"
+  ],
+  "missing_scopes": [
+    "https://www.googleapis.com/auth/calendar.events"
+  ],
+  "capabilities": [
+    "calendar.read"
+  ],
+  "selected_resource_ids": [
+    "primary"
+  ],
+  "health": {
+    "checked_at": "2026-11-09T09:00:00Z",
+    "code": "needs_more_access",
+    "recovery": "request_access",
+    "message": "Creating events needs more access.",
+    "affected_capability_ids": [
+      "calendar.write"
+    ]
+  },
+  "defaults": []
+}

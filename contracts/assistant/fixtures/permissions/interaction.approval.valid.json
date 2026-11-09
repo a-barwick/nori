@@ -8,7 +8,6 @@
   "prompt": "Send the invite?",
   "action_digest": "sha256:act1",
   "payload": {
-    "action_digest": "sha256:act1",
     "summary": "Invite alex@example.com to 'Dentist'",
     "effect": "sensitive_send",
     "account": {

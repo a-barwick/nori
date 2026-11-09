@@ -1,0 +1,25 @@
+{
+  "id": "int_5",
+  "revision": 2,
+  "task_id": "task_9",
+  "instruction_revision": 3,
+  "kind": "approval",
+  "status": "superseded",
+  "superseded_by": "int_6",
+  "task_title": "Book the dentist",
+  "prompt": "Send the invite?",
+  "action_digest": "sha256:act1",
+  "payload": {
+    "summary": "Invite alex@example.com",
+    "effect": "sensitive_send",
+    "account": {
+      "connection_id": "conn_google_personal",
+      "label": "personal@example.com"
+    },
+    "resources": []
+  },
+  "resolution": {
+    "kind": "expired",
+    "at": "2026-11-09T09:05:00Z"
+  }
+}
