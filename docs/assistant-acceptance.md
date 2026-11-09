@@ -220,7 +220,8 @@ go run ./cmd/nori-user -id 22222222-2222-4222-8222-222222222222 -email integrati
 Task worker (from `core/`, same environment without `PORT`). `nori-local` does not run Temporal workers, so tasks sit at `WorkflowTaskScheduled` until one polls. Workers use Worker Deployment versioning: give each build its own id and make it current:
 
 ```bash
-TEMPORAL_BUILD_ID=int-$(git rev-parse --short HEAD) go run ./cmd/nori-worker
+unset PORT  # PORT switches the worker into hosted mode, which demands NORI_WORKER_SERVICES
+TEMPORAL_DEPLOYMENT_NAME=nori-task TEMPORAL_BUILD_ID=int-$(git rev-parse --short HEAD) go run ./cmd/nori-worker
 ```
 
 ```bash
