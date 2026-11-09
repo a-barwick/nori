@@ -13,6 +13,7 @@ import (
 	"nori/internal/connections"
 	"nori/internal/extensions"
 	"nori/internal/permissions"
+	"nori/internal/scheduler"
 	"nori/internal/secret"
 	"nori/internal/state"
 )
@@ -34,6 +35,9 @@ type Assistant struct {
 	Stop func(ctx context.Context, commandID, taskID string) (state.Run, error)
 	// Features lists the route families that are live.
 	Features map[string]bool
+	// Scheduler serves automations, goals, delivery destinations and the inbox.
+	Scheduler        *scheduler.Service
+	UnattendedWrites string
 	// NextScheduled and InboxUnread feed the summary badges once the Scheduler and inbox exist.
 	NextScheduled func(ctx context.Context) *time.Time
 	InboxUnread   func(ctx context.Context) int
@@ -146,6 +150,9 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/work/{task_id}/actions", jsonBody(a.workAction))
 	mux.HandleFunc("GET /v1/operations", a.operations)
 	mux.HandleFunc("GET /v1/assistant/summary", a.summary)
+	if a.Scheduler != nil {
+		a.registerScheduling(mux)
+	}
 	for _, extra := range a.Extra {
 		extra(mux, a)
 	}

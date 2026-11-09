@@ -64,7 +64,7 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 		store.Close()
 		return nil, err
 	}
-	service.Extensions = services.Connections
+	service.Extensions = services.Tools
 	activities := &task.Activities{Agent: service, Store: store, Executor: &task.Executor{
 		Adapters: services.Adapters, Connections: services.Connections, Permissions: services.Permissions,
 	}}

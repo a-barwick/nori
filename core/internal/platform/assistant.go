@@ -1,13 +1,17 @@
 package platform
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
 	"nori/internal/connections"
 	"nori/internal/connectors/google"
+	"nori/internal/connectors/nori"
+	"nori/internal/extensions"
 	"nori/internal/invoke"
 	"nori/internal/permissions"
+	"nori/internal/scheduler"
 	"nori/internal/secret"
 	"nori/internal/secret/localvault"
 	"nori/internal/settings"
@@ -21,6 +25,9 @@ type AssistantServices struct {
 	Connections *connections.Service
 	Permissions *permissions.Service
 	Adapters    *invoke.Registry
+	Scheduler   *scheduler.Service
+	// Tools is the inventory the agent and the API offer: connected App connectors and Nori's own tools.
+	Tools extensions.Source
 }
 
 var (
@@ -53,8 +60,15 @@ func Credentials(s settings.Settings, user users.User) (secret.CredentialStore, 
 	return vault.ForUser(user.DataOwner())
 }
 
+// AssistantStore is the user-scoped storage the assistant services need.
+type AssistantStore interface {
+	state.ResourceStore
+	state.RunStore
+}
+
 // Assistant composes the user's assistant services over their scoped store.
-func Assistant(s settings.Settings, user users.User, store state.ResourceStore) (*AssistantServices, error) {
+func Assistant(s settings.Settings, user users.User, store AssistantStore) (*AssistantServices, error) {
+	tasks := store
 	credentials, err := Credentials(s, user)
 	if err != nil {
 		return nil, err
@@ -62,9 +76,33 @@ func Assistant(s settings.Settings, user users.User, store state.ResourceStore) 
 	adapters := invoke.NewRegistry()
 	google.Register(adapters)
 	integrations := []connections.Integration{google.Integration{ClientID: s.Connections.GoogleClientID, ClientSecret: s.Connections.GoogleClientSecret}}
+	conn := connections.New(store, credentials, s.Connections.RedirectURL, integrations...)
+	perms := &permissions.Service{Store: store, UnattendedWrites: s.Connections.UnattendedWrites, UserSends: s.Connections.UserSends}
+	sched := &scheduler.Service{Store: store, Tasks: tasks, Permissions: perms, Events: google.EventSource{Connections: conn},
+		Results: func(ctx context.Context, taskID string) []string {
+			results, err := tasks.RecentResults(ctx, 200)
+			if err != nil {
+				return nil
+			}
+			ids := []string{}
+			for _, result := range results {
+				if result.RunID == taskID {
+					ids = append(ids, result.ID)
+				}
+			}
+			return ids
+		},
+		Timezone: func(ctx context.Context) string {
+			prefs, _, err := conn.Preferences(ctx)
+			if err != nil {
+				return ""
+			}
+			return prefs.Timezone
+		},
+	}
+	nori.Register(adapters, nori.Adapter{Scheduler: sched, Unattended: s.Connections.UnattendedWrites})
 	return &AssistantServices{
-		Connections: connections.New(store, credentials, s.Connections.RedirectURL, integrations...),
-		Permissions: &permissions.Service{Store: store, UnattendedWrites: s.Connections.UnattendedWrites, UserSends: s.Connections.UserSends},
-		Adapters:    adapters,
+		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched,
+		Tools: extensions.Sources{nori.Source{}, conn},
 	}, nil
 }

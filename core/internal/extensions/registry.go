@@ -129,3 +129,24 @@ func (s *Snapshot) Search(query string, limit int) []Definition {
 	}
 	return out
 }
+
+// Sources merges several sources in order. A failing source is reported, and the others still contribute.
+type Sources []Source
+
+func (s Sources) Inventory(ctx context.Context) (Inventory, error) {
+	var merged Inventory
+	var failure error
+	for _, source := range s {
+		inventory, err := source.Inventory(ctx)
+		if err != nil {
+			failure = err
+			continue
+		}
+		merged.Definitions = append(merged.Definitions, inventory.Definitions...)
+		merged.Capabilities = append(merged.Capabilities, inventory.Capabilities...)
+	}
+	if failure != nil && len(merged.Definitions) == 0 {
+		return merged, failure
+	}
+	return merged, nil
+}

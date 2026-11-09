@@ -14,6 +14,7 @@ import (
 	"nori/internal/conversation"
 	"nori/internal/dispatch"
 	"nori/internal/platform"
+	"nori/internal/scheduler"
 	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/users"
@@ -33,6 +34,7 @@ type App struct {
 	engine     dispatch.Orchestrator
 	handler    http.Handler
 	Assistant  *api.Assistant
+	Scheduler  *scheduler.Service
 }
 
 func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user users.User) (*App, error) {
@@ -61,11 +63,15 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		store.Close()
 		return nil, err
 	}
-	toolSource := &agent.Service{Extensions: services.Connections, Computer: platform.Computer(cfg)}
+	toolSource := &agent.Service{Extensions: services.Tools, Computer: platform.Computer(cfg)}
+	result.Scheduler = services.Scheduler
 	result.Assistant = &api.Assistant{
 		Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
+		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites,
 		Features: map[string]bool{"integrations": true, "connections": true, "interactions": true, "permissions": true,
-			"preferences": true, "work": !cfg.Features.DisableBackgroundTasks, "operations": true},
+			"preferences": true, "work": !cfg.Features.DisableBackgroundTasks, "operations": true,
+			"automations": !cfg.Features.DisableBackgroundTasks, "goals": true, "inbox": true},
+		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 	}
 	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
 	if cfg.Features.DisableBackgroundTasks {
@@ -101,6 +107,13 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	result.Assistant.Answer = func(ctx context.Context, commandID, taskID, questionID, text string) error {
 		_, err := tasks.AcceptBatch(ctx, []state.Command{{ID: commandID, RunID: taskID, Kind: state.CommandAnswer, QuestionID: questionID, Text: text}}, nil)
 		return err
+	}
+	services.Scheduler.Accept = func(ctx context.Context, cmd state.Command) (state.Run, error) {
+		receipts, err := tasks.AcceptBatch(ctx, []state.Command{cmd}, nil)
+		if err != nil {
+			return state.Run{}, err
+		}
+		return receipts[0].Run, nil
 	}
 	result.Assistant.Stop = func(ctx context.Context, commandID, taskID string) (state.Run, error) {
 		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: commandID, RunID: taskID, Kind: state.CommandStop}}, nil)
@@ -139,7 +152,7 @@ func (a *App) Process(ctx context.Context) error {
 	}
 	chatDone := make(chan error, 1)
 	go func() { chatDone <- a.Chats.Process(ctx) }()
-	assistantErr := a.processAssistant(ctx)
+	assistantErr := errors.Join(a.processAssistant(ctx), a.Schedule(ctx))
 	if err := errors.Join(<-chatDone, assistantErr); err != nil {
 		return err
 	}
@@ -149,6 +162,16 @@ func (a *App) Process(ctx context.Context) error {
 	if err == nil && pending != "" {
 		err = state.ErrConversationBusy
 	}
+	return err
+}
+
+// Schedule turns due automation slots into tasks, settles finished occurrences and delivers results. Duplicate or
+// lost passes are harmless: every step is keyed by a stable occurrence identity.
+func (a *App) Schedule(ctx context.Context) error {
+	if a.Scheduler == nil || a.Scheduler.Accept == nil {
+		return nil
+	}
+	_, err := a.Scheduler.Tick(ctx)
 	return err
 }
 
