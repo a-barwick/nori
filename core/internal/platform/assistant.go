@@ -25,6 +25,7 @@ import (
 	"nori/internal/scheduler"
 	"nori/internal/secret"
 	"nori/internal/secret/localvault"
+	"nori/internal/secret/rowstore"
 	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/users"
@@ -49,14 +50,56 @@ var (
 	vaults  = map[string]*localvault.Vault{}
 )
 
-// Credentials opens the connected-account credential store for a user. Only the local development store exists
-// until decision D1 picks a production backend; every other deployment gets secret.Unavailable.
-func Credentials(s settings.Settings, user users.User) (secret.CredentialStore, error) {
+var (
+	keyMu   sync.Mutex
+	wrapper rowstore.KeyWrapper
+)
+
+// credentialKeys resolves the master key for the database credential store once per process.
+func credentialKeys(s settings.Settings) (rowstore.KeyWrapper, error) {
+	keyMu.Lock()
+	defer keyMu.Unlock()
+	if wrapper != nil {
+		return wrapper, nil
+	}
+	c := s.Connections
+	switch {
+	case c.CredentialKMSKey != "":
+		kms, err := rowstore.OpenCloudKMS(context.Background(), c.CredentialKMSKey)
+		if err != nil {
+			return nil, err
+		}
+		wrapper = kms
+	case c.CredentialKeyFile != "":
+		if s.Cloud != "local" {
+			return nil, fmt.Errorf("NORI_CREDENTIAL_KEY_FILE is for local development only and requires NORI_CLOUD=local")
+		}
+		local, err := rowstore.OpenLocalKey(c.CredentialKeyFile)
+		if err != nil {
+			return nil, err
+		}
+		wrapper = local
+	default:
+		return nil, fmt.Errorf("NORI_CREDENTIAL_STORE=database needs NORI_CREDENTIAL_KMS_KEY (or NORI_CREDENTIAL_KEY_FILE on the local stack)")
+	}
+	return wrapper, nil
+}
+
+// Credentials opens the connected-account credential store for a user: envelope-encrypted rows in the user's own
+// store (D1), the file vault on the local stack, or secret.Unavailable when none is configured.
+func Credentials(s settings.Settings, user users.User, store state.ResourceStore) (secret.CredentialStore, error) {
 	if s.Connections.CredentialStore == "" {
 		return secret.Unavailable{}, nil
 	}
+	if s.Connections.CredentialStore == "database" {
+		keys, err := credentialKeys(s)
+		if err != nil {
+			return nil, err
+		}
+		return &rowstore.Store{Resources: store, Keys: keys}, nil
+	}
 	if s.Connections.CredentialStore != "local" || s.Cloud != "local" {
-		return nil, fmt.Errorf("NORI_CREDENTIAL_STORE=local is the only store and requires NORI_CLOUD=local")
+		return nil, fmt.Errorf("NORI_CREDENTIAL_STORE is database, or local (file vault) with NORI_CLOUD=local")
 	}
 	if s.Connections.CredentialDir == "" {
 		return nil, fmt.Errorf("NORI_CREDENTIAL_STORE=local requires NORI_CREDENTIAL_DIR or NORI_LOCAL_ARTIFACT_DIR")
@@ -83,7 +126,7 @@ type AssistantStore interface {
 // Assistant composes the user's assistant services over their scoped store.
 func Assistant(s settings.Settings, user users.User, store AssistantStore) (*AssistantServices, error) {
 	tasks := store
-	credentials, err := Credentials(s, user)
+	credentials, err := Credentials(s, user, store)
 	if err != nil {
 		return nil, err
 	}

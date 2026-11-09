@@ -53,8 +53,11 @@ type Connections struct {
 	MicrosoftTenant                          string
 	// RedirectURL is the OAuth callback through the web proxy, for example http://127.0.0.1:3211/api/v1/connections/oauth/callback.
 	RedirectURL string
-	// CredentialStore is "local" (development only, requires NORI_CLOUD=local) or empty (unavailable).
-	CredentialStore, CredentialDir string
+	// CredentialStore is "local" (file vault, development only, requires NORI_CLOUD=local), "database" (envelope-
+	// encrypted rows, D1) or empty (unavailable). The database store wraps data keys with NORI_CREDENTIAL_KMS_KEY (a
+	// Cloud KMS key) or, on the local stack only, NORI_CREDENTIAL_KEY_FILE.
+	CredentialStore, CredentialDir      string
+	CredentialKMSKey, CredentialKeyFile string
 	// UnattendedWrites and UserSends are the interim D2 mechanisms; see internal/permissions.
 	UnattendedWrites, UserSends string
 	// ProviderReplay names a directory of recorded provider responses (internal/connectors/replay). Local development
@@ -252,6 +255,7 @@ func connectionsFromEnvironment(localArtifacts string) Connections {
 		MicrosoftClientID: os.Getenv("MICROSOFT_CLIENT_ID"), MicrosoftClientSecret: os.Getenv("MICROSOFT_CLIENT_SECRET"),
 		MicrosoftTenant: os.Getenv("MICROSOFT_TENANT"),
 		RedirectURL:     os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
+		CredentialKMSKey: os.Getenv("NORI_CREDENTIAL_KMS_KEY"), CredentialKeyFile: os.Getenv("NORI_CREDENTIAL_KEY_FILE"),
 		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"), UserSends: get("NORI_USER_SENDS", "allow"),
 		ProviderReplay: os.Getenv("NORI_PROVIDER_REPLAY"),
 		MCPCommands:    mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
