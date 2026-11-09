@@ -69,6 +69,7 @@ Each is run on the local integration stack and recorded here with what could not
 
 | Check | Status | Evidence |
 | --- | --- | --- |
+| Kill and restart the worker mid-task | locally verified | 2026-11-08 at `e680c6f`: task `2321c723` (six sequential web searches) stopped after 4 confirmed operations, worker down 30 s (run stayed `running`, no progress), restarted on the same build `int-e680c6f`. The in-flight workflow task timed out once and was retried; the task completed with 6 operations, each `attempt: 1`, no duplicate operation ids, and the expected result. |
 | Kill and restart core mid-task | not started | |
 | Lost wake and duplicate wake | not started | Duplicate submission only: scenario `conversation-message-retry` passes live (same message id twice gives the same active turn and one user message). A real lost wake (wake failure after acceptance) is not exercised yet. |
 | Stale approval after a correction | not started | |
@@ -85,13 +86,14 @@ Each is run on the local integration stack and recorded here with what could not
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-11-08 | coordinator record | `d1bf5bf` | n/a (docs) | pass | n/a | merged |
 | 2026-11-08 | backend W1 (Extension registry, CallRef.Exec pinning) | `8de4158` via `2ffce04` | pass | pass, 2 histories replay | two web-search tasks on the local stack; pinned `Exec` present on every call | merged; found defect D-001 (pre-existing, below) |
+| 2026-11-08 | backend D-001 fix | `67e01b3` | pass | pass | stuck run settled | merged as `e680c6f` |
 | 2026-11-08 | frontend shell, Work, interaction cards, proxy routes, generated types | `dc6d7d2` | pass, including fixture type-check | pass | web on 3213 as user A: chat history and Work list render from core 8083 through the proxy | merged |
 
 ## Defects found in integration
 
 | ID | Found | Owner | Reproduction | Status |
 | --- | --- | --- | --- | --- |
-| D-001 | 2026-11-08 at `4143e92`, also present at `ed6b020` | backend | Run core and worker with `NORI_COMPUTER_ENABLED=false`, ask for a background web lookup. The model is still offered `browser_navigate`; the call fails, then the cleanup activity fails non-retryably with "computer provider is not configured", the workflow closes FAILED, and the run stays `running` with "Waiting for owned work and cleanup to finish." The dispatcher logs "terminal recovery: computer provider is not configured" every 30 s forever, and the UI shows the task in progress. Workflow `nori-task-11111111-…:dab0dd7b-…` on namespace `nori-integration`. | reported to backend |
+| D-001 | 2026-11-08 at `4143e92`, also present at `ed6b020` | backend | Run core and worker with `NORI_COMPUTER_ENABLED=false`, ask for a background web lookup. The model is still offered `browser_navigate`; the call fails, then the cleanup activity fails non-retryably with "computer provider is not configured", the workflow closes FAILED, and the run stays `running` with "Waiting for owned work and cleanup to finish." The dispatcher logs "terminal recovery: computer provider is not configured" every 30 s forever, and the UI shows the task in progress. Workflow `nori-task-11111111-…:dab0dd7b-…` on namespace `nori-integration`. | fixed in `67e01b3`, merged as `e680c6f`. Verified: after restarting the worker on that build the stuck run settled to `failed` with "computer stop could not be confirmed …" on the next terminal-recovery pass, and the UI no longer shows it in progress. The tool-exposure half (no `location: computer` tools without a computer) is implemented, not yet exercised. |
 
 ## Runbook
 
