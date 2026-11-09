@@ -462,3 +462,9 @@ button.nova-assistant-name:hover { background: var(--fill-1); }
 }
 
 main h1[tabindex="-1"]:focus, main h1[tabindex="-1"]:focus-visible { outline: none; }
+
+/* Touch screens: every control in the assistant screens is at least 44px. */
+@media (pointer: coarse) {
+  .nori-screen button, .nori-screen select, .nori-screen [role="tab"], .nori-chat-toolbar button, .nori-rail a { min-height: 44px; }
+  .nori-screen button:not(:has(> span)), .nori-chat-toolbar button { min-width: 44px; }
+}

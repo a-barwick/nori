@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { announce } from "./announce";
 import { APIError, getJSON } from "./api";
 
 type Entry = { data?: unknown; error?: APIError | Error; loading: boolean; serial: number; revision: number };
@@ -84,10 +85,11 @@ export function useAction() {
   const [state, setState] = useState<{ pending?: string; error?: string }>({});
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const run = useCallback(async <T,>(name: string, action: () => Promise<T>): Promise<T | undefined> => {
+  const run = useCallback(async <T,>(name: string, action: () => Promise<T>, done?: string): Promise<T | undefined> => {
     setState({ pending: name });
     try {
       const result = await action();
+      if (done) announce(done);
       if (mounted.current) setState({});
       return result;
     } catch (error) {

@@ -71,6 +71,7 @@ function Frame({ children }: { children: ReactNode }) {
         </nav>
         <div className="flex min-w-0 flex-1 flex-col overflow-clip">{children}</div>
       </div>
+      <div id="nori-announcer" role="status" aria-live="polite" className="sr-only" />
       <nav aria-label="Main" className="nori-tabbar flex shrink-0 border-t border-hairline bg-surface sm:hidden">
         {mobileMain.map((item) => <TabLink key={item.href} item={item} active={item.match(path)} />)}
         <Dialog.Root open={more} onOpenChange={setMore}>

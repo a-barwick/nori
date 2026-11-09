@@ -51,7 +51,7 @@ function useRespond(interaction: Interaction, onDone?: () => void) {
       }
       invalidate("/interactions", "/work", "/assistant/summary", "/inbox");
       onDone?.();
-    });
+    }, { approve: "Approved.", decline: "Declined.", answer: "Answer sent.", choose_account: "Account chosen.", resume_computer: "Handed back to Nori." }[value.kind]);
   }
   return { respond, ...action, current, legacy };
 }

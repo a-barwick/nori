@@ -62,7 +62,7 @@ export function GoalDetailScreen({ id }: { id: string }) {
       if (error instanceof APIError && error.stale && error.body?.current) goal.apply(error.body.current as Goal);
       throw error;
     }
-  });
+  }, ({ pause: "Goal paused.", resume: "Goal resumed.", complete: "Goal marked done.", abandon: "Goal dropped." } as Record<string, string>)[value.action as string]);
   const open = item.status === "active" || item.status === "paused";
   const allMet = item.completion_criteria.every((criterion) => criterion.met);
   const tasks = item.linked.task_ids.map((taskID) => work.data?.items.find((task) => task.task_id === taskID) ?? { task_id: taskID, title: "Task" } as Pick<WorkItem, "task_id" | "title">);

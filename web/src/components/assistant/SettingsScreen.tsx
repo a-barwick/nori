@@ -149,9 +149,9 @@ function PreferencesEditor({ current, onSaved }: { current: Preferences; onSaved
       <Field label="Language and region"><input value={value.locale ?? ""} onChange={(event) => setValue({ ...value, locale: event.target.value })} className={cn(inputBase, "w-32")} placeholder="en-GB" /></Field>
     </div>
     <fieldset><legend className="mb-1.5 text-meta font-medium">Working hours</legend>
-      <ul className="space-y-1">{[1, 2, 3, 4, 5, 6, 0].map((day) => { const entry = hours(day); return <li key={day} className="flex min-h-11 flex-wrap items-center gap-3">
-        <label className="flex w-24 items-center gap-2 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={!!entry} onChange={(event) => setHours(day, event.target.checked ? { start: "09:00", end: "17:30" } : undefined)} />{DAYS[day]}</label>
-        {entry && <><input aria-label={`${DAYS[day]} start`} type="time" value={entry.start} onChange={(event) => setHours(day, { start: event.target.value, end: entry.end })} className={cn(inputBase, "w-auto py-1.5")} /><span className="text-ink-3">–</span><input aria-label={`${DAYS[day]} end`} type="time" value={entry.end} onChange={(event) => setHours(day, { start: entry.start, end: event.target.value })} className={cn(inputBase, "w-auto py-1.5")} /></>}
+      <ul className="space-y-1">{[1, 2, 3, 4, 5, 6, 0].map((day) => { const entry = hours(day); return <li key={day} className="flex min-h-11 items-center gap-3">
+        <label className="flex w-20 shrink-0 items-center gap-2 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={!!entry} onChange={(event) => setHours(day, event.target.checked ? { start: "09:00", end: "17:30" } : undefined)} />{DAYS[day]}</label>
+        {entry && <span className="flex min-w-0 items-center gap-2"><input aria-label={`${DAYS[day]} start`} type="time" value={entry.start} onChange={(event) => setHours(day, { start: event.target.value, end: entry.end })} className={cn(inputBase, "w-[7.5rem] min-w-0 px-2 py-1.5")} /><span className="text-ink-3" aria-hidden>–</span><input aria-label={`${DAYS[day]} end`} type="time" value={entry.end} onChange={(event) => setHours(day, { start: entry.start, end: event.target.value })} className={cn(inputBase, "w-[7.5rem] min-w-0 px-2 py-1.5")} /></span>}
       </li>; })}</ul>
     </fieldset>
     <div className="flex flex-wrap gap-4">
