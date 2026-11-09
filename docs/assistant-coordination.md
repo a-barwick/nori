@@ -98,6 +98,7 @@ Remaining backend scope after `26ee755`: W13 computer sessions and takeover, the
 | Decision | By | Content |
 | --- | --- | --- |
 | No web pass-through for the Nori MCP endpoint | frontend, agreed by backend and integration | `POST /mcp` is exposed from core's own ingress when hosted, with the client token as the only credential. The web origin sits behind the user's sign-in, and a route forwarding unauthenticated bearer requests would be a new public surface. A forward-only route through the web origin can be added if Austin wants it. Not a disagreement; recorded for Austin's awareness. |
+| A10 hosted managed stdio MCP is blocked, not deferred | backend, agreed by coordinator | Hosted managed stdio needs declared-host egress enforcement in the guest sandbox; the sandbox currently enforces no network at all, and stdio servers run only on the local development stack. One egress-allowlist mechanism serving both A07 and A10 is the agreed design but needs an egress proxy inside the guest's network namespace plus install-review wiring, which is beyond this pass. Hooks with deadlines remain open on backend's list. |
 
 ## Proposals in flight
 
@@ -123,7 +124,7 @@ Remaining backend scope after `26ee755`: W13 computer sessions and takeover, the
 | D-014 | integration, approval run 8 | backend | An approval given about 100 ms after the interaction opened resolved the interaction but recorded no answer command, so the task waited forever. | fixed by backend at `f66d81f` (retry delivery until the task asks), merged at `75e47fe`; verified at `f221fe9`: approvals 13, 33 and 80 ms after opening each delivered and wrote once |
 | D-016 | integration | backend | Search did not cover side chats and matched too loosely. | fixed, verified at `f221fe9` |
 | D-017 | integration | backend | A forgotten memory was still claimed. | fixed, verified at `f221fe9` |
-| D-015 | integration | backend | Plugin skills report an empty `ref.digest`. | fixed by backend at `155bba0` for new skills; skills stored earlier still project an empty digest (backfill or compute-on-read pending) |
+| D-015 | integration | backend | Plugin skills report an empty `ref.digest`. | fully fixed at `2dad57b`: skills saved earlier get their digest computed on read |
 
 ## Disagreements
 
