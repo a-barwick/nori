@@ -7,7 +7,7 @@ import { Calendar, Check, CircleSlash, Folder, KeyRound, ListTodo, Mail, Message
 import { Button } from "@/components/ui/primitives";
 import { APIError, assistantURL, getJSON, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
-import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
+import { EFFECT_LABEL, plural, relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { AuthAttempt, Connection, HealthCode, Integration, MCPServer, Preferences, Resource } from "@/lib/contracts/assistant";
 import type { CatalogEntry, Installation, InstallationReview, MCPCredentialInput, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
@@ -163,8 +163,7 @@ export function AppDetailScreen({ id }: { id: string }) {
     const connection = unfinished ?? (await mutate<Connection>("/connections", { request_id: newRequestID(), expected_revision: 0, value: { integration_id: item.id, title: item.title, selected_resource_ids: [] } })).resource as Connection;
     await startSignIn(connection, "connect", `/apps/${encodeURIComponent(item.id)}`);
   });
-  const line = item.availability !== "available" ? item.availability_reason
-    : !accounts.length ? `Connect ${item.title} so Nori can use it.` : accounts.some(needsAttention) ? "An account needs attention." : `${accounts.length === 1 ? "One account" : `${accounts.length} accounts`} connected.`;
+  const line = item.availability !== "available" ? item.availability_reason : undefined;
   return (
     <Screen title={item.title} back="/apps" line={line} actions={<AppIcon icon={item.icon} />}>
       {result && <div className="mb-6"><Notice tone={result === "connected" ? "ok" : result === "cancelled" ? "neutral" : "danger"}>{result === "connected" ? "Connected." : result === "cancelled" ? "Sign-in was cancelled. Nothing changed." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
@@ -363,12 +362,12 @@ function PluginCard({ entry }: { entry: CatalogEntry }) {
     router.push(`/apps/plugins/${encodeURIComponent((receipt.resource as Installation).id)}`);
   });
   const c = entry.contributions_summary;
-  const parts = [c.tools && `${c.tools} tools`, c.skills && `${c.skills} ${c.skills === 1 ? "skill" : "skills"}`, c.mcp_servers && "MCP server"].filter(Boolean).join(" · ");
+  const parts = [c.tools && plural(c.tools, "tool"), c.skills && `${c.skills} ${c.skills === 1 ? "skill" : "skills"}`, c.mcp_servers && "MCP server"].filter(Boolean).join(" · ");
   return <article className="flex h-full flex-col gap-2 rounded-card border border-hairline bg-surface p-4">
     <div className="flex items-start gap-2"><h3 className="min-w-0 flex-1 text-row font-semibold">{entry.title}</h3>{!entry.provenance.verified && <Pill tone="warning">Unverified</Pill>}</div>
     <p className="text-meta text-ink-2">{entry.description}</p>
     <p className="text-caption text-ink-3">{entry.publisher.name} · {entry.latest_version}{parts ? ` · ${parts}` : ""}</p>
-    <p className="text-caption text-ink-3">{entry.requested_access.action_classes.length ? `Asks to: ${entry.requested_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}${entry.requested_access.connection_types.length ? ` with ${entry.requested_access.connection_types.join(", ")}` : ""}` : "Instructions only; no account access."}</p>
+    <p className="text-caption text-ink-3">{entry.requested_access.action_classes.length ? `Access: ${entry.requested_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}${entry.requested_access.connection_types.length ? ` with ${entry.requested_access.connection_types.join(", ")}` : ""}` : "Instructions only; no account access."}</p>
     <div className="mt-auto pt-2">{entry.installation_id ? <Link href={`/apps/plugins/${encodeURIComponent(entry.installation_id)}`} className="text-meta font-medium text-accent-text hover:underline">Installed · manage</Link>
       : <Confirm title={`Install ${entry.title}?`} confirm="Install" onConfirm={() => void install()} trigger={<Button size="sm" variant="primary" disabled={!!action.pending}>{action.pending ? "Installing…" : "Install"}</Button>}
         body={<div className="space-y-2"><p>Installing adds what it contributes. It doesn’t let Nori act on your accounts until you connect them and allow it.</p>{entry.requested_access.network?.length ? <p>Reaches {entry.requested_access.network.join(", ")}.</p> : null}{entry.requested_access.filesystem?.length ? <p>Reads files in {entry.requested_access.filesystem.join(", ")}.</p> : null}{!entry.provenance.verified && <p className="text-warning">This package isn’t verified by its registry.</p>}</div>} />}
@@ -411,7 +410,7 @@ export function PluginDetailScreen({ id }: { id: string }) {
           <Button variant="quiet" onClick={() => setReview(undefined)}>Cancel</Button></div>
       </div>}
     </Section>
-    {entry && <Section title="Adds"><p className="text-body text-ink-2">{[entry.contributions_summary.tools && `${entry.contributions_summary.tools} tools`, entry.contributions_summary.skills && `${entry.contributions_summary.skills} ${entry.contributions_summary.skills === 1 ? "skill" : "skills"}`, entry.contributions_summary.prompts && `${entry.contributions_summary.prompts} prompts`, entry.contributions_summary.mcp_servers && `${entry.contributions_summary.mcp_servers === 1 ? "an MCP server" : `${entry.contributions_summary.mcp_servers} MCP servers`}`].filter(Boolean).join(", ") || "Instructions only"}.</p>
+    {entry && <Section title="Adds"><p className="text-body text-ink-2">{[entry.contributions_summary.tools && plural(entry.contributions_summary.tools, "tool"), entry.contributions_summary.skills && `${entry.contributions_summary.skills} ${entry.contributions_summary.skills === 1 ? "skill" : "skills"}`, entry.contributions_summary.prompts && `${entry.contributions_summary.prompts} prompts`, entry.contributions_summary.mcp_servers && `${entry.contributions_summary.mcp_servers === 1 ? "an MCP server" : `${entry.contributions_summary.mcp_servers} MCP servers`}`].filter(Boolean).join(", ") || "Instructions only"}.</p>
       {entry.description && <p className="mt-1 text-meta text-ink-3">{entry.description}</p>}</Section>}
     <Section title="Access">
       <p className="text-body text-ink-2">{item.approved_access.action_classes.length ? `May ${item.approved_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}` : "No account access"}{item.approved_access.connection_types.length ? ` with ${item.approved_access.connection_types.join(", ")} accounts you connect.` : "."}</p>
@@ -462,7 +461,7 @@ function ReviewList({ data }: { data: InstallationReview }) {
   const dependents = data.dependents.automation_ids.length + data.dependents.goal_ids.length;
   return <dl className="mt-2 space-y-2 text-meta">
     {rows.filter(([, list]) => list.length).map(([label, list]) => <div key={label}><dt className={cn("font-medium", label === "New access" && "text-warning")}>{label}</dt><dd className="text-ink-2">{list.join(", ")}</dd></div>)}
-    {dependents > 0 && <div><dt className="font-medium">Affects</dt><dd className="text-ink-2">{data.dependents.automation_ids.map((id) => <Link key={id} className="mr-2 text-accent-text hover:underline" href={`/routines/${encodeURIComponent(id)}`}>a routine</Link>)}{data.dependents.goal_ids.map((id) => <Link key={id} className="mr-2 text-accent-text hover:underline" href={`/goals/${encodeURIComponent(id)}`}>a goal</Link>)}</dd></div>}
+    {dependents > 0 && <div><dt className="font-medium">Affects</dt><dd className="text-ink-2">{data.dependents.automation_ids.map((id) => <Link key={id} className="mr-2 text-accent-text hover:underline" href={`/routines/${encodeURIComponent(id)}`}>an automation</Link>)}{data.dependents.goal_ids.map((id) => <Link key={id} className="mr-2 text-accent-text hover:underline" href={`/goals/${encodeURIComponent(id)}`}>a goal</Link>)}</dd></div>}
     {!rows.some(([, list]) => list.length) && !dependents && <p className="text-ink-2">Nothing else changes.</p>}
   </dl>;
 }
@@ -476,7 +475,7 @@ function MCPServers() {
     <Section actions={!adding ? <Button size="sm" variant="primary" onClick={() => setAdding(true)}><Plus size={15} aria-hidden />Add server</Button> : undefined}>
       {adding && <div className="mb-4"><NewMCPServer onDone={() => setAdding(false)} /></div>}
       {items.length ? <Rows>{items.map((server) => <Row key={server.id} href={`/apps/mcp/${encodeURIComponent(server.id)}`} leading={<span className="grid size-9 place-items-center rounded-tile bg-fill-1"><Server size={18} aria-hidden /></span>}
-        title={server.name} detail={`${server.transport === "http" ? "Remote" : "Runs on Nori’s computer"}${server.observed.tool_count !== undefined ? ` · ${server.observed.tool_count} tools` : ""}${server.observed.error ? ` · ${server.observed.error.message}` : ""}`}
+        title={server.name} detail={`${server.transport === "http" ? "Remote" : "Runs on Nori’s computer"}${server.observed.tool_count !== undefined ? ` · ${plural(server.observed.tool_count, "tool")}` : ""}${server.observed.error ? ` · ${server.observed.error.message}` : ""}`}
         trailing={<MCPStatus server={server} />} />)}</Rows> : !adding && <Empty>No MCP servers yet.</Empty>}
     </Section>
   </>;

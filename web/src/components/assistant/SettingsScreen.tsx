@@ -12,7 +12,7 @@ import { invalidate, useAction, useResource } from "@/lib/assistant/useResource"
 import type { Connection, DeliveryDestination, MCPClient, MCPClientCreated, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { OperationRows, shownOperations } from "./WorkScreen";
-import { Confirm, Empty, NoriLine, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section } from "./ui";
+import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section } from "./ui";
 
 type List<T> = { items: T[] };
 export type SettingsSection = "permissions" | "preferences" | "memory" | "notifications" | "history" | "clients" | "diagnostics";
@@ -59,20 +59,19 @@ function Permissions() {
   const groups = [
     { title: "Never", rules: items.filter((rule) => rule.effect === "deny") },
     { title: "Allowed without asking", rules: items.filter((rule) => rule.effect === "allow" && !rule.automation_id && !rule.goal_id) },
-    { title: "For routines and goals", rules: items.filter((rule) => rule.effect === "allow" && (rule.automation_id || rule.goal_id)) },
+    { title: "For automations and goals", rules: items.filter((rule) => rule.effect === "allow" && (rule.automation_id || rule.goal_id)) },
   ];
   return <>
-    <NoriLine>I ask before anything not covered here. When you ask me directly, that request is enough.</NoriLine>
     {rules.error && <div className="mt-4"><Failure error={rules.error} onRetry={() => void rules.reload()} /></div>}
     {action.error && <div className="mt-4"><Notice tone="danger">{action.error}</Notice></div>}
     {groups.map((group) => group.rules.length > 0 && <Section key={group.title} title={group.title}><Rows>{group.rules.map((rule) => <li key={rule.id} id={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
       <span className="min-w-0 flex-1">
         <span className="block text-row font-medium">{rule.summary ?? rule.title ?? "Permission"}</span>
         <span className="mt-0.5 block text-meta text-ink-2">{[rule.action_classes.map((effect) => EFFECT_LABEL[effect]).join(", "), rule.connection_ids.map((id) => id === "*" ? "any account" : account(id)?.title ?? id).join(", "), rule.recipients?.length ? `to ${rule.recipients.join(", ")}` : "", rule.expires_at ? `until ${when(rule.expires_at)}` : "", rule.max_operations ? `up to ${rule.max_operations} times` : ""].filter(Boolean).join(" · ")}</span>
-        {rule.automation_id && <Link href={`/routines/${encodeURIComponent(rule.automation_id)}`} className="text-meta text-accent-text hover:underline">Routine</Link>}
+        {rule.automation_id && <Link href={`/routines/${encodeURIComponent(rule.automation_id)}`} className="text-meta text-accent-text hover:underline">Automation</Link>}
         {rule.goal_id && <Link href={`/goals/${encodeURIComponent(rule.goal_id)}`} className="text-meta text-accent-text hover:underline">Goal</Link>}
       </span>
-      <Confirm danger title="Remove this permission?" body={rule.automation_id ? "The routine will ask you before doing this from now on." : "Nori will ask you before doing this from now on."} confirm="Remove" onConfirm={() => void revoke(rule)}
+      <Confirm danger title="Remove this permission?" body={rule.automation_id ? "The automation will ask you before doing this from now on." : "Nori will ask you before doing this from now on."} confirm="Remove" onConfirm={() => void revoke(rule)}
         trigger={<Button size="sm" variant="quiet" disabled={action.pending === rule.id}>{action.pending === rule.id ? "Removing…" : "Remove"}</Button>} />
     </li>)}</Rows></Section>)}
     {!items.length && <div className="mt-6"><Empty>No standing permissions. Nori asks before each change or send.</Empty></div>}
@@ -96,7 +95,7 @@ function NewRule({ connections, onDone }: { connections: Connection[]; onDone: (
     invalidate("/permissions"); onDone();
   });
   const selected = connections.find((connection) => connection.id === account);
-  const example = `${effect === "allow" ? "Nori may" : "Nori will never"} ${classes.map((effectClass) => ({ read: "read", reversible_write: "make undoable changes", sensitive_send: "send", unknown: "use unknown tools", control: "" }[effectClass])).join(" or ")} with ${selected?.account?.label ?? "this account"}${classes.includes("sensitive_send") && recipients ? ` to ${recipients}` : ""}${effect === "allow" ? " without asking" : ""}.`;
+  const example = `${effect === "allow" ? "Nori may" : "Nori will never"} ${classes.map((effectClass) => ({ read: "read", reversible_write: "make undoable changes", sensitive_send: "send", unknown: "use tools that don’t say what they do", control: "" }[effectClass])).join(" or ")} with ${selected?.account?.label ?? "this account"}${classes.includes("sensitive_send") && recipients ? ` to ${recipients}` : ""}${effect === "allow" ? " without asking" : ""}.`;
   return <form className="space-y-4 rounded-card border border-hairline-strong p-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
     <div className="flex flex-wrap gap-3">
       <Field label="Rule"><select value={effect} onChange={(event) => setEffect(event.target.value as "allow" | "deny")} className={cn(inputBase, "w-auto")}><option value="allow">Allow without asking</option><option value="deny">Never allow</option></select></Field>
@@ -201,7 +200,7 @@ function Memory() {
         <Button size="sm" variant="quiet" onClick={() => { setEditing(fact.id); setText(fact.text); }}>Edit</Button>
         <Confirm title="Forget this?" body="Nori stops using it. Chats where it came up stay as they are." confirm="Forget" onConfirm={() => void forget(fact)} trigger={<Button size="sm" variant="quiet" className="text-danger!" disabled={action.pending === fact.id}>Forget</Button>} />
       </div>}
-    </li>)}</Rows> : <Empty>Nori remembers only what you ask it to. Say “remember that…” in Chat.</Empty>}
+    </li>)}</Rows> : <Empty>Nothing remembered yet.</Empty>}
   </>;
 }
 
@@ -260,7 +259,7 @@ function Destination({ destination }: { destination: DeliveryDestination }) {
       <Pill tone={status.tone}>{expired ? "Expired" : status.label}</Pill>
       {managed && destination.status === "pending_verification" && !codeSent && <Button size="sm" disabled={!!action.pending} onClick={() => void act({ action: "send_verification" }, "send", "Code sent.").then(() => setCodeSent(true))}>{action.pending === "send" ? "Sending…" : "Send code"}</Button>}
       {expired && <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void reenroll()}>{action.pending === "reenroll" ? "Enrolling…" : "Re-enroll this device"}</Button>}
-      {managed && <Confirm danger title={`Remove ${destination.label}?`} body="Nori stops sending here. Routines that used it keep running and deliver to your other destinations." confirm="Remove" onConfirm={() => void act({ action: "remove" }, "remove", "Removed.")}
+      {managed && <Confirm danger title={`Remove ${destination.label}?`} body="Nori stops sending here. Automations that used it keep running and deliver to your other destinations." confirm="Remove" onConfirm={() => void act({ action: "remove" }, "remove", "Removed.")}
         trigger={<Button size="sm" variant="quiet" className="text-danger!" disabled={!!action.pending}>Remove</Button>} />}
     </div>
     {codeSent && destination.status === "pending_verification" && <form className="mt-3 flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); if (/^\d{6}$/.test(code)) void act({ action: "verify", code }, "verify", "Verified."); }}>
@@ -335,7 +334,6 @@ function Clients() {
   }, "Access removed.");
   const active = (clients.data?.items ?? []).filter((client) => !client.revoked_at);
   return <>
-    <NoriLine>Apps you add here can reach your Nori over MCP with their own token.</NoriLine>
     {created && <div className="mt-6 rounded-card border border-hairline-strong bg-fill-1 p-4" role="status">
       <p className="text-row font-semibold">Token for {created.name}</p>
       <p className="mt-1 text-meta text-ink-2">Copy it into the app now. Nori won’t show it again.</p>
