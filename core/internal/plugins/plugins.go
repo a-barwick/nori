@@ -409,6 +409,8 @@ func (s *Service) decodeInstallation(ctx context.Context, r state.Resource) (ins
 		return doc, err
 	}
 	doc.Revision = r.Revision
+	// Computed on every read: a value saved before an update is stale.
+	doc.AvailableVersion = ""
 	if all, err := s.packages(ctx); err == nil {
 		for _, p := range all {
 			if p.Manifest.Package.ID == doc.Package.ID && newer(p.Manifest.Package.Version, doc.Package.Version) &&
@@ -592,6 +594,13 @@ func contributionNames(m Manifest) map[string]string {
 		if c.Kind == "hook" {
 			name = "hook:" + c.Hook + ":" + c.Handler
 		}
+		if c.Kind == "tool" {
+			var tool struct {
+				ModelName string `json:"model_name"`
+			}
+			_ = json.Unmarshal(c.Tool, &tool)
+			name = "tool:" + tool.ModelName
+		}
 		out[name] = string(data)
 	}
 	return out
@@ -617,8 +626,9 @@ func (s *Service) Review(ctx context.Context, id, version string) (Review, error
 		}
 		review.ToVersion = version
 		after = contributionNames(to.Manifest)
-		review.AccessAdded = nonNil(covers(from.Manifest.RequestedAccess, to.Manifest.RequestedAccess))
-		review.AccessRemoved = nonNil(covers(to.Manifest.RequestedAccess, from.Manifest.RequestedAccess))
+		// Compared with what the user granted, so the review lists exactly what the update will ask to approve.
+		review.AccessAdded = nonNil(covers(inst.ApprovedAccess, to.Manifest.RequestedAccess))
+		review.AccessRemoved = nonNil(covers(to.Manifest.RequestedAccess, inst.ApprovedAccess))
 	}
 	for name, body := range after {
 		if old, ok := before[name]; !ok {

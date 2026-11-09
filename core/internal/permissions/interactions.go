@@ -167,6 +167,9 @@ type Answer struct {
 	Text      string
 	// Default is set when the user chose an account and asked to remember it for the purpose.
 	DefaultPurpose, DefaultConnection string
+	// Recheck marks an answer recorded as delivered: deliver it again only if its task is still waiting on exactly
+	// this question, which proves the earlier delivery never landed.
+	Recheck bool
 }
 
 // Respond resolves a pending interaction. Resolution, the approval record and the answer intent commit together;
@@ -202,6 +205,10 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 				}
 				resolution.Text, text = response.Text, response.Text
 			case (response.Kind == "approve" || response.Kind == "decline") && i.Kind == "approval":
+				// A missing digest is a malformed request; a different one means the action changed since it was shown.
+				if response.ActionDigest == "" {
+					return state.MutationResult{}, fmt.Errorf("%w: approve and decline need the action_digest that was shown", state.ErrInvalidResource)
+				}
 				if response.ActionDigest != i.ActionDigest {
 					return state.MutationResult{}, ErrInteractionStale
 				}
@@ -345,7 +352,7 @@ func (s *Service) UndeliveredAnswers(ctx context.Context) ([]Answer, []string, e
 	var ids []string
 	for _, r := range page {
 		i, body, err := decodeInteraction(r)
-		if err != nil || body.CommandAccepted || i.TaskID == "" {
+		if err != nil || i.TaskID == "" {
 			continue
 		}
 		if body.AnswerText == "" || body.AnswerID == "" {
@@ -366,7 +373,7 @@ func (s *Service) UndeliveredAnswers(ctx context.Context) ([]Answer, []string, e
 				continue
 			}
 		}
-		answers = append(answers, Answer{CommandID: body.AnswerID, TaskID: i.TaskID, Question: questionID(i), Text: body.AnswerText})
+		answers = append(answers, Answer{CommandID: body.AnswerID, TaskID: i.TaskID, Question: questionID(i), Text: body.AnswerText, Recheck: body.CommandAccepted})
 		ids = append(ids, i.ID)
 	}
 	return answers, ids, nil

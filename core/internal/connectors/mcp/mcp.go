@@ -391,8 +391,13 @@ func toolDefinition(server stored, tool *sdk.Tool) (extensions.Definition, bool,
 	if len(toolID) > 60 {
 		toolID = toolID[:60]
 	}
+	// The definition version follows the tool's content, so a changed description or schema is a new revision and
+	// (id, version) never names two different contents.
+	content, _ := json.Marshal([]any{title, description, schema, output, exposure, tool.Name})
+	sum := sha256.Sum256(content)
+	revision := Version + "-" + hex.EncodeToString(sum[:6])
 	d, err := extensions.Seal(extensions.Definition{
-		Ref:       extensions.DefinitionRef{ID: "mcp/" + strings.ToLower(server.ID) + "/" + strings.Trim(toolID, "-._"), Version: Version},
+		Ref:       extensions.DefinitionRef{ID: "mcp/" + strings.ToLower(server.ID) + "/" + strings.Trim(toolID, "-._"), Version: revision},
 		Extension: extensions.DefinitionRef{ID: "mcp/" + strings.ToLower(server.ID), Version: Version},
 		ModelName: modelName(server.Name, tool.Name), Title: title, Description: description,
 		Capability: server.ID, CapabilityTitle: server.Name + " (MCP)", InputSchema: schema, OutputSchema: output,

@@ -90,6 +90,8 @@ func writeAPIError(w http.ResponseWriter, err error, requestID string, current a
 		status, code, message, retryable = 400, "validation_failed", err.Error(), false
 	case errors.Is(err, secret.ErrCredentialUnavailable):
 		status, code, message, retryable = 503, "credential_store_unavailable", err.Error(), false
+	case errors.Is(err, connections.ErrBadPassword):
+		status, code, message, retryable = 400, "validation_failed", "The provider rejected the Apple ID or app-specific password. Create a new app-specific password and try again.", false
 	case errors.Is(err, scheduler.ErrVerificationFailed), errors.Is(err, scheduler.ErrTargetInvalid):
 		status, code, message, retryable = 400, "validation_failed", err.Error(), false
 	case errors.Is(err, scheduler.ErrNoTransport), errors.Is(err, scheduler.ErrRetryLater):
@@ -580,9 +582,13 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 		}
 		err := a.Answer(r.Context(), answer.CommandID, answer.TaskID, answer.Question, answer.Text)
 		switch {
-		case err == nil || errors.Is(err, state.ErrDuplicate) || errors.Is(err, state.ErrBusy):
+		case err == nil || errors.Is(err, state.ErrDuplicate):
 			a.Permissions.MarkDelivered(r.Context(), id)
-		case errors.Is(err, state.ErrQuestionStale):
+		case errors.Is(err, state.ErrBusy) && !a.taskRunning(r.Context(), answer.TaskID):
+			// The task ended; the answer has nothing left to reach.
+			a.Permissions.MarkDelivered(r.Context(), id)
+		case errors.Is(err, state.ErrQuestionStale), errors.Is(err, state.ErrBusy):
+			// A task that is mid-step answers "busy"; like an unasked question, the saved answer is retried.
 			// The task has not published this question yet. The resolution and its exact answer are saved and the
 			// delivery pass retries until the task asks it, so the answer is never lost.
 		default:
@@ -592,6 +598,11 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeReceipt(w, receipt)
+}
+
+func (a *Assistant) taskRunning(ctx context.Context, id string) bool {
+	run, err := a.Store.GetRun(ctx, id)
+	return err == nil && run.Status == state.RunRunning
 }
 
 func (a *Assistant) adoptLegacy(ctx context.Context, id string) error {

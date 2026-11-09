@@ -190,6 +190,10 @@ func (s *Service) SaveDestination(ctx context.Context, id, requestID string, exp
 	if value.Channel != "push" && value.Channel != "email" || strings.TrimSpace(value.Label) == "" {
 		return state.MutationReceipt{}, fmt.Errorf("%w: a destination needs a push or email channel and a label", state.ErrInvalidResource)
 	}
+	// Each channel takes exactly its own target (contract r2.9): an address for email, a subscription for push.
+	if value.Channel == "email" && value.Subscription != nil || value.Channel == "push" && value.Address != "" {
+		return state.MutationReceipt{}, fmt.Errorf("%w: an email destination takes an address and a push destination takes a subscription, not both", state.ErrInvalidResource)
+	}
 	method, target, status := "PUT", "/v1/delivery-destinations/"+id, 200
 	if id == "" {
 		id = "dest_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte("destination:"+requestID)).String(), "-", "")[:20]

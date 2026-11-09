@@ -174,7 +174,8 @@ func icsPreview(ctx context.Context, service *calendar.Service, call invoke.Call
 		}
 		if e.UID != "" {
 			existing, err := service.Events.List(calendarID).ICalUID(e.UID).ShowDeleted(false).MaxResults(1).Context(ctx).Do()
-			if err == nil && len(existing.Items) > 0 {
+			// Only an event carrying this exact iCalUID is a duplicate.
+			if err == nil && len(existing.Items) > 0 && existing.Items[0].ICalUID == e.UID {
 				row["duplicate_of"] = existing.Items[0].Id
 			}
 		}

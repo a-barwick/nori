@@ -495,7 +495,10 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 		for k, v := range interaction {
 			output[k] = v
 		}
-		return persist("needs_interaction", output, nil)
+		// The compose call itself finished correctly up to the nested call that needs the user, so its record is
+		// confirmed; the task reads the pending interaction from the result (see ToolRef).
+		output["awaiting_interaction"] = true
+		return persist("confirmed", output, nil)
 	case "partial":
 		output["output"] = env
 		return persist("confirmed", output, nil)
@@ -506,6 +509,29 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 // runComposeCalls runs one step's calls, at most concurrency at a time, and returns their results in script order.
 func (a *Activities) runComposeCalls(ctx context.Context, in ToolInput, calls []composeCall, concurrency int, definition extensions.Definition) []composeResult {
 	results := make([]composeResult, len(calls))
+	// Divergence is checked for the whole step before anything runs: if any recorded position now computes a
+	// different call, none of the step's calls run, and the ones that were not compared are reported as skipped.
+	diverged := false
+	for i, call := range calls {
+		operation := fmt.Sprintf("%s-c%d", in.OperationID, call.index)
+		results[i] = composeResult{Step: call.step, Tool: call.tool, OperationID: operation}
+		if saved, err := a.Store.Operation(ctx, in.RunID, operation); err == nil && saved.CallID != "" && saved.CallID != composeCallID(in, call) {
+			diverged = true
+			message := fmt.Sprintf("call %d (%s) differs from the one recorded at this position; nothing was repeated", call.index, call.tool)
+			results[i].Outcome, results[i].Error = "diverged", message
+			results[i].output = map[string]any{"outcome": "diverged", "error": message, "operation_id": operation}
+		}
+	}
+	if diverged {
+		for i := range results {
+			if results[i].Outcome == "" {
+				message := "not run: the script diverged from its recorded calls"
+				results[i].Outcome, results[i].Error = "skipped", message
+				results[i].output = map[string]any{"outcome": "skipped", "error": message, "operation_id": results[i].OperationID}
+			}
+		}
+		return results
+	}
 	schema, schemaErr := extensions.CompileSchema(definition.InputSchema)
 	slots := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -546,9 +572,7 @@ func (a *Activities) runComposeCall(ctx context.Context, in ToolInput, call comp
 	}
 	// The call identity covers the tool, its definition and its arguments, so a restart that computes a different
 	// call at this position is detected.
-	data, _ := json.Marshal([]any{call.tool, call.exec.Tool, call.args})
-	sum := sha256.Sum256(data)
-	callID := fmt.Sprintf("%s:c%d:%s", in.Call.ID, call.index, hex.EncodeToString(sum[:6]))
+	callID := composeCallID(in, call)
 	if saved, err := a.Store.Operation(ctx, in.RunID, operation); err == nil && saved.CallID != "" && saved.CallID != callID {
 		return fail("diverged", fmt.Sprintf("call %d (%s) differs from the one recorded at this position; nothing was repeated", call.index, call.tool))
 	} else if err == nil && saved.ResultRef != "" {
@@ -570,4 +594,12 @@ func (a *Activities) runComposeCall(ctx context.Context, in ToolInput, call comp
 	}
 	result.output = output
 	return result
+}
+
+// composeCallID is a nested call's identity: the compose call, its position and a digest of the tool, its definition
+// and its arguments.
+func composeCallID(in ToolInput, call composeCall) string {
+	data, _ := json.Marshal([]any{call.tool, call.exec.Tool, call.args})
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%s:c%d:%s", in.Call.ID, call.index, hex.EncodeToString(sum[:6]))
 }

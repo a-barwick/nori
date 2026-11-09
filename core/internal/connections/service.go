@@ -84,6 +84,81 @@ func (s *Service) providerContext(ctx context.Context) context.Context {
 
 func (s *Service) now() time.Time { return s.Now().UTC() }
 
+// baseClient is the plain HTTP client for provider calls, honouring a replay transport.
+func (s *Service) baseClient() *http.Client {
+	if s.Transport != nil {
+		return &http.Client{Transport: s.Transport, Timeout: 30 * time.Second}
+	}
+	return &http.Client{Timeout: 30 * time.Second}
+}
+
+type passwordCredential struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// connectPassword verifies a username and app-specific password with the provider, stores them as the credential and
+// connects with every supported capability (an app password grants the whole service). A rejected pair changes
+// nothing. Repair is the same call with a new password, after a revoked app password or an account password change.
+func (s *Service) connectPassword(ctx context.Context, id, requestID string, expected int64, action Action, integration PasswordIntegration) (state.MutationReceipt, error) {
+	username, password := strings.TrimSpace(action.Username), strings.TrimSpace(action.Password)
+	if username == "" || password == "" {
+		return state.MutationReceipt{}, fmt.Errorf("%w: this app connects with a username and an app-specific password", state.ErrInvalidResource)
+	}
+	account, err := integration.VerifyPassword(ctx, s.baseClient(), username, password)
+	if err != nil {
+		return state.MutationReceipt{}, err
+	}
+	data, _ := json.Marshal(passwordCredential{Username: username, Password: password})
+	stored, err := s.Credentials.Get(ctx, id)
+	version := int64(0)
+	if err == nil {
+		version = stored.Version
+	} else if !errors.Is(err, secret.ErrCredentialNotFound) {
+		return state.MutationReceipt{}, err
+	}
+	if _, err := s.Credentials.Replace(ctx, id, version, data); err != nil {
+		return state.MutationReceipt{}, err
+	}
+	info := integration.Info()
+	capabilities := []string{}
+	for _, c := range info.Capabilities {
+		if c.Supported {
+			capabilities = append(capabilities, c.ID)
+		}
+	}
+	prefs, _, err := s.Preferences(ctx)
+	if err != nil {
+		return state.MutationReceipt{}, err
+	}
+	// The receipt binding must not carry the password.
+	action.Password = ""
+	return s.Store.Mutate(ctx, state.Mutation{
+		RequestID: requestID, Method: "POST", Target: "/v1/connections/" + id + "/actions", ExpectedRevision: expected, Payload: action,
+		Collection: CollectionConnections, ID: id,
+		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
+			if current == nil {
+				return state.MutationResult{}, state.ErrNotFound
+			}
+			var record Record
+			if err := current.Decode(&record); err != nil {
+				return state.MutationResult{}, err
+			}
+			if record.Status == StatusDisconnecting {
+				return state.MutationResult{}, ErrInvalidAction
+			}
+			if record.Account.ProviderID != "" && record.Account.ProviderID != account.ProviderID {
+				return state.MutationResult{}, fmt.Errorf("%w: these credentials belong to a different account than this connection", state.ErrInvalidResource)
+			}
+			now := s.now()
+			record.Account, record.Status, record.Capabilities, record.GrantedScopes = account, StatusConnected, capabilities, []string{}
+			record.AuthorizationEpoch++
+			record.Health = Health{CheckedAt: &now, Code: HealthReady, Recovery: "none", LastSuccessAt: &now}
+			return s.write(record, current.Revision+1, "applied", prefs)
+		},
+	})
+}
+
 // Records lists the user's connections in ID order.
 func (s *Service) Records(ctx context.Context) ([]Record, []state.Resource, error) {
 	var records []Record
@@ -426,7 +501,9 @@ func (s *Service) scopesFor(integration Integration, capabilities []string, reco
 
 func (s *Service) connect(ctx context.Context, id, requestID string, expected int64, action Action) (state.MutationReceipt, error) {
 	if saved, err := s.Store.Receipt(ctx, requestID); err == nil {
-		return s.replay(ctx, saved, state.Mutation{RequestID: requestID, Method: "POST", Target: "/v1/connections/" + id + "/actions", ExpectedRevision: expected, Payload: action})
+		bound := action
+		bound.Password = "" // receipts never hold the password
+		return s.replay(ctx, saved, state.Mutation{RequestID: requestID, Method: "POST", Target: "/v1/connections/" + id + "/actions", ExpectedRevision: expected, Payload: bound})
 	}
 	record, current, err := s.record(ctx, id)
 	if err != nil {
@@ -435,6 +512,9 @@ func (s *Service) connect(ctx context.Context, id, requestID string, expected in
 	integration := s.Integrations[record.IntegrationID]
 	if integration == nil {
 		return state.MutationReceipt{}, ErrUnknownIntegration
+	}
+	if password, ok := integration.(PasswordIntegration); ok && integration.Info().Auth == "app_password" {
+		return s.connectPassword(ctx, id, requestID, expected, action, password)
 	}
 	config := integration.OAuth(s.RedirectURL)
 	if config == nil {
@@ -840,6 +920,17 @@ func (s *Service) Grant(ctx context.Context, id string) (Grant, error) {
 	if integration == nil {
 		return Grant{}, ErrUnknownIntegration
 	}
+	if password, ok := integration.(PasswordIntegration); ok && integration.Info().Auth == "app_password" {
+		credential, err := s.Credentials.Get(ctx, id)
+		if err != nil {
+			return Grant{}, err
+		}
+		var pc passwordCredential
+		if err := json.Unmarshal(credential.Data, &pc); err != nil {
+			return Grant{}, errors.New("stored credential is malformed")
+		}
+		return Grant{Connection: record, Revision: r.Revision, Client: password.Client(s.baseClient(), pc.Username, pc.Password)}, nil
+	}
 	config := integration.OAuth(s.RedirectURL)
 	if config == nil {
 		return Grant{}, ErrNotConfigured
@@ -928,11 +1019,23 @@ func (s *Service) ReportSuccess(ctx context.Context, id string) {
 	if err != nil {
 		return
 	}
-	if record.Health.Code == HealthReady && record.Health.LastSuccessAt != nil && s.now().Sub(*record.Health.LastSuccessAt) < 10*time.Minute {
+	if record.Health.Code == HealthReady && record.Status == StatusConnected && record.Health.LastSuccessAt != nil && s.now().Sub(*record.Health.LastSuccessAt) < 10*time.Minute {
 		return
 	}
 	now := s.now()
-	record.Health = Health{CheckedAt: &now, Code: HealthReady, Recovery: "none", LastSuccessAt: &now}
+	if missing := missingScopes(record.DesiredScopes, record.GrantedScopes); record.Status == StatusAttention && len(missing) > 0 {
+		// A working call doesn't grant the access that is still missing.
+		if record.Health.Code == HealthNeedsMoreAccess && record.Health.LastSuccessAt != nil && now.Sub(*record.Health.LastSuccessAt) < 10*time.Minute {
+			return
+		}
+		record.Health = Health{CheckedAt: &now, Code: HealthNeedsMoreAccess, Recovery: "request_access", Message: "Some requested access was not granted.", LastSuccessAt: &now}
+	} else {
+		record.Health = Health{CheckedAt: &now, Code: HealthReady, Recovery: "none", LastSuccessAt: &now}
+		if record.Status == StatusAttention {
+			// The account works again with everything it asked for.
+			record.Status = StatusConnected
+		}
+	}
 	next, err := state.NewResource(CollectionConnections, id, 0, record, recordIndex(record), now)
 	if err == nil {
 		_, _ = s.Store.PutResource(ctx, next, r.Revision)
@@ -1018,17 +1121,23 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 			if record.IntegrationID != id {
 				continue
 			}
-			switch record.Status {
-			case StatusConnected:
+			partial := record.Status == StatusAttention && record.Health.Code == HealthNeedsMoreAccess
+			switch {
+			case record.Status == StatusConnected || partial:
+				// An account missing some access still serves what it granted; the missing part is listed below.
 				labels = append(labels, record.Account.Label)
+				if partial {
+					attention = append(attention, record.Account.Label+" (some access not granted)")
+				}
 				for _, capability := range record.Capabilities {
 					granted[capability] = true
 				}
-			case StatusAttention, StatusConnecting, StatusDisabled:
+			case record.Status == StatusAttention || record.Status == StatusConnecting || record.Status == StatusDisabled:
 				attention = append(attention, fmt.Sprintf("%s (%s)", record.Account.Label, record.Status))
 			}
 		}
 		groups := map[string]string{}
+		usable := map[string]bool{}
 		var groupOrder []string
 		for _, d := range integration.Definitions() {
 			if _, seen := groups[d.Capability]; !seen {
@@ -1037,13 +1146,17 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 			}
 			if d.RequiredCapability == "" || granted[d.RequiredCapability] {
 				inventory.Definitions = append(inventory.Definitions, d)
+				usable[d.Capability] = true
 			}
 		}
 		for _, capability := range groupOrder {
 			stateText := "Not connected. The user can connect it in Apps."
-			ready := len(labels) > 0
+			// A group is ready when the connected accounts granted at least one of its tools.
+			ready := len(labels) > 0 && usable[capability]
 			if ready {
 				stateText = "Connected"
+			} else if len(labels) > 0 {
+				stateText = "Connected, but this access was not granted. The user can grant it in Apps."
 			} else if len(attention) > 0 {
 				stateText = "Needs attention in Apps: " + strings.Join(attention, ", ")
 			}
