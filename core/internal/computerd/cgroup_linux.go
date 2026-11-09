@@ -53,8 +53,22 @@ func prepareDelegation() error {
 		if err := os.MkdirAll(leaf, 0755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(leaf, "cgroup.procs"), []byte("0"), 0600); err != nil {
-			return fmt.Errorf("could not move the agent into its leaf cgroup: %w", err)
+		// Every process in <own> (the agent, a browser started beside it, helpers) must move to the leaf before
+		// controllers can be enabled; repeat because processes may fork meanwhile.
+		for range 20 {
+			data, err := os.ReadFile(filepath.Join(own, "cgroup.procs"))
+			if err != nil {
+				return err
+			}
+			pids := strings.Fields(string(data))
+			if len(pids) == 0 {
+				break
+			}
+			for _, pid := range pids {
+				if err := os.WriteFile(filepath.Join(leaf, "cgroup.procs"), []byte(pid), 0600); err != nil && pid == fmt.Sprint(os.Getpid()) {
+					return fmt.Errorf("could not move the agent into its leaf cgroup: %w", err)
+				}
+			}
 		}
 	}
 	if err := os.WriteFile(filepath.Join(own, "cgroup.subtree_control"), []byte("+memory +pids +cpu"), 0600); err != nil {

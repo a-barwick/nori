@@ -229,14 +229,15 @@ func (s *server) navigate(w http.ResponseWriter, r *http.Request) {
 		var result struct {
 			Result struct {
 				Value struct {
-					Ready bool   `json:"ready"`
-					URL   string `json:"url"`
-					Title string `json:"title"`
-					Text  string `json:"text"`
+					Ready    bool     `json:"ready"`
+					URL      string   `json:"url"`
+					Title    string   `json:"title"`
+					Text     string   `json:"text"`
+					Headings []string `json:"headings"`
 				} `json:"value"`
 			} `json:"result"`
 		}
-		err = c.call(ctx, "Runtime.evaluate", map[string]any{"expression": "({ready:document.readyState==='complete',url:location.href,title:document.title,text:(document.body?.innerText||'').slice(0,64000)})", "returnByValue": true}, &result)
+		err = c.call(ctx, "Runtime.evaluate", map[string]any{"expression": "({ready:document.readyState==='complete',url:location.href,title:document.title,text:(document.body?.innerText||'').slice(0,64000),headings:[...document.querySelectorAll('h1,h2,h3')].slice(0,40).map(h=>h.tagName.toLowerCase()+': '+(h.innerText||'').trim().slice(0,200))})", "returnByValue": true}, &result)
 		if err != nil {
 			http.Error(w, "navigation canceled or unavailable", 502)
 			return
@@ -244,7 +245,8 @@ func (s *server) navigate(w http.ResponseWriter, r *http.Request) {
 		if result.Result.Value.Ready {
 			complete = true
 			v := result.Result.Value
-			respond(w, map[string]string{"url": v.URL, "title": v.Title, "text": v.Text})
+			// Headings keep the page's structure that innerText flattens, such as which line is the main heading.
+			respond(w, map[string]any{"url": v.URL, "title": v.Title, "text": v.Text, "headings": v.Headings})
 			return
 		}
 		select {
