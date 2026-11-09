@@ -109,10 +109,10 @@ export function RuntimeComposer({
               {files.map((file) => (
                 <li key={file.id} className="flex max-w-full items-center gap-1 rounded-full border border-hairline bg-surface px-2.5 py-1 text-meta text-ink-2">
                   <span className="min-w-0 truncate">{file.name}</span>
-                  {file.status === "uploading" && <span className="shrink-0 text-ink-3">Uploading…</span>}
+                  {file.status === "uploading" && <span className="shrink-0 text-ink-3" role="status">{file.progress !== undefined ? `${Math.round(file.progress * 100)}%` : "Uploading…"}</span>}
                   {file.status === "error" && <span className="min-w-0 truncate text-danger" role="alert">{file.error}</span>}
                   {file.status === "error" && file.size <= MAX_FILE_BYTES && <button type="button" aria-label={`Retry ${file.name}`} onClick={() => onRetryFile(file)}><RotateCw size={13} aria-hidden /></button>}
-                  <button type="button" aria-label={`Remove ${file.name}`} onClick={() => onRemoveFile(file.id)}><X size={13} aria-hidden /></button>
+                  <button type="button" aria-label={file.status === "uploading" ? `Cancel uploading ${file.name}` : `Remove ${file.name}`} onClick={() => onRemoveFile(file.id)} className="grid size-6 place-items-center rounded-full hover:bg-fill-1"><X size={13} aria-hidden /></button>
                 </li>
               ))}
             </ul>

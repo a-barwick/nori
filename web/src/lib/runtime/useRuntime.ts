@@ -6,7 +6,7 @@ import type { Span } from "@sentry/nextjs";
 import type { Attachment, DraftFile, Message, PendingTaskCommand, ReadPosition, Run, SavedResult, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
 import { taskControlKinds } from "@/lib/types";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
-import { useDraftFiles } from "@/lib/useDraftFiles";
+import { useDraftFiles, type UploadContext } from "@/lib/useDraftFiles";
 import { runtimePath } from "./paths";
 
 class RequestError extends Error {
@@ -48,12 +48,25 @@ type Pending = { id: string; text: string; started: number; error?: string; atta
 const TURN_ACCEPTANCE_UNKNOWN = "Message acceptance could not be confirmed.";
 const COMMAND_ACCEPTANCE_UNKNOWN = "Task command acceptance could not be confirmed.";
 
-async function uploadFile(item: DraftFile, agentMode: boolean): Promise<Attachment> {
+/** Uploads with progress and cancel (XMLHttpRequest reports upload progress; fetch does not). */
+function uploadFile(item: DraftFile, agentMode: boolean, { signal, progress }: UploadContext): Promise<Attachment> {
   const query = new URLSearchParams({ id: item.id, filename: item.name });
-  const response = await fetch(runtimePath(agentMode, `v1/uploads?${query}`), {
-    method: "POST", body: item.file, cache: "no-store", headers: { "Content-Type": item.file.type || "application/octet-stream" },
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", runtimePath(agentMode, `v1/uploads?${query}`));
+    request.setRequestHeader("Content-Type", item.file.type || "application/octet-stream");
+    request.upload.onprogress = (event) => { if (event.lengthComputable) progress(event.loaded / event.total); };
+    request.onload = () => {
+      let data: { error?: string } & Partial<Attachment> | null = null;
+      try { data = JSON.parse(request.responseText); } catch { /* handled below */ }
+      if (request.status >= 200 && request.status < 300 && data) resolve(data as Attachment);
+      else reject(new Error(data?.error || (request.status ? `Upload failed (${request.status}).` : "Upload failed. Try again.")));
+    };
+    request.onerror = () => reject(new Error("The upload was interrupted. Retry this file."));
+    request.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
+    signal.addEventListener("abort", () => request.abort(), { once: true });
+    request.send(item.file);
   });
-  return readJSON<Attachment>(response, "Upload failed");
 }
 type ReplyTiming = { started: number; span: Span; timer: ReturnType<typeof setTimeout> };
 const STORAGE_KEY = "nori-pending-turns-v1";
@@ -542,7 +555,7 @@ export function useRuntime(agentMode = false) {
     await submit(item);
   }
 
-  const upload = (item: DraftFile) => uploadFile(item, agentMode);
+  const upload = (item: DraftFile, context: UploadContext) => uploadFile(item, agentMode, context);
 
   async function commandTask(runId: string, kind: TaskCommand["kind"], text?: string, questionId?: string) {
     if (replacingSnapshot.current) return;

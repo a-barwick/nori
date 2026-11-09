@@ -33,7 +33,10 @@ function partsOf(message: Pick<Message, "text" | "parts">, agentMode: boolean) {
 
 /** The main conversation and side chats. Runtime state lives in AssistantProvider so it survives navigation. */
 export function ChatScreen() {
-  const { runtime, chat, agentMode, debug } = useAssistant();
+  const { runtime, chat, agentMode, debug, capabilities } = useAssistant();
+  // The main composer offers exactly what the core's uploader accepts (including calendar .ics files).
+  const accepted = capabilities?.upload_accept;
+  const uploadAccept = accepted ? [...accepted.media_types, ...(accepted.extensions ?? [])].join(",") : undefined;
   const [tab, setTab] = useState<PanelTab>(() => new URL(window.location.href).searchParams.has("chat") ? "chats" : "activity");
   const {
     session,
@@ -253,6 +256,7 @@ export function ChatScreen() {
           </div>
         )}
         <RuntimeComposer
+          accept={uploadAccept}
           onDictationStart={speech.interrupt}
           draft={runtime.draft}
           setDraft={runtime.setDraft}

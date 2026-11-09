@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
 import type { Attachment, DraftFile } from "@/lib/types";
-import { useDraftFiles } from "@/lib/useDraftFiles";
+import { useDraftFiles, type UploadContext } from "@/lib/useDraftFiles";
 import {
   CONTRACT, chatAPI, conversationPath, mergeMessages, request, stay,
   type Capabilities, type Conversation, type MessagePage, type Summary,
@@ -266,7 +266,7 @@ export function useChat() {
     }
   }
 
-  async function upload(item: DraftFile) {
+  async function upload(item: DraftFile, context: UploadContext) {
     const selection = active.current;
     const timeline = selection?.timeline;
     const id = selection && await ensure(selection);
@@ -274,7 +274,7 @@ export function useChat() {
     const query = new URLSearchParams({ id: item.id, filename: item.name });
     const response = await fetch(chatAPI(`${conversationPath(id)}/uploads?${query}`), {
       method: "POST", headers: { "Content-Type": item.file.type || "text/csv" }, body: item.file, redirect: "error",
-      signal: AbortSignal.any([selection.controller.signal, AbortSignal.timeout(30_000)]),
+      signal: AbortSignal.any([selection.controller.signal, context.signal, AbortSignal.timeout(30_000)]),
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) {

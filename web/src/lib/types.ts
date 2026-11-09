@@ -11,7 +11,7 @@ export type SavedResult = {
   created_at: string; checked_at?: string; reported_at?: string; delivered_at?: string; message_id?: string;
 };
 export type Attachment = { id: string; name: string; media_type: string; size: number };
-export type DraftFile = Attachment & { status: "uploading" | "ready" | "error"; error?: string; file: File };
+export type DraftFile = Attachment & { status: "uploading" | "ready" | "error"; error?: string; file: File; /** 0–1 while uploading, when the browser reports it. */ progress?: number };
 export type MarkState = "idle" | "attentive" | "thinking";
 
 export interface TextItem {
