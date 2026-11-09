@@ -10,8 +10,7 @@ import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { AuthAttempt, Connection, HealthCode, Integration, MCPServer, Preferences, Resource } from "@/lib/contracts/assistant";
-import type { CatalogEntry, Installation, InstallationReview, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
-import type { MCPServerWithAuth } from "@/lib/contracts/pending";
+import type { CatalogEntry, Installation, InstallationReview, MCPCredentialInput, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { safeAuthorizeURL } from "./InteractionCard";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, Tabs, type Tone } from "./ui";
@@ -376,7 +375,7 @@ function NewMCPServer({ onDone }: { onDone: () => void }) {
   </form>;
 }
 
-function Credential({ server, onSaved }: { server: MCPServerWithAuth; onSaved: (next: MCPServer) => void }) {
+function Credential({ server, onSaved }: { server: MCPServer; onSaved: (next: MCPServer) => void }) {
   const action = useAction();
   const [token, setToken] = useState("");
   const [replacing, setReplacing] = useState(false);
@@ -384,21 +383,22 @@ function Credential({ server, onSaved }: { server: MCPServerWithAuth; onSaved: (
   const save = () => action.run("save", async () => {
     const value = token.trim();
     setToken("");
-    const receipt = await sendSecret<MCPServer>(`/mcp/${encodeURIComponent(server.id)}/credential`, { request_id: newRequestID(), token: value });
+    const body: MCPCredentialInput = { request_id: newRequestID(), token: value };
+    const receipt = await sendSecret<MCPServer>(`/mcp/${encodeURIComponent(server.id)}/credential`, body);
     onSaved(receipt.resource as MCPServer); setReplacing(false); invalidate(`/mcp/${encodeURIComponent(server.id)}/tools`);
   });
   if (present && !replacing) return <div className="flex flex-wrap items-center gap-3"><Pill tone="ok">Saved</Pill><Button size="sm" variant="quiet" onClick={() => setReplacing(true)}>Replace</Button></div>;
   return <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(event) => { event.preventDefault(); if (token.trim()) void save(); }}>
     <input aria-label="Token" type="password" autoComplete="off" spellCheck={false} value={token} onChange={(event) => setToken(event.target.value)} className={inputClass} placeholder={present ? "New token" : "Paste the server’s access token"} />
     <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!token.trim() || !!action.pending}>{action.pending ? "Saving…" : "Save"}</Button>{replacing && <Button variant="quiet" onClick={() => { setReplacing(false); setToken(""); }}>Cancel</Button>}</div>
-    {action.error && <p role="alert" className="text-meta text-danger">{action.error}</p>}
+    {action.error && <p role="alert" className="text-meta text-danger">{/credential storage is not configured/i.test(action.error) ? "This Nori can’t store access tokens yet. Nothing was saved." : action.error}</p>}
   </form>;
 }
 
 function MCPStatus({ server }: { server: MCPServer }) {
   const status = server.observed.status;
   const tone: Tone = status === "connected" ? "ok" : status === "failed" || status === "needs_sign_in" ? "danger" : "neutral";
-  return <Pill tone={tone}>{{ connected: "Connected", connecting: "Connecting", disconnected: "Stopped", needs_sign_in: "Needs sign-in", failed: "Failed", disabled: "Off" }[status]}</Pill>;
+  return <Pill tone={tone}>{{ connected: "Connected", connecting: "Connecting", disconnected: server.transport === "stdio" ? "Stopped" : "Not connected", needs_sign_in: "Needs sign-in", failed: "Failed", disabled: "Off" }[status]}</Pill>;
 }
 
 export function MCPDetailScreen({ id }: { id: string }) {
@@ -430,7 +430,7 @@ export function MCPDetailScreen({ id }: { id: string }) {
         </> : <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: "reconnect" }, "reconnect")}>Reconnect</Button>}
         {observed.status === "needs_sign_in" && <Button size="sm" onClick={() => void act({ action: "sign_in" }, "sign_in")}>Sign in</Button>}
       </div></Section>
-    {(item as MCPServerWithAuth).auth === "configured" && <Section title="Access token"><Credential server={item as MCPServerWithAuth} onSaved={(next) => server.apply(next)} /></Section>}
+    {item.auth === "configured" && <Section title="Access token"><Credential server={item} onSaved={(next) => server.apply(next)} /></Section>}
     <Section title="Tools">
       {tools.loading ? <Loading /> : tools.data?.items.length ? <Rows>{tools.data.items.map((tool) => <li key={tool.name} className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-2">
         <span className="min-w-0 flex-1"><span className="block text-row font-medium">{tool.title}</span><span className="block font-mono text-mono-data text-ink-3">{tool.name}</span></span>
