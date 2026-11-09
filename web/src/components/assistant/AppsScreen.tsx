@@ -30,6 +30,18 @@ const HEALTH: Record<HealthCode, { tone: Tone; label: string }> = {
   provider_unavailable: { tone: "warning", label: "Provider is down" }, credential_store_unavailable: { tone: "danger", label: "Can’t save this account" },
 };
 
+const SCOPES: Record<string, string> = {
+  "calendar.readonly": "read calendars", "calendar.events": "change events", calendar: "manage calendars",
+  "gmail.readonly": "read mail", "gmail.compose": "write drafts", "gmail.send": "send mail", "gmail.modify": "label and archive mail",
+  "contacts.readonly": "read contacts", "contacts.other.readonly": "read other contacts", openid: "", email: "", profile: "",
+};
+/** A provider scope in plain words; unknown scopes keep their last path segment. */
+export function scopeLabel(scope: string) {
+  const short = scope.replace(/^https:\/\/www\.googleapis\.com\/auth\//, "");
+  return SCOPES[short] ?? short;
+}
+const scopeList = (scopes: string[]) => [...new Set(scopes.map(scopeLabel).filter(Boolean))].join(", ");
+
 export function connectionState(connection: Connection): { tone: Tone; label: string } {
   if (connection.status === "connecting") return { tone: "neutral", label: "Connecting" };
   if (connection.status === "disconnected" || connection.status === "not_connected") return { tone: "neutral", label: "Not connected" };
@@ -163,7 +175,7 @@ function ConnectionCard({ connection, integration }: { connection: Connection; i
       {(recovery === "repair" || recovery === "connect" || recovery === "request_access") && <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-4 py-3">
         <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => void action.run("repair", () => startSignIn(connection, recovery === "connect" ? "connect" : "repair", returnTo, recovery === "request_access" ? connection.capabilities : undefined))}>
           <KeyRound size={14} aria-hidden />{action.pending === "repair" ? "Opening sign-in…" : recovery === "request_access" ? "Allow more access" : connection.account ? "Sign in again" : "Sign in"}</Button>
-        {!!connection.missing_scopes?.length && <span className="text-meta text-ink-2">Missing: {connection.missing_scopes.join(", ")}</span>}
+        {!!connection.missing_scopes?.length && <span className="text-meta text-ink-2">Still needs permission to {scopeList(connection.missing_scopes)}</span>}
       </div>}
       {recovery === "wait" && connection.health.retry_after && <p className="border-t border-hairline px-4 py-3 text-meta text-ink-2">Nori will try again {relative(connection.health.retry_after)}.</p>}
       {action.error && <div className="px-4 pb-3"><Notice tone="danger">{action.error}</Notice></div>}
@@ -226,7 +238,7 @@ function ConnectionDetails({ connection, integration }: { connection: Connection
     </div>}
     <div>
       <h4 className="mb-2 text-meta font-semibold">Granted access</h4>
-      <p className="text-meta text-ink-2 [overflow-wrap:anywhere]">{connection.granted_scopes.join(", ") || "None"}</p>
+      <p className="text-meta text-ink-2 [overflow-wrap:anywhere]">{scopeList(connection.granted_scopes) || "None"}</p>
     </div>
     {action.error && <Notice tone="danger">{action.error}</Notice>}
   </div>;
