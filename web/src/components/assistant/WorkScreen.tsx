@@ -3,17 +3,18 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { mutate, newRequestID } from "@/lib/assistant/api";
 import { AlertTriangle, Square } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { useAssistant } from "@/lib/assistant/context";
 import { cadence, money, plural, relative, when } from "@/lib/assistant/format";
 import { usePendingInteractions, useWork, useWorkDetail } from "@/lib/assistant/sources";
-import { useResource } from "@/lib/assistant/useResource";
+import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Automation, ComputerSession, Interaction, LibraryItem, OperationProjection, WorkItem } from "@/lib/contracts/assistant";
 import { MAX_MESSAGE_BYTES, messageTooLong } from "@/lib/submission";
 import { cn } from "@/lib/utils";
 import { InteractionCard } from "./InteractionCard";
-import { Empty, Failure, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, Tabs, type Tone } from "./ui";
+import { Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, Tabs, type Tone } from "./ui";
 
 type Bucket = "needs_you" | "working" | "scheduled" | "finished";
 
@@ -119,9 +120,31 @@ export function OperationRows({ operations }: { operations: (OperationProjection
   })}</Rows>;
 }
 
+const SPENDING_LIMIT = /spending limit/i;
+
+/** A task that ended before finishing can be continued as a new task; saved results carry over and completed actions aren't repeated. */
+function Continue({ item }: { item: WorkItem }) {
+  const router = useRouter();
+  const action = useAction();
+  const limited = SPENDING_LIMIT.test(item.error?.message ?? "");
+  const [budget, setBudget] = useState(String(Math.max(1, (item.cost.budget_usd ?? 1) * 2)));
+  const go = () => action.run("continue", async () => {
+    const receipt = await mutate(`/work/${encodeURIComponent(item.task_id)}/actions`, { request_id: newRequestID(), expected_revision: 0, value: { action: "continue", ...(limited && Number(budget) > 0 ? { budget_usd: Number(budget) } : {}) } });
+    invalidate("/work", "/assistant/summary");
+    if (receipt.status === "queued" && receipt.work?.task_id) router.push(`/work/${encodeURIComponent(receipt.work.task_id)}`);
+  }, "Continuing in a new task.");
+  return <Section title="Continue">
+    <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); void go(); }}>
+      {limited && <Field label="New spending limit (USD)"><input type="number" min={0.1} step={0.5} value={budget} onChange={(event) => setBudget(event.target.value)} className={cn(inputBase, "w-32")} /></Field>}
+      <Button type="submit" variant="primary" disabled={!!action.pending || (limited && !(Number(budget) > 0))}>{action.pending ? "Starting…" : "Continue this task"}</Button>
+    </form>
+    {action.error && <div className="mt-2"><Notice tone="danger">{action.error}</Notice></div>}
+  </Section>;
+}
+
 export function WorkDetailScreen({ taskID }: { taskID: string }) {
   const { runtime, has } = useAssistant();
-  const { detail, error, loading, reload } = useWorkDetail(taskID);
+  const { detail, error, loading, reload, live } = useWorkDetail(taskID);
   const item = detail?.item;
   const results = useResource<{ items: LibraryItem[] }>(has("library") && item?.result_ids.length ? `/library?task_id=${encodeURIComponent(taskID)}` : null, { poll: 0 });
   const commands = runtime.taskCommands.filter((command) => command.command.run_id === taskID);
@@ -152,6 +175,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
         {commands.filter((command) => command.error).map((command) => <div key={command.command.id} className="mt-2"><Notice tone="danger" action={command.rejected ? <Button size="sm" onClick={() => runtime.dismissTaskCommand(command.command.id)}>Dismiss</Button> : <Button size="sm" onClick={() => void runtime.retryTaskCommand(command)}>Retry</Button>}>{command.error}</Notice></div>)}
       </Section>}
       {item.status === "running" && item.cancel_requested && <div className="mt-6"><Notice>Stopping. Work already done stays done; anything unconfirmed stays marked.</Notice></div>}
+      {live && item.status === "failed" && <Continue item={item} />}
       {detail.result && <Section title={item.status === "failed" ? "Partial answer" : "Result"}><div className="rounded-card border border-hairline bg-surface p-4 text-body whitespace-pre-wrap [overflow-wrap:anywhere]">{detail.result}</div></Section>}
       {(results.data?.items.length ?? 0) > 0 && <Section title="Saved"><Rows>{results.data!.items.map((result) => <Row key={result.id} href={`/library/${encodeURIComponent(result.id)}`} title={result.title} detail={result.version > 1 ? `Version ${result.version}` : undefined} />)}</Rows></Section>}
       {!has("library") && item.result_ids.length > 0 && <Section title="Saved"><Rows>{item.result_ids.map((id) => { const saved = runtime.session?.results?.find((result) => result.id === id); return <Row key={id} href={`/library/${encodeURIComponent(id)}`} title={saved?.title ?? "Saved result"} />; })}</Rows></Section>}
@@ -167,7 +191,8 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
         <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
           <dt className="text-ink-3">Started</dt><dd>{when(item.started_at)}</dd>
           {item.finished_at && <><dt className="text-ink-3">Finished</dt><dd>{when(item.finished_at)}</dd></>}
-          <dt className="text-ink-3">From</dt><dd>{item.origin.kind === "automation" && item.origin.automation_id ? <Link className="text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.origin.automation_id)}`}>A routine</Link> : item.origin.kind === "goal" && item.origin.goal_id ? <Link className="text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.origin.goal_id)}`}>A goal</Link> : <Link className="text-accent-text hover:underline" href="/">Chat</Link>}</dd>
+          <dt className="text-ink-3">From</dt><dd>{item.origin.kind === "automation" && item.origin.automation_id ? <Link className="text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.origin.automation_id)}`}>A routine</Link> : item.origin.kind === "goal" && item.origin.goal_id ? <Link className="text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.origin.goal_id)}`}>A goal</Link> : item.origin.kind === "external" ? "Another app" : <Link className="text-accent-text hover:underline" href={item.origin.conversation_id && item.origin.conversation_id !== "assistant" ? `/?chat=${encodeURIComponent(item.origin.conversation_id)}` : "/"}>Chat</Link>}</dd>
+          {item.origin.continues_task_id && <><dt className="text-ink-3">Continues</dt><dd><Link className="text-accent-text hover:underline" href={`/work/${encodeURIComponent(item.origin.continues_task_id)}`}>The earlier task</Link></dd></>}
           <dt className="text-ink-3">Cost</dt><dd>{[item.cost.status === "known" ? money(item.cost.amount_usd) : item.cost.status === "unknown" ? (item.cost.amount_usd ? `At least ${money(item.cost.amount_usd)}` : "Not known yet") : "None", item.cost.budget_usd ? `budget ${money(item.cost.budget_usd)}` : ""].filter(Boolean).join(" · ")}</dd>
           {item.parent_task_id && <><dt className="text-ink-3">Part of</dt><dd><Link className="text-accent-text hover:underline" href={`/work/${encodeURIComponent(item.parent_task_id)}`}>Parent task</Link></dd></>}
         </dl>
