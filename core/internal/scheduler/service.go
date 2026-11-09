@@ -35,6 +35,22 @@ type Service struct {
 	// Timezone is the user's preference used when a trigger names none.
 	Timezone func(ctx context.Context) string
 	Now      func() time.Time
+	// Arm asks the hosting adapter to wake this user's process at a due time. Duplicate or lost arms are harmless;
+	// the next pass recomputes from durable state.
+	Arm func(ctx context.Context, at time.Time)
+}
+
+func (s *Service) arm(ctx context.Context) func(state.MutationReceipt, error) (state.MutationReceipt, error) {
+	return func(receipt state.MutationReceipt, err error) (state.MutationReceipt, error) {
+		if err != nil || s.Arm == nil {
+			return receipt, err
+		}
+		var a Automation
+		if json.Unmarshal(receipt.Resource, &a) == nil && a.NextAt != nil {
+			s.Arm(context.WithoutCancel(ctx), *a.NextAt)
+		}
+		return receipt, err
+	}
 }
 
 func (s *Service) now() time.Time {
@@ -315,7 +331,7 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 	}
 	rules := proposedRules(id, value)
 	now := s.now()
-	return s.Store.Mutate(ctx, state.Mutation{
+	return s.arm(ctx)(s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: method, Target: target, ExpectedRevision: expected, Payload: value,
 		Collection: CollectionAutomations, ID: id,
 		Apply: func(current *state.Resource, read func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
@@ -383,7 +399,7 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 			return state.MutationResult{Writes: append([]state.Resource{resource}, writes...), Deletes: deletes,
 				Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: status}}, nil
 		},
-	})
+	}))
 }
 
 // computeNext finds the next due instant after the cursor, honoring snooze, end and occurrence limits.
@@ -416,7 +432,7 @@ func (s *Service) computeNext(a stored, now time.Time) *time.Time {
 // Act applies pause, resume, cancel, run_now or snooze.
 func (s *Service) Act(ctx context.Context, id, requestID string, expected int64, action Action) (state.MutationReceipt, error) {
 	now := s.now()
-	return s.Store.Mutate(ctx, state.Mutation{
+	return s.arm(ctx)(s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "POST", Target: "/v1/automations/" + id + "/actions", ExpectedRevision: expected, Payload: action,
 		Collection: CollectionAutomations, ID: id,
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
@@ -428,6 +444,7 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 				return state.MutationResult{}, err
 			}
 			var extra []state.Resource
+			var work *state.WorkRef
 			switch {
 			case action.Action == "pause" && a.Status == "enabled":
 				a.Status = "paused"
@@ -447,6 +464,8 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 				}
 				extra = append(extra, resource)
 				a.LastOccurrenceID = occurrence.ID
+				// The occurrence's task ID is fixed now, so the client can open the run as soon as it starts.
+				work = &state.WorkRef{TaskID: taskID(occurrence.ID)}
 			default:
 				return state.MutationResult{}, fmt.Errorf("%w: %s does not apply to a %s automation", state.ErrInvalidResource, action.Action, a.Status)
 			}
@@ -458,10 +477,13 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 			}
 			a.Revision = revision
 			data, _ := json.Marshal(a.Automation)
-			return state.MutationResult{Writes: append([]state.Resource{resource}, extra...),
-				Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: 200}}, nil
+			receipt := state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: 200}
+			if work != nil {
+				receipt.Status, receipt.HTTPStatus, receipt.Work = "queued", 202, work
+			}
+			return state.MutationResult{Writes: append([]state.Resource{resource}, extra...), Receipt: receipt}, nil
 		},
-	})
+	}))
 }
 
 // occurrenceID is stable for the automation, the nominal slot (or source event) and the schedule generation.
