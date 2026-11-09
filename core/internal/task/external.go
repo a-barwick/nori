@@ -313,6 +313,9 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 		if outcome == "" {
 			outcome = "confirmed"
 		}
+		if (outcome == "failed" || outcome == "uncertain") && result.Cleared != "" && op.Cleared == "" {
+			op.Cleared = result.Cleared
+		}
 		return persist(outcome, output, result.Err)
 	}
 	if recovering && plan.adapter == nil {
