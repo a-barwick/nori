@@ -2592,3 +2592,46 @@ export const fx_execution_operation_projection_contained_valid: OperationProject
   "cleared": "contained"
 };
 
+// fixtures/plugins/installation-create.network.valid.json
+export const fx_plugins_installation_create_network_valid: InstallationCreateChange = {
+  "request_id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+  "expected_revision": 0,
+  "value": {
+    "package": {
+      "id": "deepwiki/mcp",
+      "version": "1.0.0"
+    },
+    "approved_access": {
+      "connection_types": [],
+      "action_classes": [
+        "read"
+      ],
+      "network": [
+        "mcp.deepwiki.com"
+      ],
+      "filesystem": []
+    }
+  }
+};
+
+// fixtures/plugins/installation-action.update-network.valid.json
+export const fx_plugins_installation_action_update_network_valid: InstallationAction = {
+  "request_id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+  "expected_revision": 2,
+  "value": {
+    "action": "update",
+    "version": "1.1.0",
+    "approved_access": {
+      "connection_types": [
+        "google"
+      ],
+      "action_classes": [
+        "read",
+        "reversible_write"
+      ],
+      "network": [],
+      "filesystem": []
+    }
+  }
+};
+

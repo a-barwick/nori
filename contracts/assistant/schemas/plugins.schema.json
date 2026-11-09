@@ -466,6 +466,20 @@
               "items": {
                 "$ref": "common.schema.json#/$defs/Effect"
               }
+            },
+            "network": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Hosts the user approved the package to reach (r2.8)"
+            },
+            "filesystem": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Paths the user approved (r2.8)"
             }
           },
           "additionalProperties": false
