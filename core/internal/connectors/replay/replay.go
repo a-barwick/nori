@@ -18,6 +18,7 @@ package replay
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -25,7 +26,9 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -41,11 +44,15 @@ type Exchange struct {
 	Query        map[string]string `json:"query,omitempty"`
 	BodyContains []string          `json:"body_contains,omitempty"`
 	BasicAuth    *BasicAuth        `json:"basic_auth,omitempty"` // the request must carry exactly these credentials
-	After        []string          `json:"after,omitempty"`      // exchanges that must have been used first
-	Times        int               `json:"times,omitempty"`      // 0 means unlimited
-	DelayMS      int               `json:"delay_ms,omitempty"`
-	Drop         bool              `json:"drop,omitempty"` // apply, then lose the response
-	Response     Response          `json:"response"`
+	// Capture saves the matched request under a name so a later response can echo it: {{capture:NAME.path}} is the
+	// request path, {{capture:NAME.stem}} its last segment without extension, {{capture:NAME.body}} the request body
+	// and {{capture:NAME.body_xml}} the body escaped for XML text. A read-back can then return exactly what was written.
+	Capture  string   `json:"capture,omitempty"`
+	After    []string `json:"after,omitempty"` // exchanges that must have been used first
+	Times    int      `json:"times,omitempty"` // 0 means unlimited
+	DelayMS  int      `json:"delay_ms,omitempty"`
+	Drop     bool     `json:"drop,omitempty"` // apply, then lose the response
+	Response Response `json:"response"`
 }
 
 // BasicAuth names the made-up credentials an exchange answers to, so an accepted and a rejected pair can be recorded
@@ -68,6 +75,7 @@ type Transport struct {
 	mu        sync.Mutex
 	exchanges []Exchange
 	used      map[string]int
+	captured  map[string]string // "NAME.path" and the like -> value
 }
 
 // ErrDropped is returned for an exchange recorded with "drop": the provider applied it, the response was lost.
@@ -156,7 +164,27 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if t.matches(x, req, body) {
 			hit = x
 			t.used[x.Name]++
+			if x.Capture != "" {
+				if t.captured == nil {
+					t.captured = map[string]string{}
+				}
+				segment := path.Base(req.URL.Path)
+				var escaped bytes.Buffer
+				_ = xml.EscapeText(&escaped, body)
+				t.captured[x.Capture+".path"] = req.URL.Path
+				t.captured[x.Capture+".stem"] = strings.TrimSuffix(segment, path.Ext(segment))
+				t.captured[x.Capture+".body"] = string(body)
+				t.captured[x.Capture+".body_xml"] = escaped.String()
+			}
 			break
+		}
+	}
+	reply := Response{}
+	if hit != nil {
+		reply = hit.Response
+		reply.Text = t.expand(reply.Text)
+		if len(reply.Body) > 0 {
+			reply.Body = json.RawMessage(t.expand(string(reply.Body)))
 		}
 	}
 	t.mu.Unlock()
@@ -175,7 +203,23 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if hit.Drop {
 		return nil, ErrDropped
 	}
-	return response(req, hit.Response), nil
+	return response(req, reply), nil
+}
+
+var placeholder = regexp.MustCompile(`\{\{capture:([A-Za-z0-9_-]+\.(?:path|stem|body|body_xml))\}\}`)
+
+// expand fills {{capture:...}} placeholders from earlier captured requests; an unknown capture is left as is. Callers
+// hold t.mu.
+func (t *Transport) expand(text string) string {
+	if t.captured == nil || !strings.Contains(text, "{{capture:") {
+		return text
+	}
+	return placeholder.ReplaceAllStringFunc(text, func(m string) string {
+		if v, ok := t.captured[placeholder.FindStringSubmatch(m)[1]]; ok {
+			return v
+		}
+		return m
+	})
 }
 
 // Used reports how many times each exchange answered, for evidence.

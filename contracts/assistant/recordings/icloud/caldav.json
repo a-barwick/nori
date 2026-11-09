@@ -94,7 +94,7 @@
     "headers": {
      "Content-Type": "text/xml; charset=utf-8"
     },
-    "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/123456789/calendars/home/icloud-pottery-1.ics</d:href><d:propstat><d:prop><d:getetag>\"C=101@U=abc\"</d:getetag><c:calendar-data>BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Apple Inc.//iCloud//EN\r\nBEGIN:VEVENT\r\nUID:icloud-pottery-1@example.com\r\nDTSTAMP:20261101T120000Z\r\nDTSTART:20261113T020000Z\r\nDTEND:20261113T040000Z\r\nSUMMARY:Pottery class\r\nLOCATION:Clay Studio\r\nSTATUS:CONFIRMED\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>/123456789/calendars/home/recorded-glaze.ics</d:href><d:propstat><d:prop><d:getetag>\"C=102@U=abc\"</d:getetag><c:calendar-data>BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Nori//EN\r\nBEGIN:VEVENT\r\nUID:recorded-glaze@nori\r\nDTSTAMP:20261109T040000Z\r\nDTSTART:20261114T180000Z\r\nDTEND:20261114T183000Z\r\nSUMMARY:Glaze pickup\r\nSTATUS:CONFIRMED\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+    "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/123456789/calendars/home/icloud-pottery-1.ics</d:href><d:propstat><d:prop><d:getetag>\"C=101@U=abc\"</d:getetag><c:calendar-data>BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Apple Inc.//iCloud//EN\r\nBEGIN:VEVENT\r\nUID:icloud-pottery-1@example.com\r\nDTSTAMP:20261101T120000Z\r\nDTSTART:20261113T020000Z\r\nDTEND:20261113T040000Z\r\nSUMMARY:Pottery class\r\nLOCATION:Clay Studio\r\nSTATUS:CONFIRMED\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>{{capture:icloud_created.path}}</d:href><d:propstat><d:prop><d:getetag>\"C=102@U=abc\"</d:getetag><c:calendar-data>{{capture:icloud_created.body_xml}}</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
    },
    "after": [
     "icloud-create"
@@ -156,7 +156,8 @@
      "ETag": "\"C=102@U=abc\""
     },
     "text": ""
-   }
+   },
+   "capture": "icloud_created"
   },
   {
    "name": "icloud-create-repeat",
