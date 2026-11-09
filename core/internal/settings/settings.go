@@ -65,6 +65,9 @@ type Connections struct {
 	// Delivery transports for push and email destinations (A28). Unset leaves the channel without a transport.
 	SMTPHost, SMTPPort, SMTPUsername, SMTPPassword, EmailFrom string
 	VAPIDPublicKey, VAPIDPrivateKey, VAPIDSubject             string
+	// DeliveryTestCAFile is a PEM root trusted, in addition to the system roots, by the push and email transports so
+	// they can be verified against local sinks with self-signed certificates. Local development only.
+	DeliveryTestCAFile string
 }
 
 // Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
@@ -253,6 +256,7 @@ func connectionsFromEnvironment(localArtifacts string) Connections {
 		SMTPHost:       os.Getenv("NORI_SMTP_HOST"), SMTPPort: os.Getenv("NORI_SMTP_PORT"), SMTPUsername: os.Getenv("NORI_SMTP_USERNAME"),
 		SMTPPassword: os.Getenv("NORI_SMTP_PASSWORD"), EmailFrom: os.Getenv("NORI_EMAIL_FROM"),
 		VAPIDPublicKey: os.Getenv("NORI_VAPID_PUBLIC_KEY"), VAPIDPrivateKey: os.Getenv("NORI_VAPID_PRIVATE_KEY"), VAPIDSubject: os.Getenv("NORI_VAPID_SUBJECT"),
+		DeliveryTestCAFile: os.Getenv("NORI_DELIVERY_TEST_CA_FILE"),
 	}
 }
 

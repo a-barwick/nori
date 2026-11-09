@@ -16,6 +16,8 @@ import (
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -49,6 +51,14 @@ func NewWebPush(public, private, subject string) *WebPush {
 }
 
 func (p *WebPush) Kind() string { return "push" }
+
+// TrustRoots makes the push client verify the push service against these roots (local test sinks only).
+func (p *WebPush) TrustRoots(roots *x509.CertPool) {
+	if roots == nil {
+		return
+	}
+	p.Client.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots}}
+}
 
 func (p *WebPush) Send(ctx context.Context, target scheduler.Target, msg scheduler.Message) (scheduler.Receipt, error) {
 	if target.Endpoint == "" || target.P256dh == "" || target.Auth == "" {
