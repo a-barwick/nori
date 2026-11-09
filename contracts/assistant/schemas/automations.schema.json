@@ -622,9 +622,167 @@
             "required": [
               "auth"
             ]
+          },
+          {
+            "required": [
+              "address"
+            ]
+          },
+          {
+            "required": [
+              "subscription"
+            ]
+          },
+          {
+            "required": [
+              "endpoint"
+            ]
           }
         ]
-      }
+      },
+      "description": "Projected destination. The enrolled email address or push subscription is write-only and never appears here."
+    },
+    "DeliveryDestinationCreate": {
+      "description": "Body value for POST /v1/delivery-destinations and PUT /v1/delivery-destinations/{id}. Changing the address or subscription returns the destination to pending_verification. The address and subscription are stored in the credential store and never projected.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "channel",
+            "label",
+            "address"
+          ],
+          "properties": {
+            "channel": {
+              "const": "email"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "address": {
+              "type": "string",
+              "format": "email"
+            },
+            "quiet_hours": {
+              "$ref": "#/$defs/DeliveryDestination/properties/quiet_hours"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "channel",
+            "label",
+            "subscription"
+          ],
+          "properties": {
+            "channel": {
+              "const": "push"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "subscription": {
+              "$ref": "#/$defs/PushSubscription"
+            },
+            "quiet_hours": {
+              "$ref": "#/$defs/DeliveryDestination/properties/quiet_hours"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PushSubscription": {
+      "description": "The browser's PushSubscription.toJSON() shape.",
+      "type": "object",
+      "required": [
+        "endpoint",
+        "keys"
+      ],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "expirationTime": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "keys": {
+          "type": "object",
+          "required": [
+            "p256dh",
+            "auth"
+          ],
+          "properties": {
+            "p256dh": {
+              "type": "string",
+              "minLength": 1
+            },
+            "auth": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeliveryDestinationAction": {
+      "description": "Body value for POST /v1/delivery-destinations/{id}/actions. send_verification sends a six-digit code through the channel (valid 15 minutes, 5 attempts, single use); verify marks the destination verified; remove deletes it. The receipt resource is the DeliveryDestination. The in-app destination accepts none of these.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "action"
+          ],
+          "properties": {
+            "action": {
+              "const": "send_verification"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "code"
+          ],
+          "properties": {
+            "action": {
+              "const": "verify"
+            },
+            "code": {
+              "type": "string",
+              "pattern": "^[0-9]{6}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action"
+          ],
+          "properties": {
+            "action": {
+              "const": "remove"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
     },
     "Goal": {
       "type": "object",
