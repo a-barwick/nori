@@ -197,7 +197,7 @@ export async function assistantRoute(request: Request, family: string, segments:
     } catch { return Response.json({ error: "Request body must be JSON." }, { status: 400 }); }
   }
   const init: RequestInit = read ? {} : { method: request.method, body, headers: { "Content-Type": "application/json" } };
-  return forward(request, mode, path, init, (type) => json(type) || (read && family === "library" && /^(application\/(pdf|octet-stream)|image\/|text\/)/.test(type)));
+  return forward(request, mode, path, init, (type) => json(type) || (read && family === "library" && /^(application\/(pdf|octet-stream)|image\/(png|jpeg|webp)|text\/(plain|markdown|csv))/.test(type)) || (read && family === "computer" && /^image\/(png|jpeg|webp)/.test(type)));
 }
 
 // The provider redirects the browser here. Core validates state within this user only and

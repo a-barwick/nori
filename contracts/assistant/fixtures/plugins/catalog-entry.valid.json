@@ -25,7 +25,11 @@
     "action_classes": [
       "read",
       "reversible_write"
-    ]
+    ],
+    "network": [
+      "api.linear.app"
+    ],
+    "filesystem": []
   },
   "contributions_summary": {
     "tools": 12,

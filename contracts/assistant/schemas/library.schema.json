@@ -150,7 +150,8 @@
         "kind",
         "title",
         "created_at",
-        "provenance"
+        "provenance",
+        "revision"
       ],
       "properties": {
         "id": {
@@ -253,6 +254,10 @@
         "delete_effect": {
           "type": "string",
           "description": "Server-stated effect of delete, e.g. that the provider copy stays with the provider"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision",
+          "description": "Resource revision for LibraryItemChange and LibraryAction expected_revision; distinct from the content version. Not state.Result.revision, which is the task's instruction revision: map it explicitly rather than embedding Result."
         }
       },
       "allOf": [
@@ -773,7 +778,8 @@
         "title",
         "body",
         "link",
-        "created_at"
+        "created_at",
+        "revision"
       ],
       "properties": {
         "id": {
@@ -813,6 +819,9 @@
         },
         "acknowledged_at": {
           "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
         }
       }
     },

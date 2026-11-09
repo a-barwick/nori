@@ -5,7 +5,6 @@
 // shapes. The legacy projection is live data, not a fixture.
 import { useMemo } from "react";
 import type { AssistantSummary, Interaction, LibraryItem, WorkDetail, WorkItem } from "@/lib/contracts/assistant";
-import type { WorkActivity } from "@/lib/contracts/pending";
 import type { Run, SavedResult, Session } from "@/lib/types";
 import { runtimePath } from "@/lib/runtime/paths";
 import { useAssistant } from "./context";
@@ -43,7 +42,8 @@ export function legacyWorkItem(run: Run, session?: Session): WorkItem {
 
 export function legacyLibraryItem(result: SavedResult, agentMode: boolean): LibraryItem {
   return {
-    id: result.id, root_id: result.root_id, version: result.version, revises: result.revises, superseded_by: result.superseded_by,
+    // Legacy results are display-only; 0 marks an item that is not yet a managed Library resource (r2.1).
+    id: result.id, revision: 0, root_id: result.root_id, version: result.version, revises: result.revises, superseded_by: result.superseded_by,
     kind: result.kind, title: result.title, name: result.name, media_type: result.media_type, size: result.size,
     url: result.kind === "link" ? result.url : result.kind === "file" || result.kind === "screenshot" ? runtimePath(agentMode, `v1/results/${result.id}/file`) : undefined,
     task_id: result.run_id, conversation_id: "assistant", provenance: { content: "generated" }, created_at: result.created_at,
@@ -65,10 +65,10 @@ export function useWork() {
 export function useWorkDetail(taskID: string) {
   const { has, runtime } = useAssistant();
   const live = has("work");
-  const remote = useResource<WorkDetail & WorkActivity>(live ? `/work/${encodeURIComponent(taskID)}` : null, { poll: 5_000 });
+  const remote = useResource<WorkDetail>(live ? `/work/${encodeURIComponent(taskID)}` : null, { poll: 5_000 });
   const session = runtime.session;
   const run = session?.runs.find((item) => item.id === taskID);
-  const legacy = useMemo<(WorkDetail & WorkActivity) | undefined>(() => run && {
+  const legacy = useMemo<(WorkDetail) | undefined>(() => run && {
     item: legacyWorkItem(run, session), operations: [],
     interactions: legacyInteraction(run) ? [legacyInteraction(run)!] : [],
     result: run.result, events: (run.events ?? []).map((event) => ({ kind: event.kind, text: event.text, created_at: event.created_at })),
