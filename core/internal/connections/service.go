@@ -877,7 +877,8 @@ func (s *Service) finishDisconnect(ctx context.Context, id string, action Action
 		problems = append(problems, "The stored credential could not be deleted.")
 	}
 	for _, cleanup := range s.Cleanup {
-		if err := cleanup(ctx, id, action.PurgeCache, action.DeleteImportedContent); err != nil {
+		purge := action.PurgeCache == nil || *action.PurgeCache
+		if err := cleanup(ctx, id, purge, action.DeleteImportedContent); err != nil {
 			problems = append(problems, "Some cached connector data could not be removed.")
 		}
 	}
