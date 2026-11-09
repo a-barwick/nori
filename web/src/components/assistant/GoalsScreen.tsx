@@ -30,7 +30,7 @@ export function GoalsScreen() {
   const closed = items.filter((goal) => goal.status === "completed" || goal.status === "abandoned");
   const blocked = open.filter((goal) => goal.blockers.length);
   return (
-    <Screen title="Goals" line={!items.length ? undefined : blocked.length ? `${blocked.length === 1 ? "One goal is" : `${blocked.length} goals are`} blocked.` : open.length ? "Everything is moving." : "No open goals."}
+    <Screen title="Goals" line={!items.length ? undefined : blocked.length ? `${blocked.length === 1 ? "One goal is" : `${blocked.length} goals are`} blocked.` : undefined}
       actions={<Link href="/goals/new" className="inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-row-title font-medium text-on-accent hover:bg-accent-hover"><Plus size={15} aria-hidden />New goal</Link>}>
       {list.error && <div className="mb-4"><Failure error={list.error} onRetry={() => void list.reload()} /></div>}
       {list.loading ? <Loading /> : !items.length ? <Empty action={<Link href="/goals/new" className="text-meta font-medium text-accent-text hover:underline">New goal</Link>}>No goals yet. Tell Nori what you want done by when, and it keeps at it.</Empty> : <>
@@ -66,7 +66,7 @@ export function GoalDetailScreen({ id }: { id: string }) {
   const open = item.status === "active" || item.status === "paused";
   const allMet = item.completion_criteria.every((criterion) => criterion.met);
   const tasks = item.linked.task_ids.map((taskID) => work.data?.items.find((task) => task.task_id === taskID) ?? { task_id: taskID, title: "Task" } as Pick<WorkItem, "task_id" | "title">);
-  const routines = item.linked.automation_ids.map((routineID) => automations.data?.items.find((routine) => routine.id === routineID) ?? { id: routineID, title: "Routine" } as Pick<Automation, "id" | "title">);
+  const routines = item.linked.automation_ids.map((routineID) => automations.data?.items.find((routine) => routine.id === routineID) ?? { id: routineID, title: "Automation" } as Pick<Automation, "id" | "title">);
   const results = item.linked.result_ids.map((resultID) => library.data?.items.find((result) => result.id === resultID) ?? { id: resultID, title: "Saved result" } as Pick<LibraryItem, "id" | "title">);
   return (
     <Screen title={item.title} back="/goals" line={item.progress || undefined} actions={<><Pill tone={STATUS[item.status].tone}>{STATUS[item.status].label}</Pill><RefreshButton onClick={() => void goal.reload()} /></>}>
@@ -83,7 +83,7 @@ export function GoalDetailScreen({ id }: { id: string }) {
       {item.next_actions.length > 0 && <Section title="Next"><ul className="list-disc space-y-1 pl-5 text-body">{item.next_actions.map((next) => <li key={next}>{next}</li>)}</ul></Section>}
       {(tasks.length > 0 || routines.length > 0 || results.length > 0) && <Section title="Linked"><Rows>
         {tasks.map((task) => <Row key={task.task_id} href={`/work/${encodeURIComponent(task.task_id)}`} title={task.title} detail="Task" />)}
-        {routines.map((routine) => <Row key={routine.id} href={`/routines/${encodeURIComponent(routine.id)}`} title={routine.title} detail={item.follow_up === "monitor" ? "Checks for changes" : "Routine"} />)}
+        {routines.map((routine) => <Row key={routine.id} href={`/routines/${encodeURIComponent(routine.id)}`} title={routine.title} detail={item.follow_up === "monitor" ? "Checks for changes" : "Automation"} />)}
         {results.map((result) => <Row key={result.id} href={`/library/${encodeURIComponent(result.id)}`} title={result.title} detail="Saved" />)}
       </Rows></Section>}
       {open && <Section title="Manage"><div className="flex flex-wrap items-center gap-2">
@@ -91,8 +91,8 @@ export function GoalDetailScreen({ id }: { id: string }) {
         <Button disabled={!!action.pending} onClick={() => void act({ action: item.status === "active" ? "pause" : "resume" }, "toggle")}>{item.status === "active" ? "Pause" : "Resume"}</Button>
         <Confirm title="Mark this goal done?" confirm="Mark done" onConfirm={() => void act({ action: "complete", keep_monitors: keepMonitors }, "complete")}
           trigger={<Button variant={allMet ? "primary" : "neutral"} disabled={!!action.pending}>Mark done</Button>}
-          body={<div className="space-y-3">{!allMet && <p>Some criteria aren’t met yet.</p>}{item.linked.automation_ids.length > 0 && <label className="flex items-start gap-2 text-ink"><input type="checkbox" className="mt-1 accent-[var(--accent)]" checked={keepMonitors} onChange={(event) => setKeepMonitors(event.target.checked)} />Keep its routines running</label>}{!item.linked.automation_ids.length && allMet && <p>Nori stops following up.</p>}</div>} />
-        <Confirm danger title="Drop this goal?" confirm="Drop goal" body="Nori stops following up and its routines stop. Saved results stay in Library." onConfirm={() => void act({ action: "abandon" }, "abandon")}
+          body={<div className="space-y-3">{!allMet && <p>Some criteria aren’t met yet.</p>}{item.linked.automation_ids.length > 0 && <label className="flex items-start gap-2 text-ink"><input type="checkbox" className="mt-1 accent-[var(--accent)]" checked={keepMonitors} onChange={(event) => setKeepMonitors(event.target.checked)} />Keep its automations running</label>}{!item.linked.automation_ids.length && allMet && <p>Nori stops following up.</p>}</div>} />
+        <Confirm danger title="Drop this goal?" confirm="Drop goal" body="Nori stops following up and its automations stop. Saved results stay in Library." onConfirm={() => void act({ action: "abandon" }, "abandon")}
           trigger={<Button variant="quiet" className="text-danger!" disabled={!!action.pending}>Drop</Button>} />
       </div></Section>}
     </Screen>

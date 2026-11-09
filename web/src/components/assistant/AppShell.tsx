@@ -55,7 +55,7 @@ function Frame({ children }: { children: ReactNode }) {
     { href: "/work", label: "Work", icon: ListChecks, badge: waiting, badgeLabel: "need you", match: (p) => p.startsWith("/work") || p.startsWith("/computer") },
     { href: "/apps", label: "Apps", icon: LayoutGrid, badge: summary.apps_attention, badgeLabel: "need attention", match: (p) => p.startsWith("/apps") },
     { href: "/library", label: "Library", icon: FolderOpen, match: (p) => p.startsWith("/library") },
-    { href: "/routines", label: "Routines", icon: Repeat, match: (p) => p.startsWith("/routines") },
+    { href: "/routines", label: "Automations", icon: Repeat, match: (p) => p.startsWith("/routines") },
     { href: "/goals", label: "Goals", icon: Target, match: (p) => p.startsWith("/goals") },
     { href: "/settings", label: "Settings", icon: Settings, match: (p) => p.startsWith("/settings") },
   ];

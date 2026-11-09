@@ -68,7 +68,7 @@ export function SkillsList() {
     {items.length ? <Rows label="Skills">{items.map((skill) => <Row key={skill.id} href={`/apps/skills/${encodeURIComponent(skill.id)}`} title={skill.title}
       detail={[skill.description, skill.installation_id ? "From a plugin" : `Version ${skill.ref.version}`].filter(Boolean).join(" · ")}
       trailing={<Button size="sm" variant="quiet" onClick={(event) => { event.preventDefault(); runSkill(skill, runtime.setDraft, router.push); }}><Play size={13} aria-hidden />Run</Button>} />)}</Rows>
-      : <Empty>No skills yet. A skill is a reusable set of instructions you can run from Chat.</Empty>}
+      : <Empty>No skills yet.</Empty>}
   </Section>;
 }
 

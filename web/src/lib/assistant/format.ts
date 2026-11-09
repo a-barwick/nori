@@ -69,7 +69,7 @@ export const EFFECT_LABEL: Record<Effect, string> = {
   read: "Read",
   reversible_write: "Change",
   sensitive_send: "Send",
-  unknown: "Unknown effect",
+  unknown: "Any action",
   control: "Nori control",
 };
 
