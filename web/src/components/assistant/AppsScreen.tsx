@@ -76,7 +76,7 @@ function recoveryOf(connection: Connection) {
 }
 
 /** Start a server-issued sign-in and send the browser to it. */
-async function startSignIn(connection: Pick<Connection, "id" | "revision">, action: "connect" | "repair", returnTo: string, capabilities?: string[]) {
+export async function startSignIn(connection: Pick<Connection, "id" | "revision">, action: "connect" | "repair", returnTo: string, capabilities?: string[]) {
   const receipt = await mutate<Connection>(`/connections/${encodeURIComponent(connection.id)}/actions`, {
     request_id: newRequestID(), expected_revision: connection.revision, value: { action, return_to: returnTo, ...(capabilities?.length ? { capabilities } : {}) },
   }) as { auth?: AuthAttempt };
@@ -194,7 +194,7 @@ const APP_PASSWORD_HELP: Record<string, string> = { icloud: "https://support.app
  * Sign-in for apps that use an account name and an app-specific password (iCloud). The pair is sent once
  * and kept nowhere in the browser; the server never returns it.
  */
-function PasswordSignIn({ integration, connection, onDone }: { integration: Integration; connection?: Connection; onDone: () => void }) {
+export function PasswordSignIn({ integration, connection, onDone }: { integration: Integration; connection?: Connection; onDone: () => void }) {
   const action = useAction();
   const apple = integration.id === "icloud";
   const repairing = !!connection?.account?.provider_id;

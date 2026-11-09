@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, ExternalLink, Monitor, ShieldCheck } from "lucide-react";
+import { Check, KeyRound, Monitor, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, getJSON, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
-import type { AccountSelectionPayload, ApprovalPayload, Connection, ComputerTakeoverPayload, Interaction, InteractionResponse, QuestionPayload, SignInPayload } from "@/lib/contracts/assistant";
+import type { AccountSelectionPayload, ApprovalPayload, Connection, ComputerTakeoverPayload, Integration, Interaction, InteractionResponse, QuestionPayload, SignInPayload } from "@/lib/contracts/assistant";
 import { MAX_MESSAGE_BYTES } from "@/lib/submission";
 import { cn } from "@/lib/utils";
+import { PasswordSignIn, startSignIn } from "./AppsScreen";
 import { inputClass, Notice, Pill } from "./ui";
 
 type Value = InteractionResponse["value"];
@@ -91,7 +92,7 @@ function Body({ interaction, onReplaced }: { interaction: Interaction; onReplace
     case "question": return <><Question payload={interaction.payload} state={state} />{extra}</>;
     case "approval": return <><Approval interaction={interaction} payload={interaction.payload} state={state} />{extra}</>;
     case "account_selection": return <><AccountChoice payload={interaction.payload} state={state} />{extra}</>;
-    case "sign_in": return <SignIn payload={interaction.payload} />;
+    case "sign_in": return <><SignIn interaction={interaction} payload={interaction.payload} state={state} />{extra}</>;
     case "computer_takeover": return <Takeover payload={interaction.payload} />;
   }
 }
@@ -158,14 +159,41 @@ function AccountChoice({ payload, state }: { payload: AccountSelectionPayload; s
   </div>;
 }
 
-function SignIn({ payload }: { payload: SignInPayload }) {
-  const url = safeAuthorizeURL(payload.authorize_url);
-  const [expired] = useState(() => Date.parse(payload.expires_at) < Date.now());
-  return <div>
-    {!!payload.requested_scopes?.length && <p className="mb-3 text-meta text-ink-2">Asks for: {payload.requested_scopes.join(", ")}</p>}
-    {expired ? <Notice tone="warning">This sign-in link expired. Ask Nori again or reconnect from Apps.</Notice>
-      : url ? <Button variant="primary" onClick={() => window.location.assign(url)}><ExternalLink size={15} aria-hidden />Sign in</Button>
-        : <Notice tone="danger">This sign-in link isn’t one Nori issued, so it won’t open.</Notice>}
+/**
+ * Repair from the card. The task resumes on its own once the account works again (the server resolves this
+ * interaction when its connection becomes usable), whether the user signs in here or from Apps.
+ */
+function SignIn({ interaction, payload, state }: { interaction: Interaction; payload: SignInPayload; state: State }) {
+  const integration = useResource<Integration>(`/integrations/${encodeURIComponent(payload.integration_id)}`, { poll: 0 });
+  const named = useResource<Connection>(payload.connection_id ? `/connections/${encodeURIComponent(payload.connection_id)}` : null, { poll: 0 });
+  const all = useResource<{ items: Connection[] }>(payload.connection_id ? null : "/connections", { poll: 0 });
+  // Without a named connection, the integration's one signed-in account is the one to repair.
+  const accounts = (all.data?.items ?? []).filter((item) => item.integration_id === payload.integration_id && item.account?.provider_id && item.status !== "disconnected");
+  const connection = { data: named.data ?? (accounts.length === 1 ? accounts[0] : undefined) };
+  const action = useAction();
+  const [form, setForm] = useState(false);
+  const [expired] = useState(() => !!payload.expires_at && Date.parse(payload.expires_at) < Date.now());
+  const auth = (payload as SignInPayload & { auth?: "oauth" | "app_password" }).auth ?? integration.data?.auth;
+  const url = payload.authorize_url ? safeAuthorizeURL(payload.authorize_url) : null;
+  const returnTo = interaction.task_id ? `/work/${encodeURIComponent(interaction.task_id)}` : `/apps/${encodeURIComponent(payload.integration_id)}`;
+  const signIn = () => {
+    if (auth === "app_password") { setForm(true); return; }
+    if (url && !expired) { window.location.assign(url); return; }
+    // The link expired: ask for a fresh one that returns to this task.
+    if (connection.data) void action.run("sign_in", () => startSignIn(connection.data!, "repair", returnTo));
+    else void action.run("sign_in", async () => { throw new Error("This sign-in link expired. Sign in again from Apps; the task continues once the account works."); });
+  };
+  if (form && integration.data) return <PasswordSignIn integration={integration.data} connection={connection.data}
+    onDone={() => { setForm(false); invalidate("/interactions", "/work", "/connections", "/assistant/summary"); }} />;
+  const blocked = !!payload.authorize_url && !url;
+  return <div className="space-y-3">
+    <p className="text-meta text-ink-2">{[integration.data?.title ?? payload.integration_id, connection.data?.account?.label].filter(Boolean).join(" · ")}</p>
+    {payload.authorize_url && !url && <Notice tone="danger">This sign-in link isn’t one Nori issued, so it won’t open.</Notice>}
+    {action.error && <Notice tone="danger">{action.error}</Notice>}
+    <div className="flex flex-wrap gap-2">
+      <Button variant="primary" disabled={blocked || !!action.pending || state.pending === "decline"} onClick={signIn}><KeyRound size={15} aria-hidden />{action.pending ? "Opening sign-in…" : "Sign in"}</Button>
+      <Button disabled={!!state.pending} onClick={() => void state.respond({ kind: "decline", ...(interaction.action_digest ? { action_digest: interaction.action_digest } : {}) } as Value, "decline")}>{state.pending === "decline" ? "Declining…" : "Not now"}</Button>
+    </div>
   </div>;
 }
 
