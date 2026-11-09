@@ -17,7 +17,10 @@ export function chatThread(chat: Conversation | null): Thread {
     const operations = message.operations ?? [];
     const parts: Part[] = (message.attachments ?? []).map((file) => ({ type: "attachment", ...file, url: `${base}/uploads/${file.id}` }));
     for (const operation of operations) {
-      if (operation.action) parts.push({ type: "action", name: label(operation), text: operation.action.text });
+      // A task started from this chat shows as a live task card that updates in place.
+      const taskID = typeof operation.result?.task_id === "string" ? operation.result.task_id : undefined;
+      if (taskID) parts.push({ type: "card", schema_version: 1, kind: "progress", resource: { kind: "task", id: taskID }, fallback: "Started a task. Its progress is in Work." });
+      else if (operation.action) parts.push({ type: "action", name: label(operation), text: operation.action.text });
       else parts.push({ type: "note", text: label(operation) });
     }
     if (message.status === "cancelled") parts.push({ type: "note", text: "Stopped" });

@@ -5,12 +5,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Calendar, Check, CircleSlash, Folder, KeyRound, ListTodo, Mail, MessageSquare, Plug, Plus, Search, Server } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
-import { mutate, newRequestID, getJSON } from "@/lib/assistant/api";
+import { getJSON, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { AuthAttempt, Connection, HealthCode, Integration, MCPServer, Preferences, Resource } from "@/lib/contracts/assistant";
 import type { CatalogEntry, Installation, InstallationReview, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
+import type { MCPServerWithAuth } from "@/lib/contracts/pending";
 import { cn } from "@/lib/utils";
 import { safeAuthorizeURL } from "./InteractionCard";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, Tabs, type Tone } from "./ui";
@@ -351,7 +352,8 @@ function NewMCPServer({ onDone }: { onDone: () => void }) {
   const action = useAction();
   const [name, setName] = useState("");
   const [endpoint, setEndpoint] = useState("");
-  const [auth, setAuth] = useState<"none" | "oauth" | "configured">("none");
+  // OAuth sign-in to MCP servers isn't implemented by the core yet, so it isn't offered.
+  const [auth, setAuth] = useState<"none" | "configured">("none");
   const [exposure, setExposure] = useState<"direct" | "discoverable">("discoverable");
   const validEndpoint = /^https:\/\/[^\s]+$/.test(endpoint.trim());
   const save = () => action.run("save", async () => {
@@ -365,12 +367,31 @@ function NewMCPServer({ onDone }: { onDone: () => void }) {
       <Field label="Server URL"><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} className={cn(inputBase, "w-96 max-w-full")} placeholder="https://mcp.example.com/mcp" inputMode="url" required /></Field>
     </div>
     <div className="flex flex-wrap gap-3">
-      <Field label="Sign-in"><select value={auth} onChange={(event) => setAuth(event.target.value as typeof auth)} className={cn(inputBase, "w-auto")}><option value="none">None</option><option value="oauth">Sign in with the server</option><option value="configured">Access token</option></select></Field>
+      <Field label="Sign-in"><select value={auth} onChange={(event) => setAuth(event.target.value as typeof auth)} className={cn(inputBase, "w-auto")}><option value="none">None</option><option value="configured">Access token</option></select></Field>
       <Field label="Tools"><select value={exposure} onChange={(event) => setExposure(event.target.value as typeof exposure)} className={cn(inputBase, "w-auto")}><option value="discoverable">When relevant</option><option value="direct">Always available</option></select></Field>
     </div>
     {endpoint && !validEndpoint && <p role="alert" className="text-meta text-danger">Use an https:// address.</p>}
     {action.error && <Notice tone="danger">{action.error}</Notice>}
     <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!name.trim() || !validEndpoint || !!action.pending}>{action.pending ? "Adding…" : "Add server"}</Button><Button variant="quiet" onClick={onDone}>Cancel</Button></div>
+  </form>;
+}
+
+function Credential({ server, onSaved }: { server: MCPServerWithAuth; onSaved: (next: MCPServer) => void }) {
+  const action = useAction();
+  const [token, setToken] = useState("");
+  const [replacing, setReplacing] = useState(false);
+  const present = server.observed.credential === "present";
+  const save = () => action.run("save", async () => {
+    const value = token.trim();
+    setToken("");
+    const receipt = await sendSecret<MCPServer>(`/mcp/${encodeURIComponent(server.id)}/credential`, { request_id: newRequestID(), token: value });
+    onSaved(receipt.resource as MCPServer); setReplacing(false); invalidate(`/mcp/${encodeURIComponent(server.id)}/tools`);
+  });
+  if (present && !replacing) return <div className="flex flex-wrap items-center gap-3"><Pill tone="ok">Saved</Pill><Button size="sm" variant="quiet" onClick={() => setReplacing(true)}>Replace</Button></div>;
+  return <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(event) => { event.preventDefault(); if (token.trim()) void save(); }}>
+    <input aria-label="Access token" type="password" autoComplete="off" spellCheck={false} value={token} onChange={(event) => setToken(event.target.value)} className={inputClass} placeholder={present ? "New token" : "Paste the server’s access token"} />
+    <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!token.trim() || !!action.pending}>{action.pending ? "Saving…" : "Save"}</Button>{replacing && <Button variant="quiet" onClick={() => { setReplacing(false); setToken(""); }}>Cancel</Button>}</div>
+    {action.error && <p role="alert" className="text-meta text-danger">{action.error}</p>}
   </form>;
 }
 
@@ -409,6 +430,7 @@ export function MCPDetailScreen({ id }: { id: string }) {
         </> : <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: "reconnect" }, "reconnect")}>Reconnect</Button>}
         {observed.status === "needs_sign_in" && <Button size="sm" onClick={() => void act({ action: "sign_in" }, "sign_in")}>Sign in</Button>}
       </div></Section>
+    {(item as MCPServerWithAuth).auth === "configured" && <Section title="Access token"><Credential server={item as MCPServerWithAuth} onSaved={(next) => server.apply(next)} /></Section>}
     <Section title="Tools">
       {tools.loading ? <Loading /> : tools.data?.items.length ? <Rows>{tools.data.items.map((tool) => <li key={tool.name} className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-2">
         <span className="min-w-0 flex-1"><span className="block text-row font-medium">{tool.title}</span><span className="block font-mono text-mono-data text-ink-3">{tool.name}</span></span>

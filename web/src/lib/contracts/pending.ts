@@ -9,3 +9,9 @@ export type Capabilities = {
   features?: Record<string, boolean>;
 } & Partial<AssistantCapabilities>;
 export type AssistantFeature = keyof AssistantCapabilities["assistant_features"];
+
+/** r2.3 as agreed with backend (a6c0e65), until integration publishes the schema. */
+export type MCPServerWithAuth = import("./assistant").MCPServer & {
+  auth?: "none" | "oauth" | "configured";
+  observed: import("./assistant").MCPServer["observed"] & { credential?: "missing" | "present" };
+};
