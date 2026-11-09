@@ -320,6 +320,14 @@ func (a *Activities) computerTool(ctx context.Context, in ToolInput, op *state.O
 	}
 	defer c.Close()
 	c.SetTaskID(in.RunID)
+	if !existingJobTool(in.Call.Name) {
+		// A question or takeover stops the computer for this run without changing its revision; reopen the drained
+		// run so calls after the user answers are admitted. Calls that were in flight stay cancelled.
+		if err = c.Reopen(ctx); err != nil {
+			op.Cleared = state.ClearedDidNotRun
+			return persist("failed", nil, err)
+		}
+	}
 	if err = c.RequireReceipts(); err != nil {
 		op.Cleared = state.ClearedDidNotRun
 		return persist("failed", nil, err)
