@@ -48,6 +48,10 @@ Allocation from here, with backend's and frontend's original lists complete:
 
 User-only blockers, consolidated: D1–D4; permission to store a real Google refresh token in the local vault for a sign-in; a VAPID key pair in `.env`; a mail provider and its SMTP credentials; a Microsoft Entra app registration; a test Apple ID with an app-specific password; the phone test over Tailscale; typing once in the backend and integration sessions to lift their messaging pause. Everything else listed as blocked before this date is engineering and is reassigned above.
 
+## Austin's decision of 2026-11-09: use his personal accounts
+
+Austin: "just use my personal accounts." Coordinator's reading, stated to him: provider verification runs against Austin's personal Google, Apple and Microsoft accounts; his real tokens may be held in the local-only encrypted vault (`secret/localvault`, `NORI_CREDENTIAL_STORE=local`, `NORI_CLOUD=local`) for local verification; D1's production custody remains open. Austin does every sign-in himself in the browser; app-specific passwords are entered by him in the product's form and never pass through a session or chat. Writes against his accounts use a dedicated test calendar and reversible operations with cleanup; emails go only to himself; sends still pass through approvals. A VAPID key pair is generated into the project `.env` (mode 600, names documented in `.env.example`). Email delivery for notifications may use his connected mail account as transport while no SMTP relay exists. Microsoft still needs an Entra app registration he performs; the exact steps are prepared for him.
+
 ## Contract revisions
 
 | Revision | Status | Commit | Acknowledged by |
