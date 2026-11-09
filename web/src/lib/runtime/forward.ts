@@ -174,7 +174,7 @@ export async function capabilitiesRoute(request: Request) {
 const ASSISTANT_FAMILIES = new Set([
   "integrations", "connections", "interactions", "work", "automations", "goals", "library", "search", "permissions",
   "preferences", "delivery-destinations", "plugins", "mcp", "computer", "assistant", "mutations", "operations", "memory",
-  "inbox", "skills", "tools",
+  "inbox", "skills", "tools", "mcp-clients",
 ]);
 const SEGMENT = /^[A-Za-z0-9._:@-]{1,200}$/;
 
