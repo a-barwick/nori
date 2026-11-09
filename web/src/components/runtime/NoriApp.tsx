@@ -1,17 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MotionConfig } from "motion/react";
-import { Dialog, Tooltip } from "radix-ui";
-import { Activity, ArrowLeft, Bug, RefreshCw, Trash2 } from "lucide-react";
+import { Dialog } from "radix-ui";
+import { Activity, ArrowLeft, RefreshCw, Trash2 } from "lucide-react";
 import { Thread } from "@/components/chat/Thread";
-import { NovaShell } from "@/components/nova/NovaShell";
 import { IconButton } from "@/components/ui/primitives";
 import { chatThread } from "@/lib/chat/thread";
-import { useChat } from "@/lib/chat/useChat";
-import { useHydrated, useWide } from "@/lib/hooks";
+import { useAssistant } from "@/lib/assistant/context";
+import { useWide } from "@/lib/hooks";
 import { runtimePath } from "@/lib/runtime/paths";
-import { useRuntime } from "@/lib/runtime/useRuntime";
 import type { Message, Part, Thread as Conversation, TextItem } from "@/lib/types";
 import { ChatList } from "./ChatList";
 import { DocumentViewer } from "./DocumentViewer";
@@ -33,29 +30,15 @@ function partsOf(message: Pick<Message, "text" | "parts">, agentMode: boolean) {
   };
 }
 
-export function NoriApp({ agentMode }: { agentMode: boolean }) {
-  const hydrated = useHydrated();
-  if (!hydrated) return <div className="fixed inset-0 bg-canvas" />;
-  return (
-    <Tooltip.Provider delayDuration={500}>
-      <MotionConfig reducedMotion="user">
-        <RuntimeChat agentMode={agentMode} />
-      </MotionConfig>
-    </Tooltip.Provider>
-  );
-}
-
-function RuntimeChat({ agentMode }: { agentMode: boolean }) {
-  const runtime = useRuntime(agentMode);
-  const chat = useChat();
+/** The main conversation and side chats. Runtime state lives in AssistantProvider so it survives navigation. */
+export function ChatScreen() {
+  const { runtime, chat, agentMode, debug } = useAssistant();
   const [tab, setTab] = useState<PanelTab>(() => new URL(window.location.href).searchParams.has("chat") ? "chats" : "activity");
-  const [debug, setDebug] = useState(false);
   const {
     session,
     pending,
     activeTasks,
     selected,
-    busy,
     loading,
     error,
   } = runtime;
@@ -155,24 +138,15 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
     : undefined;
 
   return (
-    <NovaShell
-      state={busy ? "thinking" : runtime.draft.trim() ? "attentive" : "idle"}
-      status={loading ? "Connecting…" : error || !session ? "Disconnected" : waitingCount ? "Waiting for you" : busy ? "Working…" : "Ready when you are"}
-      activityOpen={panelOpen}
-      onToggleActivity={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}
-      actions={
-      <>
-        <IconButton label={debug ? "Hide debug info" : "Show debug info"} size={32} onClick={() => setDebug((on) => !on)}>
-          <Bug size={16} strokeWidth={1.5} className={debug ? "text-accent-text" : undefined} />
-        </IconButton>
-        <IconButton label={loading ? "Loading history" : "Refresh history"} size={32} disabled={loading} onClick={() => void runtime.refreshHistory()}>
-          <RefreshCw size={16} strokeWidth={1.5} />
-        </IconButton>
-        <button ref={activityButton} type="button" className="nova-activity-button" aria-label="Activity" aria-expanded={panelOpen} onClick={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}>
-          <Activity size={16} /><span>Activity</span>{busy && <span className="nova-working-dot" />}
-        </button>
-      </>
-    }>
+    <>
+    <div className="nori-chat-toolbar flex shrink-0 items-center justify-end gap-2 px-4 pt-3">
+      <IconButton label={loading ? "Loading history" : "Refresh history"} size={32} disabled={loading} onClick={() => void runtime.refreshHistory()}>
+        <RefreshCw size={16} strokeWidth={1.5} />
+      </IconButton>
+      <button ref={activityButton} type="button" className="nova-activity-button" aria-label="Activity" aria-expanded={panelOpen} onClick={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}>
+        <Activity size={16} /><span>Activity</span>{runtime.busy && <span className="nova-working-dot" />}
+      </button>
+    </div>
     <div className="nova-live-body flex min-h-0 flex-1 overflow-clip text-ink">
       {chat.open ? <main className="relative flex min-w-0 flex-1 flex-col overflow-clip" aria-label="Chat">
         <div className="flex shrink-0 items-center gap-2 border-b border-hairline px-4 py-2">
@@ -309,6 +283,6 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
         </Dialog.Root>
       )}
     </div>
-    </NovaShell>
+    </>
   );
 }
