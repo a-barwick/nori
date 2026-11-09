@@ -1,0 +1,237 @@
+{
+ "name": "Delivery destination enrollment, verification and removal",
+ "obligation": "r2.9: the enrolled address is write-only, verification needs the code sent through the channel, another owner sees nothing, a create carries one target",
+ "note": "On a stack without an email transport, send_verification answers 503 provider_unavailable; with one it answers 200 and the destination stays pending until verified.",
+ "requires": [
+  "automations"
+ ],
+ "users": {
+  "a": "44444444-4444-4444-8444-444444444444",
+  "b": "55555555-5555-4555-8555-555555555555"
+ },
+ "steps": [
+  {
+   "name": "create",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/delivery-destinations",
+   "body": {
+    "request_id": "${uuid:create}",
+    "expected_revision": 0,
+    "value": {
+     "channel": "email",
+     "label": "Scenario email",
+     "address": "scenario.user@example.com"
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     201
+    ],
+    "schema": "common.schema.json#/$defs/MutationReceipt",
+    "resource_schema": "automations.schema.json#/$defs/DeliveryDestination",
+    "match": {
+     "/resource/status": "pending_verification",
+     "/resource/channel": "email"
+    },
+    "absent": [
+     "/resource/address",
+     "/resource/subscription"
+    ]
+   },
+   "capture": {
+    "dest": "/resource/id",
+    "rev": "/resource/revision"
+   }
+  },
+  {
+   "name": "create-retried",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/delivery-destinations",
+   "body": {
+    "request_id": "${uuid:create}",
+    "expected_revision": 0,
+    "value": {
+     "channel": "email",
+     "label": "Scenario email",
+     "address": "scenario.user@example.com"
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     201
+    ],
+    "match": {
+     "/resource/id": "${var:dest}"
+    }
+   }
+  },
+  {
+   "name": "read-has-no-address",
+   "user": "a",
+   "method": "GET",
+   "path": "/v1/delivery-destinations",
+   "expect": {
+    "status": [
+     200
+    ],
+    "items_schema": "automations.schema.json#/$defs/DeliveryDestination",
+    "match": {
+     "/items/[id=${var:dest}]/label": "Scenario email"
+    },
+    "absent": [
+     "/items/[id=${var:dest}]/address"
+    ]
+   }
+  },
+  {
+   "name": "b-cannot-act",
+   "user": "b",
+   "method": "POST",
+   "path": "/v1/delivery-destinations/${var:dest}/actions",
+   "body": {
+    "request_id": "${uuid:bact}",
+    "expected_revision": "${int:rev}",
+    "value": {
+     "action": "send_verification"
+    }
+   },
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "send-code",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/delivery-destinations/${var:dest}/actions",
+   "body": {
+    "request_id": "${uuid:send}",
+    "expected_revision": "${int:rev}",
+    "value": {
+     "action": "send_verification"
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     503
+    ]
+   }
+  },
+  {
+   "name": "wrong-code",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/delivery-destinations/${var:dest}/actions",
+   "body": {
+    "request_id": "${uuid:verify}",
+    "expected_revision": "${int:rev}",
+    "value": {
+     "action": "verify",
+     "code": "000000"
+    }
+   },
+   "expect": {
+    "status": [
+     400
+    ],
+    "match": {
+     "/code": "validation_failed",
+     "/accepted": false
+    }
+   }
+  },
+  {
+   "name": "both-targets",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/delivery-destinations",
+   "body": {
+    "request_id": "${uuid:both}",
+    "expected_revision": 0,
+    "value": {
+     "channel": "email",
+     "label": "Mixed",
+     "address": "scenario.user@example.com",
+     "subscription": {
+      "endpoint": "https://push.example.com/send/x",
+      "keys": {
+       "p256dh": "x",
+       "auth": "y"
+      }
+     }
+    }
+   },
+   "expect": {
+    "status": [
+     400
+    ],
+    "match": {
+     "/code": "validation_failed"
+    }
+   }
+  },
+  {
+   "name": "in-app-fixed",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/delivery-destinations/in_app/actions",
+   "body": {
+    "request_id": "${uuid:inapp}",
+    "expected_revision": 1,
+    "value": {
+     "action": "remove"
+    }
+   },
+   "expect": {
+    "status": [
+     400
+    ]
+   }
+  },
+  {
+   "name": "remove",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/delivery-destinations/${var:dest}/actions",
+   "body": {
+    "request_id": "${uuid:remove}",
+    "expected_revision": "${int:rev}",
+    "value": {
+     "action": "remove"
+    }
+   },
+   "expect": {
+    "status": [
+     200
+    ],
+    "match": {
+     "/accepted": true
+    }
+   }
+  },
+  {
+   "name": "gone",
+   "user": "a",
+   "method": "GET",
+   "path": "/v1/delivery-destinations",
+   "expect": {
+    "status": [
+     200
+    ],
+    "absent": [
+     "/items/[id=${var:dest}]"
+    ]
+   }
+  }
+ ]
+}
