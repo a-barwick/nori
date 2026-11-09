@@ -66,8 +66,11 @@ type Contribution struct {
 	Name   string             `json:"name,omitempty"`
 	Text   string             `json:"text,omitempty"`
 	Server *mcpServerTemplate `json:"server,omitempty"`
-	Hook   json.RawMessage    `json:"hook,omitempty"`
-	Extra  map[string]any     `json:"-"`
+	// Hook, Handler and DeadlineMS describe a hook contribution: the program receives {"hook", "handler", ...}.
+	Hook       string         `json:"hook,omitempty"`
+	Handler    string         `json:"handler,omitempty"`
+	DeadlineMS int            `json:"deadline_ms,omitempty"`
+	Extra      map[string]any `json:"-"`
 }
 
 type mcpServerTemplate struct {
@@ -168,7 +171,16 @@ func Validate(m Manifest) (string, error) {
 				return "", fmt.Errorf("%w: a package tool needs a valid model name and an input schema", state.ErrInvalidResource)
 			}
 		case "hook":
-			return "", fmt.Errorf("%w: package hooks need isolated execution", ErrUnsupported)
+			if !isolated {
+				return "", fmt.Errorf("%w: package hooks need isolated execution", ErrUnsupported)
+			}
+			// Context, progress and lifecycle hooks would start the sandbox for every task; not offered yet.
+			if c.Hook != HookPreInvocation && c.Hook != HookResult {
+				return "", fmt.Errorf("%w: only pre_invocation and result hooks run today", ErrUnsupported)
+			}
+			if c.Handler == "" || c.DeadlineMS < 0 {
+				return "", fmt.Errorf("%w: a hook needs a handler name", state.ErrInvalidResource)
+			}
 		default:
 			return "", fmt.Errorf("%w: unknown contribution %s", state.ErrInvalidResource, c.Kind)
 		}
@@ -567,6 +579,9 @@ func contributionNames(m Manifest) map[string]string {
 		if c.Server != nil {
 			name = "mcp_server:" + c.Server.Name
 		}
+		if c.Kind == "hook" {
+			name = "hook:" + c.Hook + ":" + c.Handler
+		}
 		out[name] = string(data)
 	}
 	return out
@@ -793,26 +808,59 @@ func (s *Service) ToolDefinitions(installID string, m Manifest) []extensions.Def
 }
 
 // Program returns what the sandbox runs for an installation's tool: the argument vector, files and limits.
-func (s *Service) Program(ctx context.Context, installID string) (argv []string, files map[string]string, memoryMB, wallMS int, err error) {
+const (
+	HookPreInvocation = "pre_invocation"
+	HookResult        = "result"
+	// Hook deadlines are bounded so a slow hook cannot hold a call: 2 s by default, at most 10 s.
+	defaultHookDeadlineMS = 2000
+	maxHookDeadlineMS     = 10000
+)
+
+// Hook is one of an installed package's hooks. Hooks apply only to the package's own tools.
+type Hook struct {
+	Kind       string
+	Handler    string
+	DeadlineMS int
+}
+
+// Program is how an installed package's code runs in the sandbox.
+type Program struct {
+	Argv     []string
+	Files    map[string]string
+	MemoryMB int
+	WallMS   int
+	Hooks    []Hook
+}
+
+func (s *Service) Program(ctx context.Context, installID string) (Program, error) {
 	inst, err := s.Installation(ctx, installID)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return Program{}, err
 	}
 	if !inst.Enabled || inst.State != "ready" {
-		return nil, nil, 0, 0, fmt.Errorf("the plugin is %s", inst.State)
+		return Program{}, fmt.Errorf("the plugin is %s", inst.State)
 	}
 	doc, err := s.find(ctx, inst.Package.ID, inst.Package.Version)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return Program{}, err
 	}
 	e := doc.Manifest.Executor
 	if e == nil || e.Kind != "isolated" {
-		return nil, nil, 0, 0, ErrUnsupported
+		return Program{}, ErrUnsupported
 	}
-	argv = append(append([]string{}, runtimes[e.Runtime]...), e.Entry)
-	memoryMB = 256
+	p := Program{Argv: append(append([]string{}, runtimes[e.Runtime]...), e.Entry), Files: doc.Manifest.Files, MemoryMB: 256, WallMS: e.Limits.WallMS}
 	if e.Limits.MemoryMB > 0 {
-		memoryMB = e.Limits.MemoryMB
+		p.MemoryMB = e.Limits.MemoryMB
 	}
-	return argv, doc.Manifest.Files, memoryMB, e.Limits.WallMS, nil
+	for _, c := range doc.Manifest.Contributions {
+		if c.Kind != "hook" {
+			continue
+		}
+		deadline := c.DeadlineMS
+		if deadline <= 0 {
+			deadline = defaultHookDeadlineMS
+		}
+		p.Hooks = append(p.Hooks, Hook{Kind: c.Hook, Handler: c.Handler, DeadlineMS: min(deadline, maxHookDeadlineMS)})
+	}
+	return p, nil
 }
