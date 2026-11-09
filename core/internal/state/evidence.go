@@ -68,6 +68,9 @@ const (
 	ClearedReadOnly = "read_only"
 	// ClearedAnswered is an operation named in a question the user answered.
 	ClearedAnswered = "answered"
+	// ClearedContained is a call that ran sealed in the sandbox (no network, its own namespaces and files), so its
+	// failure can't have changed anything outside it.
+	ClearedContained = "contained"
 )
 
 // Action is the requested write. Digest covers the tool, account and Spec.
