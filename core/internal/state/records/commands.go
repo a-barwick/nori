@@ -194,7 +194,12 @@ func (d *Database) appendHeldEvents(tx *docstore.Transaction, events []state.Tas
 
 // appendTaskEvent is called after the task transaction's other reads and before its writes. The state transition and
 // outer inbox insertion commit together. It reports false when the same event was already in the inbox.
-func (d *Database) appendTaskEvent(tx *docstore.Transaction, event state.TaskEvent, traceContext map[string]string) (bool, error) {
+func (d *Database) appendTaskEvent(tx *docstore.Transaction, run state.Run, event state.TaskEvent, traceContext map[string]string) (bool, error) {
+	// A task started from a separate chat reports to that chat and to Work, never through the assistant
+	// conversation.
+	if run.Origin != nil && run.Origin.ConversationID != "" && run.Origin.ConversationID != "assistant" {
+		return false, nil
+	}
 	ref := d.conversationInputs().Doc(state.TaskEventInputID(event.ID))
 	doc, err := tx.Get(ref)
 	if err == nil {

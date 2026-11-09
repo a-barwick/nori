@@ -98,7 +98,7 @@ func (d *Database) putOperation(ctx context.Context, runID string, op state.Oper
 		if event, notify := state.LateWriteEvent(run, saved, op, time.Now().UTC()); notify {
 			// Reading the run in this transaction serializes the result with Stop:
 			// either its terminal notification can see the answer, or this one follows it.
-			inserted, err := d.appendTaskEvent(tx, event, run.TraceContext)
+			inserted, err := d.appendTaskEvent(tx, run, event, run.TraceContext)
 			if err != nil {
 				return err
 			}
