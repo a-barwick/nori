@@ -104,6 +104,13 @@ print(json.dumps({"words": len(text.split()), "lines": len(text.splitlines()), "
 		Contributions:   []Contribution{{Kind: "mcp_server", Server: &mcpServerTemplate{Name: "Linear", Transport: "http", Endpoint: "https://mcp.linear.app/mcp", Auth: "configured"}}},
 	},
 	{
+		SchemaVersion: 1, Package: Ref{ID: "linear/mcp", Version: "1.1.0"}, Publisher: map[string]any{"id": "linear", "name": "Linear"},
+		Title: "Linear", Description: "Find, create and update Linear issues, projects and comments through Linear's MCP server (linear.app/docs/mcp). 1.1 signs in with your Linear account (OAuth with dynamic registration) instead of an API key.",
+		Categories: []string{"productivity", "developer"}, ContractVersion: "r2",
+		RequestedAccess: Access{ConnectionTypes: []string{}, ActionClasses: []string{"read", "unknown"}, Network: []string{"mcp.linear.app"}},
+		Contributions:   []Contribution{{Kind: "mcp_server", Server: &mcpServerTemplate{Name: "Linear", Transport: "http", Endpoint: "https://mcp.linear.app/mcp", Auth: "oauth"}}},
+	},
+	{
 		SchemaVersion: 1, Package: Ref{ID: "github/mcp", Version: "1.0.0"}, Publisher: map[string]any{"id": "github", "name": "GitHub"},
 		Title: "GitHub", Description: "Repositories, issues, pull requests and Actions through GitHub's remote MCP server (github/github-mcp-server docs/remote-server.md). Connect with a fine-grained personal access token. Organizations on Copilot Business or Enterprise must allow MCP servers; Enterprise Managed Users may have tokens disabled.",
 		Categories: []string{"developer"}, ContractVersion: "r2",
