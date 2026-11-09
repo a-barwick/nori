@@ -95,6 +95,8 @@ Remaining backend scope after `26ee755`: W13 computer sessions and takeover, the
 | Frontend | `a477508` | Settings, Connected clients over the r2.5 shapes. A13 evidence from the screen against a live core: a read-only client is created, the token is shown once and never appears in browser storage or after reload; `POST /mcp` initialize with that token answers 200; after Remove access the same request answers 401. | implemented, locally verified; awaiting integration merge |
 | Integration | `47c5381` and after | A13 and A34 locally verified: MCP client tokens with scope filtering, idempotent submit, revoke and forged user both answer 401; takeover gating and lease checks, and after D-018 the resumed task used the browser and completed. A36 revise produced version 2; A37 verified after D-017. A41 exercised, found D-022 and D-023, both fixed and merged, re-check pending. A07 blocked until the guest sandbox works; after D-019 the guest reports `sandbox_v1` and the first sandboxed run is in flight. W16 documentation: new `docs/site/apps.html`, `permissions.html`, `schedules.html` rewritten as Automations, and a takeover section in `computer.html`, unbuilt parts marked designed. | landed |
 | Frontend | `43d308a` | Work detail offers "Continue this task" on a failed task, with a new spending-limit field when the stop was a spending limit, opens the new task and shows the link back; origin kind `external` reads "Another app". Verified live: continuing returned 202 with the new task id and the new task links back. | implemented, locally verified; awaiting integration merge |
+| Backend | `0b70977`, `04d3b48`, `e5f9ced` | D-013 (cited results stay in the outer loop's task context) and D-025; plugin pre-invocation and result hooks run in the sandbox under deadlines; chained continuation titles. A14 nested calls next. | implemented; awaiting integration merge |
+| Integration | `dd3cd6d` | Frontend's latest merged; acceptance counts 24 implemented, 10 locally verified, 7 not started, 3 blocked. | landed |
 
 ## Design decisions recorded
 
@@ -129,12 +131,13 @@ Remaining backend scope after `26ee755`: W13 computer sessions and takeover, the
 | D-017 | integration | backend | A forgotten memory was still claimed. | fixed, verified at `f221fe9` |
 | D-015 | integration | backend | Plugin skills report an empty `ref.digest`. | fully fixed at `2dad57b`: skills saved earlier get their digest computed on read |
 | D-018 | integration, A34 | backend | Resume after takeover did not let the task use the browser. | fixed, verified |
-| D-019 | integration, A07 | backend | The guest did not report sandbox support. | fixed; guest reports `sandbox_v1`; first run in flight |
+| D-019 | integration, A07 | backend | The guest did not report sandbox support. | fixed; guest reports `sandbox_v1`. A07 sandbox run: a normal call completed; an infinite loop was stopped at the 5-second limit; a 512 MB allocation was stopped at the 64 MB limit; each attempt recorded its own operation outcome |
 | D-020 | integration | backend | The browser could not name a page heading. | fix merged, re-check pending |
 | D-021 | integration | backend | Reported directly to backend. | fix merged, re-check pending |
 | D-022 | integration, A41 | backend | Continue ignored the new budget, no link to the continued task, and "$0.00" wording. | fixed and merged, re-check pending |
 | D-023 | integration, A41 | backend | Feedback lacked evidence references. | fixed and merged, re-check pending |
-| D-024 | frontend, A41 | backend | A continued task's `WorkItem.title` is the internal instruction text rather than a user-facing title. | open, reported to backend |
+| D-024 | frontend, A41 | backend | A continued task's `WorkItem.title` is the internal instruction text rather than a user-facing title. | fixed at `e5f9ced`: a continuation is titled by the root task it continues; awaiting integration merge |
+| D-025 | integration | backend | The untaken branch of a conditional request was listed as unmet. | fixed at `0b70977`, awaiting integration merge |
 
 ## Disagreements
 
