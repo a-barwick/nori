@@ -49,6 +49,7 @@ Ownership is a default. Rebalance when a stream is the bottleneck; agree before 
 | r2.5 | published by integration, proposed by backend, agreed by frontend: `MCPClient` never carries the token or its hash; create-only `MCPClientChange`; `MCPClientCreated` returns the one-time token; `MCPClientAction` revoke; routes `/v1/mcp-clients`; the Nori MCP endpoint is `POST /mcp` on core. Checker reproduced by the coordinator. | `425bbeb` on `claude/nori-assistant-integration-bd1278` | backend: acknowledged; frontend: merged at `ce0ae11`, adopted at `a477508`, acknowledged. r2.5 is the accepted contract. |
 | r2.6 | published by integration: optional `WorkItem.origin.continues_task_id` for tasks started by the continue action, which backend serves after D-022. Additive. Checker reproduced by the coordinator. | `127514f` on `claude/nori-assistant-integration-bd1278` | backend: merged, acknowledged (projects it at `4e165e1`); frontend: merged, adopted at `43d308a`, acknowledged. r2.6 is the accepted contract. |
 | r2.7 | published by integration: `OperationProjection.cleared` gains `contained`, marking package failures the sandbox contained (D-026). Additive; r1's closed enum would have rejected it. Checker reproduced by the coordinator. | `ab5318e` on `claude/nori-assistant-integration-bd1278` | pending backend and frontend |
+| r2.8 | published by integration, proposed by frontend: `Installation.approved_access` (used by `InstallationCreateChange` and `InstallationAction`) gains optional `network` and `filesystem` lists mirroring the manifest's requested access; backend's `5d7bbd7` already requires them. Additive. Checker reproduced by the coordinator. | `24816e2` on `claude/nori-assistant-integration-bd1278` | pending backend and frontend |
 
 Reviews: backend `8c22c80` (`docs/assistant-r0-review-backend.md`), frontend `061cd76` (`docs/assistant-r0-review-frontend.md`), integration `3f49ccd` (`docs/assistant-r0-review-integration.md`), each on its own branch.
 
@@ -99,6 +100,7 @@ Remaining backend scope after `26ee755`: W13 computer sessions and takeover, the
 | Backend | `0b70977`, `04d3b48`, `e5f9ced` | D-013 (cited results stay in the outer loop's task context) and D-025; plugin pre-invocation and result hooks run in the sandbox under deadlines; chained continuation titles. A14 nested calls next. | implemented; awaiting integration merge |
 | Integration | `dd3cd6d` | Frontend's latest merged; acceptance counts 24 implemented, 10 locally verified, 7 not started, 3 blocked. | landed |
 | Integration | after `9b60831` | A07 locally verified. A44 exercised on the recorded provider with its stopping point recorded (files and tasks connectors, push and email transport, a real provider and a real due time). A23 reservation recipe locally verified (recorded). Scheduler race: three simultaneous slots across two cores produced one occurrence, one task and one delivery each (A26). Disconnect retention per flag: access closed, revoke called, saved items kept; the flags are indistinguishable without imported content. In flight: revoke during execution, lease expiry. Still to do: registry update after a pinned call and the dynamic-call history (A40), cold-path latency, rollback rehearsal, docs for hooks, diagnostics and continuations. | landed |
+| Integration | `122ad06` and after | Rollback rehearsal on the local stack recorded under A40: `c050016` to `f221fe9` and back, nothing lost, receipts identical, a reminder fired once on the old build, an in-flight task finished on its pinned build. A dynamic MCP call history retained and replaying after its definition changed. Documentation for hooks, continuation, diagnostics and feedback. Cold versus warm latency for the same request shape: 19.7 s cold, 13.9 s warm. In flight: lease expiry, A14 checks on backend's `5fca7f9`, D-020 and D-025 re-checks. | landed |
 
 ## Design decisions recorded
 
@@ -141,6 +143,7 @@ Remaining backend scope after `26ee755`: W13 computer sessions and takeover, the
 | D-024 | frontend, A41 | backend | A continued task's `WorkItem.title` is the internal instruction text rather than a user-facing title. | fixed at `e5f9ced`: a continuation is titled by the root task it continues; awaiting integration merge |
 | D-025 | integration | backend | The untaken branch of a conditional request was listed as unmet. | fixed at `0b70977`, awaiting integration merge |
 | D-026 | integration, A07 | backend | Sandbox-contained package failures were not distinguishable in the operation record. | fixed at `9bd0438` with r2.7 `cleared: contained` |
+| D-027 | integration, A40 | backend | An MCP definition's version stays "1" when its content changes, although the digest changes. | open, reported to backend |
 
 ## Disagreements
 
