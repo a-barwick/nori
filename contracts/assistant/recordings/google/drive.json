@@ -248,6 +248,25 @@
    }
   },
   {
+   "name": "drive-export-new",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files/recdrivenew1/export",
+   "query": {
+    "mimeType": "text/plain"
+   },
+   "after": [
+    "drive-create"
+   ],
+   "response": {
+    "status": 200,
+    "headers": {
+     "Content-Type": "text/plain; charset=utf-8"
+    },
+    "text": "Lisbon packing list\r\n- passport\r\n- charger\r\n- rain jacket\r\n- walking shoes\r\n- tram card\r\n"
+   }
+  },
+  {
    "name": "drive-get-missing",
    "method": "GET",
    "host": "www.googleapis.com",
