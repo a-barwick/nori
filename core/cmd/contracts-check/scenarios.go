@@ -54,6 +54,7 @@ type expectation struct {
 	Status         []int                      `json:"status"`
 	Schema         string                     `json:"schema,omitempty"`
 	ResourceSchema string                     `json:"resource_schema,omitempty"` // applied to /resource of a receipt
+	ItemsSchema    string                     `json:"items_schema,omitempty"`    // applied to every element of /items
 	Match          map[string]json.RawMessage `json:"match,omitempty"`           // JSON pointer -> expected value
 	Absent         []string                   `json:"absent,omitempty"`          // JSON pointers that must not exist
 	SameAs         string                     `json:"same_as,omitempty"`         // earlier step whose response body must be identical
@@ -174,7 +175,7 @@ func checkScenariosOffline(files []string, scs []scenario, compile func(string) 
 				failures++
 				fmt.Printf("FAIL scenario %s/%s: no expected status\n", name, st.Name)
 			}
-			for _, ref := range []string{st.BodySchema, st.Expect.Schema, st.Expect.ResourceSchema} {
+			for _, ref := range []string{st.BodySchema, st.Expect.Schema, st.Expect.ResourceSchema, st.Expect.ItemsSchema} {
 				if ref == "" {
 					continue
 				}
@@ -342,6 +343,18 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 		}
 		if err := validateBytes(compile, st.Expect.ResourceSchema, res); err != nil {
 			return fmt.Errorf("resource does not match %s: %v", st.Expect.ResourceSchema, err)
+		}
+	}
+	if st.Expect.ItemsSchema != "" {
+		raw, ok := pointer(got, "/items")
+		var items []json.RawMessage
+		if !ok || json.Unmarshal(raw, &items) != nil {
+			return fmt.Errorf("response has no /items array")
+		}
+		for i, item := range items {
+			if err := validateBytes(compile, st.Expect.ItemsSchema, item); err != nil {
+				return fmt.Errorf("/items/%d does not match %s: %v", i, st.Expect.ItemsSchema, err)
+			}
 		}
 	}
 	for rawP, want := range st.Expect.Match {
