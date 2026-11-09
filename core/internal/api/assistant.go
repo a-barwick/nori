@@ -367,6 +367,18 @@ func (a *Assistant) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, apiError{Error: "This sign-in link is incomplete.", Code: "validation_failed"})
 		return
 	}
+	// The same redirect URL serves MCP server sign-in; an MCP attempt owns its state, otherwise Connections does.
+	if a.MCP != nil {
+		location, err := a.MCP.Callback(r.Context(), state, code, providerError)
+		if err == nil {
+			http.Redirect(w, r, location, http.StatusSeeOther)
+			return
+		}
+		if !errors.Is(err, mcp.ErrNotMCPAttempt) {
+			writeAPIError(w, err, "", nil)
+			return
+		}
+	}
 	location, err := a.Connections.Callback(r.Context(), state, code, providerError)
 	if errors.Is(err, connections.ErrAttemptInvalid) {
 		http.Redirect(w, r, "/apps?result=failed", http.StatusSeeOther)
@@ -807,4 +819,36 @@ func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
 // newRequestIDFrom derives a stable request ID for a dependent mutation, so a retried request repeats it exactly.
 func newRequestIDFrom(requestID string) string {
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("dependent:"+requestID)).String()
+}
+
+// ResolveSignIns answers every pending sign-in interaction for a connection once its sign-in completes, so each task
+// that was waiting resumes and retries the call that needed the account.
+func (a *Assistant) ResolveSignIns(ctx context.Context, connectionID string) {
+	if a.Permissions == nil || a.Answer == nil {
+		return
+	}
+	pending, _, err := a.Permissions.Interactions(ctx, "pending", "", "", 200)
+	if err != nil {
+		return
+	}
+	for _, i := range pending {
+		if i.Kind != "sign_in" {
+			continue
+		}
+		var payload struct {
+			ConnectionID string `json:"connection_id"`
+		}
+		if json.Unmarshal(i.Payload, &payload) != nil || payload.ConnectionID != connectionID {
+			continue
+		}
+		requestID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("signed-in:"+i.ID)).String()
+		_, answer, err := a.Permissions.Respond(ctx, i.ID, requestID, i.Revision, permissions.Response{Kind: "signed_in",
+			Text: "The user signed in to the account again. Retry the same call."})
+		if err != nil || answer == nil {
+			continue
+		}
+		if err := a.Answer(ctx, answer.CommandID, answer.TaskID, answer.Question, answer.Text); err == nil || errors.Is(err, state.ErrDuplicate) {
+			a.Permissions.MarkDelivered(ctx, i.ID)
+		}
+	}
 }

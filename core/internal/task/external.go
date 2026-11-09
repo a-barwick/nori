@@ -123,7 +123,13 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, recovering 
 	if err != nil {
 		return nil, nil, err
 	}
-	call := invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args,
+	zone := ""
+	if a.Executor.Connections != nil {
+		if prefs, _, err := a.Executor.Connections.Preferences(ctx); err == nil {
+			zone = prefs.Timezone
+		}
+	}
+	call := invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args, TimeZone: zone,
 		Upload: func(ctx context.Context, id string) (string, string, []byte, error) {
 			attachment, data, err := a.Agent.TaskUpload(ctx, in.RunID, id)
 			return attachment.Name, attachment.MediaType, data, err
@@ -146,13 +152,31 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, recovering 
 		case errors.Is(err, connections.ErrUnknownAccount):
 			return nil, denial(in, effect, "failed", fmt.Sprintf("No connected account matches %q. Use one of the connected accounts or ask the user; never switch accounts silently.", requested), map[string]any{"recovery": "choose_account"}), nil
 		case errors.Is(err, connections.ErrInsufficientScope):
+			// A connected account that lacks this access asks for it from the task, which resumes once it is granted.
+			if record, ok := a.Executor.Connections.LackingCapability(ctx, in.Exec.ConnectionType, in.Exec.RequiredCapability, requested); ok && !recovering {
+				out, err := a.signIn(ctx, in, run, record, in.Exec.RequiredCapability)
+				return nil, out, err
+			}
 			return nil, denial(in, effect, "failed", "The connected account has not granted the access this needs. The user can grant it in Apps.", map[string]any{"recovery": "request_access", "integration_id": in.Exec.ConnectionType}), nil
 		case errors.Is(err, connections.ErrNotConnected):
+			// An account that only needs to sign in again is repaired from the task itself, which then resumes.
+			if record, ok := a.Executor.Connections.NeedsSignIn(ctx, in.Exec.ConnectionType, requested); ok && !recovering {
+				out, err := a.signIn(ctx, in, run, record, "")
+				return nil, out, err
+			}
 			return nil, denial(in, effect, "failed", "No account for this app is connected. The user can connect one in Apps.", map[string]any{"recovery": "connect", "integration_id": in.Exec.ConnectionType}), nil
 		case err != nil:
 			return nil, nil, err
 		}
 		grant, err := a.Executor.Connections.Grant(ctx, record.ID)
+		if errors.Is(err, connections.ErrNotConnected) && !recovering {
+			// The refresh failed: the grant was revoked or expired. Ask the user to sign in and resume this task.
+			if again, ok := a.Executor.Connections.NeedsSignIn(ctx, in.Exec.ConnectionType, record.ID); ok {
+				record = again
+			}
+			out, err := a.signIn(ctx, in, run, record, "")
+			return nil, out, err
+		}
 		if err != nil {
 			return nil, denial(in, effect, "failed", "The account could not be used: "+err.Error(), map[string]any{"recovery": "repair", "connection_id": record.ID}), nil
 		}
@@ -276,6 +300,55 @@ func (a *Activities) chooseAccount(ctx context.Context, in ToolInput, run state.
 	}
 	return denial(in, effect, "needs_interaction", choose.Error()+": "+fmt.Sprint(labels), map[string]any{
 		"interaction_id": interaction.ID, "interaction_kind": "account_selection", "prompt": prompt,
+	}), nil
+}
+
+// signIn opens a sign-in interaction bound to this task and revision. Completing the account's sign-in resolves it
+// (Connections.OnConnected), and the answer resumes the task, which retries the same call.
+func (a *Activities) signIn(ctx context.Context, in ToolInput, run state.Run, record connections.Record, capability string) (map[string]any, error) {
+	effect := string(in.Exec.Policy.Effect)
+	if a.Executor.Permissions == nil {
+		return denial(in, effect, "failed", "The account needs to sign in again. The user can do that in Apps.", map[string]any{"recovery": "connect", "connection_id": record.ID}), nil
+	}
+	revision := in.Revision
+	label := record.Account.Label
+	if label == "" {
+		label = record.Title
+	}
+	prompt := fmt.Sprintf("Sign in to %s again so Nori can continue this task.", label)
+	var capabilities, scopes []string
+	if capability != "" {
+		capabilities, scopes = []string{capability}, a.Executor.Connections.ScopesFor(record.IntegrationID, capability)
+		prompt = fmt.Sprintf("Give Nori more access to %s so it can continue this task.", label)
+	}
+	returnTo := "/work/" + in.RunID
+	payload := map[string]any{"integration_id": record.IntegrationID, "connection_id": record.ID, "return_to": returnTo}
+	if record.Health.Code != "" {
+		payload["reason"] = record.Health.Code
+	}
+	attempt, err := a.Executor.Connections.StartRepair(ctx, record.ID, interactionID("rep_", in.OperationID, record.ID+capability), returnTo, capabilities)
+	switch {
+	case err == nil:
+		payload["auth"], payload["auth_attempt_id"], payload["authorize_url"], payload["expires_at"] = "oauth", attempt.ID, attempt.AuthorizeURL, attempt.ExpiresAt
+		if len(scopes) > 0 {
+			payload["requested_scopes"] = scopes
+		}
+	case errors.Is(err, connections.ErrInvalidAction):
+		// App-password accounts (iCloud) repair with a new app-specific password through the connection action.
+		payload["auth"] = "app_password"
+	default:
+		return denial(in, effect, "failed", "The account needs to sign in again: "+err.Error(), map[string]any{"recovery": "repair", "connection_id": record.ID}), nil
+	}
+	data, _ := json.Marshal(payload)
+	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
+		ID: interactionID("int_", in.OperationID, "sign_in:"+record.ID), TaskID: in.RunID, InstructionRevision: &revision,
+		Kind: "sign_in", Prompt: prompt, Payload: data, TaskTitle: clip(run.Request, 200),
+	}, "")
+	if err != nil {
+		return nil, err
+	}
+	return denial(in, effect, "needs_interaction", "The account must sign in again before this can run.", map[string]any{
+		"interaction_id": interaction.ID, "interaction_kind": "sign_in", "prompt": prompt, "connection_id": record.ID,
 	}), nil
 }
 

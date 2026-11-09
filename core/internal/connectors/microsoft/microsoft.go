@@ -53,6 +53,9 @@ const (
 
 type Integration struct {
 	ClientID, ClientSecret string
+	// Tenant is the sign-in audience: "common" (personal and work or school, the default), "consumers" (personal
+	// Microsoft accounts only, for an app registered for personal accounts) or "organizations".
+	Tenant string
 }
 
 func (m Integration) Info() connections.Info {
@@ -83,10 +86,13 @@ func (m Integration) OAuth(redirectURL string) *oauth2.Config {
 	if m.ClientID == "" || m.ClientSecret == "" || redirectURL == "" {
 		return nil
 	}
-	// The common endpoint accepts both personal and work or school accounts.
+	tenant := m.Tenant
+	if tenant == "" {
+		tenant = "common"
+	}
 	return &oauth2.Config{ClientID: m.ClientID, ClientSecret: m.ClientSecret, RedirectURL: redirectURL, Endpoint: oauth2.Endpoint{
-		AuthURL:  "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-		TokenURL: "https://login.microsoftonline.com/common/oauth2/v2.0/token", AuthStyle: oauth2.AuthStyleInParams,
+		AuthURL:  "https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/authorize",
+		TokenURL: "https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/token", AuthStyle: oauth2.AuthStyleInParams,
 	}}
 }
 

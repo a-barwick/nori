@@ -18,7 +18,7 @@ type mcpMatrix struct {
 }
 
 var mcpMatrices = map[string]mcpMatrix{
-	"linear/mcp": {categories: []string{"projects"}, limits: "Needs a Linear API key. A read-only server is at /mcp/readonly.",
+	"linear/mcp": {categories: []string{"projects"}, limits: "Signs in with your Linear account (1.1) or a Linear API key (1.0). A read-only server is at /mcp/readonly.",
 		capabilities: []connections.Capability{
 			{ID: "projects.read", Title: "Find issues, projects and comments", Effect: "read", Supported: true},
 			{ID: "projects.write", Title: "Create and update issues, projects and comments", Effect: "reversible_write", Supported: true},

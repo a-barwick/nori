@@ -50,6 +50,7 @@ type Connections struct {
 	GoogleClientID, GoogleClientSecret string
 	// MicrosoftClientID and MicrosoftClientSecret come from an Entra app registration (personal and work accounts).
 	MicrosoftClientID, MicrosoftClientSecret string
+	MicrosoftTenant                          string
 	// RedirectURL is the OAuth callback through the web proxy, for example http://127.0.0.1:3211/api/v1/connections/oauth/callback.
 	RedirectURL string
 	// CredentialStore is "local" (development only, requires NORI_CLOUD=local) or empty (unavailable).
@@ -65,6 +66,9 @@ type Connections struct {
 	// Delivery transports for push and email destinations (A28). Unset leaves the channel without a transport.
 	SMTPHost, SMTPPort, SMTPUsername, SMTPPassword, EmailFrom string
 	VAPIDPublicKey, VAPIDPrivateKey, VAPIDSubject             string
+	// DeliveryTestCAFile is a PEM root trusted, in addition to the system roots, by the push and email transports so
+	// they can be verified against local sinks with self-signed certificates. Local development only.
+	DeliveryTestCAFile string
 }
 
 // Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
@@ -246,13 +250,15 @@ func connectionsFromEnvironment(localArtifacts string) Connections {
 	return Connections{
 		GoogleClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), GoogleClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
 		MicrosoftClientID: os.Getenv("MICROSOFT_CLIENT_ID"), MicrosoftClientSecret: os.Getenv("MICROSOFT_CLIENT_SECRET"),
-		RedirectURL: os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
+		MicrosoftTenant: os.Getenv("MICROSOFT_TENANT"),
+		RedirectURL:     os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
 		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"), UserSends: get("NORI_USER_SENDS", "ask"),
 		ProviderReplay: os.Getenv("NORI_PROVIDER_REPLAY"),
 		MCPCommands:    mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
 		SMTPHost:       os.Getenv("NORI_SMTP_HOST"), SMTPPort: os.Getenv("NORI_SMTP_PORT"), SMTPUsername: os.Getenv("NORI_SMTP_USERNAME"),
 		SMTPPassword: os.Getenv("NORI_SMTP_PASSWORD"), EmailFrom: os.Getenv("NORI_EMAIL_FROM"),
 		VAPIDPublicKey: os.Getenv("NORI_VAPID_PUBLIC_KEY"), VAPIDPrivateKey: os.Getenv("NORI_VAPID_PRIVATE_KEY"), VAPIDSubject: os.Getenv("NORI_VAPID_SUBJECT"),
+		DeliveryTestCAFile: os.Getenv("NORI_DELIVERY_TEST_CA_FILE"),
 	}
 }
 

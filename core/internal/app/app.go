@@ -122,8 +122,8 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		}
 		return receipts[0].Run, nil
 	}
-	chats.StartTask = func(ctx context.Context, commandID, chatID, messageID, request string) (state.Run, error) {
-		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: commandID, RunID: commandID, Kind: state.CommandStart, Text: request,
+	chats.StartTask = func(ctx context.Context, commandID, chatID, messageID, request string, attachments []state.Attachment) (state.Run, error) {
+		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: commandID, RunID: commandID, Kind: state.CommandStart, Text: request, Attachments: attachments,
 			Origin: &state.TaskOrigin{ConversationID: chatID, MessageID: messageID}}}, nil)
 		if err != nil {
 			return state.Run{}, err
@@ -132,6 +132,10 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	}
 	result.Assistant.Resume = result.Resume
 	result.Assistant.DeliverAnswers = result.deliverAnswers
+	if result.Assistant.Connections != nil {
+		// A completed sign-in resumes the tasks that were waiting for it.
+		result.Assistant.Connections.OnConnected = result.Assistant.ResolveSignIns
+	}
 	result.Assistant.Continue = func(ctx context.Context, taskID, previous, request string, budget float64) (state.Run, error) {
 		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: taskID, RunID: taskID, Kind: state.CommandStart, Text: request, BudgetUSD: budget,
 			Origin: &state.TaskOrigin{ConversationID: "assistant", ContinuesTaskID: previous}}}, nil)

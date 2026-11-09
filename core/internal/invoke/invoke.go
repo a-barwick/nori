@@ -33,6 +33,8 @@ type Call struct {
 	Grant *connections.Grant
 	// Progress reports a short progress line for long calls; it may be nil.
 	Progress func(text string)
+	// TimeZone is the user's IANA time zone, for writing times in summaries the user reads.
+	TimeZone string
 	// Upload reads a file the task was given, by upload ID; it refuses files the task was not given.
 	Upload func(ctx context.Context, id string) (name, mediaType string, data []byte, err error)
 }
@@ -212,4 +214,20 @@ func Int(args map[string]any, name string, fallback int) int {
 func Bool(args map[string]any, name string) bool {
 	value, _ := args[name].(bool)
 	return value
+}
+
+// HumanTime writes an RFC 3339 instant or a YYYY-MM-DD date the way the user reads it, in their zone when known:
+// "Tue 10 Nov 2026, 10:00 PST" or "Sat 14 Mar 2027".
+func HumanTime(value, zone string) string {
+	if d, err := time.Parse("2006-01-02", value); err == nil {
+		return d.Format("Mon 2 Jan 2006")
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return value
+	}
+	if loc, err := time.LoadLocation(zone); err == nil && zone != "" {
+		t = t.In(loc)
+	}
+	return t.Format("Mon 2 Jan 2006, 15:04 MST")
 }

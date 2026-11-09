@@ -60,6 +60,9 @@ type Service struct {
 	Transport http.RoundTripper
 	// Cleanup runs connector-specific cleanup after disconnect, such as dropping sync caches (D4 flags).
 	Cleanup []func(ctx context.Context, connectionID string, purgeCache, deleteImported bool) error
+	// OnConnected runs after a sign-in completes (OAuth callback or app password), so tasks waiting for that account
+	// to be signed in again can resume.
+	OnConnected func(ctx context.Context, connectionID string)
 }
 
 func New(store state.ResourceStore, credentials secret.CredentialStore, redirectURL string, integrations ...Integration) *Service {
@@ -133,7 +136,7 @@ func (s *Service) connectPassword(ctx context.Context, id, requestID string, exp
 	}
 	// The receipt binding must not carry the password.
 	action.Password = ""
-	return s.Store.Mutate(ctx, state.Mutation{
+	receipt, err := s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "POST", Target: "/v1/connections/" + id + "/actions", ExpectedRevision: expected, Payload: action,
 		Collection: CollectionConnections, ID: id,
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
@@ -157,6 +160,10 @@ func (s *Service) connectPassword(ctx context.Context, id, requestID string, exp
 			return s.write(record, current.Revision+1, "applied", prefs)
 		},
 	})
+	if err == nil && s.OnConnected != nil {
+		s.OnConnected(context.WithoutCancel(ctx), id)
+	}
+	return receipt, err
 }
 
 // Records lists the user's connections in ID order.
@@ -566,7 +573,10 @@ func (s *Service) connect(ctx context.Context, id, requestID string, expected in
 			if record.Status == StatusDisconnecting {
 				return state.MutationResult{}, ErrInvalidAction
 			}
-			if record.Status != StatusConnected {
+			// Only a first sign-in shows as connecting. An account that already signed in keeps its state while it asks
+			// for more access or signs in again, so declining leaves it as it was (needs_more_access stays a working,
+			// partially granted account) instead of looking broken.
+			if record.Status != StatusConnected && record.Account.ProviderID == "" {
 				record.Status = StatusConnecting
 			}
 			record.DesiredScopes = scopes
@@ -713,6 +723,9 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 	})
 	if err != nil {
 		return "", err
+	}
+	if s.OnConnected != nil {
+		s.OnConnected(context.WithoutCancel(ctx), a.ConnectionID)
 	}
 	return redirect("connected"), nil
 }
@@ -1179,4 +1192,89 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 		}
 	}
 	return inventory, nil
+}
+
+// NeedsSignIn returns an account of the integration that was connected but must sign in again (revoked, expired or
+// rejected credential), preferring the requested one. A task that needs it can ask the user to sign in and resume.
+func (s *Service) NeedsSignIn(ctx context.Context, integrationID, requested string) (Record, bool) {
+	records, _, err := s.Records(ctx)
+	if err != nil {
+		return Record{}, false
+	}
+	var found *Record
+	for i, r := range records {
+		if r.IntegrationID != integrationID || r.Status != StatusAttention || (r.Health.Code != HealthNeedsSignIn && r.Health.Code != HealthRevoked) {
+			continue
+		}
+		if requested != "" && (r.ID == requested || strings.EqualFold(r.Account.Label, requested)) {
+			return records[i], true
+		}
+		if found == nil {
+			found = &records[i]
+		}
+	}
+	if found == nil || requested != "" {
+		return Record{}, false
+	}
+	return *found, true
+}
+
+// StartRepair starts an OAuth sign-in attempt to repair a connection from a task and returns it. requestID makes a
+// repeated start return the same attempt.
+func (s *Service) StartRepair(ctx context.Context, id, requestID, returnTo string, capabilities []string) (AuthAttempt, error) {
+	record, r, err := s.record(ctx, id)
+	if err != nil {
+		return AuthAttempt{}, err
+	}
+	integration := s.Integrations[record.IntegrationID]
+	if integration == nil || integration.Info().Auth != "oauth" {
+		return AuthAttempt{}, fmt.Errorf("%w: this account signs in with an app password in Apps", ErrInvalidAction)
+	}
+	action := Action{Action: "repair", ReturnTo: returnTo}
+	if len(capabilities) > 0 {
+		// Ask for what the account already granted plus what the task needs.
+		action.Capabilities = append(append([]string{}, record.Capabilities...), capabilities...)
+	}
+	receipt, err := s.connect(ctx, id, requestID, r.Revision, action)
+	if err != nil {
+		return AuthAttempt{}, err
+	}
+	var attempt AuthAttempt
+	if err := json.Unmarshal(receipt.Auth, &attempt); err != nil || attempt.AuthorizeURL == "" {
+		return AuthAttempt{}, errors.New("the sign-in attempt could not be started")
+	}
+	return attempt, nil
+}
+
+// LackingCapability returns a usable account of the integration that has not granted the capability, preferring the
+// requested one, so a task can ask for the missing access on that account.
+func (s *Service) LackingCapability(ctx context.Context, integrationID, capability, requested string) (Record, bool) {
+	records, _, err := s.Records(ctx)
+	if err != nil {
+		return Record{}, false
+	}
+	for _, r := range records {
+		usable, _ := usableRecord(r)
+		if r.IntegrationID != integrationID || !usable || slices.Contains(r.Capabilities, capability) {
+			continue
+		}
+		if requested == "" || r.ID == requested || strings.EqualFold(r.Account.Label, requested) {
+			return r, true
+		}
+	}
+	return Record{}, false
+}
+
+// ScopesFor lists the provider scopes a capability needs, for showing what a request for more access asks.
+func (s *Service) ScopesFor(integrationID, capability string) []string {
+	integration := s.Integrations[integrationID]
+	if integration == nil {
+		return nil
+	}
+	for _, c := range integration.Info().Capabilities {
+		if c.ID == capability {
+			return c.Scopes
+		}
+	}
+	return nil
 }

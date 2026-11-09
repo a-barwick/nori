@@ -37,7 +37,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		recovering, saved, err = a.savedOperation(parent, in)
 		// A safe read can run again at once: if an earlier attempt is still alive and settles first, its result is
 		// reused. Anything else waits for the earlier attempt's receipt window.
-		if recovering != nil && !(effect == "read" && in.Exec != nil && in.Exec.Policy.Retry == "safe") {
+		// A compose call can also run again at once: its nested calls are deduplicated by their own identities.
+		rerunnable := effect == "read" && in.Exec != nil && in.Exec.Policy.Retry == "safe" || in.Call.Name == "compose" && policy.Runtime
+		if recovering != nil && !rerunnable {
 			return recovering.RecoveryUntil, err
 		}
 		return time.Time{}, err
