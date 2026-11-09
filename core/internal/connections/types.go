@@ -81,11 +81,12 @@ type Record struct {
 
 // Projection is the contract Connection (connections.schema.json#/$defs/Connection).
 type Projection struct {
-	ID                  string     `json:"id"`
-	Revision            int64      `json:"revision"`
-	IntegrationID       string     `json:"integration_id"`
-	Title               string     `json:"title"`
-	Account             Account    `json:"account"`
+	ID            string `json:"id"`
+	Revision      int64  `json:"revision"`
+	IntegrationID string `json:"integration_id"`
+	Title         string `json:"title"`
+	// Account is absent until a sign-in identifies the provider account.
+	Account             *Account   `json:"account,omitempty"`
 	Status              string     `json:"status"`
 	GrantedScopes       []string   `json:"granted_scopes"`
 	SelectedResourceIDs []string   `json:"selected_resource_ids"`
