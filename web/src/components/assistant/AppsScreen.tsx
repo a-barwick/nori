@@ -255,7 +255,7 @@ function Plugins() {
     {installations.length > 0 && <Section title="Installed"><Rows>{installations.map((installation) => {
       const entry = catalog.data?.items.find((item) => item.package.id === installation.package.id);
       return <Row key={installation.id} href={`/apps/plugins/${encodeURIComponent(installation.id)}`} leading={<AppIcon icon="list" size={36} />} title={entry?.title ?? installation.package.id}
-        detail={`Version ${installation.package.version}${installation.pinned ? " · pinned" : ""}${installation.available_version ? ` · ${installation.available_version} available` : ""}`}
+        detail={`Version ${installation.package.version}${installation.pinned ? " · pinned" : ""}${installation.available_version && installation.available_version !== installation.package.version ? ` · ${installation.available_version} available` : ""}`}
         trailing={<Pill tone={installation.state === "failed" ? "danger" : installation.enabled && installation.state === "ready" ? "ok" : "neutral"}>{INSTALL_STATE[installation.state] ?? (installation.enabled ? "On" : "Off")}</Pill>} />;
     })}</Rows></Section>}
     <Section title="Catalog" actions={<PackageUpload onUploaded={() => void catalog.reload()} />}>
@@ -321,6 +321,8 @@ export function PluginDetailScreen({ id }: { id: string }) {
   if (installation.loading) return <Screen title="Plugin" back="/apps?tab=plugins"><Loading /></Screen>;
   if (!item) return <Screen title="Plugin" back="/apps?tab=plugins"><Failure error={installation.error ?? "Not installed."} /></Screen>;
   const entry = catalog.data?.items.find((candidate) => candidate.package.id === item.package.id);
+  // The core may keep available_version equal to the installed one; only a different version is an update.
+  const available = item.available_version && item.available_version !== item.package.version ? item.available_version : undefined;
   // Versions this installation ran before; the core keeps their immutable packages for rollback.
   const earlier = new Set((item.history ?? []).map((event) => event.version).filter((version): version is string => !!version && version !== item.package.version));
   const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
@@ -330,16 +332,16 @@ export function PluginDetailScreen({ id }: { id: string }) {
     setReview(undefined);
   });
   const loadReview = (version?: string) => action.run("review", async () => setReview({ version, data: await getJSON<InstallationReview>(`/plugins/installations/${encodeURIComponent(id)}/review${version ? `?version=${encodeURIComponent(version)}` : ""}`) }));
-  return <Screen title={entry?.title ?? item.package.id} back="/apps?tab=plugins" line={item.state === "failed" ? "This plugin failed. Its diagnostics are below." : item.available_version && !item.pinned ? `Version ${item.available_version} is available.` : undefined}
+  return <Screen title={entry?.title ?? item.package.id} back="/apps?tab=plugins" line={item.state === "failed" ? "This plugin failed. Its diagnostics are below." : available && !item.pinned ? `Version ${available} is available.` : undefined}
     actions={<Pill tone={item.enabled ? "ok" : "neutral"}>{item.enabled ? "On" : "Off"}</Pill>}>
     {action.error && <div className="mb-4"><Notice tone="danger">{action.error}</Notice></div>}
     <Section title="Version">
-      <Rows><Row title={`${item.package.version}${item.pinned ? " (pinned)" : ""}`} detail={item.available_version ? `${item.available_version} available` : "Up to date"}
-        trailing={<>{item.available_version && <Button size="sm" variant="primary" onClick={() => void loadReview(item.available_version)}>Review update</Button>}{!item.pinned && <Button size="sm" onClick={() => void act({ action: "pin", version: item.package.version }, "pin")}>Pin</Button>}</>} /></Rows>
+      <Rows><Row title={`${item.package.version}${item.pinned ? " (pinned)" : ""}`} detail={available ? `${available} available` : "Up to date"}
+        trailing={<>{available && <Button size="sm" variant="primary" onClick={() => void loadReview(available)}>Review update</Button>}{!item.pinned && <Button size="sm" onClick={() => void act({ action: "pin", version: item.package.version }, "pin")}>Pin</Button>}</>} /></Rows>
       {review && <div className="mt-3 rounded-card border border-hairline-strong p-4">
         <h3 className="text-row font-semibold">{review.version ? `Changes in ${review.version}` : "Before you uninstall"}</h3>
         <ReviewList data={review.data} />
-        <div className="mt-4 flex gap-2">{review.version ? <Button variant="primary" onClick={() => void act({ action: "update", version: review.version, approved_access: approvedFor(item.approved_access, review.data) }, "update")}>{action.pending === "update" ? "Updating…" : review.data.access_added.length ? "Allow and update" : "Update"}</Button>
+        <div className="mt-4 flex gap-2">{review.version ? <Button variant="primary" onClick={() => void act({ action: "update", version: review.version, approved_access: approvedFor(item.approved_access, review.data, entry && entry.latest_version === review.version ? entry.requested_access : undefined) }, "update")}>{action.pending === "update" ? "Updating…" : review.data.access_added.length ? "Allow and update" : "Update"}</Button>
           : <Button variant="primary" className="bg-danger! hover:bg-danger!" onClick={() => void act({ action: "uninstall" }, "uninstall")}>{action.pending === "uninstall" ? "Uninstalling…" : "Uninstall"}</Button>}
           <Button variant="quiet" onClick={() => setReview(undefined)}>Cancel</Button></div>
       </div>}
@@ -356,7 +358,7 @@ export function PluginDetailScreen({ id }: { id: string }) {
     {!!item.history?.length && <Section title="History"><Rows>{item.history.slice().reverse().map((event, index) => <Row key={index} title={`${event.event[0].toUpperCase()}${event.event.slice(1)}${event.version ? ` ${event.version}` : ""}`} detail={relative(event.at)}
       trailing={event.version && event.version !== item.package.version && !earlier.has(event.version) ? undefined : event.version && event.version !== item.package.version ? <Button size="sm" variant="quiet" disabled={!!action.pending} onClick={() => void action.run("rollback", async () => {
         const data = await getJSON<InstallationReview>(`/plugins/installations/${encodeURIComponent(id)}/review?version=${encodeURIComponent(event.version!)}`);
-        const receipt = await mutate<Installation>(`/plugins/installations/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "rollback", version: event.version, approved_access: approvedFor(item.approved_access, data) } });
+        const receipt = await mutate<Installation>(`/plugins/installations/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "rollback", version: event.version, approved_access: approvedFor(item.approved_access, data, entry && entry.latest_version === event.version ? entry.requested_access : undefined) } });
         invalidate("/plugins", "/integrations"); installation.apply(receipt.resource as Installation);
       }, "Version changed.")}>Use this version</Button> : undefined} />)}</Rows></Section>}
     <Section title="Manage"><div className="flex flex-wrap gap-2">
@@ -369,8 +371,12 @@ export function PluginDetailScreen({ id }: { id: string }) {
 type Access = Installation["approved_access"];
 
 /** The access an update or rollback needs approved: what the installation has, plus what the review says is new. */
-function approvedFor(current: Access, review: InstallationReview): Access {
-  const next = { connection_types: [...current.connection_types], action_classes: [...current.action_classes], network: [...(current.network ?? [])], filesystem: [...(current.filesystem ?? [])] };
+function approvedFor(current: Access, review: InstallationReview, target?: Access): Access {
+  // When the catalog knows the target version's request, approve all of it: an installation made before hosts
+  // were recorded has an approval that lists none, so the review's additions alone fall short.
+  const base = { connection_types: [...current.connection_types, ...(target?.connection_types ?? [])], action_classes: [...current.action_classes, ...(target?.action_classes ?? [])],
+    network: [...(current.network ?? []), ...(target?.network ?? [])], filesystem: [...(current.filesystem ?? []), ...(target?.filesystem ?? [])] };
+  const next = base;
   const removed = new Set(review.access_removed);
   for (const entry of review.access_added) {
     const [kind, value] = entry.includes(":") ? [entry.slice(0, entry.indexOf(":")), entry.slice(entry.indexOf(":") + 1)] : ["", entry];
