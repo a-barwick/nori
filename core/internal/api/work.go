@@ -1,7 +1,10 @@
 package api
 
 import (
+	"errors"
+
 	"context"
+	"github.com/google/uuid"
 	"net/http"
 	"time"
 
@@ -341,10 +344,15 @@ func (a *Assistant) operations(w http.ResponseWriter, r *http.Request) {
 // workAction accepts stop through the existing task command acceptance; the receipt names the same task.
 func (a *Assistant) workAction(w http.ResponseWriter, r *http.Request) {
 	var value struct {
-		Action string `json:"action"`
+		Action    string  `json:"action"`
+		BudgetUSD float64 `json:"budget_usd,omitempty"`
 	}
 	requestID, _, ok := decodeChange(w, r, &value)
 	if !ok {
+		return
+	}
+	if value.Action == "continue" {
+		a.continueWork(w, r, requestID, value.BudgetUSD)
 		return
 	}
 	if value.Action != "stop" {
@@ -406,4 +414,30 @@ func (a *Assistant) summary(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Revision = int64(s.NeedsYou*1_000_000 + s.Working*10_000 + s.AppsAttention*100 + s.InboxUnread + 1)
 	writeJSON(w, 200, s)
+}
+
+// continueWork starts an explicit continuation of a finished task that did not complete, such as one stopped at its
+// spending limit. Its saved results remain, completed external actions are not repeated, and the new task records
+// what it continues.
+func (a *Assistant) continueWork(w http.ResponseWriter, r *http.Request, requestID string, budget float64) {
+	previous, err := a.Store.GetRun(r.Context(), r.PathValue("task_id"))
+	if err != nil {
+		writeAPIError(w, err, requestID, nil)
+		return
+	}
+	if previous.Status == state.RunRunning || previous.Status == state.RunCompleted || a.Continue == nil {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
+		return
+	}
+	taskID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("continue:"+requestID)).String()
+	request := "Continue this earlier task, which stopped before it finished (" + clip(previous.Error, 300) + "). Original request: " + previous.Request +
+		"\nIts saved results are available through results_find. Do not repeat external actions it already completed; check the previous task's operations first."
+	run, err := a.Continue(r.Context(), taskID, previous.ID, clip(request, state.MaxMessageBytes-64), budget)
+	if err != nil && !errors.Is(err, state.ErrDuplicate) {
+		writeAPIError(w, err, requestID, nil)
+		return
+	}
+	ops, _ := a.Store.Operations(r.Context(), run.ID)
+	data, _ := jsonMarshal(a.item(r.Context(), run, ops, nil, nil))
+	writeJSON(w, 202, state.MutationReceipt{RequestID: requestID, Accepted: true, Status: "queued", Resource: data, Work: &state.WorkRef{TaskID: taskID}})
 }

@@ -68,6 +68,10 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			return stop, err
 		} else {
 			effect = string(plan.prepared.Effect)
+			span.SetAttributes(attribute.String("nori.tool.definition", in.Exec.Tool.ID), attribute.String("nori.tool.digest", in.Exec.Tool.Digest))
+			if plan.call.Grant != nil {
+				span.SetAttributes(attribute.String("nori.connection.id", plan.call.Grant.Connection.ID))
+			}
 		}
 	}
 	if recovering == nil && plan == nil && !policy.Runtime && in.Call.Name != "complete" {

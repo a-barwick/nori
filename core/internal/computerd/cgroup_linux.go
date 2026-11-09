@@ -21,22 +21,58 @@ type operationGroup struct {
 	file *os.File
 }
 
-func newOperationGroup() (*operationGroup, error) {
+// delegatedRoot is the agent's delegated cgroup once prepareDelegation has moved the agent into a leaf below it;
+// operation groups are created beside that leaf so controllers can be enabled for them.
+var delegatedRoot string
+
+func ownCgroup() (string, error) {
 	data, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	relative := ""
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "0::/") {
-			relative = strings.TrimPrefix(line, "0::")
-			break
+			return filepath.Join("/sys/fs/cgroup", strings.TrimPrefix(filepath.Clean(strings.TrimPrefix(line, "0::")), "/")), nil
 		}
 	}
-	if relative == "" {
-		return nil, errors.New("cgroup v2 delegation unavailable")
+	return "", errors.New("cgroup v2 delegation unavailable")
+}
+
+// prepareDelegation follows cgroup v2's no-internal-process rule: the agent moves itself into <own>/agent, then
+// enables the memory, pids and cpu controllers on <own> so sibling operation groups can carry limits. Failure leaves
+// the earlier layout, and sandboxing reports itself unavailable.
+func prepareDelegation() error {
+	own, err := ownCgroup()
+	if err != nil {
+		return err
 	}
-	root := filepath.Join("/sys/fs/cgroup", strings.TrimPrefix(filepath.Clean(relative), "/"))
+	if filepath.Base(own) == "agent" {
+		own = filepath.Dir(own)
+	} else {
+		leaf := filepath.Join(own, "agent")
+		if err := os.MkdirAll(leaf, 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(leaf, "cgroup.procs"), []byte("0"), 0600); err != nil {
+			return fmt.Errorf("could not move the agent into its leaf cgroup: %w", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(own, "cgroup.subtree_control"), []byte("+memory +pids +cpu"), 0600); err != nil {
+		return fmt.Errorf("could not enable cgroup controllers: %w", err)
+	}
+	delegatedRoot = own
+	return nil
+}
+
+func newOperationGroup() (*operationGroup, error) {
+	root := delegatedRoot
+	if root == "" {
+		own, err := ownCgroup()
+		if err != nil {
+			return nil, err
+		}
+		root = own
+	}
 	directory, err := os.MkdirTemp(root, "operation-")
 	if err != nil {
 		return nil, fmt.Errorf("delegated cgroup required: %w", err)
@@ -127,7 +163,7 @@ func sandboxAttributes(g *operationGroup) *syscall.SysProcAttr {
 }
 
 func sandboxSupported() bool {
-	if _, err := os.Stat("/proc/self/ns/user"); err != nil {
+	if _, err := os.Stat("/proc/self/ns/user"); err != nil || delegatedRoot == "" {
 		return false
 	}
 	group, err := newOperationGroup()
@@ -136,4 +172,11 @@ func sandboxSupported() bool {
 	}
 	defer group.close()
 	return true
+}
+
+func init() {
+	if err := prepareDelegation(); err != nil {
+		// Shell jobs keep working in the earlier layout; sandboxed packages are refused.
+		fmt.Fprintln(os.Stderr, "computerd: cgroup controller delegation unavailable:", err)
+	}
 }

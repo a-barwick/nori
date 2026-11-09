@@ -38,6 +38,10 @@ type Assistant struct {
 	Chats any
 	// Revise starts a task that revises a saved result, keeping its earlier versions.
 	Revise func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error)
+	// Resume repairs command delivery and worker wakes, and runs a scheduler pass.
+	Resume func(ctx context.Context) error
+	// Continue starts a task that explicitly continues one that stopped, for example at its budget.
+	Continue func(ctx context.Context, taskID, previous, request string, budget float64) (state.Run, error)
 	// Submit starts a task from an external client through normal acceptance.
 	Submit func(ctx context.Context, taskID, request string) (state.Run, error)
 	// Stop accepts a task stop command.
@@ -183,6 +187,9 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	if a.Plugins != nil {
 		a.registerPlugins(mux)
 	}
+	mux.HandleFunc("GET /v1/diagnostics", a.diagnostics)
+	mux.HandleFunc("POST /v1/diagnostics/actions", jsonBody(a.diagnosticsAction))
+	mux.HandleFunc("POST /v1/feedback", jsonBody(a.feedback))
 	mux.HandleFunc("GET /v1/mcp-clients", a.mcpClients)
 	mux.HandleFunc("POST /v1/mcp-clients", jsonBody(a.createMCPClient))
 	mux.HandleFunc("POST /v1/mcp-clients/{id}/actions", jsonBody(a.mcpClientAction))
