@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { Calendar, Check, CircleSlash, Folder, KeyRound, ListTodo, Mail, MessageSquare, Plug, Plus, Search, Server, Upload } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
-import { assistantURL, getJSON, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
+import { APIError, assistantURL, getJSON, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
@@ -149,6 +149,7 @@ export function AppDetailScreen({ id }: { id: string }) {
   const integration = useResource<Integration>(has("integrations") ? `/integrations/${encodeURIComponent(id)}` : null, { poll: 60_000 });
   const connections = useResource<List<Connection>>(has("connections") ? "/connections" : null, { poll: 10_000 });
   const action = useAction();
+  const [passwordForm, setPasswordForm] = useState(false);
   if (!has("integrations")) return <Screen title="App" back="/apps"><NotYet what="Connecting apps" /></Screen>;
   if (integration.loading) return <Screen title="App" back="/apps"><Loading /></Screen>;
   const item = integration.data;
@@ -168,7 +169,8 @@ export function AppDetailScreen({ id }: { id: string }) {
     <Screen title={item.title} back="/apps" line={line} actions={<AppIcon icon={item.icon} />}>
       {result && <div className="mb-6"><Notice tone={result === "connected" ? "ok" : result === "cancelled" ? "neutral" : "danger"}>{result === "connected" ? "Connected." : result === "cancelled" ? "Sign-in was cancelled. Nothing changed." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
       {action.error && <div className="mb-6"><Notice tone="danger">{action.error}</Notice></div>}
-      <Section title="Accounts" actions={item.availability === "available" && (accounts.length === 0 || item.multiple_accounts) ? <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => void add()}><Plus size={15} aria-hidden />{action.pending ? "Opening sign-in…" : accounts.length ? "Add another account" : "Connect"}</Button> : undefined}>
+      <Section title="Accounts" actions={item.availability === "available" && (accounts.length === 0 || item.multiple_accounts) ? <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => item.auth === "app_password" ? setPasswordForm(true) : void add()}><Plus size={15} aria-hidden />{action.pending ? "Opening sign-in…" : accounts.length ? "Add another account" : "Connect"}</Button> : undefined}>
+        {passwordForm && <div className="mb-3 rounded-card border border-hairline bg-surface p-4"><PasswordSignIn integration={item} connection={unfinished} onDone={() => setPasswordForm(false)} /></div>}
         {connections.loading ? <Loading /> : accounts.length ? <div className="space-y-3">{accounts.map((connection) => <ConnectionCard key={connection.id} connection={connection} integration={item} />)}</div>
           : <Empty>{item.availability === "available" ? `No ${item.title} account yet.` : item.availability_reason ?? "Not available yet."}</Empty>}
       </Section>
@@ -180,10 +182,47 @@ export function AppDetailScreen({ id }: { id: string }) {
   );
 }
 
+/** Apple's help page for creating an app-specific password. */
+const APP_PASSWORD_HELP: Record<string, string> = { icloud: "https://support.apple.com/en-us/102654" };
+
+/**
+ * Sign-in for apps that use an account name and an app-specific password (iCloud). The pair is sent once
+ * and kept nowhere in the browser; the server never returns it.
+ */
+function PasswordSignIn({ integration, connection, onDone }: { integration: Integration; connection?: Connection; onDone: () => void }) {
+  const action = useAction();
+  const apple = integration.id === "icloud";
+  const repairing = !!connection?.account?.provider_id;
+  const [username, setUsername] = useState(repairing ? connection?.account?.label ?? "" : "");
+  const [password, setPassword] = useState("");
+  const help = APP_PASSWORD_HELP[integration.id];
+  const submit = () => action.run("save", async () => {
+    const pair = { username: username.trim(), password: password.trim() };
+    setPassword("");
+    const target = connection ?? (await mutate<Connection>("/connections", { request_id: newRequestID(), expected_revision: 0, value: { integration_id: integration.id, title: integration.title, selected_resource_ids: [] } })).resource as Connection;
+    await sendSecret<Connection>(`/connections/${encodeURIComponent(target.id)}/actions`, {
+      request_id: newRequestID(), expected_revision: target.revision, value: { action: repairing ? "repair" : "connect", ...pair, return_to: `/apps/${encodeURIComponent(integration.id)}` },
+    }).catch((error) => {
+      if (error instanceof APIError && error.code === "validation_failed") throw new Error(`${apple ? "Apple" : integration.title} didn’t accept that ${apple ? "email" : "username"} and app-specific password. Nothing was saved.`);
+      throw error;
+    });
+    invalidate("/connections", "/integrations", "/assistant/summary");
+    onDone();
+  }, repairing ? "Signed in again." : `${integration.title} connected.`);
+  return <form className="max-w-md space-y-3" onSubmit={(event) => { event.preventDefault(); if (username.trim() && password.trim()) void submit(); }}>
+    <p className="text-meta text-ink-2">{apple ? "Use an app-specific password, not your Apple Account password." : "Use an app-specific password, not your account password."}{help && <> <a href={help} target="_blank" rel="noreferrer noopener" className="font-medium text-accent-text hover:underline">How to create one</a></>}</p>
+    <Field label={apple ? "Apple Account email" : "Username"}><input value={username} onChange={(event) => setUsername(event.target.value)} type={apple ? "email" : "text"} autoComplete="username" spellCheck={false} className={inputClass} disabled={repairing} /></Field>
+    <Field label="App-specific password"><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="off" spellCheck={false} className={inputClass} placeholder="xxxx-xxxx-xxxx-xxxx" /></Field>
+    {action.error && <p role="alert" className="text-meta text-danger">{action.error}</p>}
+    <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!username.trim() || !password.trim() || !!action.pending}>{action.pending ? "Checking…" : repairing ? "Sign in again" : "Connect"}</Button><Button variant="quiet" onClick={() => { setPassword(""); onDone(); }}>Cancel</Button></div>
+  </form>;
+}
+
 function ConnectionCard({ connection, integration }: { connection: Connection; integration: Integration }) {
   const action = useAction();
   const state = connectionState(connection);
   const [open, setOpen] = useState(false);
+  const [passwordForm, setPasswordForm] = useState(false);
   const recovery = recoveryOf(connection);
   const returnTo = `/apps/${encodeURIComponent(integration.id)}`;
   const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
@@ -198,10 +237,11 @@ function ConnectionCard({ connection, integration }: { connection: Connection; i
         <Pill tone={state.tone}>{state.label}</Pill>
       </div>
       {(recovery === "repair" || recovery === "connect" || recovery === "request_access") && <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-4 py-3">
-        <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => void action.run("repair", () => startSignIn(connection, recovery === "connect" ? "connect" : "repair", returnTo, recovery === "request_access" ? wantedCapabilities(connection, integration) : undefined))}>
+        <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => integration.auth === "app_password" ? setPasswordForm(true) : void action.run("repair", () => startSignIn(connection, recovery === "connect" ? "connect" : "repair", returnTo, recovery === "request_access" ? wantedCapabilities(connection, integration) : undefined))}>
           <KeyRound size={14} aria-hidden />{action.pending === "repair" ? "Opening sign-in…" : recovery === "request_access" ? "Allow more access" : connection.account ? "Sign in again" : "Sign in"}</Button>
         {!!connection.missing_scopes?.length && <span className="text-meta text-ink-2">Still needs permission to {scopeList(connection.missing_scopes)}</span>}
       </div>}
+      {passwordForm && <div className="border-t border-hairline p-4"><PasswordSignIn integration={integration} connection={connection} onDone={() => setPasswordForm(false)} /></div>}
       {recovery === "wait" && connection.health.retry_after && <p className="border-t border-hairline px-4 py-3 text-meta text-ink-2">Nori will try again {relative(connection.health.retry_after)}.</p>}
       {action.error && <div className="px-4 pb-3"><Notice tone="danger">{action.error}</Notice></div>}
       <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-4 py-2">
