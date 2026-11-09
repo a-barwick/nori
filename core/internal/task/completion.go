@@ -72,6 +72,21 @@ func (a *Activities) CheckCompletion(ctx context.Context, in CompletionInput) (o
 			check.Proposal.Unmet = append(check.Proposal.Unmet, prompts.Runtime("operation-unresolved", map[string]any{"Name": op.Name}))
 		}
 	}
+	if a.Executor != nil && a.Executor.Permissions != nil {
+		attempted := map[string]bool{}
+		for _, op := range ops {
+			if op.Action != nil && op.Attempt > 0 {
+				attempted[op.Action.Digest] = true
+			}
+		}
+		pending, err := a.Executor.Permissions.UnperformedApprovals(ctx, in.RunID, in.Revision, attempted)
+		if err != nil {
+			return out, classified(err)
+		}
+		for _, summary := range pending {
+			check.Proposal.Unmet = append(check.Proposal.Unmet, "The user approved this action but it was not carried out: "+clip(summary, 300))
+		}
+	}
 	if e = a.Store.PutCompletionCheck(ctx, in.RunID, check); e != nil {
 		return out, classified(e)
 	}

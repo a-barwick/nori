@@ -306,3 +306,25 @@ func (s *Service) MarkDelivered(ctx context.Context, id string) {
 		_, _ = s.Store.PutResource(ctx, next, r.Revision)
 	}
 }
+
+// UnperformedApprovals lists actions the user approved for a task revision that no admitted operation attempted,
+// so a task cannot finish as if an approved action had happened.
+func (s *Service) UnperformedApprovals(ctx context.Context, runID string, revision int64, attempted map[string]bool) ([]string, error) {
+	page, _, err := s.Store.Resources(ctx, CollectionApprovals, map[string]string{"task_id": runID}, "", 200)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range page {
+		var a approval
+		if r.Decode(&a) != nil || a.Decision != "approve" || a.Revision != revision || attempted[a.Digest] {
+			continue
+		}
+		summary := "an approved action"
+		if i, err := s.Interaction(ctx, a.Interaction); err == nil {
+			summary = i.Prompt
+		}
+		out = append(out, summary)
+	}
+	return out, nil
+}
