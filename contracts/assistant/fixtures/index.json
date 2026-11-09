@@ -1,5 +1,5 @@
 {
-  "revision": "r2.7",
+  "revision": "r2.8",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -1047,6 +1047,22 @@
       "schema": "execution.schema.json#/$defs/OperationProjection",
       "valid": false,
       "note": "cleared is a closed set"
+    },
+    {
+      "file": "fixtures/plugins/installation-create.network.valid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationCreateChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/installation-action.update-network.valid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/installation-create.unknown-access-field.invalid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationCreateChange",
+      "valid": false,
+      "note": "approved access is a closed set"
     }
   ]
 }
