@@ -842,7 +842,7 @@ func (a *Assistant) ResolveSignIns(ctx context.Context, connectionID string) {
 			continue
 		}
 		requestID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("signed-in:"+i.ID)).String()
-		_, answer, err := a.Permissions.Respond(ctx, i.ID, requestID, i.Revision, permissions.Response{Kind: "answer",
+		_, answer, err := a.Permissions.Respond(ctx, i.ID, requestID, i.Revision, permissions.Response{Kind: "signed_in",
 			Text: "The user signed in to the account again. Retry the same call."})
 		if err != nil || answer == nil {
 			continue

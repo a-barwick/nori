@@ -1221,7 +1221,7 @@ func (s *Service) NeedsSignIn(ctx context.Context, integrationID, requested stri
 
 // StartRepair starts an OAuth sign-in attempt to repair a connection from a task and returns it. requestID makes a
 // repeated start return the same attempt.
-func (s *Service) StartRepair(ctx context.Context, id, requestID, returnTo string) (AuthAttempt, error) {
+func (s *Service) StartRepair(ctx context.Context, id, requestID, returnTo string, capabilities []string) (AuthAttempt, error) {
 	record, r, err := s.record(ctx, id)
 	if err != nil {
 		return AuthAttempt{}, err
@@ -1230,7 +1230,12 @@ func (s *Service) StartRepair(ctx context.Context, id, requestID, returnTo strin
 	if integration == nil || integration.Info().Auth != "oauth" {
 		return AuthAttempt{}, fmt.Errorf("%w: this account signs in with an app password in Apps", ErrInvalidAction)
 	}
-	receipt, err := s.connect(ctx, id, requestID, r.Revision, Action{Action: "repair", ReturnTo: returnTo})
+	action := Action{Action: "repair", ReturnTo: returnTo}
+	if len(capabilities) > 0 {
+		// Ask for what the account already granted plus what the task needs.
+		action.Capabilities = append(append([]string{}, record.Capabilities...), capabilities...)
+	}
+	receipt, err := s.connect(ctx, id, requestID, r.Revision, action)
 	if err != nil {
 		return AuthAttempt{}, err
 	}
@@ -1239,4 +1244,37 @@ func (s *Service) StartRepair(ctx context.Context, id, requestID, returnTo strin
 		return AuthAttempt{}, errors.New("the sign-in attempt could not be started")
 	}
 	return attempt, nil
+}
+
+// LackingCapability returns a usable account of the integration that has not granted the capability, preferring the
+// requested one, so a task can ask for the missing access on that account.
+func (s *Service) LackingCapability(ctx context.Context, integrationID, capability, requested string) (Record, bool) {
+	records, _, err := s.Records(ctx)
+	if err != nil {
+		return Record{}, false
+	}
+	for _, r := range records {
+		usable, _ := usableRecord(r)
+		if r.IntegrationID != integrationID || !usable || slices.Contains(r.Capabilities, capability) {
+			continue
+		}
+		if requested == "" || r.ID == requested || strings.EqualFold(r.Account.Label, requested) {
+			return r, true
+		}
+	}
+	return Record{}, false
+}
+
+// ScopesFor lists the provider scopes a capability needs, for showing what a request for more access asks.
+func (s *Service) ScopesFor(integrationID, capability string) []string {
+	integration := s.Integrations[integrationID]
+	if integration == nil {
+		return nil
+	}
+	for _, c := range integration.Info().Capabilities {
+		if c.ID == capability {
+			return c.Scopes
+		}
+	}
+	return nil
 }

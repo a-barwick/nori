@@ -199,6 +199,13 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 			text := ""
 			var writes []state.Resource
 			switch {
+			case response.Kind == "decline" && i.Kind == "sign_in":
+				// "Not now": the task carries on without that account or reports what it could not do.
+				text = "The user chose not to sign in now. Continue without that account, or report what could not be done."
+				resolution.Text = text
+			case response.Kind == "signed_in" && i.Kind == "sign_in":
+				// Server-side: the connection became usable again (any sign-in or repair of it, from the task or Apps).
+				resolution.Text, text = response.Text, response.Text
 			case response.Kind == "answer" && (i.Kind == "question" || i.Kind == "sign_in"):
 				if response.Text == "" || len(response.Text) > state.MaxMessageBytes {
 					return state.MutationResult{}, state.ErrInvalidResource
