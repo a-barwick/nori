@@ -81,7 +81,7 @@ Facts the reviews established: no built-in tool emits `reversible_write` or `sen
 
 ## Decisions D1–D4 (decided by the coordinator on 2026-11-09)
 
-Austin asked not to be consulted further ("you're on bypass permissions"). The coordinator decided each as below, choosing the recommendation with the strongest engineering evidence from the three reviews. Austin can overturn any of them with a word; the mechanisms stay configurable.
+The coordinator set these as working defaults on 2026-11-09, choosing the recommendation with the strongest engineering evidence from the three reviews, after misreading a complaint about permission dialogs as a request to stop consulting Austin. They are the coordinator's calls, not Austin's; he can overturn any of them with a word, and every mechanism stays configurable.
 
 | ID | Decision | Why | Mechanism |
 | --- | --- | --- | --- |
@@ -105,6 +105,8 @@ The Compose stack in `core/infrastructure/local/compose.yaml` runs one Postgres 
 | Integration | 8083 | 3213 | `nori_integration` | `nori-integration` | `nori-tasks-integration` |
 
 Peer messaging from the backend and integration sessions is paused by the app after ten messages until Austin types in each of those sessions; the coordinator relays their notes meanwhile. Typing anything in those two sessions lifts the pause.
+
+Rule for every session: never put Austin's email addresses or other personal identifiers into a command line, tool input or written file. The desktop app asks him for permission before any tool call whose input contains his account email, whatever the permission mode. Load such values from an env file the stack reads and reference the variable.
 
 ## Credentials
 
