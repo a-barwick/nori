@@ -47,7 +47,32 @@ export function connectionState(connection: Connection): { tone: Tone; label: st
   if (connection.status === "disconnected" || connection.status === "not_connected") return { tone: "neutral", label: "Not connected" };
   if (connection.status === "disabled") return { tone: "neutral", label: "Off" };
   if (connection.status === "disconnecting") return { tone: "neutral", label: "Disconnecting" };
-  return HEALTH[connection.health.code ?? "ready"] ?? { tone: "neutral", label: connection.status };
+  return HEALTH[healthOf(connection) ?? "ready"] ?? { tone: "neutral", label: connection.status };
+}
+
+/** The connection's health, also read from its status: an account can be marked as needing attention while its last call worked. */
+function healthOf(connection: Connection): HealthCode | undefined {
+  const code = connection.health.code;
+  if (connection.status === "needs_attention" && (!code || code === "ready")) return connection.missing_scopes?.length ? "needs_more_access" : "needs_sign_in";
+  return code;
+}
+
+export function needsAttention(connection: Connection) {
+  const code = healthOf(connection);
+  return connection.status !== "disconnected" && connection.status !== "not_connected" && !!code && code !== "ready";
+}
+
+/** What "Allow more access" asks for: everything granted plus the capabilities that need the missing permissions. */
+function wantedCapabilities(connection: Connection, integration: Integration) {
+  const missing = new Set(connection.missing_scopes ?? []);
+  const more = integration.capabilities.filter((capability) => capability.supported && capability.scopes?.some((scope) => missing.has(scope))).map((capability) => capability.id);
+  return [...new Set([...(connection.capabilities ?? []), ...more])];
+}
+
+function recoveryOf(connection: Connection) {
+  if (connection.status === "not_connected" || connection.status === "disconnected") return "connect";
+  if (connection.status === "needs_attention" && (!connection.health.recovery || connection.health.recovery === "none")) return connection.missing_scopes?.length ? "request_access" : "repair";
+  return connection.health.recovery;
 }
 
 /** Start a server-issued sign-in and send the browser to it. */
@@ -83,7 +108,7 @@ function Catalog() {
   const items = integrations.data?.items;
   const categories = useMemo(() => ["All", ...new Set((items ?? []).flatMap((item) => item.categories))], [items]);
   const shown = (items ?? []).filter((item) => (category === "All" || item.categories.includes(category)) && (!query || `${item.title} ${item.description} ${item.categories.join(" ")}`.toLowerCase().includes(query.toLowerCase())));
-  const attention = (connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected" && connection.status !== "not_connected" && connection.health.code && connection.health.code !== "ready");
+  const attention = (connections.data?.items ?? []).filter(needsAttention);
   const byIntegration = (id: string) => (connections.data?.items ?? []).filter((connection) => connection.integration_id === id && connection.status !== "disconnected" && !(connection.status === "not_connected" && !connection.account?.provider_id));
   if (integrations.loading) return <Loading />;
   if (integrations.error && !items) return <Failure error={integrations.error} onRetry={() => void integrations.reload()} />;
@@ -105,7 +130,7 @@ function Catalog() {
       </div>
       {shown.length ? <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{shown.map((item) => {
         const accounts = byIntegration(item.id);
-        const trouble = accounts.some((connection) => connection.health.code && connection.health.code !== "ready");
+        const trouble = accounts.some(needsAttention);
         return <li key={item.id}><Link href={`/apps/${encodeURIComponent(item.id)}`} className="flex h-full flex-col gap-3 rounded-card border border-hairline bg-surface p-4 hover:border-hairline-strong hover:bg-fill-1">
           <div className="flex items-center gap-3"><AppIcon icon={item.icon} /><span className="min-w-0 flex-1"><span className="block truncate text-row font-semibold">{item.title}</span><span className="block truncate text-caption text-ink-3 first-letter:uppercase">{item.categories.join(" · ")}</span></span></div>
           <p className="line-clamp-2 flex-1 text-meta text-ink-2">{item.description}</p>
@@ -138,7 +163,7 @@ export function AppDetailScreen({ id }: { id: string }) {
     await startSignIn(connection, "connect", `/apps/${encodeURIComponent(item.id)}`);
   });
   const line = item.availability !== "available" ? item.availability_reason
-    : !accounts.length ? `Connect ${item.title} so Nori can use it.` : accounts.some((connection) => connection.health.code && connection.health.code !== "ready") ? "An account needs attention." : `${accounts.length === 1 ? "One account" : `${accounts.length} accounts`} connected.`;
+    : !accounts.length ? `Connect ${item.title} so Nori can use it.` : accounts.some(needsAttention) ? "An account needs attention." : `${accounts.length === 1 ? "One account" : `${accounts.length} accounts`} connected.`;
   return (
     <Screen title={item.title} back="/apps" line={line} actions={<AppIcon icon={item.icon} />}>
       {result && <div className="mb-6"><Notice tone={result === "connected" ? "ok" : result === "cancelled" ? "neutral" : "danger"}>{result === "connected" ? "Connected." : result === "cancelled" ? "Sign-in was cancelled. Nothing changed." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
@@ -159,7 +184,7 @@ function ConnectionCard({ connection, integration }: { connection: Connection; i
   const action = useAction();
   const state = connectionState(connection);
   const [open, setOpen] = useState(false);
-  const recovery = connection.status === "not_connected" || connection.status === "disconnected" ? "connect" : connection.health.recovery;
+  const recovery = recoveryOf(connection);
   const returnTo = `/apps/${encodeURIComponent(integration.id)}`;
   const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
     await mutate(`/connections/${encodeURIComponent(connection.id)}/actions`, { request_id: newRequestID(), expected_revision: connection.revision, value });
@@ -173,7 +198,7 @@ function ConnectionCard({ connection, integration }: { connection: Connection; i
         <Pill tone={state.tone}>{state.label}</Pill>
       </div>
       {(recovery === "repair" || recovery === "connect" || recovery === "request_access") && <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-4 py-3">
-        <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => void action.run("repair", () => startSignIn(connection, recovery === "connect" ? "connect" : "repair", returnTo, recovery === "request_access" ? connection.capabilities : undefined))}>
+        <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => void action.run("repair", () => startSignIn(connection, recovery === "connect" ? "connect" : "repair", returnTo, recovery === "request_access" ? wantedCapabilities(connection, integration) : undefined))}>
           <KeyRound size={14} aria-hidden />{action.pending === "repair" ? "Opening sign-in…" : recovery === "request_access" ? "Allow more access" : connection.account ? "Sign in again" : "Sign in"}</Button>
         {!!connection.missing_scopes?.length && <span className="text-meta text-ink-2">Still needs permission to {scopeList(connection.missing_scopes)}</span>}
       </div>}
