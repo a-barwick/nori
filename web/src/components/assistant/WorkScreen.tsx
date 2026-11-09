@@ -157,6 +157,8 @@ function Continue({ item }: { item: WorkItem }) {
 }
 
 export function WorkDetailScreen({ taskID }: { taskID: string }) {
+  // Back from signing in for this task (the server returns here with ?result=…).
+  const signInResult = useSearchParams().get("result");
   const { runtime, has } = useAssistant();
   const { detail, error, loading, reload, live } = useWorkDetail(taskID);
   const work = useWork();
@@ -191,6 +193,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
 
   return (
     <Screen title={item.title} back="/work" line={line} actions={<><Pill tone={pill.tone}>{pill.label}</Pill><RefreshButton onClick={() => void reload()} /></>}>
+      {signInResult && <div className="mb-6"><Notice tone={signInResult === "connected" ? "ok" : signInResult === "cancelled" ? "neutral" : "danger"}>{signInResult === "connected" ? "Signed in. Nori is continuing this task." : signInResult === "cancelled" ? "Sign-in was cancelled. The task is still waiting." : "Sign-in didn’t finish. Try again from the card below."}</Notice></div>}
       {pendingInteractions.length > 0 && <Section title="Needs you"><div className="space-y-3">{pendingInteractions.map((interaction) => <InteractionCard key={interaction.id} interaction={interaction} compact />)}</div></Section>}
       {item.operations.uncertain > 0 && <div className="mt-6"><Notice tone="warning">An action may or may not have gone through. Nori is checking with the provider and won’t repeat it.</Notice></div>}
       {running && <Section title="Change this task">

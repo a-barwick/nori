@@ -43,6 +43,8 @@ export function useChat() {
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(true);
   const [sending, setSending] = useState(false);
+  // The text being sent, shown as the user's message until the core saves it.
+  const [outgoing, setOutgoing] = useState<{ text: string; at: number }>();
   const [opening, setOpening] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const active = useRef<Selection | null>(null);
@@ -181,6 +183,9 @@ export function useChat() {
     const sending = Symbol();
     selection.sending = sending;
     setSending(true);
+    setOutgoing({ text, at: Date.now() });
+    setDraft("");
+    let delivered = false;
     setError("");
     try {
       const id = await ensure(selection);
@@ -194,6 +199,7 @@ export function useChat() {
       timeline.submission = submission;
       const body = JSON.stringify({ id: submission.id, text, ...(attachments.length ? { attachments } : {}) });
       const saved = await request<{ conversation: Conversation }>(`${conversationPath(id)}/messages`, { method: "POST", body });
+      delivered = true;
       if (timelines.current.get(id) !== timeline) return;
       if (timeline.submission === submission) timeline.submission = undefined;
       // The text is saved even if the user switched chats mid-send; don't leave it to be sent twice.
@@ -204,8 +210,11 @@ export function useChat() {
     } catch (error) {
       if (active.current === selection && selection.sending === sending) setError(`${String(error)}. Send again to retry the same message.`);
     } finally {
+      // Not saved: put the text back so the same message can be sent again.
+      if (!delivered) setDraft((current) => current || text);
       if (selection.sending === sending) {
         selection.sending = undefined;
+        setOutgoing(undefined);
         if (active.current === selection) setSending(false);
       }
     }
@@ -286,7 +295,7 @@ export function useChat() {
   }
 
   return {
-    chats, current, open, draft, setDraft, files, error, connected, sending, opening,
+    chats, current, open, draft, setDraft, files, error, connected, sending, opening, outgoing,
     refresh, select, startNew, close, send, stop, remove,
     attach: (picked: File[]) => attachFiles(picked, upload, setError),
     retryFile: (item: DraftFile) => retryUpload(item, upload),
