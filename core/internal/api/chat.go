@@ -26,6 +26,10 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 		// family reports itself.
 		body["assistant_features"] = s.Assistant.Features
 		body["upload_accept"] = uploadAccept()
+		// The browser subscribes to push with this key; it is absent when push has no transport.
+		if s.Assistant.PushPublicKey != "" {
+			body["push_public_key"] = s.Assistant.PushPublicKey
+		}
 	}
 	writeJSON(w, 200, body)
 }

@@ -68,7 +68,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	result.Scheduler = services.Scheduler
 	result.Assistant = &api.Assistant{
 		Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
-		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, MCP: services.MCP, Plugins: services.Plugins, Computer: services.Sessions, Chats: chats,
+		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, PushPublicKey: pushKey(cfg), MCP: services.MCP, Plugins: services.Plugins, Computer: services.Sessions, Chats: chats,
 		Features: map[string]bool{"integrations": true, "connections": true, "interactions": true, "permissions": true,
 			"preferences": true, "work": !cfg.Features.DisableBackgroundTasks, "operations": true,
 			"automations": !cfg.Features.DisableBackgroundTasks, "goals": true, "inbox": true,
@@ -260,3 +260,12 @@ func (a *App) processAssistant(ctx context.Context) error {
 }
 
 var _ api.Operations = (*App)(nil)
+
+// pushKey is the VAPID public key when push delivery is fully configured.
+func pushKey(cfg settings.Settings) string {
+	c := cfg.Connections
+	if c.VAPIDPublicKey == "" || c.VAPIDPrivateKey == "" || c.VAPIDSubject == "" {
+		return ""
+	}
+	return c.VAPIDPublicKey
+}

@@ -13,6 +13,7 @@ import (
 	"nori/internal/connectors/mcp"
 	"nori/internal/connectors/nori"
 	"nori/internal/connectors/plugin"
+	"nori/internal/delivery"
 	"nori/internal/extensions"
 	"nori/internal/invoke"
 	"nori/internal/permissions"
@@ -97,7 +98,16 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		conn.Transport = transport
 	}
 	perms := &permissions.Service{Store: store, UnattendedWrites: s.Connections.UnattendedWrites, UserSends: s.Connections.UserSends}
+	channels := map[string]scheduler.Channel{}
+	c := s.Connections
+	if push := delivery.NewWebPush(c.VAPIDPublicKey, c.VAPIDPrivateKey, c.VAPIDSubject); push != nil {
+		channels["push"] = push
+	}
+	if email := delivery.NewSMTP(c.SMTPHost, c.SMTPPort, c.SMTPUsername, c.SMTPPassword, c.EmailFrom); email != nil {
+		channels["email"] = email
+	}
 	sched := &scheduler.Service{Store: store, Tasks: tasks, Permissions: perms, Events: google.EventSource{Connections: conn},
+		Channels: channels, Targets: credentials,
 		Results: func(ctx context.Context, taskID string) []string {
 			results, err := tasks.RecentResults(ctx, 200)
 			if err != nil {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"nori/internal/scheduler"
@@ -260,12 +261,38 @@ func (a *Assistant) updateDestination(w http.ResponseWriter, r *http.Request) {
 func (a *Assistant) destinationAction(w http.ResponseWriter, r *http.Request) {
 	var value struct {
 		Action string `json:"action"`
+		Code   string `json:"code,omitempty"`
 	}
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
 		return
 	}
-	if value.Action != "remove" || r.PathValue("id") == scheduler.InAppDestination {
+	id := r.PathValue("id")
+	if id == scheduler.InAppDestination {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
+		return
+	}
+	switch value.Action {
+	case "send_verification", "verify":
+		var err error
+		if value.Action == "verify" {
+			err = a.Scheduler.Verify(r.Context(), id, value.Code)
+		} else {
+			err = a.Scheduler.SendVerification(r.Context(), id)
+		}
+		current, readErr := a.Scheduler.Destination(r.Context(), id)
+		if err == nil && readErr != nil {
+			err = readErr
+		}
+		if err != nil {
+			writeAPIError(w, err, requestID, current)
+			return
+		}
+		data, _ := json.Marshal(current)
+		writeJSON(w, 200, state.MutationReceipt{RequestID: requestID, Accepted: true, Status: "applied", Resource: data})
+		return
+	case "remove":
+	default:
 		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
