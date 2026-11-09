@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -26,6 +27,8 @@ type SMTP struct {
 	Username string
 	Password string
 	From     string
+	// Roots, when set, replaces the system roots for verifying the relay (local test sinks only).
+	Roots *x509.CertPool
 }
 
 // NewSMTP returns nil when the relay is not configured, so the channel reports no_transport.
@@ -70,7 +73,7 @@ func (e *SMTP) Send(ctx context.Context, target scheduler.Target, msg scheduler.
 	address := net.JoinHostPort(e.Host, e.Port)
 	var conn net.Conn
 	if e.Port == "465" {
-		conn, err = tls.DialWithDialer(dialer, "tcp", address, &tls.Config{ServerName: e.Host})
+		conn, err = tls.DialWithDialer(dialer, "tcp", address, &tls.Config{ServerName: e.Host, RootCAs: e.Roots})
 	} else {
 		conn, err = dialer.DialContext(ctx, "tcp", address)
 	}
@@ -92,7 +95,7 @@ func (e *SMTP) Send(ctx context.Context, target scheduler.Target, msg scheduler.
 		if ok, _ := client.Extension("STARTTLS"); !ok {
 			return scheduler.Receipt{}, errors.New("the SMTP relay does not offer STARTTLS; refusing to send in clear text")
 		}
-		if err := client.StartTLS(&tls.Config{ServerName: e.Host}); err != nil {
+		if err := client.StartTLS(&tls.Config{ServerName: e.Host, RootCAs: e.Roots}); err != nil {
 			return scheduler.Receipt{}, fmt.Errorf("%w: %v", scheduler.ErrRetryLater, err)
 		}
 	}

@@ -134,6 +134,8 @@ type Service struct {
 	Commands map[string][]string
 	Now      func() time.Time
 	Client   *http.Client
+	// RedirectURL is the OAuth callback (NORI_OAUTH_REDIRECT_URL), shared with Connections.
+	RedirectURL string
 }
 
 func (s *Service) now() time.Time {
@@ -193,7 +195,7 @@ func (s *Service) Get(ctx context.Context, id string) (Server, error) {
 // project adds the credential presence for configured servers.
 func (s *Service) project(ctx context.Context, server stored) Server {
 	p := server.Server
-	if p.Auth == "configured" {
+	if p.Auth == "configured" || p.Auth == "oauth" {
 		p.Observed.Credential = "missing"
 		if _, err := s.Credentials.Get(ctx, "mcp-"+server.ID); err == nil {
 			p.Observed.Credential = "present"
@@ -237,9 +239,7 @@ func (s *Service) validate(value Editable) error {
 		return state.ErrInvalidResource
 	}
 	switch value.Auth {
-	case "none", "configured":
-	case "oauth":
-		return fmt.Errorf("%w: OAuth sign-in to MCP servers is not implemented yet", ErrUnsupported)
+	case "none", "configured", "oauth":
 	default:
 		return state.ErrInvalidResource
 	}
@@ -358,6 +358,13 @@ func (s *Service) connectWith(ctx context.Context, server stored, elicit func(co
 				return nil, fmt.Errorf("the server's credential is not available: %w", err)
 			}
 			httpClient.Transport = bearer{token: string(credential.Data), base: base}
+		}
+		if server.Auth == "oauth" {
+			transport, err := s.oauthTransport(ctx, server.ID, base)
+			if err != nil {
+				return nil, err
+			}
+			httpClient.Transport = transport
 		}
 		return client.Connect(ctx, &sdk.StreamableClientTransport{Endpoint: server.Endpoint, HTTPClient: httpClient, DisableStandaloneSSE: true, MaxRetries: 1}, nil)
 	case "stdio":
@@ -591,8 +598,28 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 				return s.write(server, current.Revision+1, 200)
 			},
 		})
-	case "sign_in", "sign_out":
-		return state.MutationReceipt{}, fmt.Errorf("%w: OAuth sign-in to MCP servers is not implemented yet", ErrUnsupported)
+	case "sign_in":
+		attempt, err := s.SignIn(ctx, id, "")
+		if err != nil {
+			return state.MutationReceipt{}, err
+		}
+		server, _, err := s.server(ctx, id)
+		if err != nil {
+			return state.MutationReceipt{}, err
+		}
+		data, _ := json.Marshal(s.project(ctx, server))
+		auth, _ := json.Marshal(attempt)
+		return state.MutationReceipt{RequestID: requestID, Accepted: true, Status: "queued", Resource: data, Auth: auth, HTTPStatus: 200}, nil
+	case "sign_out":
+		if err := s.SignOut(ctx, id); err != nil {
+			return state.MutationReceipt{}, err
+		}
+		server, _, err := s.server(ctx, id)
+		if err != nil {
+			return state.MutationReceipt{}, err
+		}
+		data, _ := json.Marshal(s.project(ctx, server))
+		return state.MutationReceipt{RequestID: requestID, Accepted: true, Status: "applied", Resource: data, HTTPStatus: 200}, nil
 	case "start", "stop", "restart":
 		return state.MutationReceipt{}, fmt.Errorf("%w: managed processes are started per call on the local stack", ErrUnsupported)
 	}

@@ -378,6 +378,10 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 		return persist("failed", map[string]any{"runtime": ComposeRuntime}, err)
 	}
 	snapshot, _ := a.Agent.Tools(ctx)
+	budget := &composeBudget{}
+	if run, err := a.Store.GetRun(ctx, in.RunID); err == nil && run.Budget > 0 {
+		budget.limited, budget.remaining = true, run.Budget-run.Spent-run.SubtaskSpent
+	}
 	deadline, cancel := context.WithTimeout(ctx, composeDeadline)
 	defer cancel()
 
@@ -430,7 +434,7 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 		if stop != "" {
 			break
 		}
-		outputs := a.runComposeCalls(deadline, in, calls, script.Concurrency, definition)
+		outputs := a.runComposeCalls(deadline, in, calls, script.Concurrency, definition, budget)
 		stepOutputs := make([]any, 0, len(outputs))
 		for _, r := range outputs {
 			results = append(results, r)
@@ -507,7 +511,7 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 }
 
 // runComposeCalls runs one step's calls, at most concurrency at a time, and returns their results in script order.
-func (a *Activities) runComposeCalls(ctx context.Context, in ToolInput, calls []composeCall, concurrency int, definition extensions.Definition) []composeResult {
+func (a *Activities) runComposeCalls(ctx context.Context, in ToolInput, calls []composeCall, concurrency int, definition extensions.Definition, budget *composeBudget) []composeResult {
 	results := make([]composeResult, len(calls))
 	// Divergence is checked for the whole step before anything runs: if any recorded position now computes a
 	// different call, none of the step's calls run, and the ones that were not compared are reported as skipped.
@@ -541,7 +545,18 @@ func (a *Activities) runComposeCalls(ctx context.Context, in ToolInput, calls []
 			defer wg.Done()
 			slots <- struct{}{}
 			defer func() { <-slots }()
+			// A paid call reserves its expected cost first, so parallel calls in a step cannot overrun the task's limit.
+			estimate := budget.estimate(call.exec)
+			if !budget.reserve(estimate) {
+				operation := fmt.Sprintf("%s-c%d", in.OperationID, call.index)
+				message := "not run: it could exceed the task's spending limit"
+				results[i] = composeResult{Step: call.step, Tool: call.tool, OperationID: operation, Outcome: "skipped", Error: message,
+					output: map[string]any{"outcome": "skipped", "error": message, "operation_id": operation}}
+				return
+			}
 			results[i] = a.runComposeCall(ctx, in, call, schema, schemaErr)
+			actual, _ := results[i].output["cost_usd"].(float64)
+			budget.settle(estimate, actual)
 		}()
 	}
 	wg.Wait()
@@ -602,4 +617,45 @@ func composeCallID(in ToolInput, call composeCall) string {
 	data, _ := json.Marshal([]any{call.tool, call.exec.Tool, call.args})
 	sum := sha256.Sum256(data)
 	return fmt.Sprintf("%s:c%d:%s", in.Call.ID, call.index, hex.EncodeToString(sum[:6]))
+}
+
+// composeBudget reserves the expected cost of paid nested calls against what the task may still spend.
+type composeBudget struct {
+	mu        sync.Mutex
+	limited   bool
+	remaining float64
+}
+
+// estimate is a call's expected cost: its known per-call cost, or a small reservation when the cost is only known
+// after the call. Free calls reserve nothing.
+func (b *composeBudget) estimate(exec extensions.Exec) float64 {
+	if exec.Policy.InterruptedCostUSD > 0 {
+		return exec.Policy.InterruptedCostUSD
+	}
+	if exec.Policy.InterruptedCostUnknown {
+		return 0.01
+	}
+	return 0
+}
+
+func (b *composeBudget) reserve(cost float64) bool {
+	if cost == 0 || !b.limited {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if cost > b.remaining {
+		return false
+	}
+	b.remaining -= cost
+	return true
+}
+
+func (b *composeBudget) settle(reserved, actual float64) {
+	if !b.limited || reserved == 0 && actual == 0 {
+		return
+	}
+	b.mu.Lock()
+	b.remaining += reserved - actual
+	b.mu.Unlock()
 }

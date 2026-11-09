@@ -2,9 +2,11 @@ package platform
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"log"
 	"nori/internal/connectors/replay"
+	"os"
 	"sync"
 
 	"nori/internal/computersession"
@@ -90,7 +92,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	microsoft.Register(adapters)
 	icloud.Register(adapters)
 	integrations := []connections.Integration{google.Integration{ClientID: s.Connections.GoogleClientID, ClientSecret: s.Connections.GoogleClientSecret},
-		microsoft.Integration{ClientID: s.Connections.MicrosoftClientID, ClientSecret: s.Connections.MicrosoftClientSecret}, icloud.Integration{}}
+		microsoft.Integration{ClientID: s.Connections.MicrosoftClientID, ClientSecret: s.Connections.MicrosoftClientSecret, Tenant: s.Connections.MicrosoftTenant}, icloud.Integration{}}
 	conn := connections.New(store, credentials, s.Connections.RedirectURL, integrations...)
 	if s.Connections.ProviderReplay != "" {
 		if s.Cloud != "local" {
@@ -105,10 +107,28 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	perms := &permissions.Service{Store: store, UnattendedWrites: s.Connections.UnattendedWrites, UserSends: s.Connections.UserSends}
 	channels := map[string]scheduler.Channel{}
 	c := s.Connections
+	var testRoots *x509.CertPool
+	if c.DeliveryTestCAFile != "" {
+		if s.Cloud != "local" {
+			return nil, fmt.Errorf("NORI_DELIVERY_TEST_CA_FILE is for local development only and requires NORI_CLOUD=local")
+		}
+		pem, err := os.ReadFile(c.DeliveryTestCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("NORI_DELIVERY_TEST_CA_FILE: %w", err)
+		}
+		if testRoots, err = x509.SystemCertPool(); err != nil || testRoots == nil {
+			testRoots = x509.NewCertPool()
+		}
+		if !testRoots.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("NORI_DELIVERY_TEST_CA_FILE holds no PEM certificate")
+		}
+	}
 	if push := delivery.NewWebPush(c.VAPIDPublicKey, c.VAPIDPrivateKey, c.VAPIDSubject); push != nil {
+		push.TrustRoots(testRoots)
 		channels["push"] = push
 	}
 	if email := delivery.NewSMTP(c.SMTPHost, c.SMTPPort, c.SMTPUsername, c.SMTPPassword, c.EmailFrom); email != nil {
+		email.Roots = testRoots
 		channels["email"] = email
 	}
 	sched := &scheduler.Service{Store: store, Tasks: tasks, Permissions: perms, Events: google.EventSource{Connections: conn},
@@ -135,7 +155,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		},
 	}
 	nori.Register(adapters, nori.Adapter{Scheduler: sched, Unattended: s.Connections.UnattendedWrites})
-	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: localCommands(s)}
+	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: localCommands(s), RedirectURL: s.Connections.RedirectURL}
 	// MCP targets are "<server>/<tool>", so the adapter serves every MCP prefix.
 	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
 	pluginService := &plugins.Service{Store: store, MCP: servers, Builtin: plugins.Builtin}

@@ -104,7 +104,7 @@ func (calendarAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Pr
 		if op == "schedule" {
 			verb = "Check Outlook availability"
 		}
-		return invoke.Prepared{Summary: fmt.Sprintf("%s from %s to %s", verb, plainTime(start), plainTime(end)), Effect: extensions.EffectRead,
+		return invoke.Prepared{Summary: fmt.Sprintf("%s from %s to %s", verb, invoke.HumanTime(start, call.TimeZone), invoke.HumanTime(end, call.TimeZone)), Effect: extensions.EffectRead,
 			Spec: map[string]string{"time_min": start, "time_max": end}}, nil
 	case "events.get":
 		return invoke.Prepared{Summary: "Read an Outlook event", Effect: extensions.EffectRead,
@@ -460,16 +460,4 @@ func changeEvent(ctx context.Context, c *http.Client, call invoke.Call, p invoke
 		return invoke.Result{Outcome: "uncertain", Err: err}
 	}
 	return readBack(ctx, c, conn, id, "updated")
-}
-
-// plainTime writes an RFC 3339 instant the way a person reads it, e.g. "Mon 9 Nov 2026, 08:00 UTC".
-func plainTime(value string) string {
-	t, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		return value
-	}
-	if t.Hour() == 0 && t.Minute() == 0 {
-		return t.Format("Mon 2 Jan 2006")
-	}
-	return t.Format("Mon 2 Jan 2006, 15:04 MST")
 }

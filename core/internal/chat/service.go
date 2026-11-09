@@ -39,7 +39,7 @@ type Store interface {
 type Service struct {
 	// StartTask accepts durable task work for a chat through the assistant's task engine, with the chat as origin.
 	// Nil leaves the chat without background work.
-	StartTask func(ctx context.Context, commandID, chatID, messageID, request string) (state.Run, error)
+	StartTask func(ctx context.Context, commandID, chatID, messageID, request string, attachments []state.Attachment) (state.Run, error)
 	Store     Store
 	model     conversation.ReplyModel
 	userFacts string
@@ -574,6 +574,28 @@ func boundedResult(result map[string]any) map[string]any {
 	return result
 }
 
+// chatAttachments gives a task started from a chat the files attached in that chat, newest first and at most ten.
+// The attachment ID is the chat upload's storage ID, so the task reads the same stored bytes.
+func chatAttachments(chat string, c state.Chat) []state.Attachment {
+	var out []state.Attachment
+	seen := map[string]bool{}
+	for i := len(c.Messages) - 1; i >= 0 && len(out) < 10; i-- {
+		for _, a := range c.Messages[i].Attachments {
+			if seen[a.ID] || len(out) >= 10 {
+				continue
+			}
+			seen[a.ID] = true
+			a.ID = chatUploadID(chat, a.ID)
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func chatUploadID(chat, id string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("chat/"+chat+"/"+id)).String()
+}
+
 func uploadKey(chat, id string) string {
 	return state.UploadKey(uuid.NewSHA1(uuid.NameSpaceOID, []byte("chat/"+chat+"/"+id)).String())
 }
@@ -617,7 +639,7 @@ func (s *Service) startTask(ctx context.Context, id, turn string, c state.Chat, 
 		messageID = c.Messages[len(c.Messages)-1].ID
 	}
 	commandID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("chat-task:"+id+":"+turn+":"+callID)).String()
-	run, err := s.StartTask(ctx, commandID, id, messageID, args.Request)
+	run, err := s.StartTask(ctx, commandID, id, messageID, args.Request, chatAttachments(id, c))
 	if err != nil && !errors.Is(err, state.ErrDuplicate) {
 		return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
 			m.Text = "The task could not be started: " + err.Error()
