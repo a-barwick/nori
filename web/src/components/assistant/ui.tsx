@@ -7,6 +7,7 @@ import { AlertDialog } from "radix-ui";
 import { ArrowLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { Medallion } from "@/components/mark/NoriMark";
 import { Button, IconButton } from "@/components/ui/primitives";
+import { useAssistant } from "@/lib/assistant/context";
 import { cn } from "@/lib/utils";
 
 /** A screen: an optional back link, the title, a short line from Nori, then the content. */
@@ -122,6 +123,8 @@ export function Notice({ tone = "neutral", children, action }: { tone?: Tone; ch
 
 /** Shown in place of a screen whose route family the connected core does not offer yet. */
 export function NotYet({ what }: { what: string }) {
+  const { ready } = useAssistant();
+  if (!ready) return <Loading />;
   return <Empty>{what} isn’t available on this Nori yet.</Empty>;
 }
 

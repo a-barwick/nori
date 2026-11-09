@@ -70,8 +70,8 @@ function Catalog() {
   const items = integrations.data?.items;
   const categories = useMemo(() => ["All", ...new Set((items ?? []).flatMap((item) => item.categories))], [items]);
   const shown = (items ?? []).filter((item) => (category === "All" || item.categories.includes(category)) && (!query || `${item.title} ${item.description} ${item.categories.join(" ")}`.toLowerCase().includes(query.toLowerCase())));
-  const attention = (connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected" && connection.health.code && connection.health.code !== "ready");
-  const byIntegration = (id: string) => (connections.data?.items ?? []).filter((connection) => connection.integration_id === id && connection.status !== "disconnected");
+  const attention = (connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected" && connection.status !== "not_connected" && connection.health.code && connection.health.code !== "ready");
+  const byIntegration = (id: string) => (connections.data?.items ?? []).filter((connection) => connection.integration_id === id && connection.status !== "disconnected" && !(connection.status === "not_connected" && !connection.account?.provider_id));
   if (integrations.loading) return <Loading />;
   if (integrations.error && !items) return <Failure error={integrations.error} onRetry={() => void integrations.reload()} />;
   return <>
@@ -115,11 +115,14 @@ export function AppDetailScreen({ id }: { id: string }) {
   if (integration.loading) return <Screen title="App" back="/apps"><Loading /></Screen>;
   const item = integration.data;
   if (!item) return <Screen title="App" back="/apps"><Failure error={integration.error ?? "This app isn’t in the catalog."} onRetry={() => void integration.reload()} /></Screen>;
-  const accounts = (connections.data?.items ?? []).filter((connection) => connection.integration_id === item.id && connection.status !== "disconnected");
+  const mine = (connections.data?.items ?? []).filter((connection) => connection.integration_id === item.id);
+  // A connection that never finished sign-in isn't an account; it is reused by the next Connect.
+  const accounts = mine.filter((connection) => connection.status !== "disconnected" && !(connection.status === "not_connected" && !connection.account?.provider_id));
+  const unfinished = mine.find((connection) => connection.status === "not_connected" && !connection.account?.provider_id);
   const result = params.get("result");
   const add = () => action.run("add", async () => {
-    const receipt = await mutate<Connection>("/connections", { request_id: newRequestID(), expected_revision: 0, value: { integration_id: item.id, title: item.title, selected_resource_ids: [] } });
-    await startSignIn(receipt.resource as Connection, "connect", `/apps/${encodeURIComponent(item.id)}`);
+    const connection = unfinished ?? (await mutate<Connection>("/connections", { request_id: newRequestID(), expected_revision: 0, value: { integration_id: item.id, title: item.title, selected_resource_ids: [] } })).resource as Connection;
+    await startSignIn(connection, "connect", `/apps/${encodeURIComponent(item.id)}`);
   });
   const line = item.availability !== "available" ? item.availability_reason
     : !accounts.length ? `Connect ${item.title} so Nori can use it.` : accounts.some((connection) => connection.health.code && connection.health.code !== "ready") ? "An account needs attention." : `${accounts.length === 1 ? "One account" : `${accounts.length} accounts`} connected.`;
