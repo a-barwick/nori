@@ -1,5 +1,5 @@
 {
-  "revision": "r2.2",
+  "revision": "r2.3",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -943,6 +943,28 @@
       "schema": "connections.schema.json#/$defs/Connection",
       "valid": false,
       "note": "omit the account until sign-in rather than sending an empty placeholder (r2.2)"
+    },
+    {
+      "file": "fixtures/plugins/mcp-credential.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPCredentialInput",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-credential.extra-field.invalid.json",
+      "schema": "plugins.schema.json#/$defs/MCPCredentialInput",
+      "valid": false,
+      "note": "strict input"
+    },
+    {
+      "file": "fixtures/plugins/mcp-server.configured-missing-credential.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServer",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-server.leaks-credential.invalid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServer",
+      "valid": false,
+      "note": "the projection never carries the credential"
     }
   ]
 }
