@@ -60,6 +60,9 @@ type Connections struct {
 	// MCPCommands declares local stdio MCP servers by command_ref → argument vector (NORI_MCP_COMMANDS, a JSON
 	// object). Honoured only with NORI_CLOUD=local; requests name a command_ref, never a command line.
 	MCPCommands map[string][]string
+	// Delivery transports for push and email destinations (A28). Unset leaves the channel without a transport.
+	SMTPHost, SMTPPort, SMTPUsername, SMTPPassword, EmailFrom string
+	VAPIDPublicKey, VAPIDPrivateKey, VAPIDSubject             string
 }
 
 // Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
@@ -244,6 +247,9 @@ func connectionsFromEnvironment(localArtifacts string) Connections {
 		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"), UserSends: get("NORI_USER_SENDS", "ask"),
 		ProviderReplay: os.Getenv("NORI_PROVIDER_REPLAY"),
 		MCPCommands:    mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
+		SMTPHost:       os.Getenv("NORI_SMTP_HOST"), SMTPPort: os.Getenv("NORI_SMTP_PORT"), SMTPUsername: os.Getenv("NORI_SMTP_USERNAME"),
+		SMTPPassword: os.Getenv("NORI_SMTP_PASSWORD"), EmailFrom: os.Getenv("NORI_EMAIL_FROM"),
+		VAPIDPublicKey: os.Getenv("NORI_VAPID_PUBLIC_KEY"), VAPIDPrivateKey: os.Getenv("NORI_VAPID_PRIVATE_KEY"), VAPIDSubject: os.Getenv("NORI_VAPID_SUBJECT"),
 	}
 }
 
@@ -271,7 +277,7 @@ func FromEnvironment() Settings {
 		CloudRunID: os.Getenv("TEMPORAL_CLOUD_RUN_ID") == "true",
 	}
 	var credentials []string
-	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL", "NORI_SERVICE_TOKEN_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL", "NORI_SERVICE_TOKEN_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "NORI_SMTP_PASSWORD", "NORI_VAPID_PRIVATE_KEY"} {
 		if value := os.Getenv(name); value != "" {
 			credentials = append(credentials, value)
 		}

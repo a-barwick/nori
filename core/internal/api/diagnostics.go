@@ -79,6 +79,14 @@ func (a *Assistant) diagnosticsList(ctx context.Context) ([]diagnostic, error) {
 				}
 			}
 		}
+		if destinations, err := a.Scheduler.Destinations(ctx); err == nil {
+			for _, d := range destinations {
+				if d.Status == "failed" {
+					out = append(out, diagnostic{Kind: "expired_subscription", Severity: "warning", Subject: map[string]any{"destination_id": d.ID},
+						Message: "This " + d.Channel + " destination stopped accepting messages. Enroll it again from the device or address.", Repair: "re_enroll"})
+				}
+			}
+		}
 		page, _, err := a.Store.Resources(ctx, scheduler.CollectionDeliveries, map[string]string{"state": "failed"}, "", 100)
 		if err == nil {
 			for _, r := range page {

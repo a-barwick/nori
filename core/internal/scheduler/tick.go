@@ -35,6 +35,11 @@ func (s *Service) Tick(ctx context.Context) (*time.Time, error) {
 	if err := s.drain(ctx, now); err != nil {
 		return earliest, err
 	}
+	if due, err := s.sendDue(ctx, now); err != nil {
+		log.Printf("scheduler: deliveries: %v", err)
+	} else if due != nil && (earliest == nil || due.Before(*earliest)) {
+		earliest = due
+	}
 	if earliest != nil && s.Arm != nil {
 		s.Arm(ctx, *earliest)
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"nori/internal/permissions"
+	"nori/internal/secret"
 	"nori/internal/state"
 )
 
@@ -38,6 +39,10 @@ type Service struct {
 	// Arm asks the hosting adapter to wake this user's process at a due time. Duplicate or lost arms are harmless;
 	// the next pass recomputes from durable state.
 	Arm func(ctx context.Context, at time.Time)
+	// Channels send push and email deliveries; a missing channel reports no_transport. Targets holds destinations'
+	// private addresses in the credential store.
+	Channels map[string]Channel
+	Targets  secret.CredentialStore
 }
 
 func (s *Service) arm(ctx context.Context) func(state.MutationReceipt, error) (state.MutationReceipt, error) {
