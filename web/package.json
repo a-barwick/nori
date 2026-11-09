@@ -6,7 +6,9 @@
     "dev": "next dev -H 127.0.0.1",
     "build": "next build",
     "start": "next start -H 127.0.0.1",
-    "lint": "eslint"
+    "lint": "eslint",
+    "contracts": "node scripts/contract-types.mjs",
+    "contracts:check": "node scripts/contract-types.mjs --check"
   },
   "dependencies": {
     "@sentry/nextjs": "^11.10.0",
