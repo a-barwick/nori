@@ -386,15 +386,21 @@ type searchHit struct {
 	extra      json.RawMessage `json:"-"`
 }
 
+// score requires most query words to appear (all of them for short queries), so unrelated items do not match on
+// one common word.
 func score(query []string, texts ...string) (float64, string) {
 	joined := strings.ToLower(strings.Join(texts, " \n "))
 	total := 0.0
 	for _, word := range query {
-		if strings.Contains(joined, word) {
+		if strings.Contains(joined, strings.Trim(word, ".,;:!?\"'")) {
 			total++
 		}
 	}
-	if total == 0 {
+	needed := float64(len(query))
+	if len(query) > 3 {
+		needed = float64(len(query)) * 0.75
+	}
+	if total == 0 || total < needed {
 		return 0, ""
 	}
 	snippetSource := strings.Join(texts[1:], " ")
@@ -464,6 +470,22 @@ func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, erro
 			break
 		}
 		before = next
+	}
+	if a.Chats != nil {
+		if chats, err := a.Store.ChatSummaries(ctx); err == nil {
+			for _, chat := range chats {
+				page, err := a.Store.ChatMessages(ctx, chat.ID, 0)
+				if err != nil {
+					continue
+				}
+				for _, m := range page.Messages {
+					if s, snippet := score(words, "", m.Text); s > 0 {
+						hits = append(hits, searchHit{Kind: "message", ID: m.ID, Title: chat.Title + ": " + clip(m.Text, 60), Snippet: snippet, Score: s - 0.1,
+							Jump: map[string]any{"kind": "conversation", "conversation_id": chat.ID, "message_id": m.ID}})
+					}
+				}
+			}
+		}
 	}
 	if a.Scheduler != nil {
 		if goals, err := a.Scheduler.Goals(ctx, ""); err == nil {
