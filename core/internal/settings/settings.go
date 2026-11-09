@@ -252,7 +252,7 @@ func connectionsFromEnvironment(localArtifacts string) Connections {
 		MicrosoftClientID: os.Getenv("MICROSOFT_CLIENT_ID"), MicrosoftClientSecret: os.Getenv("MICROSOFT_CLIENT_SECRET"),
 		MicrosoftTenant: os.Getenv("MICROSOFT_TENANT"),
 		RedirectURL:     os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
-		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "require_rule"), UserSends: get("NORI_USER_SENDS", "allow"),
+		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"), UserSends: get("NORI_USER_SENDS", "allow"),
 		ProviderReplay: os.Getenv("NORI_PROVIDER_REPLAY"),
 		MCPCommands:    mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
 		SMTPHost:       os.Getenv("NORI_SMTP_HOST"), SMTPPort: os.Getenv("NORI_SMTP_PORT"), SMTPUsername: os.Getenv("NORI_SMTP_USERNAME"),
