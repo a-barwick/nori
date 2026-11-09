@@ -6,7 +6,8 @@
       "host": "www.googleapis.com",
       "path": "/calendar/v3/calendars/primary/events",
       "body_contains": [
-        "Recorded run"
+        "Recorded run",
+        "Lilla Tavern"
       ],
       "response": {
         "status": 200,
@@ -249,6 +250,26 @@
               },
               "end": {
                 "date": "2026-11-15"
+              },
+              "organizer": {
+                "email": "recorded.user@example.com",
+                "self": true
+              }
+            },
+            {
+              "kind": "calendar#event",
+              "id": "recordedevt3",
+              "status": "confirmed",
+              "etag": "\"3400000000000004\"",
+              "htmlLink": "https://www.google.com/calendar/event?eid=r3",
+              "summary": "Book club",
+              "start": {
+                "dateTime": "2026-11-13T18:30:00-08:00",
+                "timeZone": "America/Los_Angeles"
+              },
+              "end": {
+                "dateTime": "2026-11-13T20:00:00-08:00",
+                "timeZone": "America/Los_Angeles"
               },
               "organizer": {
                 "email": "recorded.user@example.com",

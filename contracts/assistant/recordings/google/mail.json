@@ -1,0 +1,192 @@
+{
+  "exchanges": [
+    {
+      "name": "gmail-search",
+      "method": "GET",
+      "host": "gmail.googleapis.com",
+      "path": "/gmail/v1/users/me/messages",
+      "response": {
+        "status": 200,
+        "body": {
+          "messages": [
+            {
+              "id": "18f0reservation1",
+              "threadId": "18f0reservation1"
+            }
+          ],
+          "resultSizeEstimate": 1
+        }
+      }
+    },
+    {
+      "name": "gmail-get-metadata",
+      "method": "GET",
+      "host": "gmail.googleapis.com",
+      "path": "/gmail/v1/users/me/messages/18f0reservation1",
+      "query": {
+        "format": "metadata"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "18f0reservation1",
+          "threadId": "18f0reservation1",
+          "labelIds": [
+            "INBOX",
+            "CATEGORY_UPDATES"
+          ],
+          "snippet": "Your table is confirmed. Restaurant: Lilla Tavern, 418 Pine Street, Seattle Date: Friday, November 13, 2026 Time: 7:30 PM",
+          "internalDate": "1794240720000",
+          "sizeEstimate": 1400,
+          "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+              {
+                "name": "From",
+                "value": "Lilla Tavern <reservations@lillatavern.example>"
+              },
+              {
+                "name": "To",
+                "value": "recorded.user@example.com"
+              },
+              {
+                "name": "Subject",
+                "value": "Reservation confirmed: Friday, Nov 13 at 7:30 PM"
+              },
+              {
+                "name": "Date",
+                "value": "Mon, 9 Nov 2026 08:12:00 -0800"
+              },
+              {
+                "name": "Message-Id",
+                "value": "<lt-58213@lillatavern.example>"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "gmail-get-full",
+      "method": "GET",
+      "host": "gmail.googleapis.com",
+      "path": "/gmail/v1/users/me/messages/18f0reservation1",
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "18f0reservation1",
+          "threadId": "18f0reservation1",
+          "labelIds": [
+            "INBOX",
+            "CATEGORY_UPDATES"
+          ],
+          "snippet": "Your table is confirmed. Restaurant: Lilla Tavern, 418 Pine Street, Seattle Date: Friday, November 13, 2026 Time: 7:30 PM",
+          "internalDate": "1794240720000",
+          "sizeEstimate": 1400,
+          "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+              {
+                "name": "From",
+                "value": "Lilla Tavern <reservations@lillatavern.example>"
+              },
+              {
+                "name": "To",
+                "value": "recorded.user@example.com"
+              },
+              {
+                "name": "Subject",
+                "value": "Reservation confirmed: Friday, Nov 13 at 7:30 PM"
+              },
+              {
+                "name": "Date",
+                "value": "Mon, 9 Nov 2026 08:12:00 -0800"
+              },
+              {
+                "name": "Message-Id",
+                "value": "<lt-58213@lillatavern.example>"
+              }
+            ],
+            "body": {
+              "size": 195,
+              "data": "SGksCgpZb3VyIHRhYmxlIGlzIGNvbmZpcm1lZC4KClJlc3RhdXJhbnQ6IExpbGxhIFRhdmVybiwgNDE4IFBpbmUgU3RyZWV0LCBTZWF0dGxlCkRhdGU6IEZyaWRheSwgTm92ZW1iZXIgMTMsIDIwMjYKVGltZTogNzozMCBQTSBQYWNpZmljClBhcnR5OiAyCkNvbmZpcm1hdGlvbjogTFQtNTgyMTMKClNlZSB5b3UgdGhlbiwKTGlsbGEgVGF2ZXJu"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "gmail-thread",
+      "method": "GET",
+      "host": "gmail.googleapis.com",
+      "path": "/gmail/v1/users/me/threads/18f0reservation1",
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "18f0reservation1",
+          "historyId": "9001",
+          "messages": [
+            {
+              "id": "18f0reservation1",
+              "threadId": "18f0reservation1",
+              "labelIds": [
+                "INBOX",
+                "CATEGORY_UPDATES"
+              ],
+              "snippet": "Your table is confirmed. Restaurant: Lilla Tavern, 418 Pine Street, Seattle Date: Friday, November 13, 2026 Time: 7:30 PM",
+              "internalDate": "1794240720000",
+              "sizeEstimate": 1400,
+              "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                  {
+                    "name": "From",
+                    "value": "Lilla Tavern <reservations@lillatavern.example>"
+                  },
+                  {
+                    "name": "To",
+                    "value": "recorded.user@example.com"
+                  },
+                  {
+                    "name": "Subject",
+                    "value": "Reservation confirmed: Friday, Nov 13 at 7:30 PM"
+                  },
+                  {
+                    "name": "Date",
+                    "value": "Mon, 9 Nov 2026 08:12:00 -0800"
+                  },
+                  {
+                    "name": "Message-Id",
+                    "value": "<lt-58213@lillatavern.example>"
+                  }
+                ],
+                "body": {
+                  "size": 195,
+                  "data": "SGksCgpZb3VyIHRhYmxlIGlzIGNvbmZpcm1lZC4KClJlc3RhdXJhbnQ6IExpbGxhIFRhdmVybiwgNDE4IFBpbmUgU3RyZWV0LCBTZWF0dGxlCkRhdGU6IEZyaWRheSwgTm92ZW1iZXIgMTMsIDIwMjYKVGltZTogNzozMCBQTSBQYWNpZmljClBhcnR5OiAyCkNvbmZpcm1hdGlvbjogTFQtNTgyMTMKClNlZSB5b3UgdGhlbiwKTGlsbGEgVGF2ZXJu"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "gmail-labels",
+      "method": "GET",
+      "host": "gmail.googleapis.com",
+      "path": "/gmail/v1/users/me/labels",
+      "response": {
+        "status": 200,
+        "body": {
+          "labels": [
+            {
+              "id": "INBOX",
+              "name": "INBOX",
+              "type": "system"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
