@@ -42,7 +42,8 @@ export function legacyWorkItem(run: Run, session?: Session): WorkItem {
 
 export function legacyLibraryItem(result: SavedResult, agentMode: boolean): LibraryItem {
   return {
-    id: result.id, root_id: result.root_id, version: result.version, revises: result.revises, superseded_by: result.superseded_by,
+    // Legacy results are display-only; 0 marks an item that is not yet a managed Library resource (r2.1).
+    id: result.id, revision: 0, root_id: result.root_id, version: result.version, revises: result.revises, superseded_by: result.superseded_by,
     kind: result.kind, title: result.title, name: result.name, media_type: result.media_type, size: result.size,
     url: result.kind === "link" ? result.url : result.kind === "file" || result.kind === "screenshot" ? runtimePath(agentMode, `v1/results/${result.id}/file`) : undefined,
     task_id: result.run_id, conversation_id: "assistant", provenance: { content: "generated" }, created_at: result.created_at,

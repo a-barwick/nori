@@ -1177,7 +1177,7 @@
           "additionalProperties": false
         },
         "requested_access": {
-          "$ref": "#/$defs/Installation/properties/approved_access"
+          "$ref": "#/$defs/PackageManifest/properties/requested_access"
         },
         "contributions_summary": {
           "type": "object",

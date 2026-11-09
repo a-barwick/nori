@@ -1,5 +1,5 @@
 {
-  "revision": "r2",
+  "revision": "r2.1",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -920,6 +920,18 @@
       "file": "fixtures/plugins/computer-session.waiting.valid.json",
       "schema": "plugins.schema.json#/$defs/ComputerSession",
       "valid": true
+    },
+    {
+      "file": "fixtures/library/library-item.missing-revision.invalid.json",
+      "schema": "library.schema.json#/$defs/LibraryItem",
+      "valid": false,
+      "note": "edits need the resource revision (r2.1)"
+    },
+    {
+      "file": "fixtures/library/inbox-item.missing-revision.invalid.json",
+      "schema": "library.schema.json#/$defs/InboxItem",
+      "valid": false,
+      "note": "acknowledge needs the resource revision (r2.1)"
     }
   ]
 }
