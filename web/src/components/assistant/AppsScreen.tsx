@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
-import { Calendar, Check, CircleSlash, Folder, KeyRound, ListTodo, Mail, MessageSquare, Plug, Plus, Search, Server } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Calendar, Check, CircleSlash, Folder, KeyRound, ListTodo, Mail, MessageSquare, Plug, Plus, Search, Server, Upload } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
-import { getJSON, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
+import { assistantURL, getJSON, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
@@ -13,6 +13,7 @@ import type { AuthAttempt, Connection, HealthCode, Integration, MCPServer, Prefe
 import type { CatalogEntry, Installation, InstallationReview, MCPCredentialInput, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { safeAuthorizeURL } from "./InteractionCard";
+import { SkillsList } from "./SkillsScreen";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, Tabs, type Tone } from "./ui";
 
 type List<T> = { items: T[] };
@@ -51,13 +52,13 @@ export function AppsScreen() {
   const { has } = useAssistant();
   const params = useSearchParams();
   const router = useRouter();
-  const tab = (params.get("tab") as "apps" | "plugins" | "mcp") || "apps";
+  const tab = (params.get("tab") as "apps" | "plugins" | "skills" | "mcp") || "apps";
   const setTab = (next: string) => router.replace(next === "apps" ? "/apps" : `/apps?tab=${next}`, { scroll: false });
   if (!has("integrations")) return <Screen title="Apps"><NotYet what="Connecting apps" /></Screen>;
   return (
     <Screen title="Apps" wide>
-      <Tabs label="Apps" value={tab} onChange={setTab} items={[{ id: "apps", label: "Apps" }, { id: "plugins", label: "Plugins" }, { id: "mcp", label: "MCP servers" }]} />
-      {tab === "apps" ? <Catalog /> : tab === "plugins" ? (has("plugins") ? <Plugins /> : <NotYet what="Plugins" />) : has("mcp") ? <MCPServers /> : <NotYet what="MCP servers" />}
+      <Tabs label="Apps" value={tab} onChange={setTab} items={[{ id: "apps", label: "Apps" }, { id: "plugins", label: "Plugins" }, { id: "skills", label: "Skills" }, { id: "mcp", label: "MCP servers" }]} />
+      {tab === "apps" ? <Catalog /> : tab === "plugins" ? (has("plugins") ? <Plugins /> : <NotYet what="Plugins" />) : tab === "skills" ? <SkillsList /> : has("mcp") ? <MCPServers /> : <NotYet what="MCP servers" />}
     </Screen>
   );
 }
@@ -245,12 +246,32 @@ function Plugins() {
         detail={`Version ${installation.package.version}${installation.pinned ? " · pinned" : ""}${installation.available_version ? ` · ${installation.available_version} available` : ""}`}
         trailing={<Pill tone={installation.state === "ready" ? "ok" : installation.state === "failed" ? "danger" : "neutral"}>{installation.state === "ready" ? (installation.enabled ? "On" : "Off") : installation.state}</Pill>} />;
     })}</Rows></Section>}
-    <Section title="Catalog">
+    <Section title="Catalog" actions={<PackageUpload onUploaded={() => void catalog.reload()} />}>
       <label className="relative mb-4 block"><span className="sr-only">Search plugins</span><Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-3" aria-hidden />
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search plugins and skills" className={cn(inputClass, "pl-9")} type="search" /></label>
       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">{entries.map((entry) => <li key={entry.package.id}><PluginCard entry={entry} /></li>)}</ul>
     </Section>
   </>;
+}
+
+/** Upload a local package manifest; the core verifies it and adds it to the catalog. Installing is a separate step. */
+function PackageUpload({ onUploaded }: { onUploaded: () => void }) {
+  const picker = useRef<HTMLInputElement>(null);
+  const action = useAction();
+  const upload = (file: File) => action.run("upload", async () => {
+    if (file.size > 256 * 1024) throw new Error("That package manifest is too large.");
+    let manifest: unknown;
+    try { manifest = JSON.parse(await file.text()); } catch { throw new Error("That file isn’t a package manifest."); }
+    const response = await fetch(assistantURL("/plugins/packages"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(manifest), cache: "no-store" });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.error ?? "Nori couldn’t read that package.");
+    onUploaded();
+  });
+  return <span className="flex items-center gap-2">
+    {action.error && <span role="alert" className="text-meta text-danger">{action.error}</span>}
+    <input ref={picker} type="file" accept=".json,application/json" hidden aria-label="Choose a package manifest" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void upload(file); }} />
+    <Button size="sm" onClick={() => picker.current?.click()} disabled={!!action.pending}><Upload size={14} aria-hidden />{action.pending ? "Checking…" : "Upload package"}</Button>
+  </span>;
 }
 
 function PluginCard({ entry }: { entry: CatalogEntry }) {
@@ -270,7 +291,7 @@ function PluginCard({ entry }: { entry: CatalogEntry }) {
     <p className="text-caption text-ink-3">{entry.requested_access.action_classes.length ? `Asks to: ${entry.requested_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}${entry.requested_access.connection_types.length ? ` with ${entry.requested_access.connection_types.join(", ")}` : ""}` : "Instructions only; no account access."}</p>
     <div className="mt-auto pt-2">{entry.installation_id ? <Link href={`/apps/plugins/${encodeURIComponent(entry.installation_id)}`} className="text-meta font-medium text-accent-text hover:underline">Installed · manage</Link>
       : <Confirm title={`Install ${entry.title}?`} confirm="Install" onConfirm={() => void install()} trigger={<Button size="sm" variant="primary" disabled={!!action.pending}>{action.pending ? "Installing…" : "Install"}</Button>}
-        body={<div className="space-y-2"><p>Installing adds what it contributes. It doesn’t let Nori act on your accounts until you connect them and allow it.</p>{!entry.provenance.verified && <p className="text-warning">This package isn’t verified by its registry.</p>}</div>} />}
+        body={<div className="space-y-2"><p>Installing adds what it contributes. It doesn’t let Nori act on your accounts until you connect them and allow it.</p>{entry.requested_access.network?.length ? <p>Reaches {entry.requested_access.network.join(", ")}.</p> : null}{entry.requested_access.filesystem?.length ? <p>Reads files in {entry.requested_access.filesystem.join(", ")}.</p> : null}{!entry.provenance.verified && <p className="text-warning">This package isn’t verified by its registry.</p>}</div>} />}
       {action.error && <p role="alert" className="mt-2 text-meta text-danger">{action.error}</p>}</div>
   </article>;
 }
@@ -285,6 +306,8 @@ export function PluginDetailScreen({ id }: { id: string }) {
   if (installation.loading) return <Screen title="Plugin" back="/apps?tab=plugins"><Loading /></Screen>;
   if (!item) return <Screen title="Plugin" back="/apps?tab=plugins"><Failure error={installation.error ?? "Not installed."} /></Screen>;
   const entry = catalog.data?.items.find((candidate) => candidate.package.id === item.package.id);
+  // Versions this installation ran before; the core keeps their immutable packages for rollback.
+  const earlier = new Set((item.history ?? []).map((event) => event.version).filter((version): version is string => !!version && version !== item.package.version));
   const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
     const receipt = await mutate<Installation>(`/plugins/installations/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value });
     invalidate("/plugins", "/integrations");
@@ -306,12 +329,15 @@ export function PluginDetailScreen({ id }: { id: string }) {
           <Button variant="quiet" onClick={() => setReview(undefined)}>Cancel</Button></div>
       </div>}
     </Section>
+    {entry && <Section title="Adds"><p className="text-body text-ink-2">{[entry.contributions_summary.tools && `${entry.contributions_summary.tools} tools`, entry.contributions_summary.skills && `${entry.contributions_summary.skills} ${entry.contributions_summary.skills === 1 ? "skill" : "skills"}`, entry.contributions_summary.prompts && `${entry.contributions_summary.prompts} prompts`, entry.contributions_summary.mcp_servers && `${entry.contributions_summary.mcp_servers === 1 ? "an MCP server" : `${entry.contributions_summary.mcp_servers} MCP servers`}`].filter(Boolean).join(", ") || "Instructions only"}.</p>
+      {entry.description && <p className="mt-1 text-meta text-ink-3">{entry.description}</p>}</Section>}
     <Section title="Access">
       <p className="text-body text-ink-2">{item.approved_access.action_classes.length ? `May ${item.approved_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}` : "No account access"}{item.approved_access.connection_types.length ? ` with ${item.approved_access.connection_types.join(", ")} accounts you connect.` : "."}</p>
       {item.required_connection_types?.length ? <p className="mt-1 text-meta text-ink-3">Needs a connected {item.required_connection_types.join(", ")} account.</p> : null}
     </Section>
     {!!item.diagnostics?.length && <Section title="Diagnostics"><pre className="overflow-x-auto rounded-card bg-fill-1 p-3 font-mono text-mono-data whitespace-pre-wrap">{item.diagnostics.join("\n")}</pre></Section>}
-    {!!item.history?.length && <Section title="History"><Rows>{item.history.slice().reverse().map((event, index) => <Row key={index} title={`${event.event[0].toUpperCase()}${event.event.slice(1)}${event.version ? ` ${event.version}` : ""}`} detail={relative(event.at)} />)}</Rows></Section>}
+    {!!item.history?.length && <Section title="History"><Rows>{item.history.slice().reverse().map((event, index) => <Row key={index} title={`${event.event[0].toUpperCase()}${event.event.slice(1)}${event.version ? ` ${event.version}` : ""}`} detail={relative(event.at)}
+      trailing={event.version && event.version !== item.package.version && !earlier.has(event.version) ? undefined : event.version && event.version !== item.package.version ? <Button size="sm" variant="quiet" disabled={!!action.pending} onClick={() => void act({ action: "rollback", version: event.version }, "rollback")}>Roll back to this</Button> : undefined} />)}</Rows></Section>}
     <Section title="Manage"><div className="flex flex-wrap gap-2">
       <Button onClick={() => void act({ action: item.enabled ? "disable" : "enable" }, "toggle")} disabled={!!action.pending}>{item.enabled ? "Turn off" : "Turn on"}</Button>
       <Button className="text-danger!" variant="quiet" onClick={() => void loadReview()} disabled={!!action.pending}>Uninstall…</Button>

@@ -40,7 +40,8 @@ function Frame({ children }: { children: ReactNode }) {
     if (previous.current === path) return;
     previous.current = path;
     const frame = requestAnimationFrame(() => {
-      const heading = document.querySelector<HTMLElement>("main h1");
+      // Next can keep the previous route mounted but hidden; focus the visible screen's title.
+      const heading = [...document.querySelectorAll<HTMLElement>("main h1")].find((element) => element.offsetParent !== null);
       if (!heading) return;
       heading.tabIndex = -1;
       heading.focus({ preventScroll: true });
