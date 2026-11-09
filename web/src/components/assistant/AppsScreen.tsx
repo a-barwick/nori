@@ -87,14 +87,14 @@ function Catalog() {
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search apps" className={cn(inputClass, "pl-9")} type="search" />
         </label>
         <div className="flex flex-wrap gap-1" role="group" aria-label="Category">
-          {categories.map((name) => <button key={name} type="button" aria-pressed={category === name} onClick={() => setCategory(name)} className={cn("h-9 rounded-full px-3 text-meta font-medium", category === name ? "bg-ink text-surface" : "bg-fill-1 text-ink-2 hover:text-ink")}>{name}</button>)}
+          {categories.map((name) => <button key={name} type="button" aria-pressed={category === name} onClick={() => setCategory(name)} className={cn("h-9 rounded-full px-3 text-meta font-medium first-letter:uppercase", category === name ? "bg-ink text-surface" : "bg-fill-1 text-ink-2 hover:text-ink")}>{name}</button>)}
         </div>
       </div>
       {shown.length ? <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{shown.map((item) => {
         const accounts = byIntegration(item.id);
         const trouble = accounts.some((connection) => connection.health.code && connection.health.code !== "ready");
         return <li key={item.id}><Link href={`/apps/${encodeURIComponent(item.id)}`} className="flex h-full flex-col gap-3 rounded-card border border-hairline bg-surface p-4 hover:border-hairline-strong hover:bg-fill-1">
-          <div className="flex items-center gap-3"><AppIcon icon={item.icon} /><span className="min-w-0 flex-1"><span className="block truncate text-row font-semibold">{item.title}</span><span className="block truncate text-caption text-ink-3">{item.categories.join(" · ")}</span></span></div>
+          <div className="flex items-center gap-3"><AppIcon icon={item.icon} /><span className="min-w-0 flex-1"><span className="block truncate text-row font-semibold">{item.title}</span><span className="block truncate text-caption text-ink-3 first-letter:uppercase">{item.categories.join(" · ")}</span></span></div>
           <p className="line-clamp-2 flex-1 text-meta text-ink-2">{item.description}</p>
           <div>{item.availability !== "available" ? <Pill>{item.availability === "blocked" ? "Not set up" : "Unavailable"}</Pill>
             : accounts.length ? <Pill tone={trouble ? "warning" : "ok"}>{trouble ? "Needs attention" : accounts.length === 1 ? "Connected" : `${accounts.length} accounts`}</Pill>

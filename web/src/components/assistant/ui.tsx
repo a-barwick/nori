@@ -161,7 +161,9 @@ export function Field({ label, children, hint }: { label: string; children: Reac
   </label>;
 }
 
-export const inputClass = "w-full rounded-tile border border-hairline bg-surface px-3 py-2 text-input text-ink placeholder:text-ink-3 focus-visible:border-hairline-strong";
+/** Input styling without a width; inputClass adds full width. Use inputBase with an explicit width class. */
+export const inputBase = "rounded-tile border border-hairline bg-surface px-3 py-2 text-input text-ink placeholder:text-ink-3 focus-visible:border-hairline-strong";
+export const inputClass = `w-full ${inputBase}`;
 
 export function Tabs<T extends string>({ value, onChange, items, label }: { value: T; onChange: (value: T) => void; items: { id: T; label: string; count?: number }[]; label: string }) {
   return <div role="tablist" aria-label={label} className="scrollbar-quiet -mx-1 mb-4 flex gap-1 overflow-x-auto px-1">

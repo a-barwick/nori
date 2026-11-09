@@ -11,7 +11,7 @@ import { invalidate, useAction, useResource } from "@/lib/assistant/useResource"
 import type { Connection, DeliveryDestination, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { OperationRows } from "./WorkScreen";
-import { Confirm, Empty, NoriLine, Failure, Field, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section } from "./ui";
+import { Confirm, Empty, NoriLine, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section } from "./ui";
 
 type List<T> = { items: T[] };
 export type SettingsSection = "permissions" | "preferences" | "memory" | "notifications" | "history" | "diagnostics";
@@ -97,13 +97,13 @@ function NewRule({ connections, onDone }: { connections: Connection[]; onDone: (
   const example = `${effect === "allow" ? "Nori may" : "Nori will never"} ${classes.map((effectClass) => ({ read: "read", reversible_write: "make undoable changes", sensitive_send: "send", unknown: "use unknown tools", control: "" }[effectClass])).join(" or ")} with ${selected?.account?.label ?? "this account"}${classes.includes("sensitive_send") && recipients ? ` to ${recipients}` : ""}${effect === "allow" ? " without asking" : ""}.`;
   return <form className="space-y-4 rounded-card border border-hairline-strong p-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
     <div className="flex flex-wrap gap-3">
-      <Field label="Rule"><select value={effect} onChange={(event) => setEffect(event.target.value as "allow" | "deny")} className={cn(inputClass, "w-auto")}><option value="allow">Allow without asking</option><option value="deny">Never allow</option></select></Field>
-      <Field label="Account"><select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputClass, "w-auto")}>{connections.map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}</select></Field>
+      <Field label="Rule"><select value={effect} onChange={(event) => setEffect(event.target.value as "allow" | "deny")} className={cn(inputBase, "w-auto")}><option value="allow">Allow without asking</option><option value="deny">Never allow</option></select></Field>
+      <Field label="Account"><select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputBase, "w-auto")}>{connections.map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}</select></Field>
     </div>
     <fieldset><legend className="mb-1.5 text-meta font-medium">Actions</legend><div className="flex flex-wrap gap-2">{(["read", "reversible_write", "sensitive_send"] as const).map((effectClass) => <label key={effectClass} className={cn("flex min-h-11 items-center gap-2 rounded-full border px-3 text-meta", classes.includes(effectClass) ? "border-accent bg-accent-subtle" : "border-hairline")}>
       <input type="checkbox" className="accent-[var(--accent)]" checked={classes.includes(effectClass)} onChange={() => setClasses(classes.includes(effectClass) ? classes.filter((other) => other !== effectClass) : [...classes, effectClass])} />{EFFECT_LABEL[effectClass]}</label>)}</div></fieldset>
     {classes.includes("sensitive_send") && <Field label="Only to"><input value={recipients} onChange={(event) => setRecipients(event.target.value)} placeholder="sam@example.com, family@example.com" className={inputClass} /></Field>}
-    <Field label="Until (optional)"><input type="date" value={expires} onChange={(event) => setExpires(event.target.value)} className={cn(inputClass, "w-auto")} /></Field>
+    <Field label="Until (optional)"><input type="date" value={expires} onChange={(event) => setExpires(event.target.value)} className={cn(inputBase, "w-auto")} /></Field>
     <p className="rounded-tile bg-fill-1 px-3 py-2 text-meta text-ink">{example}</p>
     {action.error && <Notice tone="danger">{action.error}</Notice>}
     <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!account || !classes.length || (classes.includes("sensitive_send") && effect === "allow" && !recipients.trim()) || !!action.pending}>Save</Button><Button variant="quiet" onClick={onDone}>Cancel</Button></div>
@@ -144,20 +144,20 @@ function PreferencesEditor({ current, onSaved }: { current: Preferences; onSaved
   return <form className="space-y-6" onSubmit={(event) => { event.preventDefault(); void save(); }}>
     {conflict && <Notice tone="warning" action={<Button size="sm" onClick={() => onSaved(conflict)}>Load latest</Button>}>These changed on another device. Load the latest to edit them.</Notice>}
     <div className="flex flex-wrap gap-4">
-      <Field label="Time zone"><input value={value.timezone} onChange={(event) => setValue({ ...value, timezone: event.target.value })} className={cn(inputClass, "w-64")} list="zones" /></Field>
+      <Field label="Time zone"><input value={value.timezone} onChange={(event) => setValue({ ...value, timezone: event.target.value })} className={cn(inputBase, "w-64")} list="zones" /></Field>
       <datalist id="zones">{(Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone").map((zone) => <option key={zone} value={zone} />)}</datalist>
-      <Field label="Language and region"><input value={value.locale ?? ""} onChange={(event) => setValue({ ...value, locale: event.target.value })} className={cn(inputClass, "w-32")} placeholder="en-GB" /></Field>
+      <Field label="Language and region"><input value={value.locale ?? ""} onChange={(event) => setValue({ ...value, locale: event.target.value })} className={cn(inputBase, "w-32")} placeholder="en-GB" /></Field>
     </div>
     <fieldset><legend className="mb-1.5 text-meta font-medium">Working hours</legend>
       <ul className="space-y-1">{[1, 2, 3, 4, 5, 6, 0].map((day) => { const entry = hours(day); return <li key={day} className="flex min-h-11 flex-wrap items-center gap-3">
         <label className="flex w-24 items-center gap-2 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={!!entry} onChange={(event) => setHours(day, event.target.checked ? { start: "09:00", end: "17:30" } : undefined)} />{DAYS[day]}</label>
-        {entry && <><input aria-label={`${DAYS[day]} start`} type="time" value={entry.start} onChange={(event) => setHours(day, { start: event.target.value, end: entry.end })} className={cn(inputClass, "w-auto py-1.5")} /><span className="text-ink-3">–</span><input aria-label={`${DAYS[day]} end`} type="time" value={entry.end} onChange={(event) => setHours(day, { start: entry.start, end: event.target.value })} className={cn(inputClass, "w-auto py-1.5")} /></>}
+        {entry && <><input aria-label={`${DAYS[day]} start`} type="time" value={entry.start} onChange={(event) => setHours(day, { start: event.target.value, end: entry.end })} className={cn(inputBase, "w-auto py-1.5")} /><span className="text-ink-3">–</span><input aria-label={`${DAYS[day]} end`} type="time" value={entry.end} onChange={(event) => setHours(day, { start: entry.start, end: event.target.value })} className={cn(inputBase, "w-auto py-1.5")} /></>}
       </li>; })}</ul>
     </fieldset>
     <div className="flex flex-wrap gap-4">
-      <Field label="Budget per task (USD)"><input type="number" min={0} step={0.5} value={value.budgets.task_usd} onChange={(event) => setValue({ ...value, budgets: { ...value.budgets, task_usd: Number(event.target.value) } })} className={cn(inputClass, "w-32")} /></Field>
-      <Field label="Monthly limit (USD)"><input type="number" min={0} step={5} value={value.budgets.monthly_usd ?? ""} onChange={(event) => setValue({ ...value, budgets: { ...value.budgets, monthly_usd: event.target.value ? Number(event.target.value) : undefined } })} className={cn(inputClass, "w-32")} /></Field>
-      <Field label="Dictation language"><input value={value.input?.dictation_language ?? ""} onChange={(event) => setValue({ ...value, input: { ...value.input, dictation_language: event.target.value || undefined } })} className={cn(inputClass, "w-32")} placeholder="en-GB" /></Field>
+      <Field label="Budget per task (USD)"><input type="number" min={0} step={0.5} value={value.budgets.task_usd} onChange={(event) => setValue({ ...value, budgets: { ...value.budgets, task_usd: Number(event.target.value) } })} className={cn(inputBase, "w-32")} /></Field>
+      <Field label="Monthly limit (USD)"><input type="number" min={0} step={5} value={value.budgets.monthly_usd ?? ""} onChange={(event) => setValue({ ...value, budgets: { ...value.budgets, monthly_usd: event.target.value ? Number(event.target.value) : undefined } })} className={cn(inputBase, "w-32")} /></Field>
+      <Field label="Dictation language"><input value={value.input?.dictation_language ?? ""} onChange={(event) => setValue({ ...value, input: { ...value.input, dictation_language: event.target.value || undefined } })} className={cn(inputBase, "w-32")} placeholder="en-GB" /></Field>
     </div>
     <AccountDefaults defaults={value.account_defaults} onChange={(account_defaults) => setValue({ ...value, account_defaults })} />
     {action.error && !conflict && <Notice tone="danger">{action.error}</Notice>}
@@ -172,7 +172,7 @@ function AccountDefaults({ defaults, onChange }: { defaults: Record<string, stri
   const label: Record<string, string> = { "calendar.create": "New events go to", "calendar.read": "Read events from", "mail.send": "Send mail as" };
   return <fieldset><legend className="mb-1.5 text-meta font-medium">Default accounts</legend>
     <ul className="space-y-2">{purposes.map((purpose) => <li key={purpose} className="flex flex-wrap items-center gap-3"><span className="w-40 text-body">{label[purpose] ?? purpose}</span>
-      <select aria-label={label[purpose] ?? purpose} value={defaults[purpose]} onChange={(event) => onChange({ ...defaults, [purpose]: event.target.value })} className={cn(inputClass, "w-auto")}>
+      <select aria-label={label[purpose] ?? purpose} value={defaults[purpose]} onChange={(event) => onChange({ ...defaults, [purpose]: event.target.value })} className={cn(inputBase, "w-auto")}>
         {(connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected").map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}
       </select></li>)}</ul>
   </fieldset>;
@@ -227,7 +227,7 @@ function ActionHistory() {
   const operations = useResource<List<Operation>>(`/operations${account ? `?connection_id=${encodeURIComponent(account)}` : ""}`, { poll: 30_000 });
   return <>
     <label className="mb-4 flex items-center gap-2 text-meta"><span className="text-ink-2">Account</span>
-      <select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputClass, "w-auto")}><option value="">All accounts</option>{(connections.data?.items ?? []).map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}</select></label>
+      <select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputBase, "w-auto")}><option value="">All accounts</option>{(connections.data?.items ?? []).map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}</select></label>
     {operations.loading ? <Loading /> : operations.error ? <Failure error={operations.error} onRetry={() => void operations.reload()} /> : operations.data?.items.length ? <>
       <OperationRows operations={operations.data.items} />
     </> : <Empty>No actions yet.</Empty>}
