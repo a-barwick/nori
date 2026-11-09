@@ -118,7 +118,10 @@ const AUTHORITY: Record<string, string> = { user_request: "you asked", permissio
 const RECOVERY: Record<string, string> = { reconciling: "checking with the provider", needs_review: "needs your review", resolved: "resolved" };
 
 /** Plain names for built-in steps that carry no action summary. */
-const BUILTIN: Record<string, string> = { capability_load: "Checked which apps and tools are ready" };
+const BUILTIN: Record<string, string> = { upload_open: "Opened an attached file" };
+
+/** Steps worth showing: checking which tools are ready is bookkeeping, not an action. */
+export const shownOperations = <T extends { name: string }>(operations: T[]) => operations.filter((operation) => operation.name !== "capability_load");
 
 export function OperationRows({ operations }: { operations: (OperationProjection & { recovery?: string; task_title?: string })[] }) {
   return <Rows label="Actions">{operations.map((operation) => {
@@ -193,7 +196,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
       {detail.result && <Section title={item.status === "failed" ? "Partial answer" : "Result"}><div className="rounded-card border border-hairline bg-surface p-4 text-body [overflow-wrap:anywhere]"><Markdown variant="page">{detail.result}</Markdown></div></Section>}
       {saved.length > 0 && <Section title="Saved"><Rows>{saved.map((result) => <Row key={result.id} href={`/library/${encodeURIComponent(result.id)}`} title={result.title} detail={result.version > 1 ? `Version ${result.version}` : undefined} />)}</Rows></Section>}
       {!has("library") && item.result_ids.length > 0 && <Section title="Saved"><Rows>{item.result_ids.map((id) => { const saved = runtime.session?.results?.find((result) => result.id === id); return <Row key={id} href={`/library/${encodeURIComponent(id)}`} title={saved?.title ?? "Saved result"} />; })}</Rows></Section>}
-      {detail.operations.length > 0 && <Section title="Actions"><OperationRows operations={detail.operations} /></Section>}
+      {shownOperations(detail.operations).length > 0 && <Section title="Actions"><OperationRows operations={shownOperations(detail.operations)} /></Section>}
       {!!detail.events?.length && <Section title="Activity">
         <ol className="space-y-3 border-l border-hairline pl-4">{detail.events.map((event, index) => <li key={`${event.created_at}-${index}`} className="relative">
           <span aria-hidden className="absolute top-1.5 -left-[21px] size-2.5 rounded-full border-2 border-surface bg-hairline-strong" />
