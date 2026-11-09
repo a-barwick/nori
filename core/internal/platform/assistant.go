@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"nori/internal/connectors/replay"
 	"sync"
 
 	"nori/internal/connections"
@@ -77,6 +78,16 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	google.Register(adapters)
 	integrations := []connections.Integration{google.Integration{ClientID: s.Connections.GoogleClientID, ClientSecret: s.Connections.GoogleClientSecret}}
 	conn := connections.New(store, credentials, s.Connections.RedirectURL, integrations...)
+	if s.Connections.ProviderReplay != "" {
+		if s.Cloud != "local" {
+			return nil, fmt.Errorf("NORI_PROVIDER_REPLAY is for local development only and requires NORI_CLOUD=local")
+		}
+		transport, err := replay.Shared(s.Connections.ProviderReplay, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		conn.Transport = transport
+	}
 	perms := &permissions.Service{Store: store, UnattendedWrites: s.Connections.UnattendedWrites, UserSends: s.Connections.UserSends}
 	sched := &scheduler.Service{Store: store, Tasks: tasks, Permissions: perms, Events: google.EventSource{Connections: conn},
 		Results: func(ctx context.Context, taskID string) []string {

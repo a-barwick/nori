@@ -1,0 +1,27 @@
+{
+  "exchanges": [
+    {"name": "calendar-list", "method": "GET", "host": "www.googleapis.com", "path": "/calendar/v3/users/me/calendarList",
+     "response": {"status": 200, "body": {"kind": "calendar#calendarList", "items": [
+       {"kind": "calendar#calendarListEntry", "id": "primary", "summary": "recorded.user@example.com", "timeZone": "America/Los_Angeles", "accessRole": "owner", "primary": true, "selected": true},
+       {"kind": "calendar#calendarListEntry", "id": "team.recorded@group.calendar.google.com", "summary": "Team", "timeZone": "America/Los_Angeles", "accessRole": "reader", "selected": true}]}}},
+    {"name": "insert-lost", "method": "POST", "host": "www.googleapis.com", "path": "/calendar/v3/calendars/primary/events", "times": 1, "drop": true,
+     "response": {"status": 200, "body": {}}},
+    {"name": "insert-duplicate", "method": "POST", "host": "www.googleapis.com", "path": "/calendar/v3/calendars/primary/events", "after": ["insert-lost"],
+     "response": {"status": 409, "body": {"error": {"code": 409, "message": "The requested identifier already exists.", "errors": [{"domain": "global", "reason": "duplicate", "message": "The requested identifier already exists."}]}}}},
+    {"name": "get-created", "method": "GET", "host": "www.googleapis.com", "path": "/calendar/v3/calendars/primary/events/*", "after": ["insert-lost"],
+     "response": {"status": 200, "body": {"kind": "calendar#event", "id": "recordedcreated", "status": "confirmed", "etag": "\"3400000000000000\"", "htmlLink": "https://www.google.com/calendar/event?eid=recorded", "summary": "Recorded planning sync", "start": {"dateTime": "2026-11-10T15:00:00-08:00", "timeZone": "America/Los_Angeles"}, "end": {"dateTime": "2026-11-10T15:30:00-08:00", "timeZone": "America/Los_Angeles"}, "organizer": {"email": "recorded.user@example.com", "self": true}, "attendees": [{"email": "guest@example.com", "responseStatus": "needsAction"}]}}},
+    {"name": "get-missing", "method": "GET", "host": "www.googleapis.com", "path": "/calendar/v3/calendars/primary/events/*",
+     "response": {"status": 404, "body": {"error": {"code": 404, "message": "Not Found", "errors": [{"domain": "global", "reason": "notFound", "message": "Not Found"}]}}}},
+    {"name": "events-primary", "method": "GET", "host": "www.googleapis.com", "path": "/calendar/v3/calendars/primary/events",
+     "response": {"status": 200, "body": {"kind": "calendar#events", "summary": "recorded.user@example.com", "timeZone": "America/Los_Angeles", "items": [
+       {"kind": "calendar#event", "id": "recordedevt1", "status": "confirmed", "etag": "\"3400000000000001\"", "htmlLink": "https://www.google.com/calendar/event?eid=r1", "summary": "Dentist", "location": "12 Main St", "start": {"dateTime": "2026-11-10T10:00:00-08:00", "timeZone": "America/Los_Angeles"}, "end": {"dateTime": "2026-11-10T10:30:00-08:00", "timeZone": "America/Los_Angeles"}, "organizer": {"email": "recorded.user@example.com", "self": true}},
+       {"kind": "calendar#event", "id": "recordedevt2", "status": "confirmed", "etag": "\"3400000000000002\"", "htmlLink": "https://www.google.com/calendar/event?eid=r2", "summary": "Weekend hike", "start": {"date": "2026-11-14"}, "end": {"date": "2026-11-15"}, "organizer": {"email": "recorded.user@example.com", "self": true}}]}}},
+    {"name": "events-team", "method": "GET", "host": "www.googleapis.com", "path": "/calendar/v3/calendars/team.recorded@group.calendar.google.com/events",
+     "response": {"status": 200, "body": {"kind": "calendar#events", "summary": "Team", "timeZone": "America/Los_Angeles", "items": [
+       {"kind": "calendar#event", "id": "recordedteam1", "status": "confirmed", "etag": "\"3400000000000003\"", "summary": "Team standup", "start": {"dateTime": "2026-11-10T09:00:00-08:00"}, "end": {"dateTime": "2026-11-10T09:15:00-08:00"}, "organizer": {"email": "lead@example.com"}}]}}},
+    {"name": "freebusy", "method": "POST", "host": "www.googleapis.com", "path": "/calendar/v3/freeBusy",
+     "response": {"status": 200, "body": {"kind": "calendar#freeBusy", "timeMin": "2026-11-10T00:00:00Z", "timeMax": "2026-11-11T00:00:00Z", "calendars": {
+       "primary": {"busy": [{"start": "2026-11-10T18:00:00Z", "end": "2026-11-10T18:30:00Z"}]},
+       "team.recorded@group.calendar.google.com": {"errors": [{"domain": "global", "reason": "notFound"}]}}}}}
+  ]
+}
