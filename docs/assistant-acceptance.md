@@ -55,9 +55,9 @@ Statuses: **not started**; **implemented** (code merged into the integration bra
 | A35 | File input and voice | not started | | Voice is out of scope for current work per Austin's standing instruction; recorded as such unless he brings it back. |
 | A36 | Library/search/revision/export | not started | | None. |
 | A37 | Memory and preferences | not started | | None. |
-| A38 | Wrong-account and cross-user attacks | not started | | None (two local users, see runbook). |
+| A38 | Wrong-account and cross-user attacks | not started | Existing conversation routes only: scenario `conversations-owner-isolation` passes live (user B gets 404 on read, history, operations, message, cancel and delete of user A's conversation; A's conversation survives). New route families, cached results, plugin calls and search are not built yet. | None (two local users, see runbook). |
 | A39 | Uncertain external write | not started | | Fault injection locally; provider leg needs a writable provider account. |
-| A40 | Upgrade/replay/rollback | not started | | None. Pre-change histories are captured from this stack at `ed6b020`. |
+| A40 | Upgrade/replay/rollback | implemented | W1 pinning (`8de4158`) merged as `4143e92`. `contracts-check` replays `contracts/assistant/histories/ed6b020-web-search-task.json` (captured before pinning; calls carry no `Exec`, so the workflow takes the name-lookup path) and `4143e92-pinned-exec-computer-unavailable.json` (every call pins tool ref, binding and policy) against the merged workflow: both replay. A tampered copy fails with TMPRL1100, so the check bites. Remaining for locally verified: a dynamic (non-built-in) call history once W2/W3 land; rollback of a worker build with saved receipts and schedules intact. | None. |
 | A41 | Budget exhaustion and feedback | not started | | None. |
 | A42 | Physical mobile and accessibility | not started | | A real phone on the same network as the local web server, operated by Austin, or a reachable test deployment (not production). |
 | A43 | Provider failure and performance | not started | | Provider accounts for real failure paths; latency baseline runs locally. |
@@ -70,11 +70,11 @@ Each is run on the local integration stack and recorded here with what could not
 | Check | Status | Evidence |
 | --- | --- | --- |
 | Kill and restart core mid-task | not started | |
-| Lost wake and duplicate wake | not started | |
+| Lost wake and duplicate wake | not started | Duplicate submission only: scenario `conversation-message-retry` passes live (same message id twice gives the same active turn and one user message). A real lost wake (wake failure after acceptance) is not exercised yet. |
 | Stale approval after a correction | not started | |
 | Revoke during execution | not started | |
 | Registry update after a pinned call | not started | |
-| Replay of a retained Temporal history against the new worker | not started | |
+| Replay of a retained Temporal history against the new worker | locally verified | See A40: ed6b020 and 4143e92 histories replay against the merged workflow in `contracts-check`. |
 | Scheduler race with two due-slot observers | not started | |
 | Computer takeover and lease expiry | not started | |
 | Disconnect retention (D4 interim flags) | not started | |
@@ -84,6 +84,14 @@ Each is run on the local integration stack and recorded here with what could not
 | Date | Source | Commit | `make check` | `contracts-check` | Exercised | Result |
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-11-08 | coordinator record | `d1bf5bf` | n/a (docs) | pass | n/a | merged |
+| 2026-11-08 | backend W1 (Extension registry, CallRef.Exec pinning) | `8de4158` via `2ffce04` | pass | pass, 2 histories replay | two web-search tasks on the local stack; pinned `Exec` present on every call | merged; found defect D-001 (pre-existing, below) |
+| 2026-11-08 | frontend shell, Work, interaction cards, proxy routes, generated types | `dc6d7d2` | pass, including fixture type-check | pass | web on 3213 as user A: chat history and Work list render from core 8083 through the proxy | merged |
+
+## Defects found in integration
+
+| ID | Found | Owner | Reproduction | Status |
+| --- | --- | --- | --- | --- |
+| D-001 | 2026-11-08 at `4143e92`, also present at `ed6b020` | backend | Run core and worker with `NORI_COMPUTER_ENABLED=false`, ask for a background web lookup. The model is still offered `browser_navigate`; the call fails, then the cleanup activity fails non-retryably with "computer provider is not configured", the workflow closes FAILED, and the run stays `running` with "Waiting for owned work and cleanup to finish." The dispatcher logs "terminal recovery: computer provider is not configured" every 30 s forever, and the UI shows the task in progress. Workflow `nori-task-11111111-…:dab0dd7b-…` on namespace `nori-integration`. | reported to backend |
 
 ## Runbook
 
