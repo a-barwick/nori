@@ -41,7 +41,7 @@ Ownership is a default. Rebalance when a stream is the bottleneck; agree before 
 | r0 (docs) | reviewed independently by all three streams; superseded by r1 once published | `2a5d5bd` | none |
 | r0-draft encoding (`contracts/assistant`) | the review's concrete object | `ed6b020` | none |
 | r1 | published 2026-11-09 by integration as single editor: 151 fixtures, 0 failures; checker run by the coordinator against that tree | `a449fe3` on `claude/nori-assistant-integration-bd1278` | backend: merged as `2ffce04`, acknowledged; frontend: merged as `f0dc31d`, types regenerated at `cd1dfcd`, acknowledged. r1 is the accepted contract. |
-| r2 | queued: frontend F12, rest of F14, F15–F19, integration I1 scenario fixtures and live mode, and F20 `WorkDetail.result` and bounded `events` (the current task panel shows both; without them Work detail regresses). Screens that need r2 shapes are labelled fixture-backed and their hand-written types sit in `web/src/lib/contracts/pending.ts` until r2 lands (library edits, memory and inbox resources, plugin catalog and review shapes, MCP server editing and actions, skills, computer session waiting tasks) | | |
+| r2 | queued: frontend F12, rest of F14, F15–F19, integration I1 scenario format (live mode already runs), the pinned mutation paths and status codes, `APIError.current` and the error code list, and F20 `WorkDetail.result` and bounded `events` (the current task panel shows both; without them Work detail regresses). Screens that need r2 shapes are labelled fixture-backed and their hand-written types sit in `web/src/lib/contracts/pending.ts` until r2 lands (library edits, memory and inbox resources, plugin catalog and review shapes, MCP server editing and actions, skills, computer session waiting tasks) | | |
 
 Reviews: backend `8c22c80` (`docs/assistant-r0-review-backend.md`), frontend `061cd76` (`docs/assistant-r0-review-frontend.md`), integration `3f49ccd` (`docs/assistant-r0-review-integration.md`), each on its own branch.
 
@@ -64,7 +64,15 @@ Mechanisms for all four are built configurable. No recommendation is adopted as 
 
 | Stream | Commit | Contents | Status |
 | --- | --- | --- | --- |
-| Backend | `8de4158` | W1: `internal/extensions` registry (definitions, digests, canonical schema validation, model projection, reserved names, snapshots, search); every built-in migrated as a `nori/builtin/*` definition; `CallRef.Exec` pinning with name-based fallback for old histories; additive `OperationRecord` references. Coordinator spot-check: no registry reference in `task/workflow.go`; `history.go` imports only the `Exec` type and `finishModelRound` runs on the activity side. | implemented; awaiting integration merge and replay evidence |
+| Backend | `8de4158` | W1: `internal/extensions` registry (definitions, digests, canonical schema validation, model projection, reserved names, snapshots, search); every built-in migrated as a `nori/builtin/*` definition; `CallRef.Exec` pinning with name-based fallback for old histories; additive `OperationRecord` references. Coordinator spot-check: no registry reference in `task/workflow.go`; `history.go` imports only the `Exec` type and `finishModelRound` runs on the activity side. | merged into the integration branch as `4143e92`; `make check` green; replay evidence recorded at `381d8ad` under A40: histories from `ed6b020` (no pinned execution metadata) and `4143e92` (pinned on every call) both replay against the compiled workflow, a tampered copy fails as expected |
+| Frontend | `dc6d7d2` | Generated TypeScript types from the r1 schemas, fixture mode, navigation shell; web on port 3213 renders chat and Work against the integration core through the proxy as a test user. | merged into the integration branch |
+| Integration | `381d8ad` | `contracts-check` runs live scenarios with `-live` (owner isolation and same-id retry pass against core 8083 with two users), replays every history under `contracts/assistant/histories`, emits every valid fixture as a typed TS literal; `make check` runs all of it plus the generated-type freshness check. Acceptance runbook fixed: `nori-local` does not host the task worker, which needs `TEMPORAL_BUILD_ID` and a set-current-version call. | landed |
+
+## Defects
+
+| ID | Found by | Owner | Description | Status |
+| --- | --- | --- | --- | --- |
+| D-001 | integration, pre-existing at `ed6b020` | backend | With the computer disabled, browser tools are still offered to the model, and a failed cleanup leaves the run open forever. | open, sent to backend |
 
 ## Disagreements
 
