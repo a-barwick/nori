@@ -40,8 +40,8 @@ Ownership is a default. Rebalance when a stream is the bottleneck; agree before 
 | --- | --- | --- | --- |
 | r0 (docs) | reviewed independently by all three streams; superseded by r1 once published | `2a5d5bd` | none |
 | r0-draft encoding (`contracts/assistant`) | the review's concrete object | `ed6b020` | none |
-| r1 | published 2026-11-09 by integration as single editor: 151 fixtures, 0 failures; checker run by the coordinator against that tree | `a449fe3` on `claude/nori-assistant-integration-bd1278` | backend: merged as `2ffce04`, acknowledged with no unimplementable shape; frontend: pending |
-| r2 | queued: frontend F12, rest of F14, F15–F19, integration I1 scenario fixtures and live mode (library edits, memory and inbox resources, plugin catalog and review shapes, MCP server editing and actions, skills, computer session waiting tasks) | | |
+| r1 | published 2026-11-09 by integration as single editor: 151 fixtures, 0 failures; checker run by the coordinator against that tree | `a449fe3` on `claude/nori-assistant-integration-bd1278` | backend: merged as `2ffce04`, acknowledged; frontend: merged as `f0dc31d`, types regenerated at `cd1dfcd`, acknowledged. r1 is the accepted contract. |
+| r2 | queued: frontend F12, rest of F14, F15–F19, integration I1 scenario fixtures and live mode, and F20 `WorkDetail.result` and bounded `events` (the current task panel shows both; without them Work detail regresses). Screens that need r2 shapes are labelled fixture-backed and their hand-written types sit in `web/src/lib/contracts/pending.ts` until r2 lands (library edits, memory and inbox resources, plugin catalog and review shapes, MCP server editing and actions, skills, computer session waiting tasks) | | |
 
 Reviews: backend `8c22c80` (`docs/assistant-r0-review-backend.md`), frontend `061cd76` (`docs/assistant-r0-review-frontend.md`), integration `3f49ccd` (`docs/assistant-r0-review-integration.md`), each on its own branch.
 
