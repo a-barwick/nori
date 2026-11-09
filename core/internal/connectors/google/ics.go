@@ -182,7 +182,7 @@ func icsPreview(ctx context.Context, service *calendar.Service, call invoke.Call
 		rows = append(rows, row)
 	}
 	return map[string]any{"file": name, "calendar_id": calendarID, "events": rows, "imported_from": "ics",
-		"note": "This is a preview of an uploaded file, not a live calendar. Events marked duplicate_of already exist and import updates them instead of adding copies."}, events, nil
+		"note": "The events come from the uploaded file and nothing was imported. Each event was checked against the live calendar by its iCalUID: duplicate_of marks one that already exists there (import updates it instead of adding a copy); the rest are not on the calendar yet."}, events, nil
 }
 
 func prepareICS(ctx context.Context, call invoke.Call, operation string) (invoke.Prepared, error) {
