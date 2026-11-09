@@ -116,15 +116,25 @@ func (a *Assistant) mcpTools(w http.ResponseWriter, r *http.Request) {
 // mcpCredential stores a configured server credential. It is write-only: no route ever returns it.
 func (a *Assistant) mcpCredential(w http.ResponseWriter, r *http.Request) {
 	var value struct {
-		Token string `json:"token"`
+		RequestID string `json:"request_id"`
+		Token     string `json:"token"`
 	}
-	requestID, _, ok := decodeChange(w, r, &value)
-	if !ok {
+	if !decode(w, r, &value) {
+		return
+	}
+	if !validID(value.RequestID) {
+		writeAPIError(w, state.ErrInvalidResource, value.RequestID, nil)
 		return
 	}
 	if err := a.MCP.SetCredential(r.Context(), r.PathValue("id"), value.Token); err != nil {
-		writeAPIError(w, err, requestID, nil)
+		writeAPIError(w, err, value.RequestID, nil)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"request_id": requestID, "accepted": true, "status": "applied", "resource": map[string]string{"id": r.PathValue("id")}})
+	server, err := a.MCP.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeAPIError(w, err, value.RequestID, nil)
+		return
+	}
+	data, _ := jsonMarshal(server)
+	writeJSON(w, 200, state.MutationReceipt{RequestID: value.RequestID, Accepted: true, Status: "applied", Resource: data})
 }

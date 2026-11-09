@@ -75,6 +75,8 @@ type Observed struct {
 	LastSuccessAt     *time.Time   `json:"last_success_at,omitempty"`
 	Error             *ErrorDetail `json:"error,omitempty"`
 	Diagnostics       []Diagnostic `json:"diagnostics,omitempty"`
+	// Credential says whether a configured credential is stored; the credential itself is never projected.
+	Credential string `json:"credential,omitempty"`
 }
 
 type Source struct {
@@ -94,11 +96,11 @@ type Server struct {
 	Enabled      bool     `json:"enabled"`
 	Exposure     Exposure `json:"exposure"`
 	Observed     Observed `json:"observed"`
+	Auth         string   `json:"auth,omitempty"`
 }
 
 type stored struct {
 	Server
-	Auth       string `json:"auth"`
 	CommandRef string `json:"command_ref,omitempty"`
 	// Tools maps each discovered tool name to its current definition key.
 	Tools map[string]string `json:"tools,omitempty"`
@@ -165,7 +167,7 @@ func (s *Service) List(ctx context.Context) ([]Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, server.Server)
+		out = append(out, s.project(ctx, server))
 	}
 	return out, nil
 }
@@ -181,7 +183,22 @@ func (s *Service) server(ctx context.Context, id string) (stored, state.Resource
 
 func (s *Service) Get(ctx context.Context, id string) (Server, error) {
 	server, _, err := s.server(ctx, id)
-	return server.Server, err
+	if err != nil {
+		return Server{}, err
+	}
+	return s.project(ctx, server), nil
+}
+
+// project adds the credential presence for configured servers.
+func (s *Service) project(ctx context.Context, server stored) Server {
+	p := server.Server
+	if p.Auth == "configured" {
+		p.Observed.Credential = "missing"
+		if _, err := s.Credentials.Get(ctx, "mcp-"+server.ID); err == nil {
+			p.Observed.Credential = "present"
+		}
+	}
+	return p
 }
 
 // validEndpoint refuses non-HTTPS endpoints (except loopback on the local stack) and infrastructure metadata hosts,
