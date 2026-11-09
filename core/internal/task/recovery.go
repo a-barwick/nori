@@ -3,10 +3,12 @@ package task
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"nori/internal/agent"
 	"nori/internal/computer"
 	"nori/internal/dispatch"
+	"nori/internal/extensions"
 	"nori/internal/prompts"
 	"nori/internal/state"
 )
@@ -132,7 +134,8 @@ func operationScopes(ctx context.Context, store state.TaskStore, runID string) (
 	}
 	var revisions []int64
 	for _, op := range ops {
-		if op.Name == "request_work" || agent.TaskToolPolicy(op.Name).Runtime {
+		external := op.Tool != nil && !strings.HasPrefix(op.Tool.ID, extensions.BuiltinExtension+"/")
+		if op.Name == "request_work" || external || agent.TaskToolPolicy(op.Name).Runtime {
 			continue
 		}
 		revisions = append(revisions, op.Revision)

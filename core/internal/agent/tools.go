@@ -2,8 +2,10 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
+	"nori/internal/extensions"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
@@ -129,7 +131,8 @@ func TaskToolPolicy(name string) ToolPolicy {
 
 // ValidateCalls checks a whole tool batch before any call runs, so a batch
 // is either executed in order or rejected without effects.
-func ValidateCalls(calls []transcript.ToolCall, wait, work bool) error {
+// Calls naming a definition outside the engine are checked against snapshot, the set the model was offered.
+func ValidateCalls(calls []transcript.ToolCall, wait, work bool, snapshot *extensions.Snapshot) error {
 	if len(calls) > 64 {
 		return errors.New(prompts.Runtime("tool-a-tool-batch-may-contain-at-most-64-calls", nil))
 	}
@@ -145,7 +148,18 @@ func ValidateCalls(calls []transcript.ToolCall, wait, work bool) error {
 		seen[call.ID] = true
 		definition, known := taskToolsByName[call.Name]
 		if !known {
-			return errors.New(prompts.Runtime("unknown-tool-name", map[string]any{"Tool": call.Name}))
+			registered, ok := snapshot.Lookup(call.Name)
+			if !ok || registered.Builtin() || registered.Exposure == extensions.ExposureDisabled || registered.Exposure == extensions.ExposureProgrammatic {
+				return errors.New(prompts.Runtime("unknown-tool-name", map[string]any{"Tool": call.Name}))
+			}
+			schema, err := extensions.CompileSchema(registered.InputSchema)
+			if err == nil {
+				err = schema.Validate(call.Args)
+			}
+			if err != nil {
+				return fmt.Errorf("%s: %w", call.Name, err)
+			}
+			continue
 		}
 		if definition.access > access {
 			return errors.New(prompts.Runtime(definition.unavailable, nil))

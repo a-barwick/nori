@@ -93,6 +93,12 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 	tools := []any{}
 	for _, tool := range req.Tools {
+		if tool.Schema != nil {
+			tools = append(tools, map[string]any{
+				"type": "function", "name": tool.Name, "description": tool.Description, "strict": false, "parameters": tool.Schema,
+			})
+			continue
+		}
 		parameters := responseSchema(tool.Parameters)
 		if parameters == nil {
 			parameters = map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}, "additionalProperties": false}

@@ -6,6 +6,9 @@ type Tool struct {
 	Description string
 	// Parameters describes the call's arguments as an object schema. Nil means no arguments.
 	Parameters *Schema
+	// Schema, when set, is a provider-ready JSON Schema projected from a registered definition's canonical schema.
+	// It is sent as given and is not strict; arguments are validated against the canonical schema before a call runs.
+	Schema map[string]any
 }
 
 // SchemaType is the JSON type a Schema describes.

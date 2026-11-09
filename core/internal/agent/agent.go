@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"nori/internal/computer"
+	"nori/internal/extensions"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
@@ -20,6 +21,8 @@ type Service struct {
 	Computer     computer.Provider
 	Capabilities Capabilities
 	HTTP         *http.Client
+	// Extensions supplies the user's current tools beyond the engine's own. Nil offers built-ins only.
+	Extensions extensions.Source
 }
 
 func New(store state.Store, model Model, c computer.Provider) *Service {

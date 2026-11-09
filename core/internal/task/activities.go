@@ -18,6 +18,7 @@ import (
 	"nori/internal/computer"
 	"nori/internal/contextview"
 	"nori/internal/dispatch"
+	"nori/internal/extensions"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -52,6 +53,7 @@ type ToolInput struct {
 	Step
 	OperationID string
 	Call        transcript.ToolCall
+	Exec        *extensions.Exec `json:",omitempty"`
 }
 type Publication struct {
 	Step

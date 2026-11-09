@@ -33,6 +33,32 @@ type OperationRecord struct {
 	Action        *Action   `json:"action,omitempty" firestore:"action,omitempty"`
 	// Cleared says why a failed or uncertain operation no longer blocks later ones. The outcome and result stay as saved.
 	Cleared string `json:"cleared,omitempty" firestore:"cleared,omitempty"`
+	// Tool is the registry definition the call was pinned to; its digest identifies the binding. Records made before
+	// pinning have none. Like the fields below, it is fixed once recorded.
+	Tool *DefinitionRef `json:"tool,omitempty" firestore:"tool,omitempty"`
+	// ConnectionID is the account the call used. AuthorityRef is the server-issued reference to the evaluated
+	// authority. ParentOperationID links a nested call to the operation that issued it.
+	ConnectionID      string `json:"connection_id,omitempty" firestore:"connection_id,omitempty"`
+	AuthorityRef      string `json:"-" firestore:"authority_ref,omitempty"`
+	ParentOperationID string `json:"parent_operation_id,omitempty" firestore:"parent_operation_id,omitempty"`
+	// ProviderRefs are the provider's identities for what the call read or changed. Later evidence may add to them.
+	ProviderRefs []ProviderRef `json:"provider_refs,omitempty" firestore:"provider_refs,omitempty"`
+}
+
+// DefinitionRef names an immutable registry definition.
+type DefinitionRef struct {
+	ID      string `json:"id" firestore:"id"`
+	Version string `json:"version" firestore:"version"`
+	Digest  string `json:"digest" firestore:"digest"`
+}
+
+// ProviderRef is a provider resource an operation touched, with the provider's revision when known.
+type ProviderRef struct {
+	ConnectionID     string `json:"connection_id" firestore:"connection_id"`
+	Kind             string `json:"kind" firestore:"kind"`
+	ProviderID       string `json:"provider_id" firestore:"provider_id"`
+	ProviderRevision string `json:"provider_revision,omitempty" firestore:"provider_revision,omitempty"`
+	URL              string `json:"url,omitempty" firestore:"url,omitempty"`
 }
 
 const (
@@ -104,7 +130,10 @@ func boundedEvidenceText(values []string) bool {
 
 func validOperation(op OperationRecord) bool {
 	if !ValidEvidenceID(op.ID) || !ValidEvidenceID(op.CallID) || op.Name == "" || len(op.Name) > 256 || op.Revision < 0 ||
-		op.Attempt < 0 || op.Attempt > 64 || !validEvidenceIDs(op.ArtifactIDs) || (op.ResultRef != "" && !ValidHistoryRef(op.ResultRef)) {
+		op.Attempt < 0 || op.Attempt > 64 || !validEvidenceIDs(op.ArtifactIDs) || (op.ResultRef != "" && !ValidHistoryRef(op.ResultRef)) ||
+		len(op.ProviderRefs) > MaxEvidenceReferences || len(op.ConnectionID) > 256 || len(op.AuthorityRef) > 256 ||
+		(op.ParentOperationID != "" && !ValidEvidenceID(op.ParentOperationID)) ||
+		(op.Tool != nil && (op.Tool.ID == "" || op.Tool.Digest == "" || len(op.Tool.ID)+len(op.Tool.Digest)+len(op.Tool.Version) > 512)) {
 		return false
 	}
 	switch op.EffectClass {
@@ -227,6 +256,11 @@ func PlanOperation(saved *SavedOperation, op OperationRecord) (OperationWrite, e
 	if old.Cleared != "" && old.Cleared != op.Cleared {
 		return OperationWrite{}, errors.New("operation evidence identity conflict")
 	}
+	if !reflect.DeepEqual(old.Tool, op.Tool) && old.Tool != nil || old.ConnectionID != "" && old.ConnectionID != op.ConnectionID ||
+		old.AuthorityRef != "" && old.AuthorityRef != op.AuthorityRef || old.ParentOperationID != op.ParentOperationID ||
+		!prefixRefs(old.ProviderRefs, op.ProviderRefs) {
+		return OperationWrite{}, errors.New("operation evidence identity conflict")
+	}
 	if old.Cleared == "" && op.Cleared != "" && old.Outcome == op.Outcome && (op.Outcome == "failed" || op.Outcome == "uncertain") {
 		cleared := old
 		cleared.Cleared = op.Cleared
@@ -238,6 +272,19 @@ func PlanOperation(saved *SavedOperation, op OperationRecord) (OperationWrite, e
 		return OperationWrite{}, errors.New("recorded operation outcome is immutable")
 	}
 	return OperationWrite{}, nil
+}
+
+// prefixRefs reports whether next keeps every provider reference already recorded, in order.
+func prefixRefs(old, next []ProviderRef) bool {
+	if len(next) < len(old) {
+		return false
+	}
+	for i := range old {
+		if old[i] != next[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // outcomeMayFollow lists the only changes to a saved outcome. A write leaves attempted only for what the provider
