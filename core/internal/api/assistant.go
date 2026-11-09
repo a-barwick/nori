@@ -56,6 +56,8 @@ type Assistant struct {
 	Plugins          *plugins.Service
 	Computer         *computersession.Service
 	UnattendedWrites string
+	// PushPublicKey is the VAPID public key, set only when push delivery is configured.
+	PushPublicKey string
 	// NextScheduled and InboxUnread feed the summary badges once the Scheduler and inbox exist.
 	NextScheduled func(ctx context.Context) *time.Time
 	InboxUnread   func(ctx context.Context) int
