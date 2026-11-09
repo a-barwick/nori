@@ -40,8 +40,8 @@ Ownership is a default. Rebalance when a stream is the bottleneck; agree before 
 | --- | --- | --- | --- |
 | r0 (docs) | reviewed independently by all three streams; superseded by r1 once published | `2a5d5bd` | none |
 | r0-draft encoding (`contracts/assistant`) | the review's concrete object | `ed6b020` | none |
-| r1 | published 2026-11-09 by integration as single editor: 151 fixtures, 0 failures; checker run by the coordinator against that tree | `a449fe3` on `claude/nori-assistant-integration-bd1278` | pending backend and frontend |
-| r2 | queued: frontend F12, rest of F14, F15–F19, integration I1 scenario fixtures and live mode (library edits, memory and inbox resources, plugin catalog and review shapes, MCP server editing and actions, skills, computer session waiting tasks) | | |
+| r1 | published 2026-11-09 by integration as single editor: 151 fixtures, 0 failures; checker run by the coordinator against that tree | `a449fe3` on `claude/nori-assistant-integration-bd1278` | backend: merged as `2ffce04`, acknowledged; frontend: merged as `f0dc31d`, types regenerated at `cd1dfcd`, acknowledged. r1 is the accepted contract. |
+| r2 | queued: frontend F12, rest of F14, F15–F19, integration I1 scenario fixtures and live mode, and F20 `WorkDetail.result` and bounded `events` (the current task panel shows both; without them Work detail regresses). Screens that need r2 shapes are labelled fixture-backed and their hand-written types sit in `web/src/lib/contracts/pending.ts` until r2 lands (library edits, memory and inbox resources, plugin catalog and review shapes, MCP server editing and actions, skills, computer session waiting tasks) | | |
 
 Reviews: backend `8c22c80` (`docs/assistant-r0-review-backend.md`), frontend `061cd76` (`docs/assistant-r0-review-frontend.md`), integration `3f49ccd` (`docs/assistant-r0-review-integration.md`), each on its own branch.
 
@@ -59,6 +59,12 @@ Mechanisms for all four are built configurable. No recommendation is adopted as 
 | D2 | Standing authority for automations | A direct explicit request authorizes its actions without a second confirmation; an automation holds only what was shown at creation; expanded access returns to the user. | Creation materializes permission rules with explicit selectors and `max_operations`; occurrence tasks carry only that authority. `NORI_AUTOMATION_UNATTENDED=require_rule\|confirm_writes`, default `confirm_writes` until resolved, which turns unattended writes into interactions that expire at the execution window. Acceptance rows A25, A30 and A44 will say "interim D2" until then. |
 | D3 | Missed automation runs | Catch up the latest read or summary run; deliver reminders only within their useful window; expire unattended writes outside their window; show missed work. | `missed_run` is required on every definition (`skip`, `latest`, `all`), so the API has no default; the creation screen shows the choice in plain words, preselected once Austin answers. Skipped and expired occurrences carry a reason. |
 | D4 | What disconnect retains | Keep saved Library results and action history, stop future access, remove transient caches, offer separate deletion of imported content. | Disconnect always closes admission first; `purge_cache` and `delete_imported` flags default to false; saved items show `copied` provenance and the source connection's status. Backend, frontend and integration all support r0 here. |
+
+## Landed work
+
+| Stream | Commit | Contents | Status |
+| --- | --- | --- | --- |
+| Backend | `8de4158` | W1: `internal/extensions` registry (definitions, digests, canonical schema validation, model projection, reserved names, snapshots, search); every built-in migrated as a `nori/builtin/*` definition; `CallRef.Exec` pinning with name-based fallback for old histories; additive `OperationRecord` references. Coordinator spot-check: no registry reference in `task/workflow.go`; `history.go` imports only the `Exec` type and `finishModelRound` runs on the activity side. | implemented; awaiting integration merge and replay evidence |
 
 ## Disagreements
 
