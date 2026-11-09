@@ -1,0 +1,37 @@
+{
+  "id": "mcp_1",
+  "revision": 2,
+  "source": {
+    "kind": "installation",
+    "installation_id": "inst_1"
+  },
+  "name": "linear",
+  "transport": "http",
+  "endpoint": "https://mcp.linear.app/mcp",
+  "connection_id": "conn_linear",
+  "enabled": true,
+  "exposure": {
+    "default": "discoverable",
+    "overrides": {
+      "linear.issues.create": "direct"
+    }
+  },
+  "observed": {
+    "status": "connected",
+    "protocol_version": "2026-07-28",
+    "capabilities": [
+      "tools",
+      "resources",
+      "prompts",
+      "logging"
+    ],
+    "discovery_revision": "sha256:disc1",
+    "tool_count": 24,
+    "resource_count": 3,
+    "prompt_count": 1,
+    "last_success_at": "2026-11-09T09:00:00Z"
+  },
+  "headers": {
+    "Authorization": "Bearer x"
+  }
+}

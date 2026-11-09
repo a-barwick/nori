@@ -1,0 +1,31 @@
+{
+  "ref": {
+    "connection_id": "upload_ics_1",
+    "kind": "calendar_event",
+    "provider_id": "uid-1@example"
+  },
+  "calendar": {
+    "connection_id": "conn_google_personal",
+    "kind": "calendar",
+    "provider_id": "primary",
+    "provider_revision": "etag-7"
+  },
+  "title": "Conference",
+  "time": {
+    "kind": "all_day",
+    "start_date": "2026-11-20",
+    "end_date": "2026-11-22"
+  },
+  "location": "12 High St",
+  "attendees": [],
+  "status": "confirmed",
+  "source_url": "https://calendar.google.com/event?eid=abc",
+  "imported_from": "ics",
+  "supports": {
+    "update": false,
+    "cancel": false,
+    "invite": false,
+    "rsvp": false,
+    "recurrence_scopes": []
+  }
+}

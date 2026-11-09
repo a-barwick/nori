@@ -1,0 +1,13 @@
+{
+  "id": "dest_push",
+  "revision": 1,
+  "channel": "push",
+  "label": "iPhone",
+  "status": "verified",
+  "supports_receipts": false,
+  "quiet_hours": {
+    "start": "22:00",
+    "end": "07:00",
+    "timezone": "Europe/London"
+  }
+}

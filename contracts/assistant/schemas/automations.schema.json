@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.nori.local/assistant/automations.schema.json",
+  "title": "Automations, Scheduler, goals and delivery (C7)",
+  "$defs": {
+    "Trigger": {
+      "oneOf": [
+        {"type": "object", "required": ["kind", "at"], "properties": {"kind": {"const": "once"}, "at": {"$ref": "common.schema.json#/$defs/Instant"}}, "additionalProperties": false},
+        {"type": "object", "required": ["kind", "local_start", "timezone", "rrule"], "properties": {"kind": {"const": "recurring"}, "local_start": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?$", "description": "Floating local date-time without offset"}, "timezone": {"$ref": "common.schema.json#/$defs/Timezone"}, "rrule": {"type": "string", "minLength": 1, "description": "RFC 5545 RRULE value"}}, "additionalProperties": false},
+        {"type": "object", "required": ["kind", "event", "offset_seconds"], "properties": {"kind": {"const": "event_relative"}, "event": {"$ref": "common.schema.json#/$defs/ResourceRef"}, "offset_seconds": {"type": "integer"}}, "additionalProperties": false},
+        {"type": "object", "required": ["kind", "source", "predicate_ref", "min_interval_seconds"], "properties": {"kind": {"const": "watch"}, "source": {"$ref": "common.schema.json#/$defs/ResourceRef"}, "predicate_ref": {"type": "string", "minLength": 1, "description": "Reference to a validated typed condition or stored instruction; never executable code"}, "min_interval_seconds": {"type": "integer", "minimum": 60}}, "additionalProperties": false}
+      ]
+    },
+    "MissedRun": {"enum": ["skip", "latest", "all"], "description": "Per-definition policy. The default offered at creation depends on D3; no hidden global default."},
+    "Automation": {
+      "type": "object",
+      "required": ["id", "revision", "title", "instruction", "status", "trigger", "connection_ids", "authority_ref", "budget_usd", "max_active_runs", "missed_run", "execution_window_seconds", "destination_ids"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/ID"},
+        "revision": {"$ref": "common.schema.json#/$defs/Revision"},
+        "title": {"type": "string", "minLength": 1},
+        "instruction": {"type": "string", "minLength": 1},
+        "status": {"enum": ["enabled", "paused", "cancelled"]},
+        "trigger": {"$ref": "#/$defs/Trigger"},
+        "connection_ids": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ID"}},
+        "authority_ref": {"type": "string", "minLength": 1, "description": "Opaque server-issued reference; not user-writable"},
+        "budget_usd": {"type": "number", "minimum": 0},
+        "max_active_runs": {"type": "integer", "minimum": 1},
+        "missed_run": {"$ref": "#/$defs/MissedRun"},
+        "execution_window_seconds": {"type": "integer", "minimum": 0},
+        "destination_ids": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ID"}},
+        "next_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "end_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "max_occurrences": {"type": "integer", "minimum": 1},
+        "goal_id": {"$ref": "common.schema.json#/$defs/ID"},
+        "skill_ref": {"$ref": "common.schema.json#/$defs/DefinitionRef"},
+        "last_occurrence_id": {"type": "string"},
+        "created_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "updated_at": {"$ref": "common.schema.json#/$defs/Instant"}
+      }
+    },
+    "AutomationEditable": {
+      "type": "object",
+      "required": ["title", "instruction", "trigger", "connection_ids", "budget_usd", "max_active_runs", "missed_run", "execution_window_seconds", "destination_ids"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1},
+        "instruction": {"type": "string", "minLength": 1},
+        "trigger": {"$ref": "#/$defs/Trigger"},
+        "connection_ids": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ID"}},
+        "requested_authority": {
+          "type": "object",
+          "description": "Intended standing scope submitted at creation; the service records authority per C5/D2 and returns authority_ref",
+          "required": ["action_classes"],
+          "properties": {
+            "action_classes": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/Effect"}},
+            "tool_ids": {"type": "array", "items": {"type": "string"}},
+            "resource_ids": {"type": "array", "items": {"type": "string"}},
+            "recipients": {"type": "array", "items": {"type": "string"}},
+            "max_operations": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        },
+        "budget_usd": {"type": "number", "minimum": 0},
+        "max_active_runs": {"type": "integer", "minimum": 1},
+        "missed_run": {"$ref": "#/$defs/MissedRun"},
+        "execution_window_seconds": {"type": "integer", "minimum": 0},
+        "destination_ids": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ID"}},
+        "end_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "max_occurrences": {"type": "integer", "minimum": 1},
+        "goal_id": {"$ref": "common.schema.json#/$defs/ID"},
+        "skill_ref": {"$ref": "common.schema.json#/$defs/DefinitionRef"}
+      },
+      "additionalProperties": false
+    },
+    "AutomationChange": {
+      "allOf": [{"$ref": "common.schema.json#/$defs/Change"}, {"properties": {"value": {"$ref": "#/$defs/AutomationEditable"}}}]
+    },
+    "AutomationAction": {
+      "allOf": [
+        {"$ref": "common.schema.json#/$defs/ActionRequest"},
+        {"properties": {"value": {"oneOf": [
+          {"type": "object", "required": ["action"], "properties": {"action": {"enum": ["pause", "resume", "cancel", "run_now"]}}, "additionalProperties": false},
+          {"type": "object", "required": ["action", "until"], "properties": {"action": {"const": "snooze"}, "until": {"$ref": "common.schema.json#/$defs/Instant"}}, "additionalProperties": false}
+        ]}}}
+      ]
+    },
+    "Occurrence": {
+      "type": "object",
+      "required": ["id", "automation_id", "automation_revision", "scheduled_at", "status", "task_ids", "delivery_ids"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "description": "Stable: automation + nominal occurrence/source event + schedule generation"},
+        "automation_id": {"$ref": "common.schema.json#/$defs/ID"},
+        "automation_revision": {"$ref": "common.schema.json#/$defs/Revision"},
+        "generation": {"type": "integer", "minimum": 0},
+        "scheduled_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "source_revision": {"type": "string"},
+        "status": {"enum": ["pending", "accepted", "running", "completed", "failed", "cancelled", "expired"]},
+        "task_ids": {"type": "array", "items": {"type": "string"}},
+        "delivery_ids": {"type": "array", "items": {"type": "string"}},
+        "started_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "finished_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "summary": {"type": "string"},
+        "error": {"$ref": "common.schema.json#/$defs/ErrorDetail"}
+      }
+    },
+    "Delivery": {
+      "type": "object",
+      "required": ["id", "destination_id", "state"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "occurrence_id": {"type": "string"},
+        "result_ids": {"type": "array", "items": {"type": "string"}},
+        "task_id": {"type": "string"},
+        "destination_id": {"$ref": "common.schema.json#/$defs/ID"},
+        "state": {"enum": ["pending", "attempting", "accepted", "delivered", "failed", "uncertain"]},
+        "attempt_id": {"type": "string"},
+        "receipt": {"type": "string"},
+        "acknowledged_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "scheduled_for": {"$ref": "common.schema.json#/$defs/Instant", "description": "Deferred by quiet hours; execution is not cancelled"},
+        "created_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "updated_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "error": {"$ref": "common.schema.json#/$defs/ErrorDetail"}
+      }
+    },
+    "DeliveryDestination": {
+      "type": "object",
+      "required": ["id", "revision", "channel", "label", "status"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/ID"},
+        "revision": {"$ref": "common.schema.json#/$defs/Revision"},
+        "channel": {"enum": ["in_app", "push", "email"]},
+        "label": {"type": "string"},
+        "status": {"enum": ["pending_verification", "verified", "disabled", "failed"]},
+        "supports_receipts": {"type": "boolean"},
+        "quiet_hours": {"type": "object", "required": ["start", "end", "timezone"], "properties": {"start": {"type": "string", "pattern": "^\\d{2}:\\d{2}$"}, "end": {"type": "string", "pattern": "^\\d{2}:\\d{2}$"}, "timezone": {"$ref": "common.schema.json#/$defs/Timezone"}}, "additionalProperties": false}
+      },
+      "not": {"anyOf": [{"required": ["token"]}, {"required": ["endpoint_secret"]}, {"required": ["auth"]}]}
+    },
+    "Goal": {
+      "type": "object",
+      "required": ["id", "revision", "title", "outcome", "completion_criteria", "status", "progress", "next_actions", "blockers", "linked"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/ID"},
+        "revision": {"$ref": "common.schema.json#/$defs/Revision"},
+        "title": {"type": "string", "minLength": 1},
+        "outcome": {"type": "string", "minLength": 1},
+        "completion_criteria": {"type": "array", "items": {"type": "object", "required": ["id", "text", "met"], "properties": {"id": {"type": "string"}, "text": {"type": "string"}, "met": {"type": "boolean"}, "evidence_result_ids": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false}},
+        "status": {"enum": ["active", "paused", "completed", "abandoned"]},
+        "progress": {"type": "string"},
+        "next_actions": {"type": "array", "items": {"type": "string"}},
+        "blockers": {"type": "array", "items": {"type": "object", "required": ["text"], "properties": {"text": {"type": "string"}, "interaction_id": {"type": "string"}, "connection_id": {"type": "string"}}, "additionalProperties": false}},
+        "linked": {"type": "object", "required": ["task_ids", "automation_ids", "result_ids"], "properties": {"task_ids": {"type": "array", "items": {"type": "string"}}, "automation_ids": {"type": "array", "items": {"type": "string"}}, "result_ids": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false},
+        "deadline": {"$ref": "common.schema.json#/$defs/Instant"},
+        "follow_up": {"enum": ["none", "remind", "monitor"]},
+        "authority_ref": {"type": "string"},
+        "created_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "updated_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "completed_at": {"$ref": "common.schema.json#/$defs/Instant"}
+      }
+    },
+    "GoalEditable": {
+      "type": "object",
+      "required": ["title", "outcome", "completion_criteria"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1},
+        "outcome": {"type": "string", "minLength": 1},
+        "completion_criteria": {"type": "array", "items": {"type": "object", "required": ["text"], "properties": {"id": {"type": "string"}, "text": {"type": "string"}}, "additionalProperties": false}},
+        "deadline": {"$ref": "common.schema.json#/$defs/Instant"},
+        "follow_up": {"enum": ["none", "remind", "monitor"]}
+      },
+      "additionalProperties": false
+    },
+    "GoalChange": {
+      "allOf": [{"$ref": "common.schema.json#/$defs/Change"}, {"properties": {"value": {"$ref": "#/$defs/GoalEditable"}}}]
+    },
+    "GoalAction": {
+      "allOf": [
+        {"$ref": "common.schema.json#/$defs/ActionRequest"},
+        {"properties": {"value": {"type": "object", "required": ["action"], "properties": {"action": {"enum": ["pause", "resume", "complete", "abandon"]}, "keep_monitors": {"type": "boolean"}}, "additionalProperties": false}}}
+      ]
+    }
+  }
+}

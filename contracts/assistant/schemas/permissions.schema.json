@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.nori.local/assistant/permissions.schema.json",
+  "title": "Permission checks and pending interactions (C5)",
+  "$defs": {
+    "PermissionRule": {
+      "description": "Every selector is an explicit allowlist; an empty list matches nothing. Wildcards are explicit values, never implied by absence.",
+      "type": "object",
+      "required": ["id", "revision", "effect", "tool_ids", "connection_ids", "resource_ids", "action_classes"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/ID"},
+        "revision": {"$ref": "common.schema.json#/$defs/Revision"},
+        "effect": {"enum": ["allow", "deny"]},
+        "tool_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "connection_ids": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ID"}},
+        "resource_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "action_classes": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/Effect"}},
+        "recipients": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Omitted authorizes nobody for recipient-addressed actions; the explicit wildcard is the string \"*\""},
+        "automation_id": {"$ref": "common.schema.json#/$defs/ID"},
+        "expires_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "max_operations": {"type": "integer", "minimum": 1},
+        "title": {"type": "string"},
+        "created_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "updated_at": {"$ref": "common.schema.json#/$defs/Instant"}
+      }
+    },
+    "PermissionRuleEditable": {
+      "type": "object",
+      "required": ["effect", "tool_ids", "connection_ids", "resource_ids", "action_classes"],
+      "properties": {
+        "effect": {"enum": ["allow", "deny"]},
+        "tool_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "connection_ids": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ID"}},
+        "resource_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "action_classes": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/Effect"}},
+        "recipients": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "automation_id": {"$ref": "common.schema.json#/$defs/ID"},
+        "expires_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "max_operations": {"type": "integer", "minimum": 1},
+        "title": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "PermissionRuleChange": {
+      "allOf": [{"$ref": "common.schema.json#/$defs/Change"}, {"properties": {"value": {"$ref": "#/$defs/PermissionRuleEditable"}}}]
+    },
+    "PermissionDecision": {
+      "type": "object",
+      "required": ["result", "reason"],
+      "properties": {
+        "result": {"enum": ["allow", "deny", "needs_interaction"]},
+        "reason": {"type": "string"},
+        "interaction_id": {"$ref": "common.schema.json#/$defs/ID"}
+      },
+      "not": {"required": ["authority_ref"]}
+    },
+    "QuestionPayload": {
+      "type": "object",
+      "required": ["input"],
+      "properties": {
+        "input": {"enum": ["text", "choice", "multi_choice", "date", "confirm"]},
+        "options": {"type": "array", "items": {"type": "object", "required": ["id", "label"], "properties": {"id": {"type": "string"}, "label": {"type": "string"}}, "additionalProperties": false}},
+        "constraints": {"type": "object", "properties": {"max_length": {"type": "integer", "minimum": 1}, "pattern": {"type": "string"}}, "additionalProperties": false}
+      },
+      "additionalProperties": false
+    },
+    "ApprovalPayload": {
+      "type": "object",
+      "required": ["action_digest", "summary", "effect", "account", "resources"],
+      "properties": {
+        "action_digest": {"type": "string", "minLength": 1},
+        "summary": {"type": "string"},
+        "effect": {"$ref": "common.schema.json#/$defs/Effect"},
+        "account": {"type": "object", "required": ["connection_id", "label"], "properties": {"connection_id": {"$ref": "common.schema.json#/$defs/ID"}, "label": {"type": "string"}}, "additionalProperties": false},
+        "resources": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ResourceRef"}},
+        "recipients": {"type": "array", "items": {"type": "string"}},
+        "material_effects": {"type": "array", "items": {"type": "string"}, "description": "Readable consequences, e.g. attendees will be notified"},
+        "card": {"$ref": "library.schema.json#/$defs/CardPart"}
+      },
+      "additionalProperties": false
+    },
+    "AccountSelectionPayload": {
+      "type": "object",
+      "required": ["purpose", "eligible_connection_ids"],
+      "properties": {
+        "purpose": {"type": "string", "minLength": 1},
+        "eligible_connection_ids": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/ID"}},
+        "remember_as_default": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "SignInPayload": {
+      "description": "Server-created auth attempt. Carries the authorize URL and allowed return destination, never credentials.",
+      "type": "object",
+      "required": ["auth_attempt_id", "integration_id", "authorize_url", "expires_at"],
+      "properties": {
+        "auth_attempt_id": {"$ref": "common.schema.json#/$defs/ID"},
+        "integration_id": {"type": "string", "minLength": 1},
+        "connection_id": {"$ref": "common.schema.json#/$defs/ID"},
+        "authorize_url": {"type": "string", "format": "uri"},
+        "requested_scopes": {"type": "array", "items": {"type": "string"}},
+        "return_to": {"type": "string"},
+        "expires_at": {"$ref": "common.schema.json#/$defs/Instant"}
+      },
+      "additionalProperties": false
+    },
+    "ComputerTakeoverPayload": {
+      "type": "object",
+      "required": ["session_id", "reason"],
+      "properties": {
+        "session_id": {"$ref": "common.schema.json#/$defs/ID"},
+        "reason": {"enum": ["sign_in", "captcha", "user_requested", "blocked"]},
+        "lease_id": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "Interaction": {
+      "type": "object",
+      "required": ["id", "revision", "kind", "status", "prompt", "payload"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/ID"},
+        "revision": {"$ref": "common.schema.json#/$defs/Revision"},
+        "task_id": {"type": "string"},
+        "instruction_revision": {"type": "integer", "minimum": 0},
+        "conversation_id": {"type": "string"},
+        "automation_id": {"$ref": "common.schema.json#/$defs/ID"},
+        "kind": {"enum": ["question", "approval", "account_selection", "sign_in", "computer_takeover"]},
+        "status": {"enum": ["pending", "resolved", "expired", "superseded"]},
+        "prompt": {"type": "string"},
+        "payload": {"$ref": "common.schema.json#/$defs/JSON"},
+        "action_digest": {"type": "string"},
+        "expires_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "created_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "resolved_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "legacy_question_id": {"type": "string", "description": "Set when this interaction projects an existing state.Question"}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "question"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/QuestionPayload"}}}},
+        {"if": {"properties": {"kind": {"const": "approval"}}}, "then": {"required": ["action_digest"], "properties": {"payload": {"$ref": "#/$defs/ApprovalPayload"}}}},
+        {"if": {"properties": {"kind": {"const": "account_selection"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/AccountSelectionPayload"}}}},
+        {"if": {"properties": {"kind": {"const": "sign_in"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/SignInPayload"}}}},
+        {"if": {"properties": {"kind": {"const": "computer_takeover"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/ComputerTakeoverPayload"}}}}
+      ]
+    },
+    "InteractionResponse": {
+      "allOf": [
+        {"$ref": "common.schema.json#/$defs/Change"},
+        {"properties": {"value": {"oneOf": [
+          {"type": "object", "required": ["kind", "text"], "properties": {"kind": {"const": "answer"}, "text": {"type": "string"}, "option_ids": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false},
+          {"type": "object", "required": ["kind", "action_digest"], "properties": {"kind": {"enum": ["approve", "decline"]}, "action_digest": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+          {"type": "object", "required": ["kind", "connection_id"], "properties": {"kind": {"const": "choose_account"}, "connection_id": {"$ref": "common.schema.json#/$defs/ID"}, "remember_as_default": {"type": "boolean"}}, "additionalProperties": false},
+          {"type": "object", "required": ["kind", "session_id", "lease_id"], "properties": {"kind": {"const": "resume_computer"}, "session_id": {"$ref": "common.schema.json#/$defs/ID"}, "lease_id": {"type": "string", "minLength": 1}}, "additionalProperties": false}
+        ]}}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "auto_1:2026-11-10T07:30:00Z:g2",
+  "automation_id": "auto_1",
+  "automation_revision": 3,
+  "generation": 2,
+  "scheduled_at": "2026-11-10T07:30:00Z",
+  "status": "completed",
+  "task_ids": [
+    "task_20"
+  ],
+  "delivery_ids": [
+    "dlv_1"
+  ],
+  "started_at": "2026-11-10T07:30:02Z",
+  "finished_at": "2026-11-10T07:31:40Z",
+  "summary": "3 meetings, 1 urgent email"
+}

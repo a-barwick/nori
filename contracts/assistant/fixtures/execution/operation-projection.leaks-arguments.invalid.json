@@ -1,0 +1,36 @@
+{
+  "id": "op_42",
+  "task_id": "task_9",
+  "instruction_revision": 3,
+  "call_id": "call_7",
+  "name": "calendar_create_event",
+  "tool": {
+    "id": "nori.google/calendar/events.create",
+    "version": "1.0.0",
+    "digest": "sha256:1111"
+  },
+  "effect_class": "sensitive_send",
+  "outcome": "confirmed",
+  "connection_id": "conn_google_personal",
+  "account_summary": "Personal Google (personal@example.com)",
+  "action_summary": "Created 'Dentist' and invited alex@example.com",
+  "authority_source": "user_request",
+  "provider_refs": [
+    {
+      "connection_id": "conn_google_personal",
+      "kind": "calendar_event",
+      "provider_id": "evt_123",
+      "provider_revision": "etag-9"
+    }
+  ],
+  "receipt_url": "https://calendar.google.com/event?eid=abc",
+  "result_ids": [
+    "res_1"
+  ],
+  "cost": {
+    "status": "not_applicable"
+  },
+  "created_at": "2026-11-09T09:00:00Z",
+  "updated_at": "2026-11-09T10:00:00Z",
+  "arguments": "{...}"
+}

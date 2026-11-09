@@ -1,0 +1,46 @@
+{
+  "ref": {
+    "connection_id": "conn_google_personal",
+    "kind": "mail_message",
+    "provider_id": "msg_1"
+  },
+  "thread": {
+    "connection_id": "conn_google_personal",
+    "kind": "mail_thread",
+    "provider_id": "thr_1"
+  },
+  "from": {
+    "email": "bookings@hotel.example",
+    "name": "Hotel"
+  },
+  "to": [
+    {
+      "email": "personal@example.com"
+    }
+  ],
+  "subject": "Your reservation",
+  "received_at": "2026-11-09T09:00:00Z",
+  "content": {
+    "kind": "snippet",
+    "text": "Your room is confirmed for 20-22 Nov..."
+  },
+  "attachments": [
+    {
+      "id": "att_1",
+      "name": "confirmation.pdf",
+      "media_type": "application/pdf",
+      "size": 48213
+    }
+  ],
+  "labels": [
+    "INBOX"
+  ],
+  "unread": false,
+  "source_url": "https://mail.google.com/mail/u/0/#inbox/thr_1",
+  "supports": {
+    "labels": true,
+    "folders": false,
+    "archive": true,
+    "mark_read": true
+  }
+}

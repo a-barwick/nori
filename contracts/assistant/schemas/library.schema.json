@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.nori.local/assistant/library.schema.json",
+  "title": "Library, typed card parts, search and input (C8)",
+  "$defs": {
+    "CardPart": {
+      "description": "A typed message part that references an authoritative server resource. Older clients show fallback. Never carries executable handlers.",
+      "type": "object",
+      "required": ["type", "schema_version", "kind", "resource", "fallback"],
+      "properties": {
+        "type": {"const": "card"},
+        "schema_version": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["connection_request", "question", "approval", "progress", "calendar_event", "mail_draft", "mail_message", "automation", "goal", "file", "outcome", "computer_session", "plugin"]},
+        "resource": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"type": "string", "minLength": 1}, "id": {"type": "string", "minLength": 1}, "revision": {"$ref": "common.schema.json#/$defs/Revision"}}, "additionalProperties": false},
+        "actions": {"type": "array", "items": {"type": "string", "pattern": "^[a-z_]{1,32}$"}, "description": "Known action kinds the client may offer after re-fetching current state"},
+        "fallback": {"type": "string"},
+        "display": {"enum": ["page", "bubble"]},
+        "id": {"type": "string"}
+      },
+      "not": {"anyOf": [{"required": ["html"]}, {"required": ["script"]}, {"required": ["onclick"]}]}
+    },
+    "Provenance": {
+      "type": "object",
+      "required": ["content"],
+      "properties": {
+        "content": {"enum": ["generated", "uploaded", "copied", "live"]},
+        "source": {"$ref": "common.schema.json#/$defs/ResourceRef"},
+        "source_url": {"type": "string"},
+        "retrieved_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "connection_status": {"$ref": "connections.schema.json#/$defs/ConnectionStatus", "description": "Current access status of the originating connection, for copied/live content"}
+      },
+      "additionalProperties": false
+    },
+    "LibraryItem": {
+      "description": "Projects the existing SavedResult (root_id/version/revises) plus provenance and associations. Existing result URLs remain valid.",
+      "type": "object",
+      "required": ["id", "root_id", "version", "kind", "title", "created_at", "provenance"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "root_id": {"type": "string", "minLength": 1},
+        "version": {"type": "integer", "minimum": 1},
+        "revises": {"type": "string"},
+        "superseded_by": {"type": "string"},
+        "kind": {"enum": ["answer", "file", "screenshot", "link", "document", "event", "message", "report"]},
+        "title": {"type": "string"},
+        "name": {"type": "string"},
+        "media_type": {"type": "string"},
+        "size": {"type": "integer", "minimum": 0},
+        "url": {"type": "string"},
+        "task_id": {"type": "string"},
+        "conversation_id": {"type": "string"},
+        "goal_id": {"type": "string"},
+        "automation_id": {"type": "string"},
+        "provenance": {"$ref": "#/$defs/Provenance"},
+        "index_status": {"enum": ["indexed", "pending", "unsupported", "failed", "stale"]},
+        "created_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "updated_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "deleted_at": {"$ref": "common.schema.json#/$defs/Instant"}
+      }
+    },
+    "SearchHit": {
+      "type": "object",
+      "required": ["kind", "id", "title", "snippet"],
+      "properties": {
+        "kind": {"enum": ["result", "message", "task", "goal", "automation", "file"]},
+        "id": {"type": "string", "minLength": 1},
+        "title": {"type": "string"},
+        "snippet": {"type": "string", "maxLength": 1024},
+        "jump": {"type": "object", "required": ["conversation_id"], "properties": {"conversation_id": {"type": "string"}, "message_id": {"type": "string"}, "task_id": {"type": "string"}}, "additionalProperties": false},
+        "provenance": {"$ref": "#/$defs/Provenance"},
+        "freshness": {"$ref": "common.schema.json#/$defs/Instant"},
+        "score": {"type": "number"}
+      }
+    },
+    "SearchResponse": {
+      "allOf": [{"$ref": "common.schema.json#/$defs/ListResponse"}, {"properties": {"items": {"type": "array", "items": {"$ref": "#/$defs/SearchHit"}}, "query": {"type": "string"}}}]
+    },
+    "UploadAccept": {
+      "description": "Supported upload media types declared by the server, so the composer never suggests an unsupported fallback.",
+      "type": "object",
+      "required": ["media_types", "max_bytes"],
+      "properties": {
+        "media_types": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "max_bytes": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    }
+  }
+}

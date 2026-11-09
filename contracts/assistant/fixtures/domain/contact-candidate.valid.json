@@ -1,0 +1,12 @@
+{
+  "source": {
+    "connection_id": "conn_google_personal",
+    "kind": "contact",
+    "provider_id": "people/c1"
+  },
+  "name": "Alex Kim",
+  "emails": [
+    "alex@example.com"
+  ],
+  "hint": "3 threads in the last month"
+}

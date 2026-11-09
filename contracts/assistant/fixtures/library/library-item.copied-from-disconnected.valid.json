@@ -1,0 +1,19 @@
+{
+  "id": "res_8",
+  "root_id": "res_8",
+  "version": 2,
+  "revises": "res_8v1",
+  "kind": "document",
+  "title": "Reservation confirmation",
+  "provenance": {
+    "content": "copied",
+    "source": {
+      "connection_id": "conn_google_personal",
+      "kind": "mail_message",
+      "provider_id": "msg_1"
+    },
+    "retrieved_at": "2026-11-09T09:00:00Z",
+    "connection_status": "disconnected"
+  },
+  "created_at": "2026-11-09T09:00:00Z"
+}

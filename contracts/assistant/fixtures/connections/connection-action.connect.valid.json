@@ -1,0 +1,11 @@
+{
+  "request_id": "0a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d",
+  "expected_revision": 0,
+  "value": {
+    "action": "connect",
+    "return_to": "/apps/google",
+    "requested_scopes": [
+      "calendar.events"
+    ]
+  }
+}

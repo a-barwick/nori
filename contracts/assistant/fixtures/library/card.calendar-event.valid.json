@@ -1,0 +1,13 @@
+{
+  "type": "card",
+  "schema_version": 1,
+  "kind": "calendar_event",
+  "resource": {
+    "kind": "calendar_event",
+    "id": "conn_google_personal/evt_123"
+  },
+  "actions": [
+    "open"
+  ],
+  "fallback": "Dentist, Tue 10:00-10:30 on Personal"
+}

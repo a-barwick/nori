@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "package": {
+    "id": "acme/weekly-review",
+    "version": "1.2.0",
+    "digest": "sha256:pkg1"
+  },
+  "publisher": {
+    "id": "acme",
+    "name": "Acme"
+  },
+  "title": "Weekly review",
+  "contract_version": "r1",
+  "contributions": [
+    {
+      "kind": "tool",
+      "tool": {
+        "ref": {
+          "id": "nori.google/calendar/events.create",
+          "version": "1.0.0",
+          "digest": "sha256:1111"
+        },
+        "extension": {
+          "id": "nori.google/calendar",
+          "version": "1.0.0",
+          "digest": "sha256:2222"
+        },
+        "model_name": "calendar_create_event",
+        "title": "Create calendar event",
+        "description": "Creates an event on a selected calendar.",
+        "input_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "required": [
+            "calendar_id",
+            "title",
+            "time"
+          ],
+          "properties": {
+            "calendar_id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "time": {
+              "type": "object"
+            },
+            "attendees": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "email"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "output_schema": {
+          "type": "object"
+        },
+        "binding": {
+          "adapter": "plugin",
+          "target": "acme",
+          "version": "1"
+        },
+        "connection_type": "google",
+        "policy": {
+          "effect": "control",
+          "retry": "safe",
+          "timeout_ms": 1000
+        },
+        "exposure": "direct"
+      }
+    }
+  ],
+  "requested_access": {
+    "connection_types": [],
+    "action_classes": [
+      "read"
+    ]
+  },
+  "executor": {
+    "kind": "none"
+  }
+}

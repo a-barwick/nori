@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.nori.local/assistant/connections.schema.json",
+  "title": "Connections and account credentials (C3)",
+  "$defs": {
+    "ConnectionStatus": {"enum": ["not_connected", "connecting", "connected", "needs_attention", "disabled", "disconnecting", "disconnected"]},
+    "Health": {
+      "type": "object",
+      "properties": {
+        "checked_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "code": {"type": "string", "description": "ready, needs_sign_in, needs_more_access, rate_limited, temporarily_failing, revoked, ..."},
+        "message": {"type": "string"},
+        "last_success_at": {"$ref": "common.schema.json#/$defs/Instant"}
+      },
+      "additionalProperties": false
+    },
+    "Connection": {
+      "description": "Public projection. Never carries tokens, credential references, provider payloads from refresh errors, or secret-bearing endpoint URLs.",
+      "type": "object",
+      "required": ["id", "revision", "integration_id", "title", "account", "status", "granted_scopes", "selected_resource_ids", "health", "defaults"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/ID"},
+        "revision": {"$ref": "common.schema.json#/$defs/Revision"},
+        "integration_id": {"type": "string", "minLength": 1},
+        "title": {"type": "string"},
+        "account": {
+          "type": "object",
+          "required": ["provider_id", "label"],
+          "properties": {"provider_id": {"type": "string", "minLength": 1}, "label": {"type": "string"}},
+          "additionalProperties": false
+        },
+        "status": {"$ref": "#/$defs/ConnectionStatus"},
+        "granted_scopes": {"type": "array", "items": {"type": "string"}},
+        "selected_resource_ids": {"type": "array", "items": {"type": "string"}},
+        "health": {"$ref": "#/$defs/Health"},
+        "defaults": {"type": "array", "items": {"type": "string"}, "description": "Named purposes this account is the default for, e.g. calendar.create"},
+        "created_at": {"$ref": "common.schema.json#/$defs/Instant"},
+        "updated_at": {"$ref": "common.schema.json#/$defs/Instant"}
+      },
+      "not": {"anyOf": [
+        {"required": ["access_token"]}, {"required": ["refresh_token"]}, {"required": ["credential_ref"]},
+        {"required": ["credential_version"]}, {"required": ["client_secret"]}, {"required": ["authorization_epoch"]}
+      ]}
+    },
+    "ConnectionEditable": {
+      "type": "object",
+      "required": ["integration_id", "title", "selected_resource_ids", "defaults"],
+      "properties": {
+        "integration_id": {"type": "string", "minLength": 1},
+        "title": {"type": "string"},
+        "selected_resource_ids": {"type": "array", "items": {"type": "string"}},
+        "defaults": {"type": "array", "items": {"type": "string"}},
+        "configuration": {"type": "object", "description": "Ordinary, non-secret configuration. Secret inputs are supplied through a sign-in interaction or a dedicated secret input, never here."}
+      },
+      "additionalProperties": false
+    },
+    "ConnectionChange": {
+      "allOf": [
+        {"$ref": "common.schema.json#/$defs/Change"},
+        {"properties": {"value": {"$ref": "#/$defs/ConnectionEditable"}}}
+      ]
+    },
+    "ConnectionAction": {
+      "allOf": [
+        {"$ref": "common.schema.json#/$defs/ActionRequest"},
+        {"properties": {"value": {"oneOf": [
+          {"type": "object", "required": ["action"], "properties": {"action": {"const": "connect"}, "return_to": {"type": "string"}, "requested_scopes": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false},
+          {"type": "object", "required": ["action"], "properties": {"action": {"const": "repair"}, "return_to": {"type": "string"}}, "additionalProperties": false},
+          {"type": "object", "required": ["action"], "properties": {"action": {"const": "disconnect"}, "delete_imported_content": {"type": "boolean", "description": "Separate explicit deletion; its default depends on D4"}}, "additionalProperties": false},
+          {"type": "object", "required": ["action"], "properties": {"action": {"enum": ["enable", "disable"]}}, "additionalProperties": false}
+        ]}}}
+      ]
+    },
+    "Resource": {
+      "type": "object",
+      "required": ["ref", "title", "kind"],
+      "properties": {
+        "ref": {"$ref": "common.schema.json#/$defs/ResourceRef"},
+        "title": {"type": "string"},
+        "kind": {"type": "string"},
+        "selected": {"type": "boolean"},
+        "writable": {"type": "boolean"}
+      }
+    }
+  }
+}

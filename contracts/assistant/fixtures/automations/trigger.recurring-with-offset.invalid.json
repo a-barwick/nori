@@ -1,0 +1,6 @@
+{
+  "kind": "recurring",
+  "local_start": "2026-11-10T07:30:00Z",
+  "timezone": "Europe/London",
+  "rrule": "FREQ=DAILY"
+}

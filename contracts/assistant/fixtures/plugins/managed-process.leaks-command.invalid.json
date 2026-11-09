@@ -1,0 +1,13 @@
+{
+  "id": "proc_1",
+  "owner_kind": "mcp_server",
+  "owner_id": "mcp_2",
+  "generation": 3,
+  "desired": "running",
+  "observed": "running",
+  "command": [
+    "sh",
+    "-c",
+    "x"
+  ]
+}

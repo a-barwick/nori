@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "package": {
+    "id": "acme/linear",
+    "version": "0.4.1",
+    "digest": "sha256:pkg2"
+  },
+  "publisher": {
+    "id": "acme",
+    "name": "Acme"
+  },
+  "title": "Linear",
+  "contract_version": "r1",
+  "contributions": [
+    {
+      "kind": "mcp_server",
+      "server": {
+        "name": "linear",
+        "transport": "http",
+        "endpoint": "https://mcp.linear.app/mcp",
+        "auth": "oauth"
+      }
+    }
+  ],
+  "requested_access": {
+    "connection_types": [
+      "linear"
+    ],
+    "action_classes": [
+      "read",
+      "reversible_write"
+    ],
+    "network": [
+      "mcp.linear.app"
+    ]
+  },
+  "executor": {
+    "kind": "none"
+  }
+}

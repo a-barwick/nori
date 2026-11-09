@@ -1,0 +1,15 @@
+{
+  "name": "filesystem",
+  "transport": "stdio",
+  "command": [
+    "npx",
+    "-y",
+    "@modelcontextprotocol/server-filesystem",
+    "/data"
+  ],
+  "working_directory": "/data",
+  "environment_refs": [
+    "FS_TOKEN"
+  ],
+  "auth": "none"
+}

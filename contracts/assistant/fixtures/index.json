@@ -1,0 +1,584 @@
+{
+  "revision": "r0-draft",
+  "baseline": "docs/assistant-contract-baseline.md",
+  "schemas_dir": "schemas",
+  "fixtures": [
+    {
+      "file": "fixtures/common/change.valid.json",
+      "schema": "common.schema.json#/$defs/Change",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/change.unknown-field.invalid.json",
+      "schema": "common.schema.json#/$defs/Change",
+      "valid": false,
+      "note": "request schemas reject unknown fields; owner is never client-supplied"
+    },
+    {
+      "file": "fixtures/common/change.bad-request-id.invalid.json",
+      "schema": "common.schema.json#/$defs/Change",
+      "valid": false
+    },
+    {
+      "file": "fixtures/common/receipt.applied.valid.json",
+      "schema": "common.schema.json#/$defs/MutationReceipt",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/receipt.queued.valid.json",
+      "schema": "common.schema.json#/$defs/MutationReceipt",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/receipt.not-accepted.invalid.json",
+      "schema": "common.schema.json#/$defs/MutationReceipt",
+      "valid": false
+    },
+    {
+      "file": "fixtures/common/api-error.503-accepted.valid.json",
+      "schema": "common.schema.json#/$defs/APIError",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/api-error.409.valid.json",
+      "schema": "common.schema.json#/$defs/APIError",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/list.valid.json",
+      "schema": "common.schema.json#/$defs/ListResponse",
+      "valid": true
+    },
+    {
+      "file": "fixtures/tools/tool-definition.valid.json",
+      "schema": "tools.schema.json#/$defs/ToolDefinition",
+      "valid": true
+    },
+    {
+      "file": "fixtures/tools/tool-definition.bad-exposure.invalid.json",
+      "schema": "tools.schema.json#/$defs/ToolDefinition",
+      "valid": false
+    },
+    {
+      "file": "fixtures/tools/tool-definition.bad-model-name.invalid.json",
+      "schema": "tools.schema.json#/$defs/ToolDefinition",
+      "valid": false
+    },
+    {
+      "file": "fixtures/tools/available-tool.ready.valid.json",
+      "schema": "tools.schema.json#/$defs/AvailableTool",
+      "valid": true
+    },
+    {
+      "file": "fixtures/tools/available-tool.needs-connection.valid.json",
+      "schema": "tools.schema.json#/$defs/AvailableTool",
+      "valid": true
+    },
+    {
+      "file": "fixtures/tools/available-tool.leaks-credential.invalid.json",
+      "schema": "tools.schema.json#/$defs/AvailableTool",
+      "valid": false,
+      "note": "Available tools contains no credential references"
+    },
+    {
+      "file": "fixtures/tools/available-tool-list.valid.json",
+      "schema": "tools.schema.json#/$defs/AvailableToolList",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection.connected.valid.json",
+      "schema": "connections.schema.json#/$defs/Connection",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection.needs-attention.valid.json",
+      "schema": "connections.schema.json#/$defs/Connection",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection.leaks-token.invalid.json",
+      "schema": "connections.schema.json#/$defs/Connection",
+      "valid": false,
+      "note": "public projection never carries tokens"
+    },
+    {
+      "file": "fixtures/connections/connection.leaks-credential-ref.invalid.json",
+      "schema": "connections.schema.json#/$defs/Connection",
+      "valid": false
+    },
+    {
+      "file": "fixtures/connections/connection.bad-status.invalid.json",
+      "schema": "connections.schema.json#/$defs/Connection",
+      "valid": false
+    },
+    {
+      "file": "fixtures/connections/connection-change.valid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection-change.secret-in-config.invalid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionChange",
+      "valid": false
+    },
+    {
+      "file": "fixtures/connections/connection-action.disconnect.valid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection-action.connect.valid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection-action.unknown.invalid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionAction",
+      "valid": false
+    },
+    {
+      "file": "fixtures/connections/resource.valid.json",
+      "schema": "connections.schema.json#/$defs/Resource",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/invocation.valid.json",
+      "schema": "execution.schema.json#/$defs/Invocation",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/invocation.unknown-field.invalid.json",
+      "schema": "execution.schema.json#/$defs/Invocation",
+      "valid": false,
+      "note": "adapters receive scoped credentials out of band, never inside the invocation record"
+    },
+    {
+      "file": "fixtures/execution/prepared-action.valid.json",
+      "schema": "execution.schema.json#/$defs/PreparedAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/adapter-result.uncertain.valid.json",
+      "schema": "execution.schema.json#/$defs/AdapterResult",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/adapter-result.confirmed.valid.json",
+      "schema": "execution.schema.json#/$defs/AdapterResult",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/adapter-result.bad-outcome.invalid.json",
+      "schema": "execution.schema.json#/$defs/AdapterResult",
+      "valid": false
+    },
+    {
+      "file": "fixtures/execution/operation-projection.valid.json",
+      "schema": "execution.schema.json#/$defs/OperationProjection",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/operation-projection.leaks-arguments.invalid.json",
+      "schema": "execution.schema.json#/$defs/OperationProjection",
+      "valid": false,
+      "note": "raw arguments stay private"
+    },
+    {
+      "file": "fixtures/execution/operation-projection.bad-outcome.invalid.json",
+      "schema": "execution.schema.json#/$defs/OperationProjection",
+      "valid": false
+    },
+    {
+      "file": "fixtures/permissions/rule.allow-calendar.valid.json",
+      "schema": "permissions.schema.json#/$defs/PermissionRule",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/rule.automation-send.valid.json",
+      "schema": "permissions.schema.json#/$defs/PermissionRule",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/rule.bad-effect.invalid.json",
+      "schema": "permissions.schema.json#/$defs/PermissionRule",
+      "valid": false
+    },
+    {
+      "file": "fixtures/permissions/rule-change.valid.json",
+      "schema": "permissions.schema.json#/$defs/PermissionRuleChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/decision.needs-interaction.valid.json",
+      "schema": "permissions.schema.json#/$defs/PermissionDecision",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/decision.leaks-authority-ref.invalid.json",
+      "schema": "permissions.schema.json#/$defs/PermissionDecision",
+      "valid": false
+    },
+    {
+      "file": "fixtures/permissions/interaction.question.valid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/interaction.question.bad-payload.invalid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": false
+    },
+    {
+      "file": "fixtures/permissions/interaction.approval.valid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/interaction.approval.missing-digest.invalid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": false,
+      "note": "approvals bind to an action digest"
+    },
+    {
+      "file": "fixtures/permissions/interaction.sign-in.valid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/interaction.account-selection.valid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/interaction.computer-takeover.valid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/interaction.legacy-question.valid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/response.approve.valid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/response.answer.valid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/response.choose-account.valid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/response.approve-without-digest.invalid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": false,
+      "note": "an unbound approve is insufficient"
+    },
+    {
+      "file": "fixtures/permissions/response.bad-kind.invalid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": false
+    },
+    {
+      "file": "fixtures/automations/automation.recurring.valid.json",
+      "schema": "automations.schema.json#/$defs/Automation",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/automation.once.valid.json",
+      "schema": "automations.schema.json#/$defs/Automation",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/automation.event-relative.valid.json",
+      "schema": "automations.schema.json#/$defs/Automation",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/automation.watch.valid.json",
+      "schema": "automations.schema.json#/$defs/Automation",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/automation.bad-missed-run.invalid.json",
+      "schema": "automations.schema.json#/$defs/Automation",
+      "valid": false
+    },
+    {
+      "file": "fixtures/automations/trigger.watch-too-frequent.invalid.json",
+      "schema": "automations.schema.json#/$defs/Trigger",
+      "valid": false
+    },
+    {
+      "file": "fixtures/automations/trigger.recurring-with-offset.invalid.json",
+      "schema": "automations.schema.json#/$defs/Trigger",
+      "valid": false,
+      "note": "recurring local times are floating; the offset belongs to the timezone"
+    },
+    {
+      "file": "fixtures/automations/automation-change.valid.json",
+      "schema": "automations.schema.json#/$defs/AutomationChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/automation-change.authority-ref-supplied.invalid.json",
+      "schema": "automations.schema.json#/$defs/AutomationChange",
+      "valid": false,
+      "note": "authority_ref is server-issued"
+    },
+    {
+      "file": "fixtures/automations/automation-action.snooze.valid.json",
+      "schema": "automations.schema.json#/$defs/AutomationAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/automation-action.pause.valid.json",
+      "schema": "automations.schema.json#/$defs/AutomationAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/occurrence.valid.json",
+      "schema": "automations.schema.json#/$defs/Occurrence",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/delivery.valid.json",
+      "schema": "automations.schema.json#/$defs/Delivery",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/delivery.bad-state.invalid.json",
+      "schema": "automations.schema.json#/$defs/Delivery",
+      "valid": false
+    },
+    {
+      "file": "fixtures/automations/destination.valid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestination",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/destination.leaks-token.invalid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestination",
+      "valid": false,
+      "note": "no plaintext notification secrets in responses"
+    },
+    {
+      "file": "fixtures/automations/goal.valid.json",
+      "schema": "automations.schema.json#/$defs/Goal",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/goal.bad-status.invalid.json",
+      "schema": "automations.schema.json#/$defs/Goal",
+      "valid": false
+    },
+    {
+      "file": "fixtures/automations/goal-change.valid.json",
+      "schema": "automations.schema.json#/$defs/GoalChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/goal-action.complete.valid.json",
+      "schema": "automations.schema.json#/$defs/GoalAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/card.approval.valid.json",
+      "schema": "library.schema.json#/$defs/CardPart",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/card.calendar-event.valid.json",
+      "schema": "library.schema.json#/$defs/CardPart",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/card.has-script.invalid.json",
+      "schema": "library.schema.json#/$defs/CardPart",
+      "valid": false,
+      "note": "cards never carry executable handlers"
+    },
+    {
+      "file": "fixtures/library/card.bad-kind.invalid.json",
+      "schema": "library.schema.json#/$defs/CardPart",
+      "valid": false
+    },
+    {
+      "file": "fixtures/library/library-item.copied.valid.json",
+      "schema": "library.schema.json#/$defs/LibraryItem",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/library-item.copied-from-disconnected.valid.json",
+      "schema": "library.schema.json#/$defs/LibraryItem",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/library-item.bad-provenance.invalid.json",
+      "schema": "library.schema.json#/$defs/LibraryItem",
+      "valid": false
+    },
+    {
+      "file": "fixtures/library/search-response.valid.json",
+      "schema": "library.schema.json#/$defs/SearchResponse",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/upload-accept.valid.json",
+      "schema": "library.schema.json#/$defs/UploadAccept",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/skill.valid.json",
+      "schema": "plugins.schema.json#/$defs/Skill",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/skill.claims-authority.invalid.json",
+      "schema": "plugins.schema.json#/$defs/Skill",
+      "valid": false,
+      "note": "loading a skill grants no authority"
+    },
+    {
+      "file": "fixtures/plugins/manifest.instruction-only.valid.json",
+      "schema": "plugins.schema.json#/$defs/PackageManifest",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/manifest.mcp.valid.json",
+      "schema": "plugins.schema.json#/$defs/PackageManifest",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/manifest.reserved-control.invalid.json",
+      "schema": "plugins.schema.json#/$defs/PackageManifest",
+      "valid": false,
+      "note": "external manifests cannot register control tools"
+    },
+    {
+      "file": "fixtures/plugins/installation.valid.json",
+      "schema": "plugins.schema.json#/$defs/Installation",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/installation.bad-state.invalid.json",
+      "schema": "plugins.schema.json#/$defs/Installation",
+      "valid": false
+    },
+    {
+      "file": "fixtures/plugins/installation-action.update.valid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/installation-action.uninstall.valid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-server-template.leaks-token.invalid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServerTemplate",
+      "valid": false,
+      "note": "store secret references, not literal credentials"
+    },
+    {
+      "file": "fixtures/plugins/mcp-server-template.stdio.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServerTemplate",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-server.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServer",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-server.leaks-headers.invalid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServer",
+      "valid": false
+    },
+    {
+      "file": "fixtures/plugins/managed-process.valid.json",
+      "schema": "plugins.schema.json#/$defs/ManagedProcess",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/managed-process.leaks-command.invalid.json",
+      "schema": "plugins.schema.json#/$defs/ManagedProcess",
+      "valid": false,
+      "note": "the executable vector is runtime-resolved, not a public field"
+    },
+    {
+      "file": "fixtures/plugins/computer-session.valid.json",
+      "schema": "plugins.schema.json#/$defs/ComputerSession",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/computer-session.bad-controller.invalid.json",
+      "schema": "plugins.schema.json#/$defs/ComputerSession",
+      "valid": false
+    },
+    {
+      "file": "fixtures/plugins/computer-session-action.resume.valid.json",
+      "schema": "plugins.schema.json#/$defs/ComputerSessionAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/computer-session-action.resume-without-lease.invalid.json",
+      "schema": "plugins.schema.json#/$defs/ComputerSessionAction",
+      "valid": false
+    },
+    {
+      "file": "fixtures/domain/calendar-event.timed.valid.json",
+      "schema": "domain.schema.json#/$defs/CalendarEvent",
+      "valid": true
+    },
+    {
+      "file": "fixtures/domain/calendar-event.all-day-ics.valid.json",
+      "schema": "domain.schema.json#/$defs/CalendarEvent",
+      "valid": true
+    },
+    {
+      "file": "fixtures/domain/calendar-event.bad-time.invalid.json",
+      "schema": "domain.schema.json#/$defs/CalendarEvent",
+      "valid": false,
+      "note": "timed events keep their IANA zone"
+    },
+    {
+      "file": "fixtures/domain/calendar-time.mixed.invalid.json",
+      "schema": "domain.schema.json#/$defs/CalendarTime",
+      "valid": false
+    },
+    {
+      "file": "fixtures/domain/availability.unknown.valid.json",
+      "schema": "domain.schema.json#/$defs/AvailabilitySlot",
+      "valid": true
+    },
+    {
+      "file": "fixtures/domain/mail-message.snippet.valid.json",
+      "schema": "domain.schema.json#/$defs/MailMessage",
+      "valid": true
+    },
+    {
+      "file": "fixtures/domain/mail-draft.valid.json",
+      "schema": "domain.schema.json#/$defs/MailDraft",
+      "valid": true
+    },
+    {
+      "file": "fixtures/domain/mail-draft.missing-recipient-lists.invalid.json",
+      "schema": "domain.schema.json#/$defs/MailDraft",
+      "valid": false,
+      "note": "approval binds the full recipient lists, so they are always present"
+    },
+    {
+      "file": "fixtures/domain/contact-candidate.valid.json",
+      "schema": "domain.schema.json#/$defs/ContactCandidate",
+      "valid": true
+    }
+  ]
+}

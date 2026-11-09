@@ -1,0 +1,17 @@
+{
+  "request_id": "6f1c2a0e-1b7e-4f0a-9c2d-3e4f5a6b7c8d",
+  "expected_revision": 5,
+  "value": {
+    "action": "update",
+    "version": "0.5.0",
+    "approved_access": {
+      "connection_types": [
+        "linear"
+      ],
+      "action_classes": [
+        "read",
+        "reversible_write"
+      ]
+    }
+  }
+}

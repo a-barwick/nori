@@ -1,0 +1,24 @@
+{
+  "ref": {
+    "id": "nori.user/skills/weekly-review",
+    "version": "3",
+    "digest": "sha256:skill3"
+  },
+  "title": "Weekly review",
+  "description": "Summarize the week's commitments.",
+  "instructions": "Read goals and finished work from the past 7 days and write a short review.",
+  "inputs": {
+    "type": "object",
+    "properties": {
+      "week_of": {
+        "type": "string",
+        "format": "date"
+      }
+    }
+  },
+  "required_tool_ids": [
+    "nori/library.search",
+    "nori/goals.list"
+  ],
+  "scope": "user"
+}

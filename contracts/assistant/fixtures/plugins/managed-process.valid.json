@@ -1,0 +1,16 @@
+{
+  "id": "proc_1",
+  "owner_kind": "mcp_server",
+  "owner_id": "mcp_2",
+  "generation": 3,
+  "desired": "running",
+  "observed": "running",
+  "computer_id": "cmp_1",
+  "restart_policy": "on_failure",
+  "limits": {
+    "memory_mb": 512,
+    "wall_ms": 3600000
+  },
+  "log_ref": "artifact://proc_1/g3/log",
+  "started_at": "2026-11-09T09:00:00Z"
+}
