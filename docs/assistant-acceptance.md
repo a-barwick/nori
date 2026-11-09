@@ -76,9 +76,9 @@ Each is run on the local integration stack and recorded here with what could not
 | Revoke during execution | not started | |
 | Registry update after a pinned call | not started | |
 | Replay of a retained Temporal history against the new worker | locally verified | See A40: ed6b020 and 4143e92 histories replay against the merged workflow in `contracts-check`. |
-| Scheduler race with two due-slot observers | not started | |
+| Scheduler race with two due-slot observers | locally verified | At `2e2351f` a second core (port 8084) ran against the same database and Temporal namespace while three one-time reminders fell due at the same instant (02:16:47Z); both cores were processing at that moment. Each reminder produced exactly one occurrence, one task and one delivery. |
 | Computer takeover and lease expiry | not started | |
-| Disconnect retention (D4 interim flags) | not started | |
+| Disconnect retention (D4 interim flags) | locally verified, partly | At `2e2351f` on three recorded connections, disconnect with each flag combination (`purge_cache` / `delete_imported_content`: off/off, on/off, on/on) closed access at once (resource reads answer 409 `not_connected`), called the provider's revoke, kept the account identity for attribution, and left saved Library items untouched. Not shown: a difference between the flags, because these connections had no cached or imported content yet. |
 
 ## Performance baseline
 
