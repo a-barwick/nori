@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { deviceLabel, pushSupported, subscribeThisDevice } from "@/lib/assistant/push";
 import { useAssistant } from "@/lib/assistant/context";
-import { EFFECT_LABEL, relative, when } from "@/lib/assistant/format";
+import { EFFECT_LABEL, relative, when, plainText } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Connection, DeliveryDestination, MCPClient, MCPClientCreated, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
@@ -217,7 +217,7 @@ function Notifications() {
       {preferences.data?.quiet_hours && <p className="mt-2 text-meta text-ink-2">Quiet hours {preferences.data.quiet_hours.start}–{preferences.data.quiet_hours.end}: notifications wait; work still runs.</p>}
       <AddDestination />
     </Section>
-    <Section title="Inbox">{inbox.loading ? <Loading /> : inbox.data?.items.length ? <Rows>{inbox.data.items.map((item) => <Row key={item.id} href={hrefFor(item.link)} title={item.title} detail={`${item.body} · ${relative(item.created_at)}`}
+    <Section title="Inbox">{inbox.loading ? <Loading /> : inbox.data?.items.length ? <Rows>{inbox.data.items.map((item) => <Row key={item.id} href={hrefFor(item.link)} title={item.title} detail={`${plainText(item.body)} · ${relative(item.created_at)}`}
       trailing={item.acknowledged_at ? <span className="text-meta text-ink-3">Seen</span> : <Button size="sm" variant="quiet" onClick={() => void acknowledge(item)}>Mark seen</Button>} chevron={false} />)}</Rows> : <Empty>Nothing yet.</Empty>}</Section>
   </>;
 }
