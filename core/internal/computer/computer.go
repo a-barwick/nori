@@ -335,7 +335,7 @@ func (c *Client) SandboxRun(ctx context.Context, req rpc.SandboxRequest) (rpc.Sa
 	if !c.sandbox {
 		return result, errors.New("this computer cannot run sandboxed packages")
 	}
-	req.TaskID = c.taskID
+	req.RunID, req.TaskID = c.run, c.taskID
 	data, err := c.post(ctx, rpc.SandboxRunPath, req, 512<<10)
 	if err != nil {
 		return result, err
