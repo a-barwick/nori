@@ -92,7 +92,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	microsoft.Register(adapters)
 	icloud.Register(adapters)
 	integrations := []connections.Integration{google.Integration{ClientID: s.Connections.GoogleClientID, ClientSecret: s.Connections.GoogleClientSecret},
-		microsoft.Integration{ClientID: s.Connections.MicrosoftClientID, ClientSecret: s.Connections.MicrosoftClientSecret}, icloud.Integration{}}
+		microsoft.Integration{ClientID: s.Connections.MicrosoftClientID, ClientSecret: s.Connections.MicrosoftClientSecret, Tenant: s.Connections.MicrosoftTenant}, icloud.Integration{}}
 	conn := connections.New(store, credentials, s.Connections.RedirectURL, integrations...)
 	if s.Connections.ProviderReplay != "" {
 		if s.Cloud != "local" {

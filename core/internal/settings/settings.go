@@ -50,6 +50,7 @@ type Connections struct {
 	GoogleClientID, GoogleClientSecret string
 	// MicrosoftClientID and MicrosoftClientSecret come from an Entra app registration (personal and work accounts).
 	MicrosoftClientID, MicrosoftClientSecret string
+	MicrosoftTenant                          string
 	// RedirectURL is the OAuth callback through the web proxy, for example http://127.0.0.1:3211/api/v1/connections/oauth/callback.
 	RedirectURL string
 	// CredentialStore is "local" (development only, requires NORI_CLOUD=local) or empty (unavailable).
@@ -249,7 +250,8 @@ func connectionsFromEnvironment(localArtifacts string) Connections {
 	return Connections{
 		GoogleClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), GoogleClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
 		MicrosoftClientID: os.Getenv("MICROSOFT_CLIENT_ID"), MicrosoftClientSecret: os.Getenv("MICROSOFT_CLIENT_SECRET"),
-		RedirectURL: os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
+		MicrosoftTenant: os.Getenv("MICROSOFT_TENANT"),
+		RedirectURL:     os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
 		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"), UserSends: get("NORI_USER_SENDS", "ask"),
 		ProviderReplay: os.Getenv("NORI_PROVIDER_REPLAY"),
 		MCPCommands:    mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
