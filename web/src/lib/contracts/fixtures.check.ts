@@ -2390,3 +2390,16 @@ export const fx_plugins_computer_session_waiting_valid: ComputerSession = {
   ]
 };
 
+// fixtures/connections/connection.not-connected-no-account.valid.json
+export const fx_connections_connection_not_connected_no_account_valid: Connection = {
+  "id": "conn_new",
+  "revision": 1,
+  "integration_id": "google",
+  "title": "Google",
+  "status": "not_connected",
+  "granted_scopes": [],
+  "selected_resource_ids": [],
+  "health": {},
+  "defaults": []
+};
+

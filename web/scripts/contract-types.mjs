@@ -90,6 +90,14 @@ function typeOf(schema, file, pad) {
     const { schema: merged, conditionals } = mergeAllOf({ allOf: own.properties ? [own, ...allOf] : allOf }, file);
     if (!conditionals.length) return objectType(merged, file, pad, true);
     const discriminators = new Set(conditionals.map(({ part }) => Object.keys(part.if.properties)[0]));
+    // A const conditional becomes a union only when it discriminates on one enum field
+    // that every arm names. Anything else would silently narrow the whole type.
+    const [field] = discriminators;
+    const declared = merged.properties[field]?.schema ?? merged.properties[field];
+    const values = conditionals.map(({ part }) => part.if.properties[field].const);
+    if (discriminators.size !== 1 || !Array.isArray(declared?.enum) || !values.every((value) => declared.enum.includes(value))) {
+      throw new Error(`Unsupported if/then on "${[...discriminators].join(", ")}": only a const on one enum discriminator is turned into a union. Express this rule another way or extend the generator.`);
+    }
     const base = objectType({ ...merged, properties: Object.fromEntries(Object.entries(merged.properties).filter(([name]) => !discriminators.has(name))) }, file, pad, true);
     const variants = conditionals.map(({ part, file: partFile }) => {
       const [discriminator, condition] = Object.entries(part.if.properties)[0];

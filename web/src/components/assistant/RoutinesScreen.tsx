@@ -95,7 +95,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
         </DropdownMenu.Root>}
         <Link href={`/routines/${encodeURIComponent(id)}/edit`} className="inline-flex h-9 items-center rounded-full px-4 text-row-title font-medium text-ink shadow-[inset_0_0_0_1px_var(--hairline-strong)] hover:bg-fill-1">Edit</Link>
         <Confirm danger title="Cancel this routine?" body="It won’t run again. Its history stays here. Work already started keeps going until you stop it in Work." confirm="Cancel routine" onConfirm={() => void act({ action: "cancel" }, "cancel")}
-          trigger={<Button variant="quiet" className="text-danger" disabled={!!action.pending}>Cancel routine</Button>} />
+          trigger={<Button variant="quiet" className="text-danger!" disabled={!!action.pending}>Cancel routine</Button>} />
       </div>}
       <Section title="What it does">
         <p className="rounded-card border border-hairline bg-surface p-4 text-body whitespace-pre-wrap">{item.instruction}</p>
@@ -245,7 +245,7 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
         <fieldset>
           <legend className="mb-1.5 text-meta font-medium">Accounts it can use</legend>
           {writable.length ? <div className="flex flex-wrap gap-2">{writable.map((connection) => <label key={connection.id} className={cn("flex min-h-11 cursor-pointer items-center gap-2 rounded-full border px-3 text-meta", accounts.includes(connection.id) ? "border-accent bg-accent-subtle" : "border-hairline")}>
-            <input type="checkbox" className="accent-[var(--accent)]" checked={accounts.includes(connection.id)} onChange={() => setAccounts(accounts.includes(connection.id) ? accounts.filter((other) => other !== connection.id) : [...accounts, connection.id])} />{connection.title} · {connection.account.label}</label>)}</div>
+            <input type="checkbox" className="accent-[var(--accent)]" checked={accounts.includes(connection.id)} onChange={() => setAccounts(accounts.includes(connection.id) ? accounts.filter((other) => other !== connection.id) : [...accounts, connection.id])} />{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</label>)}</div>
             : <p className="text-meta text-ink-2">No connected accounts. <Link href="/apps" className="text-accent-text hover:underline">Connect one</Link>.</p>}
         </fieldset>
         <fieldset className="space-y-2">

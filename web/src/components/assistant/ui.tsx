@@ -138,7 +138,7 @@ export function Confirm({ trigger, title, body, confirm, onConfirm, danger }: {
           {body ? <AlertDialog.Description asChild><div className="mt-2 text-body text-ink-2">{body}</div></AlertDialog.Description> : <AlertDialog.Description className="sr-only">{title}</AlertDialog.Description>}
           <div className="mt-6 flex justify-end gap-2">
             <AlertDialog.Cancel asChild><Button variant="quiet">Cancel</Button></AlertDialog.Cancel>
-            <AlertDialog.Action asChild><Button variant="primary" className={danger ? "bg-danger hover:bg-danger active:bg-danger" : undefined} onClick={onConfirm}>{confirm}</Button></AlertDialog.Action>
+            <AlertDialog.Action asChild><Button variant="primary" className={danger ? "bg-danger! hover:bg-danger! active:bg-danger!" : undefined} onClick={onConfirm}>{confirm}</Button></AlertDialog.Action>
           </div>
         </AlertDialog.Content>
       </AlertDialog.Portal>

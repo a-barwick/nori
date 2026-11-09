@@ -1,5 +1,5 @@
 {
-  "revision": "r2.1",
+  "revision": "r2.2",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -932,6 +932,17 @@
       "schema": "library.schema.json#/$defs/InboxItem",
       "valid": false,
       "note": "acknowledge needs the resource revision (r2.1)"
+    },
+    {
+      "file": "fixtures/connections/connection.not-connected-no-account.valid.json",
+      "schema": "connections.schema.json#/$defs/Connection",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection.empty-account.invalid.json",
+      "schema": "connections.schema.json#/$defs/Connection",
+      "valid": false,
+      "note": "omit the account until sign-in rather than sending an empty placeholder (r2.2)"
     }
   ]
 }

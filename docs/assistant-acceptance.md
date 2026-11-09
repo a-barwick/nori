@@ -18,9 +18,9 @@ Statuses: **not started**; **implemented** (code merged into the integration bra
 
 | ID | Scenario | Status | Evidence | Needs (credential, account or decision) |
 | --- | --- | --- | --- | --- |
-| A01 | New user connects several accounts | not started | | Google: blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console. Microsoft Graph app registration. iCloud app-specific password for a test Apple account. D1 for storing real credentials beyond the interim local store. |
-| A02 | Cancel, repeat, replay sign-in callback | not started | | Local verification possible with a recorded callback; provider leg blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console. |
-| A03 | Expired/revoked/insufficient access | not started | | Provider leg blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console; then Austin revokes the grant at myaccount.google.com. |
+| A01 | New user connects several accounts | not started | | Google: blocked on (1) Austin signing in with a Google account at the browser on `http://127.0.0.1:3213` (Apps → Google → Sign in) and choosing the account and consenting; (2) the console registration of `http://127.0.0.1:3213/api/v1/connections/oauth/callback` appears satisfied: on 2026-11-08 Google accepted the client and redirect and showed its account chooser for "Nori" rather than `redirect_uri_mismatch`, but this is unconfirmed until a callback completes. Microsoft Graph app registration. iCloud app-specific password for a test Apple account. D1 for storing real credentials beyond the interim local store. |
+| A02 | Cancel, repeat, replay sign-in callback | not started | | Local verification possible with a recorded callback; provider leg blocked on (1) Austin signing in with a Google account at the browser on `http://127.0.0.1:3213` (Apps → Google → Sign in) and choosing the account and consenting; (2) the console registration of `http://127.0.0.1:3213/api/v1/connections/oauth/callback` appears satisfied: on 2026-11-08 Google accepted the client and redirect and showed its account chooser for "Nori" rather than `redirect_uri_mismatch`, but this is unconfirmed until a callback completes. |
+| A03 | Expired/revoked/insufficient access | not started | | Provider leg blocked on (1) Austin signing in with a Google account at the browser on `http://127.0.0.1:3213` (Apps → Google → Sign in) and choosing the account and consenting; (2) the console registration of `http://127.0.0.1:3213/api/v1/connections/oauth/callback` appears satisfied: on 2026-11-08 Google accepted the client and redirect and showed its account chooser for "Nori" rather than `redirect_uri_mismatch`, but this is unconfirmed until a callback completes; then Austin revokes the grant at myaccount.google.com. |
 | A04 | Capability-only request forbids private reads | not started | | None beyond implementation; verified from operation records showing no read calls. |
 | A05 | Install/configure a plugin | not started | | None. |
 | A06 | Update/pin/rollback/uninstall | not started | | None. |
@@ -32,16 +32,16 @@ Statuses: **not started**; **implemented** (code merged into the integration bra
 | A12 | MCP resources/prompts/interactive requests | not started | | None for local. |
 | A13 | Nori MCP endpoint | not started | | An external MCP client (local). |
 | A14 | Nested calls/programmatic composition | not started | | None. |
-| A15 | Multi-calendar agenda and natural follow-up | not started | | Google: blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console, with two calendars on the account; Microsoft and iCloud as in A01. |
+| A15 | Multi-calendar agenda and natural follow-up | not started | | Google: blocked on (1) Austin signing in with a Google account at the browser on `http://127.0.0.1:3213` (Apps → Google → Sign in) and choosing the account and consenting; (2) the console registration of `http://127.0.0.1:3213/api/v1/connections/oauth/callback` appears satisfied: on 2026-11-08 Google accepted the client and redirect and showed its account chooser for "Nori" rather than `redirect_uri_mismatch`, but this is unconfirmed until a callback completes, with two calendars on the account; Microsoft and iCloud as in A01. |
 | A16 | Availability/conflicts | not started | | As A15. |
 | A17 | Create/update/cancel/invite/RSVP | not started | | As A15, plus a second test account to receive invitations. |
 | A18 | Recurrence and time semantics | not started | | As A15. |
 | A19 | Calendar synchronization and ICS | not started | | As A15; push channels need a public HTTPS callback, which the local stack lacks, so local uses polling/incremental sync and records that limit. |
-| A20 | Email search/read/attachments | not started | | HEY: access path for the user's HEY account (not Gmail as a substitute). Gmail: blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console, with mail scopes. Outlook: Microsoft Graph registration. |
+| A20 | Email search/read/attachments | not started | | HEY: access path for the user's HEY account (not Gmail as a substitute). Gmail: blocked on (1) Austin signing in with a Google account at the browser on `http://127.0.0.1:3213` (Apps → Google → Sign in) and choosing the account and consenting; (2) the console registration of `http://127.0.0.1:3213/api/v1/connections/oauth/callback` appears satisfied: on 2026-11-08 Google accepted the client and redirect and showed its account chooser for "Nori" rather than `redirect_uri_mismatch`, but this is unconfirmed until a callback completes, with mail scopes. Outlook: Microsoft Graph registration. |
 | A21 | Draft/reply/forward/send | not started | | As A20; sends go only to test recipients Austin names. |
 | A22 | Email organization and contacts | not started | | As A20. |
 | A23 | Cross-app reservation workflow | not started | | Calendar and email providers above. |
-| A24 | Files/projects/messaging connectors | not started | | Google Drive (blocked on (1) Austin signing in with a Google account at the browser on `http://localhost:3213` and (2) the Google OAuth client listing `http://localhost:3213/api/v1/connections/oauth/callback` as an authorized redirect URI in the Google Cloud console), OneDrive, Dropbox, Notion, Linear, GitHub, Slack, Teams: a token, app registration or MCP OAuth for each. |
+| A24 | Files/projects/messaging connectors | not started | | Google Drive (blocked on (1) Austin signing in with a Google account at the browser on `http://127.0.0.1:3213` (Apps → Google → Sign in) and choosing the account and consenting; (2) the console registration of `http://127.0.0.1:3213/api/v1/connections/oauth/callback` appears satisfied: on 2026-11-08 Google accepted the client and redirect and showed its account chooser for "Nori" rather than `redirect_uri_mismatch`, but this is unconfirmed until a callback completes), OneDrive, Dropbox, Notion, Linear, GitHub, Slack, Teams: a token, app registration or MCP OAuth for each. |
 | A25 | One-time and recurring reminders | not started | | Push provider credentials for closed-app delivery; in-app delivery verifiable locally. D2 interim for unattended writes. |
 | A26 | Edit/cancel/snooze and duplicate wakes | not started | | None. |
 | A27 | Event-relative reminders | not started | | Calendar provider (A15). |
@@ -55,7 +55,7 @@ Statuses: **not started**; **implemented** (code merged into the integration bra
 | A35 | File input and voice | not started | | Voice is out of scope for current work per Austin's standing instruction; recorded as such unless he brings it back. |
 | A36 | Library/search/revision/export | not started | | None. |
 | A37 | Memory and preferences | not started | | None. |
-| A38 | Wrong-account and cross-user attacks | not started | Existing conversation routes only: scenario `conversations-owner-isolation` passes live (user B gets 404 on read, history, operations, message, cancel and delete of user A's conversation; A's conversation survives). New route families, cached results, plugin calls and search are not built yet. | None (two local users, see runbook). |
+| A38 | Wrong-account and cross-user attacks | not started | Scenarios pass live at `ce40471`: `conversations-owner-isolation` and `connections-owner-isolation` (user B gets 404 on read, resources, update, actions, receipt lookup and list for user A's ids; A's records unchanged). Request schemas reject `owner_id` in values (fixtures; backend returns 400). Not yet covered: permissions, interactions, work, search, cached results, plugin calls. | None (two local users, see runbook). |
 | A39 | Uncertain external write | not started | | Fault injection locally; provider leg needs a writable provider account. |
 | A40 | Upgrade/replay/rollback | implemented | W1 pinning (`8de4158`) merged as `4143e92`. `contracts-check` replays `contracts/assistant/histories/ed6b020-web-search-task.json` (captured before pinning; calls carry no `Exec`, so the workflow takes the name-lookup path) and `4143e92-pinned-exec-computer-unavailable.json` (every call pins tool ref, binding and policy) against the merged workflow: both replay. A tampered copy fails with TMPRL1100, so the check bites. Remaining for locally verified: a dynamic (non-built-in) call history once W2/W3 land; rollback of a worker build with saved receipts and schedules intact. | None. |
 | A41 | Budget exhaustion and feedback | not started | | None. |
@@ -72,7 +72,7 @@ Each is run on the local integration stack and recorded here with what could not
 | Kill and restart the worker mid-task | locally verified | 2026-11-08 at `e680c6f`: task `2321c723` (six sequential web searches) stopped after 4 confirmed operations, worker down 30 s (run stayed `running`, no progress), restarted on the same build `int-e680c6f`. The in-flight workflow task timed out once and was retried; the task completed with 6 operations, each `attempt: 1`, no duplicate operation ids, and the expected result. |
 | Kill and restart core mid-task | locally verified | 2026-11-08 at `e680c6f`: task `aa217d42` (four sequential web searches) running with 2 operations done; core (`nori-local`) stopped at 00:56:45. The worker finished the workflow while core was down. After core restarted, the result was delivered to the assistant conversation once (one assistant message at 00:57:38), with 4 operations, each `attempt: 1`. |
 | Lost wake and duplicate wake | not started | Duplicate submission only: scenario `conversation-message-retry` passes live (same message id twice gives the same active turn and one user message). A real lost wake (wake failure after acceptance) is not exercised yet. |
-| Stale approval after a correction | not started | |
+| Stale approval after a correction | not started | Implemented by backend at `0e0c152` (a steer that advances the instruction revision supersedes pending interactions in the same transaction). Not exercised: needs a task that raises an approval, which needs a connected provider write tool. |
 | Revoke during execution | not started | |
 | Registry update after a pinned call | not started | |
 | Replay of a retained Temporal history against the new worker | locally verified | See A40: ed6b020 and 4143e92 histories replay against the merged workflow in `contracts-check`. |
@@ -100,12 +100,26 @@ Stages: ack = user message to acknowledgment; dispatch = user message to task st
 | 2026-11-08 | coordinator record | `d1bf5bf` | n/a (docs) | pass | n/a | merged |
 | 2026-11-08 | backend W1 (Extension registry, CallRef.Exec pinning) | `8de4158` via `2ffce04` | pass | pass, 2 histories replay | two web-search tasks on the local stack; pinned `Exec` present on every call | merged; found defect D-001 (pre-existing, below) |
 | 2026-11-08 | backend D-001 fix | `67e01b3` | pass | pass | stuck run settled | merged as `e680c6f` |
+| 2026-11-08 | backend W2/W3, C1, C5, Google connector | `0e0c152` | pass | pass | live scenarios on core 8083 with `NORI_CREDENTIAL_STORE=local`; Google authorize URL checked (calendar.readonly + identity scopes only, PKCE, state, 127.0.0.1:3213 redirect) | merged as `ff180f3`; D-002, D-003 found |
+| 2026-11-08 | backend D-002 fix | `2264300` | pass | pass | `connections-owner-isolation` passes | merged |
+| 2026-11-08 | frontend Apps, Routines, Goals, Library, Settings, Computer screens | `bc69dba` | pass | pass | fixture-backed until routes land; not evidence | merged |
+| 2026-11-08 | frontend optional account, composer input, typed cards | `888b924` | pass | pass | not yet exercised | merged with r2.2 `ce40471` |
 | 2026-11-08 | frontend shell, Work, interaction cards, proxy routes, generated types | `dc6d7d2` | pass, including fixture type-check | pass | web on 3213 as user A: chat history and Work list render from core 8083 through the proxy | merged |
+
+## Contract obligations exercised live
+
+| Obligation | Status | Evidence |
+| --- | --- | --- |
+| Connection update (revision guard, idempotent retry, conflicting retry) | locally verified except one field | Scenario `connection-update-idempotency` against backend handlers at `ff180f3`: create 201 at revision 1; X expecting 1 gives revision 2; identical retry of X returns the identical receipt; `GET /v1/mutations/X` returns it; Y expecting 1 gets 409 `revision_conflict` with `current.revision: 2`; X with a changed value gets 409 `idempotency_conflict` without `current`; the connection is unchanged. The only failing check is the r2.2 `account` shape (backend still sends an empty placeholder). |
+| Owner isolation | locally verified for conversations and connections | See A38. |
+| Acceptance with retry of the same id | locally verified for conversation messages | Scenario `conversation-message-retry`. |
 
 ## Defects found in integration
 
 | ID | Found | Owner | Reproduction | Status |
 | --- | --- | --- | --- | --- |
+| D-002 | 2026-11-08 at `ff180f3` | backend | As user 2222…, `PUT /v1/connections/conn_00000000000000000000` (or user A's id) with `expected_revision: 1` returned 409 `revision_conflict` without `current`; missing or foreign ids must be 404. Not an existence oracle (a random id behaved the same). | fixed in `2264300`, merged; `connections-owner-isolation` passes at `ce40471` |
+| D-003 | 2026-11-08 at `ce40471` | backend | A connection created before sign-in is returned with `account: {provider_id: "", label: ""}`; r2.2 requires omitting `account` until sign-in. | reported |
 | D-001 | 2026-11-08 at `4143e92`, also present at `ed6b020` | backend | Run core and worker with `NORI_COMPUTER_ENABLED=false`, ask for a background web lookup. The model is still offered `browser_navigate`; the call fails, then the cleanup activity fails non-retryably with "computer provider is not configured", the workflow closes FAILED, and the run stays `running` with "Waiting for owned work and cleanup to finish." The dispatcher logs "terminal recovery: computer provider is not configured" every 30 s forever, and the UI shows the task in progress. Workflow `nori-task-11111111-…:dab0dd7b-…` on namespace `nori-integration`. | fixed in `67e01b3`, merged as `e680c6f`. Verified: after restarting the worker on that build the stuck run settled to `failed` with "computer stop could not be confirmed …" on the next terminal-recovery pass, and the UI no longer shows it in progress. The tool-exposure half (no `location: computer` tools without a computer) is implemented, not yet exercised. |
 
 ## Runbook
@@ -149,6 +163,16 @@ temporal worker deployment set-current-version --address 127.0.0.1:17233 -n nori
 ```
 
 Running workflows stay pinned to the build that started them; only new tasks move to the new current version.
+
+More users, created the same way: C `33333333-3333-4333-8333-333333333333` (`integration-c@nori.local`, `-local-computer-url http://127.0.0.1:8097`) for computer work, and scenario users `44444444-4444-4444-8444-444444444444` and `55555555-5555-4555-8555-555555555555` (`scenario-a@`, `scenario-b@nori.local`) that only `contracts-check -live` uses, so scenario leftovers stay out of the users exercised in the UI.
+
+Local computer for user C: build `computer-agent` for the container (`GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o <dir>/computer-agent ./cmd/computer-agent`), put beside it a `start.sh` that runs headless Chromium with `--remote-debugging-port=9222` in the background and then `exec /nori/computer-agent -listen 0.0.0.0:8090 -tasks /workspace/tasks`, and run it in the existing `bot-computer:local-v1` image:
+
+```bash
+docker run -d --name nori-integration-computer --restart unless-stopped --shm-size 1g -p 127.0.0.1:8097:8090 -v <dir>:/nori:ro --entrypoint /nori/start.sh bot-computer:local-v1
+```
+
+Connections need `NORI_CREDENTIAL_STORE=local` (an interim local store under `NORI_LOCAL_ARTIFACT_DIR`, refused outside `NORI_CLOUD=local`, pending D1) and `NORI_OAUTH_REDIRECT_URL=http://127.0.0.1:3213/api/v1/connections/oauth/callback` on core and worker.
 
 Core is addressed per user as `http://127.0.0.1:8083/users/<id>/v1/...`; requests carrying `Origin` or `Sec-Fetch-Site` are refused, so browsers go through the web server.
 
