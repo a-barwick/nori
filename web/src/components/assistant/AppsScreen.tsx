@@ -179,7 +179,7 @@ export function AppDetailScreen({ id }: { id: string }) {
       <Section title="What Nori can do">
         <Rows>{item.capabilities.map((capability) => <Row key={capability.id} leading={!capability.supported ? <CircleSlash size={18} className="text-ink-3" aria-hidden /> : canAllow(capability) ? <Circle size={18} className="text-ink-3" aria-hidden /> : <Check size={18} className="text-[#1c7a43]" aria-hidden />}
           title={capability.title} detail={capability.supported ? undefined : capability.reason}
-          trailing={<>{canAllow(capability) && <Button size="sm" variant="quiet" disabled={!!action.pending} aria-label={`Allow: ${capability.title}`}
+          trailing={<>{canAllow(capability) && <Button size="sm" variant="quiet" className="text-accent-text!" disabled={!!action.pending} aria-label={`Allow: ${capability.title}`}
             onClick={() => void action.run("allow", () => startSignIn(single!, "repair", `/apps/${encodeURIComponent(item.id)}`, [...(single!.capabilities ?? []), capability.id]))}>{action.pending === "allow" ? "Opening sign-in…" : "Allow"}</Button>}
             <Pill tone={capability.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[capability.effect]}</Pill></>} />)}</Rows>
       </Section>
