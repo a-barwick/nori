@@ -2,7 +2,7 @@
 
 Completion record for [the assistant integration plan](assistant-integration-plan.md): one row per acceptance case A01–A44 with its status, evidence and what blocks it. Owned by the integration stream on branch `claude/nori-assistant-integration-bd1278`.
 
-Statuses: **not started**; **locally verified (recorded provider)** (exercised end to end on the local stack with `NORI_PROVIDER_REPLAY` serving hand-written Google recordings from `contracts/assistant/recordings/google`; proves Nori's side of the flow, says nothing about the real provider); **implemented** (code merged into the integration branch, not yet exercised); **locally verified** (exercised end to end on the local integration stack, evidence linked); **provider verified** (exercised against the real provider account); **blocked** (the concrete missing thing named). A passing mock, a compile, or a model saying "done" is not evidence. Rows verified under an interim D1–D4 mechanism say so.
+Statuses: **not started**; **locally verified (recorded provider)** (exercised end to end on the local stack with `NORI_PROVIDER_REPLAY` serving hand-written recordings from `contracts/assistant/recordings` (one subdirectory per provider: `google/`, `icloud/`); proves Nori's side of the flow, says nothing about the real provider); **implemented** (code merged into the integration branch, not yet exercised); **locally verified** (exercised end to end on the local integration stack, evidence linked); **provider verified** (exercised against the real provider account); **blocked** (the concrete missing thing named). A passing mock, a compile, or a model saying "done" is not evidence. Rows verified under an interim D1–D4 mechanism say so.
 
 ## Summary
 
