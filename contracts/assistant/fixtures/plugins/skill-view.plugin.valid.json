@@ -1,0 +1,21 @@
+{
+  "ref": {
+    "id": "nori/morning-briefing/morning-briefing",
+    "version": "1.0.0",
+    "digest": "sha256:5d1"
+  },
+  "title": "Morning briefing",
+  "description": "Today's agenda, urgent messages and goal blockers.",
+  "instructions": "Read today's events and report them with sources. Do not change anything.",
+  "inputs": {
+    "type": "object"
+  },
+  "required_tool_ids": [
+    "google/calendar/calendar-events"
+  ],
+  "scope": "user",
+  "id": "skl_nori__morning-briefing__morning-briefing",
+  "revision": 9,
+  "installation_id": "inst_f6716ceda5355c5c9733",
+  "enabled": true
+}

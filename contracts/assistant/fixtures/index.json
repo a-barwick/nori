@@ -1,5 +1,5 @@
 {
-  "revision": "r2.3",
+  "revision": "r2.4",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -965,6 +965,22 @@
       "schema": "plugins.schema.json#/$defs/MCPServer",
       "valid": false,
       "note": "the projection never carries the credential"
+    },
+    {
+      "file": "fixtures/plugins/skill-view.plugin.valid.json",
+      "schema": "plugins.schema.json#/$defs/SkillView",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/skill-view.user.valid.json",
+      "schema": "plugins.schema.json#/$defs/SkillView",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/skill-view.empty-digest.invalid.json",
+      "schema": "plugins.schema.json#/$defs/SkillView",
+      "valid": false,
+      "note": "a definition ref always names its content digest"
     }
   ]
 }
