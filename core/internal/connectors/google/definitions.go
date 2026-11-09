@@ -112,9 +112,23 @@ var specs = []spec{
 	{"contacts_search", "Look up contacts", "contacts", "contacts.read", "google.contacts/search", "read", "safe",
 		"Find people by name or email in the connected account's contacts and other contacts. Returns candidates with their source; an ambiguous name must be confirmed with the user, never guessed.",
 		`{"type": "object", "properties": {` + account + `, "query": {"type": "string", "minLength": 1, "maxLength": 200}}, "required": ["query"], "additionalProperties": false}`},
+	{"drive_search", "Search Google Drive", "drive", "files.read", "google.drive/files.search", "read", "safe",
+		"Find Drive files by name or content, newest first. Results carry each file's link and revision for citing or later changes.",
+		`{"type": "object", "properties": {` + account + `, "query": {"type": "string", "maxLength": 200}, "max_results": {"type": "integer", "minimum": 1, "maximum": 50}}, "additionalProperties": false}`},
+	{"drive_read", "Read a Drive file", "drive", "files.read", "google.drive/files.read", "read", "safe",
+		"Read a Drive file's text: Google Docs and Slides as plain text, Sheets as CSV, and text files as they are. Other types return metadata and the link. Cite the file's link.",
+		`{"type": "object", "properties": {` + account + `, "file_id": {"type": "string"}}, "required": ["file_id"], "additionalProperties": false}`},
+	{"drive_create", "Create a Drive file", "drive", "files.write", "google.drive/files.create", "reversible_write", "provider_key",
+		"Create a file in My Drive or a folder: a Google Doc (default), a Markdown file or a plain text file, from the given text. The result is read back from Drive.",
+		`{"type": "object", "properties": {` + account + `, "name": {"type": "string", "minLength": 1, "maxLength": 255},
+			"content": {"type": "string", "maxLength": 1000000}, "format": {"enum": ["google_doc", "markdown", "text"]}, "folder_id": {"type": "string"}
+		}, "required": ["name", "content"], "additionalProperties": false}`},
+	{"drive_update", "Replace a Drive file's contents", "drive", "files.write", "google.drive/files.update", "reversible_write", "reconcile_only",
+		"Replace the text of a file Nori created or the user opened with it. A change made in Drive after the file was read is not overwritten.",
+		`{"type": "object", "properties": {` + account + `, "file_id": {"type": "string"}, "content": {"type": "string", "maxLength": 1000000}}, "required": ["file_id", "content"], "additionalProperties": false}`},
 }
 
-var capabilityTitles = map[string]string{"calendar": "Google Calendar", "mail": "Gmail", "contacts": "Google Contacts"}
+var capabilityTitles = map[string]string{"calendar": "Google Calendar", "mail": "Gmail", "contacts": "Google Contacts", "drive": "Google Drive"}
 
 var definitions = func() []extensions.Definition {
 	out := make([]extensions.Definition, 0, len(specs))

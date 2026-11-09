@@ -45,8 +45,8 @@ type Integration struct {
 func (g Integration) Info() connections.Info {
 	return connections.Info{
 		ID: IntegrationID, Title: "Google", Icon: "google", Source: "native", Auth: "oauth", MultipleAccounts: true,
-		Description: "Google Calendar, Gmail and Contacts for personal and work Google accounts.",
-		Categories:  []string{"calendar", "email", "contacts"},
+		Description: "Google Calendar, Gmail, Contacts and Drive for personal and work Google accounts.",
+		Categories:  []string{"calendar", "email", "contacts", "files"},
 		Purposes: []connections.Purpose{
 			{ID: "calendar.write", Title: "Calendar for new events"}, {ID: "mail.send", Title: "Sender for email"},
 			{ID: "mail.draft", Title: "Account for drafts"},
@@ -59,6 +59,8 @@ func (g Integration) Info() connections.Info {
 			{ID: "mail.send", Title: "Send email", Effect: "sensitive_send", Supported: true, Scopes: []string{scopeMailCompose, scopeMailSend}},
 			{ID: "mail.organize", Title: "Label, archive and mark email", Effect: "reversible_write", Supported: true, Scopes: []string{scopeMailModify}},
 			{ID: "contacts.read", Title: "Look up contacts", Effect: "read", Supported: true, Scopes: []string{scopeContacts, scopeOtherContacts}},
+			{ID: "files.read", Title: "Find and read Google Drive files", Effect: "read", Supported: true, Scopes: []string{scopeDriveRead}},
+			{ID: "files.write", Title: "Create Drive files and change files Nori created", Effect: "reversible_write", Supported: true, Scopes: []string{scopeDriveFile}},
 		},
 		BaseScopes: []string{"openid", "email"},
 	}
@@ -125,6 +127,7 @@ func Register(registry *invoke.Registry) {
 	registry.Register(extensions.AdapterNative, "google.calendar", calendarAdapter{})
 	registry.Register(extensions.AdapterNative, "google.mail", mailAdapter{})
 	registry.Register(extensions.AdapterNative, "google.contacts", contactsAdapter{})
+	registry.Register(extensions.AdapterNative, "google.drive", driveAdapter{})
 }
 
 // classify maps Google API errors onto connection and executor error classes.

@@ -181,7 +181,7 @@ type DestinationEditable struct {
 type PushSubscription struct {
 	Endpoint       string   `json:"endpoint"`
 	ExpirationTime *float64 `json:"expirationTime,omitempty"`
-	Keys     struct {
+	Keys           struct {
 		P256dh string `json:"p256dh"`
 		Auth   string `json:"auth"`
 	} `json:"keys"`

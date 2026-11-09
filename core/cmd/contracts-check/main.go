@@ -4,7 +4,8 @@
 // It is the shared compatibility check for the Nori assistant contracts:
 // every fixture in fixtures/index.json must validate (or fail) as declared,
 // every schema must compile, and every $defs entry should have at least one
-// fixture. Run it from anywhere in the repository:
+// fixture. A valid fixture whose schema has a Go type in api.ContractTypes is also decoded into that type with unknown
+// fields disallowed, re-encoded and validated again. Run it from anywhere in the repository:
 //
 //	go run ./cmd/contracts-check            # from core/
 //	go run ./cmd/contracts-check -root ../contracts/assistant -strict
@@ -22,6 +23,8 @@ import (
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"nori/internal/api"
 )
 
 // schemaHost is the $id authority every schema in contracts/assistant uses.
@@ -110,6 +113,7 @@ func main() {
 			defs[name+"#/$defs/"+d] = false
 		}
 	}
+	roundTrips := 0
 	for _, fx := range idx.Fixtures {
 		defs[fx.Schema] = true
 		sch, err := compiler.Compile("https://" + schemaHost + "/assistant/" + fx.Schema)
@@ -118,14 +122,13 @@ func main() {
 			fmt.Printf("FAIL %s: schema %s: %v\n", fx.File, fx.Schema, err)
 			continue
 		}
-		f, err := os.Open(filepath.Join(dir, fx.File))
+		raw, err := os.ReadFile(filepath.Join(dir, fx.File))
 		if err != nil {
 			failures++
 			fmt.Printf("FAIL %s: %v\n", fx.File, err)
 			continue
 		}
-		value, err := jsonschema.UnmarshalJSON(f)
-		f.Close()
+		value, err := jsonschema.UnmarshalJSON(strings.NewReader(string(raw)))
 		if err != nil {
 			failures++
 			fmt.Printf("FAIL %s: not JSON: %v\n", fx.File, err)
@@ -139,6 +142,25 @@ func main() {
 		case !fx.Valid && verr == nil:
 			failures++
 			fmt.Printf("FAIL %s: expected invalid against %s but validated\n", fx.File, fx.Schema)
+		case fx.Valid:
+			// The Go type the server reads or writes for this schema must take the fixture without dropping or
+			// inventing fields: decode with unknown fields disallowed, re-encode, and validate the result again.
+			if _, registered := api.ContractTypes[fx.Schema]; !registered {
+				break
+			}
+			again, err := api.RoundTrip(fx.Schema, raw)
+			if err == nil {
+				var reencoded any
+				if reencoded, err = jsonschema.UnmarshalJSON(strings.NewReader(string(again))); err == nil {
+					err = sch.Validate(reencoded)
+				}
+			}
+			if err != nil {
+				failures++
+				fmt.Printf("FAIL %s: Go round trip through %s\n%s\n", fx.File, fx.Schema, indent(err.Error()))
+			} else {
+				roundTrips++
+			}
 		}
 	}
 	compile := func(ref string) (*jsonschema.Schema, error) {
@@ -171,7 +193,7 @@ func main() {
 	for _, d := range uncovered {
 		fmt.Printf("WARN no fixture for %s\n", d)
 	}
-	fmt.Printf("contracts %s: %d schemas, %d fixtures, %d scenarios, %d histories replayed, %d failures, %d definitions without fixtures\n", idx.Revision, len(files), len(idx.Fixtures), len(scenarios), histories, failures, len(uncovered))
+	fmt.Printf("contracts %s: %d schemas, %d fixtures (%d round-tripped through Go types), %d scenarios, %d histories replayed, %d failures, %d definitions without fixtures\n", idx.Revision, len(files), len(idx.Fixtures), roundTrips, len(scenarios), histories, failures, len(uncovered))
 	if failures > 0 || (*strict && len(uncovered) > 0) {
 		os.Exit(1)
 	}
