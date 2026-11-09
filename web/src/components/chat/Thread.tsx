@@ -71,6 +71,12 @@ function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: strin
   );
 }
 
+function Receipt({ state }: { state: "sending" | "saved" }) {
+  return <p role="status" className="flex items-center gap-1 pr-1 text-caption text-ink-3">
+    {state === "saved" && <Check size={12} strokeWidth={2} aria-hidden />}{state === "sending" ? "Sending…" : "Saved"}
+  </p>;
+}
+
 function WorkLine({ label, onDetails }: { label: string; onDetails?: () => void }) {
   return (
     <div className="anim-fade mt-4 flex items-center gap-2 text-meta text-ink-2" role="status">
@@ -96,6 +102,7 @@ function UnitView({ unit, onOpenDocument }: { unit: Unit; onOpenDocument: OpenDo
             </div>
           ))}
           {unit.sender === "nori" && unit.units.map((u) => u.item.debug ? <DebugBlock key={`${u.key}-debug`} info={u.item.debug} /> : null)}
+          {unit.sender === "me" && unit.units.at(-1)?.item.receipt && <Receipt state={unit.units.at(-1)!.item.receipt!} />}
         </div>
       );
   }

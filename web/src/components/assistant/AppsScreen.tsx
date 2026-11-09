@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
-import { Calendar, Check, CircleSlash, Folder, KeyRound, ListTodo, Mail, MessageSquare, Plug, Plus, Search, Server, Upload } from "lucide-react";
+import { Calendar, Check, Circle, CircleSlash, Folder, KeyRound, ListTodo, Mail, MessageSquare, Plug, Plus, Search, Server, Upload } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, assistantURL, getJSON, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
@@ -33,7 +33,7 @@ const HEALTH: Record<HealthCode, { tone: Tone; label: string }> = {
 const SCOPES: Record<string, string> = {
   "calendar.readonly": "read calendars", "calendar.events": "change events", calendar: "manage calendars",
   "gmail.readonly": "read mail", "gmail.compose": "write drafts", "gmail.send": "send mail", "gmail.modify": "label and archive mail",
-  "contacts.readonly": "read contacts", "contacts.other.readonly": "read other contacts", openid: "", email: "", profile: "",
+  "contacts.readonly": "read contacts", "contacts.other.readonly": "read other contacts", "drive.readonly": "read Drive files", "drive.file": "change Drive files Nori created", openid: "", email: "", profile: "",
 };
 /** A provider scope in plain words; unknown scopes keep their last path segment. */
 export function scopeLabel(scope: string) {
@@ -164,6 +164,9 @@ export function AppDetailScreen({ id }: { id: string }) {
     await startSignIn(connection, "connect", `/apps/${encodeURIComponent(item.id)}`);
   });
   const line = item.availability !== "available" ? item.availability_reason : undefined;
+  // With one signed-in account, a capability it hasn't granted can be added by signing in again for it.
+  const single = item.auth === "oauth" && accounts.length === 1 && accounts[0].account?.provider_id ? accounts[0] : undefined;
+  const canAllow = (capability: Integration["capabilities"][number]) => !!single && capability.supported && !(single.capabilities ?? []).includes(capability.id);
   return (
     <Screen title={item.title} back="/apps" line={line} actions={<AppIcon icon={item.icon} />}>
       {result && <div className="mb-6"><Notice tone={result === "connected" ? "ok" : result === "cancelled" ? "neutral" : "danger"}>{result === "connected" ? "Connected." : result === "cancelled" ? "Sign-in was cancelled. Nothing changed." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
@@ -174,8 +177,11 @@ export function AppDetailScreen({ id }: { id: string }) {
           : <Empty>{item.availability === "available" ? `No ${item.title} account yet.` : item.availability_reason ?? "Not available yet."}</Empty>}
       </Section>
       <Section title="What Nori can do">
-        <Rows>{item.capabilities.map((capability) => <Row key={capability.id} leading={capability.supported ? <Check size={18} className="text-[#1c7a43]" aria-hidden /> : <CircleSlash size={18} className="text-ink-3" aria-hidden />}
-          title={capability.title} detail={capability.supported ? undefined : capability.reason} trailing={<Pill tone={capability.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[capability.effect]}</Pill>} />)}</Rows>
+        <Rows>{item.capabilities.map((capability) => <Row key={capability.id} leading={!capability.supported ? <CircleSlash size={18} className="text-ink-3" aria-hidden /> : canAllow(capability) ? <Circle size={18} className="text-ink-3" aria-hidden /> : <Check size={18} className="text-[#1c7a43]" aria-hidden />}
+          title={capability.title} detail={capability.supported ? undefined : capability.reason}
+          trailing={<>{canAllow(capability) && <Button size="sm" variant="quiet" className="text-accent-text!" disabled={!!action.pending} aria-label={`Allow: ${capability.title}`}
+            onClick={() => void action.run("allow", () => startSignIn(single!, "repair", `/apps/${encodeURIComponent(item.id)}`, [...(single!.capabilities ?? []), capability.id]))}>{action.pending === "allow" ? "Opening sign-in…" : "Allow"}</Button>}
+            <Pill tone={capability.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[capability.effect]}</Pill></>} />)}</Rows>
       </Section>
     </Screen>
   );
