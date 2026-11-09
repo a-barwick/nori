@@ -90,15 +90,19 @@ export function ChatScreen() {
         ? { run: session?.runs.find((run) => run.id === message.run_id), turns: session?.traces?.filter((trace) => trace.turn_id === (message.turn_id || message.id.replace(/-assistant$/, ""))), agentMode, turnId: message.turn_id }
         : undefined,
     }));
+    // Saved: the core has the message (its receipt or the stream returned it) and Nori hasn't replied yet.
+    const lastNori = items.findLast((item) => item.sender === "nori");
+    const lastMine = items.findLast((item) => item.sender === "me");
+    if (lastMine && (!lastNori || lastNori.at < lastMine.at) && (session?.conversation?.pending || session?.conversation?.processing)) lastMine.receipt = "saved";
     for (const item of pending) {
       if (!session?.messages.some((message) => message.id === `${item.id}-user`)) items.push({
-        id: `${item.id}-user`, sender: "me", at: item.started, text: item.text,
+        id: `${item.id}-user`, sender: "me", at: item.started, text: item.text, receipt: item.error ? undefined : "sending",
         parts: item.attachments?.map((file) => ({ type: "attachment", ...file, url: runtimePath(agentMode, `v1/uploads/${file.id}`) })),
       });
     }
     items.sort((a, b) => a.at - b.at);
     return { title: "Nori", items };
-  }, [session?.messages, session?.runs, session?.dispatches, session?.traces, pending, debug, agentMode]);
+  }, [session?.messages, session?.runs, session?.dispatches, session?.traces, session?.conversation?.pending, session?.conversation?.processing, pending, debug, agentMode]);
 
   const openChat = chat.current;
   const chatConversation = useMemo(() => chatThread(openChat), [openChat]);
@@ -144,7 +148,8 @@ export function ChatScreen() {
     ? "Some work is waiting for this message to be resolved. Send a follow-up to retry or clarify."
     : "");
   const waitingCount = activeTasks.filter((run) => run.question ? !run.question.resolved_by : run.waiting).length;
-  const work = runtime.conversationBusy ? "Nori is thinking…" : pending.some((item) => !item.error) ? "Sending your message…" : activeTasks.length
+  // Before the core's receipt the message itself says "Sending…"; progress starts once it is saved.
+  const work = runtime.conversationBusy ? "Nori is thinking…" : activeTasks.length
     ? runtime.tasksUnavailable ? "Task execution is paused. You can still chat with Nori."
       : `${activeTasks.length} ${activeTasks.length === 1 ? "task" : "tasks"} in progress${waitingCount ? ` · ${waitingCount} waiting for you` : ""}`
     : undefined;
