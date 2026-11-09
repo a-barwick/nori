@@ -1,13 +1,82 @@
 {
   "exchanges": [
-    {"name": "token-exchange", "method": "POST", "host": "oauth2.googleapis.com", "path": "/token", "body_contains": ["grant_type=authorization_code", "code=recorded-code"],
-     "response": {"status": 200, "body": {"access_token": "recorded-access-token", "expires_in": 3599, "refresh_token": "recorded-refresh-token", "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events", "token_type": "Bearer"}}},
-    {"name": "token-exchange-bad-code", "method": "POST", "host": "oauth2.googleapis.com", "path": "/token", "body_contains": ["grant_type=authorization_code"],
-     "response": {"status": 400, "body": {"error": "invalid_grant", "error_description": "Bad Request"}}},
-    {"name": "token-refresh", "method": "POST", "host": "oauth2.googleapis.com", "path": "/token", "body_contains": ["grant_type=refresh_token"],
-     "response": {"status": 200, "body": {"access_token": "recorded-access-token-2", "expires_in": 3599, "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events", "token_type": "Bearer"}}},
-    {"name": "userinfo", "method": "GET", "host": "openidconnect.googleapis.com", "path": "/v1/userinfo",
-     "response": {"status": 200, "body": {"sub": "100000000000000000001", "email": "recorded.user@example.com", "email_verified": true}}},
-    {"name": "revoke", "method": "POST", "host": "oauth2.googleapis.com", "path": "/revoke", "response": {"status": 200, "body": {}}}
+    {
+      "name": "token-exchange",
+      "method": "POST",
+      "host": "oauth2.googleapis.com",
+      "path": "/token",
+      "body_contains": [
+        "grant_type=authorization_code",
+        "code=recorded-code"
+      ],
+      "response": {
+        "status": 200,
+        "body": {
+          "access_token": "recorded-access-token",
+          "expires_in": 3599,
+          "refresh_token": "recorded-refresh-token",
+          "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.readonly",
+          "token_type": "Bearer"
+        }
+      }
+    },
+    {
+      "name": "token-exchange-bad-code",
+      "method": "POST",
+      "host": "oauth2.googleapis.com",
+      "path": "/token",
+      "body_contains": [
+        "grant_type=authorization_code"
+      ],
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "invalid_grant",
+          "error_description": "Bad Request"
+        }
+      }
+    },
+    {
+      "name": "token-refresh",
+      "method": "POST",
+      "host": "oauth2.googleapis.com",
+      "path": "/token",
+      "body_contains": [
+        "grant_type=refresh_token"
+      ],
+      "response": {
+        "status": 200,
+        "body": {
+          "access_token": "recorded-access-token-2",
+          "expires_in": 3599,
+          "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.readonly",
+          "token_type": "Bearer"
+        }
+      }
+    },
+    {
+      "name": "userinfo",
+      "method": "GET",
+      "host": "openidconnect.googleapis.com",
+      "path": "/v1/userinfo",
+      "response": {
+        "status": 200,
+        "body": {
+          "sub": "100000000000000000001",
+          "email": "recorded.user@example.com",
+          "email_verified": true
+        }
+      }
+    },
+    {
+      "name": "revoke",
+      "method": "POST",
+      "host": "oauth2.googleapis.com",
+      "path": "/revoke",
+      "response": {
+        "status": 200,
+        "body": {}
+      }
+    }
   ]
 }

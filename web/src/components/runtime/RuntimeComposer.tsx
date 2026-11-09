@@ -3,10 +3,19 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Mic, Paperclip, RotateCw, Square, X } from "lucide-react";
 import { useDictation } from "@/lib/assistant/voice";
+import { useBlobURL } from "@/lib/useBlobURL";
 import { hasSubmission, MAX_FILE_BYTES, MAX_MESSAGE_BYTES } from "@/lib/submission";
 import type { DraftFile } from "@/lib/types";
 
 const ACCEPT = "image/png,image/jpeg,image/webp,application/pdf,text/csv,.csv";
+
+/** A small preview of an attached image, released when the chip goes away. */
+function Thumbnail({ file }: { file: File }) {
+  const load = useCallback(async () => file as Blob, [file]);
+  const preview = useBlobURL(load);
+  // eslint-disable-next-line @next/next/no-img-element -- blob URL
+  return preview?.url ? <img src={preview.url} alt="" className="-ml-1 size-6 shrink-0 rounded-full object-cover" /> : null;
+}
 
 /** True when the picker's accept list (MIME types, wildcards and extensions) admits the file. */
 function accepted(file: File, accept: string) {
@@ -108,6 +117,7 @@ export function RuntimeComposer({
             <ul aria-label="Attached files" className="mb-2 flex flex-wrap gap-1.5 pl-2">
               {files.map((file) => (
                 <li key={file.id} className="flex max-w-full items-center gap-1 rounded-full border border-hairline bg-surface px-2.5 py-1 text-meta text-ink-2">
+                  {file.file.type.startsWith("image/") && <Thumbnail file={file.file} />}
                   <span className="min-w-0 truncate">{file.name}</span>
                   {file.status === "uploading" && <span className="shrink-0 text-ink-3" role="status">{file.progress !== undefined ? `${Math.round(file.progress * 100)}%` : "Uploading…"}</span>}
                   {file.status === "error" && <span className="min-w-0 truncate text-danger" role="alert">{file.error}</span>}

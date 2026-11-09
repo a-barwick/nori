@@ -443,6 +443,11 @@
         },
         "upload_accept": {
           "$ref": "library.schema.json#/$defs/UploadAccept"
+        },
+        "push_public_key": {
+          "description": "VAPID application server public key (base64url), present only when push delivery is configured.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$"
         }
       }
     },
@@ -661,7 +666,8 @@
         "validation_failed",
         "not_found",
         "credential_store_unavailable",
-        "provider_unavailable"
+        "provider_unavailable",
+        "subscription_expired"
       ]
     }
   }

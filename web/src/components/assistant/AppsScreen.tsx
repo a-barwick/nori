@@ -30,6 +30,18 @@ const HEALTH: Record<HealthCode, { tone: Tone; label: string }> = {
   provider_unavailable: { tone: "warning", label: "Provider is down" }, credential_store_unavailable: { tone: "danger", label: "Can’t save this account" },
 };
 
+const SCOPES: Record<string, string> = {
+  "calendar.readonly": "read calendars", "calendar.events": "change events", calendar: "manage calendars",
+  "gmail.readonly": "read mail", "gmail.compose": "write drafts", "gmail.send": "send mail", "gmail.modify": "label and archive mail",
+  "contacts.readonly": "read contacts", "contacts.other.readonly": "read other contacts", openid: "", email: "", profile: "",
+};
+/** A provider scope in plain words; unknown scopes keep their last path segment. */
+export function scopeLabel(scope: string) {
+  const short = scope.replace(/^https:\/\/www\.googleapis\.com\/auth\//, "");
+  return SCOPES[short] ?? short;
+}
+const scopeList = (scopes: string[]) => [...new Set(scopes.map(scopeLabel).filter(Boolean))].join(", ");
+
 export function connectionState(connection: Connection): { tone: Tone; label: string } {
   if (connection.status === "connecting") return { tone: "neutral", label: "Connecting" };
   if (connection.status === "disconnected" || connection.status === "not_connected") return { tone: "neutral", label: "Not connected" };
@@ -163,7 +175,7 @@ function ConnectionCard({ connection, integration }: { connection: Connection; i
       {(recovery === "repair" || recovery === "connect" || recovery === "request_access") && <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-4 py-3">
         <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => void action.run("repair", () => startSignIn(connection, recovery === "connect" ? "connect" : "repair", returnTo, recovery === "request_access" ? connection.capabilities : undefined))}>
           <KeyRound size={14} aria-hidden />{action.pending === "repair" ? "Opening sign-in…" : recovery === "request_access" ? "Allow more access" : connection.account ? "Sign in again" : "Sign in"}</Button>
-        {!!connection.missing_scopes?.length && <span className="text-meta text-ink-2">Missing: {connection.missing_scopes.join(", ")}</span>}
+        {!!connection.missing_scopes?.length && <span className="text-meta text-ink-2">Still needs permission to {scopeList(connection.missing_scopes)}</span>}
       </div>}
       {recovery === "wait" && connection.health.retry_after && <p className="border-t border-hairline px-4 py-3 text-meta text-ink-2">Nori will try again {relative(connection.health.retry_after)}.</p>}
       {action.error && <div className="px-4 pb-3"><Notice tone="danger">{action.error}</Notice></div>}
@@ -226,7 +238,7 @@ function ConnectionDetails({ connection, integration }: { connection: Connection
     </div>}
     <div>
       <h4 className="mb-2 text-meta font-semibold">Granted access</h4>
-      <p className="text-meta text-ink-2 [overflow-wrap:anywhere]">{connection.granted_scopes.join(", ") || "None"}</p>
+      <p className="text-meta text-ink-2 [overflow-wrap:anywhere]">{scopeList(connection.granted_scopes) || "None"}</p>
     </div>
     {action.error && <Notice tone="danger">{action.error}</Notice>}
   </div>;
@@ -243,7 +255,7 @@ function Plugins() {
     {installations.length > 0 && <Section title="Installed"><Rows>{installations.map((installation) => {
       const entry = catalog.data?.items.find((item) => item.package.id === installation.package.id);
       return <Row key={installation.id} href={`/apps/plugins/${encodeURIComponent(installation.id)}`} leading={<AppIcon icon="list" size={36} />} title={entry?.title ?? installation.package.id}
-        detail={`Version ${installation.package.version}${installation.pinned ? " · pinned" : ""}${installation.available_version ? ` · ${installation.available_version} available` : ""}`}
+        detail={`Version ${installation.package.version}${installation.pinned ? " · pinned" : ""}${installation.available_version && installation.available_version !== installation.package.version ? ` · ${installation.available_version} available` : ""}`}
         trailing={<Pill tone={installation.state === "failed" ? "danger" : installation.enabled && installation.state === "ready" ? "ok" : "neutral"}>{INSTALL_STATE[installation.state] ?? (installation.enabled ? "On" : "Off")}</Pill>} />;
     })}</Rows></Section>}
     <Section title="Catalog" actions={<PackageUpload onUploaded={() => void catalog.reload()} />}>
@@ -280,7 +292,8 @@ function PluginCard({ entry }: { entry: CatalogEntry }) {
   const action = useAction();
   const router = useRouter();
   const install = () => action.run("install", async () => {
-    const receipt = await mutate<Installation>("/plugins/installations", { request_id: newRequestID(), expected_revision: 0, value: { package: { id: entry.package.id, version: entry.latest_version }, approved_access: { connection_types: entry.requested_access.connection_types, action_classes: entry.requested_access.action_classes } } });
+    // The user approves exactly what the package requests, hosts and paths included.
+    const receipt = await mutate<Installation>("/plugins/installations", { request_id: newRequestID(), expected_revision: 0, value: { package: { id: entry.package.id, version: entry.latest_version }, approved_access: entry.requested_access } });
     invalidate("/plugins", "/integrations");
     router.push(`/apps/plugins/${encodeURIComponent((receipt.resource as Installation).id)}`);
   });
@@ -308,6 +321,8 @@ export function PluginDetailScreen({ id }: { id: string }) {
   if (installation.loading) return <Screen title="Plugin" back="/apps?tab=plugins"><Loading /></Screen>;
   if (!item) return <Screen title="Plugin" back="/apps?tab=plugins"><Failure error={installation.error ?? "Not installed."} /></Screen>;
   const entry = catalog.data?.items.find((candidate) => candidate.package.id === item.package.id);
+  // The core may keep available_version equal to the installed one; only a different version is an update.
+  const available = item.available_version && item.available_version !== item.package.version ? item.available_version : undefined;
   // Versions this installation ran before; the core keeps their immutable packages for rollback.
   const earlier = new Set((item.history ?? []).map((event) => event.version).filter((version): version is string => !!version && version !== item.package.version));
   const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
@@ -317,16 +332,16 @@ export function PluginDetailScreen({ id }: { id: string }) {
     setReview(undefined);
   });
   const loadReview = (version?: string) => action.run("review", async () => setReview({ version, data: await getJSON<InstallationReview>(`/plugins/installations/${encodeURIComponent(id)}/review${version ? `?version=${encodeURIComponent(version)}` : ""}`) }));
-  return <Screen title={entry?.title ?? item.package.id} back="/apps?tab=plugins" line={item.state === "failed" ? "This plugin failed. Its diagnostics are below." : item.available_version && !item.pinned ? `Version ${item.available_version} is available.` : undefined}
+  return <Screen title={entry?.title ?? item.package.id} back="/apps?tab=plugins" line={item.state === "failed" ? "This plugin failed. Its diagnostics are below." : available && !item.pinned ? `Version ${available} is available.` : undefined}
     actions={<Pill tone={item.enabled ? "ok" : "neutral"}>{item.enabled ? "On" : "Off"}</Pill>}>
     {action.error && <div className="mb-4"><Notice tone="danger">{action.error}</Notice></div>}
     <Section title="Version">
-      <Rows><Row title={`${item.package.version}${item.pinned ? " (pinned)" : ""}`} detail={item.available_version ? `${item.available_version} available` : "Up to date"}
-        trailing={<>{item.available_version && <Button size="sm" variant="primary" onClick={() => void loadReview(item.available_version)}>Review update</Button>}{!item.pinned && <Button size="sm" onClick={() => void act({ action: "pin", version: item.package.version }, "pin")}>Pin</Button>}</>} /></Rows>
+      <Rows><Row title={`${item.package.version}${item.pinned ? " (pinned)" : ""}`} detail={available ? `${available} available` : "Up to date"}
+        trailing={<>{available && <Button size="sm" variant="primary" onClick={() => void loadReview(available)}>Review update</Button>}{!item.pinned && <Button size="sm" onClick={() => void act({ action: "pin", version: item.package.version }, "pin")}>Pin</Button>}</>} /></Rows>
       {review && <div className="mt-3 rounded-card border border-hairline-strong p-4">
         <h3 className="text-row font-semibold">{review.version ? `Changes in ${review.version}` : "Before you uninstall"}</h3>
         <ReviewList data={review.data} />
-        <div className="mt-4 flex gap-2">{review.version ? <Button variant="primary" onClick={() => void act({ action: "update", version: review.version }, "update")}>{action.pending === "update" ? "Updating…" : review.data.access_added.length ? "Allow and update" : "Update"}</Button>
+        <div className="mt-4 flex gap-2">{review.version ? <Button variant="primary" onClick={() => void act({ action: "update", version: review.version, approved_access: approvedFor(item.approved_access, review.data, entry && entry.latest_version === review.version ? entry.requested_access : undefined) }, "update")}>{action.pending === "update" ? "Updating…" : review.data.access_added.length ? "Allow and update" : "Update"}</Button>
           : <Button variant="primary" className="bg-danger! hover:bg-danger!" onClick={() => void act({ action: "uninstall" }, "uninstall")}>{action.pending === "uninstall" ? "Uninstalling…" : "Uninstall"}</Button>}
           <Button variant="quiet" onClick={() => setReview(undefined)}>Cancel</Button></div>
       </div>}
@@ -335,16 +350,44 @@ export function PluginDetailScreen({ id }: { id: string }) {
       {entry.description && <p className="mt-1 text-meta text-ink-3">{entry.description}</p>}</Section>}
     <Section title="Access">
       <p className="text-body text-ink-2">{item.approved_access.action_classes.length ? `May ${item.approved_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}` : "No account access"}{item.approved_access.connection_types.length ? ` with ${item.approved_access.connection_types.join(", ")} accounts you connect.` : "."}</p>
+      {item.approved_access.network?.length ? <p className="mt-1 text-meta text-ink-2">Reaches {item.approved_access.network!.join(", ")}.</p> : null}
+      {item.approved_access.filesystem?.length ? <p className="mt-1 text-meta text-ink-2">Reads files in {item.approved_access.filesystem!.join(", ")}.</p> : null}
       {item.required_connection_types?.length ? <p className="mt-1 text-meta text-ink-3">Needs a connected {item.required_connection_types.join(", ")} account.</p> : null}
     </Section>
     {!!item.diagnostics?.length && <Section title="Diagnostics"><pre className="overflow-x-auto rounded-card bg-fill-1 p-3 font-mono text-mono-data whitespace-pre-wrap">{item.diagnostics.join("\n")}</pre></Section>}
     {!!item.history?.length && <Section title="History"><Rows>{item.history.slice().reverse().map((event, index) => <Row key={index} title={`${event.event[0].toUpperCase()}${event.event.slice(1)}${event.version ? ` ${event.version}` : ""}`} detail={relative(event.at)}
-      trailing={event.version && event.version !== item.package.version && !earlier.has(event.version) ? undefined : event.version && event.version !== item.package.version ? <Button size="sm" variant="quiet" disabled={!!action.pending} onClick={() => void act({ action: "rollback", version: event.version }, "rollback")}>Roll back to this</Button> : undefined} />)}</Rows></Section>}
+      trailing={event.version && event.version !== item.package.version && !earlier.has(event.version) ? undefined : event.version && event.version !== item.package.version ? <Button size="sm" variant="quiet" disabled={!!action.pending} onClick={() => void action.run("rollback", async () => {
+        const data = await getJSON<InstallationReview>(`/plugins/installations/${encodeURIComponent(id)}/review?version=${encodeURIComponent(event.version!)}`);
+        const receipt = await mutate<Installation>(`/plugins/installations/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "rollback", version: event.version, approved_access: approvedFor(item.approved_access, data, entry && entry.latest_version === event.version ? entry.requested_access : undefined) } });
+        invalidate("/plugins", "/integrations"); installation.apply(receipt.resource as Installation);
+      }, "Version changed.")}>Use this version</Button> : undefined} />)}</Rows></Section>}
     <Section title="Manage"><div className="flex flex-wrap gap-2">
       <Button onClick={() => void act({ action: item.enabled ? "disable" : "enable" }, "toggle")} disabled={!!action.pending}>{item.enabled ? "Turn off" : "Turn on"}</Button>
       <Button className="text-danger!" variant="quiet" onClick={() => void loadReview()} disabled={!!action.pending}>Uninstall…</Button>
     </div></Section>
   </Screen>;
+}
+
+type Access = Installation["approved_access"];
+
+/** The access an update or rollback needs approved: what the installation has, plus what the review says is new. */
+function approvedFor(current: Access, review: InstallationReview, target?: Access): Access {
+  // When the catalog knows the target version's request, approve all of it: an installation made before hosts
+  // were recorded has an approval that lists none, so the review's additions alone fall short.
+  const base = { connection_types: [...current.connection_types, ...(target?.connection_types ?? [])], action_classes: [...current.action_classes, ...(target?.action_classes ?? [])],
+    network: [...(current.network ?? []), ...(target?.network ?? [])], filesystem: [...(current.filesystem ?? []), ...(target?.filesystem ?? [])] };
+  const next = base;
+  const removed = new Set(review.access_removed);
+  for (const entry of review.access_added) {
+    const [kind, value] = entry.includes(":") ? [entry.slice(0, entry.indexOf(":")), entry.slice(entry.indexOf(":") + 1)] : ["", entry];
+    if (kind === "network") next.network.push(value);
+    else if (kind === "filesystem") next.filesystem.push(value);
+    else if (kind === "connection") next.connection_types.push(value);
+    else if (kind === "action") next.action_classes.push(value as Installation["approved_access"]["action_classes"][number]);
+  }
+  const keep = (kind: string) => (value: string) => !removed.has(`${kind}:${value}`);
+  return { connection_types: [...new Set(next.connection_types.filter(keep("connection")))], action_classes: [...new Set(next.action_classes.filter(keep("action")))],
+    network: [...new Set(next.network.filter(keep("network")))], filesystem: [...new Set(next.filesystem.filter(keep("filesystem")))] };
 }
 
 function ReviewList({ data }: { data: InstallationReview }) {

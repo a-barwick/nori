@@ -1,0 +1,21 @@
+{
+  "assistant_features": {
+    "connections": true,
+    "integrations": true,
+    "work": false,
+    "automations": false,
+    "skills": true
+  },
+  "upload_accept": {
+    "media_types": [
+      "image/png",
+      "application/pdf",
+      "text/csv",
+      "text/plain",
+      "text/markdown",
+      "text/calendar"
+    ],
+    "max_bytes": 20971520
+  },
+  "push_public_key": "BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U"
+}

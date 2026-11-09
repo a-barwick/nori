@@ -57,7 +57,14 @@ export const newRequestID = () => crypto.randomUUID();
  * response is resolved by retrying the identical request or reading /v1/mutations/{id};
  * it never becomes a second, different request.
  */
-export async function mutate<T = unknown>(path: string, body: { request_id: string } & Record<string, unknown>, method = "POST"): Promise<MutationReceipt & { resource: T }> {
+export async function mutate<T = unknown>(path: string, input: { request_id: string } & Record<string, unknown>, method = "POST"): Promise<MutationReceipt & { resource: T }> {
+  // Submitting the identical change again while an earlier attempt is unconfirmed reuses that attempt's request
+  // ID, so the core returns the saved receipt instead of applying it twice.
+  const { request_id: _fresh, ...change } = input;
+  void _fresh;
+  const withoutID = (value: unknown) => JSON.stringify(Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => key !== "request_id")));
+  const same = pendingMutations().find((item) => item.path === path && item.method === method && withoutID(item.body) === JSON.stringify(change));
+  const body = same ? { ...input, request_id: same.request_id } : input;
   savePending([...pendingMutations().filter((item) => item.request_id !== body.request_id), { request_id: body.request_id, path, method, body, started: Date.now() }]);
   try {
     const response = await fetch(assistantURL(path), {

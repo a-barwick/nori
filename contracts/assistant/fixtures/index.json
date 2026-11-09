@@ -1,5 +1,5 @@
 {
-  "revision": "r2.6",
+  "revision": "r2.9",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -1036,6 +1036,92 @@
       "schema": "execution.schema.json#/$defs/WorkItem",
       "valid": false,
       "note": "origin fields are closed"
+    },
+    {
+      "file": "fixtures/execution/operation-projection.contained.valid.json",
+      "schema": "execution.schema.json#/$defs/OperationProjection",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/operation-projection.unknown-cleared.invalid.json",
+      "schema": "execution.schema.json#/$defs/OperationProjection",
+      "valid": false,
+      "note": "cleared is a closed set"
+    },
+    {
+      "file": "fixtures/plugins/installation-create.network.valid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationCreateChange",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/installation-action.update-network.valid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/installation-create.unknown-access-field.invalid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationCreateChange",
+      "valid": false,
+      "note": "approved access is a closed set"
+    },
+    {
+      "file": "fixtures/automations/destination-create.email.valid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestinationCreate",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/destination-create.push.valid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestinationCreate",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/destination-create.both-targets.invalid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestinationCreate",
+      "valid": false,
+      "note": "a create carries exactly one target for its channel"
+    },
+    {
+      "file": "fixtures/automations/destination-create.http-endpoint.invalid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestinationCreate",
+      "valid": false,
+      "note": "push endpoints must be https"
+    },
+    {
+      "file": "fixtures/automations/destination.leaks-address.invalid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestination",
+      "valid": false,
+      "note": "the enrolled address is write-only"
+    },
+    {
+      "file": "fixtures/automations/destination-action.send-verification.valid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestinationAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/destination-action.verify.valid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestinationAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/destination-action.verify-short-code.invalid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestinationAction",
+      "valid": false,
+      "note": "codes are six digits"
+    },
+    {
+      "file": "fixtures/automations/destination-action.remove.valid.json",
+      "schema": "automations.schema.json#/$defs/DeliveryDestinationAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/capabilities.push-key.valid.json",
+      "schema": "common.schema.json#/$defs/AssistantCapabilities",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/api-error.subscription-expired.valid.json",
+      "schema": "common.schema.json#/$defs/APIError",
+      "valid": true
     }
   ]
 }
