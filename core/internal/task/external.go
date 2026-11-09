@@ -1,0 +1,306 @@
+package task
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"nori/internal/connections"
+	"nori/internal/invoke"
+	"nori/internal/permissions"
+	"nori/internal/state"
+)
+
+// Executor holds what the Tool executor needs for registry tools beyond the engine's own: adapters, the user's
+// Connections and Permission checks. A nil Executor leaves registry tools unavailable, never silently substituted.
+type Executor struct {
+	Adapters    *invoke.Registry
+	Connections *connections.Service
+	Permissions *permissions.Service
+}
+
+// externalPlan is what was resolved before admission: the adapter, the account access for this attempt, the
+// prepared action and the authority that admits it.
+type externalPlan struct {
+	adapter   invoke.Adapter
+	call      invoke.Call
+	prepared  invoke.Prepared
+	digest    string
+	authority permissions.Decision
+}
+
+func denial(in ToolInput, effect, outcome, message string, extra map[string]any) map[string]any {
+	output := map[string]any{"operation_id": in.OperationID, "outcome": outcome, "effect_class": effect, "error": message, "admitted": false}
+	for k, v := range extra {
+		output[k] = v
+	}
+	return output
+}
+
+// taskOrigin says who the task acts for: a direct user request, an automation occurrence or a goal.
+func taskOrigin(run state.Run) (origin, automationID, goalID string) {
+	if run.Origin != nil {
+		switch {
+		case run.Origin.AutomationID != "":
+			return "automation", run.Origin.AutomationID, run.Origin.GoalID
+		case run.Origin.GoalID != "":
+			return "goal", "", run.Origin.GoalID
+		}
+	}
+	return "user", "", ""
+}
+
+func interactionID(prefix, operationID, digest string) string {
+	sum := sha256.Sum256([]byte(operationID + "\x00" + digest))
+	return prefix + hex.EncodeToString(sum[:16])
+}
+
+// planExternal resolves a registry tool call before admission. A non-nil output ends the call without admitting
+// an operation: the tool is unavailable, the account must be chosen or connected, arguments are invalid, the
+// action is denied, or it waits on the user's approval.
+func (a *Activities) planExternal(ctx context.Context, in ToolInput, recovering bool) (*externalPlan, map[string]any, error) {
+	effect := string(in.Exec.Policy.Effect)
+	adapter, ok := a.Executor.adapter(in)
+	if !ok {
+		return nil, denial(in, effect, "failed", "This tool's implementation is not available in this worker version, so it did not run.", nil), nil
+	}
+	run, err := a.Store.GetRun(ctx, in.RunID)
+	if err != nil {
+		return nil, nil, err
+	}
+	call := invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args}
+	connectionID, epoch := "", int64(0)
+	if in.Exec.ConnectionType != "" {
+		if a.Executor.Connections == nil {
+			return nil, denial(in, effect, "failed", "Connections are not available in this deployment.", nil), nil
+		}
+		requested := invoke.String(in.Call.Args, "account")
+		record, _, err := a.Executor.Connections.Select(ctx, in.Exec.ConnectionType, in.Exec.RequiredCapability, requested)
+		var choose *connections.ChooseAccount
+		switch {
+		case errors.As(err, &choose):
+			if recovering {
+				return nil, nil, err
+			}
+			out, err := a.chooseAccount(ctx, in, run, choose)
+			return nil, out, err
+		case errors.Is(err, connections.ErrUnknownAccount):
+			return nil, denial(in, effect, "failed", fmt.Sprintf("No connected account matches %q. Use one of the connected accounts or ask the user; never switch accounts silently.", requested), map[string]any{"recovery": "choose_account"}), nil
+		case errors.Is(err, connections.ErrInsufficientScope):
+			return nil, denial(in, effect, "failed", "The connected account has not granted the access this needs. The user can grant it in Apps.", map[string]any{"recovery": "request_access", "integration_id": in.Exec.ConnectionType}), nil
+		case errors.Is(err, connections.ErrNotConnected):
+			return nil, denial(in, effect, "failed", "No account for this app is connected. The user can connect one in Apps.", map[string]any{"recovery": "connect", "integration_id": in.Exec.ConnectionType}), nil
+		case err != nil:
+			return nil, nil, err
+		}
+		grant, err := a.Executor.Connections.Grant(ctx, record.ID)
+		if err != nil {
+			return nil, denial(in, effect, "failed", "The account could not be used: "+err.Error(), map[string]any{"recovery": "repair", "connection_id": record.ID}), nil
+		}
+		call.Grant = &grant
+		connectionID, epoch = record.ID, record.AuthorizationEpoch
+	}
+	prepared, err := adapter.Prepare(ctx, call)
+	if err != nil {
+		if errors.Is(err, invoke.ErrInvalidArguments) {
+			return nil, denial(in, effect, "failed", err.Error(), nil), nil
+		}
+		if call.Grant != nil {
+			a.Executor.Connections.ReportFailure(ctx, connectionID, err)
+		}
+		return nil, denial(in, effect, "failed", "The action could not be prepared: "+err.Error(), nil), nil
+	}
+	if prepared.Effect == "" {
+		prepared.Effect = in.Exec.Policy.Effect
+	}
+	plan := &externalPlan{adapter: adapter, call: call, prepared: prepared, digest: invoke.Digest(call, connectionID, epoch, prepared)}
+	if recovering {
+		return plan, nil, nil
+	}
+	origin, automationID, goalID := taskOrigin(run)
+	resourceIDs := make([]string, 0, len(prepared.Resources))
+	for _, r := range prepared.Resources {
+		resourceIDs = append(resourceIDs, r.ProviderID)
+	}
+	decision := permissions.Decision{Result: "allow", Source: "user_request"}
+	if a.Executor.Permissions != nil {
+		decision, err = a.Executor.Permissions.Check(ctx, permissions.Request{
+			RunID: in.RunID, Revision: in.Revision, Origin: origin, AutomationID: automationID, GoalID: goalID, ReadOnly: run.ReadOnly,
+			ToolID: in.Exec.Tool.ID, Effect: string(prepared.Effect), ConnectionID: connectionID, Epoch: epoch,
+			ResourceIDs: resourceIDs, Recipients: prepared.Recipients, Digest: plan.digest,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if prepared.Effect != "read" {
+		decision = permissions.Decision{Result: "needs_interaction", Reason: "Permission checks are not configured; nothing may change without them."}
+	}
+	switch decision.Result {
+	case "deny":
+		return nil, denial(in, string(prepared.Effect), "denied", decision.Reason, nil), nil
+	case "needs_interaction":
+		if a.Executor.Permissions == nil {
+			return nil, denial(in, string(prepared.Effect), "denied", decision.Reason, nil), nil
+		}
+		out, err := a.requestApproval(ctx, in, run, plan, connectionID)
+		return nil, out, err
+	}
+	plan.authority = decision
+	return plan, nil, nil
+}
+
+func (e *Executor) adapter(in ToolInput) (invoke.Adapter, bool) {
+	if e == nil {
+		return nil, false
+	}
+	return e.Adapters.Lookup(in.Exec.Binding)
+}
+
+func (a *Activities) requestApproval(ctx context.Context, in ToolInput, run state.Run, plan *externalPlan, connectionID string) (map[string]any, error) {
+	label := ""
+	if plan.call.Grant != nil {
+		label = plan.call.Grant.Connection.Account.Label
+	}
+	resources := make([]map[string]any, 0, len(plan.prepared.Resources))
+	for _, r := range plan.prepared.Resources {
+		ref := map[string]any{"connection_id": connectionID, "kind": r.Kind, "provider_id": r.ProviderID}
+		if r.ProviderRevision != "" {
+			ref["provider_revision"] = r.ProviderRevision
+		}
+		resources = append(resources, ref)
+	}
+	payload := map[string]any{
+		"summary": plan.prepared.Summary, "effect": string(plan.prepared.Effect),
+		"account": map[string]any{"connection_id": connectionID, "label": label}, "resources": resources,
+	}
+	if len(plan.prepared.Recipients) > 0 {
+		payload["recipients"] = plan.prepared.Recipients
+	}
+	if len(plan.prepared.MaterialEffects) > 0 {
+		payload["material_effects"] = plan.prepared.MaterialEffects
+	}
+	data, _ := json.Marshal(payload)
+	revision := in.Revision
+	expires := time.Now().Add(24 * time.Hour).UTC()
+	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
+		ID: interactionID("int_", in.OperationID, plan.digest), TaskID: in.RunID, InstructionRevision: &revision, Kind: "approval",
+		Prompt: plan.prepared.Summary, Payload: data, ActionDigest: plan.digest, ExpiresAt: &expires, TaskTitle: clip(run.Request, 200),
+		ConnectionID: connectionID,
+	}, "")
+	if err != nil {
+		return nil, err
+	}
+	return denial(in, string(plan.prepared.Effect), "needs_interaction", "This action waits for the user's approval.", map[string]any{
+		"interaction_id": interaction.ID, "interaction_kind": "approval", "prompt": "Approve this action? " + plan.prepared.Summary,
+	}), nil
+}
+
+func (a *Activities) chooseAccount(ctx context.Context, in ToolInput, run state.Run, choose *connections.ChooseAccount) (map[string]any, error) {
+	effect := string(in.Exec.Policy.Effect)
+	if a.Executor.Permissions == nil {
+		return denial(in, effect, "failed", choose.Error(), nil), nil
+	}
+	ids, labels := []string{}, []string{}
+	for _, record := range choose.Eligible {
+		ids = append(ids, record.ID)
+		labels = append(labels, fmt.Sprintf("%s (%s)", record.Account.Label, record.ID))
+	}
+	data, _ := json.Marshal(map[string]any{"purpose": choose.Purpose, "eligible_connection_ids": ids})
+	revision := in.Revision
+	prompt := fmt.Sprintf("Which account should Nori use for %s?", choose.Purpose)
+	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
+		ID: interactionID("int_", in.OperationID, "account:"+choose.Purpose), TaskID: in.RunID, InstructionRevision: &revision,
+		Kind: "account_selection", Prompt: prompt, Payload: data, TaskTitle: clip(run.Request, 200),
+	}, choose.Purpose)
+	if err != nil {
+		return nil, err
+	}
+	return denial(in, effect, "needs_interaction", choose.Error()+": "+fmt.Sprint(labels), map[string]any{
+		"interaction_id": interaction.ID, "interaction_kind": "account_selection", "prompt": prompt,
+	}), nil
+}
+
+// runExternal records the attempt, dispatches once and settles the outcome. An interrupted write is reconciled
+// from provider state or stays uncertain; it is never blindly sent again.
+func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.OperationRecord, recovering bool, plan *externalPlan, persist persistFunc) (map[string]any, error) {
+	connectionID := op.ConnectionID
+	report := func(result invoke.Result) {
+		if connectionID == "" || a.Executor.Connections == nil {
+			return
+		}
+		if result.Err != nil && result.Outcome == "failed" {
+			a.Executor.Connections.ReportFailure(ctx, connectionID, result.Err)
+		} else if result.Err == nil {
+			a.Executor.Connections.ReportSuccess(ctx, connectionID)
+		}
+	}
+	settle := func(result invoke.Result) (map[string]any, error) {
+		report(result)
+		op.ProviderRefs = append(op.ProviderRefs, result.ProviderRefs...)
+		output := result.Content
+		if output == nil {
+			output = map[string]any{}
+		}
+		if result.CostUSD > 0 {
+			output["cost_usd"] = result.CostUSD
+		}
+		if result.CostUnknown {
+			output["cost_unknown"] = true
+		}
+		if len(result.ProviderRefs) > 0 {
+			output["provider_refs"] = result.ProviderRefs
+		}
+		outcome := result.Outcome
+		if outcome == "" {
+			outcome = "confirmed"
+		}
+		return persist(outcome, output, result.Err)
+	}
+	if recovering && plan.adapter == nil {
+		outcome := "uncertain"
+		if in.Exec.Policy.Effect == "read" {
+			outcome = "failed"
+		}
+		return persist(outcome, map[string]any{"reconciled": false}, errors.New("the worker stopped before this call's result was saved, and the account or implementation is no longer available to check it"))
+	}
+	if recovering {
+		if reconciler, ok := plan.adapter.(invoke.Reconciler); ok {
+			if result, ok := reconciler.Reconcile(ctx, plan.call, plan.prepared); ok {
+				return settle(result)
+			}
+		}
+		if in.Exec.Policy.Retry != "safe" {
+			return persist("uncertain", map[string]any{"reconciled": false}, errors.New("the worker stopped before this action's result was saved, and the provider's state could not confirm it"))
+		}
+	}
+	if _, err := a.Store.Guard(ctx, in.RunID, in.Revision); err != nil {
+		if _, saveErr := persist("skipped", nil, err); saveErr != nil {
+			return nil, saveErr
+		}
+		return nil, classified(err)
+	}
+	op.Attempt++
+	if err := a.Store.PutOperation(ctx, in.RunID, *op); err != nil {
+		return nil, classified(err)
+	}
+	plan.call.Attempt = op.Attempt
+	timeout := time.Duration(in.Exec.Policy.TimeoutMS) * time.Millisecond
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	result := plan.adapter.Execute(callCtx, plan.call, plan.prepared)
+	cancel()
+	if result.Outcome == "" {
+		result.Outcome = "confirmed"
+		if result.Err != nil {
+			result.Outcome = "failed"
+		}
+	}
+	if ctx.Err() != nil && result.Outcome == "failed" && in.Exec.Policy.Effect != "read" {
+		// Cancellation or a timeout is not proof the provider did nothing.
+		result.Outcome = "uncertain"
+	}
+	return settle(result)
+}

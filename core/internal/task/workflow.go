@@ -484,6 +484,9 @@ func (c *Checkpoint) afterTool(output RefToolOutcome, id string) bool {
 			Text:     prompts.Runtime("read-only-question", nil),
 			Revision: c.Revision,
 		}
+	case output.Outcome == "needs_interaction" && output.InteractionID != "":
+		// Only registry tools produce this outcome, so histories recorded before it existed never reach here.
+		c.Question = &state.Question{ID: output.InteractionID, Kind: "input", Text: output.Prompt, Revision: c.Revision}
 	case output.Outcome == "uncertain" && output.EffectClass != "read":
 		text := prompts.Runtime("uncertain-action-question", nil)
 		if output.Unresolved != "" {

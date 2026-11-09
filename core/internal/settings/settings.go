@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,19 @@ type Settings struct {
 	// TaskBudgetUSD is recorded as the spending ceiling when a background task starts.
 	TaskBudgetUSD float64
 	Observability Observability
+	Connections   Connections
+}
+
+// Connections configures connected accounts. Provider app credentials are project keys from the env file; account
+// credentials go to the credential store, which exists only for local development until decision D1 is made.
+type Connections struct {
+	GoogleClientID, GoogleClientSecret string
+	// RedirectURL is the OAuth callback through the web proxy, for example http://127.0.0.1:3211/api/v1/connections/oauth/callback.
+	RedirectURL string
+	// CredentialStore is "local" (development only, requires NORI_CLOUD=local) or empty (unavailable).
+	CredentialStore, CredentialDir string
+	// UnattendedWrites and UserSends are the interim D2 mechanisms; see internal/permissions.
+	UnattendedWrites, UserSends string
 }
 
 // Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
@@ -212,6 +226,18 @@ func Load() (Settings, error) {
 }
 
 // FromEnvironment supplies settings for the computer agent without loading a project env file.
+func connectionsFromEnvironment(localArtifacts string) Connections {
+	dir := os.Getenv("NORI_CREDENTIAL_DIR")
+	if dir == "" && localArtifacts != "" {
+		dir = filepath.Join(localArtifacts, "credentials")
+	}
+	return Connections{
+		GoogleClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), GoogleClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
+		RedirectURL: os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
+		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"), UserSends: get("NORI_USER_SENDS", "ask"),
+	}
+}
+
 func FromEnvironment() Settings {
 	taskBudget, err := strconv.ParseFloat(get("NORI_TASK_BUDGET_USD", "1"), 64)
 	if err != nil {
@@ -242,6 +268,7 @@ func FromEnvironment() Settings {
 		}
 	}
 	return Settings{
+		Connections: connectionsFromEnvironment(store.LocalArtifactDir),
 		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") == "false", DisableComputer: os.Getenv("NORI_COMPUTER_ENABLED") == "false"},
 		Cloud:       cloud,
 		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION")), WakeQueueURL: os.Getenv("NORI_AWS_WAKE_QUEUE_URL")},

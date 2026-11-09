@@ -89,6 +89,9 @@ type RefToolOutcome struct {
 	// Unresolved names the operations a question about this result is for, and Clears lists those an answer releases.
 	Unresolved string
 	Clears     []string
+	// InteractionID and Prompt are set when a registry tool waits on the user's approval or account choice.
+	InteractionID string `json:",omitempty"`
+	Prompt        string `json:",omitempty"`
 }
 type RefInput struct {
 	Step
@@ -432,6 +435,10 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	out.Cost, _ = result["cost_usd"].(float64)
 	out.CostUnknown, _ = result["cost_unknown"].(bool)
 	out.StartedJob, out.EndedJob = jobTransition(call, result)
+	if out.Outcome == "needs_interaction" {
+		out.InteractionID, _ = result["interaction_id"].(string)
+		out.Prompt, _ = result["prompt"].(string)
+	}
 	if out.Outcome == "uncertain" && out.EffectClass != "read" {
 		out.Unresolved, out.Clears, e = a.nameUnresolved(ctx, in.RunID, messages)
 		if e != nil {

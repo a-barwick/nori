@@ -46,15 +46,17 @@ type Command struct {
 	SourceInputIDs []string     `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
 	Attachments    []Attachment `json:"attachments,omitempty" firestore:"attachments,omitempty"`
 	Revises        string       `json:"revises,omitempty" firestore:"revises,omitempty"`
-	ID             string       `json:"id" firestore:"id"`
-	RunID          string       `json:"run_id" firestore:"run_id"`
-	ParentID       string       `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
-	Kind           CommandKind  `json:"kind" firestore:"kind"`
-	Text           string       `json:"text" firestore:"text"`
-	Position       int64        `json:"position" firestore:"position"`
-	Revision       int64        `json:"revision" firestore:"revision"`
-	Delivered      bool         `json:"delivered" firestore:"delivered"`
-	CreatedAt      time.Time    `json:"created_at" firestore:"created_at"`
+	// Origin is recorded on the task a start command creates.
+	Origin    *TaskOrigin `json:"origin,omitempty" firestore:"origin,omitempty"`
+	ID        string      `json:"id" firestore:"id"`
+	RunID     string      `json:"run_id" firestore:"run_id"`
+	ParentID  string      `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
+	Kind      CommandKind `json:"kind" firestore:"kind"`
+	Text      string      `json:"text" firestore:"text"`
+	Position  int64       `json:"position" firestore:"position"`
+	Revision  int64       `json:"revision" firestore:"revision"`
+	Delivered bool        `json:"delivered" firestore:"delivered"`
+	CreatedAt time.Time   `json:"created_at" firestore:"created_at"`
 }
 
 type TaskSnapshot struct {
@@ -74,7 +76,14 @@ const (
 func SameCommand(a, b Command) bool {
 	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID &&
 		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs) &&
-		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises
+		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises && sameOrigin(a.Origin, b.Origin)
+}
+
+func sameOrigin(a, b *TaskOrigin) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // ValidateCommandBatch checks a batch before anything is read. A rejected batch never partly commits.
@@ -289,7 +298,7 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 	run := Run{
 		ID: cmd.RunID, Request: cmd.Text, Status: RunRunning,
 		StartedAt: p.now, Budget: p.taskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
-		TraceContext: p.traceContext, OriginTraceContext: p.traceContext, Revises: cmd.Revises,
+		TraceContext: p.traceContext, OriginTraceContext: p.traceContext, Revises: cmd.Revises, Origin: cmd.Origin,
 	}
 	if cmd.ParentID != "" {
 		parent, question, err := linkSubtask(p.runs[cmd.ParentID], p.exists[cmd.ParentID], cmd, p.opened)

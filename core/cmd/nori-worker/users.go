@@ -59,7 +59,15 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 	service.Capabilities = caps
 	service.UserFacts = row.Facts()
 	waker := wake.ForUser(g.waker, row.ID)
-	activities := &task.Activities{Agent: service, Store: store}
+	services, err := platform.Assistant(cfg, row, store)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	service.Extensions = services.Connections
+	activities := &task.Activities{Agent: service, Store: store, Executor: &task.Executor{
+		Adapters: services.Adapters, Connections: services.Connections, Permissions: services.Permissions,
+	}}
 	entry := &userWorker{activities: activities, store: store, dispatcher: platform.Dispatcher(cfg, store, task.NewEngine(g.client, cfg.Temporal, row.ID), waker, row.ID)}
 	g.entries[row] = entry
 	return entry, nil
