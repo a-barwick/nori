@@ -143,7 +143,7 @@ var definitionID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-
 
 // Reserved are runtime orchestration and engine names no external definition may claim.
 var Reserved = map[string]bool{
-	"complete": true, "request_input": true, "request_work": true, "capability_load": true, "tool_search": true,
+	"complete": true, "compose": true, "request_input": true, "request_work": true, "capability_load": true, "tool_search": true,
 	"job_start": true, "job_status": true, "job_stop": true, "job_wait": true, "operation_read": true,
 	"task_history_read": true, "answer": true, "dispatch": true, "forget": true, "hold": true, "remember": true,
 	"show_result": true, "steer": true, "stop": true,

@@ -93,7 +93,7 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	}
 	op := state.OperationRecord{
 		ID: in.OperationID, CallID: in.Call.ID, Name: in.Call.Name, Revision: in.Revision,
-		EffectClass: effect, Outcome: "pending", RecoveryUntil: until,
+		EffectClass: effect, Outcome: "pending", RecoveryUntil: until, ParentOperationID: in.ParentOperationID,
 	}
 	if in.Exec != nil {
 		op.Tool = &state.DefinitionRef{ID: in.Exec.Tool.ID, Version: in.Exec.Tool.Version, Digest: in.Exec.Tool.Digest}
@@ -171,6 +171,10 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 
 	if plan != nil {
 		return a.runExternal(ctx, in, &op, recovering != nil, plan, persist)
+	}
+	if policy.Runtime && in.Call.Name == "compose" {
+		// Running a compose call again is safe: nested calls reuse their saved results.
+		return a.composeTool(ctx, in, persist)
 	}
 	if policy.Runtime {
 		return a.runtimeTool(ctx, in, &op, recovering != nil, policy, persist)
