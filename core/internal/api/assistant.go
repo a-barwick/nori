@@ -820,3 +820,35 @@ func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
 func newRequestIDFrom(requestID string) string {
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("dependent:"+requestID)).String()
 }
+
+// ResolveSignIns answers every pending sign-in interaction for a connection once its sign-in completes, so each task
+// that was waiting resumes and retries the call that needed the account.
+func (a *Assistant) ResolveSignIns(ctx context.Context, connectionID string) {
+	if a.Permissions == nil || a.Answer == nil {
+		return
+	}
+	pending, _, err := a.Permissions.Interactions(ctx, "pending", "", "", 200)
+	if err != nil {
+		return
+	}
+	for _, i := range pending {
+		if i.Kind != "sign_in" {
+			continue
+		}
+		var payload struct {
+			ConnectionID string `json:"connection_id"`
+		}
+		if json.Unmarshal(i.Payload, &payload) != nil || payload.ConnectionID != connectionID {
+			continue
+		}
+		requestID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("signed-in:"+i.ID)).String()
+		_, answer, err := a.Permissions.Respond(ctx, i.ID, requestID, i.Revision, permissions.Response{Kind: "answer",
+			Text: "The user signed in to the account again. Retry the same call."})
+		if err != nil || answer == nil {
+			continue
+		}
+		if err := a.Answer(ctx, answer.CommandID, answer.TaskID, answer.Question, answer.Text); err == nil || errors.Is(err, state.ErrDuplicate) {
+			a.Permissions.MarkDelivered(ctx, i.ID)
+		}
+	}
+}
