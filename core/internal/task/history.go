@@ -427,6 +427,10 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 		}
 	}
 	result["evidence_ref"] = in.OperationID
+	if waiting, _ := result["awaiting_interaction"].(bool); waiting && call.Name == "compose" {
+		// A compose script stopped at a nested call that needs the user: the task asks, exactly as for a direct call.
+		result["outcome"] = "needs_interaction"
+	}
 	out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{transcript.ToolResultMessage(call.ID, call.Name, result)})
 	if e != nil {
 		return out, errors.New("The tool result could not be saved to task history.")

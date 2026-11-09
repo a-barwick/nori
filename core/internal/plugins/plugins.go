@@ -594,6 +594,13 @@ func contributionNames(m Manifest) map[string]string {
 		if c.Kind == "hook" {
 			name = "hook:" + c.Hook + ":" + c.Handler
 		}
+		if c.Kind == "tool" {
+			var tool struct {
+				ModelName string `json:"model_name"`
+			}
+			_ = json.Unmarshal(c.Tool, &tool)
+			name = "tool:" + tool.ModelName
+		}
 		out[name] = string(data)
 	}
 	return out
