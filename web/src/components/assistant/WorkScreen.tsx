@@ -145,6 +145,9 @@ function Continue({ item }: { item: WorkItem }) {
 export function WorkDetailScreen({ taskID }: { taskID: string }) {
   const { runtime, has } = useAssistant();
   const { detail, error, loading, reload, live } = useWorkDetail(taskID);
+  const work = useWork();
+  // The reverse of origin.continues_task_id: later tasks that continue this one.
+  const continuedBy = (work.items ?? []).filter((other) => other.origin.continues_task_id === taskID);
   const item = detail?.item;
   const results = useResource<{ items: LibraryItem[] }>(has("library") && item?.result_ids.length ? `/library?task_id=${encodeURIComponent(taskID)}` : null, { poll: 0 });
   const commands = runtime.taskCommands.filter((command) => command.command.run_id === taskID);
@@ -175,7 +178,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
         {commands.filter((command) => command.error).map((command) => <div key={command.command.id} className="mt-2"><Notice tone="danger" action={command.rejected ? <Button size="sm" onClick={() => runtime.dismissTaskCommand(command.command.id)}>Dismiss</Button> : <Button size="sm" onClick={() => void runtime.retryTaskCommand(command)}>Retry</Button>}>{command.error}</Notice></div>)}
       </Section>}
       {item.status === "running" && item.cancel_requested && <div className="mt-6"><Notice>Stopping. Work already done stays done; anything unconfirmed stays marked.</Notice></div>}
-      {live && item.status === "failed" && <Continue item={item} />}
+      {live && item.status === "failed" && !continuedBy.length && <Continue item={item} />}
       {detail.result && <Section title={item.status === "failed" ? "Partial answer" : "Result"}><div className="rounded-card border border-hairline bg-surface p-4 text-body whitespace-pre-wrap [overflow-wrap:anywhere]">{detail.result}</div></Section>}
       {(results.data?.items.length ?? 0) > 0 && <Section title="Saved"><Rows>{results.data!.items.map((result) => <Row key={result.id} href={`/library/${encodeURIComponent(result.id)}`} title={result.title} detail={result.version > 1 ? `Version ${result.version}` : undefined} />)}</Rows></Section>}
       {!has("library") && item.result_ids.length > 0 && <Section title="Saved"><Rows>{item.result_ids.map((id) => { const saved = runtime.session?.results?.find((result) => result.id === id); return <Row key={id} href={`/library/${encodeURIComponent(id)}`} title={saved?.title ?? "Saved result"} />; })}</Rows></Section>}
@@ -192,6 +195,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
           <dt className="text-ink-3">Started</dt><dd>{when(item.started_at)}</dd>
           {item.finished_at && <><dt className="text-ink-3">Finished</dt><dd>{when(item.finished_at)}</dd></>}
           <dt className="text-ink-3">From</dt><dd>{item.origin.kind === "automation" && item.origin.automation_id ? <Link className="text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.origin.automation_id)}`}>A routine</Link> : item.origin.kind === "goal" && item.origin.goal_id ? <Link className="text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.origin.goal_id)}`}>A goal</Link> : item.origin.kind === "external" ? "Another app" : <Link className="text-accent-text hover:underline" href={item.origin.conversation_id && item.origin.conversation_id !== "assistant" ? `/?chat=${encodeURIComponent(item.origin.conversation_id)}` : "/"}>Chat</Link>}</dd>
+          {continuedBy.length > 0 && <><dt className="text-ink-3">Continued by</dt><dd className="flex flex-col">{continuedBy.map((other) => <Link key={other.task_id} className="text-accent-text hover:underline" href={`/work/${encodeURIComponent(other.task_id)}`}>{other.status === "running" ? "A task in progress" : `A later task (${statusPill(other).label.toLowerCase()})`}</Link>)}</dd></>}
           {item.origin.continues_task_id && <><dt className="text-ink-3">Continues</dt><dd><Link className="text-accent-text hover:underline" href={`/work/${encodeURIComponent(item.origin.continues_task_id)}`}>The earlier task</Link></dd></>}
           <dt className="text-ink-3">Cost</dt><dd>{[item.cost.status === "known" ? money(item.cost.amount_usd) : item.cost.status === "unknown" ? (item.cost.amount_usd ? `At least ${money(item.cost.amount_usd)}` : "Not known yet") : "None", item.cost.budget_usd ? `budget ${money(item.cost.budget_usd)}` : ""].filter(Boolean).join(" · ")}</dd>
           {item.parent_task_id && <><dt className="text-ink-3">Part of</dt><dd><Link className="text-accent-text hover:underline" href={`/work/${encodeURIComponent(item.parent_task_id)}`}>Parent task</Link></dd></>}
