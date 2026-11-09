@@ -130,6 +130,14 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		}
 		return receipts[0].Run, nil
 	}
+	result.Assistant.Submit = func(ctx context.Context, taskID, request string) (state.Run, error) {
+		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: taskID, RunID: taskID, Kind: state.CommandStart, Text: request,
+			Origin: &state.TaskOrigin{ConversationID: "external"}}}, nil)
+		if err != nil {
+			return state.Run{}, err
+		}
+		return receipts[0].Run, nil
+	}
 	result.Assistant.Revise = func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error) {
 		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: taskID, RunID: taskID, Kind: state.CommandStart, Text: instruction, Revises: resultID}}, nil)
 		if err != nil {

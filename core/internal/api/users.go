@@ -40,6 +40,21 @@ func UserHandler(directory users.Directory, open func(context.Context, users.Use
 			return
 		}
 		id := ""
+		// External MCP clients reach /mcp with a client token that names its user; the token itself is verified
+		// against that user's records before anything is served.
+		if r.URL.Path == "/mcp" {
+			token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+			owner, ok := ClientTokenUser(token)
+			if !ok {
+				writeJSON(w, 401, map[string]string{"error": "A Nori client token is required."})
+				return
+			}
+			id = owner
+			copyURL := *r.URL
+			copyURL.Path = "/v1/nori-mcp"
+			r = r.Clone(r.Context())
+			r.URL = &copyURL
+		}
 		if strings.HasPrefix(r.URL.Path, "/users/") {
 			var path string
 			id, path, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/users/"), "/")

@@ -412,17 +412,23 @@ func score(query []string, texts ...string) (float64, string) {
 // from this user's scoped store and deleted items are excluded at query time.
 func (a *Assistant) search(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	words := strings.Fields(strings.ToLower(q))
-	if len(words) == 0 {
-		writeAPIError(w, state.ErrInvalidResource, "", nil)
-		return
-	}
-	ctx := r.Context()
-	hits := []searchHit{}
-	items, byID, err := a.libraryItems(ctx)
+	hits, err := a.searchHits(r.Context(), q)
 	if err != nil {
 		writeAPIError(w, err, "", nil)
 		return
+	}
+	writeJSON(w, 200, map[string]any{"items": hits, "query": q})
+}
+
+func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, error) {
+	words := strings.Fields(strings.ToLower(q))
+	if len(words) == 0 {
+		return nil, state.ErrInvalidResource
+	}
+	hits := []searchHit{}
+	items, byID, err := a.libraryItems(ctx)
+	if err != nil {
+		return nil, err
 	}
 	for _, item := range items {
 		if s, snippet := score(words, item.Title, byID[item.ID].Text, item.Name); s > 0 {
@@ -481,7 +487,7 @@ func (a *Assistant) search(w http.ResponseWriter, r *http.Request) {
 	if len(hits) > 50 {
 		hits = hits[:50]
 	}
-	writeJSON(w, 200, map[string]any{"items": hits, "query": q})
+	return hits, nil
 }
 
 type memoryFact struct {
