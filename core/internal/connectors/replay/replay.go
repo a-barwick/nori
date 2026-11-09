@@ -40,11 +40,19 @@ type Exchange struct {
 	Path         string            `json:"path"` // exact, or a prefix ending in "*"
 	Query        map[string]string `json:"query,omitempty"`
 	BodyContains []string          `json:"body_contains,omitempty"`
-	After        []string          `json:"after,omitempty"` // exchanges that must have been used first
-	Times        int               `json:"times,omitempty"` // 0 means unlimited
+	BasicAuth    *BasicAuth        `json:"basic_auth,omitempty"` // the request must carry exactly these credentials
+	After        []string          `json:"after,omitempty"`      // exchanges that must have been used first
+	Times        int               `json:"times,omitempty"`      // 0 means unlimited
 	DelayMS      int               `json:"delay_ms,omitempty"`
 	Drop         bool              `json:"drop,omitempty"` // apply, then lose the response
 	Response     Response          `json:"response"`
+}
+
+// BasicAuth names the made-up credentials an exchange answers to, so an accepted and a rejected pair can be recorded
+// for the same request. Recordings never hold real credentials.
+type BasicAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 // Response is the recorded reply. Body is JSON; Text is used when Body is absent.
@@ -82,12 +90,17 @@ func Shared(dir, owner string) (*Transport, error) {
 	return actual.(*Transport), nil
 }
 
-// New loads every recording in dir.
+// New loads every recording in dir and in its immediate subdirectories (one per provider).
 func New(dir string) (*Transport, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if err != nil {
 		return nil, err
 	}
+	nested, err := filepath.Glob(filepath.Join(dir, "*", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, nested...)
 	if len(files) == 0 {
 		return nil, fmt.Errorf("replay: no recordings in %s", dir)
 	}
@@ -191,6 +204,12 @@ func (t *Transport) matches(x *Exchange, req *http.Request, body []byte) bool {
 	}
 	for _, s := range x.BodyContains {
 		if !bytes.Contains(body, []byte(s)) {
+			return false
+		}
+	}
+	if x.BasicAuth != nil {
+		user, password, ok := req.BasicAuth()
+		if !ok || user != x.BasicAuth.Username || password != x.BasicAuth.Password {
 			return false
 		}
 	}

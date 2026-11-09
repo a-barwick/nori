@@ -1,0 +1,156 @@
+{
+ "exchanges": [
+  {
+   "name": "icloud-principal-rejected",
+   "method": "PROPFIND",
+   "host": "caldav.icloud.com",
+   "path": "/",
+   "basic_auth": {
+    "username": "recorded.user@icloud.com",
+    "password": "zzzz-zzzz-zzzz-zzzz"
+   },
+   "response": {
+    "status": 401,
+    "headers": {
+     "WWW-Authenticate": "Basic realm=\"iCloud\""
+    },
+    "text": "Unauthorized"
+   }
+  },
+  {
+   "name": "icloud-principal",
+   "method": "PROPFIND",
+   "host": "caldav.icloud.com",
+   "path": "/",
+   "basic_auth": {
+    "username": "recorded.user@icloud.com",
+    "password": "abcd-efgh-ijkl-mnop"
+   },
+   "body_contains": [
+    "current-user-principal"
+   ],
+   "response": {
+    "status": 207,
+    "headers": {
+     "Content-Type": "text/xml; charset=utf-8"
+    },
+    "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/</d:href><d:propstat><d:prop><d:current-user-principal><d:href>/123456789/principal/</d:href></d:current-user-principal></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+   }
+  },
+  {
+   "name": "icloud-home",
+   "method": "PROPFIND",
+   "host": "caldav.icloud.com",
+   "path": "/123456789/principal/",
+   "basic_auth": {
+    "username": "recorded.user@icloud.com",
+    "password": "abcd-efgh-ijkl-mnop"
+   },
+   "body_contains": [
+    "calendar-home-set"
+   ],
+   "response": {
+    "status": 207,
+    "headers": {
+     "Content-Type": "text/xml; charset=utf-8"
+    },
+    "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/123456789/principal/</d:href><d:propstat><d:prop><c:calendar-home-set><d:href>https://p42-caldav.icloud.com/123456789/calendars/</d:href></c:calendar-home-set></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+   }
+  },
+  {
+   "name": "icloud-calendars",
+   "method": "PROPFIND",
+   "host": "p42-caldav.icloud.com",
+   "path": "/123456789/calendars/",
+   "basic_auth": {
+    "username": "recorded.user@icloud.com",
+    "password": "abcd-efgh-ijkl-mnop"
+   },
+   "body_contains": [
+    "supported-calendar-component-set"
+   ],
+   "response": {
+    "status": 207,
+    "headers": {
+     "Content-Type": "text/xml; charset=utf-8"
+    },
+    "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/123456789/calendars/</d:href><d:propstat><d:prop><d:displayname>calendars</d:displayname><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>/123456789/calendars/home/</d:href><d:propstat><d:prop><d:displayname>Home</d:displayname><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><c:supported-calendar-component-set><c:comp name=\"VEVENT\"/></c:supported-calendar-component-set><d:current-user-privilege-set><d:privilege><d:read/></d:privilege><d:privilege><d:write/></d:privilege></d:current-user-privilege-set></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>/123456789/calendars/family/</d:href><d:propstat><d:prop><d:displayname>Family</d:displayname><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><c:supported-calendar-component-set><c:comp name=\"VEVENT\"/></c:supported-calendar-component-set><d:current-user-privilege-set><d:privilege><d:read/></d:privilege></d:current-user-privilege-set></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>/123456789/calendars/tasks/</d:href><d:propstat><d:prop><d:displayname>Reminders</d:displayname><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><c:supported-calendar-component-set><c:comp name=\"VTODO\"/></c:supported-calendar-component-set><d:current-user-privilege-set><d:privilege><d:read/></d:privilege><d:privilege><d:write/></d:privilege></d:current-user-privilege-set></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+   }
+  },
+  {
+   "name": "icloud-events-home",
+   "method": "REPORT",
+   "host": "p42-caldav.icloud.com",
+   "path": "/123456789/calendars/home/",
+   "basic_auth": {
+    "username": "recorded.user@icloud.com",
+    "password": "abcd-efgh-ijkl-mnop"
+   },
+   "body_contains": [
+    "calendar-query"
+   ],
+   "response": {
+    "status": 207,
+    "headers": {
+     "Content-Type": "text/xml; charset=utf-8"
+    },
+    "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/123456789/calendars/home/icloud-pottery-1.ics</d:href><d:propstat><d:prop><d:getetag>\"C=101@U=abc\"</d:getetag><c:calendar-data>BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Apple Inc.//iCloud//EN\r\nBEGIN:VEVENT\r\nUID:icloud-pottery-1@example.com\r\nDTSTAMP:20261101T120000Z\r\nDTSTART:20261113T020000Z\r\nDTEND:20261113T040000Z\r\nSUMMARY:Pottery class\r\nLOCATION:Clay Studio\r\nSTATUS:CONFIRMED\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+   }
+  },
+  {
+   "name": "icloud-events-family-forbidden",
+   "method": "REPORT",
+   "host": "p42-caldav.icloud.com",
+   "path": "/123456789/calendars/family/",
+   "basic_auth": {
+    "username": "recorded.user@icloud.com",
+    "password": "abcd-efgh-ijkl-mnop"
+   },
+   "response": {
+    "status": 403,
+    "headers": {
+     "Content-Type": "text/xml; charset=utf-8"
+    },
+    "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/123456789/calendars/family/</d:href><d:status>HTTP/1.1 403 Forbidden</d:status></d:response></d:multistatus>"
+   }
+  },
+  {
+   "name": "icloud-create",
+   "method": "PUT",
+   "host": "p42-caldav.icloud.com",
+   "path": "/123456789/calendars/home/*",
+   "basic_auth": {
+    "username": "recorded.user@icloud.com",
+    "password": "abcd-efgh-ijkl-mnop"
+   },
+   "body_contains": [
+    "BEGIN:VEVENT"
+   ],
+   "times": 1,
+   "response": {
+    "status": 201,
+    "headers": {
+     "ETag": "\"C=102@U=abc\""
+    },
+    "text": ""
+   }
+  },
+  {
+   "name": "icloud-create-repeat",
+   "method": "PUT",
+   "host": "p42-caldav.icloud.com",
+   "path": "/123456789/calendars/home/*",
+   "basic_auth": {
+    "username": "recorded.user@icloud.com",
+    "password": "abcd-efgh-ijkl-mnop"
+   },
+   "after": [
+    "icloud-create"
+   ],
+   "response": {
+    "status": 412,
+    "text": "Precondition Failed"
+   }
+  }
+ ]
+}
