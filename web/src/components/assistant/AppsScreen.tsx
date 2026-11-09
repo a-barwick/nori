@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Calendar, Check, Circle, CircleSlash, Folder, KeyRound, ListTodo, Mail, MessageSquare, Plug, Plus, Search, Server, Upload } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, assistantURL, getJSON, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
@@ -91,6 +91,12 @@ export function AppsScreen() {
   const router = useRouter();
   const tab = (params.get("tab") as "apps" | "plugins" | "skills" | "mcp") || "apps";
   const setTab = (next: string) => router.replace(next === "apps" ? "/apps" : `/apps?tab=${next}`, { scroll: false });
+  // MCP sign-in returns to /apps?mcp=<id>&result=…; show the result on that server's page.
+  const signedInServer = params.get("mcp");
+  const signInResult = params.get("result");
+  useEffect(() => {
+    if (signedInServer) router.replace(`/apps/mcp/${encodeURIComponent(signedInServer)}?result=${encodeURIComponent(signInResult ?? "")}`);
+  }, [signedInServer, signInResult, router]);
   if (!has("integrations")) return <Screen title="Apps"><NotYet what="Connecting apps" /></Screen>;
   return (
     <Screen title="Apps" wide>
@@ -546,6 +552,7 @@ export function MCPDetailScreen({ id }: { id: string }) {
   const server = useResource<MCPServer>(`/mcp/${encodeURIComponent(id)}`, { poll: 5_000 });
   const tools = useResource<List<MCPTool>>(`/mcp/${encodeURIComponent(id)}/tools`, { poll: 0 });
   const action = useAction();
+  const result = useSearchParams().get("result");
   const item = server.data;
   if (server.loading) return <Screen title="MCP server" back="/apps?tab=mcp"><Loading /></Screen>;
   if (!item) return <Screen title="MCP server" back="/apps?tab=mcp"><Failure error={server.error ?? "Not found."} /></Screen>;
@@ -553,9 +560,17 @@ export function MCPDetailScreen({ id }: { id: string }) {
     const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value });
     server.apply(receipt.resource as MCPServer); invalidate(`/mcp/${encodeURIComponent(id)}/tools`);
   });
+  // OAuth servers open the provider's sign-in; the server returns here with ?result=.
+  const signIn = () => action.run("sign_in", async () => {
+    const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "sign_in" } }) as { auth?: AuthAttempt };
+    const url = receipt.auth && safeAuthorizeURL(receipt.auth.authorize_url);
+    if (!url) throw new Error("Nori didn’t return a sign-in link. Try again.");
+    window.location.assign(url);
+  });
   const observed = item.observed;
   return <Screen title={item.name} back="/apps?tab=mcp" line={observed.error?.message ?? (observed.status === "connected" ? `Connected${observed.last_success_at ? `, last call ${relative(observed.last_success_at)}` : ""}.` : undefined)}
     actions={<><MCPStatus server={item} /><RefreshButton onClick={() => void server.reload()} /></>}>
+    {result && <div className="mb-4"><Notice tone={result === "connected" ? "ok" : "danger"}>{result === "connected" ? "Signed in." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
     {action.error && <div className="mb-4"><Notice tone="danger">{action.error}</Notice></div>}
     <Section title="Connection"><dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
       <dt className="text-ink-3">Transport</dt><dd>{item.transport === "http" ? "Streamable HTTP" : "Managed process (stdio)"}</dd>
@@ -569,7 +584,7 @@ export function MCPDetailScreen({ id }: { id: string }) {
           <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: observed.status === "connected" ? "restart" : "start" }, "start")}>{observed.status === "connected" ? "Restart" : "Start"}</Button>
           {observed.status === "connected" && <Button size="sm" disabled={!!action.pending} onClick={() => void act({ action: "stop" }, "stop")}>Stop</Button>}
         </> : <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: "reconnect" }, "reconnect")}>Reconnect</Button>}
-        {observed.status === "needs_sign_in" && <Button size="sm" onClick={() => void act({ action: "sign_in" }, "sign_in")}>Sign in</Button>}
+        {(observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <Button size="sm" disabled={!!action.pending} onClick={() => void signIn()}>{action.pending === "sign_in" ? "Opening sign-in…" : "Sign in"}</Button>}
       </div></Section>
     {item.auth === "configured" && <Section title="Access token"><Credential server={item} onSaved={(next) => server.apply(next)} /></Section>}
     <Section title="Tools">
