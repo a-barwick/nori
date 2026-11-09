@@ -202,12 +202,25 @@ func fitTaskContext(result *TaskContext, records []*TaskContextRecord) error {
 			record.CommandHistoryTruncated = true
 		}
 	}
+	// Cited results are what the report is checked against, so they are shortened last: first other text, then
+	// background (recent) tasks, then the cited results themselves.
 	for _, limit := range []int{8192, 4096, 2048, 1024, 512, 256, 64, 0} {
 		if fits() {
 			return nil
 		}
 		for _, record := range records {
-			trimRecordText(record, limit)
+			trimRecordText(record, limit, false)
+		}
+	}
+	for len(result.RecentTasks) > 0 && !fits() {
+		result.RecentTasks = result.RecentTasks[:len(result.RecentTasks)-1]
+	}
+	for _, limit := range []int{4096, 2048, 1024, 512, 256, 64, 0} {
+		if fits() {
+			return nil
+		}
+		for _, record := range records {
+			trimRecordText(record, limit, true)
 		}
 	}
 	for !fits() {
@@ -239,7 +252,7 @@ func trimContextText(text *string, limit int, truncated *bool) {
 	*text, *truncated = (*text)[:limit], true
 }
 
-func trimRecordText(record *TaskContextRecord, limit int) {
+func trimRecordText(record *TaskContextRecord, limit int, evidence bool) {
 	trimContextText(&record.Request, limit, &record.TextTruncated)
 	trimContextText(&record.Waiting, limit, &record.TextTruncated)
 	trimContextText(&record.Progress, limit, &record.TextTruncated)
@@ -250,7 +263,9 @@ func trimRecordText(record *TaskContextRecord, limit int) {
 			trimContextText(&record.Outcome.Unmet[i], limit, &record.Outcome.Shortened)
 		}
 		for i := range record.Outcome.Evidence {
-			trimContextText(&record.Outcome.Evidence[i].Result, limit, &record.Outcome.Shortened)
+			if evidence {
+				trimContextText(&record.Outcome.Evidence[i].Result, limit, &record.Outcome.Shortened)
+			}
 		}
 	}
 	if record.Question != nil {

@@ -128,7 +128,16 @@ func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.Operati
 	}
 	if item.Origin.ContinuesTaskID != "" {
 		// Show what is being continued, not the continuation instruction the task was given.
-		if previous, err := a.Store.GetRun(ctx, item.Origin.ContinuesTaskID); err == nil {
+		// A continuation of a continuation names the root task, at most a few hops back.
+		previous, err := a.Store.GetRun(ctx, item.Origin.ContinuesTaskID)
+		for hops := 0; err == nil && hops < 8 && previous.Origin != nil && previous.Origin.ContinuesTaskID != ""; hops++ {
+			earlier, lookup := a.Store.GetRun(ctx, previous.Origin.ContinuesTaskID)
+			if lookup != nil {
+				break
+			}
+			previous = earlier
+		}
+		if err == nil {
 			title := clip(previous.Request, 190)
 			if previous.Origin != nil && previous.Origin.AutomationID != "" && a.Scheduler != nil {
 				if automation, err := a.Scheduler.Get(ctx, previous.Origin.AutomationID); err == nil {
