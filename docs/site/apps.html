@@ -40,7 +40,7 @@
 </section>
 <section><h2>Google</h2>
 <p>Calendar list, events, free/busy, create, update, cancel and respond; ICS preview and import; Gmail search, read, drafts and send; contacts lookup. Event creation uses an id derived from the action, so a retry after a lost response finds the event instead of creating a second one, and an uncertain write is read back before anyone is asked.</p>
-<p class="designed">HEY, Drive, OneDrive, Dropbox, Notion, Linear, GitHub, Slack and Teams have no connector yet.</p>
+<p class="designed">HEY, Drive, OneDrive, Dropbox, Slack and Teams have no connector yet; Linear, GitHub and Notion come as MCP packages (below).</p>
 </section>
 <section><h2>Microsoft</h2>
 <p>One Microsoft identity platform integration covers personal and work or school accounts, and the account label says which. Outlook calendar: calendars, events in a range, event details, create, update and cancel. Availability of other people comes from getSchedule and is offered only for work or school accounts; a personal account is told why. Creates carry a transaction id and a key stored on the event, so an interrupted create is found rather than repeated. Updates and cancels send the etag Nori read, so a change made in Outlook since then is not overwritten. Mail: search, read, keyed drafts, send only as approved (Graph answers 202, recorded as submitted), folders, categories and flags. Contacts and people search report where each match came from.</p>
@@ -54,7 +54,10 @@
 </section>
 <section><h2>MCP</h2>
 <p>Remote MCP servers over Streamable HTTP, added by the user or by a package. Discovery runs outside the workflow; each discovered tool becomes a definition named <code>mcp/&lt;server&gt;/&lt;tool&gt;</code> with its own digest, and its version includes a hash of the tool's content, so a changed description or schema is a new version while calls pinned to the old one keep it. A server's tool annotations are advisory, so MCP tools are treated as effect unknown and need an approval or an allow rule. A token for a server is written once and never returned.</p>
-<p class="designed">MCP sign-in with OAuth, managed stdio servers, resources, prompts and interactive requests are not built.</p>
+<p>A server that offers resources or prompts also gets four read tools from Nori: list resources (with resource templates), read a resource, list prompts and get a prompt. They are protocol reads, so they need no approval; the server's own tools stay effect unknown. Nori opens a session per call, so it does not receive list-change or subscription notifications; reconnecting discovers again. Sampling and roots are not offered, and the server's diagnostics say so.</p>
+<p>When a server needs input from the user during a call, it asks through the protocol's input requests. A call cannot pause, so Nori answers cancel and hands the question to the task. The task asks the user, then calls again with the answer, asking for approval again if the arguments changed.</p>
+<p>Linear, GitHub and Notion are packages in the catalog. Each contributes its provider's first-party remote server with a token the user supplies: a Linear API key, a GitHub fine-grained personal access token, or a Notion MCP token (Business or Enterprise workspaces). Installing asks for the server's network host; the server waits until the token is set.</p>
+<p class="designed">MCP sign-in with OAuth and managed stdio servers on the computer are not built. Slack, Teams, Google Drive, Dropbox and OneDrive are not packaged.</p>
 <p>Nori also answers MCP at <code>POST /mcp</code> for the user's own external clients. Each client gets a token shown once, scoped to read or to read and change; changes keep their request ids, so a retried submit returns the same task.</p>
 </section>
 <section><h2>Plugins and skills</h2>
