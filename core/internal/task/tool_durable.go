@@ -70,6 +70,11 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			effect = string(plan.prepared.Effect)
 		}
 	}
+	if recovering == nil && plan == nil && !policy.Runtime && in.Call.Name != "complete" {
+		if gated, err := a.computerGate(ctx, in, effect); err != nil || gated != nil {
+			return gated, err
+		}
+	}
 	if recovering == nil {
 		if blocked, err := a.unresolvedWriteBlock(ctx, in.RunID, effect); err != nil || blocked != nil {
 			return blocked, err

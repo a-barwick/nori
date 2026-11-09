@@ -232,6 +232,9 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 				if response.RememberAsDefault {
 					body.RememberDefault = true
 				}
+			case response.Kind == "resume_computer" && i.Kind == "computer_takeover":
+				// The computer session validated the lease and task revision before this response.
+				text = "The user finished controlling the computer. Check the browser's current state before continuing."
 			default:
 				return state.MutationResult{}, state.ErrInvalidResource
 			}
