@@ -389,7 +389,7 @@ function Credential({ server, onSaved }: { server: MCPServerWithAuth; onSaved: (
   });
   if (present && !replacing) return <div className="flex flex-wrap items-center gap-3"><Pill tone="ok">Saved</Pill><Button size="sm" variant="quiet" onClick={() => setReplacing(true)}>Replace</Button></div>;
   return <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(event) => { event.preventDefault(); if (token.trim()) void save(); }}>
-    <input aria-label="Access token" type="password" autoComplete="off" spellCheck={false} value={token} onChange={(event) => setToken(event.target.value)} className={inputClass} placeholder={present ? "New token" : "Paste the server’s access token"} />
+    <input aria-label="Token" type="password" autoComplete="off" spellCheck={false} value={token} onChange={(event) => setToken(event.target.value)} className={inputClass} placeholder={present ? "New token" : "Paste the server’s access token"} />
     <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!token.trim() || !!action.pending}>{action.pending ? "Saving…" : "Save"}</Button>{replacing && <Button variant="quiet" onClick={() => { setReplacing(false); setToken(""); }}>Cancel</Button>}</div>
     {action.error && <p role="alert" className="text-meta text-danger">{action.error}</p>}
   </form>;
