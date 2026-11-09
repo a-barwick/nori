@@ -292,7 +292,8 @@ function PluginCard({ entry }: { entry: CatalogEntry }) {
   const action = useAction();
   const router = useRouter();
   const install = () => action.run("install", async () => {
-    const receipt = await mutate<Installation>("/plugins/installations", { request_id: newRequestID(), expected_revision: 0, value: { package: { id: entry.package.id, version: entry.latest_version }, approved_access: { connection_types: entry.requested_access.connection_types, action_classes: entry.requested_access.action_classes } } });
+    // The user approves exactly what the package requests, hosts and paths included.
+    const receipt = await mutate<Installation>("/plugins/installations", { request_id: newRequestID(), expected_revision: 0, value: { package: { id: entry.package.id, version: entry.latest_version }, approved_access: entry.requested_access } });
     invalidate("/plugins", "/integrations");
     router.push(`/apps/plugins/${encodeURIComponent((receipt.resource as Installation).id)}`);
   });
@@ -338,7 +339,7 @@ export function PluginDetailScreen({ id }: { id: string }) {
       {review && <div className="mt-3 rounded-card border border-hairline-strong p-4">
         <h3 className="text-row font-semibold">{review.version ? `Changes in ${review.version}` : "Before you uninstall"}</h3>
         <ReviewList data={review.data} />
-        <div className="mt-4 flex gap-2">{review.version ? <Button variant="primary" onClick={() => void act({ action: "update", version: review.version }, "update")}>{action.pending === "update" ? "Updating…" : review.data.access_added.length ? "Allow and update" : "Update"}</Button>
+        <div className="mt-4 flex gap-2">{review.version ? <Button variant="primary" onClick={() => void act({ action: "update", version: review.version, approved_access: approvedFor(item.approved_access, review.data) }, "update")}>{action.pending === "update" ? "Updating…" : review.data.access_added.length ? "Allow and update" : "Update"}</Button>
           : <Button variant="primary" className="bg-danger! hover:bg-danger!" onClick={() => void act({ action: "uninstall" }, "uninstall")}>{action.pending === "uninstall" ? "Uninstalling…" : "Uninstall"}</Button>}
           <Button variant="quiet" onClick={() => setReview(undefined)}>Cancel</Button></div>
       </div>}
@@ -347,16 +348,40 @@ export function PluginDetailScreen({ id }: { id: string }) {
       {entry.description && <p className="mt-1 text-meta text-ink-3">{entry.description}</p>}</Section>}
     <Section title="Access">
       <p className="text-body text-ink-2">{item.approved_access.action_classes.length ? `May ${item.approved_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}` : "No account access"}{item.approved_access.connection_types.length ? ` with ${item.approved_access.connection_types.join(", ")} accounts you connect.` : "."}</p>
+      {(item.approved_access as Access).network?.length ? <p className="mt-1 text-meta text-ink-2">Reaches {(item.approved_access as Access).network!.join(", ")}.</p> : null}
+      {(item.approved_access as Access).filesystem?.length ? <p className="mt-1 text-meta text-ink-2">Reads files in {(item.approved_access as Access).filesystem!.join(", ")}.</p> : null}
       {item.required_connection_types?.length ? <p className="mt-1 text-meta text-ink-3">Needs a connected {item.required_connection_types.join(", ")} account.</p> : null}
     </Section>
     {!!item.diagnostics?.length && <Section title="Diagnostics"><pre className="overflow-x-auto rounded-card bg-fill-1 p-3 font-mono text-mono-data whitespace-pre-wrap">{item.diagnostics.join("\n")}</pre></Section>}
     {!!item.history?.length && <Section title="History"><Rows>{item.history.slice().reverse().map((event, index) => <Row key={index} title={`${event.event[0].toUpperCase()}${event.event.slice(1)}${event.version ? ` ${event.version}` : ""}`} detail={relative(event.at)}
-      trailing={event.version && event.version !== item.package.version && !earlier.has(event.version) ? undefined : event.version && event.version !== item.package.version ? <Button size="sm" variant="quiet" disabled={!!action.pending} onClick={() => void act({ action: "rollback", version: event.version }, "rollback")}>Use this version</Button> : undefined} />)}</Rows></Section>}
+      trailing={event.version && event.version !== item.package.version && !earlier.has(event.version) ? undefined : event.version && event.version !== item.package.version ? <Button size="sm" variant="quiet" disabled={!!action.pending} onClick={() => void action.run("rollback", async () => {
+        const data = await getJSON<InstallationReview>(`/plugins/installations/${encodeURIComponent(id)}/review?version=${encodeURIComponent(event.version!)}`);
+        const receipt = await mutate<Installation>(`/plugins/installations/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "rollback", version: event.version, approved_access: approvedFor(item.approved_access, data) } });
+        invalidate("/plugins", "/integrations"); installation.apply(receipt.resource as Installation);
+      }, "Version changed.")}>Use this version</Button> : undefined} />)}</Rows></Section>}
     <Section title="Manage"><div className="flex flex-wrap gap-2">
       <Button onClick={() => void act({ action: item.enabled ? "disable" : "enable" }, "toggle")} disabled={!!action.pending}>{item.enabled ? "Turn off" : "Turn on"}</Button>
       <Button className="text-danger!" variant="quiet" onClick={() => void loadReview()} disabled={!!action.pending}>Uninstall…</Button>
     </div></Section>
   </Screen>;
+}
+
+type Access = Installation["approved_access"] & { network?: string[]; filesystem?: string[] };
+
+/** The access an update or rollback needs approved: what the installation has, plus what the review says is new. */
+function approvedFor(current: Access, review: InstallationReview): Access {
+  const next = { connection_types: [...current.connection_types], action_classes: [...current.action_classes], network: [...(current.network ?? [])], filesystem: [...(current.filesystem ?? [])] };
+  const removed = new Set(review.access_removed);
+  for (const entry of review.access_added) {
+    const [kind, value] = entry.includes(":") ? [entry.slice(0, entry.indexOf(":")), entry.slice(entry.indexOf(":") + 1)] : ["", entry];
+    if (kind === "network") next.network.push(value);
+    else if (kind === "filesystem") next.filesystem.push(value);
+    else if (kind === "connection") next.connection_types.push(value);
+    else if (kind === "action") next.action_classes.push(value as Installation["approved_access"]["action_classes"][number]);
+  }
+  const keep = (kind: string) => (value: string) => !removed.has(`${kind}:${value}`);
+  return { connection_types: [...new Set(next.connection_types.filter(keep("connection")))], action_classes: [...new Set(next.action_classes.filter(keep("action")))],
+    network: [...new Set(next.network.filter(keep("network")))], filesystem: [...new Set(next.filesystem.filter(keep("filesystem")))] };
 }
 
 function ReviewList({ data }: { data: InstallationReview }) {
