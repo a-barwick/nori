@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Bell, Bug, Check, Copy, History, Brain, KeyRound, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
+import { deviceLabel, pushSupported, subscribeThisDevice } from "@/lib/assistant/push";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative, when } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
@@ -212,14 +213,94 @@ function Notifications() {
   const acknowledge = (item: InboxItem) => action.run(item.id, async () => { await mutate(`/inbox/${encodeURIComponent(item.id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "acknowledge" } }); invalidate("/inbox", "/assistant/summary"); });
   const hrefFor = (link: InboxItem["link"]) => ({ interaction: "/work?tab=needs_you", task: `/work/${encodeURIComponent(link.id)}`, result: `/library/${encodeURIComponent(link.id)}`, automation: `/routines/${encodeURIComponent(link.id)}`, goal: `/goals/${encodeURIComponent(link.id)}`, connection: "/apps", installation: "/apps?tab=plugins", computer_session: `/computer?session=${encodeURIComponent(link.id)}` } as Record<string, string>)[link.kind] ?? "/";
   return <>
-    <Section title="Where Nori reaches you">{destinations.loading ? <Loading /> : <Rows>{(destinations.data?.items ?? []).map((destination) => <Row key={destination.id} title={destination.label}
-      detail={[{ in_app: "In Nori", push: "Push notification", email: "Email" }[destination.channel], destination.quiet_hours ? `quiet ${destination.quiet_hours.start}–${destination.quiet_hours.end}` : "", destination.supports_receipts === false ? "can’t confirm you saw it" : ""].filter(Boolean).join(" · ")}
-      trailing={<Pill tone={destination.status === "verified" ? "ok" : destination.status === "failed" ? "danger" : "neutral"}>{{ verified: "On", pending_verification: "Not verified", disabled: "Off", failed: "Failing" }[destination.status]}</Pill>} />)}</Rows>}
+    <Section title="Where Nori reaches you">
+      {destinations.loading ? <Loading /> : <Rows>{(destinations.data?.items ?? []).map((destination) => <Destination key={destination.id} destination={destination} />)}</Rows>}
       {preferences.data?.quiet_hours && <p className="mt-2 text-meta text-ink-2">Quiet hours {preferences.data.quiet_hours.start}–{preferences.data.quiet_hours.end}: notifications wait; work still runs.</p>}
+      <AddDestination />
     </Section>
     <Section title="Inbox">{inbox.loading ? <Loading /> : inbox.data?.items.length ? <Rows>{inbox.data.items.map((item) => <Row key={item.id} href={hrefFor(item.link)} title={item.title} detail={`${item.body} · ${relative(item.created_at)}`}
       trailing={item.acknowledged_at ? <span className="text-meta text-ink-3">Seen</span> : <Button size="sm" variant="quiet" onClick={() => void acknowledge(item)}>Mark seen</Button>} chevron={false} />)}</Rows> : <Empty>Nothing yet.</Empty>}</Section>
   </>;
+}
+
+const CHANNEL: Record<DeliveryDestination["channel"], string> = { in_app: "In Nori", push: "Push notification", email: "Email" };
+const DESTINATION_STATUS: Record<DeliveryDestination["status"], { tone: "ok" | "neutral" | "danger"; label: string }> = {
+  verified: { tone: "ok", label: "On" }, pending_verification: { tone: "neutral", label: "Not verified" }, disabled: { tone: "neutral", label: "Off" }, failed: { tone: "danger", label: "Failing" },
+};
+
+/** One destination: verify with a code, re-enroll an expired push subscription, or remove it. */
+function Destination({ destination }: { destination: DeliveryDestination }) {
+  const { capabilities } = useAssistant();
+  const action = useAction();
+  const [codeSent, setCodeSent] = useState(false);
+  const [code, setCode] = useState("");
+  const [expired, setExpired] = useState(destination.channel === "push" && destination.status === "failed");
+  const status = DESTINATION_STATUS[destination.status] ?? { tone: "neutral" as const, label: destination.status };
+  const act = (value: Record<string, unknown>, label: string, done?: string) => action.run(label, async () => {
+    try {
+      await mutate(`/delivery-destinations/${encodeURIComponent(destination.id)}/actions`, { request_id: newRequestID(), expected_revision: destination.revision, value });
+    } catch (error) {
+      if (error instanceof APIError && error.code === "subscription_expired") setExpired(true);
+      if (error instanceof APIError && error.code === "provider_unavailable") throw new Error(destination.channel === "email" ? "Nori can’t send email yet: no mail service is set up." : "Nori can’t send notifications yet: push isn’t set up.");
+      throw error;
+    }
+    invalidate("/delivery-destinations");
+  }, done);
+  const reenroll = () => action.run("reenroll", async () => {
+    if (!capabilities?.push_public_key) throw new Error("Push isn’t set up on this Nori.");
+    const subscription = await subscribeThisDevice(capabilities.push_public_key);
+    await mutate(`/delivery-destinations/${encodeURIComponent(destination.id)}`, { request_id: newRequestID(), expected_revision: destination.revision, value: { channel: "push", label: destination.label, subscription, ...(destination.quiet_hours ? { quiet_hours: destination.quiet_hours } : {}) } }, "PUT");
+    setExpired(false); invalidate("/delivery-destinations");
+  }, "This device is enrolled again.");
+  const managed = destination.channel !== "in_app";
+  return <li className="px-4 py-3">
+    <div className="flex flex-wrap items-center gap-3">
+      <span className="min-w-0 flex-1"><span className="block text-row font-medium">{destination.label}</span>
+        <span className="block text-meta text-ink-2">{[CHANNEL[destination.channel], destination.quiet_hours ? `quiet ${destination.quiet_hours.start}–${destination.quiet_hours.end}` : "", destination.supports_receipts === false ? "can’t confirm you saw it" : ""].filter(Boolean).join(" · ")}</span></span>
+      <Pill tone={status.tone}>{expired ? "Expired" : status.label}</Pill>
+      {managed && destination.status === "pending_verification" && !codeSent && <Button size="sm" disabled={!!action.pending} onClick={() => void act({ action: "send_verification" }, "send", "Code sent.").then(() => setCodeSent(true))}>{action.pending === "send" ? "Sending…" : "Send code"}</Button>}
+      {expired && <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void reenroll()}>{action.pending === "reenroll" ? "Enrolling…" : "Re-enroll this device"}</Button>}
+      {managed && <Confirm danger title={`Remove ${destination.label}?`} body="Nori stops sending here. Routines that used it keep running and deliver to your other destinations." confirm="Remove" onConfirm={() => void act({ action: "remove" }, "remove", "Removed.")}
+        trigger={<Button size="sm" variant="quiet" className="text-danger!" disabled={!!action.pending}>Remove</Button>} />}
+    </div>
+    {codeSent && destination.status === "pending_verification" && <form className="mt-3 flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); if (/^\d{6}$/.test(code)) void act({ action: "verify", code }, "verify", "Verified."); }}>
+      <input aria-label="Verification code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))} className={cn(inputBase, "w-32 tracking-[0.3em]")} placeholder="123456" />
+      <Button type="submit" size="sm" variant="primary" disabled={code.length !== 6 || !!action.pending}>{action.pending === "verify" ? "Checking…" : "Verify"}</Button>
+      <Button size="sm" variant="quiet" disabled={!!action.pending} onClick={() => void act({ action: "send_verification" }, "send", "New code sent.")}>Send a new code</Button>
+    </form>}
+    {action.error && <p role="alert" className="mt-2 text-meta text-danger">{action.error}</p>}
+  </li>;
+}
+
+/** Add an email address, or enroll this browser for push when the core has a push key. */
+function AddDestination() {
+  const { capabilities } = useAssistant();
+  const action = useAction();
+  const [adding, setAdding] = useState<"email" | undefined>();
+  const [label, setLabel] = useState("");
+  const [address, setAddress] = useState("");
+  const create = (value: Record<string, unknown>, done: string) => action.run("create", async () => {
+    await mutate("/delivery-destinations", { request_id: newRequestID(), expected_revision: 0, value });
+    setAdding(undefined); setAddress(""); setLabel(""); invalidate("/delivery-destinations");
+  }, done);
+  const enrollThisDevice = () => action.run("push", async () => {
+    const subscription = await subscribeThisDevice(capabilities!.push_public_key!);
+    await mutate("/delivery-destinations", { request_id: newRequestID(), expected_revision: 0, value: { channel: "push", label: deviceLabel(), subscription } });
+    invalidate("/delivery-destinations");
+  }, "This device is added. Send a code to verify it.");
+  const canPush = !!capabilities?.push_public_key && pushSupported();
+  return <div className="mt-3">
+    {adding === "email" ? <form className="flex flex-wrap items-end gap-3 rounded-card border border-hairline-strong p-4" onSubmit={(event) => { event.preventDefault(); void create({ channel: "email", label: label.trim() || address.trim(), address: address.trim() }, "Email added. Send a code to verify it."); }}>
+      <Field label="Email address"><input type="email" required value={address} onChange={(event) => setAddress(event.target.value)} className={cn(inputBase, "w-64 max-w-full")} placeholder="you@example.com" /></Field>
+      <Field label="Name (optional)"><input value={label} onChange={(event) => setLabel(event.target.value)} className={cn(inputBase, "w-48")} placeholder="Personal email" /></Field>
+      <Button type="submit" variant="primary" disabled={!address.trim() || !!action.pending}>Add</Button><Button variant="quiet" onClick={() => setAdding(undefined)}>Cancel</Button>
+    </form> : <div className="flex flex-wrap gap-2">
+      <Button size="sm" onClick={() => setAdding("email")}>Add an email address</Button>
+      {canPush ? <Button size="sm" disabled={!!action.pending} onClick={() => void enrollThisDevice()}>{action.pending === "push" ? "Asking…" : "Notify this device"}</Button>
+        : <span className="self-center text-meta text-ink-3">{!capabilities?.push_public_key ? "Push notifications aren’t set up on this Nori." : "This browser can’t receive notifications."}</span>}
+    </div>}
+    {action.error && <p role="alert" className="mt-2 text-meta text-danger">{action.error}</p>}
+  </div>;
 }
 
 function ActionHistory() {
