@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"nori/internal/computersession"
 	"nori/internal/connections"
 	"nori/internal/invoke"
 	"nori/internal/permissions"
@@ -21,6 +22,52 @@ type Executor struct {
 	Adapters    *invoke.Registry
 	Connections *connections.Service
 	Permissions *permissions.Service
+	// Sessions decides who controls the computer; nil leaves computer tools ungated.
+	Sessions *computersession.Service
+}
+
+// computerGate gives the task the computer for an engine tool that runs on it, or ends the call unadmitted: while
+// the user controls the computer the task waits for them to resume; while another task holds it, the call is
+// refused so it can be retried.
+func (a *Activities) computerGate(ctx context.Context, in ToolInput, effect string) (map[string]any, error) {
+	if a.Executor == nil || a.Executor.Sessions == nil {
+		return nil, nil
+	}
+	err := a.Executor.Sessions.Acquire(ctx, in.RunID)
+	switch {
+	case errors.Is(err, computersession.ErrUserControl):
+		run, _ := a.Store.GetRun(ctx, in.RunID)
+		prompt := "The user is controlling the computer. Nori continues this task when the user resumes it."
+		interaction, err := a.Executor.Sessions.Handoff(ctx, in.RunID, in.Revision, "user_requested", prompt, clip(run.Request, 200))
+		if err != nil {
+			return nil, err
+		}
+		return denial(in, effect, "needs_interaction", prompt, map[string]any{"interaction_id": interaction.ID, "interaction_kind": "computer_takeover", "prompt": prompt}), nil
+	case errors.Is(err, computersession.ErrBusy):
+		return denial(in, effect, "failed", "Another task is using the computer right now. Continue with other work, then try again.", nil), nil
+	}
+	return nil, err
+}
+
+// handoff asks the user to take over the computer, for example to sign in. The task waits on the interaction.
+func (a *Activities) handoff(ctx context.Context, in ToolInput) (map[string]any, error) {
+	if a.Executor == nil || a.Executor.Sessions == nil || a.Executor.Permissions == nil {
+		return denial(in, "read", "failed", "The computer is not available for a handoff in this deployment.", nil), nil
+	}
+	reason := invoke.String(in.Call.Args, "reason")
+	if reason == "" {
+		reason = "blocked"
+	}
+	prompt := invoke.String(in.Call.Args, "message")
+	if prompt == "" {
+		prompt = "Nori needs you to take over the computer."
+	}
+	run, _ := a.Store.GetRun(ctx, in.RunID)
+	interaction, err := a.Executor.Sessions.Handoff(ctx, in.RunID, in.Revision, reason, prompt, clip(run.Request, 200))
+	if err != nil {
+		return nil, err
+	}
+	return denial(in, "read", "needs_interaction", prompt, map[string]any{"interaction_id": interaction.ID, "interaction_kind": "computer_takeover", "prompt": prompt}), nil
 }
 
 // externalPlan is what was resolved before admission: the adapter, the account access for this attempt, the
@@ -64,6 +111,10 @@ func interactionID(prefix, operationID, digest string) string {
 // action is denied, or it waits on the user's approval.
 func (a *Activities) planExternal(ctx context.Context, in ToolInput, recovering bool) (*externalPlan, map[string]any, error) {
 	effect := string(in.Exec.Policy.Effect)
+	if in.Exec.Binding.Target == "nori.computer/handoff" && !recovering {
+		out, err := a.handoff(ctx, in)
+		return nil, out, err
+	}
 	adapter, ok := a.Executor.adapter(in)
 	if !ok {
 		return nil, denial(in, effect, "failed", "This tool's implementation is not available in this worker version, so it did not run.", nil), nil

@@ -1,0 +1,20 @@
+{
+  "ref": {
+    "id": "user/weekly-report",
+    "version": "3",
+    "digest": "sha256:77a"
+  },
+  "title": "Weekly report",
+  "description": "Today's agenda, urgent messages and goal blockers.",
+  "instructions": "Read today's events and report them with sources. Do not change anything.",
+  "inputs": {
+    "type": "object"
+  },
+  "required_tool_ids": [
+    "google/calendar/calendar-events"
+  ],
+  "scope": "user",
+  "id": "skl_user_weekly",
+  "revision": 3,
+  "enabled": true
+}

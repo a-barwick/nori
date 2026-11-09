@@ -34,6 +34,9 @@ const triggerSchema = `"trigger": {"type": "object", "description": "One of: {ki
 	"required": ["kind"]}`
 
 var specs = []spec{
+	{"computer_request_takeover", "Ask the user to take over the computer", "nori_computer", "Computer", "nori.computer/handoff", "read", "safe",
+		"Ask the user to take over the computer to sign in, solve a check or act where Nori is blocked. Never type passwords yourself. The task waits until the user resumes it, then re-check the browser.",
+		`{"type": "object", "properties": {"reason": {"enum": ["sign_in", "captcha", "blocked"]}, "message": {"type": "string", "maxLength": 500}}, "required": ["reason", "message"], "additionalProperties": false}`},
 	{"automation_create", "Create a reminder, routine or monitor", "nori_automations", "Reminders and routines", "nori.automations/create", "reversible_write", "provider_key",
 		"Create a one-time reminder, a recurring routine, an event-relative reminder or a bounded monitor that runs the instruction at its schedule and delivers the result to the user's inbox. missed_run says what happens to runs Nori could not make: skip, latest or all; state the choice to the user. Requested standing authority for changes or sends while the user is away is shown to the user for approval.",
 		`{"type": "object", "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 200}, "instruction": {"type": "string", "minLength": 1, "maxLength": 6000}, ` + triggerSchema + `,
@@ -256,6 +259,7 @@ func (Source) Inventory(context.Context) (extensions.Inventory, error) {
 	return extensions.Inventory{Definitions: Definitions, Capabilities: []extensions.CapabilityState{
 		{Capability: "nori_automations", Title: "Reminders and routines", Account: "Nori", Availability: "Available", Ready: true},
 		{Capability: "nori_goals", Title: "Goals", Account: "Nori", Availability: "Available", Ready: true},
+		{Capability: "nori_computer", Title: "Computer", Account: "Nori", Availability: "Available when the computer is enabled", Ready: true},
 	}}, nil
 }
 

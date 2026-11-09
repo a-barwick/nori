@@ -71,7 +71,7 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 		return err == nil && strings.Contains(string(r.Body), `"deleted_at"`)
 	}
 	activities := &task.Activities{Agent: service, Store: store, Executor: &task.Executor{
-		Adapters: services.Adapters, Connections: services.Connections, Permissions: services.Permissions,
+		Adapters: services.Adapters, Connections: services.Connections, Permissions: services.Permissions, Sessions: services.Sessions,
 	}}
 	entry := &userWorker{activities: activities, store: store, dispatcher: platform.Dispatcher(cfg, store, task.NewEngine(g.client, cfg.Temporal, row.ID), waker, row.ID)}
 	g.entries[row] = entry

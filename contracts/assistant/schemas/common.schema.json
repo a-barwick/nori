@@ -432,6 +432,9 @@
             },
             "operations": {
               "type": "boolean"
+            },
+            "skills": {
+              "type": "boolean"
             }
           },
           "additionalProperties": {

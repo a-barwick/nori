@@ -1622,6 +1622,36 @@
         }
       },
       "additionalProperties": false
+    },
+    "SkillView": {
+      "description": "GET /v1/skills and /v1/skills/{id} items (r2.4). Plugin skills carry installation_id and are read-only.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Skill"
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "revision",
+            "enabled"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "common.schema.json#/$defs/ID"
+            },
+            "revision": {
+              "$ref": "common.schema.json#/$defs/Revision"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "installation_id": {
+              "$ref": "common.schema.json#/$defs/ID"
+            }
+          }
+        }
+      ]
     }
   }
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"nori/internal/computersession"
 	"nori/internal/connections"
 	"nori/internal/connectors/mcp"
 	"nori/internal/extensions"
@@ -43,6 +44,7 @@ type Assistant struct {
 	Scheduler        *scheduler.Service
 	MCP              *mcp.Service
 	Plugins          *plugins.Service
+	Computer         *computersession.Service
 	UnattendedWrites string
 	// NextScheduled and InboxUnread feed the summary badges once the Scheduler and inbox exist.
 	NextScheduled func(ctx context.Context) *time.Time
@@ -62,6 +64,8 @@ type apiError struct {
 func writeAPIError(w http.ResponseWriter, err error, requestID string, current any) {
 	status, code, message, retryable := 502, "internal", "Nori could not finish this request.", true
 	switch {
+	case errors.Is(err, computersession.ErrLease):
+		status, code, message, retryable = 409, "interaction_stale", err.Error(), false
 	case errors.Is(err, state.ErrNotFound):
 		status, code, message, retryable = 404, "not_found", "Not found.", false
 	case errors.Is(err, state.ErrRevisionConflict):
@@ -174,6 +178,11 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	}
 	if a.Plugins != nil {
 		a.registerPlugins(mux)
+	}
+	if a.Computer != nil {
+		mux.HandleFunc("GET /v1/computer/sessions", a.computerSessions)
+		mux.HandleFunc("GET /v1/computer/sessions/{id}", a.computerSession)
+		mux.HandleFunc("POST /v1/computer/sessions/{id}/actions", jsonBody(a.computerAction))
 	}
 	for _, extra := range a.Extra {
 		extra(mux, a)
@@ -518,6 +527,22 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if value.Kind == "resume_computer" {
+		if a.Computer == nil {
+			writeAPIError(w, state.ErrInvalidResource, requestID, nil)
+			return
+		}
+		interaction, err := a.Permissions.Interaction(r.Context(), id)
+		if err != nil || interaction.InstructionRevision == nil {
+			writeAPIError(w, state.ErrNotFound, requestID, nil)
+			return
+		}
+		session, _ := a.Computer.Get(r.Context())
+		if _, _, err := a.Computer.Resume(r.Context(), newRequestIDFrom(requestID), session.Revision, value.LeaseID, interaction.TaskID, *interaction.InstructionRevision); err != nil {
+			writeAPIError(w, err, requestID, interaction)
+			return
+		}
+	}
 	receipt, answer, err := a.Permissions.Respond(r.Context(), id, requestID, expected, value)
 	if err != nil {
 		current, _ := a.Permissions.Interaction(r.Context(), id)
@@ -528,14 +553,18 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 		if answer.DefaultPurpose != "" {
 			a.rememberDefault(r.Context(), answer.DefaultPurpose, answer.DefaultConnection)
 		}
-		if err := a.Answer(r.Context(), answer.CommandID, answer.TaskID, answer.Question, answer.Text); err != nil &&
-			!errors.Is(err, state.ErrQuestionStale) && !errors.Is(err, state.ErrBusy) && !errors.Is(err, state.ErrDuplicate) {
-			// The resolution is saved; delivery of the answer is repaired by retrying this same request.
+		err := a.Answer(r.Context(), answer.CommandID, answer.TaskID, answer.Question, answer.Text)
+		switch {
+		case err == nil || errors.Is(err, state.ErrDuplicate) || errors.Is(err, state.ErrBusy):
+			a.Permissions.MarkDelivered(r.Context(), id)
+		case errors.Is(err, state.ErrQuestionStale):
+			// The task has not published this question yet. The resolution and its exact answer are saved and the
+			// delivery pass retries until the task asks it, so the answer is never lost.
+		default:
 			writeJSON(w, 503, apiError{Error: "Your answer is saved; delivering it to the task failed. Retry to finish.", Code: "delivery_pending",
 				Retryable: true, Accepted: true, RequestID: requestID})
 			return
 		}
-		a.Permissions.MarkDelivered(r.Context(), id)
 	}
 	writeReceipt(w, receipt)
 }
@@ -708,3 +737,8 @@ func (a *Assistant) tool(w http.ResponseWriter, r *http.Request) {
 func newRequestID() string { return uuid.NewString() }
 
 func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
+
+// newRequestIDFrom derives a stable request ID for a dependent mutation, so a retried request repeats it exactly.
+func newRequestIDFrom(requestID string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("dependent:"+requestID)).String()
+}

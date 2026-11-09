@@ -3,7 +3,8 @@
     "connections": true,
     "integrations": true,
     "work": false,
-    "automations": false
+    "automations": false,
+    "skills": true
   },
   "upload_accept": {
     "media_types": [

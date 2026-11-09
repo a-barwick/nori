@@ -68,11 +68,11 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	result.Scheduler = services.Scheduler
 	result.Assistant = &api.Assistant{
 		Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
-		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, MCP: services.MCP, Plugins: services.Plugins,
+		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, MCP: services.MCP, Plugins: services.Plugins, Computer: services.Sessions,
 		Features: map[string]bool{"integrations": true, "connections": true, "interactions": true, "permissions": true,
 			"preferences": true, "work": !cfg.Features.DisableBackgroundTasks, "operations": true,
 			"automations": !cfg.Features.DisableBackgroundTasks, "goals": true, "inbox": true,
-			"library": true, "search": true, "memory": true, "mcp": true, "plugins": true, "skills": true},
+			"library": true, "search": true, "memory": true, "mcp": true, "plugins": true, "skills": true, "computer_sessions": !cfg.Features.DisableComputer},
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 	}
 	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
@@ -195,7 +195,32 @@ func (a *App) Schedule(ctx context.Context) error {
 		return nil
 	}
 	_, err := a.Scheduler.Tick(ctx)
-	return errors.Join(err, a.Chats.DeliverTasks(ctx, a.Store.GetRun))
+	return errors.Join(err, a.Chats.DeliverTasks(ctx, a.Store.GetRun), a.deliverAnswers(ctx))
+}
+
+// deliverAnswers retries answer commands for interactions resolved before their task asked. An answer for a task
+// that ended or moved to a newer instruction is retired: the newer revision supersedes it.
+func (a *App) deliverAnswers(ctx context.Context) error {
+	if a.Assistant == nil || a.Assistant.Permissions == nil || a.Assistant.Answer == nil {
+		return nil
+	}
+	answers, ids, err := a.Assistant.Permissions.UndeliveredAnswers(ctx)
+	if err != nil {
+		return err
+	}
+	for i, answer := range answers {
+		err := a.Assistant.Answer(ctx, answer.CommandID, answer.TaskID, answer.Question, answer.Text)
+		if errors.Is(err, state.ErrQuestionStale) {
+			run, runErr := a.Store.GetRun(ctx, answer.TaskID)
+			if runErr == nil && run.Status == state.RunRunning && (run.Question == nil || run.Question.ID == answer.Question) {
+				continue
+			}
+		}
+		if err == nil || errors.Is(err, state.ErrDuplicate) || errors.Is(err, state.ErrQuestionStale) || errors.Is(err, state.ErrBusy) {
+			a.Assistant.Permissions.MarkDelivered(ctx, ids[i])
+		}
+	}
+	return nil
 }
 
 func (a *App) processAssistant(ctx context.Context) error {
