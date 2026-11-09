@@ -1,0 +1,36 @@
+{
+  "package": {
+    "id": "linear/linear-mcp",
+    "version": "2.1.0",
+    "digest": "sha256:9a"
+  },
+  "title": "Linear",
+  "description": "Issues and projects.",
+  "publisher": {
+    "id": "linear",
+    "name": "Linear"
+  },
+  "categories": [
+    "projects"
+  ],
+  "latest_version": "2.1.0",
+  "provenance": {
+    "source": "registry",
+    "verified": true
+  },
+  "requested_access": {
+    "connection_types": [
+      "linear"
+    ],
+    "action_classes": [
+      "read",
+      "reversible_write"
+    ]
+  },
+  "contributions_summary": {
+    "tools": 12,
+    "skills": 1,
+    "prompts": 0,
+    "mcp_servers": 1
+  }
+}

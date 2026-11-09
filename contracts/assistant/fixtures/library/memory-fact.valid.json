@@ -1,0 +1,11 @@
+{
+  "id": "mem_1",
+  "revision": 1,
+  "text": "Prefers aisle seats",
+  "scope": "user",
+  "origin": {
+    "conversation_id": "assistant",
+    "message_id": "msg_3"
+  },
+  "created_at": "2026-11-09T09:00:00Z"
+}

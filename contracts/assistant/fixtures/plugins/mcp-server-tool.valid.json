@@ -1,0 +1,11 @@
+{
+  "name": "search_pages",
+  "title": "Search pages",
+  "exposure": "discoverable",
+  "definition": {
+    "id": "mcp/wiki/search_pages",
+    "version": "d1",
+    "digest": "sha256:aa"
+  },
+  "availability": "ready"
+}

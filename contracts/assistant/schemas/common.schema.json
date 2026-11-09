@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.nori.local/assistant/common.schema.json",
   "title": "Nori assistant shared primitives",
-  "description": "Baseline r1 encoding of docs/assistant-contract-baseline.md C1 common conventions.",
+  "description": "Baseline r2 encoding of docs/assistant-contract-baseline.md C1 common conventions.",
   "$defs": {
     "ID": {
       "type": "string",
@@ -254,8 +254,52 @@
         },
         "receipt": {
           "$ref": "#/$defs/MutationReceipt"
+        },
+        "current": {
+          "description": "Latest resource projection; present on 409 revision_conflict and interaction_stale, absent on idempotency_conflict"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "idempotency_conflict"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "current"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "revision_conflict",
+                  "interaction_stale"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "required": [
+              "current"
+            ]
+          }
+        }
+      ]
     },
     "ErrorDetail": {
       "type": "object",
@@ -643,6 +687,18 @@
             }
           }
         }
+      ]
+    },
+    "ErrorCode": {
+      "description": "Codes agreed for new endpoints in r2. Clients treat an unknown code by its HTTP status.",
+      "enum": [
+        "revision_conflict",
+        "idempotency_conflict",
+        "interaction_stale",
+        "validation_failed",
+        "not_found",
+        "credential_store_unavailable",
+        "provider_unavailable"
       ]
     }
   }
