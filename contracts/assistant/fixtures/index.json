@@ -1,5 +1,5 @@
 {
-  "revision": "r2.5",
+  "revision": "r2.6",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -1025,6 +1025,17 @@
       "file": "fixtures/plugins/mcp-client-action.revoke.valid.json",
       "schema": "plugins.schema.json#/$defs/MCPClientAction",
       "valid": true
+    },
+    {
+      "file": "fixtures/execution/work-item.continuation.valid.json",
+      "schema": "execution.schema.json#/$defs/WorkItem",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/work-item.origin-unknown-field.invalid.json",
+      "schema": "execution.schema.json#/$defs/WorkItem",
+      "valid": false,
+      "note": "origin fields are closed"
     }
   ]
 }

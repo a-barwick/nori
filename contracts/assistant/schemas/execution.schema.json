@@ -405,6 +405,11 @@
             },
             "goal_id": {
               "$ref": "common.schema.json#/$defs/ID"
+            },
+            "continues_task_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Set on a task started by the continue action after a spending-limit stop (r2.6)"
             }
           },
           "additionalProperties": false

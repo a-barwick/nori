@@ -2544,3 +2544,33 @@ export const fx_plugins_mcp_client_action_revoke_valid: MCPClientAction = {
   }
 };
 
+// fixtures/execution/work-item.continuation.valid.json
+export const fx_execution_work_item_continuation_valid: WorkItem = {
+  "task_id": "task_11",
+  "title": "Continue: university founding years",
+  "status": "running",
+  "bucket": "working",
+  "instruction_revision": 3,
+  "origin": {
+    "kind": "conversation",
+    "conversation_id": "assistant",
+    "continues_task_id": "task_10"
+  },
+  "interaction_ids": [],
+  "progress": "Waiting for approval to send the invite",
+  "operations": {
+    "total": 3,
+    "uncertain": 0,
+    "failed": 0,
+    "submitted": 0
+  },
+  "result_ids": [],
+  "cost": {
+    "amount_usd": 0.01,
+    "status": "known",
+    "budget_usd": 0.5
+  },
+  "started_at": "2026-11-09T09:00:00Z",
+  "cancel_requested": false
+};
+
