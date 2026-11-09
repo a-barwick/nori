@@ -60,7 +60,7 @@ Statuses: **not started**; **implemented** (code merged into the integration bra
 | A40 | Upgrade/replay/rollback | implemented | W1 pinning (`8de4158`) merged as `4143e92`. `contracts-check` replays `contracts/assistant/histories/ed6b020-web-search-task.json` (captured before pinning; calls carry no `Exec`, so the workflow takes the name-lookup path) and `4143e92-pinned-exec-computer-unavailable.json` (every call pins tool ref, binding and policy) against the merged workflow: both replay. A tampered copy fails with TMPRL1100, so the check bites. Remaining for locally verified: a dynamic (non-built-in) call history once W2/W3 land; rollback of a worker build with saved receipts and schedules intact. | None. |
 | A41 | Budget exhaustion and feedback | not started | | None. |
 | A42 | Physical mobile and accessibility | not started | | A real phone on the same network as the local web server, operated by Austin, or a reachable test deployment (not production). |
-| A43 | Provider failure and performance | not started | | Provider accounts for real failure paths; latency baseline runs locally. |
+| A43 | Provider failure and performance | not started | Latency and cost baseline started, see Performance baseline below. Provider failure paths not exercised. | Provider accounts for real failure paths; latency baseline runs locally. |
 | A44 | Full everyday workflow | not started | | All calendar, email, files, task and delivery providers above. |
 
 ## Recovery checks
@@ -79,6 +79,19 @@ Each is run on the local integration stack and recorded here with what could not
 | Scheduler race with two due-slot observers | not started | |
 | Computer takeover and lease expiry | not started | |
 | Disconnect retention (D4 interim flags) | not started | |
+
+## Performance baseline
+
+Measured with `scripts/assistant-latency.py --user 11111111-1111-4111-8111-111111111111` on the local stack (core and worker on one laptop, OpenAI outer model, OpenRouter task model, Brave search) at `e680c6f`, 2026-11-08. Seconds; cost in USD from the usage records.
+
+| run | condition | ack | dispatch | model | tools | other | deliver | total | calls | cost |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `ef41561d`, `aad1673f`, `972249a0` | warm; one turn started three parallel one-search tasks | 8.4 | 8.1 | 4.8–6.4 | 0.8–0.9 | 1.9–2.5 | 2.9–4.0 | 20.1 | 5–6 | 0.021–0.038 |
+| `2321c723` | warm start, six sequential searches; worker stopped 30 s mid-task | 7.0 | 6.9 | 19.1 | 4.3 | 39.9 (includes the outage) | 3.8 | 74.1 | 11 | 0.063 |
+| `aa217d42` | warm start, four sequential searches; core stopped mid-task | 5.5 | 5.4 | 14.1 | 2.9 | 3.2 | 46.2 (core down) | 71.7 | 9 | 0.061 |
+| `ec27d94f` | cold: no worker polling until it was started 3 min later | 7.5 | 7.5 | 14.4 | 3.4 | 176.0 (no worker) | 3.9 | 205.1 | 10 | 0.028 |
+
+Stages: ack = user message to acknowledgment; dispatch = user message to task start; model and tools = time in `ModelRef` and `ToolRef` activities; other = the rest of the task (history sync, spend, projection, cleanup, workflow-task queueing); deliver = task end to result message. Observations: the acknowledgment costs 5–8 s of outer-model time before any work starts, the largest fixed cost on the warm path; tool time is small next to model time; delivery adds about 3–4 s for the terminal outer turn. Limits: one run per condition; parallel tasks from one turn each count that turn's outer calls, so their costs overlap; every run has one call with unknown cost (the classification hint, `jev`); no true cold start (fresh core, worker and model connections on an idle machine) is measured yet, and no provider confirmation stage exists until provider writes land.
 
 ## Merges into the integration branch
 
