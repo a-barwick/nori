@@ -245,6 +245,9 @@ func (s *Service) Callback(ctx context.Context, stateValue, code, providerError 
 	if _, err := s.Discover(ctx, attempt.ServerID); err != nil {
 		return fail("discovery")
 	}
+	if s.OnSignedIn != nil {
+		s.OnSignedIn(context.WithoutCancel(ctx), attempt.ServerID)
+	}
 	return attempt.ReturnTo + "?mcp=" + url.QueryEscape(attempt.ServerID) + "&result=connected", nil
 }
 

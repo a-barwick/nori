@@ -3,7 +3,6 @@ package plugins
 import (
 	"context"
 	"sort"
-	"strings"
 
 	"nori/internal/connections"
 )
@@ -18,17 +17,17 @@ type mcpMatrix struct {
 }
 
 var mcpMatrices = map[string]mcpMatrix{
-	"linear/mcp": {categories: []string{"projects"}, limits: "Signs in with your Linear account (1.1) or a Linear API key (1.0). A read-only server is at /mcp/readonly.",
+	"linear/mcp": {categories: []string{"projects"}, limits: "Needs a Linear account.",
 		capabilities: []connections.Capability{
 			{ID: "projects.read", Title: "Find issues, projects and comments", Effect: "read", Supported: true},
 			{ID: "projects.write", Title: "Create and update issues, projects and comments", Effect: "reversible_write", Supported: true},
 		}},
-	"github/mcp": {categories: []string{"developer"}, limits: "Needs a fine-grained personal access token. Copilot Business and Enterprise organizations must allow MCP servers; Enterprise Managed Users may have tokens turned off.",
+	"github/mcp": {categories: []string{"developer"}, limits: "Needs a GitHub fine-grained personal access token. Organizations on Copilot Business or Enterprise must allow MCP servers, and some managed accounts can't create tokens.",
 		capabilities: []connections.Capability{
 			{ID: "code.read", Title: "Read repositories, issues, pull requests and Actions runs", Effect: "read", Supported: true},
 			{ID: "code.write", Title: "Open and comment on issues and pull requests, and other repository changes the token allows", Effect: "unknown", Supported: true},
 		}},
-	"notion/mcp": {categories: []string{"documents"}, limits: "Connecting with a token needs a Business or Enterprise workspace; a workspace owner creates the MCP token. Guests cannot connect.",
+	"notion/mcp": {categories: []string{"documents"}, limits: "Needs a Business or Enterprise workspace; a workspace owner creates the token. Guests can't connect.",
 		capabilities: []connections.Capability{
 			{ID: "docs.read", Title: "Search the workspace and read pages", Effect: "read", Supported: true},
 			{ID: "docs.write", Title: "Create and edit pages and databases", Effect: "reversible_write", Supported: true},
@@ -79,8 +78,9 @@ func (s *Service) IntegrationEntries(ctx context.Context) ([]connections.Integra
 		if auth == "" {
 			auth = "none"
 		}
+		// Provider preconditions live only in the matrix; the description is the package's own sentence plus them.
 		description := m.Description
-		if matrix.limits != "" && !strings.Contains(description, matrix.limits) {
+		if matrix.limits != "" {
 			description += " " + matrix.limits
 		}
 		out = append(out, connections.IntegrationEntry{

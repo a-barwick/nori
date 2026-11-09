@@ -98,28 +98,28 @@ print(json.dumps({"words": len(text.split()), "lines": len(text.splitlines()), "
 	// packaged yet; see the capability matrix in the backend provider notes.
 	{
 		SchemaVersion: 1, Package: Ref{ID: "linear/mcp", Version: "1.0.0"}, Publisher: map[string]any{"id": "linear", "name": "Linear"},
-		Title: "Linear", Description: "Find, create and update Linear issues, projects and comments through Linear's MCP server (linear.app/docs/mcp). Connect with a Linear API key from Settings → Security & access; a read-only server is at /mcp/readonly.",
+		Title: "Linear", Description: "Find, create and update Linear issues, projects and comments. Connect with a Linear API key.",
 		Categories: []string{"productivity", "developer"}, ContractVersion: "r2",
 		RequestedAccess: Access{ConnectionTypes: []string{}, ActionClasses: []string{"read", "unknown"}, Network: []string{"mcp.linear.app"}},
 		Contributions:   []Contribution{{Kind: "mcp_server", Server: &mcpServerTemplate{Name: "Linear", Transport: "http", Endpoint: "https://mcp.linear.app/mcp", Auth: "configured"}}},
 	},
 	{
 		SchemaVersion: 1, Package: Ref{ID: "linear/mcp", Version: "1.1.0"}, Publisher: map[string]any{"id": "linear", "name": "Linear"},
-		Title: "Linear", Description: "Find, create and update Linear issues, projects and comments through Linear's MCP server (linear.app/docs/mcp). 1.1 signs in with your Linear account (OAuth with dynamic registration) instead of an API key.",
+		Title: "Linear", Description: "Find, create and update Linear issues, projects and comments. Sign in with your Linear account.",
 		Categories: []string{"productivity", "developer"}, ContractVersion: "r2",
 		RequestedAccess: Access{ConnectionTypes: []string{}, ActionClasses: []string{"read", "unknown"}, Network: []string{"mcp.linear.app"}},
 		Contributions:   []Contribution{{Kind: "mcp_server", Server: &mcpServerTemplate{Name: "Linear", Transport: "http", Endpoint: "https://mcp.linear.app/mcp", Auth: "oauth"}}},
 	},
 	{
 		SchemaVersion: 1, Package: Ref{ID: "github/mcp", Version: "1.0.0"}, Publisher: map[string]any{"id": "github", "name": "GitHub"},
-		Title: "GitHub", Description: "Repositories, issues, pull requests and Actions through GitHub's remote MCP server (github/github-mcp-server docs/remote-server.md). Connect with a fine-grained personal access token. Organizations on Copilot Business or Enterprise must allow MCP servers; Enterprise Managed Users may have tokens disabled.",
+		Title: "GitHub", Description: "Read and work with repositories, issues, pull requests and Actions.",
 		Categories: []string{"developer"}, ContractVersion: "r2",
 		RequestedAccess: Access{ConnectionTypes: []string{}, ActionClasses: []string{"read", "unknown"}, Network: []string{"api.githubcopilot.com"}},
 		Contributions:   []Contribution{{Kind: "mcp_server", Server: &mcpServerTemplate{Name: "GitHub", Transport: "http", Endpoint: "https://api.githubcopilot.com/mcp/", Auth: "configured"}}},
 	},
 	{
 		SchemaVersion: 1, Package: Ref{ID: "notion/mcp", Version: "1.0.0"}, Publisher: map[string]any{"id": "notion", "name": "Notion"},
-		Title: "Notion", Description: "Search the workspace and create or edit pages and databases through Notion's MCP server (developers.notion.com/docs/mcp). Connecting with a token needs a Business or Enterprise workspace: a workspace owner creates an MCP token in the Developer portal. Guests cannot connect.",
+		Title: "Notion", Description: "Search your workspace and create or edit pages and databases.",
 		Categories: []string{"productivity"}, ContractVersion: "r2",
 		RequestedAccess: Access{ConnectionTypes: []string{}, ActionClasses: []string{"read", "unknown"}, Network: []string{"mcp.notion.com"}},
 		Contributions:   []Contribution{{Kind: "mcp_server", Server: &mcpServerTemplate{Name: "Notion", Transport: "http", Endpoint: "https://mcp.notion.com/mcp", Auth: "configured"}}},

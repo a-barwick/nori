@@ -136,6 +136,8 @@ type Service struct {
 	Client   *http.Client
 	// RedirectURL is the OAuth callback (NORI_OAUTH_REDIRECT_URL), shared with Connections.
 	RedirectURL string
+	// OnSignedIn runs after a server's OAuth sign-in completes, so tasks waiting for it resume.
+	OnSignedIn func(ctx context.Context, serverID string)
 }
 
 func (s *Service) now() time.Time {
@@ -708,6 +710,25 @@ func clip(text string, limit int) string {
 
 // Adapter invokes MCP tools for one user.
 type Adapter struct{ Service *Service }
+
+// SignInNeeded starts OAuth sign-in when the call's server signs in with OAuth and has no usable token, so the task
+// can ask the user and resume once the callback completes.
+func (a Adapter) SignInNeeded(ctx context.Context, call invoke.Call, returnTo string) (*invoke.SignInStart, error) {
+	serverID, _, _ := strings.Cut(call.Exec.Binding.Target, "/")
+	server, _, err := a.Service.server(ctx, serverID)
+	if err != nil || server.Auth != "oauth" {
+		return nil, nil
+	}
+	if _, err := a.Service.oauthCredential(ctx, serverID); err == nil && server.Observed.Status != "needs_sign_in" {
+		return nil, nil
+	}
+	attempt, err := a.Service.SignIn(ctx, serverID, returnTo)
+	if err != nil {
+		return nil, err
+	}
+	return &invoke.SignInStart{IntegrationID: "mcp", ConnectionID: serverID, Label: server.Name, AttemptID: attempt.ID,
+		AuthorizeURL: attempt.AuthorizeURL, ExpiresAt: attempt.ExpiresAt}, nil
+}
 
 func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared, error) {
 	serverID, tool, _ := strings.Cut(call.Exec.Binding.Target, "/")

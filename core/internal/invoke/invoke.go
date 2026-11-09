@@ -231,3 +231,16 @@ func HumanTime(value, zone string) string {
 	}
 	return t.Format("Mon 2 Jan 2006, 15:04 MST")
 }
+
+// SignInStart is a sign-in an adapter needs before it can run a call: the attempt to open and what it signs in to.
+type SignInStart struct {
+	IntegrationID, ConnectionID, Label string
+	AttemptID, AuthorizeURL            string
+	ExpiresAt                          time.Time
+}
+
+// SignInChecker is implemented by adapters whose calls can need the user to sign in first (MCP servers with OAuth).
+// A nil start means the call can run.
+type SignInChecker interface {
+	SignInNeeded(ctx context.Context, call Call, returnTo string) (*SignInStart, error)
+}
