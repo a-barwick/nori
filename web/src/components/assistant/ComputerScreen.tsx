@@ -8,8 +8,7 @@ import { APIError, assistantURL, getJSON, mutate, newRequestID } from "@/lib/ass
 import { useAssistant } from "@/lib/assistant/context";
 import { relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
-import type { WorkDetail } from "@/lib/contracts/assistant";
-import type { ComputerSession } from "@/lib/contracts/pending";
+import type { ComputerSession, WorkDetail } from "@/lib/contracts/assistant";
 import { useBlobURL } from "@/lib/useBlobURL";
 import { Empty, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section, type Tone } from "./ui";
 

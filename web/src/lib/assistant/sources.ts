@@ -5,7 +5,6 @@
 // shapes. The legacy projection is live data, not a fixture.
 import { useMemo } from "react";
 import type { AssistantSummary, Interaction, LibraryItem, WorkDetail, WorkItem } from "@/lib/contracts/assistant";
-import type { WorkActivity } from "@/lib/contracts/pending";
 import type { Run, SavedResult, Session } from "@/lib/types";
 import { runtimePath } from "@/lib/runtime/paths";
 import { useAssistant } from "./context";
@@ -65,10 +64,10 @@ export function useWork() {
 export function useWorkDetail(taskID: string) {
   const { has, runtime } = useAssistant();
   const live = has("work");
-  const remote = useResource<WorkDetail & WorkActivity>(live ? `/work/${encodeURIComponent(taskID)}` : null, { poll: 5_000 });
+  const remote = useResource<WorkDetail>(live ? `/work/${encodeURIComponent(taskID)}` : null, { poll: 5_000 });
   const session = runtime.session;
   const run = session?.runs.find((item) => item.id === taskID);
-  const legacy = useMemo<(WorkDetail & WorkActivity) | undefined>(() => run && {
+  const legacy = useMemo<(WorkDetail) | undefined>(() => run && {
     item: legacyWorkItem(run, session), operations: [],
     interactions: legacyInteraction(run) ? [legacyInteraction(run)!] : [],
     result: run.result, events: (run.events ?? []).map((event) => ({ kind: event.kind, text: event.text, created_at: event.created_at })),

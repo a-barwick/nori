@@ -1,6 +1,6 @@
 // Development-only fixture service for the assistant management API. It serves the
 // contract fixtures in contracts/assistant/fixtures (plus hand-written examples for
-// the r1 shapes in contracts/pending.ts) and applies mutations in memory with the
+// shapes the contract fixtures do not cover) and applies mutations in memory with the
 // contract's receipt, revision and stale-interaction rules, so screens can be built
 // before backend routes land. Nothing here is integration evidence.
 import { readFileSync } from "node:fs";

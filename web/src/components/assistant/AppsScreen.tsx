@@ -10,8 +10,7 @@ import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { AuthAttempt, Connection, HealthCode, Integration, MCPServer, Preferences, Resource } from "@/lib/contracts/assistant";
-import type { CatalogEntry, InstallationReview, MCPTool } from "@/lib/contracts/pending";
-import type { Installation } from "@/lib/contracts/assistant";
+import type { CatalogEntry, Installation, InstallationReview, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { safeAuthorizeURL } from "./InteractionCard";
 import { Confirm, Empty, Failure, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, Tabs, type Tone } from "./ui";
@@ -268,7 +267,7 @@ function PluginCard({ entry }: { entry: CatalogEntry }) {
     <p className="text-caption text-ink-3">{entry.requested_access.action_classes.length ? `Asks to: ${entry.requested_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}${entry.requested_access.connection_types.length ? ` with ${entry.requested_access.connection_types.join(", ")}` : ""}` : "Instructions only; no account access."}</p>
     <div className="mt-auto pt-2">{entry.installation_id ? <Link href={`/apps/plugins/${encodeURIComponent(entry.installation_id)}`} className="text-meta font-medium text-accent-text hover:underline">Installed · manage</Link>
       : <Confirm title={`Install ${entry.title}?`} confirm="Install" onConfirm={() => void install()} trigger={<Button size="sm" variant="primary" disabled={!!action.pending}>{action.pending ? "Installing…" : "Install"}</Button>}
-        body={<div className="space-y-2"><p>Installing adds what it contributes. It doesn’t let Nori act on your accounts until you connect them and allow it.</p>{entry.requested_access.network?.length ? <p>Reaches: {entry.requested_access.network.join(", ")}</p> : null}{!entry.provenance.verified && <p className="text-warning">This package isn’t verified by its registry.</p>}</div>} />}
+        body={<div className="space-y-2"><p>Installing adds what it contributes. It doesn’t let Nori act on your accounts until you connect them and allow it.</p>{!entry.provenance.verified && <p className="text-warning">This package isn’t verified by its registry.</p>}</div>} />}
       {action.error && <p role="alert" className="mt-2 text-meta text-danger">{action.error}</p>}</div>
   </article>;
 }
