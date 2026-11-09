@@ -120,6 +120,9 @@ type Database interface {
 	TaskDatabase
 	ConversationDatabase
 	ResourceStore
+	// EditMemory and ForgetMemory are the user's direct edits of saved memories, guarded by the memory's last update.
+	EditMemory(ctx context.Context, id string, expectedUpdated int64, text string) (Memory, error)
+	ForgetMemory(ctx context.Context, id string, expectedUpdated int64) (Memory, error)
 	// WorkVersion returns an opaque identity for pending API work, or empty when
 	// none needs a wake. tasks=false excludes assistant/task work in chat-only mode.
 	WorkVersion(ctx context.Context, tasks bool) (string, error)

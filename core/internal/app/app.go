@@ -70,7 +70,8 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites,
 		Features: map[string]bool{"integrations": true, "connections": true, "interactions": true, "permissions": true,
 			"preferences": true, "work": !cfg.Features.DisableBackgroundTasks, "operations": true,
-			"automations": !cfg.Features.DisableBackgroundTasks, "goals": true, "inbox": true},
+			"automations": !cfg.Features.DisableBackgroundTasks, "goals": true, "inbox": true,
+			"library": true, "search": true, "memory": true},
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 	}
 	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
@@ -110,6 +111,13 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	}
 	services.Scheduler.Accept = func(ctx context.Context, cmd state.Command) (state.Run, error) {
 		receipts, err := tasks.AcceptBatch(ctx, []state.Command{cmd}, nil)
+		if err != nil {
+			return state.Run{}, err
+		}
+		return receipts[0].Run, nil
+	}
+	result.Assistant.Revise = func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error) {
+		receipts, err := tasks.AcceptBatch(ctx, []state.Command{{ID: taskID, RunID: taskID, Kind: state.CommandStart, Text: instruction, Revises: resultID}}, nil)
 		if err != nil {
 			return state.Run{}, err
 		}
