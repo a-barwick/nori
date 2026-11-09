@@ -14,6 +14,7 @@ import (
 	"nori/internal/connectors/mcp"
 	"nori/internal/extensions"
 	"nori/internal/permissions"
+	"nori/internal/plugins"
 	"nori/internal/scheduler"
 	"nori/internal/secret"
 	"nori/internal/state"
@@ -41,6 +42,7 @@ type Assistant struct {
 	// Scheduler serves automations, goals, delivery destinations and the inbox.
 	Scheduler        *scheduler.Service
 	MCP              *mcp.Service
+	Plugins          *plugins.Service
 	UnattendedWrites string
 	// NextScheduled and InboxUnread feed the summary badges once the Scheduler and inbox exist.
 	NextScheduled func(ctx context.Context) *time.Time
@@ -169,6 +171,9 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	}
 	if a.MCP != nil {
 		a.registerMCP(mux)
+	}
+	if a.Plugins != nil {
+		a.registerPlugins(mux)
 	}
 	for _, extra := range a.Extra {
 		extra(mux, a)

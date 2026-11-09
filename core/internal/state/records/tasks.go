@@ -193,7 +193,7 @@ func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision i
 		if len(eventTraceContext) == 0 {
 			eventTraceContext = run.TraceContext
 		}
-		inserted, err := d.appendTaskEvent(tx, event, eventTraceContext)
+		inserted, err := d.appendTaskEvent(tx, run, event, eventTraceContext)
 		if err != nil || !inserted {
 			return err
 		}
@@ -308,7 +308,7 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			if len(eventTraceContext) == 0 {
 				eventTraceContext = run.TraceContext
 			}
-			inserted, err := d.appendTaskEvent(tx, event, eventTraceContext)
+			inserted, err := d.appendTaskEvent(tx, run, event, eventTraceContext)
 			if err != nil {
 				return err
 			}
