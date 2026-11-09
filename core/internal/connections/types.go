@@ -8,6 +8,7 @@ package connections
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -112,6 +113,10 @@ type Action struct {
 	Capabilities          []string `json:"capabilities,omitempty"`
 	ReturnTo              string   `json:"return_to,omitempty"`
 	PurgeCache            bool     `json:"purge_cache,omitempty"`
+	// Username and Password connect an app-password integration (connect or repair). Write-only: stored as the
+	// credential and never returned.
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
 	DeleteImportedContent bool     `json:"delete_imported_content,omitempty"`
 }
 
@@ -192,6 +197,18 @@ type IntegrationEntry struct {
 	InstallationID string   `json:"installation_id,omitempty"`
 	ConnectionIDs  []string `json:"connection_ids"`
 }
+
+// PasswordIntegration is an integration that signs in with a username and an app-specific password instead of
+// OAuth (Info.Auth "app_password"). VerifyPassword checks the pair with the provider and identifies the account
+// without reading account content; Client returns an HTTP client that authenticates with it.
+type PasswordIntegration interface {
+	Integration
+	VerifyPassword(ctx context.Context, client *http.Client, username, password string) (Account, error)
+	Client(base *http.Client, username, password string) *http.Client
+}
+
+// ErrBadPassword is a username or app-specific password the provider rejected.
+var ErrBadPassword = errors.New("the provider rejected the username or app-specific password")
 
 // Integration is the auth and catalog half of an App connector. The execution half is an invoke.Adapter.
 type Integration interface {
