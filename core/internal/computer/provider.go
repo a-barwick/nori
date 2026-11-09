@@ -31,7 +31,9 @@ func Open(ctx context.Context, p Provider, run string) (*Client, error) {
 
 func Attach(ctx context.Context, p Provider, run string) (*Client, error) {
 	if p == nil {
-		return nil, errNoProvider
+		// A deployment without a computer never started one, so there is nothing running to attach to. Cleanup and
+		// recovery treat it as stopped instead of failing forever.
+		return nil, ErrStopped
 	}
 	return p.Attach(ctx, run)
 }
