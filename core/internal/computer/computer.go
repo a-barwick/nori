@@ -129,6 +129,10 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) (resp
 		operation = "job_stop"
 	case rpc.StopTaskJobsPath:
 		operation = "job_stop_task"
+	case rpc.SandboxRunPath:
+		operation = "sandbox_run"
+	case rpc.ReopenRunPath:
+		operation = "run_reopen"
 	}
 	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer."+operation, trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),
