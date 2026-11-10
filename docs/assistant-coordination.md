@@ -44,9 +44,9 @@ The first slice itself is defined by Austin's original backlog, which is not in 
 | Role | Session | Branch |
 | --- | --- | --- |
 | Coordination | this session | `claude/nori-assistant-integration-25ae45` (this record and `docs/assistant-notes/`) |
-| Backend | filled in after start | `claude/nori-assistant-backend-9c520e` |
-| Frontend | filled in after start | `claude/nori-assistant-frontend-78149f` |
-| Integration | filled in after start | `claude/nori-assistant-integration-bd1278` (the assembled product; source of draft PR a-barwick/nori#165) |
+| Backend | `local_46d9f859-0b45-4e40-a079-07efd4511e3e`, name `nori-backend`, Opus 5.5, high (as requested at start, not read back) | `claude/nori-assistant-backend-9c520e` |
+| Frontend | `local_f2176277-cca3-42f2-925f-ada558148038`, name `nori-frontend`, Opus 5.5, high (as requested at start, not read back) | `claude/nori-assistant-frontend-78149f` |
+| Integration | `local_7b8ce016-729a-4483-8300-cc70b0d25f6d`, name `nori-integration`, Opus 5.5, high (as requested at start, not read back) | `claude/nori-assistant-integration-bd1278` (the assembled product; source of draft PR a-barwick/nori#165) |
 
 Ports, databases and Temporal namespaces are as in Local stacks below.
 
