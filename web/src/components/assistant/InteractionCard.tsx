@@ -130,7 +130,8 @@ function Approval({ interaction, payload, state }: { interaction: Interaction; p
   const busy = !!state.pending;
   const digest = interaction.action_digest!;
   return <div>
-    <p className="text-body text-ink">{payload.summary}</p>
+    {/* A send's summary carries the message after a line break (core mail.go); keep the lines. */}
+    <p className="whitespace-pre-line text-body text-ink [overflow-wrap:anywhere]">{payload.summary}</p>
     <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-meta">
       <dt className="text-ink-3">Account</dt><dd className="text-ink">{payload.account.label}</dd>
       {!!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
@@ -196,8 +197,10 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
     onDone={() => { setForm(false); invalidate("/interactions", "/work", "/connections", "/assistant/summary"); }} />;
   const blocked = !!payload.authorize_url && !url;
   const title = mcp ? server.data?.name ?? "MCP server" : integration.data?.title ?? payload.integration_id;
+  const wanted = askedFor(payload.requested_scopes, integration.data);
   return <div className="space-y-3">
     <p className="text-meta text-ink-2">{[title, connection.data?.account?.label].filter(Boolean).join(" · ")}</p>
+    {wanted.length > 0 && <p className="text-meta text-ink-2">{title} will ask you to allow: {wanted.join("; ")}.</p>}
     {payload.authorize_url && !url && <Notice tone="danger">This sign-in link isn’t one Nori issued, so it won’t open.</Notice>}
     {action.error && <Notice tone="danger">{action.error}</Notice>}
     <div className="flex flex-wrap gap-2">
@@ -205,6 +208,17 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
       <Button disabled={!!state.pending} onClick={() => void state.respond({ kind: "decline" }, "decline")}>{state.pending === "decline" ? "Declining…" : "Not now"}</Button>
     </div>
   </div>;
+}
+
+/**
+ * A "more access" sign-in names the scopes of one capability (core ScopesFor), which include the scopes of narrower
+ * ones (calendar.write carries calendar.readonly). Name only the widest capabilities the scopes fully cover.
+ */
+function askedFor(scopes: string[] | undefined, integration: Integration | undefined) {
+  const asked = new Set(scopes ?? []);
+  const covered = (integration?.capabilities ?? []).filter((capability) => capability.scopes?.length && capability.scopes.every((scope) => asked.has(scope)));
+  const within = (a: string[], b: string[]) => a.length < b.length && a.every((scope) => b.includes(scope));
+  return covered.filter((capability) => !covered.some((other) => within(capability.scopes!, other.scopes!))).map((capability) => capability.title);
 }
 
 function Takeover({ payload }: { payload: ComputerTakeoverPayload }) {
