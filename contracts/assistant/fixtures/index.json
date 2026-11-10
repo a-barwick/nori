@@ -1,5 +1,5 @@
 {
-  "revision": "r2.10",
+  "revision": "r2.11",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -1144,6 +1144,44 @@
       "schema": "connections.schema.json#/$defs/Connection",
       "valid": false,
       "note": "an app-specific password is write-only"
+    },
+    {
+      "file": "fixtures/permissions/interaction.sign-in-app-password.valid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/interaction.sign-in-app-password-with-url.invalid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": false,
+      "note": "an app-password sign-in carries no authorize URL"
+    },
+    {
+      "file": "fixtures/permissions/interaction.sign-in-mcp-signed-in.valid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/interaction.sign-in-declined.valid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/interaction.sign-in-oauth-without-url.invalid.json",
+      "schema": "permissions.schema.json#/$defs/Interaction",
+      "valid": false,
+      "note": "an OAuth sign-in needs its attempt, URL and expiry"
+    },
+    {
+      "file": "fixtures/permissions/interaction-response.sign-in-decline.valid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/interaction-response.signed-in.invalid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": false,
+      "note": "signed_in is set by the server, never sent by a client"
     }
   ]
 }
