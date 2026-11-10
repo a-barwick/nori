@@ -132,7 +132,7 @@ func (*server) health(w http.ResponseWriter, r *http.Request) {
 	}
 	// Probe the CDP connection without creating a task tab.
 	_ = c.conn.CloseNow()
-	respond(w, rpc.Health{Ready: true, Receipts: true, TaskTabs: true, Jobs: true, Files: true, Sandbox: sandboxSupported(), Reopen: true})
+	respond(w, rpc.Health{Ready: true, Receipts: true, TaskTabs: true, Jobs: true, Files: true, Sandbox: sandboxSupported(), Egress: egressSupported(), Reopen: true})
 }
 
 type activityState struct {

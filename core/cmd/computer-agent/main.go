@@ -18,6 +18,10 @@ import (
 )
 
 func main() {
+	// Inside a sandbox's network namespace: the egress shim, not the server.
+	if len(os.Args) > 1 && os.Args[1] == "sandbox-shim" {
+		os.Exit(computerd.RunSandboxShim(os.Args[2:]))
+	}
 	listen := flag.String("listen", "172.30.0.2:8090", "HTTP bind address")
 	proxy := flag.Bool("proxy", false, "forward RPC to the guest instead of running tools")
 	guest := flag.String("guest-url", "http://172.30.0.2:8090", "guest RPC address for host proxy")

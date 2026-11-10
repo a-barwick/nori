@@ -59,7 +59,11 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, p invoke.Prepare
 	client.SetOperation(call.OperationID)
 	run := func(input map[string]any, wall int) (rpc.SandboxResult, error) {
 		stdin, _ := json.Marshal(input)
-		return client.SandboxRun(ctx, rpc.SandboxRequest{Argv: program.Argv, Stdin: string(stdin), Files: program.Files, MemoryMB: memoryMB, Pids: 32, CPUPct: 50, WallMS: wall, Network: "none"})
+		req := rpc.SandboxRequest{Argv: program.Argv, Stdin: string(stdin), Files: program.Files, MemoryMB: memoryMB, Pids: 32, CPUPct: 50, WallMS: wall, Network: "none"}
+		if len(program.AllowHosts) > 0 {
+			req.Network, req.AllowHosts = "allowlist", program.AllowHosts
+		}
+		return client.SandboxRun(ctx, req)
 	}
 	// Pre-invocation hooks can only refuse a call; they cannot change its arguments, which the approval covered.
 	// A hook that errs or misses its deadline refuses too, so a broken policy never lets a call through.
@@ -98,6 +102,9 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, p invoke.Prepare
 	}
 	if result.Stderr != "" {
 		content["diagnostics"] = result.Stderr
+	}
+	if len(result.Denied) > 0 {
+		content["egress_denied"] = result.Denied
 	}
 	switch {
 	case result.TimedOut:

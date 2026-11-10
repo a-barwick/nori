@@ -165,13 +165,19 @@ func (g *operationGroup) oomKilled() bool {
 
 // sandboxAttributes places the process in the limited group and in new user, network, mount and IPC namespaces: it
 // keeps only loopback networking and its own user mapping.
-func sandboxAttributes(g *operationGroup) *syscall.SysProcAttr {
+func sandboxAttributes(g *operationGroup, rootInNamespace bool) *syscall.SysProcAttr {
 	uid, gid := os.Getuid(), os.Getgid()
+	inside, insideGroup := uid, gid
+	if rootInNamespace {
+		// The egress shim needs CAP_NET_ADMIN over its own network namespace to bring loopback up; root inside the
+		// user namespace has it there and nothing outside. The shim drops every capability before the program runs.
+		inside, insideGroup = 0, 0
+	}
 	return &syscall.SysProcAttr{
 		UseCgroupFD: true, CgroupFD: int(g.file.Fd()), Setpgid: true,
 		Cloneflags:                 syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET | syscall.CLONE_NEWNS | syscall.CLONE_NEWIPC,
-		UidMappings:                []syscall.SysProcIDMap{{ContainerID: uid, HostID: uid, Size: 1}},
-		GidMappings:                []syscall.SysProcIDMap{{ContainerID: gid, HostID: gid, Size: 1}},
+		UidMappings:                []syscall.SysProcIDMap{{ContainerID: inside, HostID: uid, Size: 1}},
+		GidMappings:                []syscall.SysProcIDMap{{ContainerID: insideGroup, HostID: gid, Size: 1}},
 		GidMappingsEnableSetgroups: false,
 	}
 }
