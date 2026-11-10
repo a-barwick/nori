@@ -85,9 +85,13 @@ func (s *Service) now() time.Time { return time.Now().In(s.location()) }
 
 // catalogInstruction changes at most daily unless an account changes, so it doesn't
 // disturb the provider's prompt cache between model calls.
-func (s *Service) catalogInstruction(catalog []Capability) string {
+// location is the user's current zone (see Profile); nil means the zone the worker opened the user with.
+func (s *Service) catalogInstruction(catalog []Capability, location *time.Location) string {
+	if location == nil {
+		location = s.location()
+	}
 	return prompts.Runtime("capability-catalog", map[string]any{
-		"Date": s.now().Format("Monday, 2 January 2006"), "Zone": s.location().String(), "Capabilities": catalog,
+		"Date": time.Now().In(location).Format("Monday, 2 January 2006"), "Zone": location.String(), "Capabilities": catalog,
 	})
 }
 

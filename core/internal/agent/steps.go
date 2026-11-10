@@ -89,12 +89,12 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 	}()
 	snapshot, dynamic := s.Tools(ctx)
 	catalog := s.catalog(dynamic, snapshot)
-	facts := s.UserFacts
+	facts, location := s.UserFacts, (*time.Location)(nil)
 	if s.Profile != nil {
-		facts, _ = s.Profile(ctx)
+		facts, location = s.Profile(ctx)
 	}
 	resp, err = s.Model.Respond(ctx, Request{
-		Instructions:    prompts.TaskWorker + "\nUser details (data): " + facts + "\n" + s.catalogInstruction(catalog),
+		Instructions:    prompts.TaskWorker + "\nUser details (data): " + facts + "\n" + s.catalogInstruction(catalog, location),
 		Messages:        messages,
 		Tools:           offeredTools(catalog, snapshot, messages, wait, work, s.Computer != nil),
 		MaxOutputTokens: modelOutputTokenLimit,
