@@ -8,7 +8,7 @@ import { APIError, getJSON, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
-import type { AccountSelectionPayload, ApprovalPayload, Connection, ComputerTakeoverPayload, Integration, Interaction, InteractionResponse, QuestionPayload, SignInPayload } from "@/lib/contracts/assistant";
+import type { AccountSelectionPayload, ApprovalPayload, AuthAttempt, Connection, ComputerTakeoverPayload, Integration, Interaction, InteractionResponse, MCPServer, QuestionPayload, SignInPayload } from "@/lib/contracts/assistant";
 import { MAX_MESSAGE_BYTES } from "@/lib/submission";
 import { cn } from "@/lib/utils";
 import { PasswordSignIn, startSignIn } from "./AppsScreen";
@@ -79,7 +79,7 @@ function Resolved({ interaction }: { interaction: Interaction }) {
   const r = interaction.resolution;
   if (interaction.status === "superseded") return <p className="text-meta text-ink-2">A newer version replaced this.{interaction.superseded_by ? " It’s in Needs you." : ""}</p>;
   if (!r) return null;
-  const text = r.kind === "approve" ? "Approved" : r.kind === "decline" ? "Declined" : r.kind === "choose_account" ? "Account chosen" : r.text ? `“${r.text}”` : "Answered";
+  const text = r.kind === "approve" ? "Approved" : r.kind === "signed_in" ? "Signed in" : r.kind === "decline" ? (interaction.kind === "sign_in" ? "Not now" : "Declined") : r.kind === "choose_account" ? "Account chosen" : r.text ? `“${r.text}”` : "Answered";
   return <p className="flex items-center gap-1.5 text-meta text-ink-2"><Check size={14} aria-hidden />{text}{r.at ? ` · ${relative(r.at)}` : ""}</p>;
 }
 
@@ -160,39 +160,49 @@ function AccountChoice({ payload, state }: { payload: AccountSelectionPayload; s
 }
 
 /**
- * Repair from the card. The task resumes on its own once the account works again (the server resolves this
- * interaction when its connection becomes usable), whether the user signs in here or from Apps.
+ * Repair from the card (r2.11). The task resumes on its own once the account works again: the server resolves this
+ * interaction as signed_in when the connection, or for integration "mcp" the MCP server, becomes usable, whether
+ * the user signs in here or from Apps. "Not now" sends {kind: "decline"} with no action digest.
  */
 function SignIn({ interaction, payload, state }: { interaction: Interaction; payload: SignInPayload; state: State }) {
-  const integration = useResource<Integration>(`/integrations/${encodeURIComponent(payload.integration_id)}`, { poll: 0 });
-  const named = useResource<Connection>(payload.connection_id ? `/connections/${encodeURIComponent(payload.connection_id)}` : null, { poll: 0 });
-  const all = useResource<{ items: Connection[] }>(payload.connection_id ? null : "/connections", { poll: 0 });
+  const mcp = payload.integration_id === "mcp";
+  const integration = useResource<Integration>(mcp ? null : `/integrations/${encodeURIComponent(payload.integration_id)}`, { poll: 0 });
+  const server = useResource<MCPServer>(mcp && payload.connection_id ? `/mcp/${encodeURIComponent(payload.connection_id)}` : null, { poll: 0 });
+  const named = useResource<Connection>(!mcp && payload.connection_id ? `/connections/${encodeURIComponent(payload.connection_id)}` : null, { poll: 0 });
+  const all = useResource<{ items: Connection[] }>(mcp || payload.connection_id ? null : "/connections", { poll: 0 });
   // Without a named connection, the integration's one signed-in account is the one to repair.
   const accounts = (all.data?.items ?? []).filter((item) => item.integration_id === payload.integration_id && item.account?.provider_id && item.status !== "disconnected");
   const connection = { data: named.data ?? (accounts.length === 1 ? accounts[0] : undefined) };
   const action = useAction();
   const [form, setForm] = useState(false);
   const [expired] = useState(() => !!payload.expires_at && Date.parse(payload.expires_at) < Date.now());
-  const auth = (payload as SignInPayload & { auth?: "oauth" | "app_password" }).auth ?? integration.data?.auth;
-  const url = payload.authorize_url ? safeAuthorizeURL(payload.authorize_url) : null;
-  const returnTo = interaction.task_id ? `/work/${encodeURIComponent(interaction.task_id)}` : `/apps/${encodeURIComponent(payload.integration_id)}`;
+  const url = payload.auth === "oauth" && payload.authorize_url ? safeAuthorizeURL(payload.authorize_url) : null;
+  const returnTo = interaction.task_id ? `/work/${encodeURIComponent(interaction.task_id)}` : mcp && payload.connection_id
+    ? `/apps/mcp/${encodeURIComponent(payload.connection_id)}` : `/apps/${encodeURIComponent(payload.integration_id)}`;
   const signIn = () => {
-    if (auth === "app_password") { setForm(true); return; }
+    if (payload.auth === "app_password") { setForm(true); return; }
     if (url && !expired) { window.location.assign(url); return; }
-    // The link expired: ask for a fresh one that returns to this task.
-    if (connection.data) void action.run("sign_in", () => startSignIn(connection.data!, "repair", returnTo));
+    // The link expired: ask for a fresh one. An MCP server's sign-in returns to the server's page, not the task.
+    if (mcp && server.data) void action.run("sign_in", async () => {
+      const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(server.data!.id)}/actions`, { request_id: newRequestID(), expected_revision: server.data!.revision, value: { action: "sign_in" } }) as { auth?: AuthAttempt };
+      const next = receipt.auth && safeAuthorizeURL(receipt.auth.authorize_url);
+      if (!next) throw new Error("Nori didn’t return a sign-in link. Try again.");
+      window.location.assign(next);
+    });
+    else if (!mcp && connection.data) void action.run("sign_in", () => startSignIn(connection.data!, "repair", returnTo));
     else void action.run("sign_in", async () => { throw new Error("This sign-in link expired. Sign in again from Apps; the task continues once the account works."); });
   };
   if (form && integration.data) return <PasswordSignIn integration={integration.data} connection={connection.data}
     onDone={() => { setForm(false); invalidate("/interactions", "/work", "/connections", "/assistant/summary"); }} />;
   const blocked = !!payload.authorize_url && !url;
+  const title = mcp ? server.data?.name ?? "MCP server" : integration.data?.title ?? payload.integration_id;
   return <div className="space-y-3">
-    <p className="text-meta text-ink-2">{[integration.data?.title ?? payload.integration_id, connection.data?.account?.label].filter(Boolean).join(" · ")}</p>
+    <p className="text-meta text-ink-2">{[title, connection.data?.account?.label].filter(Boolean).join(" · ")}</p>
     {payload.authorize_url && !url && <Notice tone="danger">This sign-in link isn’t one Nori issued, so it won’t open.</Notice>}
     {action.error && <Notice tone="danger">{action.error}</Notice>}
     <div className="flex flex-wrap gap-2">
       <Button variant="primary" disabled={blocked || !!action.pending || state.pending === "decline"} onClick={signIn}><KeyRound size={15} aria-hidden />{action.pending ? "Opening sign-in…" : "Sign in"}</Button>
-      <Button disabled={!!state.pending} onClick={() => void state.respond({ kind: "decline", ...(interaction.action_digest ? { action_digest: interaction.action_digest } : {}) } as Value, "decline")}>{state.pending === "decline" ? "Declining…" : "Not now"}</Button>
+      <Button disabled={!!state.pending} onClick={() => void state.respond({ kind: "decline" }, "decline")}>{state.pending === "decline" ? "Declining…" : "Not now"}</Button>
     </div>
   </div>;
 }
