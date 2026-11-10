@@ -2,6 +2,68 @@
 
 Compact record for the parallel implementation of [the assistant integration plan](assistant-integration-plan.md): who owns what, which contract revision is accepted, what is pending for Austin, and where acceptance evidence lives. Chat carries discussion; this file carries decisions.
 
+## Restart of 2026-11-10
+
+This section is current. Everything below it is the record of the first run (2026-11-08 and 09) and is kept as history; where the two differ, this section wins.
+
+### What Austin said
+
+These are Austin's statements from his restart message, quoted or closely paraphrased. Nothing else in this section is his decision.
+
+- "We built breadth faster than we proved anything. 44 cases were implemented and none was verified against a real account." His backlog asked for one everyday workflow proven end to end first. "Return to that order: keep what's built, but prove the backlog's first slice on my real accounts before expanding further."
+- "Recorded provider responses proved less than the acceptance record suggested. Grade evidence honestly."
+- "Work got stranded on stream branches. Keep integration current."
+- "Coordinator defaults were recorded as my decisions, which caused churn. Only call something my decision if I made it."
+- "Messages between sessions got held. Anything that matters belongs in the repository."
+- Limits: keep production available (`AGENTS.md`). Austin does all sign-ins himself. Writes to his accounts stay reversible and contained, and email goes only to him. No deploys, no external messages, no force-pushes. Disagreements go to Austin instead of being settled quietly.
+- Open with Austin, by his list: D1 to D4, the r2.11 proposal, which mailbox counts for email (his backlog asked about HEY and it was never checked against his account), and what this machine needs from him.
+
+The first slice itself is defined by Austin's original backlog, which is not in the repository yet. Until it is recorded here, no stream expands scope.
+
+### Working rules (coordinator's, following the statements above)
+
+1. **No new breadth.** No new acceptance cases, providers, connectors or screens until the first slice is provider verified on Austin's accounts. Work that is not on the path to that run waits, including the hosted stdio WIP at `a62a26e`.
+2. **Evidence labels.** "Provider verified" means it ran against the real provider on a real account, with the task id and time recorded. Hand-written recordings show how Nori behaves when the provider answers as the recording's author expected; they are not evidence about the provider. Every summary leads with the provider-verified count, which is 0 today.
+3. **Integration stays current.** Each stream pushes its branch at the end of every turn. Integration merges the stream branches and this coordinator branch at the start of every turn and runs `make check`. Unverified work is merged only when `make check` stays green and it is labelled unverified; otherwise the reason it is held back is written in the integration status note.
+4. **The repository is the channel.** Each stream ends every turn by updating `docs/assistant-notes/<stream>-status.md` on its own branch and pushing. Requests to another stream go in that file under a heading naming the stream. Session messages are a convenience and may be held; nothing may exist only in a message.
+5. **Decisions.** A row says "Austin decided" only with his words quoted and dated. Anything else is "coordinator's allocation" or "stream's choice" and can be reversed without asking him. D1 to D4 keep their interim mechanisms.
+6. **Disagreements** are written under Disagreements below in the stated format and brought to Austin. They are not closed by the coordinator.
+7. **Austin's accounts.** No session signs in, enters a password or app-specific password, or handles a token value. No write reaches his accounts until he has signed in and the slice run is agreed with him; then writes go to a dedicated test calendar, are reversible and cleaned up, and email goes only to his own address after an approval he clicks.
+8. **Personal identifiers** (Austin's addresses) never go into a command line, tool input or committed file. Load them from an env file.
+9. **Production** is not touched: no deploy, no `make pause`, nothing against the hosted project.
+
+### This machine
+
+- Checkout: `/Users/austin/Documents/dev/nori` (the first run used a different path; old absolute paths in the notes are wrong here). Worktrees from the first run do not exist. The coordinator holds this checkout on `claude/nori-assistant-integration-25ae45`.
+- Present: Go, Bun, Node, Docker, `gh` (signed in), and the Compose Postgres and Temporal containers, already running. Missing: the `temporal` CLI, `psql` on the host, Tailscale.
+- `.env` exists (mode 600). By variable name it has no VAPID pair, no Microsoft app and no `NORI_CREDENTIAL_STORE`; the first run's VAPID pair and its stack env files stayed on the old laptop. Integration confirms the Google OAuth client by name and lists exactly what is missing.
+- The local credential vault from the first run is gone. Nothing is lost: no real sign-in ever completed.
+
+### Sessions
+
+| Role | Session | Branch |
+| --- | --- | --- |
+| Coordination | this session | `claude/nori-assistant-integration-25ae45` (this record and `docs/assistant-notes/`) |
+| Backend | filled in after start | `claude/nori-assistant-backend-9c520e` |
+| Frontend | filled in after start | `claude/nori-assistant-frontend-78149f` |
+| Integration | filled in after start | `claude/nori-assistant-integration-bd1278` (the assembled product; source of draft PR a-barwick/nori#165) |
+
+Ports, databases and Temporal namespaces are as in Local stacks below.
+
+### Branch state at restart
+
+- Integration `aa5f301`. Not on it: backend `840555e` (sandbox egress allowlist) and `a62a26e` (WIP hosted stdio, unverified); frontend `ea53ff9` (per-account Allow); this coordinator branch (the record and notes).
+- `origin/trade-in/2026-11-09/nori-assistant-backend-9c520e-a4fbb33a39` (`77a5e9d`) and `…-latest` (`1ff70c4`) are snapshots of backend's uncommitted work taken before the trade-in. They look like earlier states of `840555e` and `a62a26e`. Backend confirms nothing in them is missing from its branch; the branches are left in place.
+- r2.11 was published by integration at `7f7387c` from backend's proposal. No acknowledgement from frontend is recorded, and it is missing from the Contract revisions table below. It is open with Austin at his request.
+
+### First assignments (coordinator's allocation)
+
+| Stream | Now |
+| --- | --- |
+| Integration | Merge this branch, frontend `ea53ff9` and backend `840555e`; `make check` on this machine; rebuild the recorded stack (8083) and the real-provider stack (8085, web 3213, empty vault); list by name what `.env` lacks; regrade `docs/assistant-acceptance.md` and the PR description under rule 2; rewrite `austin-real-accounts-steps.md` for this machine. |
+| Backend | Confirm the trade-in snapshots; merge integration; stack up; fix D-053 (bounded model call with a readable outcome) and D-054, which sit on the everyday path; check HEY against what is actually installed and reachable here without signing in, and write what a real check needs from Austin. |
+| Frontend | Merge integration; stack up; state in its status note whether it accepts r2.11 as published, with reasons if not; re-run journeys 3 to 8 on the fixed recordings as a rehearsal of the screens the real run will use, labelled as rehearsal. |
+
 ## Baseline commits
 
 | What | Commit |
