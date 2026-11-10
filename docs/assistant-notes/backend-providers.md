@@ -6,7 +6,7 @@ Branch `claude/nori-assistant-backend-9c520e`. None of the three has been run ag
 | --- | --- | --- | --- | --- |
 | Microsoft (Outlook) | 9acf840 | OAuth, Microsoft identity platform v2, `common` endpoint | calendar (list, events, get, free/busy, create, update, cancel), mail (search, read, draft, send draft, organize), contacts and people search | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` from an Entra app registration for "any organizational directory and personal Microsoft accounts", with `NORI_OAUTH_REDIRECT_URL` as a Web redirect URI |
 | iCloud Calendar | 46608a2 (+ b765587 for the connect path) | Apple ID + app-specific password (no OAuth exists) | calendar list, events (server-expanded), create, delete | A test Apple ID with two-factor authentication and an app-specific password |
-| HEY | none | HEY OAuth with PKCE at app.hey.com | nothing | A HEY OAuth client registered for Nori by 37signals (see below) |
+| HEY | none | HEY OAuth 2 at app.hey.com (PKCE, device flow; scopes read, write, send) | nothing (no connector, by instruction) | A client Nori may use: third-party registration is advertised but switched off (checked 2026-11-10, see below) |
 
 ## Microsoft: personal vs work or school accounts
 
@@ -24,17 +24,51 @@ Branch `claude/nori-assistant-backend-9c520e`. None of the three has been run ag
 - Credentials go only to https `*.icloud.com` hosts, including across discovery redirects.
 - iCloud Mail is IMAP-only and iCloud Contacts would need CardDAV. Neither is built; both are listed as unsupported capabilities.
 
-## HEY: supported path and the gap
+## HEY: checked 2026-11-10 (replaces the first run's assessment)
 
-Source: the official 37signals HEY CLI (basecamp/hey-cli 1.2.1, cached at `~/.claude/plugins/cache/37signals/hey/1.2.1`), its `API-COVERAGE.md`, and `internal/auth/auth.go`.
+The first run read a cached copy of the HEY CLI 1.2.1 on the old laptop. This section is re-checked from public sources on 2026-11-10, on the new machine. Nothing was signed in to, no HEY client id was used, nothing was sent to `/oauth/clients`.
 
-- HEY has a JSON API at app.hey.com covering mail boxes, threads, search, drafts, labels (folders), collections, the Screener, contacts and calendars. The official Go SDK is `github.com/basecamp/hey-sdk/go` (v0.28.0 in the CLI's go.mod).
-- Auth is HEY's own OAuth server with PKCE: `/oauth/authorizations/new` and `/oauth/tokens`. The CLI uses a public client ID registered for itself, with a fixed loopback redirect (`127.0.0.1:8976/callback`).
-- **The gap:** I found no published way for a third-party app to register its own HEY OAuth client. Reusing the CLI's client ID would impersonate the CLI, so Nori must not.
-- **Supported path:** 37signals registers a Nori OAuth client for Nori's redirect URL. Then a native HEY connector on hey-sdk/go fits the existing OAuth integration shape.
-- Exact credential needed: a HEY OAuth client ID (and secret, if HEY issues confidential clients) registered for `NORI_OAUTH_REDIRECT_URL`.
-- Gmail is not a stand-in for HEY.
-- A personal-only interim exists but is not built: the user runs the HEY CLI themselves and exposes it through a local stdio MCP server declared with `NORI_MCP_COMMANDS` (local stack only). It would need an MCP wrapper around the CLI and is not a product path.
+### On this machine
+
+- No `hey` binary on the PATH, no HEY app in `/Applications`, no HEY or 37signals plugin or marketplace under `~/.claude/plugins` (only `claude-plugins-official`). The CLI is not installed here.
+
+### Public sources (read 2026-11-10)
+
+| Fact | Source |
+| --- | --- |
+| HEY CLI latest is v1.13.1, published 2026-11-10 01:58 UTC (1.2.1 was the first run's copy). | `gh api repos/basecamp/hey-cli/releases/latest` |
+| The CLI signs in with OAuth + PKCE against `app.hey.com/oauth/authorizations/new` and `/oauth/tokens`, loopback redirect on `127.0.0.1:<ephemeral port>`, with a client id hard-coded for the CLI (`internal/auth/auth.go:20`, `oauthClientID`). It also accepts a pasted token (`hey auth login --token`, `HEY_TOKEN`) or a web session cookie. Tokens go to the OS keyring. | github.com/basecamp/hey-cli at v1.13.1: `internal/auth/auth.go`, `docs/architecture/auth-and-setup.md` |
+| `hey auth login --mcp` uses a second first-party client, "HEY MCP (local)", scopes `read write send`, device flow where available. | `internal/config/mcp.go`, `internal/auth/mcp.go` at v1.13.1 (as reported by the research agent; not re-read line by line) |
+| Read-only commands: `hey box list`, `hey box view <imbox\|feedbox\|…>`, `hey thread read <id>`, `hey search`, `hey label list/view`, `hey collection list/view`, `hey screener list`, `hey contact list/show`, `hey draft list/show`, `hey attachment list/save`, `hey account list`. `hey mcp --read-only` drops write tools. | hey-cli `README.md`, `docs/cli.md`, `API-COVERAGE.md`, `docs/agents.md` at v1.13.1 |
+| API coverage is JSON on app.hey.com: boxes, topics and entries (cursor paging in the `Link` header), messages, advanced search, folders/labels, collections, Screener clearances, contacts, calendars, identity, a changes feed; writes are postings, drafts and sending. | hey-cli `API-COVERAGE.md` at v1.13.1 |
+| Go SDK `github.com/basecamp/hey-sdk/go`, latest v0.35.0 (2026-11-08). Auth: any bearer token (`StaticTokenProvider`) or OAuth with PKCE and refresh; RFC 8414 discovery. Default client id is the CLI's. No personal access token feature is described. | github.com/basecamp/hey-sdk README at v0.35.0; `gh api repos/basecamp/hey-sdk/releases/latest` |
+| HEY's live OAuth metadata lists `registration_endpoint: https://app.hey.com/oauth/clients`, `client_id_metadata_document_supported: true`, scopes `read`, `write`, `send`, a device authorization endpoint, and client auth `none`, `client_secret_basic`, `client_secret_post`. | `GET https://app.hey.com/.well-known/oauth-authorization-server`, fetched 2026-11-10 by this session |
+| The SDK maintainers describe `POST /oauth/clients` as RFC 7591 dynamic registration "for third-party connectors", answering a bare 404 "while switched off". Merged 2026-11-08. | github.com/basecamp/hey-sdk/pull/300, read by this session with `gh api` |
+| A hosted HEY MCP server exists at `https://mcp.hey.com/mcp` (GET answers 401 with an OAuth protected-resource challenge). hey.com/ai describes it as a preview for 37signals staff and invited reviewers, "coming to every HEY account", no date. | `GET https://mcp.hey.com/mcp` (401, this session); www.hey.com/ai (research agent) |
+| No developer portal or third-party registration page: `hey.com/api` and `hey.com/developers` are 404; dev.37signals.com has nothing on a HEY API; no GitHub issue asks for third-party clients (Discussions are off on both repos). | research agent, 2026-11-10 |
+| No IMAP or POP. HEY offers an MBOX export (email), vCard (contacts), .ics (calendars), and forwarding of all non-spam mail to another address. | help.hey.com articles 718 (2025-07-24), 730 (2025-08-01), 1055 (2026-03-27), research agent |
+| The official Claude Code plugin `hey` is in the 37signals marketplace (`basecamp/plugins`), sourced from hey-cli; it ships a skill and a session hook that drive the CLI, no MCP server. | github.com/basecamp/plugins `.claude-plugin/marketplace.json`, research agent |
+
+### What this means for Nori (backend's reading, not a decision)
+
+- **Still no client Nori may use today.** Every working way in belongs to 37signals' own clients (the CLI id, the "HEY MCP (local)" id) or is a pasted token or cookie. Reusing those would impersonate HEY's software, so Nori must not.
+- **Changed since the first run:** HEY now advertises dynamic client registration and client-ID metadata documents, and its SDK calls registration a path for "third-party connectors" that is switched off for now. When it is switched on, Nori could register its own client (or publish a client metadata document at a Nori URL) with the `read` scope, and a native connector on hey-sdk/go would fit the existing OAuth integration shape. The hosted MCP at mcp.hey.com is the other likely route once it leaves preview: Nori's MCP client already does OAuth with discovery and dynamic registration (c6cbeec), so it may work without new code, but only once HEY opens registration to outside clients.
+- Not tried, because each would mean sending a request on Austin's behalf or registering a client without his say: a `POST /oauth/clients`, an authorize request with a client metadata document URL.
+- **Interim, no new code:** HEY can forward all non-spam mail to an address Nori already reads (for example his Google account), which would put HEY mail on the Google path the first slice is proving. That is Austin's choice and changes his mail setup.
+- No HEY connector and no MCP wrapper is built (instruction of 2026-11-10).
+
+### The cheapest honest check against Austin's account (for Austin to run himself)
+
+This tells us whether his HEY account works with HEY's own tooling and which scopes and boxes it exposes. It uses 37signals' client, on his machine, signed in by him, read-only. Nori is not involved and no session sees the token.
+
+1. Install the official CLI, for example `brew install --cask basecamp/tap/hey` or `go install github.com/basecamp/hey-cli/cmd/hey@v1.13.1` (hey-cli `docs/install.md`). `hey doctor` checks the install.
+2. Run `hey auth login` and complete the sign-in in the browser HEY opens.
+3. Run, and note only whether each works and roughly what it lists (no message contents needed): `hey account list`, `hey box list`, `hey box view imbox`, `hey search "<a word you know is in a recent email>"`.
+4. `hey auth status` shows the sign-in state.
+5. Afterwards, if he does not want to keep it: `hey auth logout`, and remove the CLI's access under HEY's Connected Apps.
+6. Write the results (works / fails with what message) in his reply or have a session record them in the coordinator's notes.
+
+This proves his account reachable through HEY's API, which no recording can. It does not give Nori access; that still waits on HEY opening third-party registration or the hosted MCP, or on forwarding.
 
 ## W8: connectors through MCP packages (bf2efb2)
 

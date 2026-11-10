@@ -12,10 +12,13 @@ import (
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
+	"nori/internal/users"
 )
 
 type Service struct {
-	UserFacts    string
+	UserFacts string
+	// Profile, when set, supplies the user facts at the time of each request instead of UserFacts.
+	Profile      users.Profile
 	Store        state.Store
 	Model        Model
 	Computer     computer.Provider

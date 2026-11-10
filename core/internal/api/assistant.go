@@ -588,6 +588,11 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if value.Kind == "signed_in" {
+		// r2.11: only the server resolves a sign-in as signed_in, when the account or MCP server becomes usable.
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
+		return
+	}
 	id := r.PathValue("id")
 	if _, err := a.Permissions.Interaction(r.Context(), id); errors.Is(err, state.ErrNotFound) {
 		// A legacy question becomes a stored interaction on first response so the response is receipted.

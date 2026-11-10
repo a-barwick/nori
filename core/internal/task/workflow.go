@@ -522,7 +522,30 @@ func (c *Checkpoint) applySync(synced HistorySync) {
 }
 
 // callModel retains and accounts for the response before any newer-input check.
+// D-053: a re-ask after an interrupted model request starts only while a normal pass (one request plus its checkpoint
+// save) still fits within modelStepDeadline of the step's start. A request that hangs ends after 2 minutes and is not
+// asked again; a request cut off by a worker stop is recovered (about 4 to 5.5 minutes, the 240-second activity window
+// plus restart) and asked once more, so such a step ends within about 9 minutes. Only a second stop during the re-ask
+// can take longer, and it is not asked again.
+const modelStepDeadline = 9 * time.Minute
+
+const modelPassLimit = modelRequestLimit + modelSaveReserve
+
 func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string) (RefModelOutcome, error) {
+	return c.askModel(ctx, quick, spending, id, workflow.Now(ctx))
+}
+
+// mayAskAgain reports whether an interrupted model request may be asked again. Histories recorded before the deadline
+// carry no "model-step-deadline" marker and keep re-asking unconditionally, so they replay unchanged; the marker is
+// only recorded when a request was interrupted.
+func mayAskAgain(ctx workflow.Context, started time.Time) bool {
+	if workflow.GetVersion(ctx, "model-step-deadline", workflow.DefaultVersion, 1) == workflow.DefaultVersion {
+		return true
+	}
+	return workflow.Now(ctx).Sub(started) <= modelStepDeadline-modelPassLimit
+}
+
+func (c *Checkpoint) askModel(ctx, quick, spending workflow.Context, id string, started time.Time) (RefModelOutcome, error) {
 	var a *Activities
 	var model RefModelOutcome
 	err := workflow.ExecuteActivity(quick, a.Project, Projection{Step: Step{id, c.Revision}, Kind: "model", Text: "Thinking"}).Get(ctx, nil)
@@ -544,9 +567,9 @@ func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string)
 	c.projectSpend(spending, id)
 	// A worker that stopped mid-request (a deploy or graceful stop) leaves no answer; asking again is a read whose
 	// lost cost is already counted as unknown. Histories recorded before this flag existed never set it.
-	if model.Interrupted && c.ModelRetries < 2 {
+	if model.Interrupted && c.ModelRetries < 2 && mayAskAgain(ctx, started) {
 		c.ModelRetries++
-		return c.callModel(ctx, quick, spending, id)
+		return c.askModel(ctx, quick, spending, id, started)
 	}
 	if model.Failure != "" {
 		err = errors.New(model.Failure)

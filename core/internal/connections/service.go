@@ -53,7 +53,9 @@ type Service struct {
 	order        []string
 	// RedirectURL is the externally reachable OAuth callback, through the web proxy.
 	RedirectURL string
-	Now         func() time.Time
+	// UserTimezone seeds the time zone of preferences the user has not saved yet; empty means DefaultTimezone.
+	UserTimezone string
+	Now          func() time.Time
 	// Transport, when set, carries every provider request this service makes or hands out (token exchange, refresh,
 	// identity, revocation and the clients adapters receive). Only local development sets it, to replay recorded
 	// provider exchanges.

@@ -1,26 +1,29 @@
 package rpc
 
 const (
-	HealthPath        = "/healthz"
-	CancelPath        = "/cancel"
-	CloseBrowserPath  = "/browser/close"
-	ExecPath          = "/exec"
-	NavigatePath      = "/navigate"
-	ScreenshotPath    = "/screenshot"
-	StartJobPath      = "/job/start"
-	JobStatusPath     = "/job/status"
-	StopJobPath       = "/job/stop"
-	StopTaskJobsPath  = "/job/stop-task"
-	PutFilePath       = "/file/put"
-	GetFilePath       = "/file/get"
-	OperationPath     = "/operation"
-	CancelReadPath    = "/operation/cancel"
-	SandboxRunPath    = "/sandbox/run"
-	ReopenRunPath     = "/run/reopen"
-	OperationIDHeader = "Nori-Operation-ID"
-	DrainingHeader    = "Nori-Computer-Draining"
-	BrowserRestarted  = "browser_restarted"
-	MaxScreenshot     = 2 << 20
+	HealthPath       = "/healthz"
+	CancelPath       = "/cancel"
+	CloseBrowserPath = "/browser/close"
+	ExecPath         = "/exec"
+	NavigatePath     = "/navigate"
+	ScreenshotPath   = "/screenshot"
+	StartJobPath     = "/job/start"
+	JobStatusPath    = "/job/status"
+	StopJobPath      = "/job/stop"
+	StopTaskJobsPath = "/job/stop-task"
+	PutFilePath      = "/file/put"
+	GetFilePath      = "/file/get"
+	OperationPath    = "/operation"
+	CancelReadPath   = "/operation/cancel"
+	SandboxRunPath   = "/sandbox/run"
+	// SandboxSessionPath upgrades to a raw stream carrying a sandboxed program's stdin and stdout.
+	SandboxSessionPath = "/sandbox/session"
+	SandboxUpgrade     = "nori-stdio"
+	ReopenRunPath      = "/run/reopen"
+	OperationIDHeader  = "Nori-Operation-ID"
+	DrainingHeader     = "Nori-Computer-Draining"
+	BrowserRestarted   = "browser_restarted"
+	MaxScreenshot      = 2 << 20
 )
 
 type Health struct {
@@ -32,7 +35,9 @@ type Health struct {
 	Sandbox  bool `json:"sandbox_v1"`
 	// Egress says the guest can run sandboxed programs with a declared-host egress allowlist.
 	Egress bool `json:"egress_allowlist_v1"`
-	Reopen bool `json:"run_reopen_v1"`
+	// Sessions says the guest can run a sandboxed program as a streamed stdio session.
+	Sessions bool `json:"sandbox_sessions_v1"`
+	Reopen   bool `json:"run_reopen_v1"`
 }
 
 // SandboxRequest runs one packaged program with enforced limits and no network.

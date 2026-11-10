@@ -64,9 +64,12 @@ var (
 	DefaultTaskBudget = 5.0
 )
 
-func defaultPreferences() Preferences {
+func defaultPreferences(zone string) Preferences {
+	if _, err := time.LoadLocation(zone); zone == "" || err != nil {
+		zone = DefaultTimezone
+	}
 	return Preferences{
-		Timezone:              DefaultTimezone,
+		Timezone:              zone,
 		WorkingHours:          WorkingHours{{1, "09:00", "17:00"}, {2, "09:00", "17:00"}, {3, "09:00", "17:00"}, {4, "09:00", "17:00"}, {5, "09:00", "17:00"}},
 		DefaultDestinationIDs: []string{},
 		AccountDefaults:       map[string]string{},
@@ -78,7 +81,7 @@ func defaultPreferences() Preferences {
 func (s *Service) Preferences(ctx context.Context) (Preferences, state.Resource, error) {
 	r, err := s.Store.Resource(ctx, CollectionPreferences, PreferencesID)
 	if errors.Is(err, state.ErrNotFound) {
-		return defaultPreferences(), state.Resource{}, nil
+		return defaultPreferences(s.UserTimezone), state.Resource{}, nil
 	}
 	if err != nil {
 		return Preferences{}, r, err

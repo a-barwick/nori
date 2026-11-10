@@ -153,8 +153,15 @@ func Validate(m Manifest) (string, error) {
 				return "", fmt.Errorf("%w: a prompt needs a name and text", state.ErrInvalidResource)
 			}
 		case "mcp_server":
-			if c.Server == nil || c.Server.Transport != "http" || c.Server.Endpoint == "" {
-				return "", fmt.Errorf("%w: package MCP servers must be remote HTTP servers", ErrUnsupported)
+			switch {
+			case c.Server == nil:
+				return "", fmt.Errorf("%w: an MCP server contribution needs a server", state.ErrInvalidResource)
+			case c.Server.Transport == "http" && c.Server.Endpoint != "":
+			case c.Server.Transport == "stdio" && isolated:
+				// The package's entry program is the server; it runs sandboxed on the computer under the
+				// package's declared hosts.
+			default:
+				return "", fmt.Errorf("%w: package MCP servers are remote HTTP servers or the package's own sandboxed program", ErrUnsupported)
 			}
 		case "tool":
 			var d extensions.Definition
@@ -564,7 +571,7 @@ func (s *Service) activate(ctx context.Context, installID string, m Manifest) {
 				auth = "none"
 			}
 			receipt, err := s.MCP.SaveFrom(ctx, "", uuid.NewSHA1(uuid.NameSpaceOID, []byte(installID+":"+c.Server.Name+":"+m.Package.Version)).String(), 0,
-				mcp.Editable{Name: c.Server.Name, Transport: "http", Endpoint: c.Server.Endpoint, Auth: auth, Enabled: true, Exposure: mcp.Exposure{Default: "discoverable"}},
+				serverEditable(c.Server, installID, auth),
 				mcp.Source{Kind: "installation", InstallationID: installID})
 			if err != nil {
 				diagnostics = append(diagnostics, "MCP server "+c.Server.Name+": "+err.Error())
@@ -911,4 +918,14 @@ func (s *Service) Program(ctx context.Context, installID string) (Program, error
 		p.Hooks = append(p.Hooks, Hook{Kind: c.Hook, Handler: c.Handler, DeadlineMS: min(deadline, maxHookDeadlineMS)})
 	}
 	return p, nil
+}
+
+// serverEditable turns a package's MCP server template into a server configuration: a remote endpoint, or the
+// package's own program run as a sandboxed stdio session (command_ref package:<installation>).
+func serverEditable(t *mcpServerTemplate, installID, auth string) mcp.Editable {
+	e := mcp.Editable{Name: t.Name, Transport: t.Transport, Endpoint: t.Endpoint, Auth: auth, Enabled: true, Exposure: mcp.Exposure{Default: "discoverable"}}
+	if t.Transport == "stdio" {
+		e.Endpoint, e.CommandRef = "", "package:"+installID
+	}
+	return e
 }

@@ -334,10 +334,8 @@ func (a *Activities) signIn(ctx context.Context, in ToolInput, run state.Run, re
 		prompt = fmt.Sprintf("Give Nori more access to %s so it can continue this task.", label)
 	}
 	returnTo := "/work/" + in.RunID
+	// r2.11's SignInPayload allows no other fields; why the account needs sign-in is on the Connection's health.
 	payload := map[string]any{"integration_id": record.IntegrationID, "connection_id": record.ID, "return_to": returnTo}
-	if record.Health.Code != "" {
-		payload["reason"] = record.Health.Code
-	}
 	attempt, err := a.Executor.Connections.StartRepair(ctx, record.ID, interactionID("rep_", in.OperationID, record.ID+capability), returnTo, capabilities)
 	switch {
 	case err == nil:

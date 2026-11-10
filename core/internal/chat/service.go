@@ -17,6 +17,7 @@ import (
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/usage"
+	"nori/internal/users"
 )
 
 const (
@@ -43,12 +44,14 @@ type Service struct {
 	Store     Store
 	model     conversation.ReplyModel
 	userFacts string
-	owner     string
-	mu        sync.Mutex
-	running   map[chatTurn]context.CancelFunc
-	runEnded  chan struct{}
-	closed    bool
-	wg        sync.WaitGroup
+	// Profile, when set, supplies the user facts at the time of each reply instead of userFacts.
+	Profile  users.Profile
+	owner    string
+	mu       sync.Mutex
+	running  map[chatTurn]context.CancelFunc
+	runEnded chan struct{}
+	closed   bool
+	wg       sync.WaitGroup
 }
 
 func New(store Store, model conversation.ReplyModel, userFacts string) *Service {
@@ -56,6 +59,14 @@ func New(store Store, model conversation.ReplyModel, userFacts string) *Service 
 		Store: store, model: model, userFacts: userFacts, owner: uuid.NewString(),
 		running: map[chatTurn]context.CancelFunc{}, runEnded: make(chan struct{}),
 	}
+}
+
+func (s *Service) facts(ctx context.Context) string {
+	if s.Profile != nil {
+		facts, _ := s.Profile(ctx)
+		return facts
+	}
+	return s.userFacts
 }
 
 func (s *Service) Create(ctx context.Context, title string) (state.Chat, error) {
@@ -380,7 +391,7 @@ func raw(role string, content any) json.RawMessage {
 
 func (s *Service) respond(ctx context.Context, id, turn string, messages []json.RawMessage) (conversation.Reply, error) {
 	saved := time.Time{}
-	messages = append(append([]json.RawMessage{}, messages...), raw("system", "User details (data): "+s.userFacts))
+	messages = append(append([]json.RawMessage{}, messages...), raw("system", "User details (data): "+s.facts(ctx)))
 	request := conversation.ReplyRequest{Messages: messages, NoDispatch: true, Foreground: true, Tools: chatToolSchema, Stream: func(text string) error {
 		if time.Since(saved) < persistEvery {
 			return ctx.Err()

@@ -56,6 +56,7 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 	}
 	_, taskKey := cfg.Models.TaskCredential()
 	model := responses.New(taskKey, cfg.Models.Inner, store)
+	model.TestURL = cfg.Models.TestURL
 	service := agent.New(store, model, platform.Computer(cfg))
 	service.Capabilities = caps
 	service.UserFacts = row.Facts()
@@ -66,6 +67,7 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 		return nil, err
 	}
 	service.Extensions = services.Tools
+	service.Profile = platform.Profile(row, services.Connections)
 	service.Hidden = func(ctx context.Context, id string) bool {
 		r, err := store.Resource(ctx, "library_overlay", id)
 		return err == nil && strings.Contains(string(r.Body), `"deleted_at"`)

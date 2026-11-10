@@ -92,6 +92,48 @@ print(json.dumps({"words": len(text.split()), "lines": len(text.splitlines()), "
 		RequestedAccess: Access{ConnectionTypes: []string{}, ActionClasses: []string{"read"}, Network: []string{"mcp.deepwiki.com"}},
 		Contributions:   []Contribution{{Kind: "mcp_server", Server: &mcpServerTemplate{Name: "DeepWiki", Transport: "http", Endpoint: "https://mcp.deepwiki.com/mcp", Auth: "none"}}},
 	},
+	{
+		SchemaVersion: 1, Package: Ref{ID: "nori/fetch-mcp", Version: "1.0.0"}, Publisher: map[string]any{"id": "nori", "name": "Nori"},
+		Title: "Page fetcher", Description: "An example stdio MCP server that runs on the computer in a sandbox and may reach only example.com.",
+		Categories: []string{"developer"}, ContractVersion: "r2",
+		RequestedAccess: Access{ConnectionTypes: []string{}, ActionClasses: []string{"read"}, Network: []string{"example.com"}},
+		Executor: &Executor{Kind: "isolated", Runtime: "python3", Entry: "server.py", Limits: &struct {
+			MemoryMB int `json:"memory_mb,omitempty"`
+			CPUMS    int `json:"cpu_ms,omitempty"`
+			WallMS   int `json:"wall_ms,omitempty"`
+		}{MemoryMB: 128, WallMS: 30000}},
+		Files: map[string]string{"server.py": `import json, sys, urllib.request
+def reply(i, result=None, error=None):
+    msg = {"jsonrpc": "2.0", "id": i}
+    if error: msg["error"] = error
+    else: msg["result"] = result
+    sys.stdout.write(json.dumps(msg) + "\n"); sys.stdout.flush()
+TOOL = {"name": "fetch", "description": "Fetch a web page and return its status and first characters. Only declared hosts are reachable.",
+        "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}}
+for line in sys.stdin:
+    try: msg = json.loads(line)
+    except ValueError: continue
+    method, i = msg.get("method"), msg.get("id")
+    if i is None: continue
+    if method == "initialize":
+        reply(i, {"protocolVersion": msg["params"].get("protocolVersion", "2025-06-18"), "capabilities": {"tools": {}}, "serverInfo": {"name": "fetch-mcp", "version": "1.0.0"}})
+    elif method == "tools/list":
+        reply(i, {"tools": [TOOL]})
+    elif method == "tools/call":
+        url = msg["params"].get("arguments", {}).get("url", "")
+        try:
+            with urllib.request.urlopen(url, timeout=10) as r:
+                text = "status %d: %s" % (r.status, r.read(200).decode("utf-8", "replace"))
+            reply(i, {"content": [{"type": "text", "text": text}]})
+        except Exception as e:
+            reply(i, {"content": [{"type": "text", "text": "blocked or failed: %s" % e}], "isError": True})
+    elif method == "ping":
+        reply(i, {})
+    else:
+        reply(i, error={"code": -32601, "message": "method not found"})
+`},
+		Contributions: []Contribution{{Kind: "mcp_server", Server: &mcpServerTemplate{Name: "Page fetcher", Transport: "stdio", Auth: "none"}}},
+	},
 	// First-party remote MCP servers that accept a bearer credential, which Nori's MCP client supports. Their tools
 	// arrive with unknown effect and need the user's authority like any external tool. Providers whose servers need
 	// their own OAuth app (Slack, Google Drive, Dropbox) or Microsoft's Agent 365 preview (Teams, OneDrive) are not

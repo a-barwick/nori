@@ -51,6 +51,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	}
 	model := cfg.Models.Outer
 	outer := conversation.NewOpenAIModel(key, model)
+	outer.TestURL = cfg.Models.TestURL
 	location, err := time.LoadLocation(cfg.TimeZone)
 	if err != nil {
 		store.Close()
@@ -64,6 +65,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		store.Close()
 		return nil, err
 	}
+	chats.Profile = platform.Profile(user, services.Connections)
 	toolSource := &agent.Service{Extensions: services.Tools, Computer: platform.Computer(cfg)}
 	result.Scheduler = services.Scheduler
 	result.Assistant = &api.Assistant{
@@ -98,12 +100,14 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		summaryModel = cfg.Models.Inner
 	}
 	summarizer := responses.New(taskKey, summaryModel, store)
+	summarizer.TestURL = cfg.Models.TestURL
 	var classifier conversation.IntentClassifier
 	if !cfg.Features.DisableJev {
 		classifier = conversation.NewJevClassifier(cfg.Models.JevKey)
 	}
 	runner := conversation.New(outer, classifier, summarizer, tasks)
 	runner.UserFacts = userFacts
+	runner.Profile = platform.Profile(user, services.Connections)
 	runner.Clock = conversation.Clock{Location: location}
 	result.Runner, result.Tasks, result.Dispatcher, result.engine = runner, tasks, dispatcher, engine
 	result.Assistant.Answer = func(ctx context.Context, commandID, taskID, questionID, text string) error {

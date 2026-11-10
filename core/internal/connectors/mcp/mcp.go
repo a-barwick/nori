@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -136,6 +137,9 @@ type Service struct {
 	Client   *http.Client
 	// RedirectURL is the OAuth callback (NORI_OAUTH_REDIRECT_URL), shared with Connections.
 	RedirectURL string
+	// Sandboxed starts a package's stdio MCP server as a sandboxed session on the Computer runtime, under the package's
+	// declared-host egress allowlist, and returns its stdin and stdout. Nil when no computer is available.
+	Sandboxed func(ctx context.Context, installationID string) (io.ReadWriteCloser, error)
 	// OnSignedIn runs after a server's OAuth sign-in completes, so tasks waiting for it resume.
 	OnSignedIn func(ctx context.Context, serverID string)
 }
@@ -234,6 +238,12 @@ func (s *Service) validate(value Editable) error {
 			return err
 		}
 	case "stdio":
+		if installation, ok := strings.CutPrefix(value.CommandRef, "package:"); ok {
+			if s.Sandboxed == nil || installation == "" {
+				return fmt.Errorf("%w: packaged stdio servers run on the computer, which is not available here", ErrUnsupported)
+			}
+			break
+		}
 		if _, ok := s.Commands[value.CommandRef]; !ok || !s.LocalProcesses {
 			return fmt.Errorf("%w: managed stdio servers need a declared command and a managed process host", ErrUnsupported)
 		}
@@ -370,6 +380,17 @@ func (s *Service) connectWith(ctx context.Context, server stored, elicit func(co
 		}
 		return client.Connect(ctx, &sdk.StreamableClientTransport{Endpoint: server.Endpoint, HTTPClient: httpClient, DisableStandaloneSSE: true, MaxRetries: 1}, nil)
 	case "stdio":
+		// A packaged server runs sandboxed on the computer; its stream carries the MCP session.
+		if installation, ok := strings.CutPrefix(server.CommandRef, "package:"); ok {
+			if s.Sandboxed == nil {
+				return nil, fmt.Errorf("%w: the computer is not available for packaged servers", ErrUnsupported)
+			}
+			stream, err := s.Sandboxed(ctx, installation)
+			if err != nil {
+				return nil, fmt.Errorf("the packaged server could not start on the computer: %w", err)
+			}
+			return client.Connect(ctx, &sdk.IOTransport{Reader: stream, Writer: stream}, nil)
+		}
 		if !s.LocalProcesses {
 			return nil, ErrUnsupported
 		}

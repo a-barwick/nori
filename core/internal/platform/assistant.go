@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"log"
+	"nori/internal/computer"
+	"nori/internal/computer/rpc"
 	"nori/internal/connectors/replay"
 	"os"
 	"sync"
@@ -137,6 +140,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	integrations := []connections.Integration{google.Integration{ClientID: s.Connections.GoogleClientID, ClientSecret: s.Connections.GoogleClientSecret},
 		microsoft.Integration{ClientID: s.Connections.MicrosoftClientID, ClientSecret: s.Connections.MicrosoftClientSecret, Tenant: s.Connections.MicrosoftTenant}, icloud.Integration{}}
 	conn := connections.New(store, credentials, s.Connections.RedirectURL, integrations...)
+	conn.UserTimezone = user.TimeZone
 	if s.Connections.ProviderReplay != "" {
 		if s.Cloud != "local" {
 			return nil, fmt.Errorf("NORI_PROVIDER_REPLAY is for local development only and requires NORI_CLOUD=local")
@@ -200,8 +204,13 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	nori.Register(adapters, nori.Adapter{Scheduler: sched, Unattended: s.Connections.UnattendedWrites})
 	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: localCommands(s), RedirectURL: s.Connections.RedirectURL}
 	// MCP targets are "<server>/<tool>", so the adapter serves every MCP prefix.
-	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
 	pluginService := &plugins.Service{Store: store, MCP: servers, Builtin: plugins.Builtin}
+	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
+	if provider := Computer(s); provider != nil {
+		servers.Sandboxed = func(ctx context.Context, installationID string) (io.ReadWriteCloser, error) {
+			return sandboxedServer(ctx, provider, pluginService, installationID)
+		}
+	}
 	plugin.Register(adapters, plugin.Adapter{Plugins: pluginService, Computer: Computer(s)})
 	return &AssistantServices{
 		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched, MCP: servers,
@@ -220,4 +229,41 @@ func localCommands(s settings.Settings) map[string][]string {
 		log.Printf("local stdio MCP commands declared: %d", len(s.Connections.MCPCommands))
 	}
 	return s.Connections.MCPCommands
+}
+
+// sandboxedServer starts an installed package's program as a stdio MCP server in a sandboxed session on the computer,
+// with the package's approved hosts as its egress allowlist (no network when it declares none).
+func sandboxedServer(ctx context.Context, provider computer.Provider, packages *plugins.Service, installationID string) (io.ReadWriteCloser, error) {
+	program, err := packages.Program(ctx, installationID)
+	if err != nil {
+		return nil, err
+	}
+	run := "mcp-" + installationID
+	client, err := computer.Open(ctx, provider, run)
+	if err != nil {
+		return nil, err
+	}
+	client.SetTaskID(run)
+	req := rpc.SandboxRequest{Argv: program.Argv, Files: program.Files, MemoryMB: program.MemoryMB, Pids: 64, CPUPct: 50, WallMS: 600_000, Network: "none"}
+	if len(program.AllowHosts) > 0 {
+		req.Network, req.AllowHosts = "allowlist", program.AllowHosts
+	}
+	stream, err := client.SandboxSession(ctx, req)
+	if err != nil {
+		client.Close()
+		return nil, err
+	}
+	return sessionStream{ReadWriteCloser: stream, client: client}, nil
+}
+
+// sessionStream closes the computer client with the session.
+type sessionStream struct {
+	io.ReadWriteCloser
+	client *computer.Client
+}
+
+func (s sessionStream) Close() error {
+	err := s.ReadWriteCloser.Close()
+	s.client.Close()
+	return err
 }

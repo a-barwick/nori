@@ -19,6 +19,7 @@ import (
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
+	"nori/internal/users"
 )
 
 type Input struct {
@@ -79,7 +80,9 @@ type Session struct {
 	ReadPosition state.ReadMark `json:"read_position"`
 }
 type Runner struct {
-	UserFacts  string
+	UserFacts string
+	// Profile, when set, supplies the user facts and clock at the time of each call instead of UserFacts and Clock.
+	Profile    users.Profile
 	model      ReplyModel
 	classifier IntentClassifier
 	// summarizer writes the conversation summary. compactAfter pauses compaction after a failure.

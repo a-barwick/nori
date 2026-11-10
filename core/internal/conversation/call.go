@@ -246,7 +246,11 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if callCtx.Err() != nil {
 		return callCtx.Err()
 	}
-	advice, _ := json.Marshal(map[string]any{"user": r.UserFacts, "classification_hint": hint, "task_context": taskContext, "now": r.Clock.timeContext()})
+	facts, clock := r.UserFacts, r.Clock
+	if r.Profile != nil {
+		facts, clock.Location = r.Profile(ctx)
+	}
+	advice, _ := json.Marshal(map[string]any{"user": facts, "classification_hint": hint, "task_context": taskContext, "now": clock.timeContext()})
 	advisory := modelMessage(map[string]string{"role": "system", "content": prompts.Runtime("call-advisory-context-for-the-current-inputs", nil) + string(advice)})
 	// The oldest recent turns give way first when the whole input would pass its budget. Compaction folds them into
 	// the summary.

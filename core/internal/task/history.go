@@ -370,7 +370,7 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	if e != nil {
 		observability.RecordErrorCategory(ctx, "task.model.checkpoint", e)
 		// Return known usage even if the checkpoint could not be committed.
-		out.Ref, out.Calls, out.Failure = in.Ref, nil, "The model result could not be saved."
+		out.Ref, out.Calls, out.Failure = in.Ref, nil, modelSaveFailure
 	}
 	span.SetAttributes(attribute.Int("nori.tool.call_count", len(out.Calls)))
 	return out, nil
