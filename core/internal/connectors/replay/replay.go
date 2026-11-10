@@ -160,10 +160,14 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Body.Close()
 	}
 	t.mu.Lock()
+	// The most specific recording wins: an exact path before a prefix ("*") path, then file order.
 	var hit *Exchange
-	for i := range t.exchanges {
-		x := &t.exchanges[i]
-		if t.matches(x, req, body) {
+	for pass := 0; pass < 2 && hit == nil; pass++ {
+		for i := range t.exchanges {
+			x := &t.exchanges[i]
+			if strings.HasSuffix(x.Path, "*") != (pass == 1) || !t.matches(x, req, body) {
+				continue
+			}
 			hit = x
 			t.used[x.Name]++
 			if x.Capture != "" {
