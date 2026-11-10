@@ -138,6 +138,118 @@
    }
   },
   {
+   "name": "b-events-wed-401-by-id",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/recorded.work@example.com/events",
+   "headers": {
+    "Authorization": "Bearer recorded-access-token-b"
+   },
+   "query_prefix": {
+    "timeMin": "2026-11-18"
+   },
+   "times": 1,
+   "response": {
+    "status": 401,
+    "body": {
+     "error": {
+      "code": 401,
+      "message": "Request had invalid authentication credentials.",
+      "errors": [
+       {
+        "domain": "global",
+        "reason": "authError",
+        "message": "Invalid Credentials"
+       }
+      ],
+      "status": "UNAUTHENTICATED"
+     }
+    }
+   },
+   "after": []
+  },
+  {
+   "name": "b-events-wed-by-id",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/recorded.work@example.com/events",
+   "headers": {
+    "Authorization": "Bearer recorded-access-token-b"
+   },
+   "query_prefix": {
+    "timeMin": "2026-11-18"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#events",
+     "summary": "recorded.user@example.com",
+     "timeZone": "America/Los_Angeles",
+     "items": [
+      {
+       "kind": "calendar#event",
+       "id": "recworkwed",
+       "status": "confirmed",
+       "etag": "\"3500000000000002\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=recworkwed",
+       "summary": "Vendor call",
+       "start": {
+        "dateTime": "2026-11-18T14:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-18T14:30:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "recorded.work@example.com",
+        "self": true
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "b-events-by-id",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/recorded.work@example.com/events",
+   "headers": {
+    "Authorization": "Bearer recorded-access-token-b"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#events",
+     "summary": "recorded.user@example.com",
+     "timeZone": "America/Los_Angeles",
+     "items": [
+      {
+       "kind": "calendar#event",
+       "id": "recworkplan",
+       "status": "confirmed",
+       "etag": "\"3500000000000001\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=recworkplan",
+       "summary": "Quarterly planning",
+       "start": {
+        "dateTime": "2026-11-16T10:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-16T11:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "recorded.work@example.com",
+        "self": true
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
    "name": "insert-dinner-ok",
    "method": "POST",
    "host": "www.googleapis.com",
@@ -406,66 +518,6 @@
         "domain": "global",
         "reason": "duplicate",
         "message": "The requested identifier already exists."
-       }
-      ]
-     }
-    }
-   }
-  },
-  {
-   "name": "get-created",
-   "method": "GET",
-   "host": "www.googleapis.com",
-   "path": "/calendar/v3/calendars/primary/events/*",
-   "after": [
-    "insert-lost"
-   ],
-   "response": {
-    "status": 200,
-    "body": {
-     "kind": "calendar#event",
-     "id": "recordedcreated",
-     "status": "confirmed",
-     "etag": "\"3400000000000000\"",
-     "htmlLink": "https://www.google.com/calendar/event?eid=recorded",
-     "summary": "Recorded planning sync",
-     "start": {
-      "dateTime": "2026-11-10T15:00:00-08:00",
-      "timeZone": "America/Los_Angeles"
-     },
-     "end": {
-      "dateTime": "2026-11-10T15:30:00-08:00",
-      "timeZone": "America/Los_Angeles"
-     },
-     "organizer": {
-      "email": "recorded.user@example.com",
-      "self": true
-     },
-     "attendees": [
-      {
-       "email": "guest@example.com",
-       "responseStatus": "needsAction"
-      }
-     ]
-    }
-   }
-  },
-  {
-   "name": "get-missing",
-   "method": "GET",
-   "host": "www.googleapis.com",
-   "path": "/calendar/v3/calendars/primary/events/*",
-   "response": {
-    "status": 404,
-    "body": {
-     "error": {
-      "code": 404,
-      "message": "Not Found",
-      "errors": [
-       {
-        "domain": "global",
-        "reason": "notFound",
-        "message": "Not Found"
        }
       ]
      }
@@ -869,6 +921,45 @@
          "responseStatus": "needsAction"
         }
        ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "events-wed-18",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events",
+   "query_prefix": {
+    "timeMin": "2026-11-18"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#events",
+     "summary": "recorded.user@example.com",
+     "timeZone": "America/Los_Angeles",
+     "items": [
+      {
+       "kind": "calendar#event",
+       "id": "recpiano",
+       "status": "confirmed",
+       "etag": "\"3400000000000060\"",
+       "htmlLink": "https://www.google.com/calendar/event?eid=recpiano",
+       "summary": "Piano lesson",
+       "start": {
+        "dateTime": "2026-11-18T17:00:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "end": {
+        "dateTime": "2026-11-18T17:45:00-08:00",
+        "timeZone": "America/Los_Angeles"
+       },
+       "organizer": {
+        "email": "recorded.user@example.com",
+        "self": true
+       }
       }
      ]
     }
@@ -1442,6 +1533,66 @@
         }
        ]
       }
+     }
+    }
+   }
+  },
+  {
+   "name": "get-created",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/*",
+   "after": [
+    "insert-lost"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "calendar#event",
+     "id": "recordedcreated",
+     "status": "confirmed",
+     "etag": "\"3400000000000000\"",
+     "htmlLink": "https://www.google.com/calendar/event?eid=recorded",
+     "summary": "Recorded planning sync",
+     "start": {
+      "dateTime": "2026-11-10T15:00:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "end": {
+      "dateTime": "2026-11-10T15:30:00-08:00",
+      "timeZone": "America/Los_Angeles"
+     },
+     "organizer": {
+      "email": "recorded.user@example.com",
+      "self": true
+     },
+     "attendees": [
+      {
+       "email": "guest@example.com",
+       "responseStatus": "needsAction"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "get-missing",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/calendar/v3/calendars/primary/events/*",
+   "response": {
+    "status": 404,
+    "body": {
+     "error": {
+      "code": 404,
+      "message": "Not Found",
+      "errors": [
+       {
+        "domain": "global",
+        "reason": "notFound",
+        "message": "Not Found"
+       }
+      ]
      }
     }
    }

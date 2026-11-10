@@ -3,7 +3,7 @@
   {
    "name": "draft-create",
    "method": "POST",
-   "host": "www.googleapis.com",
+   "host": "gmail.googleapis.com",
    "path": "/gmail/v1/users/me/drafts",
    "response": {
     "status": 200,
@@ -22,7 +22,7 @@
   {
    "name": "draft-send",
    "method": "POST",
-   "host": "www.googleapis.com",
+   "host": "gmail.googleapis.com",
    "path": "/gmail/v1/users/me/drafts/send",
    "body_contains": [
     "recdraft1"
@@ -41,7 +41,7 @@
   {
    "name": "sent-lookup",
    "method": "GET",
-   "host": "www.googleapis.com",
+   "host": "gmail.googleapis.com",
    "path": "/gmail/v1/users/me/messages",
    "query_prefix": {
     "q": "in:sent rfc822msgid:"
@@ -65,7 +65,7 @@
   {
    "name": "sent-lookup-none",
    "method": "GET",
-   "host": "www.googleapis.com",
+   "host": "gmail.googleapis.com",
    "path": "/gmail/v1/users/me/messages",
    "query_prefix": {
     "q": "in:sent rfc822msgid:"
