@@ -1,10 +1,38 @@
 # Integration status
 
-Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10 (restart, first turn, new machine). The first run's version of this note is in git history.
+Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, second turn of the restart (assignment in "After the first turn", `a9e1d8b` on the coordinator branch). The first run's version of this note is in git history.
 
 **Provider verified: 0 of 44.**
 
-## What ran this turn
+## Second turn (2026-11-10)
+
+- **Merged**:
+  - the coordinator branch at `a9e1d8b`;
+  - frontend head `f7ed24a` (r2.11 adopted at `ca49e42`, Google connect copy, approval message lines);
+  - backend head `bd5a7d6` (D-053, D-054, HEY note, `backend-stack.sh`).
+
+  All three merged cleanly. Merge head `a8781a3`, then `031b475` for the r2.11 row.
+- **Backend's hosted stdio WIP `a62a26e` is merged, labelled unverified.** It came with the backend head. `make check` and `go test ./...` in core both stayed green at `a8781a3`, so it stays in. Per backend, it affects only packaged stdio MCP servers. Nothing in it has been exercised here, and A10 stays blocked.
+- **Backend's two summary fixes** were not on `origin/claude/nori-assistant-backend-9c520e` at either fetch this turn, so they are not merged yet.
+- **r2.11 row updated**: backend acknowledged at `2ed6bdb`, frontend accepted and adopted at `ca49e42`, still open with Austin, and not recorded as accepted.
+- **Keys, by name** (re-checked this turn; `.env` unchanged since 07:58):
+  - `OPENAI_API_KEY` is **set**.
+  - `OPENROUTER_API_KEY` is **still empty**.
+  - `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` are **still absent**.
+
+  So the stacks were **not** restarted with models, and the **Google authorize-URL check has not run**. Both wait on those three values. I did not wait in a loop.
+- **Stacks moved to `031b475`**, both still in `NORI_STACK_NO_MODEL=1` mode:
+  - recorded: core 8083, worker `int-031b475` current, **12 of 12 live scenarios pass**;
+  - real: core 8085, worker `real-031b475` current, web 3213 answers.
+- **Once the keys are present**, I will:
+  1. stop both stacks (`stack.sh <stack> stop`);
+  2. start core and worker without `NORI_STACK_NO_MODEL`, then run `set-current`;
+  3. re-run the recorded scenarios;
+  4. on the real stack, create a Google connection for `real-a`, call `connect`, and load the returned authorize URL without choosing an account, recording what Google shows.
+
+## First turn (2026-11-10)
+
+
 
 - **Merges**: the coordinator branch `claude/nori-assistant-integration-25ae45` (docs), frontend `ea53ff9` and backend `840555e` (that commit, not the branch tip; `a62a26e` WIP stays out under rule 1). All merged cleanly; merge head `e290c5f`.
 - **Checks on this machine**:
@@ -44,7 +72,7 @@ Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/
   15 rows whose status said verified but whose text listed unexercised parts were lowered, with the reason in bold. Wording that presented the local vault, the interim D1–D4 settings, or "voice set aside" as Austin's decisions was removed. PR #165's description matches; it stays a draft, with no reviews requested and no comments.
 - **r2.11** is recorded in the Contract revisions table of `docs/assistant-coordination.md` (one row after r2.10): published, proposed by backend, no acknowledgement recorded from either stream, open with Austin. No new revision was published.
 
-## What failed or went wrong
+### What failed or went wrong (first turn)
 
 - **I killed other sessions' cores.** At about 07:56 I ran `pkill -f nori-local`, which matches every session's core on this machine. Frontend's core (its web 3212 and worker on `nori-frontend` were up) was very likely killed, and possibly backend's. I messaged both sessions to restart. `stack.sh stop` now stops only its own ports and namespace, and the README warns against stopping by name.
 - Both cores refuse to start without `OPENROUTER_API_KEY` even with `OPENAI_API_KEY` set, because background tasks need it for conversation summaries. With only the OpenAI key present, the stacks still run in no-model mode.
@@ -53,27 +81,25 @@ Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/
 
 ## Needs from backend
 
-- Add `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` (and `NORI_OAUTH_REDIRECT_URL`) to `.env.example`. Core reads them, but the example omits them, so a new machine cannot tell they are needed.
-- Acknowledge or reject r2.11 as published at `7f7387c` in your status note.
+- Push the two summary fixes. I merge them at the start of my next turn.
+- Add `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET` and `NORI_OAUTH_REDIRECT_URL` to `.env.example`. Core reads them, but the example omits them.
 - Optional: a way to remove a never-connected connection (disconnect answers "does not apply", `DELETE` is 405).
-- If you had a core running at 07:56, restart it (see above).
+- Say if `a62a26e` should be held back after all. It is merged here as unverified.
 
 ## Needs from frontend
 
-- Restart your core if it is down (my `pkill`, 07:56).
-- State in your status note whether you accept r2.11 as published (the restart assignment).
+- Nothing new. r2.11 adoption is recorded. If your core is still down from my 07:56 `pkill`, restart it.
 
 ## Needs from the coordinator
 
-- I added one row to `docs/assistant-coordination.md` on this branch (r2.11 in Contract revisions). Merge it, or tell me to move it to your branch, so the two copies don't diverge.
-- The restart section's "This machine" list assumes the Google OAuth client is in `.env` ("Integration confirms the Google OAuth client by name"). It is absent, and the model keys were empty. Please correct that list.
-- The first slice from Austin's backlog. I prepare, and add no cases, recordings or delivery work until it arrives.
+- Nothing new. The r2.11 row now carries both acknowledgements on this branch. Your copy at `8a31e15` still says outstanding; take this branch's row when you next merge.
+- Still waiting: the first slice from Austin's backlog.
 
 ## Needs from Austin
 
 All of these are in `docs/assistant-notes/austin-real-accounts-steps.md`:
 
-- `OPENROUTER_API_KEY` in `.env`.
+- `OPENROUTER_API_KEY` in `.env` (still empty; `OPENAI_API_KEY` is set).
 - The Google OAuth client in `.env`. Check that the redirect URI `http://127.0.0.1:3213/api/v1/connections/oauth/callback` is on the client and that his address is a test user.
 - A "Nori test" calendar.
 - After integration confirms the authorize URL: his Google sign-in at http://127.0.0.1:3213/apps.
