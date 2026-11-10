@@ -54,6 +54,10 @@ User actions that remain: sign in to Google and Microsoft when integration says 
 
 Austin: "just use my personal accounts." Coordinator's reading, stated to him: provider verification runs against Austin's personal Google, Apple and Microsoft accounts; his real tokens may be held in the local-only encrypted vault (`secret/localvault`, `NORI_CREDENTIAL_STORE=local`, `NORI_CLOUD=local`) for local verification; D1's production custody remains open. Austin does every sign-in himself in the browser; app-specific passwords are entered by him in the product's form and never pass through a session or chat. Writes against his accounts use a dedicated test calendar and reversible operations with cleanup; emails go only to himself; sends still pass through approvals. A VAPID key pair is generated into the project `.env` (mode 600, names documented in `.env.example`). Email delivery for notifications may use his connected mail account as transport while no SMTP relay exists. Microsoft still needs an Entra app registration he performs; the exact steps are prepared for him.
 
+## Stop of 2026-11-09
+
+Austin stopped all work because this laptop is being traded in. Every branch is pushed to `origin`; the session notes that lived outside the repository are copied to `docs/assistant-notes/` on the coordinator branch. Branches: coordinator `claude/nori-assistant-integration-25ae45`; integration (the assembled product and the pull request source) `claude/nori-assistant-integration-bd1278`; backend `claude/nori-assistant-backend-9c520e`; frontend `claude/nori-assistant-frontend-78149f`. Backend's last commits (the sandbox egress allowlist) and frontend's per-account Allow are not yet merged into the integration branch; the integration branch is the last state that passed `make check`. Resume by reading this file, `docs/assistant-acceptance.md` on the integration branch, and the notes.
+
 ## Contract revisions
 
 | Revision | Status | Commit | Acknowledged by |
