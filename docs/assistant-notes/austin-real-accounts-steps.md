@@ -1,54 +1,82 @@
-# Connecting your real accounts to local Nori
+# What this Mac needs from Austin before a real Google run
 
-Everything is set up except the parts only you can do: signing in, approving access, and one Microsoft app registration. Nori runs on your Mac at **http://127.0.0.1:3213**, with its own database and an encrypted local credential vault. Production is not touched.
+Rewritten 2026-11-10 by integration for the new machine. It covers Google only. Microsoft and iCloud come later (see the end).
 
-## Google (about 2 minutes)
+Local Nori for real accounts runs on this Mac at **http://127.0.0.1:3213**. It has its own database (`nori_real`), its own Temporal namespace (`nori-real`) and a new, empty local credential vault under `~/.nori-stacks/real/`. Production is not touched. Integration restarts it with `scripts/local-stacks/stack.sh real …` (see `scripts/local-stacks/README.md`).
 
-1. Open http://127.0.0.1:3213/apps, then Google → Connect.
+Today it answers, but only as plumbing. It has no model key and no Google client, so it cannot hold a conversation or start a Google sign-in. The steps below are the things only you can supply. Please put values in the file yourself. Don't paste them into a chat or a session: nobody else reads, prints or copies them.
+
+## What `.env` lacks, by variable name
+
+Compared on 2026-11-10 against `.env.example` and against what core actually reads (`core/internal/settings/settings.go`). Values were never read or printed. Only whether each one is present was checked.
+
+| Needed for | Variable | State in `/Users/austin/Documents/dev/nori/.env` | Who |
+| --- | --- | --- | --- |
+| Any conversation (core refuses to start without it) | `OPENAI_API_KEY` | present, empty | **you** |
+| Any task (the worker refuses to start without it; the task model is `openai/gpt-6.1-terra` through OpenRouter) | `OPENROUTER_API_KEY` | present, empty | **you** |
+| Google sign-in | `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET` | absent (also missing from `.env.example`; hosted reads them from Secret Manager) | **you** |
+| Google redirect | `NORI_OAUTH_REDIRECT_URL` | absent; the stack script sets `http://127.0.0.1:3213/api/v1/connections/oauth/callback` | integration (done) |
+| Credential store | `NORI_CREDENTIAL_STORE`, `NORI_CREDENTIAL_DIR` | absent; the stack script sets `local` and a new vault | integration (done) |
+| Background tasks | `NORI_BACKGROUND_TASKS_ENABLED` | `false` (chat-only); the stack script overrides it to `true` for the stacks only | integration (done) |
+| Push (VAPID) | `NORI_VAPID_PUBLIC_KEY`, `NORI_VAPID_PRIVATE_KEY`, `NORI_VAPID_SUBJECT` | absent from `.env`. A new pair was generated into `~/.nori-stacks/real.env` (mode 600) and the real stack loads it from there. It went outside `.env` because `.env` was open in vim when it was generated, and your next save would have overwritten an edit made underneath it. | integration (done) |
+| Web search inside tasks (not needed for a Google slice) | `BRAVE_SEARCH_API_KEY` | present, empty | you, optional |
+| Microsoft (later) | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_TENANT` | absent | you, later |
+| Email delivery (not in scope now) | `NORI_SMTP_*`, `NORI_EMAIL_FROM` | absent | not now |
+
+## Step 1. Model keys (about 2 minutes)
+
+In `/Users/austin/Documents/dev/nori/.env`, fill:
+
+- `OPENAI_API_KEY=` with a key from platform.openai.com → API keys. It is used for the outer conversation.
+- `OPENROUTER_API_KEY=` with a key from openrouter.ai → Keys. It is used for the task worker.
+
+The project budget defaults still apply: `NORI_TASK_BUDGET_USD` caps each task.
+
+## Step 2. Google OAuth client for local use (about 3 minutes)
+
+The first run used the Nori web client whose client ID starts `8273801370-`.
+
+1. Open Google Cloud Console for the project that owns that client → **Google Auth Platform → Clients** → open that client.
+2. Under **Authorized redirect URIs**, make sure `http://127.0.0.1:3213/api/v1/connections/oauth/callback` is listed. The first run had added it. Add it if it is gone.
+3. Copy the **Client ID**. For the secret, use **Add secret** and copy the new value (Google shows it once). An existing secret stays valid for production.
+4. Add two lines to `/Users/austin/Documents/dev/nori/.env`:
+   - `GOOGLE_CALENDAR_CLIENT_ID=<client ID>`
+   - `GOOGLE_CALENDAR_CLIENT_SECRET=<secret value>`
+5. Under **Google Auth Platform → Audience**, check that the app is in **Testing** and that your Google address is under **Test users**. Add it if not. Gmail scopes are restricted, so an unverified app only works for test users.
+
+Then tell the coordinator (or any Nori session) "keys are in". Integration restarts the real stack and checks that Google accepts the authorize URL. It loads the consent page without choosing an account, before anything else happens.
+
+## Step 3. A calendar just for the checks (1 minute)
+
+At calendar.google.com → Other calendars **+** → Create new calendar, named **Nori test**. Writes from the real run go only there.
+
+## Step 4. Sign in (about 2 minutes, after integration confirms step 2)
+
+1. Open http://127.0.0.1:3213/apps → Google → Connect.
 2. Choose your Google address and approve the access shown.
-   - If Google says **"Access blocked: Nori has not completed the Google verification process"**, open Google Cloud Console for the project that owns the Nori OAuth client (client ID starting `8273801370-`). Go to **Google Auth Platform → Audience → Test users → Add users**, add your Google address, save, and repeat step 1.
-   - If it says **"Google hasn't verified this app"**, choose Continue. It's your own app in testing.
-3. Create a calendar just for these checks: calendar.google.com → Other calendars **+** → Create new calendar, named **Nori test**. Nori writes only there.
+   - "Google hasn't verified this app": choose Continue. It is your own app in testing.
+   - "Access blocked: … has not completed the Google verification process": your address is not a test user; see step 2.5.
 
-Checked before writing this: Google accepts the OAuth client and the redirect URI (the consent page shows "Choose an account to continue to Nori").
+You sign in to Nori's web on this Mac as a local test user (`real-a@nori.local`). Your Google account is what gets connected; no address of yours is written into any command or file.
 
-## iCloud (about 2 minutes)
+## Also open with you (not steps; listed so nothing waits silently)
 
-1. At account.apple.com → Sign-In and Security → **App-Specific Passwords**, generate one named "Nori local".
-2. In Nori, go to Apps → iCloud Calendar → Connect. Enter your Apple ID and that password.
+- **Which mailbox counts for email.** Your backlog asked about HEY. Backend is checking what can be learned about HEY on this machine without signing in. Nothing about HEY has been checked against your account.
+- **The first slice.** The real run tests only the slice taken from your backlog once it is recorded in `docs/assistant-coordination.md`. Nothing writes to your account before that run is agreed with you.
+- **D1 to D4 and r2.11** are open with you; see the coordination record. Interim mechanisms are in use and are not your decisions.
 
-The password goes straight into Nori's local vault. Nori never shows it again, and no one else sees it.
+## Rules for the real run
 
-## Microsoft (about 5 minutes, one time)
+- Nothing writes to your account until you have signed in and the slice run is agreed with you.
+- Writes then go only to the **Nori test** calendar. They are reversible, and integration deletes what it made.
+- Email goes only to your own address, after an approval you click.
+- A row in `docs/assistant-acceptance.md` becomes "provider verified" only with the task id and time of a run against your account.
 
-1. Sign in at **entra.microsoft.com** with your Microsoft address.
-   - If it asks you to create a directory or an Azure account first, a free one is enough.
-2. Go to **Applications → App registrations → New registration**:
-   - Name: Nori local.
-   - Supported account types: **Personal Microsoft accounts only**.
-   - Redirect URI: platform **Web**, address **http://127.0.0.1:3213/api/v1/connections/oauth/callback**.
-   - Click Register.
-3. On the app's Overview, copy **Application (client) ID**.
-4. Go to **Certificates & secrets → New client secret** (24 months) and copy its **Value**. It is shown once.
-5. Add three lines to `/Users/austinbarwick/Documents/dev/agents/nori/.env`:
-   - `MICROSOFT_CLIENT_ID=<the client ID>`
-   - `MICROSOFT_CLIENT_SECRET=<the secret value>`
-   - `MICROSOFT_TENANT=consumers`
+## Later, not now
 
-   Then tell me; I restart the local core.
-6. In Nori, go to Apps → Microsoft → Connect, sign in, and approve.
-
-Nori asks Microsoft for these delegated permissions: openid, email, offline_access, User.Read, Calendars.Read, Calendars.ReadWrite, Mail.Read, Mail.ReadWrite, Mail.Send, Contacts.Read, People.Read. You consent at sign-in; nothing needs adding under API permissions.
-
-If the portal refuses `http://127.0.0.1` as a Web redirect URI, tell me. Nori's redirect address would then move to `http://localhost:3213/...` for all providers.
-
-## Rules for the real runs
-
-- Writes go only to the **Nori test** calendar. Each is reversible, and integration deletes what it made at the end.
-- Email goes only to your Google address. Every send waits for an approval you click yourself.
-- Rows are marked "provider verified" only for what actually ran against your account.
-- After you sign in, integration runs A01–A03, A15–A23 and A27 against Google, iCloud and Microsoft.
+- **Microsoft**: an Entra app registration (`MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_TENANT=consumers`) with the redirect URI above. The first run's steps are in git history (this file before 2026-11-10).
+- **iCloud**: an app-specific password, entered by you in Apps → iCloud Calendar.
 
 ## Turning it off
 
-Disconnect each account in Apps. Google also lists Nori at myaccount.google.com/connections, and Microsoft at account.live.com/consent/Manage.
+Disconnect Google in Apps. Google also lists the app at myaccount.google.com/connections. Integration stops the stack with `scripts/local-stacks/stack.sh real stop`.
