@@ -522,13 +522,14 @@ func (c *Checkpoint) applySync(synced HistorySync) {
 }
 
 // callModel retains and accounts for the response before any newer-input check.
-// A model step, including any re-asks after an interrupted request, ends within modelStepDeadline of workflow time
-// (D-053). One ModelRef pass is bounded by its 240-second activity plus a recovery read, so a re-ask starts only while a
-// whole pass still fits.
-const (
-	modelStepDeadline = 6 * time.Minute
-	modelPassLimit    = 4 * time.Minute
-)
+// D-053: a re-ask after an interrupted model request starts only while a normal pass (one request plus its checkpoint
+// save) still fits within modelStepDeadline of the step's start. A request that hangs ends after 2 minutes and is not
+// asked again; a request cut off by a worker stop is recovered (about 4 to 5.5 minutes, the 240-second activity window
+// plus restart) and asked once more, so such a step ends within about 9 minutes. Only a second stop during the re-ask
+// can take longer, and it is not asked again.
+const modelStepDeadline = 9 * time.Minute
+
+const modelPassLimit = modelRequestLimit + modelSaveReserve
 
 func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string) (RefModelOutcome, error) {
 	return c.askModel(ctx, quick, spending, id, workflow.Now(ctx))
