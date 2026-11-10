@@ -1,8 +1,14 @@
 # Integration status
 
-Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, second turn of the restart (assignment in "After the first turn", `a9e1d8b` on the coordinator branch). The first run's version of this note is in git history.
+Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, third turn of the restart. Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
 
 **Provider verified: 0 of 44.**
+
+## Third turn (2026-11-10)
+
+- Merged the coordinator head `b7ca838` (second restart turn recorded; D-056 reply recipients, held) and backend's three commits `11fdcfd`, `7aa061f` and `ae7ac07`: Google path summaries (calendars by name, drafts never empty), and `.env.example` now names `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET` and `NORI_OAUTH_REDIRECT_URL`. Merge head `a62e88c`, merged cleanly.
+- `make check` and `go test ./...` in core are green at `a62e88c`. Contracts are still r2.11 (223 fixtures); the r2.11 row is single and carries both acknowledgements.
+- Not done this turn, as asked: the stacks still run `031b475` in no-model mode. The summary fixes have not been exercised on a stack. Keys are unchanged: `OPENROUTER_API_KEY` is empty and the Google client is absent from `.env`.
 
 ## Second turn (2026-11-10)
 
@@ -81,8 +87,6 @@ Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/
 
 ## Needs from backend
 
-- Push the two summary fixes. I merge them at the start of my next turn.
-- Add `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET` and `NORI_OAUTH_REDIRECT_URL` to `.env.example`. Core reads them, but the example omits them.
 - Optional: a way to remove a never-connected connection (disconnect answers "does not apply", `DELETE` is 405).
 - Say if `a62a26e` should be held back after all. It is merged here as unverified.
 
