@@ -26,6 +26,8 @@ type Client struct {
 	taskTabs  bool
 	jobs      bool
 	sandbox   bool
+	sessions  bool
+	egress    bool
 	reopen    bool
 	files     bool
 	operation string
@@ -89,6 +91,7 @@ func (c *Client) Probe(ctx context.Context) (rpc.Health, error) {
 		return rpc.Health{}, fmt.Errorf("%w: %v", ErrUnhealthy, decodeErr)
 	}
 	c.receipts, c.taskTabs, c.jobs, c.files, c.sandbox = health.Receipts, health.TaskTabs, health.Jobs, health.Files, health.Sandbox
+	c.sessions, c.egress = health.Sessions, health.Egress
 	c.reopen = health.Reopen
 	return health, nil
 }
@@ -342,6 +345,46 @@ func (c *Client) SandboxRun(ctx context.Context, req rpc.SandboxRequest) (rpc.Sa
 	}
 	err = json.Unmarshal(data, &result)
 	return result, err
+}
+
+// SandboxSession starts a packaged program as a long-lived sandboxed process and returns a stream connected to its
+// stdin and stdout, for example a stdio MCP server. Closing the stream ends the program.
+func (c *Client) SandboxSession(ctx context.Context, req rpc.SandboxRequest) (io.ReadWriteCloser, error) {
+	if !c.sessions {
+		return nil, errors.New("this computer cannot run sandboxed sessions")
+	}
+	if req.Network == "allowlist" && !c.egress {
+		return nil, errors.New("this computer cannot enforce an egress allowlist")
+	}
+	req.RunID, req.TaskID = c.run, c.taskID
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.conn.BaseURL+rpc.SandboxSessionPath, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Connection", "Upgrade")
+	httpReq.Header.Set("Upgrade", rpc.SandboxUpgrade)
+	for key, value := range observability.InjectTrace(ctx) {
+		httpReq.Header.Set(key, value)
+	}
+	resp, err := c.conn.HTTP.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		resp.Body.Close()
+		return nil, &RPCError{Path: rpc.SandboxSessionPath, Status: resp.StatusCode}
+	}
+	stream, ok := resp.Body.(io.ReadWriteCloser)
+	if !ok {
+		resp.Body.Close()
+		return nil, errors.New("the computer did not return a stream")
+	}
+	return stream, nil
 }
 
 // Reopen makes a run that was stopped while waiting accept operations again. Guests without the capability keep

@@ -120,6 +120,8 @@ var guestRoutes = map[string]guestRoute{
 	http.MethodPost + " " + rpc.CancelReadPath:   {serve: (*server).cancelRead},
 	http.MethodPost + " " + rpc.ReopenRunPath:    {serve: (*server).reopenRun},
 	http.MethodPost + " " + rpc.SandboxRunPath:   {serve: (*server).sandboxRun, receipt: durableReceipt, requestLimit: maxFileRequest},
+	// A session is a live stream, not a receipted operation; each MCP call inside it carries its own receipt.
+	http.MethodPost + " " + rpc.SandboxSessionPath: {serve: (*server).sandboxSession, requestLimit: maxFileRequest},
 }
 
 func (*server) health(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +134,7 @@ func (*server) health(w http.ResponseWriter, r *http.Request) {
 	}
 	// Probe the CDP connection without creating a task tab.
 	_ = c.conn.CloseNow()
-	respond(w, rpc.Health{Ready: true, Receipts: true, TaskTabs: true, Jobs: true, Files: true, Sandbox: sandboxSupported(), Egress: egressSupported(), Reopen: true})
+	respond(w, rpc.Health{Ready: true, Receipts: true, TaskTabs: true, Jobs: true, Files: true, Sandbox: sandboxSupported(), Egress: egressSupported(), Sessions: sandboxSupported(), Reopen: true})
 }
 
 type activityState struct {
