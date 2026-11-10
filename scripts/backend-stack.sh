@@ -30,7 +30,7 @@ if [ -n "${NORI_MODEL_TEST_URL:-}" ]; then
 	export ARIZE_API_KEY= SENTRY_DSN= NORI_USAGE_METER=store
 fi
 mkdir -p "$NORI_LOCAL_ARTIFACT_DIR"
-build="be-$(git -C "$root" rev-parse --short HEAD)"
+build="${NORI_BUILD_ID:-be-$(git -C "$root" rev-parse --short HEAD)}"  # override only to drain tasks pinned to an older build
 cd "$root/core"
 case "${1:-}" in
 setup)
@@ -45,7 +45,7 @@ users)
 	;;
 core) PORT=8081 exec go run ./cmd/nori-local ;;
 worker)
-	unset PORT
+	export PORT=  # an empty PORT keeps the worker out of hosted mode; .env sets one
 	TEMPORAL_DEPLOYMENT_NAME=nori-task TEMPORAL_BUILD_ID="$build" exec go run ./cmd/nori-worker
 	;;
 current)
