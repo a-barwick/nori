@@ -36,7 +36,7 @@ The first slice itself is defined by Austin's original backlog, which is not in 
 
 - Checkout: `/Users/austin/Documents/dev/nori` (the first run used a different path; old absolute paths in the notes are wrong here). Worktrees from the first run do not exist. The coordinator holds this checkout on `claude/nori-assistant-integration-25ae45`.
 - Present: Go, Bun, Node, Docker, `gh` (signed in), and the Compose Postgres and Temporal containers, already running. Missing: the `temporal` CLI, `psql` on the host, Tailscale.
-- `.env` exists (mode 600) but is close to a template: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `BRAVE_SEARCH_API_KEY` and `TEMPORAL_API_KEY` are present with empty values, and there is no Google OAuth client, VAPID pair, Microsoft app or `NORI_CREDENTIAL_STORE` (checked by name and by empty or set, never by value; frontend reported it first). **No task can run on any local stack until Austin puts a model key in `.env`.** The Google OAuth client values are also his to restore. Sessions do not fetch keys from production or any other store on their own. Until the keys arrive, streams do the work that needs no model call and say what is waiting.
+- `.env` exists (mode 600). State by name at the end of the first turn (never by value): `OPENAI_API_KEY` set by Austin at 07:58; `OPENROUTER_API_KEY` present and empty, and with background tasks on core and the worker refuse to start without it (the task model and conversation summaries go through OpenRouter); `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` absent (and absent from `.env.example`); `BRAVE_SEARCH_API_KEY` empty, not needed for a Google slice. The coordinator's first check was by name only and missed the empty values; frontend caught it. **No model turn can run on any local stack until the OpenRouter key is in `.env`; no Google sign-in can start until the client is.** Both are Austin's to supply; sessions do not fetch keys from production or any other store. The VAPID pair, redirect URL and credential store settings are set by integration's `scripts/local-stacks/stack.sh` from `~/.nori-stacks/` (machine-local, outside the repository).
 - The local credential vault from the first run is gone. Nothing is lost: no real sign-in ever completed.
 
 ### Sessions
@@ -63,6 +63,30 @@ Ports, databases and Temporal namespaces are as in Local stacks below.
 | Integration | Merge this branch, frontend `ea53ff9` and backend `840555e`; `make check` on this machine; rebuild the recorded stack (8083) and the real-provider stack (8085, web 3213, empty vault); list by name what `.env` lacks; regrade `docs/assistant-acceptance.md` and the PR description under rule 2; rewrite `austin-real-accounts-steps.md` for this machine. |
 | Backend | Confirm the trade-in snapshots; merge integration; stack up; fix D-053 (bounded model call with a readable outcome) and D-054, which sit on the everyday path; check HEY against what is actually installed and reachable here without signing in, and write what a real check needs from Austin. |
 | Frontend | Merge integration; stack up; state in its status note whether it accepts r2.11 as published, with reasons if not; re-run journeys 3 to 8 on the fixed recordings as a rehearsal of the screens the real run will use, labelled as rehearsal. |
+
+### After the first turn (2026-11-10)
+
+Read from each stream's pushed note, not from messages. Provider verified: 0 of 44.
+
+| Stream | Head | Result |
+| --- | --- | --- |
+| Integration | `e706c33` | Merged this branch, frontend `ea53ff9`, backend `840555e`; `make check` and `go test ./...` green; stack scripts at `scripts/local-stacks/`; recorded stack passes 12 of 12 live scenarios in no-model mode (API level, no model turn); real stack up on 8085 and 3213 with an empty vault; acceptance record regraded (0 provider verified, 6 verified locally with no provider, 2 exercised in full on hand-written recordings, 33 implemented, 2 blocked, 1 not started); PR #165 description updated, still a draft. Its `pkill -f nori-local` stopped other streams' cores once; its script now stops only its own. The Google authorize-URL check did not run (no client). |
+| Backend | `bd5a7d6` | Trade-in snapshots hold nothing the branch lacks. D-053 fixed (one model request bounded at 2 minutes, a re-ask only after a worker stop and only inside 9 minutes, readable messages, version-gated so old histories replay) and D-054 fixed (prompts follow the saved time zone); both verified against a loopback model stub only, no real model. HEY re-checked from public sources: see `backend-providers.md` on its branch. Not on integration yet. |
+| Frontend | `f7ed24a` | r2.11 adopted at `ca49e42`; five fixes on the Google connect and approval screens (`666aeff`, `74217bb`); journeys 3 to 8 not run (no model key). Not on integration yet. |
+
+r2.11: backend acknowledges (after dropping `reason` from the sign-in payload and refusing a client-sent `signed_in`, `2ed6bdb`); frontend accepts and has adopted it. Still open with Austin at his request.
+
+HEY, backend's finding (not a decision): there is still no client Nori may use; HEY's OAuth metadata now advertises dynamic client registration that its SDK describes as for third-party connectors and switched off for now, and a hosted HEY MCP server is in invited preview. Options that are Austin's: run HEY's own CLI read-only himself to confirm his account answers; forward HEY mail to an address Nori reads; or leave email out of the first slice.
+
+The first slice is still undefined. Austin said the backlog is in Linear; the coordinator searched the workspace through the connector (issues including archived, the Nori project, milestones, documents) and found nothing that mentions HEY or a first everyday workflow. Waiting on an issue id or the text.
+
+Second assignments (coordinator's allocation, all on the path to a real Google run):
+
+| Stream | Now |
+| --- | --- |
+| Integration | Merge this branch and the backend and frontend heads. Backend's head carries the hosted stdio WIP `a62a26e`: merge it labelled unverified if `make check` and `go test ./...` stay green, since it only affects packaged stdio MCP servers; otherwise say why it is held. Update the r2.11 row with both acknowledgements. When the keys are in `.env`: restart both stacks with models, run the authorize-URL check, and say so in the note. |
+| Backend | Add the Google client and redirect variables to `.env.example`. Fix the two summaries frontend found on the Google path: the calendar named by raw id in an approval, and the empty draft summary. |
+| Frontend | Waits for the model key, then journeys 3 to 8 as rehearsal and the approval and result screens it could not reach. |
 
 ## Baseline commits
 
