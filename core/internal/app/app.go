@@ -65,6 +65,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		return nil, err
 	}
 	toolSource := &agent.Service{Extensions: services.Tools, Computer: platform.Computer(cfg)}
+	chats.Profile = platform.Profile(user, services.Connections)
 	result.Scheduler = services.Scheduler
 	result.Assistant = &api.Assistant{
 		Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
@@ -106,6 +107,7 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	runner.UserFacts = userFacts
 	runner.Clock = conversation.Clock{Location: location}
 	result.Runner, result.Tasks, result.Dispatcher, result.engine = runner, tasks, dispatcher, engine
+	runner.Profile = platform.Profile(user, services.Connections)
 	result.Assistant.Answer = func(ctx context.Context, commandID, taskID, questionID, text string) error {
 		_, err := tasks.AcceptBatch(ctx, []state.Command{{ID: commandID, RunID: taskID, Kind: state.CommandAnswer, QuestionID: questionID, Text: text}}, nil)
 		return err

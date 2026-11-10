@@ -140,6 +140,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	integrations := []connections.Integration{google.Integration{ClientID: s.Connections.GoogleClientID, ClientSecret: s.Connections.GoogleClientSecret},
 		microsoft.Integration{ClientID: s.Connections.MicrosoftClientID, ClientSecret: s.Connections.MicrosoftClientSecret, Tenant: s.Connections.MicrosoftTenant}, icloud.Integration{}}
 	conn := connections.New(store, credentials, s.Connections.RedirectURL, integrations...)
+	conn.UserTimezone = user.TimeZone
 	if s.Connections.ProviderReplay != "" {
 		if s.Cloud != "local" {
 			return nil, fmt.Errorf("NORI_PROVIDER_REPLAY is for local development only and requires NORI_CLOUD=local")

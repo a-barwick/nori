@@ -67,6 +67,7 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 	}
 	service.Extensions = services.Tools
 	service.Hidden = func(ctx context.Context, id string) bool {
+	service.Profile = platform.Profile(row, services.Connections)
 		r, err := store.Resource(ctx, "library_overlay", id)
 		return err == nil && strings.Contains(string(r.Body), `"deleted_at"`)
 	}

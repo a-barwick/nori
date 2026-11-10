@@ -62,7 +62,7 @@ func (s *Service) prepareContext(ctx context.Context, id, turn string) (state.Ch
 	if err != nil {
 		return c, nil, err
 	}
-	fixed := []json.RawMessage{raw("system", prompts.Chat), raw("system", "User details (data): "+s.userFacts)}
+	fixed := []json.RawMessage{raw("system", prompts.Chat), raw("system", "User details (data): "+s.facts(ctx))}
 	// Keep the newest read whole; older results can be reread from their saved
 	// arguments. Shedding evidence never changes the saved operations.
 	evidence := readEvidence(reply.Operations, 0)
