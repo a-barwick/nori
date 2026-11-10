@@ -65,12 +65,12 @@ export function LibraryScreen() {
     <Screen title="Library" line={library.items && !items.length ? undefined : settled && has("search") ? (search.data ? `${search.data.items.length || "No"} ${search.data.items.length === 1 ? "match" : "matches"} across chats, tasks and saved work.` : undefined) : undefined}>
       <label className="relative mb-4 block"><span className="sr-only">Search everything</span>
         <Search size={17} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-3" aria-hidden />
-        <input autoFocus={!!params.get("q")} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={has("search") ? "Search chats, tasks, goals and saved work" : "Search saved work"} className={cn(inputClass, "h-12 pl-10 text-search")} />
+        <input autoFocus={!!params.get("q")} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search" className={cn(inputClass, "h-12 pl-10 text-search")} />
       </label>
       {settled && has("search") ? (search.loading ? <Loading label="Searching…" /> : search.error ? <Failure error={search.error} onRetry={() => void search.reload()} />
         : search.data?.items.length ? <Rows label="Search results">{search.data.items.map((hit) => <Row key={`${hit.kind}:${hit.id}`} href={jumpHref(hit)} title={hit.title}
           detail={<><span className="line-clamp-2">{hit.snippet}</span>{hit.provenance && <span className="mt-0.5 block text-caption text-ink-3">{provenanceLabel({ provenance: hit.provenance })}</span>}</>}
-          trailing={<Pill>{{ result: "Saved", message: "Chat", task: "Task", goal: "Goal", automation: "Routine", file: "File" }[hit.kind]}</Pill>} />)}</Rows>
+          trailing={<Pill>{{ result: "Saved", message: "Chat", task: "Task", goal: "Goal", automation: "Automation", file: "File" }[hit.kind]}</Pill>} />)}</Rows>
           : <Empty>Nothing matches “{settled}”. Try fewer words.</Empty>) : <>
         <Tabs label="Kind" value={kind} onChange={setKind} items={[{ id: "all", label: "All" }, { id: "documents", label: "Documents" }, { id: "files", label: "Files" }, { id: "events", label: "Events" }, { id: "messages", label: "Mail" }]} />
         {library.error && <div className="mb-4"><Failure error={library.error} onRetry={() => void library.reload()} /></div>}
@@ -150,7 +150,7 @@ export function LibraryDetailScreen({ id }: { id: string }) {
       <Section title="From">
         <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
           {item.task_id && <><dt className="text-ink-3">Task</dt><dd><Link className="text-accent-text hover:underline" href={`/work/${encodeURIComponent(item.task_id)}`}>Open task</Link></dd></>}
-          {item.automation_id && <><dt className="text-ink-3">Routine</dt><dd><Link className="text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.automation_id)}`}>Open routine</Link></dd></>}
+          {item.automation_id && <><dt className="text-ink-3">Automation</dt><dd><Link className="text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.automation_id)}`}>Open automation</Link></dd></>}
           {item.goal_id && <><dt className="text-ink-3">Goal</dt><dd><Link className="text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.goal_id)}`}>Open goal</Link></dd></>}
           {item.provenance.source_url && /^https:\/\//.test(item.provenance.source_url) && <><dt className="text-ink-3">Source</dt><dd><a className="text-accent-text hover:underline" href={item.provenance.source_url} target="_blank" rel="noreferrer noopener">Open original</a></dd></>}
           {item.provenance.retrieved_at && <><dt className="text-ink-3">Fetched</dt><dd>{when(item.provenance.retrieved_at)}</dd></>}

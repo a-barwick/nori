@@ -183,10 +183,15 @@ export async function assistantRoute(request: Request, family: string, segments:
   if (!ASSISTANT_FAMILIES.has(family) || segments.length > 4 || !segments.every((segment) => SEGMENT.test(segment))) return notFound();
   const read = request.method === "GET";
   if (!read && !["POST", "PUT", "DELETE"].includes(request.method)) return notFound();
-  if (!allowedCaller(request, mode, read ? sameOriginRead : sameOrigin)) return forbidden();
   const incoming = new URL(request.url).searchParams;
   const path = ["v1", family, ...segments].map(encodeURIComponent).join("/") + (incoming.size ? `?${incoming}` : "");
-  if (family === "connections" && segments.join("/") === "oauth/callback") return oauthCallback(request, mode, path);
+  // The provider's redirect is a cross-site top-level navigation, so it cannot pass the same-origin check. Core
+  // validates the single-use state within this user and the PKCE verifier; only a navigation is accepted here.
+  if (family === "connections" && segments.join("/") === "oauth/callback") {
+    if (!read || request.headers.get("sec-fetch-mode") !== "navigate") return forbidden();
+    return oauthCallback(request, mode, path);
+  }
+  if (!allowedCaller(request, mode, read ? sameOriginRead : sameOrigin)) return forbidden();
   let body: string | undefined;
   if (!read) {
     if (Number(request.headers.get("content-length") ?? 0) > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });

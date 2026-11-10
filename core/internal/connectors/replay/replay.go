@@ -18,6 +18,7 @@ package replay
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -25,7 +26,9 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -39,12 +42,26 @@ type Exchange struct {
 	Host         string            `json:"host"`
 	Path         string            `json:"path"` // exact, or a prefix ending in "*"
 	Query        map[string]string `json:"query,omitempty"`
+	QueryPrefix  map[string]string `json:"query_prefix,omitempty"` // each named query value must start with this
+	Headers      map[string]string `json:"headers,omitempty"`      // each named request header must start with this
 	BodyContains []string          `json:"body_contains,omitempty"`
-	After        []string          `json:"after,omitempty"` // exchanges that must have been used first
-	Times        int               `json:"times,omitempty"` // 0 means unlimited
-	DelayMS      int               `json:"delay_ms,omitempty"`
-	Drop         bool              `json:"drop,omitempty"` // apply, then lose the response
-	Response     Response          `json:"response"`
+	BasicAuth    *BasicAuth        `json:"basic_auth,omitempty"` // the request must carry exactly these credentials
+	// Capture saves the matched request under a name so a later response can echo it: {{capture:NAME.path}} is the
+	// request path, {{capture:NAME.stem}} its last segment without extension, {{capture:NAME.body}} the request body
+	// and {{capture:NAME.body_xml}} the body escaped for XML text. A read-back can then return exactly what was written.
+	Capture  string   `json:"capture,omitempty"`
+	After    []string `json:"after,omitempty"` // exchanges that must have been used first
+	Times    int      `json:"times,omitempty"` // 0 means unlimited
+	DelayMS  int      `json:"delay_ms,omitempty"`
+	Drop     bool     `json:"drop,omitempty"` // apply, then lose the response
+	Response Response `json:"response"`
+}
+
+// BasicAuth names the made-up credentials an exchange answers to, so an accepted and a rejected pair can be recorded
+// for the same request. Recordings never hold real credentials.
+type BasicAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 // Response is the recorded reply. Body is JSON; Text is used when Body is absent.
@@ -60,6 +77,7 @@ type Transport struct {
 	mu        sync.Mutex
 	exchanges []Exchange
 	used      map[string]int
+	captured  map[string]string // "NAME.path" and the like -> value
 }
 
 // ErrDropped is returned for an exchange recorded with "drop": the provider applied it, the response was lost.
@@ -82,12 +100,17 @@ func Shared(dir, owner string) (*Transport, error) {
 	return actual.(*Transport), nil
 }
 
-// New loads every recording in dir.
+// New loads every recording in dir and in its immediate subdirectories (one per provider).
 func New(dir string) (*Transport, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if err != nil {
 		return nil, err
 	}
+	nested, err := filepath.Glob(filepath.Join(dir, "*", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, nested...)
 	if len(files) == 0 {
 		return nil, fmt.Errorf("replay: no recordings in %s", dir)
 	}
@@ -137,13 +160,37 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Body.Close()
 	}
 	t.mu.Lock()
+	// The most specific recording wins: an exact path before a prefix ("*") path, then file order.
 	var hit *Exchange
-	for i := range t.exchanges {
-		x := &t.exchanges[i]
-		if t.matches(x, req, body) {
+	for pass := 0; pass < 2 && hit == nil; pass++ {
+		for i := range t.exchanges {
+			x := &t.exchanges[i]
+			if strings.HasSuffix(x.Path, "*") != (pass == 1) || !t.matches(x, req, body) {
+				continue
+			}
 			hit = x
 			t.used[x.Name]++
+			if x.Capture != "" {
+				if t.captured == nil {
+					t.captured = map[string]string{}
+				}
+				segment := path.Base(req.URL.Path)
+				var escaped bytes.Buffer
+				_ = xml.EscapeText(&escaped, body)
+				t.captured[x.Capture+".path"] = req.URL.Path
+				t.captured[x.Capture+".stem"] = strings.TrimSuffix(segment, path.Ext(segment))
+				t.captured[x.Capture+".body"] = string(body)
+				t.captured[x.Capture+".body_xml"] = escaped.String()
+			}
 			break
+		}
+	}
+	reply := Response{}
+	if hit != nil {
+		reply = hit.Response
+		reply.Text = t.expand(reply.Text)
+		if len(reply.Body) > 0 {
+			reply.Body = json.RawMessage(t.expand(string(reply.Body)))
 		}
 	}
 	t.mu.Unlock()
@@ -162,7 +209,23 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if hit.Drop {
 		return nil, ErrDropped
 	}
-	return response(req, hit.Response), nil
+	return response(req, reply), nil
+}
+
+var placeholder = regexp.MustCompile(`\{\{capture:([A-Za-z0-9_-]+\.(?:path|stem|body|body_xml))\}\}`)
+
+// expand fills {{capture:...}} placeholders from earlier captured requests; an unknown capture is left as is. Callers
+// hold t.mu.
+func (t *Transport) expand(text string) string {
+	if t.captured == nil || !strings.Contains(text, "{{capture:") {
+		return text
+	}
+	return placeholder.ReplaceAllStringFunc(text, func(m string) string {
+		if v, ok := t.captured[placeholder.FindStringSubmatch(m)[1]]; ok {
+			return v
+		}
+		return m
+	})
 }
 
 // Used reports how many times each exchange answered, for evidence.
@@ -189,8 +252,24 @@ func (t *Transport) matches(x *Exchange, req *http.Request, body []byte) bool {
 			return false
 		}
 	}
+	for k, v := range x.QueryPrefix {
+		if !strings.HasPrefix(q.Get(k), v) {
+			return false
+		}
+	}
+	for k, v := range x.Headers {
+		if !strings.HasPrefix(req.Header.Get(k), v) {
+			return false
+		}
+	}
 	for _, s := range x.BodyContains {
 		if !bytes.Contains(body, []byte(s)) {
+			return false
+		}
+	}
+	if x.BasicAuth != nil {
+		user, password, ok := req.BasicAuth()
+		if !ok || user != x.BasicAuth.Username || password != x.BasicAuth.Password {
 			return false
 		}
 	}

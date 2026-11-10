@@ -69,10 +69,20 @@ export const EFFECT_LABEL: Record<Effect, string> = {
   read: "Read",
   reversible_write: "Change",
   sensitive_send: "Send",
-  unknown: "Unknown effect",
+  unknown: "Any action",
   control: "Nori control",
 };
 
 export function plural(n: number, one: string, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
+}
+
+/** One line of text from Markdown: drops emphasis, code marks, link targets and heading or list markers. */
+export function plainText(markdown: string) {
+  return markdown
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|`)(\S(?:.*?\S)?)\1/g, "$2")
+    .replace(/^\s{0,3}(#{1,6}\s+|[-*+]\s+|>\s?)/gm, "")
+    .replace(/\s*\n+\s*/g, " ")
+    .trim();
 }

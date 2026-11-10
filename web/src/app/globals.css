@@ -14,7 +14,7 @@
   --overlay: rgba(22, 5, 49, 0.26);
   --text-primary: #190936;
   --text-secondary: #726d82;
-  --text-tertiary: #777185;
+  --text-tertiary: #6e6880;
   --text-on-accent: #ffffff;
   --accent: #5000ff;
   --accent-hover: #4200d6;
@@ -24,9 +24,9 @@
   --accent-subtle: #f1ebff;
   --accent-muted: #e9dfff;
   --focus-ring: #7943ff;
-  --warning-text: #a56800;
+  --warning-text: #946000;
   --warning-bg: #fff4dc;
-  --danger-text: #e82b40;
+  --danger-text: #cc1f33;
   --danger-bg: #fff0f2;
   --soul-from: #5000ff;
   --soul-to: #ff4e60;

@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>Apps and extensions</h1>
-<p class="lede">How Nori learns about tools, connects the user's accounts, and runs calls against Google, MCP servers and installed packages.</p>
+<p class="lede">How Nori learns about tools, connects the user's accounts, and runs calls against Google, Microsoft, iCloud, MCP servers and installed packages.</p>
 <div class="card"><div class="flow">
 <div class="node"><b>Extension registry</b><small>Versioned tool definitions: schema, binding, policy and a content digest.</small></div>
 <div class="arrow">↓ <span class="lbl">definitions, filtered by installation and permission</span></div>
@@ -23,10 +23,14 @@
 <p>Every tool, built in or contributed, is a definition with a stable id, a model-facing name, its input schema, a binding to the code that runs it, and a policy: effect, where it runs, retry behaviour and timeout. A digest covers everything that changes what a call does. The model name must match <code>^[A-Za-z0-9_-]{1,64}$</code>; built-in names cannot be claimed by packages.</p>
 <p>When the task model asks for a tool, the activity resolves the definition and records it with the call in the workflow history. The workflow itself never looks anything up in the registry, so a history replays with the definition it was recorded with even after a package changes. Calls recorded before pinning existed still replay through the old name-based policy.</p>
 </section>
+<section><h2>Scripts of tool calls</h2>
+<p>When a step needs many calls whose results are combined, such as reading every selected calendar, the task model can send one <code>compose</code> script instead of calling tools one at a time. A script is versioned JSON: ordered steps, a step that repeats over a list with an optional filter, references to earlier results, and an output template. At most 8 calls run at once, 64 in all.</p>
+<p>Every call in a script is an ordinary operation with its parent recorded: it gets its own Permission check, approval and receipt, and is pinned to its definition. The script sees results, never credentials. If the worker restarts, calls that already finished are reused and a finished write is never sent again. If a restart would make a different call at a recorded position, for example because a package changed, the script stops as diverged and calls that never ran are marked skipped. A call that needs the user stops the script with that question; after the answer the task runs the script again, and the approved write happens once.</p>
+</section>
 <section><h2>Connections</h2>
 <p>A connection is one account at one provider: its identity, the scopes granted, the resources the user selected (for example two calendars), its health, and a revision. Several accounts per integration are allowed. Which account Nori uses by default for a purpose, such as creating events, is a user preference rather than a property of the connection.</p>
 <div class="card"><table><tr><th>Step</th><th>What happens</th></tr>
-<tr><td>Connect</td><td>Returns a one-time sign-in attempt bound to the user and the integration, with PKCE and state. Only the scopes for the requested purposes are asked for.</td></tr>
+<tr><td>Connect</td><td>OAuth integrations return a one-time sign-in attempt bound to the user and the integration, with PKCE and state. Only the scopes for the requested purposes are asked for. App-password integrations (iCloud) take a username and an app-specific password in the same call; the pair is checked with the provider, stored as the credential and never returned.</td></tr>
 <tr><td>Callback</td><td>Found by state within the signed-in user only. A cancelled or replayed callback creates nothing new. The browser returns to a path inside the web app.</td></tr>
 <tr><td>Use</td><td>The executor asks Connections for a client for exactly one account. A failed write is never retried on another account.</td></tr>
 <tr><td>Disconnect</td><td>Closes new calls first, then revokes at the provider. Saved results keep their source as a copy.</td></tr>
@@ -36,11 +40,24 @@
 </section>
 <section><h2>Google</h2>
 <p>Calendar list, events, free/busy, create, update, cancel and respond; ICS preview and import; Gmail search, read, drafts and send; contacts lookup. Event creation uses an id derived from the action, so a retry after a lost response finds the event instead of creating a second one, and an uncertain write is read back before anyone is asked.</p>
-<p class="designed">Outlook and Microsoft 365, iCloud, HEY, Drive, OneDrive, Dropbox, Notion, Linear, GitHub, Slack and Teams have no connector yet.</p>
+<p class="designed">HEY, Drive, OneDrive, Dropbox, Slack and Teams have no connector yet; Linear, GitHub and Notion come as MCP packages (below).</p>
+</section>
+<section><h2>Microsoft</h2>
+<p>One Microsoft identity platform integration covers personal and work or school accounts, and the account label says which. Outlook calendar: calendars, events in a range, event details, create, update and cancel. Availability of other people comes from getSchedule and is offered only for work or school accounts; a personal account is told why. Creates carry a transaction id and a key stored on the event, so an interrupted create is found rather than repeated. Updates and cancels send the etag Nori read, so a change made in Outlook since then is not overwritten. Mail: search, read, keyed drafts, send only as approved (Graph answers 202, recorded as submitted), folders, categories and flags. Contacts and people search report where each match came from.</p>
+<p>Microsoft does not offer revocation of delegated grants to the app, so disconnect deletes Nori's copy of the token and says so.</p>
+<p class="designed">Not verified against a real account: the deployment needs an Entra app registration (<code>MICROSOFT_CLIENT_ID</code>, <code>MICROSOFT_CLIENT_SECRET</code>). Until then the integration is listed as unavailable with that reason.</p>
+</section>
+<section><h2>iCloud Calendar</h2>
+<p>iCloud connects over CalDAV with the user's Apple ID and an app-specific password, never the primary Apple password. Connecting finds the account's CalDAV principal first, so a wrong pair is reported at once and nothing is saved. Tools: list calendars, read events in a range (recurring events are expanded by the server; a calendar that cannot be read is listed as unreadable, never as empty), create with a UID derived from the action so a repeat finds the same event, and delete under the etag that was read. Credentials are sent only to https icloud.com hosts.</p>
+<p>A revoked app-specific password or a changed Apple ID password shows up as a rejected credential; the connection then needs sign-in, and repair is the same call with a new app-specific password.</p>
+<p class="designed">Not verified against a real account: needs an Apple ID with an app-specific password.</p>
 </section>
 <section><h2>MCP</h2>
-<p>Remote MCP servers over Streamable HTTP, added by the user or by a package. Discovery runs outside the workflow; each discovered tool becomes a definition named <code>mcp/&lt;server&gt;/&lt;tool&gt;</code> with its own digest. A server's tool annotations are advisory, so MCP tools are treated as effect unknown and need an approval or an allow rule. A token for a server is written once and never returned.</p>
-<p class="designed">MCP sign-in with OAuth, managed stdio servers, resources, prompts and interactive requests are not built.</p>
+<p>Remote MCP servers over Streamable HTTP, added by the user or by a package. Discovery runs outside the workflow; each discovered tool becomes a definition named <code>mcp/&lt;server&gt;/&lt;tool&gt;</code> with its own digest, and its version includes a hash of the tool's content, so a changed description or schema is a new version while calls pinned to the old one keep it. A server's tool annotations are advisory, so MCP tools are treated as effect unknown and need an approval or an allow rule. A token for a server is written once and never returned.</p>
+<p>A server that offers resources or prompts also gets four read tools from Nori: list resources (with resource templates), read a resource, list prompts and get a prompt. They are protocol reads, so they need no approval; the server's own tools stay effect unknown. Nori opens a session per call, so it does not receive list-change or subscription notifications; reconnecting discovers again. Sampling and roots are not offered, and the server's diagnostics say so.</p>
+<p>When a server needs input from the user during a call, it asks through the protocol's input requests. A call cannot pause, so Nori answers cancel and hands the question to the task. The task asks the user, then calls again with the answer, asking for approval again if the arguments changed.</p>
+<p>Linear, GitHub and Notion are packages in the catalog. Each contributes its provider's first-party remote server with a token the user supplies: a Linear API key, a GitHub fine-grained personal access token, or a Notion MCP token (Business or Enterprise workspaces). Installing asks for the server's network host; the server waits until the token is set.</p>
+<p class="designed">MCP sign-in with OAuth and managed stdio servers on the computer are not built. Slack, Teams, Google Drive, Dropbox and OneDrive are not packaged.</p>
 <p>Nori also answers MCP at <code>POST /mcp</code> for the user's own external clients. Each client gets a token shown once, scoped to read or to read and change; changes keep their request ids, so a retried submit returns the same task.</p>
 </section>
 <section><h2>Plugins and skills</h2>

@@ -184,7 +184,7 @@
    "name": "in-app-fixed",
    "user": "a",
    "method": "POST",
-   "path": "/v1/delivery-destinations/in_app/actions",
+   "path": "/v1/delivery-destinations/dest_in_app/actions",
    "body": {
     "request_id": "${uuid:inapp}",
     "expected_revision": 1,

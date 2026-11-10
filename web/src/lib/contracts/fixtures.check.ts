@@ -583,6 +583,7 @@ export const fx_permissions_interaction_sign_in_valid: Interaction = {
   "status": "pending",
   "prompt": "Sign in to Google to continue",
   "payload": {
+    "auth": "oauth",
     "auth_attempt_id": "auth_1",
     "integration_id": "google",
     "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=opaque",
@@ -2736,6 +2737,82 @@ export const fx_connections_connection_action_app_password_repair_valid: Connect
     "action": "repair",
     "username": "recorded.user@icloud.com",
     "password": "qrst-uvwx-yzab-cdef"
+  }
+};
+
+// fixtures/permissions/interaction.sign-in-app-password.valid.json
+export const fx_permissions_interaction_sign_in_app_password_valid: Interaction = {
+  "id": "int_8",
+  "revision": 1,
+  "task_id": "task_1",
+  "kind": "sign_in",
+  "status": "pending",
+  "prompt": "Sign in to iCloud again to continue",
+  "payload": {
+    "auth": "app_password",
+    "integration_id": "icloud",
+    "connection_id": "conn_icloud",
+    "return_to": "/work/task_1"
+  }
+};
+
+// fixtures/permissions/interaction.sign-in-mcp-signed-in.valid.json
+export const fx_permissions_interaction_sign_in_mcp_signed_in_valid: Interaction = {
+  "id": "int_10",
+  "revision": 2,
+  "task_id": "task_1",
+  "kind": "sign_in",
+  "status": "resolved",
+  "prompt": "Sign in to Linear to continue",
+  "payload": {
+    "auth": "oauth",
+    "auth_attempt_id": "auth_2",
+    "integration_id": "mcp",
+    "connection_id": "mcp_linear",
+    "authorize_url": "https://linear.app/oauth/authorize?state=opaque",
+    "requested_scopes": [
+      "read",
+      "write"
+    ],
+    "expires_at": "2026-11-09T10:00:00Z"
+  },
+  "resolution": {
+    "kind": "signed_in",
+    "connection_id": "mcp_linear",
+    "at": "2026-11-09T09:05:00Z"
+  },
+  "resolved_at": "2026-11-09T09:05:00Z"
+};
+
+// fixtures/permissions/interaction.sign-in-declined.valid.json
+export const fx_permissions_interaction_sign_in_declined_valid: Interaction = {
+  "id": "int_11",
+  "revision": 2,
+  "task_id": "task_1",
+  "kind": "sign_in",
+  "status": "resolved",
+  "prompt": "Sign in to Google to continue",
+  "payload": {
+    "auth": "oauth",
+    "auth_attempt_id": "auth_3",
+    "integration_id": "google",
+    "connection_id": "conn_google",
+    "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=opaque",
+    "expires_at": "2026-11-09T10:00:00Z"
+  },
+  "resolution": {
+    "kind": "decline",
+    "at": "2026-11-09T09:06:00Z"
+  },
+  "resolved_at": "2026-11-09T09:06:00Z"
+};
+
+// fixtures/permissions/interaction-response.sign-in-decline.valid.json
+export const fx_permissions_interaction_response_sign_in_decline_valid: InteractionResponse = {
+  "request_id": "8a7b6c5d-4e3f-4a2b-9c1d-0e9f8a7b6c5d",
+  "expected_revision": 1,
+  "value": {
+    "kind": "decline"
   }
 };
 

@@ -93,11 +93,11 @@ export async function mutate<T = unknown>(path: string, input: { request_id: str
 }
 
 /**
- * Sends a secret (an access token) once. Unlike mutate(), nothing is kept for retry:
+ * Sends a secret (an access token or app-specific password) once. Unlike mutate(), nothing is kept for retry:
  * the browser never stores credentials. A lost response is resolved by reading the
  * resource, which says only whether a credential is present.
  */
-export async function sendSecret<T>(path: string, body: { request_id: string } & Record<string, string>): Promise<MutationReceipt & { resource: T }> {
+export async function sendSecret<T>(path: string, body: { request_id: string } & Record<string, unknown>): Promise<MutationReceipt & { resource: T }> {
   const response = await fetch(assistantURL(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store", redirect: "error" });
   return readJSON<MutationReceipt & { resource: T }>(response);
 }

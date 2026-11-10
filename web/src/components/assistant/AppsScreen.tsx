@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
-import { Calendar, Check, CircleSlash, Folder, KeyRound, ListTodo, Mail, MessageSquare, Plug, Plus, Search, Server, Upload } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Calendar, Check, Circle, CircleSlash, Folder, KeyRound, ListTodo, Mail, MessageSquare, Plug, Plus, Search, Server, Upload } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
-import { assistantURL, getJSON, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
+import { APIError, assistantURL, getJSON, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
-import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
+import { EFFECT_LABEL, plural, relative } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { AuthAttempt, Connection, HealthCode, Integration, MCPServer, Preferences, Resource } from "@/lib/contracts/assistant";
 import type { CatalogEntry, Installation, InstallationReview, MCPCredentialInput, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
@@ -33,7 +33,7 @@ const HEALTH: Record<HealthCode, { tone: Tone; label: string }> = {
 const SCOPES: Record<string, string> = {
   "calendar.readonly": "read calendars", "calendar.events": "change events", calendar: "manage calendars",
   "gmail.readonly": "read mail", "gmail.compose": "write drafts", "gmail.send": "send mail", "gmail.modify": "label and archive mail",
-  "contacts.readonly": "read contacts", "contacts.other.readonly": "read other contacts", openid: "", email: "", profile: "",
+  "contacts.readonly": "read contacts", "contacts.other.readonly": "read other contacts", "drive.readonly": "read Drive files", "drive.file": "change Drive files Nori created", openid: "", email: "", profile: "",
 };
 /** A provider scope in plain words; unknown scopes keep their last path segment. */
 export function scopeLabel(scope: string) {
@@ -47,11 +47,36 @@ export function connectionState(connection: Connection): { tone: Tone; label: st
   if (connection.status === "disconnected" || connection.status === "not_connected") return { tone: "neutral", label: "Not connected" };
   if (connection.status === "disabled") return { tone: "neutral", label: "Off" };
   if (connection.status === "disconnecting") return { tone: "neutral", label: "Disconnecting" };
-  return HEALTH[connection.health.code ?? "ready"] ?? { tone: "neutral", label: connection.status };
+  return HEALTH[healthOf(connection) ?? "ready"] ?? { tone: "neutral", label: connection.status };
+}
+
+/** The connection's health, also read from its status: an account can be marked as needing attention while its last call worked. */
+function healthOf(connection: Connection): HealthCode | undefined {
+  const code = connection.health.code;
+  if (connection.status === "needs_attention" && (!code || code === "ready")) return connection.missing_scopes?.length ? "needs_more_access" : "needs_sign_in";
+  return code;
+}
+
+export function needsAttention(connection: Connection) {
+  const code = healthOf(connection);
+  return connection.status !== "disconnected" && connection.status !== "not_connected" && !!code && code !== "ready";
+}
+
+/** What "Allow more access" asks for: everything granted plus the capabilities that need the missing permissions. */
+function wantedCapabilities(connection: Connection, integration: Integration) {
+  const missing = new Set(connection.missing_scopes ?? []);
+  const more = integration.capabilities.filter((capability) => capability.supported && capability.scopes?.some((scope) => missing.has(scope))).map((capability) => capability.id);
+  return [...new Set([...(connection.capabilities ?? []), ...more])];
+}
+
+function recoveryOf(connection: Connection) {
+  if (connection.status === "not_connected" || connection.status === "disconnected") return "connect";
+  if (connection.status === "needs_attention" && (!connection.health.recovery || connection.health.recovery === "none")) return connection.missing_scopes?.length ? "request_access" : "repair";
+  return connection.health.recovery;
 }
 
 /** Start a server-issued sign-in and send the browser to it. */
-async function startSignIn(connection: Pick<Connection, "id" | "revision">, action: "connect" | "repair", returnTo: string, capabilities?: string[]) {
+export async function startSignIn(connection: Pick<Connection, "id" | "revision">, action: "connect" | "repair", returnTo: string, capabilities?: string[]) {
   const receipt = await mutate<Connection>(`/connections/${encodeURIComponent(connection.id)}/actions`, {
     request_id: newRequestID(), expected_revision: connection.revision, value: { action, return_to: returnTo, ...(capabilities?.length ? { capabilities } : {}) },
   }) as { auth?: AuthAttempt };
@@ -66,6 +91,12 @@ export function AppsScreen() {
   const router = useRouter();
   const tab = (params.get("tab") as "apps" | "plugins" | "skills" | "mcp") || "apps";
   const setTab = (next: string) => router.replace(next === "apps" ? "/apps" : `/apps?tab=${next}`, { scroll: false });
+  // MCP sign-in returns to /apps?mcp=<id>&result=…; show the result on that server's page.
+  const signedInServer = params.get("mcp");
+  const signInResult = params.get("result");
+  useEffect(() => {
+    if (signedInServer) router.replace(`/apps/mcp/${encodeURIComponent(signedInServer)}?result=${encodeURIComponent(signInResult ?? "")}`);
+  }, [signedInServer, signInResult, router]);
   if (!has("integrations")) return <Screen title="Apps"><NotYet what="Connecting apps" /></Screen>;
   return (
     <Screen title="Apps" wide>
@@ -83,7 +114,7 @@ function Catalog() {
   const items = integrations.data?.items;
   const categories = useMemo(() => ["All", ...new Set((items ?? []).flatMap((item) => item.categories))], [items]);
   const shown = (items ?? []).filter((item) => (category === "All" || item.categories.includes(category)) && (!query || `${item.title} ${item.description} ${item.categories.join(" ")}`.toLowerCase().includes(query.toLowerCase())));
-  const attention = (connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected" && connection.status !== "not_connected" && connection.health.code && connection.health.code !== "ready");
+  const attention = (connections.data?.items ?? []).filter(needsAttention);
   const byIntegration = (id: string) => (connections.data?.items ?? []).filter((connection) => connection.integration_id === id && connection.status !== "disconnected" && !(connection.status === "not_connected" && !connection.account?.provider_id));
   if (integrations.loading) return <Loading />;
   if (integrations.error && !items) return <Failure error={integrations.error} onRetry={() => void integrations.reload()} />;
@@ -105,7 +136,7 @@ function Catalog() {
       </div>
       {shown.length ? <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{shown.map((item) => {
         const accounts = byIntegration(item.id);
-        const trouble = accounts.some((connection) => connection.health.code && connection.health.code !== "ready");
+        const trouble = accounts.some(needsAttention);
         return <li key={item.id}><Link href={`/apps/${encodeURIComponent(item.id)}`} className="flex h-full flex-col gap-3 rounded-card border border-hairline bg-surface p-4 hover:border-hairline-strong hover:bg-fill-1">
           <div className="flex items-center gap-3"><AppIcon icon={item.icon} /><span className="min-w-0 flex-1"><span className="block truncate text-row font-semibold">{item.title}</span><span className="block truncate text-caption text-ink-3 first-letter:uppercase">{item.categories.join(" · ")}</span></span></div>
           <p className="line-clamp-2 flex-1 text-meta text-ink-2">{item.description}</p>
@@ -124,6 +155,7 @@ export function AppDetailScreen({ id }: { id: string }) {
   const integration = useResource<Integration>(has("integrations") ? `/integrations/${encodeURIComponent(id)}` : null, { poll: 60_000 });
   const connections = useResource<List<Connection>>(has("connections") ? "/connections" : null, { poll: 10_000 });
   const action = useAction();
+  const [passwordForm, setPasswordForm] = useState(false);
   if (!has("integrations")) return <Screen title="App" back="/apps"><NotYet what="Connecting apps" /></Screen>;
   if (integration.loading) return <Screen title="App" back="/apps"><Loading /></Screen>;
   const item = integration.data;
@@ -137,29 +169,72 @@ export function AppDetailScreen({ id }: { id: string }) {
     const connection = unfinished ?? (await mutate<Connection>("/connections", { request_id: newRequestID(), expected_revision: 0, value: { integration_id: item.id, title: item.title, selected_resource_ids: [] } })).resource as Connection;
     await startSignIn(connection, "connect", `/apps/${encodeURIComponent(item.id)}`);
   });
-  const line = item.availability !== "available" ? item.availability_reason
-    : !accounts.length ? `Connect ${item.title} so Nori can use it.` : accounts.some((connection) => connection.health.code && connection.health.code !== "ready") ? "An account needs attention." : `${accounts.length === 1 ? "One account" : `${accounts.length} accounts`} connected.`;
+  const line = item.availability !== "available" ? item.availability_reason : undefined;
+  // With one signed-in account, a capability it hasn't granted can be added by signing in again for it.
+  const single = item.auth === "oauth" && accounts.length === 1 && accounts[0].account?.provider_id ? accounts[0] : undefined;
+  const canAllow = (capability: Integration["capabilities"][number]) => !!single && capability.supported && !(single.capabilities ?? []).includes(capability.id);
   return (
     <Screen title={item.title} back="/apps" line={line} actions={<AppIcon icon={item.icon} />}>
       {result && <div className="mb-6"><Notice tone={result === "connected" ? "ok" : result === "cancelled" ? "neutral" : "danger"}>{result === "connected" ? "Connected." : result === "cancelled" ? "Sign-in was cancelled. Nothing changed." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
       {action.error && <div className="mb-6"><Notice tone="danger">{action.error}</Notice></div>}
-      <Section title="Accounts" actions={item.availability === "available" && (accounts.length === 0 || item.multiple_accounts) ? <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => void add()}><Plus size={15} aria-hidden />{action.pending ? "Opening sign-in…" : accounts.length ? "Add another account" : "Connect"}</Button> : undefined}>
+      <Section title="Accounts" actions={item.availability === "available" && (accounts.length === 0 || item.multiple_accounts) ? <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => item.auth === "app_password" ? setPasswordForm(true) : void add()}><Plus size={15} aria-hidden />{action.pending ? "Opening sign-in…" : accounts.length ? "Add another account" : "Connect"}</Button> : undefined}>
+        {passwordForm && <div className="mb-3 rounded-card border border-hairline bg-surface p-4"><PasswordSignIn integration={item} connection={unfinished} onDone={() => setPasswordForm(false)} /></div>}
         {connections.loading ? <Loading /> : accounts.length ? <div className="space-y-3">{accounts.map((connection) => <ConnectionCard key={connection.id} connection={connection} integration={item} />)}</div>
           : <Empty>{item.availability === "available" ? `No ${item.title} account yet.` : item.availability_reason ?? "Not available yet."}</Empty>}
       </Section>
       <Section title="What Nori can do">
-        <Rows>{item.capabilities.map((capability) => <Row key={capability.id} leading={capability.supported ? <Check size={18} className="text-[#1c7a43]" aria-hidden /> : <CircleSlash size={18} className="text-ink-3" aria-hidden />}
-          title={capability.title} detail={capability.supported ? undefined : capability.reason} trailing={<Pill tone={capability.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[capability.effect]}</Pill>} />)}</Rows>
+        <Rows>{item.capabilities.map((capability) => <Row key={capability.id} leading={!capability.supported ? <CircleSlash size={18} className="text-ink-3" aria-hidden /> : canAllow(capability) ? <Circle size={18} className="text-ink-3" aria-hidden /> : <Check size={18} className="text-[#1c7a43]" aria-hidden />}
+          title={capability.title} detail={capability.supported ? undefined : capability.reason}
+          trailing={<>{canAllow(capability) && <Button size="sm" variant="quiet" className="text-accent-text!" disabled={!!action.pending} aria-label={`Allow: ${capability.title}`}
+            onClick={() => void action.run("allow", () => startSignIn(single!, "repair", `/apps/${encodeURIComponent(item.id)}`, [...(single!.capabilities ?? []), capability.id]))}>{action.pending === "allow" ? "Opening sign-in…" : "Allow"}</Button>}
+            <Pill tone={capability.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[capability.effect]}</Pill></>} />)}</Rows>
       </Section>
     </Screen>
   );
+}
+
+/** Apple's help page for creating an app-specific password. */
+const APP_PASSWORD_HELP: Record<string, string> = { icloud: "https://support.apple.com/en-us/102654" };
+
+/**
+ * Sign-in for apps that use an account name and an app-specific password (iCloud). The pair is sent once
+ * and kept nowhere in the browser; the server never returns it.
+ */
+export function PasswordSignIn({ integration, connection, onDone }: { integration: Integration; connection?: Connection; onDone: () => void }) {
+  const action = useAction();
+  const apple = integration.id === "icloud";
+  const repairing = !!connection?.account?.provider_id;
+  const [username, setUsername] = useState(repairing ? connection?.account?.label ?? "" : "");
+  const [password, setPassword] = useState("");
+  const help = APP_PASSWORD_HELP[integration.id];
+  const submit = () => action.run("save", async () => {
+    const pair = { username: username.trim(), password: password.trim() };
+    setPassword("");
+    const target = connection ?? (await mutate<Connection>("/connections", { request_id: newRequestID(), expected_revision: 0, value: { integration_id: integration.id, title: integration.title, selected_resource_ids: [] } })).resource as Connection;
+    await sendSecret<Connection>(`/connections/${encodeURIComponent(target.id)}/actions`, {
+      request_id: newRequestID(), expected_revision: target.revision, value: { action: repairing ? "repair" : "connect", ...pair, return_to: `/apps/${encodeURIComponent(integration.id)}` },
+    }).catch((error) => {
+      if (error instanceof APIError && error.code === "validation_failed") throw new Error(`${apple ? "Apple" : integration.title} didn’t accept that ${apple ? "email" : "username"} and app-specific password. Nothing was saved.`);
+      throw error;
+    });
+    invalidate("/connections", "/integrations", "/assistant/summary");
+    onDone();
+  }, repairing ? "Signed in again." : `${integration.title} connected.`);
+  return <form className="max-w-md space-y-3" onSubmit={(event) => { event.preventDefault(); if (username.trim() && password.trim()) void submit(); }}>
+    <p className="text-meta text-ink-2">{apple ? "Use an app-specific password, not your Apple Account password." : "Use an app-specific password, not your account password."}{help && <> <a href={help} target="_blank" rel="noreferrer noopener" className="font-medium text-accent-text hover:underline">How to create one</a></>}</p>
+    <Field label={apple ? "Apple Account email" : "Username"}><input value={username} onChange={(event) => setUsername(event.target.value)} type={apple ? "email" : "text"} autoComplete="username" spellCheck={false} className={inputClass} disabled={repairing} /></Field>
+    <Field label="App-specific password"><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="off" spellCheck={false} className={inputClass} placeholder="xxxx-xxxx-xxxx-xxxx" /></Field>
+    {action.error && <p role="alert" className="text-meta text-danger">{action.error}</p>}
+    <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!username.trim() || !password.trim() || !!action.pending}>{action.pending ? "Checking…" : repairing ? "Sign in again" : "Connect"}</Button><Button variant="quiet" onClick={() => { setPassword(""); onDone(); }}>Cancel</Button></div>
+  </form>;
 }
 
 function ConnectionCard({ connection, integration }: { connection: Connection; integration: Integration }) {
   const action = useAction();
   const state = connectionState(connection);
   const [open, setOpen] = useState(false);
-  const recovery = connection.status === "not_connected" || connection.status === "disconnected" ? "connect" : connection.health.recovery;
+  const [passwordForm, setPasswordForm] = useState(false);
+  const recovery = recoveryOf(connection);
   const returnTo = `/apps/${encodeURIComponent(integration.id)}`;
   const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
     await mutate(`/connections/${encodeURIComponent(connection.id)}/actions`, { request_id: newRequestID(), expected_revision: connection.revision, value });
@@ -173,10 +248,11 @@ function ConnectionCard({ connection, integration }: { connection: Connection; i
         <Pill tone={state.tone}>{state.label}</Pill>
       </div>
       {(recovery === "repair" || recovery === "connect" || recovery === "request_access") && <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-4 py-3">
-        <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => void action.run("repair", () => startSignIn(connection, recovery === "connect" ? "connect" : "repair", returnTo, recovery === "request_access" ? connection.capabilities : undefined))}>
+        <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => integration.auth === "app_password" ? setPasswordForm(true) : void action.run("repair", () => startSignIn(connection, recovery === "connect" ? "connect" : "repair", returnTo, recovery === "request_access" ? wantedCapabilities(connection, integration) : undefined))}>
           <KeyRound size={14} aria-hidden />{action.pending === "repair" ? "Opening sign-in…" : recovery === "request_access" ? "Allow more access" : connection.account ? "Sign in again" : "Sign in"}</Button>
         {!!connection.missing_scopes?.length && <span className="text-meta text-ink-2">Still needs permission to {scopeList(connection.missing_scopes)}</span>}
       </div>}
+      {passwordForm && <div className="border-t border-hairline p-4"><PasswordSignIn integration={integration} connection={connection} onDone={() => setPasswordForm(false)} /></div>}
       {recovery === "wait" && connection.health.retry_after && <p className="border-t border-hairline px-4 py-3 text-meta text-ink-2">Nori will try again {relative(connection.health.retry_after)}.</p>}
       {action.error && <div className="px-4 pb-3"><Notice tone="danger">{action.error}</Notice></div>}
       <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-4 py-2">
@@ -201,6 +277,8 @@ function Disconnect({ connection, onDisconnect, busy }: { connection: Connection
 }
 
 function ConnectionDetails({ connection, integration }: { connection: Connection; integration: Integration }) {
+  // Capabilities this account hasn't granted; each can be added by signing in again for it.
+  const notAllowed = integration.capabilities.filter((capability) => capability.supported && !(connection.capabilities ?? []).includes(capability.id));
   const { has } = useAssistant();
   const resources = useResource<List<Resource>>(`/connections/${encodeURIComponent(connection.id)}/resources`, { poll: 0 });
   const preferences = useResource<Preferences>(has("preferences") ? "/preferences" : null, { poll: 0 });
@@ -240,6 +318,14 @@ function ConnectionDetails({ connection, integration }: { connection: Connection
       <h4 className="mb-2 text-meta font-semibold">Granted access</h4>
       <p className="text-meta text-ink-2 [overflow-wrap:anywhere]">{scopeList(connection.granted_scopes) || "None"}</p>
     </div>
+    {integration.auth === "oauth" && notAllowed.length > 0 && <div>
+      <h4 className="mb-2 text-meta font-semibold">Not allowed yet</h4>
+      <ul className="space-y-1">{notAllowed.map((capability) => <li key={capability.id} className="flex min-h-11 items-center gap-3 text-meta">
+        <span className="min-w-0 flex-1">{capability.title}</span>
+        <Button size="sm" variant="quiet" className="text-accent-text!" disabled={!!action.pending} aria-label={`Allow for ${connection.account?.label ?? "this account"}: ${capability.title}`}
+          onClick={() => void action.run(`allow-${capability.id}`, () => startSignIn(connection, "repair", `/apps/${encodeURIComponent(integration.id)}`, [...(connection.capabilities ?? []), capability.id]))}>{action.pending === `allow-${capability.id}` ? "Opening sign-in…" : "Allow"}</Button>
+      </li>)}</ul>
+    </div>}
     {action.error && <Notice tone="danger">{action.error}</Notice>}
   </div>;
 }
@@ -298,12 +384,12 @@ function PluginCard({ entry }: { entry: CatalogEntry }) {
     router.push(`/apps/plugins/${encodeURIComponent((receipt.resource as Installation).id)}`);
   });
   const c = entry.contributions_summary;
-  const parts = [c.tools && `${c.tools} tools`, c.skills && `${c.skills} ${c.skills === 1 ? "skill" : "skills"}`, c.mcp_servers && "MCP server"].filter(Boolean).join(" · ");
+  const parts = [c.tools && plural(c.tools, "tool"), c.skills && `${c.skills} ${c.skills === 1 ? "skill" : "skills"}`, c.mcp_servers && "MCP server"].filter(Boolean).join(" · ");
   return <article className="flex h-full flex-col gap-2 rounded-card border border-hairline bg-surface p-4">
     <div className="flex items-start gap-2"><h3 className="min-w-0 flex-1 text-row font-semibold">{entry.title}</h3>{!entry.provenance.verified && <Pill tone="warning">Unverified</Pill>}</div>
     <p className="text-meta text-ink-2">{entry.description}</p>
     <p className="text-caption text-ink-3">{entry.publisher.name} · {entry.latest_version}{parts ? ` · ${parts}` : ""}</p>
-    <p className="text-caption text-ink-3">{entry.requested_access.action_classes.length ? `Asks to: ${entry.requested_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}${entry.requested_access.connection_types.length ? ` with ${entry.requested_access.connection_types.join(", ")}` : ""}` : "Instructions only; no account access."}</p>
+    <p className="text-caption text-ink-3">{entry.requested_access.action_classes.length ? `Access: ${entry.requested_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}${entry.requested_access.connection_types.length ? ` with ${entry.requested_access.connection_types.join(", ")}` : ""}` : "Instructions only; no account access."}</p>
     <div className="mt-auto pt-2">{entry.installation_id ? <Link href={`/apps/plugins/${encodeURIComponent(entry.installation_id)}`} className="text-meta font-medium text-accent-text hover:underline">Installed · manage</Link>
       : <Confirm title={`Install ${entry.title}?`} confirm="Install" onConfirm={() => void install()} trigger={<Button size="sm" variant="primary" disabled={!!action.pending}>{action.pending ? "Installing…" : "Install"}</Button>}
         body={<div className="space-y-2"><p>Installing adds what it contributes. It doesn’t let Nori act on your accounts until you connect them and allow it.</p>{entry.requested_access.network?.length ? <p>Reaches {entry.requested_access.network.join(", ")}.</p> : null}{entry.requested_access.filesystem?.length ? <p>Reads files in {entry.requested_access.filesystem.join(", ")}.</p> : null}{!entry.provenance.verified && <p className="text-warning">This package isn’t verified by its registry.</p>}</div>} />}
@@ -346,7 +432,7 @@ export function PluginDetailScreen({ id }: { id: string }) {
           <Button variant="quiet" onClick={() => setReview(undefined)}>Cancel</Button></div>
       </div>}
     </Section>
-    {entry && <Section title="Adds"><p className="text-body text-ink-2">{[entry.contributions_summary.tools && `${entry.contributions_summary.tools} tools`, entry.contributions_summary.skills && `${entry.contributions_summary.skills} ${entry.contributions_summary.skills === 1 ? "skill" : "skills"}`, entry.contributions_summary.prompts && `${entry.contributions_summary.prompts} prompts`, entry.contributions_summary.mcp_servers && `${entry.contributions_summary.mcp_servers === 1 ? "an MCP server" : `${entry.contributions_summary.mcp_servers} MCP servers`}`].filter(Boolean).join(", ") || "Instructions only"}.</p>
+    {entry && <Section title="Adds"><p className="text-body text-ink-2">{[entry.contributions_summary.tools && plural(entry.contributions_summary.tools, "tool"), entry.contributions_summary.skills && `${entry.contributions_summary.skills} ${entry.contributions_summary.skills === 1 ? "skill" : "skills"}`, entry.contributions_summary.prompts && `${entry.contributions_summary.prompts} prompts`, entry.contributions_summary.mcp_servers && `${entry.contributions_summary.mcp_servers === 1 ? "an MCP server" : `${entry.contributions_summary.mcp_servers} MCP servers`}`].filter(Boolean).join(", ") || "Instructions only"}.</p>
       {entry.description && <p className="mt-1 text-meta text-ink-3">{entry.description}</p>}</Section>}
     <Section title="Access">
       <p className="text-body text-ink-2">{item.approved_access.action_classes.length ? `May ${item.approved_access.action_classes.map((effect) => EFFECT_LABEL[effect].toLowerCase()).join(", ")}` : "No account access"}{item.approved_access.connection_types.length ? ` with ${item.approved_access.connection_types.join(", ")} accounts you connect.` : "."}</p>
@@ -397,7 +483,7 @@ function ReviewList({ data }: { data: InstallationReview }) {
   const dependents = data.dependents.automation_ids.length + data.dependents.goal_ids.length;
   return <dl className="mt-2 space-y-2 text-meta">
     {rows.filter(([, list]) => list.length).map(([label, list]) => <div key={label}><dt className={cn("font-medium", label === "New access" && "text-warning")}>{label}</dt><dd className="text-ink-2">{list.join(", ")}</dd></div>)}
-    {dependents > 0 && <div><dt className="font-medium">Affects</dt><dd className="text-ink-2">{data.dependents.automation_ids.map((id) => <Link key={id} className="mr-2 text-accent-text hover:underline" href={`/routines/${encodeURIComponent(id)}`}>a routine</Link>)}{data.dependents.goal_ids.map((id) => <Link key={id} className="mr-2 text-accent-text hover:underline" href={`/goals/${encodeURIComponent(id)}`}>a goal</Link>)}</dd></div>}
+    {dependents > 0 && <div><dt className="font-medium">Affects</dt><dd className="text-ink-2">{data.dependents.automation_ids.map((id) => <Link key={id} className="mr-2 text-accent-text hover:underline" href={`/routines/${encodeURIComponent(id)}`}>an automation</Link>)}{data.dependents.goal_ids.map((id) => <Link key={id} className="mr-2 text-accent-text hover:underline" href={`/goals/${encodeURIComponent(id)}`}>a goal</Link>)}</dd></div>}
     {!rows.some(([, list]) => list.length) && !dependents && <p className="text-ink-2">Nothing else changes.</p>}
   </dl>;
 }
@@ -411,7 +497,7 @@ function MCPServers() {
     <Section actions={!adding ? <Button size="sm" variant="primary" onClick={() => setAdding(true)}><Plus size={15} aria-hidden />Add server</Button> : undefined}>
       {adding && <div className="mb-4"><NewMCPServer onDone={() => setAdding(false)} /></div>}
       {items.length ? <Rows>{items.map((server) => <Row key={server.id} href={`/apps/mcp/${encodeURIComponent(server.id)}`} leading={<span className="grid size-9 place-items-center rounded-tile bg-fill-1"><Server size={18} aria-hidden /></span>}
-        title={server.name} detail={`${server.transport === "http" ? "Remote" : "Runs on Nori’s computer"}${server.observed.tool_count !== undefined ? ` · ${server.observed.tool_count} tools` : ""}${server.observed.error ? ` · ${server.observed.error.message}` : ""}`}
+        title={server.name} detail={`${server.transport === "http" ? "Remote" : "Runs on Nori’s computer"}${server.observed.tool_count !== undefined ? ` · ${plural(server.observed.tool_count, "tool")}` : ""}${server.observed.error ? ` · ${server.observed.error.message}` : ""}`}
         trailing={<MCPStatus server={server} />} />)}</Rows> : !adding && <Empty>No MCP servers yet.</Empty>}
     </Section>
   </>;
@@ -476,6 +562,7 @@ export function MCPDetailScreen({ id }: { id: string }) {
   const server = useResource<MCPServer>(`/mcp/${encodeURIComponent(id)}`, { poll: 5_000 });
   const tools = useResource<List<MCPTool>>(`/mcp/${encodeURIComponent(id)}/tools`, { poll: 0 });
   const action = useAction();
+  const result = useSearchParams().get("result");
   const item = server.data;
   if (server.loading) return <Screen title="MCP server" back="/apps?tab=mcp"><Loading /></Screen>;
   if (!item) return <Screen title="MCP server" back="/apps?tab=mcp"><Failure error={server.error ?? "Not found."} /></Screen>;
@@ -483,9 +570,17 @@ export function MCPDetailScreen({ id }: { id: string }) {
     const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value });
     server.apply(receipt.resource as MCPServer); invalidate(`/mcp/${encodeURIComponent(id)}/tools`);
   });
+  // OAuth servers open the provider's sign-in; the server returns here with ?result=.
+  const signIn = () => action.run("sign_in", async () => {
+    const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "sign_in" } }) as { auth?: AuthAttempt };
+    const url = receipt.auth && safeAuthorizeURL(receipt.auth.authorize_url);
+    if (!url) throw new Error("Nori didn’t return a sign-in link. Try again.");
+    window.location.assign(url);
+  });
   const observed = item.observed;
   return <Screen title={item.name} back="/apps?tab=mcp" line={observed.error?.message ?? (observed.status === "connected" ? `Connected${observed.last_success_at ? `, last call ${relative(observed.last_success_at)}` : ""}.` : undefined)}
     actions={<><MCPStatus server={item} /><RefreshButton onClick={() => void server.reload()} /></>}>
+    {result && <div className="mb-4"><Notice tone={result === "connected" ? "ok" : "danger"}>{result === "connected" ? "Signed in." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
     {action.error && <div className="mb-4"><Notice tone="danger">{action.error}</Notice></div>}
     <Section title="Connection"><dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
       <dt className="text-ink-3">Transport</dt><dd>{item.transport === "http" ? "Streamable HTTP" : "Managed process (stdio)"}</dd>
@@ -499,7 +594,7 @@ export function MCPDetailScreen({ id }: { id: string }) {
           <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: observed.status === "connected" ? "restart" : "start" }, "start")}>{observed.status === "connected" ? "Restart" : "Start"}</Button>
           {observed.status === "connected" && <Button size="sm" disabled={!!action.pending} onClick={() => void act({ action: "stop" }, "stop")}>Stop</Button>}
         </> : <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: "reconnect" }, "reconnect")}>Reconnect</Button>}
-        {observed.status === "needs_sign_in" && <Button size="sm" onClick={() => void act({ action: "sign_in" }, "sign_in")}>Sign in</Button>}
+        {(observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <Button size="sm" disabled={!!action.pending} onClick={() => void signIn()}>{action.pending === "sign_in" ? "Opening sign-in…" : "Sign in"}</Button>}
       </div></Section>
     {item.auth === "configured" && <Section title="Access token"><Credential server={item} onSaved={(next) => server.apply(next)} /></Section>}
     <Section title="Tools">

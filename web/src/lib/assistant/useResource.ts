@@ -86,14 +86,24 @@ export function useAction() {
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const run = useCallback(async <T,>(name: string, action: () => Promise<T>, done?: string): Promise<T | undefined> => {
+    // Controls are disabled while an action runs, which drops keyboard focus to the page; put it back after.
+    // A control that swaps for another (Pause → Resume) is replaced by the one in the same place.
+    const control = typeof document !== "undefined" && document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined;
+    const parent = control?.parentElement;
+    const index = parent ? [...parent.children].indexOf(control!) : -1;
+    const restore = () => setTimeout(() => {
+      if (document.activeElement && document.activeElement !== document.body) return;
+      const target = control?.isConnected ? control : parent?.isConnected ? parent.children[index] : undefined;
+      if (target instanceof HTMLElement) target.focus({ preventScroll: true });
+    }, 50);
     setState({ pending: name });
     try {
       const result = await action();
       if (done) announce(done);
-      if (mounted.current) setState({});
+      if (mounted.current) { setState({}); restore(); }
       return result;
     } catch (error) {
-      if (mounted.current) setState({ error: error instanceof Error ? error.message : "Something went wrong." });
+      if (mounted.current) { setState({ error: error instanceof Error ? error.message : "Something went wrong." }); restore(); }
       return undefined;
     }
   }, []);

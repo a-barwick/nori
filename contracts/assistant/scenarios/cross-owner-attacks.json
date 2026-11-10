@@ -1,0 +1,503 @@
+{
+ "name": "Cross-owner attacks on packages, skills, goals, automations, MCP servers, receipts and search",
+ "obligation": "A38: forged identifiers and search never cross ownership; another user's package, skill, goal, automation, MCP server or receipt is not found, and nothing of A's changes",
+ "requires": [
+  "plugins",
+  "skills",
+  "goals",
+  "automations",
+  "mcp",
+  "search"
+ ],
+ "users": {
+  "a": "44444444-4444-4444-8444-444444444444",
+  "b": "55555555-5555-4555-8555-555555555555"
+ },
+ "steps": [
+  {
+   "name": "a-install",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/plugins/installations",
+   "body": {
+    "request_id": "${uuid:inst}",
+    "expected_revision": 0,
+    "value": {
+     "package": {
+      "id": "nori/morning-briefing",
+      "version": "1.0.0"
+     },
+     "approved_access": {
+      "connection_types": [
+       "google"
+      ],
+      "action_classes": [
+       "read"
+      ]
+     }
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     201
+    ]
+   },
+   "capture": {
+    "inst": "/resource/id"
+   }
+  },
+  {
+   "name": "b-read-installation",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/plugins/installations/${var:inst}",
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "b-review-installation",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/plugins/installations/${var:inst}/review?version=1.1.0",
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "b-uninstall",
+   "user": "b",
+   "method": "POST",
+   "path": "/v1/plugins/installations/${var:inst}/actions",
+   "body": {
+    "request_id": "${uuid:buninst}",
+    "expected_revision": 1,
+    "value": {
+     "action": "uninstall"
+    }
+   },
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "b-list-installations",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/plugins/installations",
+   "expect": {
+    "status": [
+     200
+    ],
+    "absent": [
+     "/items/[id=${var:inst}]"
+    ]
+   }
+  },
+  {
+   "name": "b-tools-exclude-a-plugin",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/tools",
+   "expect": {
+    "status": [
+     200
+    ],
+    "absent": [
+     "/items/[installation_id=${var:inst}]"
+    ]
+   }
+  },
+  {
+   "name": "a-skill",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/skills",
+   "body": {
+    "request_id": "${uuid:skill}",
+    "expected_revision": 0,
+    "value": {
+     "title": "Zanzibar audit skill",
+     "description": "Scenario skill.",
+     "instructions": "List the Zanzibar items.",
+     "inputs": {
+      "type": "object"
+     },
+     "required_tool_ids": [],
+     "scope": "user"
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     201
+    ]
+   },
+   "capture": {
+    "skill": "/resource/id"
+   }
+  },
+  {
+   "name": "b-read-skill",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/skills/${var:skill}",
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "b-edit-skill",
+   "user": "b",
+   "method": "PUT",
+   "path": "/v1/skills/${var:skill}",
+   "body": {
+    "request_id": "${uuid:bskill}",
+    "expected_revision": 1,
+    "value": {
+     "title": "Taken",
+     "description": "",
+     "instructions": "x",
+     "inputs": {
+      "type": "object"
+     },
+     "required_tool_ids": [],
+     "scope": "user"
+    }
+   },
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "a-goal",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/goals",
+   "body": {
+    "request_id": "${uuid:goal}",
+    "expected_revision": 0,
+    "value": {
+     "title": "Zanzibar trip",
+     "outcome": "Booked before December",
+     "completion_criteria": [
+      {
+       "text": "Flights booked"
+      }
+     ],
+     "follow_up": "remind"
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     201
+    ]
+   },
+   "capture": {
+    "goal": "/resource/id"
+   }
+  },
+  {
+   "name": "b-read-goal",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/goals/${var:goal}",
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "b-complete-goal",
+   "user": "b",
+   "method": "POST",
+   "path": "/v1/goals/${var:goal}/actions",
+   "body": {
+    "request_id": "${uuid:bgoal}",
+    "expected_revision": 1,
+    "value": {
+     "action": "complete"
+    }
+   },
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "a-automation",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/automations",
+   "body": {
+    "request_id": "${uuid:auto}",
+    "expected_revision": 0,
+    "value": {
+     "title": "Zanzibar reminder",
+     "instruction": "Remind me about Zanzibar.",
+     "trigger": {
+      "kind": "once",
+      "at": "2027-01-05T09:00:00Z"
+     },
+     "connection_ids": [],
+     "requested_authority": {
+      "action_classes": [
+       "read"
+      ]
+     },
+     "budget_usd": 0.1,
+     "max_active_runs": 1,
+     "missed_run": "skip",
+     "execution_window_seconds": 3600,
+     "destination_ids": [
+      "dest_in_app"
+     ]
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     201
+    ]
+   },
+   "capture": {
+    "auto": "/resource/id"
+   }
+  },
+  {
+   "name": "b-read-automation",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/automations/${var:auto}",
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "b-occurrences",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/automations/${var:auto}/occurrences",
+   "expect": {
+    "status": [
+     404,
+     200
+    ],
+    "absent": [
+     "/items/0"
+    ]
+   }
+  },
+  {
+   "name": "b-pause-automation",
+   "user": "b",
+   "method": "POST",
+   "path": "/v1/automations/${var:auto}/actions",
+   "body": {
+    "request_id": "${uuid:bauto}",
+    "expected_revision": 1,
+    "value": {
+     "action": "pause"
+    }
+   },
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "a-mcp",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/mcp",
+   "body": {
+    "request_id": "${uuid:mcp}",
+    "expected_revision": 0,
+    "value": {
+     "name": "Zanzibar wiki",
+     "transport": "http",
+     "endpoint": "https://mcp.example.com/mcp",
+     "auth": "configured",
+     "enabled": true,
+     "exposure": {
+      "default": "discoverable"
+     }
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     201
+    ]
+   },
+   "capture": {
+    "mcp": "/resource/id"
+   }
+  },
+  {
+   "name": "b-read-mcp",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/mcp/${var:mcp}",
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "b-mcp-tools",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/mcp/${var:mcp}/tools",
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "b-mcp-credential",
+   "user": "b",
+   "method": "POST",
+   "path": "/v1/mcp/${var:mcp}/credential",
+   "body": {
+    "request_id": "${uuid:bcred}",
+    "token": "forged-token"
+   },
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   },
+   "body_schema": "plugins.schema.json#/$defs/MCPCredentialInput"
+  },
+  {
+   "name": "b-receipt-lookup",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/mutations/${uuid:skill}",
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "a-search-sees-own",
+   "user": "a",
+   "method": "GET",
+   "path": "/v1/search?q=Zanzibar",
+   "expect": {
+    "status": [
+     200
+    ],
+    "match": {
+     "/items/[id=${var:goal}]/title": "Zanzibar trip",
+     "/items/[id=${var:auto}]/kind": "automation"
+    }
+   }
+  },
+  {
+   "name": "b-search-sees-none",
+   "user": "b",
+   "method": "GET",
+   "path": "/v1/search?q=Zanzibar",
+   "expect": {
+    "status": [
+     200
+    ],
+    "absent": [
+     "/items/0"
+    ]
+   }
+  },
+  {
+   "name": "a-records-unchanged",
+   "user": "a",
+   "method": "GET",
+   "path": "/v1/goals/${var:goal}",
+   "expect": {
+    "status": [
+     200
+    ],
+    "match": {
+     "/title": "Zanzibar trip",
+     "/revision": 1,
+     "/status": "active"
+    }
+   }
+  },
+  {
+   "name": "a-mcp-credential-still-missing",
+   "user": "a",
+   "method": "GET",
+   "path": "/v1/mcp/${var:mcp}",
+   "expect": {
+    "status": [
+     200
+    ],
+    "match": {
+     "/observed/credential": "missing",
+     "/revision": 1
+    }
+   }
+  }
+ ]
+}

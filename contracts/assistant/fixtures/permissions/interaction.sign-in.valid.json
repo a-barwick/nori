@@ -5,6 +5,7 @@
   "status": "pending",
   "prompt": "Sign in to Google to continue",
   "payload": {
+    "auth": "oauth",
     "auth_attempt_id": "auth_1",
     "integration_id": "google",
     "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=opaque",

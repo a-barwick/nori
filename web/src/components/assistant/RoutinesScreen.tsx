@@ -22,7 +22,7 @@ const OCCURRENCE: Record<Occurrence["status"], { tone: Tone; label: string }> = 
   pending: { tone: "neutral", label: "Due" }, accepted: { tone: "neutral", label: "Starting" }, running: { tone: "accent", label: "Running" }, completed: { tone: "ok", label: "Done" },
   failed: { tone: "danger", label: "Failed" }, cancelled: { tone: "neutral", label: "Cancelled" }, expired: { tone: "warning", label: "Expired" }, skipped: { tone: "warning", label: "Skipped" },
 };
-const REASON: Record<NonNullable<Occurrence["reason"]>, string> = { missed_window: "Nori was offline past this run’s window.", paused: "The routine was paused.", superseded: "An edit replaced this run.", max_active_runs: "The previous run was still going." };
+const REASON: Record<NonNullable<Occurrence["reason"]>, string> = { missed_window: "Nori was offline past this run’s window.", paused: "The automation was paused.", superseded: "An edit replaced this run.", max_active_runs: "The previous run was still going." };
 const DELIVERY: Record<string, string> = { pending: "Waiting to send", attempting: "Sending", accepted: "Handed to the provider", delivered: "Delivered", failed: "Not delivered", uncertain: "Delivery unknown" };
 
 function snoozeOptions(): [string, string][] {
@@ -39,20 +39,20 @@ function stateOf(item: Automation, long = false) {
 export function RoutinesScreen() {
   const { has } = useAssistant();
   const list = useResource<List<Automation>>(has("automations") ? "/automations" : null, { poll: 30_000 });
-  if (!has("automations")) return <Screen title="Routines"><NotYet what="Routines and reminders" /></Screen>;
+  if (!has("automations")) return <Screen title="Automations"><NotYet what="Automations and reminders" /></Screen>;
   const items = list.data?.items ?? [];
   const active = items.filter((item) => item.status !== "cancelled").sort((a, b) => Date.parse(a.next_at ?? "9999") - Date.parse(b.next_at ?? "9999"));
   const next = active.find((item) => item.status === "enabled" && item.next_at);
   return (
-    <Screen title="Routines" line={next ? `Next: ${next.title}, ${relative(next.next_at)}.` : items.length ? "Nothing is scheduled." : undefined}
-      actions={<Link href="/routines/new" className="inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-row-title font-medium text-on-accent hover:bg-accent-hover"><Plus size={15} aria-hidden />New routine</Link>}>
+    <Screen title="Automations" line={next ? `Next: ${next.title}, ${relative(next.next_at)}.` : items.length ? "Nothing is scheduled." : undefined}
+      actions={<Link href="/routines/new" className="inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-row-title font-medium text-on-accent hover:bg-accent-hover"><Plus size={15} aria-hidden />New automation</Link>}>
       {list.error && <div className="mb-4"><Failure error={list.error} onRetry={() => void list.reload()} /></div>}
-      {list.loading ? <Loading /> : active.length ? <Rows label="Routines">{active.map((item) => {
+      {list.loading ? <Loading /> : active.length ? <Rows label="Automations">{active.map((item) => {
         const state = stateOf(item);
         return <Row key={item.id} href={`/routines/${encodeURIComponent(item.id)}`} title={item.title}
           detail={[cadence(item.trigger), item.status === "enabled" && item.next_at ? `next ${relative(item.next_at)}` : "", item.last_occurrence?.status === "failed" ? "last run failed" : item.last_occurrence?.status === "skipped" ? "last run skipped" : ""].filter(Boolean).join(" · ")}
           trailing={<Pill tone={item.last_occurrence?.status === "failed" ? "danger" : state.tone}>{item.last_occurrence?.status === "failed" ? "Last run failed" : state.label}</Pill>} />;
-      })}</Rows> : <Empty action={<Link href="/routines/new" className="text-meta font-medium text-accent-text hover:underline">New routine</Link>}>No routines yet. Ask Nori in Chat (“remind me before I leave”) or make one here.</Empty>}
+      })}</Rows> : <Empty>No automations yet.</Empty>}
     </Screen>
   );
 }
@@ -65,8 +65,8 @@ export function RoutineDetailScreen({ id }: { id: string }) {
   const router = useRouter();
   const [started, setStarted] = useState(false);
   const item = routine.data;
-  if (routine.loading) return <Screen title="Routine" back="/routines"><Loading /></Screen>;
-  if (!item) return <Screen title="Routine" back="/routines"><Failure error={routine.error ?? "This routine doesn’t exist."} /></Screen>;
+  if (routine.loading) return <Screen title="Automation" back="/routines"><Loading /></Screen>;
+  if (!item) return <Screen title="Automation" back="/routines"><Failure error={routine.error ?? "This automation doesn’t exist."} /></Screen>;
   const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
     try {
       const receipt = await mutate<Automation>(`/automations/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value });
@@ -78,7 +78,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
       if (error instanceof APIError && error.stale && error.body?.current) routine.apply(error.body.current as Automation);
       throw error;
     }
-  }, ({ pause: "Routine paused.", resume: "Routine resumed.", snooze: "Routine snoozed.", cancel: "Routine cancelled.", run_now: "Run started." } as Record<string, string>)[value.action as string]);
+  }, ({ pause: "Automation paused.", resume: "Automation resumed.", snooze: "Automation snoozed.", cancel: "Automation cancelled.", run_now: "Run started." } as Record<string, string>)[value.action as string]);
   const state = stateOf(item, true);
   const destinationLabel = (destinationID: string) => destinations.data?.items.find((destination) => destination.id === destinationID)?.label ?? "a destination";
   return (
@@ -97,8 +97,8 @@ export function RoutineDetailScreen({ id }: { id: string }) {
           </DropdownMenu.Content></DropdownMenu.Portal>
         </DropdownMenu.Root>}
         <Link href={`/routines/${encodeURIComponent(id)}/edit`} className="inline-flex h-9 items-center rounded-full px-4 text-row-title font-medium text-ink shadow-[inset_0_0_0_1px_var(--hairline-strong)] hover:bg-fill-1">Edit</Link>
-        <Confirm danger title="Cancel this routine?" body="It won’t run again. Its history stays here. Work already started keeps going until you stop it in Work." confirm="Cancel routine" onConfirm={() => void act({ action: "cancel" }, "cancel")}
-          trigger={<Button variant="quiet" className="text-danger!" disabled={!!action.pending}>Cancel routine</Button>} />
+        <Confirm danger title="Cancel this automation?" body="It won’t run again. Its history stays here. Work already started keeps going until you stop it in Work." confirm="Cancel automation" onConfirm={() => void act({ action: "cancel" }, "cancel")}
+          trigger={<Button variant="quiet" className="text-danger!" disabled={!!action.pending}>Cancel automation</Button>} />
       </div>}
       <Section title="What it does">
         <p className="rounded-card border border-hairline bg-surface p-4 text-body whitespace-pre-wrap">{item.instruction}</p>
@@ -158,8 +158,8 @@ export function RoutineEditorScreen({ id }: { id?: string }) {
   const { has } = useAssistant();
   const existing = useResource<Automation>(id ? `/automations/${encodeURIComponent(id)}` : null, { poll: 0 });
   const rules = useResource<List<PermissionRule>>(id ? "/permissions" : null, { poll: 0 });
-  if (!has("automations")) return <Screen title="New routine" back="/routines"><NotYet what="Routines" /></Screen>;
-  if (id && (!existing.data || !rules.data)) return <Screen title="Edit routine" back={`/routines/${id}`}>{existing.error || rules.error ? <Failure error={existing.error ?? rules.error} /> : <Loading />}</Screen>;
+  if (!has("automations")) return <Screen title="New automation" back="/routines"><NotYet what="Automations" /></Screen>;
+  if (id && (!existing.data || !rules.data)) return <Screen title="Edit automation" back={`/routines/${id}`}>{existing.error || rules.error ? <Failure error={existing.error ?? rules.error} /> : <Loading />}</Screen>;
   // Editing starts from the standing permission the routine already holds, so saving never narrows or widens it silently.
   const held = new Set((rules.data?.items ?? []).filter((rule) => rule.effect === "allow" && existing.data?.authority_rule_ids.includes(rule.id)).flatMap((rule) => rule.action_classes));
   return <Editor key={existing.data?.revision ?? "new"} existing={existing.data} held={held} />;
@@ -198,7 +198,7 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
   const triggerKey = JSON.stringify(trigger);
   const targetsKey = chosenTargets.join();
   const value = useMemo<AutomationEditable | undefined>(() => (special ? existing!.trigger : trigger) && missed ? {
-    title: title.trim() || "Routine", instruction: instruction.trim(), trigger: special ? existing!.trigger : trigger!, connection_ids: accounts,
+    title: title.trim() || "Automation", instruction: instruction.trim(), trigger: special ? existing!.trigger : trigger!, connection_ids: accounts,
     requested_authority: { action_classes: classes }, budget_usd: Number(budget) || 0, max_active_runs: 1, missed_run: missed,
     execution_window_seconds: 3600, destination_ids: chosenTargets, ...(endAt ? { end_at: new Date(`${endAt}T23:59:59`).toISOString() } : {}),
   } : undefined, [title, instruction, triggerKey, accounts, writes, sends, missed, budget, endAt, targetsKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -228,7 +228,7 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
 
   const writable = (connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected");
   return (
-    <Screen title={existing ? "Edit routine" : "New routine"} back={existing ? `/routines/${existing.id}` : "/routines"}>
+    <Screen title={existing ? "Edit automation" : "New automation"} back={existing ? `/routines/${existing.id}` : "/routines"}>
       <form className="space-y-6" onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <Field label="Name"><input value={title} onChange={(event) => setTitle(event.target.value)} className={inputClass} placeholder="Morning briefing" required /></Field>
         <Field label="What Nori does each time"><textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} rows={3} className={cn(inputClass, "resize-y")} placeholder="Summarize today’s agenda, urgent mail and anything due." required /></Field>
@@ -282,7 +282,7 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
         </section>}
         {action.error && <Notice tone="danger">{action.error}</Notice>}
         <div className="flex gap-2">
-          <Button type="submit" variant="primary" disabled={!!action.pending || !value || !instruction.trim()}>{action.pending ? "Saving…" : existing ? "Save changes" : "Create routine"}</Button>
+          <Button type="submit" variant="primary" disabled={!!action.pending || !value || !instruction.trim()}>{action.pending ? "Saving…" : existing ? "Save changes" : "Create automation"}</Button>
           <Button variant="quiet" onClick={() => router.back()}>Cancel</Button>
         </div>
       </form>

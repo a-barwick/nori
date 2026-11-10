@@ -22,6 +22,8 @@ export interface TextItem {
   display?: Part["display"];
   parts?: Part[];
   debug?: DebugInfo;
+  /** The user's own latest message: sending until the core's receipt, then saved until Nori replies. */
+  receipt?: "sending" | "saved";
 }
 
 export interface Thread {
