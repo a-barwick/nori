@@ -4,7 +4,31 @@ Branch `claude/nori-assistant-backend-9c520e`, worked from worktree `.claude/wor
 
 Evidence label (rule 2): **provider verified: 0.** Everything below is locally verified against a loopback model stub, the local database and the local Temporal dev server. Nothing here ran against a real model or a real provider account.
 
-## What changed this turn
+## Second assignment (2026-11-10, coordination record "After the first turn")
+
+| Commit | What |
+| --- | --- |
+| `11fdcfd` | `.env.example` names `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET` and `NORI_OAUTH_REDIRECT_URL`, one line each on what they are for. |
+| `11fdcfd` | Event-create summaries name the calendar as the user sees it: "your main calendar" for the primary, otherwise `the "<title>" calendar` from the account's calendar list (one extra read of the list at prepare; if it fails, the id is kept). |
+| `11fdcfd` | Draft summaries are never empty: a reply's subject is read from the original message the same way saving the draft resolves it ("Re: …"); a missing subject reads "(no subject)" and no recipients reads "with no recipients yet". The draft result carries the subject the draft was saved with. |
+
+How verified (build `be-11fdcfd` on my stack; the loopback model stub drove each task with one tool call; Google answered from integration's hand-written recordings with `NORI_PROVIDER_REPLAY` and the made-up recorded client; user A connected through the recorded OAuth callback, then repaired with `code=recorded-mail-code` for drafting). This is evidence about Nori's text, not about Google:
+
+| Tool call | Operation summary (from `GET /v1/operations`) |
+| --- | --- |
+| `calendar_event_create` on `team.recorded@group.calendar.google.com` | `Create "Planning" on the "Team" calendar, Mon 16 Nov 2026 10:00–10:30 PST` |
+| `calendar_event_create` on `primary` | `Create "Planning" on your main calendar, Mon 16 Nov 2026 10:00–10:30 PST` |
+| `mail_draft_create` replying to `18f0reservation1`, no subject, no `to` | `Draft "Re: Reservation confirmed: Friday, Nov 13 at 7:30 PM" with no recipients yet (not sent)` |
+| `mail_draft_create` to one address, no subject | `Draft (no subject) to friend@example.com (not sent)` |
+
+Notes:
+
+- A direct request does not raise an approval (`NORI_USER_SENDS=allow`, interim), so on the stack the summary showed on the operation, which Work displays; an approval shows the same text.
+- The action spec (the digest input) still holds the arguments as given, so a reply's spec has `subject: ""`. That is deliberate: the digest binds to what the model asked for.
+- The Team create came back uncertain because the recordings have no insert for that calendar (it is read-only there); the task asks the user what happened, as designed. Not a defect.
+- **Found, not fixed (outside this assignment):** a reply draft is not addressed from the original message. `saveDraft` writes only the `to`/`cc`/`bcc` it is given, so a reply without them is saved with no recipients. The summary now says so instead of hiding it. Filling reply recipients from the original's From/To/Cc (reply, reply_all) would be the fix; it is a change to what gets written to Austin's mailbox, so I'd like the coordinator's go-ahead first.
+
+## What changed in the first turn
 
 | Commit | What |
 | --- | --- |
