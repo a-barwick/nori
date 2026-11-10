@@ -36,7 +36,7 @@ The first slice itself is defined by Austin's original backlog, which is not in 
 
 - Checkout: `/Users/austin/Documents/dev/nori` (the first run used a different path; old absolute paths in the notes are wrong here). Worktrees from the first run do not exist. The coordinator holds this checkout on `claude/nori-assistant-integration-25ae45`.
 - Present: Go, Bun, Node, Docker, `gh` (signed in), and the Compose Postgres and Temporal containers, already running. Missing: the `temporal` CLI, `psql` on the host, Tailscale.
-- `.env` exists (mode 600). By variable name it has no VAPID pair, no Microsoft app and no `NORI_CREDENTIAL_STORE`; the first run's VAPID pair and its stack env files stayed on the old laptop. Integration confirms the Google OAuth client by name and lists exactly what is missing.
+- `.env` exists (mode 600) but is close to a template: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `BRAVE_SEARCH_API_KEY` and `TEMPORAL_API_KEY` are present with empty values, and there is no Google OAuth client, VAPID pair, Microsoft app or `NORI_CREDENTIAL_STORE` (checked by name and by empty or set, never by value; frontend reported it first). **No task can run on any local stack until Austin puts a model key in `.env`.** The Google OAuth client values are also his to restore. Sessions do not fetch keys from production or any other store on their own. Until the keys arrive, streams do the work that needs no model call and say what is waiting.
 - The local credential vault from the first run is gone. Nothing is lost: no real sign-in ever completed.
 
 ### Sessions
