@@ -32,6 +32,8 @@ type Client struct {
 	ModelName string
 	HTTP      *http.Client
 	Meter     usage.Meter
+	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
+	TestURL string
 }
 
 func New(key, model string, meter usage.Meter) *Client {
@@ -58,6 +60,9 @@ func (c *Client) Provider() string {
 func (c *Client) Name() string { return c.ModelName }
 
 func (c *Client) endpoint() string {
+	if c.TestURL != "" {
+		return strings.TrimRight(c.TestURL, "/") + "/v1/responses"
+	}
 	if c.direct() {
 		return "https://api.openai.com/v1/responses"
 	}

@@ -35,6 +35,8 @@ type OpenAIModel struct {
 	name   string
 	key    string
 	Client *http.Client
+	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
+	TestURL string
 }
 
 func NewOpenAIModel(key, name string) *OpenAIModel {
@@ -76,7 +78,11 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		return reply, err
 	}
 	span.SetAttributes(attribute.Int("nori.prompt.bytes", len(body)))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIChatURL, bytes.NewReader(body))
+	endpoint := openAIChatURL
+	if m.TestURL != "" {
+		endpoint = strings.TrimRight(m.TestURL, "/") + "/v1/chat/completions"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return reply, fmt.Errorf("invalid model request")
 	}

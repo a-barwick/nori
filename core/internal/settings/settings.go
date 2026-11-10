@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -88,6 +89,9 @@ type Models struct {
 	OpenAIKey, JevKey, OpenRouterKey string
 	// Outer is the outer conversation model and Inner the task worker model.
 	Outer, Inner string
+	// TestURL sends every model request to a loopback HTTP stub instead of the provider. Local development only
+	// (NORI_MODEL_TEST_URL, refused unless NORI_CLOUD=local), for checking timeouts and prompts without provider keys.
+	TestURL string
 }
 
 func (m Models) UsesOpenAIForTasks() bool { return m.Inner == "gpt-6.1-terra" }
@@ -241,6 +245,12 @@ func Load() (Settings, error) {
 	if err := s.Metering.Validate(); err != nil {
 		return Settings{}, err
 	}
+	if s.Models.TestURL != "" {
+		u, err := url.Parse(s.Models.TestURL)
+		if err != nil || s.Cloud != "local" || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost") {
+			return Settings{}, fmt.Errorf("NORI_MODEL_TEST_URL is for local development only: an http loopback URL with NORI_CLOUD=local")
+		}
+	}
 	return s, nil
 }
 
@@ -305,6 +315,7 @@ func FromEnvironment() Settings {
 		Models: Models{
 			OpenAIKey: os.Getenv("OPENAI_API_KEY"), JevKey: os.Getenv("JEV_API_KEY"), OpenRouterKey: os.Getenv("OPENROUTER_API_KEY"),
 			Outer: get("NORI_AGENT_MODEL", "gpt-6.1-sol"), Inner: get("MODEL_NAME", "openai/gpt-6.1-terra"),
+			TestURL: os.Getenv("NORI_MODEL_TEST_URL"),
 		},
 		Store:         store,
 		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN")},
