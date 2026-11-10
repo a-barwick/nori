@@ -53,7 +53,7 @@ scripts/local-stacks/stack.sh real stop
 
 ## Without model keys
 
-Core refuses to start without `OPENAI_API_KEY`, and the worker refuses without `OPENROUTER_API_KEY`. `NORI_STACK_NO_MODEL=1` fills either one with a placeholder only if `.env` has no value for it. It also sends all outbound HTTP(S) to a dead local proxy, so nothing leaves the machine. API scenarios run; model turns and real provider calls fail. It checks plumbing and is never evidence about a model or provider.
+With background tasks on (the stacks force them on), core refuses to start without both `OPENAI_API_KEY` and `OPENROUTER_API_KEY` (the latter for conversation summaries), and the worker refuses without `OPENROUTER_API_KEY`. `NORI_STACK_NO_MODEL=1` fills either one with a placeholder only if `.env` has no value for it. It also sends all outbound HTTP(S) to a dead local proxy, so nothing leaves the machine. API scenarios run; model turns and real provider calls fail. It checks plumbing and is never evidence about a model or provider.
 
 ## Machine-local files (not in the repository)
 

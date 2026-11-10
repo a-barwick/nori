@@ -28,7 +28,7 @@ On this machine (2026-11-10), what only you can supply. Exact steps are in `docs
 
 | You supply | Unblocks |
 | --- | --- |
-| `OPENAI_API_KEY` and `OPENROUTER_API_KEY` in `.env` (both empty on this machine) | Any conversation or task on the local stacks. Core and the worker refuse to start without them. |
+| `OPENROUTER_API_KEY` in `.env` (empty; `OPENAI_API_KEY` was set at 07:58 on 2026-11-10) | Any conversation or task on the local stacks. With background tasks on, core and the worker refuse to start without it. |
 | The Google OAuth client in `.env` (`GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`; absent), with the local redirect URI and your address as a test user | The authorize-URL check, then your Google sign-in |
 | Your Google sign-in at http://127.0.0.1:3213/apps, after the two rows above | Any provider-verified row on Google |
 | The first slice from your backlog | Which cases run first on your account. Nothing is expanded until then. |

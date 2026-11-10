@@ -4,7 +4,7 @@ Rewritten 2026-11-10 by integration for the new machine. It covers Google only. 
 
 Local Nori for real accounts runs on this Mac at **http://127.0.0.1:3213**. It has its own database (`nori_real`), its own Temporal namespace (`nori-real`) and a new, empty local credential vault under `~/.nori-stacks/real/`. Production is not touched. Integration restarts it with `scripts/local-stacks/stack.sh real …` (see `scripts/local-stacks/README.md`).
 
-Today it answers, but only as plumbing. It has no model key and no Google client, so it cannot hold a conversation or start a Google sign-in. The steps below are the things only you can supply. Please put values in the file yourself. Don't paste them into a chat or a session: nobody else reads, prints or copies them.
+Today it answers, but only as plumbing: without `OPENROUTER_API_KEY` it starts only in a no-model mode (placeholder keys, all outbound traffic blocked), and without a Google client it cannot start a Google sign-in. The steps below are the things only you can supply. Please put values in the file yourself. Don't paste them into a chat or a session: nobody else reads, prints or copies them.
 
 ## What `.env` lacks, by variable name
 
@@ -12,8 +12,8 @@ Compared on 2026-11-10 against `.env.example` and against what core actually rea
 
 | Needed for | Variable | State in `/Users/austin/Documents/dev/nori/.env` | Who |
 | --- | --- | --- | --- |
-| Any conversation (core refuses to start without it) | `OPENAI_API_KEY` | present, empty | **you** |
-| Any task (the worker refuses to start without it; the task model is `openai/gpt-6.1-terra` through OpenRouter) | `OPENROUTER_API_KEY` | present, empty | **you** |
+| Any conversation | `OPENAI_API_KEY` | empty at 07:52; **set** when re-checked after your 07:58 save | done |
+| Any conversation or task (with background tasks on, core and the worker both refuse to start without it; conversation summaries and the task model `openai/gpt-6.1-terra` go through OpenRouter) | `OPENROUTER_API_KEY` | present, **empty** | **you** |
 | Google sign-in | `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET` | absent (also missing from `.env.example`; hosted reads them from Secret Manager) | **you** |
 | Google redirect | `NORI_OAUTH_REDIRECT_URL` | absent; the stack script sets `http://127.0.0.1:3213/api/v1/connections/oauth/callback` | integration (done) |
 | Credential store | `NORI_CREDENTIAL_STORE`, `NORI_CREDENTIAL_DIR` | absent; the stack script sets `local` and a new vault | integration (done) |
@@ -27,7 +27,7 @@ Compared on 2026-11-10 against `.env.example` and against what core actually rea
 
 In `/Users/austin/Documents/dev/nori/.env`, fill:
 
-- `OPENAI_API_KEY=` with a key from platform.openai.com → API keys. It is used for the outer conversation.
+- `OPENAI_API_KEY=` with a key from platform.openai.com → API keys. It is used for the outer conversation. (Set as of 07:58 on 2026-11-10.)
 - `OPENROUTER_API_KEY=` with a key from openrouter.ai → Keys. It is used for the task worker.
 
 The project budget defaults still apply: `NORI_TASK_BUDGET_USD` caps each task.

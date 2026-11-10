@@ -1,181 +1,84 @@
-# Integration status (nori-integration session)
+# Integration status
 
-Branch `claude/nori-assistant-integration-bd1278`, head `aa5f301`. `make check` green. Contracts r2.10: 216 fixtures (86 round-tripped through Go types), 12 scenarios (all pass live), 5 histories.
+Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10 (restart, first turn, new machine). The first run's version of this note is in git history.
 
-Evidence lives in `docs/assistant-acceptance.md`. Counts: implemented 23, locally verified 12, locally verified (recorded provider) 6, blocked 2, not started 1.
+**Provider verified: 0 of 44.**
 
-Session messaging from this session is paused by the app (10-message limit until Austin types here), so the notes below stand in for messages.
+## What ran this turn
 
-## D-055 done and the D-053 timeouts (for the coordinator)
+- **Merges**: the coordinator branch `claude/nori-assistant-integration-25ae45` (docs), frontend `ea53ff9` and backend `840555e` (that commit, not the branch tip; `a62a26e` WIP stays out under rule 1). All merged cleanly; merge head `e290c5f`.
+- **Checks on this machine**:
+  - `make check` is green. The only fix needed was `bun install` in `web/`; nothing in the repository changed for it.
+  - Note that `make check` runs only `go vet` for core, so I also ran `go test ./...` in core: green.
+  - Contracts r2.11: 223 fixtures, 90 Go round trips, 12 scenarios, 5 histories.
+- **Stack scripts** are committed at `scripts/local-stacks/` (`stack.sh` and a README) and hold no secret.
+  - Commands: `setup`, `users`, `core`, `worker`, `set-current`, `web`, `check`, `stop`, `status`.
+  - `psql` and the `temporal` CLI run inside the Compose containers, since neither is on this host.
+  - Machine-local state lives in `~/.nori-stacks/`.
+- **Recorded stack**: core 8083, database `nori_integration`, namespace `nori-integration`, worker `int-e290c5f` set current.
+  - Users: `integration-a@`, `integration-b@`, `scenario-a@` and `scenario-b@nori.local`.
+  - **12 of 12 live scenarios pass** (`contracts-check -live … -recorded`), twice, the second time after a restart.
+  - They ran in `NORI_STACK_NO_MODEL=1` mode: placeholder model keys, all outbound HTTP(S) sent to a dead local proxy. No model turn was exercised, and the scenarios are API-level.
+- **Real stack**: core 8085, database `nori_real`, namespace `nori-real`, worker `real-e290c5f` set current.
+  - Web 3213 → 8085, signed in as `real-a@nori.local` (user `66666666-…`; no personal address anywhere).
+  - Credential store `local`, with a new empty vault at `~/.nori-stacks/real/artifacts/credentials`. Redirect: `http://127.0.0.1:3213/api/v1/connections/oauth/callback`.
+  - It answers, also in no-model mode, and advertises `push_public_key`.
+  - Starting a Google connection answers `provider_unavailable` ("this integration is not configured in this deployment"), so **the Google authorize-URL check could not run**: there is no Google client on this machine.
+  - A not-connected "Google probe" connection (`conn_376569c546155488accd`) remains on `real-a` because I found no action that removes a never-connected connection. It is harmless and can be reused or ignored.
+- **VAPID**: a new pair was generated into `~/.nori-stacks/real.env` (mode 600, never printed), which `stack.sh` loads for core and worker. It is not in `.env`, contrary to the assignment, because Austin had `.env` open in vim at the time (pid 33716, swap file present). An edit underneath would have been overwritten by his save. It can move into `.env` if wanted.
+- **`.env` gap, by name**, compared with `.env.example` and with what core reads. Full table in `austin-real-accounts-steps.md`.
+  - `OPENROUTER_API_KEY`: empty.
+  - `OPENAI_API_KEY`: empty at 07:52, set after Austin's 07:58 save.
+  - `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`: absent, and also **absent from `.env.example`**, a documentation gap for backend.
+  - `NORI_BACKGROUND_TASKS_ENABLED=false` (chat-only); `stack.sh` overrides it.
+  - No `NORI_CREDENTIAL_STORE`, `NORI_OAUTH_REDIRECT_URL` or VAPID entries; `stack.sh` sets these.
+  - Microsoft and SMTP are absent; they come later.
+- **Steps for Austin**: `austin-real-accounts-steps.md` is rewritten for this machine, covering Google only. Order: OpenRouter key, then Google client with the redirect URI and his address as a test user, then a Nori test calendar, then his sign-in. Microsoft and iCloud are marked later.
+- **Acceptance record regraded** under rule 2 (`docs/assistant-acceptance.md`):
+  - provider verified 0;
+  - verified locally with no provider involved 6;
+  - exercised on hand-written recordings 2;
+  - implemented 33 (12 with parts on recordings, 13 with parts exercised locally, 8 not exercised);
+  - blocked 2; not started 1.
 
-- **D-055 is fixed:**
-  - recordings at `d2e9e61` (account B by calendar id, Gmail on `gmail.googleapis.com`, catch-all reads last);
-  - the replay itself now prefers an exact path over a prefix path, whatever the file order (`aa5f301`).
+  15 rows whose status said verified but whose text listed unexercised parts were lowered, with the reason in bold. Wording that presented the local vault, the interim D1–D4 settings, or "voice set aside" as Austin's decisions was removed. PR #165's description matches; it stays a draft, with no reviews requested and no comments.
+- **r2.11** is recorded in the Contract revisions table of `docs/assistant-coordination.md` (one row after r2.10): published, proposed by backend, no acknowledgement recorded from either stream, open with Austin. No new revision was published.
 
-  Live scenarios pass on the restarted recorded stack. Frontend: please re-run journeys 3–8. The note below has the details.
-- **D-053 timeouts on my stack** (the same code everywhere):
-  - Outer-loop model request: HTTP timeout 75 s (`conversation/openai.go`).
-  - Task model request: HTTP timeout 2 min (`agent/responses/responses.go`, `agent/agent.go`), inside the ModelRef activity: start-to-close 240 s, heartbeat 10 s, one attempt.
-  - Since `4a57a0a`, an interrupted model request is asked again up to twice, each after its recovery window.
-  - So three passes of about 4 min plus recovery waits make roughly 15 min, which matches the hang frontend saw. Suggestion for backend: a shorter task-model deadline, or fail fast on a request with no response.
+## What failed or went wrong
 
-## For frontend: journey recordings fixed (re-run 3–8)
+- **I killed other sessions' cores.** At about 07:56 I ran `pkill -f nori-local`, which matches every session's core on this machine. Frontend's core (its web 3212 and worker on `nori-frontend` were up) was very likely killed, and possibly backend's. I messaged both sessions to restart. `stack.sh stop` now stops only its own ports and namespace, and the README warns against stopping by name.
+- Both cores refuse to start without `OPENROUTER_API_KEY` even with `OPENAI_API_KEY` set, because background tasks need it for conversation summaries. With only the OpenAI key present, the stacks still run in no-model mode.
+- The Google authorize-URL check did not run (no client).
+- `.env` holds `PORT=8080`. A worker with `PORT` unset picks that up and enters hosted mode (`NORI_WORKER_SERVICES must be configured`). `stack.sh` exports an empty `PORT` instead.
 
-Messaging is paused, so this note stands in for a message to frontend.
+## Needs from backend
 
-- **Event reads:** the catch-all reads (`get-missing`, `get-created`) now come last, so the move, RSVP and standup reads hit their own recordings. Checked here: "move Lunch with Priya … to 1pm" (task `f77e76dc`) patched once and confirmed 1:00–2:00 pm.
-- **Gmail:** draft, send and sent lookup now use host `gmail.googleapis.com`.
-- **Account B** is recorded under `calendars/recorded.work@example.com/events` as well as `primary`, including the one-time 401 on Wed 18.
-- **Account A** has a Wednesday 18 list (Piano lesson 17:00–17:45).
-- Your B connection was left temporarily failing. Repair it (`code=recorded-code-2`) or connect B again before journey 8.
-- **Backend items** from your run (the 15-minute model hang, "Europe/London" in the task text, the empty draft summary) are in your `journeys-frontend.md`. The coordinator reads both notes.
+- Add `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` (and `NORI_OAUTH_REDIRECT_URL`) to `.env.example`. Core reads them, but the example omits them, so a new machine cannot tell they are needed.
+- Acknowledge or reject r2.11 as published at `7f7387c` in your status note.
+- Optional: a way to remove a never-connected connection (disconnect answers "does not apply", `DELETE` is 405).
+- If you had a core running at 07:56, restart it (see above).
 
-## Latest: contracts r2.11 at `7f7387c` (acks needed from backend and frontend)
+## Needs from frontend
 
-Messaging from this session is paused again, so this note stands in for the message to the coordinator.
+- Restart your core if it is down (my `pkill`, 07:56).
+- State in your status note whether you accept r2.11 as published (the restart assignment).
 
-- **SignInPayload** requires `auth` (`oauth` or `app_password`):
-  - `oauth` requires `auth_attempt_id`, `authorize_url` and `expires_at`;
-  - `app_password` requires `connection_id` and forbids those three;
-  - for an MCP server, `integration_id` is `mcp` and `connection_id` is the server id.
-- **Resolutions** `signed_in` and `decline`. InteractionResponse accepts `{kind: "decline"}` without a digest; `signed_in` from a client is invalid.
-- **Fixtures:** 223 in all. The new sign-in fixtures round-trip through backend's Go interaction types (90 round trips). `make check` is green.
-- **Merged:**
-  - backend `1dac231`, `8063c59`, `d6ed945` (`0e3dd34` came along; `d6ed945` undoes it);
-  - frontend `ab2cd12`, `5a61de2`, `8f3e13b` (`eef25bb`).
-- **Next:** confirm the interim defaults are back and D-051 is fixed on my stack; A09 with a local fake OAuth MCP server.
+## Needs from the coordinator
 
-## Earlier
+- I added one row to `docs/assistant-coordination.md` on this branch (r2.11 in Contract revisions). Merge it, or tell me to move it to your branch, so the two copies don't diverge.
+- The restart section's "This machine" list assumes the Google OAuth client is in `.env` ("Integration confirms the Google OAuth client by name"). It is absent, and the model keys were empty. Please correct that list.
+- The first slice from Austin's backlog. I prepare, and add no cases, recordings or delivery work until it arrives.
 
-- **Both stacks restarted on `c46a1f7`:**
-  - recorded on 8083, worker `int-c46a1f7`, 12 live scenarios pass;
-  - real on 8085, worker `real-c46a1f7`; web 3213 → 8085.
-  - Both pin `NORI_AUTOMATION_UNATTENDED=confirm_writes` (the interim) while 42eecbd's decided defaults are sorted out.
-- **Web 3213** starts from `start-web-real.sh`, which sources a mode-600 env file built from the user record. No personal identifier appears in any command.
-- **Journey recordings at `041d5da`:**
-  - range-aware agendas (Fri 13, Sat 14, Mon 16);
-  - move, RSVP, instance and series;
-  - Gmail draft and send (repair with `code=recorded-mail-code`);
-  - account B (`code=recorded-code-2`);
-  - a one-time 401 on B's Wed 18 read.
+## Needs from Austin
 
-  Frontend has "go".
-- **42eecbd conflicts with the interim D2 and D4 defaults;** reported to the coordinator and backend.
-- **Tailscale** is installed; `tailscale serve` waits on Austin's own yes.
+All of these are in `docs/assistant-notes/austin-real-accounts-steps.md`:
 
-## Earlier (real-provider setup)
+- `OPENROUTER_API_KEY` in `.env`.
+- The Google OAuth client in `.env`. Check that the redirect URI `http://127.0.0.1:3213/api/v1/connections/oauth/callback` is on the client and that his address is a test user.
+- A "Nori test" calendar.
+- After integration confirms the authorize URL: his Google sign-in at http://127.0.0.1:3213/apps.
+- Open with him, by his list: D1 to D4, r2.11, which mailbox counts for email (HEY), and the first slice.
 
-- **Austin's steps:** `austin-real-accounts-steps.md` in this folder.
-- **Real-provider stack:**
-  - core on 8085 with database `nori_real`, Temporal namespace `nori-real`, worker `real-c9826e8`, local vault, no replay;
-  - web on 3213 → 8085 as `your Google address` (user `14faef10…`);
-  - the recorded stack stays on 8083 (worker `int-1d7be22`) and its 12 live scenarios pass.
-- **Keys and Google:** the VAPID pair is in the project .env. Google accepts the OAuth client and the redirect URI.
-- **Fixed at `1d7be22`:** the web OAuth callback refused the provider's cross-site navigation with 403, so no real OAuth sign-in could have completed.
-- **Merged:** backend 77bbf5d … d08ca3e, frontend 2fb8da4 … aa616ee.
-- **Verified on recordings:** Drive and A44 (files, and a reminder at its real due time).
-- **Ledger hygiene done** (`2ade1d9`).
-- **Next:**
-  - recordings for the joint journeys (second Google account, patch, RSVP, series, draft/send, 401 mid-call);
-  - the real runs after sign-in;
-  - Cloud Tasks wake against the emulator;
-  - push on 3213 and email through the connected account.
+## Restart the stacks
 
-## Earlier (backend 917ffb3, beb80b6, 4a57a0a, 5140563 merged at `6051676`)
-
-- `contracts-check` now round-trips every valid fixture whose schema is in `api.ContractTypes`: decode with unknown fields disallowed, re-encode, validate again. 86 pass (`729dc3f`). A gofmt-only fix followed the merge (`2ece042`).
-- **Verified:**
-  - D-034: two 429s are retried, then the read succeeds.
-  - D-035: the preference budget applies.
-  - D-036: the continuation reads the stopped task's five searches and doesn't redo them.
-  - D-037: no caveat.
-  - D-040: the server source is the installation.
-  - D-041: a side chat reads .ics.
-  - D-042: plain summaries, titles and iCloud reasons.
-  - D-043.
-- **Follow-ups:**
-  - The model request cut off by a SIGKILL is asked again and the task completes (cost `unknown`), after about 4 minutes.
-  - **D-045 (new):** a crashed nested read inside compose still waits about 4 minutes, because the compose call is a pending `control` operation and its own recovery window gates the retry.
-- **D-044** (no capability matrix for the packages) is open with backend.
-- **A24** now names exactly what Austin would register (Slack app, Dropbox app, Agent 365 plus an Entra app, Linear/GitHub/Notion tokens; Drive needs a Google OAuth client and isn't packaged).
-- **A28 not done locally, on purpose:**
-  - SMTP requires TLS checked against system roots. On macOS Go ignores `SSL_CERT_FILE`, so a local sink needs a keychain root, which is a security-settings change.
-  - Browser push goes through the vendor's push service, an outside service.
-  - Suggested to backend: a local-only test root setting (for example `NORI_DELIVERY_TEST_CA_FILE`, refused outside `NORI_CLOUD=local`) so both can run against local sinks.
-- Observation: one step's parallel calls overran a $0.004 limit to $0.026, because the limit is checked between steps.
-
-## Earlier (frontend bb77f1e merged at `16cd6ed`)
-
-- **D-043, integration's part, done:** calendar readbacks are pinned to the id their insert returns, so a readback can no longer match an unrelated recording. A Neighborhood potluck insert (`insert-potluck-ok`) and readback (`get-potluck`) cover the case where the model creates instead of importing. A19 was re-run end to end on the import tool (task `11b85739`) and passed. Steering the model to the import tool stays with backend.
-- **Numbering, following the coordination record:**
-  - D-040 is the same defect frontend reported (package MCP server source).
-  - D-041 (side chats read only CSV), D-042 (model-facing strings in the UI) and D-043 are recorded as numbered there.
-  - My capability-matrix defect is now **D-044**.
-
-## Earlier (backend 9d65da5, bf2efb2, bcdc61a merged at `9611cea`)
-
-- **A12 locally verified** on my local stdio server, which now has a resource, a template, a prompt and a `greet` tool:
-  - the four read tools were discovered and ran as reads, with no approval;
-  - the full elicitation loop works: the server asks via `InputRequests`, Nori answers cancel and hands the question to the task, the task asks the user and gets "Ada", approval is asked for the changed call, and the result is "Hello, Ada!".
-  - Note for backend and docs: on protocol 2026-07-28 the SDK refuses a server's old mid-call `elicitation/create`; servers must use `InputRequests`.
-- **A30 locally verified (recorded provider):** a 60 s watch delivered one inbox item, then two "No meaningful change." runs were quiet. The same-finding branch didn't come into play. The watch is paused.
-- **D-038 and D-039 verified. D-020 closed as not a defect:** example.com today has no h1–h3, and the IANA page's "Example Domains" was named exactly.
-- **W8 (Linear, GitHub, Notion):** catalog entries validate. Install without the network host is refused; with it, each installs ready and the server waits with credential missing, so nothing is sent before a token. Recorded as blocked for provider verification on a token only Austin can create. A24 stays blocked for Slack, Teams, Drive, Dropbox and OneDrive.
-- **New backend defects:**
-  - **D-040:** a package's MCP server records `source: user` instead of `{kind: installation, installation_id}` (`plugins.go` calls `MCP.Save` without a source); after uninstall it stays behind, disabled and unlinked.
-  - **D-044** (was my D-041): the W8 packages have no capability matrix; `/v1/integrations` lists only google, microsoft and icloud.
-- **Docs:** apps.html covers MCP resources, prompts, input requests and the three packages.
-
-## Earlier (after the coordinator's frontend-merge and iCloud-recording request)
-
-- Frontend `0b30953`, `0eccf8b` and `0d3bf5e` are merged at `2ebba24`.
-- The replay transport matches made-up basic-auth credentials and loads `recordings/<provider>/`. Point `NORI_PROVIDER_REPLAY` at `contracts/assistant/recordings` (the root, not `google/`).
-- `recordings/icloud/caldav.json` covers:
-  - a 401 rejected pair (`recorded.user@icloud.com` / `zzzz-zzzz-zzzz-zzzz`);
-  - the accepted pair `abcd-efgh-ijkl-mnop`;
-  - principal and calendar-home discovery;
-  - Home (writable), Family (read-only, 403 on query) and Reminders (VTODO, excluded);
-  - an event query, and a create with its 412 repeat.
-
-  Nothing is sent to Apple.
-- The new scenario `recorded-icloud-signin` passes. A rejected pair returns 400 `validation_failed` with core's text ("The provider rejected the Apple ID or app-specific password. Create a new app-specific password and try again."). Frontend shows its own copy.
-- A01 and A15 now cover iCloud on recordings. A create makes one PUT; Nori won't call it confirmed because a static readback can't carry the UID it derived (recording limit, not a defect).
-- A19's true duplicate was already exercised (`dentist-r1@example.com` exists as `recordedevt1`). Upload file for frontend: `contracts/assistant/recordings/samples/a19-duplicate-and-new.ics`.
-- **ID clash:** the coordinator's D-034/D-035 (frontend's stale "needs attention" and `/v1/library` ignoring `task_id`) are **D-038/D-039** in the acceptance record, because D-034–D-037 were already taken: retry, preference budget, continuation visibility, D-013 regression.
-
-## For the coordinator
-
-- Backend's ten commits are merged (`aee91bb`), plus a gofmt-only fix (`97b0308`).
-- Contracts r2.10 (`7a1e041`): `connect` and `repair` accept a write-only `username` and `password`, sent together, for `app_password` integrations (iCloud). r2.9's strict `ConnectionAction` gave the iCloud sign-in no shape. Acks needed from backend and frontend.
-- Re-checks verified: D-021, D-027, D-028, D-029, D-030, D-031, D-032, D-033.
-- Newly verified locally:
-  - A14: crash, divergence and approval inside a script.
-  - A19: ICS preview and import on new recordings.
-  - A38: new `cross-owner-attacks` scenario plus hand checks, including the Nori MCP endpoint.
-- Implemented with failures exercised: A41 (budget stop, continuation, feedback) and A43 (rate limit, outage, auth on recordings; unrelated work continues).
-- Microsoft and iCloud: implemented, blocked for provider verification.
-  - Microsoft needs an Entra app registration (`MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`).
-  - iCloud needs an Apple ID with an app-specific password.
-- Docs: `docs/site/apps.html` covers Microsoft, iCloud, app-password connect, compose scripts and MCP content versions.
-
-## For backend (new defects, reproductions in the record)
-
-| ID | Short |
-| --- | --- |
-| D-034 | One 429 (`Retry-After: 1`) or 503 on a safe read is not retried; plan asks for bounded backoff |
-| D-035 | `Preferences.budgets.task_usd` is saved but never applied to new tasks |
-| D-036 | A continuation can't read the stopped task's operations (`operation_read` scoped to its own task), so it asks to redo work |
-| D-037 | Unwarranted "can't independently confirm" caveat on a continued web-search task (D-013 on another path) |
-
-Still open from before: D-020 (browser h1), D-026 (sandbox-contained failure question).
-
-## For frontend
-
-- A19 recordings are in `contracts/assistant/recordings/google/calendar.json` (`ics-lookup-*`, `ics-import-*`). Test with an .ics carrying UID `dentist-r1@example.com` (existing, `recordedevt1`) and UID `potluck-2026@example.com` (new). Task `a78f2a0a` on the integration stack shows the expected preview and import.
-- r2.10 for the iCloud sign-in form: `{action: "connect", username, password}`. A rejected pair returns 400 `validation_failed`, with a message telling the user to create a new app-specific password.
-
-## Local stack
-
-- Core 8083 and worker `int-7a1e041` (current), both on the normal recordings.
-- User A's recorded Google connection `conn_8e14…` is ready again after the auth-failure check. User A's preferences are restored (`task_usd` 5).
-- Computer container on 8097 for user C. Web on 3213 as user A.
+Commands are in `scripts/local-stacks/README.md`. Drop `NORI_STACK_NO_MODEL=1` once `.env` has both model keys. Logs: `~/.nori-stacks/<stack>/{core,worker,web}.log`.
