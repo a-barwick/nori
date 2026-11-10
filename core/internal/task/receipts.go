@@ -50,7 +50,7 @@ func (a *Activities) waitForReceipt(ctx context.Context, runID string, lookup fu
 }
 
 func (a *Activities) recoverModelRef(ctx context.Context, runID string, intent state.TaskModelCheckpoint) (RefModelOutcome, error) {
-	interrupted := RefModelOutcome{Ref: intent.Parent, Failure: "The model request was interrupted before its result was saved.", Interrupted: true}
+	interrupted := RefModelOutcome{Ref: intent.Parent, Failure: "The model request was cut off before its answer was saved (Nori restarted or the request ran out of time), so the task stopped. This step changed nothing; ask again to retry.", Interrupted: true}
 	data, err := json.Marshal(interrupted)
 	if err != nil {
 		return RefModelOutcome{}, classified(err)
