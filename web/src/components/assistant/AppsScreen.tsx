@@ -277,6 +277,8 @@ function Disconnect({ connection, onDisconnect, busy }: { connection: Connection
 }
 
 function ConnectionDetails({ connection, integration }: { connection: Connection; integration: Integration }) {
+  // Capabilities this account hasn't granted; each can be added by signing in again for it.
+  const notAllowed = integration.capabilities.filter((capability) => capability.supported && !(connection.capabilities ?? []).includes(capability.id));
   const { has } = useAssistant();
   const resources = useResource<List<Resource>>(`/connections/${encodeURIComponent(connection.id)}/resources`, { poll: 0 });
   const preferences = useResource<Preferences>(has("preferences") ? "/preferences" : null, { poll: 0 });
@@ -316,6 +318,14 @@ function ConnectionDetails({ connection, integration }: { connection: Connection
       <h4 className="mb-2 text-meta font-semibold">Granted access</h4>
       <p className="text-meta text-ink-2 [overflow-wrap:anywhere]">{scopeList(connection.granted_scopes) || "None"}</p>
     </div>
+    {integration.auth === "oauth" && notAllowed.length > 0 && <div>
+      <h4 className="mb-2 text-meta font-semibold">Not allowed yet</h4>
+      <ul className="space-y-1">{notAllowed.map((capability) => <li key={capability.id} className="flex min-h-11 items-center gap-3 text-meta">
+        <span className="min-w-0 flex-1">{capability.title}</span>
+        <Button size="sm" variant="quiet" className="text-accent-text!" disabled={!!action.pending} aria-label={`Allow for ${connection.account?.label ?? "this account"}: ${capability.title}`}
+          onClick={() => void action.run(`allow-${capability.id}`, () => startSignIn(connection, "repair", `/apps/${encodeURIComponent(integration.id)}`, [...(connection.capabilities ?? []), capability.id]))}>{action.pending === `allow-${capability.id}` ? "Opening sign-in…" : "Allow"}</Button>
+      </li>)}</ul>
+    </div>}
     {action.error && <Notice tone="danger">{action.error}</Notice>}
   </div>;
 }
