@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/mail"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -174,7 +175,7 @@ func (mailAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepar
 			verb = "Edit draft"
 		}
 		return preparedWithKeys{
-			Summary: fmt.Sprintf("%s %q to %s (not sent)", verb, invoke.String(args, "subject"), strings.Join(recipients, ", ")),
+			Summary: draftSummary(verb, draftSubject(ctx, call), recipients),
 			Effect:  extensions.EffectReversibleWrite, Recipients: recipients,
 			Spec: map[string]string{"to": strings.Join(to, ","), "cc": strings.Join(cc, ","), "bcc": strings.Join(bcc, ","),
 				"subject": invoke.String(args, "subject"), "body_sha256": hex.EncodeToString(sum[:]), "reply_to": invoke.String(args, "reply_to_message_id"),
@@ -366,6 +367,45 @@ func labelIDs(ctx context.Context, service *gmail.Service, add, remove []string)
 	return addIDs, removeIDs, err
 }
 
+// draftSubject is the subject the draft will carry: the one given, or for a reply the original's with "Re: ", as
+// saveDraft writes it. It reads the original only for the summary; when that fails the summary says it is a reply.
+func draftSubject(ctx context.Context, call invoke.Call) string {
+	subject := invoke.String(call.Args, "subject")
+	reply := invoke.String(call.Args, "reply_to_message_id")
+	if subject != "" || reply == "" || call.Grant == nil {
+		return subject
+	}
+	service, err := gmailService(ctx, call)
+	if err != nil {
+		return ""
+	}
+	original, err := service.Users.Messages.Get("me", reply).Format("metadata").MetadataHeaders("Subject").Context(ctx).Do()
+	if err != nil {
+		return ""
+	}
+	return replySubject(header(original.Payload.Headers, "Subject"), invoke.String(call.Args, "mode"))
+}
+
+func replySubject(original, mode string) string {
+	if !strings.HasPrefix(strings.ToLower(original), "re:") && mode != "forward" {
+		return "Re: " + original
+	}
+	return original
+}
+
+// draftSummary never prints an empty subject or recipient list (frontend saw `Draft "" to  (not sent)`).
+func draftSummary(verb, subject string, recipients []string) string {
+	title := "(no subject)"
+	if subject != "" {
+		title = strconv.Quote(subject)
+	}
+	to := "with no recipients yet"
+	if len(recipients) > 0 {
+		to = "to " + strings.Join(recipients, ", ")
+	}
+	return fmt.Sprintf("%s %s %s (not sent)", verb, title, to)
+}
+
 func encodeHeader(value string) string { return mime.QEncoding.Encode("utf-8", value) }
 
 func saveDraft(ctx context.Context, service *gmail.Service, call invoke.Call, p invoke.Prepared, operation string) invoke.Result {
@@ -381,10 +421,7 @@ func saveDraft(ctx context.Context, service *gmail.Service, call invoke.Call, p 
 		inReplyTo = header(original.Payload.Headers, "Message-Id")
 		references = strings.TrimSpace(header(original.Payload.Headers, "References") + " " + inReplyTo)
 		if subject == "" {
-			subject = header(original.Payload.Headers, "Subject")
-			if !strings.HasPrefix(strings.ToLower(subject), "re:") && invoke.String(args, "mode") != "forward" {
-				subject = "Re: " + subject
-			}
+			subject = replySubject(header(original.Payload.Headers, "Subject"), invoke.String(args, "mode"))
 		}
 	}
 	var raw strings.Builder
@@ -413,17 +450,18 @@ func saveDraft(ctx context.Context, service *gmail.Service, call invoke.Call, p 
 		}
 		return invoke.Result{Outcome: "uncertain", Err: classify(err)}
 	}
-	return draftResult(call, draft, p)
+	return draftResult(call, draft, p, subject)
 }
 
-func draftResult(call invoke.Call, draft *gmail.Draft, p invoke.Prepared) invoke.Result {
+// subject is the subject the draft was saved with, which for a reply can differ from the arguments.
+func draftResult(call invoke.Call, draft *gmail.Draft, p invoke.Prepared, subject string) invoke.Result {
 	conn := connectionID(call)
 	return invoke.Result{Outcome: "confirmed", ProviderRefs: []state.ProviderRef{{ConnectionID: conn, Kind: "mail_draft", ProviderID: draft.Id,
 		ProviderRevision: draft.Message.Id, URL: "https://mail.google.com/mail/u/0/#drafts"}},
 		Content: map[string]any{"summary": "Saved a draft; it has not been sent.", "draft": map[string]any{
 			"ref":    map[string]any{"connection_id": conn, "kind": "mail_draft", "provider_id": draft.Id, "provider_revision": draft.Message.Id},
 			"sender": map[string]any{"email": call.Grant.Connection.Account.Label}, "to": emails(p.Spec["to"]), "cc": emails(p.Spec["cc"]),
-			"bcc": emails(p.Spec["bcc"]), "subject": invoke.String(call.Args, "subject"), "body_text": invoke.String(call.Args, "body"),
+			"bcc": emails(p.Spec["bcc"]), "subject": subject, "body_text": invoke.String(call.Args, "body"),
 			"attachment_ids": []string{}, "state": "draft",
 		}}}
 }
@@ -456,7 +494,7 @@ func (a mailAdapter) Reconcile(ctx context.Context, call invoke.Call, p invoke.P
 		if err != nil {
 			return invoke.Result{}, false
 		}
-		return draftResult(call, draft, p), true
+		return draftResult(call, draft, p, draftSubject(ctx, call)), true
 	case "drafts.send":
 		id := strings.Trim(p.Spec["message_id"], "<>")
 		if id == "" {

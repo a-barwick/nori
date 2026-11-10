@@ -1,6 +1,7 @@
 package google
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base32"
@@ -188,7 +189,7 @@ func (calendarAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Pr
 		return invoke.Prepared{Summary: "Read an event", Effect: extensions.EffectRead,
 			Resources: []state.ProviderRef{{ConnectionID: conn, Kind: "calendar_event", ProviderID: invoke.String(args, "event_id")}}}, nil
 	case "events.insert":
-		return prepareInsert(call)
+		return prepareInsert(ctx, call)
 	case "events.patch", "events.delete", "events.respond":
 		return prepareChange(ctx, call, operation)
 	case "ics.preview", "ics.import":
@@ -225,7 +226,34 @@ func sendUpdatesValue(args map[string]any) string {
 	return value
 }
 
-func prepareInsert(call invoke.Call) (invoke.Prepared, error) {
+// calendarLabel names a calendar the way the user sees it in Google Calendar, for approval summaries. The primary
+// calendar is "your main calendar"; another is its (possibly overridden) title. When the list cannot be read the ID is
+// used, so a summary never blocks the call.
+func calendarLabel(ctx context.Context, call invoke.Call, calendarID string) string {
+	if calendarID == "primary" {
+		return "your main calendar"
+	}
+	if call.Grant != nil {
+		if service, err := calendarService(ctx, call); err == nil {
+			if list, err := service.CalendarList.List().MaxResults(250).Context(ctx).Do(); err == nil {
+				for _, item := range list.Items {
+					if item.Id != calendarID {
+						continue
+					}
+					if item.Primary {
+						return "your main calendar"
+					}
+					if title := cmp.Or(item.SummaryOverride, item.Summary); title != "" {
+						return fmt.Sprintf("the %q calendar", title)
+					}
+				}
+			}
+		}
+	}
+	return calendarID
+}
+
+func prepareInsert(ctx context.Context, call invoke.Call) (invoke.Prepared, error) {
 	args := call.Args
 	when, err := parseEventTime(invoke.String(args, "start"), invoke.String(args, "end"), invoke.String(args, "timezone"))
 	if err != nil {
@@ -243,7 +271,7 @@ func prepareInsert(call invoke.Call) (invoke.Prepared, error) {
 		effect = extensions.EffectSensitiveSend
 	}
 	title := invoke.String(args, "title")
-	summary := fmt.Sprintf("Create %q on %s, %s", title, calendarID, when)
+	summary := fmt.Sprintf("Create %q on %s, %s", title, calendarLabel(ctx, call, calendarID), when)
 	if len(attendees) > 0 {
 		summary += ", inviting " + strings.Join(attendees, ", ")
 	}
