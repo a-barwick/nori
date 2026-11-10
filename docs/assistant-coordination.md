@@ -88,6 +88,12 @@ Second assignments (coordinator's allocation, all on the path to a real Google r
 | Backend | Add the Google client and redirect variables to `.env.example`. Fix the two summaries frontend found on the Google path: the calendar named by raw id in an approval, and the empty draft summary. |
 | Frontend | Waits for the model key, then journeys 3 to 8 as rehearsal and the approval and result screens it could not reach. |
 
+### After the second turn (2026-11-10)
+
+- Integration `aecc338`: coordinator, frontend `f7ed24a` and backend `bd5a7d6` merged, including the hosted stdio WIP `a62a26e` labelled unverified; `make check` and `go test ./...` green; 12 of 12 scenarios on 8083, still without a model. The model-backed restart and the Google authorize-URL check wait on `OPENROUTER_API_KEY` and the Google client, both still missing from `.env`.
+- Backend `ae7ac07`: `.env.example` names the Google client and redirect; calendar approvals name the calendar; draft summaries are never empty. Verified with the model stub and recorded Google responses, not real Google. Integration is asked to merge `11fdcfd` to `ae7ac07`.
+- D-056 (backend found, open, held by the coordinator): a reply draft is saved with no recipients unless the model supplies them. The fix would address replies from the original message, which sends mail to other people; Austin's limit is that email goes only to him. Held until the first slice says whether replies are in it, and then raised with Austin if they are.
+
 ## Baseline commits
 
 | What | Commit |
