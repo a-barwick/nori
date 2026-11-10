@@ -95,6 +95,8 @@ function seed(): Store {
         { ...fixture("permissions/interaction.question.valid.json"), task_title: "Book the dentist and invite Alex" },
         { ...fixture("permissions/interaction.account-selection.valid.json"), status: "resolved", resolution: { kind: "choose_account", connection_id: google.id, at: hours(-1) }, task_title: "Book the dentist and invite Alex" },
         { ...fixture("permissions/interaction.sign-in.valid.json"), task_id: "task_12", task_title: "Check the school portal for this term's dates", expires_at: hours(1) },
+        { ...fixture("permissions/interaction.sign-in-app-password.valid.json"), task_id: "task_12", task_title: "Check the school portal for this term's dates" },
+        { ...fixture("permissions/interaction.sign-in-mcp-signed-in.valid.json"), task_title: "Check the school portal for this term's dates" },
       ],
       work: [
         { task_id: "task_9", title: "Book the dentist and invite Alex", status: "running", bucket: "needs_you", instruction_revision: 3, origin: { kind: "conversation", conversation_id: "assistant" }, interaction_ids: ["int_5", "int_1"], progress: "Found a 10:00 slot on Tuesday.", operations: { total: 3, uncertain: 0, failed: 0, submitted: 0 }, result_ids: [], cost: { status: "known", amount_usd: 0.12, budget_usd: 2 }, started_at: hours(-1), cancel_requested: false },

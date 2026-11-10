@@ -1,49 +1,84 @@
 # Frontend status (nori-frontend)
 
-Branch `claude/nori-assistant-frontend-78149f`, head `bb77f1e` (integration `9611cea` merged in). Contract adopted: r2.10 (`7a1e041`).
+Updated 2026-11-10, first turn after the restart. Branch `claude/nori-assistant-frontend-78149f`, with integration `54c6b91` merged in. The first run's version of this note is in git history (`ea53ff9` and earlier).
 
-## Where things are
+**Provider verified: 0.** Nothing in this note ran against a real provider. "Recorded" means the hand-written recordings in `contracts/assistant/recordings`; they show screens and Nori's flow, not Google. "Fixture" means `?fixtures=1` in the web, which is display only.
 
-| Area | Code | State |
+## What ran
+
+- **Branch.** Switched the worktree to `claude/nori-assistant-frontend-78149f` and deleted the scratch branch. Merged integration twice, at `e290c5f` (fast-forward) and at `54c6b91`.
+- **Stack** (core 8082, web 3212, database `nori_frontend`, namespace `nori-frontend`, queue `nori-tasks-frontend`, replay on).
+  - Restart commands: `docs/assistant-notes/frontend-stack.sh`. It holds no secret and reads `.env` through `NORI_ENV_FILE`. Logs, the dev vault and artifacts go to `$TMPDIR/nori-frontend-stack`.
+  - Test user: `frontend.test@example.com`, user `1e815713…`, America/Los_Angeles. It is not a real address.
+  - Worker build `fe-e290c5f`, set current with the `temporal` CLI inside the Temporal container.
+  - **This machine's `.env` has no model key** (`OPENAI_API_KEY` and `OPENROUTER_API_KEY` are both empty; I checked names only). The stack runs with `NORI_FE_NO_MODEL=1` placeholders, so screens load but every chat reply and task fails at the model call. Chat shows "I couldn't write a conversation reply: model provider returned HTTP 401." Integration's `scripts/local-stacks/stack.sh` (`NORI_STACK_NO_MODEL=1`) also sends outbound traffic to a dead proxy, so it is the better pattern. My script does not do that.
+- **Checks on the merged tree:** `bun install`, `bun run contracts:check` (types current at r2.11), `tsc --noEmit` and `eslint src`. All pass.
+
+## r2.11: accepted as published
+
+Frontend accepts r2.11 as published at `7f7387c`. It is open with Austin, so this acknowledgement is frontend's and is not final.
+
+- The card needed exactly what r2.11 gives:
+  - `auth` says whether to open a URL or show the app-password form;
+  - `integration_id: "mcp"` with the server id says to sign the server in, not a connection;
+  - `signed_in` lets a resolved card say what happened;
+  - `{kind: "decline"}` without a digest matches a card that has no action to digest.
+- Adopted in `ca49e42`. The sign-in card reads `payload.auth`; for `mcp` it reads `/v1/mcp/{id}` and, when the link has expired, asks for a fresh one through `/v1/mcp/{id}/actions` `sign_in`. A resolved card shows "Signed in", or "Not now" for a declined sign-in. Not now sends `{kind: "decline"}`. Fixture check: the Google and iCloud cards render, and iCloud's Sign in opens the app-password form.
+- **Not objections, for a later revision:**
+  - The MCP `sign_in` action takes no `return_to`, so a card that refreshes an expired MCP link returns to the server's page, not the task. That is a route on `/v1/mcp`, not part of r2.11.
+  - **Backend emits a field r2.11 forbids:** `core/internal/task/external.go` `signIn` puts `reason` (the health code) into the sign-in payload, and `SignInPayload` has `additionalProperties: false`. The web ignores `reason`. Smallest change: backend drops `reason`, or a revision adds it.
+
+## Journeys 3 to 8 (rehearsal on recordings): not run
+
+Blocked: no model key on this machine (see What ran). Every journey needs model turns. Integration's recording fixes (`d2e9e61`, `aa5f301`) are on my branch and unexercised by me. The first run's results stay in `journeys-frontend.md`.
+
+| # | Journey | Result |
 | --- | --- | --- |
-| Shell, nav, badges, focus on navigation | `web/src/components/assistant/AppShell.tsx` | Locally verified (8082 and 8083) |
-| Chat (existing conversation + side chats), typed cards | `web/src/components/runtime/NoriApp.tsx`, `assistant/CardView.tsx` | Chat locally verified; side-chat task cards verified against backend 938d665; other cards wait for backend card parts |
-| Work list and task detail (steer, stop) | `assistant/WorkScreen.tsx` | Locally verified on /v1/work and on the legacy snapshot (ask → task → stop) |
-| Interactions (question, approval, account, sign-in, takeover) | `assistant/InteractionCard.tsx` | Question answered live through /v1/interactions/{id}/responses; approval, account choice and sign-in not yet raised by a live task |
-| Apps, plugins, MCP | `assistant/AppsScreen.tsx` | Apps catalog/detail render live from 8083; sign-in round trip not yet run; MCP add server and write-only token verified against a6c0e65 (token never in browser storage or DOM); plugins (install, off/on, pin, uninstall) and skills (create, version, export, import, run, delete) verified live; Connected clients (A13) verified: token works on /mcp, 401 after revoke |
-| Routines, Goals | `assistant/RoutinesScreen.tsx`, `GoalsScreen.tsx` | Locally verified against backend 805b534: preview, create, pause, resume, snooze, run now; goal create, pause, complete |
-| Library and search | `assistant/LibraryScreen.tsx` | Search verified live against a6c0e65 (tasks and chat messages with jump links); library list live |
-| Settings | `assistant/SettingsScreen.tsx` | Permissions, Preferences (two-tab conflict), Memory (edit, forget) verified live; notification destinations (r2.9): email add, send code, remove verified live (send code returns provider_unavailable locally, shown plainly); this-device push and real delivery blocked on VAPID keys and a mail provider; history fixture-backed |
-| Computer | `assistant/ComputerScreen.tsx` | Verified live with my own computer container (port 8098): take over, more time, hand back resumes the waiting task; shows the task's latest screenshot (no live screen feed in the core) |
-| Composer | `runtime/RuntimeComposer.tsx`, `lib/assistant/voice.ts` | Server accept list (incl. .ics), upload progress and cancel, drag/drop, paste, saved draft verified live. Dictation verified with a scripted SpeechRecognition: interim words, final words into the draft (nothing sent), stop, blocked-mic message; read-aloud speaks a new reply, and starting dictation or turning read-aloud off cancels it. Real microphone needs Austin's device |
+| 3 | Move lunch with Priya | not run (no model key) |
+| 4 | Accept the design review | not run (no model key) |
+| 5 | Standup instance and series | not run (no model key) |
+| 6 | Allow send, find the reservation, reply and send | Allow path not re-run; the task steps were not run (no model key) |
+| 7 | Reminder that follows a moved event | not run (no model key) |
+| 8 | Repair mid-task on account B | not run (no model key) |
 
-## How to run
+## Austin's path: walked up to Google's page
 
-- Fixtures: open any screen with `?fixtures=1` (dev only, served by `/api/fixtures/v1`). Never evidence.
-- Live: web reads `/api/v1/<family>` through `assistantRoute` in `web/src/lib/runtime/forward.ts`; a screen switches to live data when `/v1/capabilities.assistant_features.<family>` is true.
-- Types: `cd web && bun run contracts` regenerates `src/lib/contracts/assistant.ts`; `bun run contracts:check` fails when stale.
-- After merging, `rm -rf web/.next` if the dev server reload-loops.
+Walked on my recorded stack with a made-up Google client. Clicking Connect reached accounts.google.com, which showed `invalid_client` as expected. No account was chosen and nothing was signed in. To see the screens after a connection, I sent the recorded code to the callback in place of Google's redirect. Fixed in `web/` (`666aeff`, `74217bb`):
 
-## Open items
+1. **Before connecting, the page looked as if Connect grants everything.** Every capability had a green check, but Connect asks Google only for the read scopes (core `scopesFor`). Now only the Read items are checked before the first account, with a line saying changes and sends need a second Google sign-in.
+2. **An abandoned sign-in looked like an account.** After backing out of Google's page, the connection showed as "Google · Connecting" with "Add another account". It is now treated as unfinished and reused by the next Connect.
+3. **"Connected." next to "Needs more access".** If Google grants less than was asked (its consent screen lets Austin untick items), the return banner now says so, in the warning tone.
+4. **Approval for a send ran the message into the header.** A send's summary is `Send "subject" from … to …:` followed by the body on new lines; the card collapsed it into one line. The lines are now kept.
+5. **The more-access sign-in didn't say what it asks for.** When a task needs a capability that hasn't been granted, core raises a sign-in ("Give Nori more access to … so it can continue this task.") with `requested_scopes`. The card now names the capability, for example "Google will ask you to allow: Create and change events, invitations and replies."
 
-- ICS: live on 78cf85f from a fresh chat (preview called, completed, no false duplicates). The long main chat still repeats stale "needs attention"; reported to backend. A real duplicate match has not been exercised (the recordings have no matching iCalUID).
-- 0b30953: connection state reads status and missing_scopes; Allow more access requests the missing capabilities; task result renders markdown; Saved filters by result_ids (core ignores ?task_id=).
-- 0eccf8b: action lists hide capability_load; working-hours inputs fit on a phone.
-- Microsoft renders Unavailable in the catalog (9acf840 merged).
-- Blocked: push/email delivery (VAPID keys, mail provider: Austin), real Google provider (D1), dictation with a mic, real phone + screen reader (A42), shell in my computer container (no cgroup delegation in an unprivileged container).
+Points that need words to Austin, not code (for `austin-real-accounts-steps.md`):
 
-- Local stack note: `nori-local` does not host the task worker. Run `nori-worker` with `TEMPORAL_BUILD_ID` and set it current, or tasks are accepted but never run.
-- Live checks this round: plugin update and rollback (uploaded deepwiki/mcp 1.1.0), Google connect through the web's callback with NORI_PROVIDER_REPLAY, .ics read and listed (duplicate check blocked by backend scope gating), memory edit/forget, two-tab conflict, offline retry reusing the request ID, drag/drop and paste.
+- Connect asks for calendar, Gmail, contacts and Drive **read** access in one consent. Gmail and Drive read are restricted scopes, so with an unverified OAuth client Google is likely to show "Google hasn't verified this app", and Austin must be listed as a test user. I have not seen this screen; it is an expectation.
+- The first calendar write or send asks him to sign in to Google again from a card in Work → Needs you, or from Apps → Google → account details → Allow. The task waits and resumes by itself afterwards.
+- Without push or email delivery configured, nothing tells him a card is waiting. He has to look at the Needs you badge in the sidebar and header.
+- **Finding the result afterwards (unverified here):** Work → Finished → the task, which shows the result and its actions. Also the task card in the chat.
 
-## Round: r2.10, A19, W8, copy pass
-- iCloud sign-in (0d3bf5e): rejected pair shows Apple's refusal in plain words; accepted pair connects; the password is in no browser storage and no response. Verified against the iCloud recordings.
-- A19 from the main chat: preview marked Dentist as existing and potluck as new; only the potluck was written (calendar_event_create, not ICS import). The readback (calendar_event_get) returned an unrelated recorded event, so the task ended Incomplete. Side chats read CSV only (core design), so .ics checks run in the main chat.
-- W8 (bf2efb2): Linear, GitHub and Notion are in the catalog; Linear installs (review shows mcp.linear.app) and its server asks for a token. It is bearer-token auth, not OAuth. The core reports plugin-contributed servers with source kind "user".
-- Copy pass (bb77f1e): Routines renamed Automations in the UI (paths stay /routines); cut redundant lines under titles and helper text; "Access:" with "any action" for unknown effects; plural tool counts; plain step names; Activity skips tool calls already listed under Actions.
+Not verified here, because each needs a running task: the approval card's live text for a calendar write and a send, the more-access card raised by a real task, and the result screens.
 
-## Round: accessibility, Drive (frontend list complete)
-- Contrast (aa616ee): danger #cc1f33, warning #946000, tertiary #6e6880 meet 4.5:1 on their backgrounds; axe-core shows 0 violations on the audited screens at desktop and phone width. Chat has a heading.
-- Keyboard (7e1f76c): skip link (message box on Chat, title elsewhere); focus returns to the control, or the one that replaced it, after an action. Walked in the built-in browser: Work, Chat, Preferences, New automation, automation Pause/Resume (announced).
-- Drive (93a47e0, 817214d): "Allow" per capability on a single signed-in account; Drive granted through the recorded exchange (code recorded-drive-code); a chat search found and read the Lisbon plan, with source links to the Doc and the packing list.
-- Inbox lines show plain text (83357c9).
-- Waiting: backend d08ca3e (D-045) and aa802b2 (D-042: side-chat files, times in the user's zone) are not on integration yet. D-042 still shows ISO times in the iCloud create summary and the automation run's saved title.
+## Needs
+
+### From Austin (through the coordinator)
+
+- A model key in `.env`: `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` for the configured task model. Without it no journey or task runs on any stack.
+- The Google OAuth client (`GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`) for the real-provider stack. Integration lists these too.
+
+### From backend
+
+- Drop `reason` from the sign-in payload in `task/external.go` `signIn`, or propose adding it to the contract (r2.11 forbids it).
+- The calendar approval summary names the calendar by its raw id (`Create "…" on primary, …`). On Austin's dedicated test calendar this will be a long `…@group.calendar.google.com` id. It should use the calendar's name. Seen in `connectors/google/calendar.go` `prepareInsert`; no task id, because no task ran.
+- Still open from the first run: D-053 (model call with no time limit), "Europe/London" in task text when Preferences say America/Los_Angeles, and the empty draft summary (`Draft "" to  (not sent)`). Not re-checked this turn.
+- A chat whose first reply fails shows the failure above the user's first message (same minute). Seen once on 8082 with the placeholder key; not investigated.
+
+### From integration
+
+- Nothing blocking. Once a model key exists I re-run journeys 3 to 8 on my stack, or on `scripts/local-stacks/stack.sh recorded` if that is preferred.
+
+### From the coordinator
+
+- Record frontend's acknowledgement of r2.11 (above) in the Contract revisions table. It stays open with Austin.
+- Decide whether frontend should switch to `scripts/local-stacks/stack.sh` with a third stack entry instead of keeping `frontend-stack.sh`.

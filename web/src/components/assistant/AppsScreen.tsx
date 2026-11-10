@@ -161,10 +161,15 @@ export function AppDetailScreen({ id }: { id: string }) {
   const item = integration.data;
   if (!item) return <Screen title="App" back="/apps"><Failure error={integration.error ?? "This app isn’t in the catalog."} onRetry={() => void integration.reload()} /></Screen>;
   const mine = (connections.data?.items ?? []).filter((connection) => connection.integration_id === item.id);
-  // A connection that never finished sign-in isn't an account; it is reused by the next Connect.
-  const accounts = mine.filter((connection) => connection.status !== "disconnected" && !(connection.status === "not_connected" && !connection.account?.provider_id));
-  const unfinished = mine.find((connection) => connection.status === "not_connected" && !connection.account?.provider_id);
+  // A connection that never finished sign-in (not connected, or a sign-in left open or abandoned on the provider's
+  // page) isn't an account; it is reused by the next Connect. App-password connections have no provider_id step.
+  const signedIn = (connection: Connection) => !!connection.account?.provider_id || item.auth !== "oauth" && connection.status !== "not_connected";
+  const accounts = mine.filter((connection) => connection.status !== "disconnected" && signedIn(connection));
+  const unfinished = mine.find((connection) => connection.status !== "disconnected" && !signedIn(connection));
   const result = params.get("result");
+  // The provider may grant less than was asked (Google lets the user untick items on its consent screen).
+  const returned = mine.find((connection) => connection.id === params.get("connection"));
+  const partial = !!returned && healthOf(returned) === "needs_more_access";
   const add = () => action.run("add", async () => {
     const connection = unfinished ?? (await mutate<Connection>("/connections", { request_id: newRequestID(), expected_revision: 0, value: { integration_id: item.id, title: item.title, selected_resource_ids: [] } })).resource as Connection;
     await startSignIn(connection, "connect", `/apps/${encodeURIComponent(item.id)}`);
@@ -172,10 +177,11 @@ export function AppDetailScreen({ id }: { id: string }) {
   const line = item.availability !== "available" ? item.availability_reason : undefined;
   // With one signed-in account, a capability it hasn't granted can be added by signing in again for it.
   const single = item.auth === "oauth" && accounts.length === 1 && accounts[0].account?.provider_id ? accounts[0] : undefined;
+  const firstConnect = item.auth === "oauth" && item.availability === "available" && accounts.length === 0;
   const canAllow = (capability: Integration["capabilities"][number]) => !!single && capability.supported && !(single.capabilities ?? []).includes(capability.id);
   return (
     <Screen title={item.title} back="/apps" line={line} actions={<AppIcon icon={item.icon} />}>
-      {result && <div className="mb-6"><Notice tone={result === "connected" ? "ok" : result === "cancelled" ? "neutral" : "danger"}>{result === "connected" ? "Connected." : result === "cancelled" ? "Sign-in was cancelled. Nothing changed." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
+      {result && <div className="mb-6"><Notice tone={result === "connected" ? (partial ? "warning" : "ok") : result === "cancelled" ? "neutral" : "danger"}>{result === "connected" ? (partial ? `Connected, but ${item.title} didn’t grant everything Nori asked for. Nori can use what was granted; Allow more access asks again.` : "Connected.") : result === "cancelled" ? "Sign-in was cancelled. Nothing changed." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
       {action.error && <div className="mb-6"><Notice tone="danger">{action.error}</Notice></div>}
       <Section title="Accounts" actions={item.availability === "available" && (accounts.length === 0 || item.multiple_accounts) ? <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => item.auth === "app_password" ? setPasswordForm(true) : void add()}><Plus size={15} aria-hidden />{action.pending ? "Opening sign-in…" : accounts.length ? "Add another account" : "Connect"}</Button> : undefined}>
         {passwordForm && <div className="mb-3 rounded-card border border-hairline bg-surface p-4"><PasswordSignIn integration={item} connection={unfinished} onDone={() => setPasswordForm(false)} /></div>}
@@ -183,7 +189,9 @@ export function AppDetailScreen({ id }: { id: string }) {
           : <Empty>{item.availability === "available" ? `No ${item.title} account yet.` : item.availability_reason ?? "Not available yet."}</Empty>}
       </Section>
       <Section title="What Nori can do">
-        <Rows>{item.capabilities.map((capability) => <Row key={capability.id} leading={!capability.supported ? <CircleSlash size={18} className="text-ink-3" aria-hidden /> : canAllow(capability) ? <Circle size={18} className="text-ink-3" aria-hidden /> : <Check size={18} className="text-[#1c7a43]" aria-hidden />}
+        {/* Connect asks the provider for the read capabilities only (core scopesFor); anything else is a second sign-in. */}
+        {firstConnect && <p className="mb-2 text-meta text-ink-2">Connect asks {item.title} only for the Read items. Nori asks again, with a new {item.title} sign-in, before it can change or send anything.</p>}
+        <Rows>{item.capabilities.map((capability) => <Row key={capability.id} leading={!capability.supported ? <CircleSlash size={18} className="text-ink-3" aria-hidden /> : canAllow(capability) || firstConnect && capability.effect !== "read" ? <Circle size={18} className="text-ink-3" aria-hidden /> : <Check size={18} className="text-[#1c7a43]" aria-hidden />}
           title={capability.title} detail={capability.supported ? undefined : capability.reason}
           trailing={<>{canAllow(capability) && <Button size="sm" variant="quiet" className="text-accent-text!" disabled={!!action.pending} aria-label={`Allow: ${capability.title}`}
             onClick={() => void action.run("allow", () => startSignIn(single!, "repair", `/apps/${encodeURIComponent(item.id)}`, [...(single!.capabilities ?? []), capability.id]))}>{action.pending === "allow" ? "Opening sign-in…" : "Allow"}</Button>}
