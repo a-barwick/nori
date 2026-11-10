@@ -60,8 +60,19 @@ func (s *server) sandboxRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "sandbox run needs a task and a program", 400)
 		return
 	}
-	if req.Network != "none" {
-		http.Error(w, "only network-free sandboxes are supported", 400)
+	switch req.Network {
+	case "none":
+	case "allowlist":
+		if err := validEgressHosts(req.AllowHosts); err != nil {
+			http.Error(w, "invalid allowlist: "+err.Error(), 400)
+			return
+		}
+		if !egressSupported() {
+			http.Error(w, "this computer cannot enforce an egress allowlist, so the program did not run", 503)
+			return
+		}
+	default:
+		http.Error(w, "network must be none or allowlist", 400)
 		return
 	}
 	if !sandboxSupported() {
@@ -105,18 +116,43 @@ func (s *server) sandboxRun(w http.ResponseWriter, r *http.Request) {
 	wall := time.Duration(max(min(req.WallMS, 300_000), 100)) * time.Millisecond
 	ctx, cancel := context.WithTimeout(operation, wall)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, req.Argv[0], req.Argv[1:]...)
+	argv := req.Argv
+	var proxy *egressProxy
+	if req.Network == "allowlist" {
+		// The proxy runs here, outside the namespace; the shim inside forwards to it and starts the program.
+		socket := filepath.Join(root, egressSocketName)
+		if proxy, err = startEgressProxy(socket, req.AllowHosts); err != nil {
+			http.Error(w, "the egress proxy could not start, so the program did not run", 503)
+			return
+		}
+		self, err := os.Executable()
+		if err != nil {
+			proxy.close()
+			http.Error(w, "the egress shim is unavailable, so the program did not run", 503)
+			return
+		}
+		argv = append([]string{self, "sandbox-shim", socket, "--"}, req.Argv...)
+	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = root
 	cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + root, "TMPDIR=" + root, "LANG=C.UTF-8"}
 	cmd.Stdin = strings.NewReader(req.Stdin)
 	stdout, stderr := &boundedBuffer{limit: maxSandboxStdout}, &boundedBuffer{limit: maxSandboxStderr}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
-	cmd.SysProcAttr = sandboxAttributes(group)
+	cmd.SysProcAttr = sandboxAttributes(group, proxy != nil)
 	cmd.Cancel = group.kill
 	cmd.WaitDelay = time.Second
 	started := time.Now()
 	err = cmd.Run()
 	result := rpc.SandboxResult{Stdout: stdout.String(), Stderr: redact(stderr.String()), WallMS: time.Since(started).Milliseconds(), OOMKilled: group.oomKilled()}
+	if proxy != nil {
+		result.Denied = proxy.close()
+		// The shim refuses to start the program when it cannot establish the forwarder.
+		if strings.Contains(stderr.String(), egressFailMarker) {
+			http.Error(w, "the egress allowlist could not be enforced, so the program did not run: "+redact(stderr.String()), 503)
+			return
+		}
+	}
 	if stdout.truncated {
 		result.Stderr += "\n[output truncated]"
 	}

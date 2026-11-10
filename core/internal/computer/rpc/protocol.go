@@ -30,7 +30,9 @@ type Health struct {
 	Jobs     bool `json:"shell_jobs_v1"`
 	Files    bool `json:"files_v1"`
 	Sandbox  bool `json:"sandbox_v1"`
-	Reopen   bool `json:"run_reopen_v1"`
+	// Egress says the guest can run sandboxed programs with a declared-host egress allowlist.
+	Egress bool `json:"egress_allowlist_v1"`
+	Reopen bool `json:"run_reopen_v1"`
 }
 
 // SandboxRequest runs one packaged program with enforced limits and no network.
@@ -44,7 +46,9 @@ type SandboxRequest struct {
 	Pids     int               `json:"pids"`
 	CPUPct   int               `json:"cpu_percent"`
 	WallMS   int               `json:"wall_ms"`
-	Network  string            `json:"network"`
+	// Network is "none" (no network) or "allowlist" (only AllowHosts, through the guest's egress proxy).
+	Network    string   `json:"network"`
+	AllowHosts []string `json:"allow_hosts,omitempty"`
 }
 
 type SandboxResult struct {
@@ -54,4 +58,6 @@ type SandboxResult struct {
 	TimedOut  bool   `json:"timed_out"`
 	OOMKilled bool   `json:"oom_killed"`
 	WallMS    int64  `json:"wall_ms"`
+	// Denied lists hosts the program tried to reach outside its allowlist.
+	Denied []string `json:"denied,omitempty"`
 }

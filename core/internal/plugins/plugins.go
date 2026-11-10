@@ -137,9 +137,9 @@ func Validate(m Manifest) (string, error) {
 		if _, ok := runtimes[m.Executor.Runtime]; !ok || m.Files[m.Executor.Entry] == "" || size > 256<<10 || m.Executor.Limits == nil || m.Executor.Limits.WallMS <= 0 {
 			return "", fmt.Errorf("%w: an executable package needs a runtime (python3, node, sh), its entry file, limits and at most 256 KiB of files", state.ErrInvalidResource)
 		}
-		// The sandbox enforces no network; a package that asks for hosts cannot be honestly constrained yet.
-		if len(m.RequestedAccess.Network) > 0 {
-			return "", fmt.Errorf("%w: sandboxed packages run without network; host allowlists are not enforceable yet", ErrUnsupported)
+		// Declared hosts become the sandbox's egress allowlist; the computer refuses the run when it cannot enforce it.
+		if len(m.RequestedAccess.Network) > 32 {
+			return "", fmt.Errorf("%w: a package may declare at most 32 hosts", state.ErrInvalidResource)
 		}
 	}
 	for _, c := range m.Contributions {
@@ -870,6 +870,8 @@ type Program struct {
 	MemoryMB int
 	WallMS   int
 	Hooks    []Hook
+	// AllowHosts are the network hosts the user approved for the package; empty means no network at all.
+	AllowHosts []string
 }
 
 func (s *Service) Program(ctx context.Context, installID string) (Program, error) {
@@ -889,6 +891,12 @@ func (s *Service) Program(ctx context.Context, installID string) (Program, error
 		return Program{}, ErrUnsupported
 	}
 	p := Program{Argv: append(append([]string{}, runtimes[e.Runtime]...), e.Entry), Files: doc.Manifest.Files, MemoryMB: 256, WallMS: e.Limits.WallMS}
+	// Only hosts both declared by the package and approved by the user are reachable.
+	for _, host := range doc.Manifest.RequestedAccess.Network {
+		if slices.Contains(inst.ApprovedAccess.Network, host) {
+			p.AllowHosts = append(p.AllowHosts, host)
+		}
+	}
 	if e.Limits.MemoryMB > 0 {
 		p.MemoryMB = e.Limits.MemoryMB
 	}
