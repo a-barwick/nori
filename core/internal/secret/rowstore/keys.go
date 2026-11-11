@@ -70,11 +70,17 @@ func (k *LocalKey) Unwrap(_ context.Context, wrapped []byte, keyID string) ([]by
 	return gcm.Open(nil, wrapped[:gcm.NonceSize()], wrapped[gcm.NonceSize():], []byte("nori-data-key"))
 }
 
+// KMSClient is the part of a key service the store needs: symmetric encryption under a named key, with associated data.
+type KMSClient interface {
+	Encrypt(ctx context.Context, key string, plaintext, aad []byte) ([]byte, error)
+	Decrypt(ctx context.Context, key string, ciphertext, aad []byte) ([]byte, error)
+}
+
 // CloudKMS wraps data keys with a Cloud KMS symmetric key (projects/…/locations/…/keyRings/…/cryptoKeys/…), using the
 // deployment's own identity. The master key never leaves KMS.
 type CloudKMS struct {
-	Key     string
-	service *cloudkms.Service
+	Key    string
+	client KMSClient
 }
 
 func OpenCloudKMS(ctx context.Context, key string) (*CloudKMS, error) {
@@ -82,26 +88,45 @@ func OpenCloudKMS(ctx context.Context, key string) (*CloudKMS, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &CloudKMS{Key: key, service: service}, nil
+	return NewCloudKMS(key, googleKMS{service}), nil
 }
 
+// NewCloudKMS wraps data keys under key with the given client.
+func NewCloudKMS(key string, client KMSClient) *CloudKMS { return &CloudKMS{Key: key, client: client} }
+
+var dataKeyAAD = []byte("nori-data-key")
+
 func (k *CloudKMS) Wrap(ctx context.Context, dataKey []byte) ([]byte, string, error) {
-	resp, err := k.service.Projects.Locations.KeyRings.CryptoKeys.Encrypt(k.Key, &cloudkms.EncryptRequest{
-		Plaintext: base64.StdEncoding.EncodeToString(dataKey), AdditionalAuthenticatedData: base64.StdEncoding.EncodeToString([]byte("nori-data-key")),
-	}).Context(ctx).Do()
+	wrapped, err := k.client.Encrypt(ctx, k.Key, dataKey, dataKeyAAD)
 	if err != nil {
 		return nil, "", err
 	}
-	wrapped, err := base64.StdEncoding.DecodeString(resp.Ciphertext)
-	return wrapped, "kms:" + k.Key, err
+	return wrapped, "kms:" + k.Key, nil
 }
 
 func (k *CloudKMS) Unwrap(ctx context.Context, wrapped []byte, keyID string) ([]byte, error) {
 	if keyID != "kms:"+k.Key {
 		return nil, fmt.Errorf("the row was wrapped by %s, not this deployment's key", keyID)
 	}
-	resp, err := k.service.Projects.Locations.KeyRings.CryptoKeys.Decrypt(k.Key, &cloudkms.DecryptRequest{
-		Ciphertext: base64.StdEncoding.EncodeToString(wrapped), AdditionalAuthenticatedData: base64.StdEncoding.EncodeToString([]byte("nori-data-key")),
+	return k.client.Decrypt(ctx, k.Key, wrapped, dataKeyAAD)
+}
+
+// googleKMS is KMSClient over the Cloud KMS API.
+type googleKMS struct{ service *cloudkms.Service }
+
+func (g googleKMS) Encrypt(ctx context.Context, key string, plaintext, aad []byte) ([]byte, error) {
+	resp, err := g.service.Projects.Locations.KeyRings.CryptoKeys.Encrypt(key, &cloudkms.EncryptRequest{
+		Plaintext: base64.StdEncoding.EncodeToString(plaintext), AdditionalAuthenticatedData: base64.StdEncoding.EncodeToString(aad),
+	}).Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	return base64.StdEncoding.DecodeString(resp.Ciphertext)
+}
+
+func (g googleKMS) Decrypt(ctx context.Context, key string, ciphertext, aad []byte) ([]byte, error) {
+	resp, err := g.service.Projects.Locations.KeyRings.CryptoKeys.Decrypt(key, &cloudkms.DecryptRequest{
+		Ciphertext: base64.StdEncoding.EncodeToString(ciphertext), AdditionalAuthenticatedData: base64.StdEncoding.EncodeToString(aad),
 	}).Context(ctx).Do()
 	if err != nil {
 		return nil, err

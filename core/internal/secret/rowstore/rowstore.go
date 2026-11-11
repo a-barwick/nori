@@ -33,13 +33,18 @@ type row struct {
 	KeyID      string `json:"key_id"`
 	Nonce      []byte `json:"nonce"`
 	Ciphertext []byte `json:"ciphertext"`
+	// Owner is set when the ciphertext is bound to its owner as well as its connection, so a row copied into another
+	// user's store does not decrypt there. Rows written before owner binding have none and are read as they were.
+	Owner bool `json:"owner,omitempty"`
 }
 
 // Store is a secret.CredentialStore over one user's resource store.
 type Store struct {
 	Resources state.ResourceStore
 	Keys      KeyWrapper
-	Now       func() time.Time
+	// Owner is the user whose store this is; new rows are bound to it.
+	Owner string
+	Now   func() time.Time
 }
 
 var _ secret.CredentialStore = (*Store)(nil)
@@ -52,6 +57,10 @@ func (s *Store) now() time.Time {
 }
 
 func aad(connectionID string) []byte { return []byte("nori-credential:" + connectionID) }
+
+func ownerAAD(owner, connectionID string) []byte {
+	return []byte("nori-credential:" + owner + ":" + connectionID)
+}
 
 func (s *Store) Get(ctx context.Context, connectionID string) (secret.Credential, error) {
 	if !state.ValidResourceID(connectionID) {
@@ -76,7 +85,11 @@ func (s *Store) Get(ctx context.Context, connectionID string) (secret.Credential
 	if err != nil {
 		return secret.Credential{}, err
 	}
-	data, err := gcm.Open(nil, stored.Nonce, stored.Ciphertext, aad(connectionID))
+	bound := aad(connectionID)
+	if stored.Owner {
+		bound = ownerAAD(s.Owner, connectionID)
+	}
+	data, err := gcm.Open(nil, stored.Nonce, stored.Ciphertext, bound)
 	if err != nil {
 		return secret.Credential{}, errors.New("the credential could not be decrypted")
 	}
@@ -104,8 +117,11 @@ func (s *Store) Replace(ctx context.Context, connectionID string, expected int64
 	if err != nil {
 		return 0, fmt.Errorf("the data key could not be wrapped: %w", err)
 	}
+	if s.Owner == "" {
+		return 0, errors.New("the credential store has no owner")
+	}
 	r, err := state.NewResource(Collection, connectionID, expected+1, row{WrappedKey: wrapped, KeyID: keyID, Nonce: nonce,
-		Ciphertext: gcm.Seal(nil, nonce, data, aad(connectionID))}, nil, s.now())
+		Ciphertext: gcm.Seal(nil, nonce, data, ownerAAD(s.Owner, connectionID)), Owner: true}, nil, s.now())
 	if err != nil {
 		return 0, err
 	}

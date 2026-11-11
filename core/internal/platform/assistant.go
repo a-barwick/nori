@@ -100,7 +100,7 @@ func Credentials(s settings.Settings, user users.User, store state.ResourceStore
 		if err != nil {
 			return nil, err
 		}
-		return &rowstore.Store{Resources: store, Keys: keys}, nil
+		return &rowstore.Store{Resources: store, Keys: keys, Owner: user.ID}, nil
 	}
 	if s.Connections.CredentialStore != "local" || s.Cloud != "local" {
 		return nil, fmt.Errorf("NORI_CREDENTIAL_STORE is database, or local (file vault) with NORI_CLOUD=local")
