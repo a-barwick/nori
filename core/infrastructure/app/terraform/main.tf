@@ -570,7 +570,10 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
   }
 
   lifecycle {
-    ignore_changes = [spec[0].container_spec[0].image_uri]
+    # After creation, releases own the deployment spec: ops.deploy_runtime patches the live environment, worker routes
+    # and capacity (adding the connected-account settings from this state's outputs). Without this, an apply of this
+    # state reverted release-set environment on the running runtime (seen in the 2026-11-11 production plan).
+    ignore_changes = [spec[0].container_spec[0].image_uri, spec[0].deployment_spec]
   }
 
   depends_on = [google_project_service.api, google_project_iam_member.runtime_firestore, google_project_iam_member.runtime_model, google_artifact_registry_repository_iam_member.runtime_image_reader, google_artifact_registry_repository_iam_member.platform_image_reader, google_secret_manager_secret_iam_member.conversation_runtime_secrets, google_secret_manager_secret_iam_member.conversation_deploy_secrets, google_secret_manager_secret_iam_member.arize_runtime, google_secret_manager_secret_iam_member.arize_platform, google_kms_crypto_key_iam_member.runtime_credentials, google_secret_manager_secret_iam_member.google_client_platform, google_secret_manager_secret_iam_member.vapid_runtime, google_secret_manager_secret_iam_member.vapid_platform]

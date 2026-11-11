@@ -125,3 +125,12 @@ output "credential_kms_key" {
 output "oauth_redirect_url" {
   value = local.oauth_redirect_url
 }
+
+# What ops.deploy_runtime merges into the live runtime at each release (the runtime's deployment spec is release-owned).
+output "connected_accounts_env" {
+  value = local.connected_accounts_env
+}
+
+output "connected_accounts_secret_env" {
+  value = local.connected_accounts_secret_env
+}
