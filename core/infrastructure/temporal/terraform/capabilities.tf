@@ -29,3 +29,21 @@ resource "google_secret_manager_secret_iam_member" "capability_runner" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${local.runner}"
 }
+
+variable "oauth_redirect_url" {
+  description = "OAuth callback outside production (production uses the custom web domain); workers need it to refresh account tokens."
+  type        = string
+  default     = ""
+}
+
+locals {
+  # The key ring and key are owned by the application state (app/terraform/connected-accounts.tf), in us-central1.
+  credential_kms_key = "projects/${local.project}/locations/us-central1/keyRings/${local.production ? "nori-credentials" : "nori-sandbox-credentials"}/cryptoKeys/connected-accounts"
+  oauth_redirect_url = local.production ? "https://noribot.chat/api/v1/connections/oauth/callback" : var.oauth_redirect_url
+  connected_accounts_env = merge({
+    NORI_CREDENTIAL_STORE   = "database"
+    NORI_CREDENTIAL_KMS_KEY = local.credential_kms_key
+    NORI_USER_SENDS         = "ask"
+    NORI_MAIL_RECIPIENTS    = "self"
+  }, local.oauth_redirect_url == "" ? {} : { NORI_OAUTH_REDIRECT_URL = local.oauth_redirect_url })
+}
