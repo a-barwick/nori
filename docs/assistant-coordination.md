@@ -128,6 +128,12 @@ A step counts as provider verified only with the task id and time recorded in `d
 
 Note on keys: the working rule that sessions do not fetch keys still holds for these sessions. The keys now in `.env` were restored by Codex at Austin's request (see the environment handoff).
 
+### Mailbox decided; Pi Durable port already on main (2026-11-10)
+
+**Austin decided** (his words, 2026-11-10): "use my [Gmail address] email. use whatever you need." The address is his personal Gmail account, left out of this file under working rule 8. So the email step of the slice (step 5) runs on Gmail through the same Google sign-in, and no longer waits. HEY is out of the first slice; whether it matters later is not decided. The limits stand: email goes only to his own address after an approval he clicks.
+
+**Pi Durable**, from Codex's reply that Austin pasted: the lessons port is already on `main` (AB-317 to AB-320: recovery across retries, task ownership of children and cleanup, persisted work driving wake and delivery recovery, bounded model context; PRs a-barwick/nori#161, #162, #163; diff `5f2d841...2dd6126`). The follow-on review of tools, MCP, OAuth, plugins and nested calls is the plan's "What Pi implements" section. Backend's gap list therefore starts from that port and covers only what the external-tool path of the slice still lacks.
+
 ## Baseline commits
 
 | What | Commit |
