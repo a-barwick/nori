@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"net/http"
 	"net/mail"
 	"sort"
 	"strconv"
@@ -36,11 +37,47 @@ func othersThanSelf(call invoke.Call, recipients []string) []string {
 	}
 	others := []string{}
 	for _, r := range recipients {
-		if self == "" || strings.ToLower(strings.TrimSpace(r)) != self {
+		address := strings.TrimSpace(r)
+		if parsed, err := mail.ParseAddress(address); err == nil {
+			address = parsed.Address
+		}
+		if self == "" || strings.ToLower(address) != self {
 			others = append(others, r)
 		}
 	}
 	return others
+}
+
+// ownOnly is the refusal for mail addressed to anyone but the connected account itself.
+func ownOnly(call invoke.Call, others []string) string {
+	return fmt.Sprintf("this Nori sends email only to the connected account's own address, %s; %s is not that address",
+		call.Grant.Connection.Account.Label, strings.Join(others, ", "))
+}
+
+// noriDraft says whether a draft's message was written by Nori: Nori's drafts carry a Message-ID from messageID.
+func noriDraft(headers []*gmail.MessagePartHeader) bool {
+	id := header(headers, "Message-Id")
+	return strings.HasPrefix(id, "<nori-") && strings.HasSuffix(id, "@mail.nori.invalid>")
+}
+
+// DiscardNoriDraft deletes a draft only if Nori wrote it, for a send the user declined or Nori refused; a draft the
+// user wrote is never touched. It reports whether a draft was removed.
+func DiscardNoriDraft(ctx context.Context, client *http.Client, draftID string) (bool, error) {
+	service, err := gmail.NewService(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		return false, err
+	}
+	draft, err := service.Users.Drafts.Get("me", draftID).Format("metadata").Context(ctx).Do()
+	if err != nil {
+		return false, classify(err)
+	}
+	if draft.Message == nil || draft.Message.Payload == nil || !noriDraft(draft.Message.Payload.Headers) {
+		return false, nil
+	}
+	if err := service.Users.Drafts.Delete("me", draftID).Context(ctx).Do(); err != nil {
+		return false, classify(err)
+	}
+	return true, nil
 }
 
 const maxMailText = 32 << 10
@@ -186,6 +223,11 @@ func (a mailAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prep
 			}
 		}
 		recipients := append(append(append([]string{}, to...), cc...), bcc...)
+		if others := othersThanSelf(call, recipients); a.selfOnly && len(others) > 0 {
+			// Checked before the draft exists: a draft that can never be sent would only be left behind.
+			return invoke.Prepared{}, fmt.Errorf("%w: no draft was created: %s. Address it to that account or tell the user",
+				invoke.ErrInvalidArguments, ownOnly(call, others))
+		}
 		sort.Strings(recipients)
 		body := invoke.String(args, "body")
 		sum := sha256.Sum256([]byte(body))
@@ -223,8 +265,14 @@ func (a mailAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prep
 			return invoke.Prepared{}, fmt.Errorf("%w: the draft has no recipients", invoke.ErrInvalidArguments)
 		}
 		if others := othersThanSelf(call, recipients); a.selfOnly && len(others) > 0 {
-			return invoke.Prepared{}, fmt.Errorf("%w: this Nori sends email only to the connected account's own address (%s); the draft is also addressed to %s. Change the draft or tell the user",
-				invoke.ErrInvalidArguments, call.Grant.Connection.Account.Label, strings.Join(others, ", "))
+			note := "Change the draft or tell the user"
+			if noriDraft(headers) {
+				// This draft can never be sent here; a draft Nori wrote is not left behind.
+				if err := service.Users.Drafts.Delete("me", draft.Id).Context(ctx).Do(); err == nil {
+					note = "The unsent draft Nori had created for it was deleted"
+				}
+			}
+			return invoke.Prepared{}, fmt.Errorf("%w: not sent: %s. %s", invoke.ErrInvalidArguments, ownOnly(call, others), note)
 		}
 		sort.Strings(recipients)
 		body := bodyText(draft.Message.Payload)

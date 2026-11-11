@@ -176,6 +176,13 @@ type Answer struct {
 // a stale revision, changed action digest, resolved or expired interaction is rejected with the current state.
 func (s *Service) Respond(ctx context.Context, id, requestID string, expected int64, response Response) (state.MutationReceipt, *Answer, error) {
 	var answer *Answer
+	declineNote := ""
+	if response.Kind == "decline" && s.OnDecline != nil {
+		// Provider clean-up can't run inside the transaction; it runs first, only for the exact action being declined.
+		if i, err := s.Interaction(ctx, id); err == nil && i.Kind == "approval" && i.Status == "pending" && response.ActionDigest != "" && response.ActionDigest == i.ActionDigest {
+			declineNote = s.OnDecline(ctx, i)
+		}
+	}
 	receipt, err := s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "POST", Target: "/v1/interactions/" + id + "/responses", ExpectedRevision: expected,
 		Payload: response, Collection: CollectionInteractions, ID: id, SkipRevisionCheck: true,
@@ -231,7 +238,7 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 				writes = append(writes, approvalResource)
 				text = "The user approved this exact action; retry the same call unchanged: " + i.Prompt
 				if response.Kind == "decline" {
-					text = "The user declined this action. Do not attempt it; report what was not done: " + i.Prompt
+					text = "The user declined this action. Do not attempt it; report what was not done: " + i.Prompt + declineNote
 				}
 			case response.Kind == "choose_account" && i.Kind == "account_selection":
 				var payload struct {
