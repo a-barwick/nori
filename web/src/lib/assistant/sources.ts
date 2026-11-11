@@ -54,7 +54,7 @@ export function legacyLibraryItem(result: SavedResult, agentMode: boolean): Libr
 export function useWork() {
   const { has, runtime } = useAssistant();
   const live = has("work");
-  const remote = useResource<List<WorkItem>>(live ? "/work" : null, { poll: 10_000 });
+  const remote = useResource<List<WorkItem>>(live ? "/work" : null, { poll: 20_000 });
   const session = runtime.session;
   const legacy = useMemo(() => (session?.runs ?? []).map((run) => legacyWorkItem(run, session)), [session]);
   return live
@@ -81,7 +81,7 @@ export function useWorkDetail(taskID: string) {
 export function usePendingInteractions() {
   const { has, runtime } = useAssistant();
   const live = has("interactions");
-  const remote = useResource<List<Interaction>>(live ? "/interactions?status=pending" : null, { poll: 10_000 });
+  const remote = useResource<List<Interaction>>(live ? "/interactions?status=pending" : null, { poll: 20_000 });
   const runs = runtime.session?.runs;
   const legacy = useMemo(() => (runs ?? []).map(legacyInteraction).filter((item): item is Interaction => !!item), [runs]);
   return live ? { items: remote.data?.items, reload: remote.reload, live } : { items: runs ? legacy : undefined, reload: runtime.refreshHistory, live };
@@ -100,7 +100,7 @@ export function useLibrary(query = "") {
 export function useSummary(): Partial<AssistantSummary> {
   const { has, runtime } = useAssistant();
   const live = has("work") && has("interactions");
-  const remote = useResource<AssistantSummary>(live ? "/assistant/summary" : null, { poll: 15_000 });
+  const remote = useResource<AssistantSummary>(live ? "/assistant/summary" : null, { poll: 30_000 });
   const runs = runtime.session?.runs;
   return useMemo(() => {
     if (live) return remote.data ?? {};
