@@ -163,6 +163,16 @@ In flight: backend `c73476e` (calendar delete with approval, Stop settles tasks 
 
 Defects found by the real runs and fixed the same evening: no sign-in offered when Google was not connected; relative times asking for a clock time; duplicate connections for one account; "my own address" resolving to the Nori profile address; drafts left after refused sends; four separate consent trips for write access.
 
+### Getting PR #165 ready (2026-11-11)
+
+Austin, asked whether to get the PR ready to ship: "Yes, get it ready". The deploy itself still waits for his explicit go ("no deploys" stands).
+
+Coordinator's choices under that go-ahead (not Austin's decisions; reversible before any deploy):
+- **Credential custody for production (D1):** the existing `database` store, envelope-encrypted rows with a Cloud KMS key, as recommended earlier. Austin has not decided D1; this is the mechanism the PR ships with unless he says otherwise.
+- **Production defaults:** `NORI_USER_SENDS=ask`, `NORI_MAIL_RECIPIENTS=self`.
+
+Assignments: backend wires production (KMS key and IAM, credential store, OAuth redirect, the defaults, hosted reminder delivery) and verifies with `terraform validate`/plan off production; integration merges `main`, runs `make check`, core tests and a production web build, checks the database credential store locally, runs the read-only `make deploy-check`, rewrites the PR description and marks it ready; frontend checks the production build. Nothing is applied to production.
+
 ## Baseline commits
 
 | What | Commit |
