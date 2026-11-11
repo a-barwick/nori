@@ -1,8 +1,19 @@
 # Integration status
 
-Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, fifth turn of the restart (slice writes on the test account). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
+Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, sixth turn of the restart (re-run on the merged build). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
 
 **Provider verified: 0 of 44.**
+
+## Sixth turn: restart on `5ef24d5` and re-run (2026-11-10, 21:05 to 21:25)
+
+- **Stacks restarted on merge head `5ef24d5`**, with models on and `NORI_STACK_NO_MODEL` unset. One worker per build: `real-5ef24d5` (pid 68899, child 68971) and `int-5ef24d5` (pid 68901, child 68972), both set current. The real stack carries `NORI_USER_SENDS=ask` from `~/.nori-stacks/real.env`, a machine-local, mode-600 file, as a coordinator's setting for this stack; it is not a D2 decision. Recorded scenarios: 12 of 12, 0 failures.
+- **Web 3213 went into a hot-reload loop** after the restart: about 6,800 page loads in 10 minutes, "[Fast Refresh] rebuilding" over and over, and the page blank. No file in the worktree was changing. Restarting only the web process cleared it. Cause unknown; frontend may want to know (`next dev` at 3213, started while the browser pane was hidden).
+- **Re-run, approved by Austin directly in this session.** Details are in `docs/assistant-acceptance.md` → "Re-run on the merged build".
+  - Step 2 passes.
+  - Step 3 (create, move, delete) passes. The needless "11 or 12 November?" question is still there on the new build.
+  - The own-address send stopped at an approval card with recipient and full text; I approved it and it sent (`0a41ef0e…`).
+  - A send to `someone@example.com` was refused before any approval, and nothing was sent (`95a5a7e8…`). **But it left an unsent draft to that address in the test account's Drafts**, because the draft is created before the recipient check. That is for backend. I did not delete it.
+- Step 4 with the app closed: still not exercised.
 
 ## Fifth turn: slice writes on the test account (2026-11-10, about 20:57 to 21:03)
 
