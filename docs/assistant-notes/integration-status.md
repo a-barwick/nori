@@ -1,8 +1,31 @@
 # Integration status
 
-Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, tenth turn of the restart (last round, `c2e5dcb`). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
+Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-11, getting PR #165 ready. Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
 
 **Provider verified: 0 of 44.**
+
+## Getting PR #165 ready (2026-11-11, morning)
+
+Austin said "Yes, get it ready" (coordinator record `293399c`); the deploy waits for his explicit go.
+
+- **Main.** `origin/main` (`c539313`) is already contained in this branch: 0 commits behind, nothing to merge or resolve.
+- **Checks at `03cf81e`** (this repository has no GitHub CI): `make check` green, `go test ./...` in core green, and the production web build (`cd web && bun run build`) green.
+- **Database credential store (the production path), checked locally:**
+  - A separate core on 8086 ran with `NORI_CREDENTIAL_STORE=database`, `NORI_CREDENTIAL_KEY_FILE=~/.nori-stacks/realdb/credential.key` and its own database `nori_realdb`. It started and created the key file (mode 600).
+  - Creating a Google connection and asking to connect returned a valid Google authorize URL: PKCE S256, `calendar.readonly`, offline, `include_granted_scopes`. The sign-in attempt was stored. The URL was not opened.
+  - **No real token went through the database store.** There is no migration from the local file vault, so the real stack's grant stays in its file vault. A sign-in on the check core would need Austin, and its own web for the callback.
+  - The week read through the database store was therefore **not run**.
+  - **`internal/secret/rowstore` has no tests in the repository.** An uncommitted scratch test against the local Postgres passed:
+    - a write, then a stale write refused (version conflict);
+    - a read-back of the new version;
+    - a wrong key unable to decrypt;
+    - delete, then not found.
+
+    Cloud KMS wrapping (`OpenCloudKMS`) is not exercised anywhere. **For backend:** commit tests for `rowstore` (and KMS wrapping against a fake).
+  - The real stack on 8085 was left on the file vault so its pending cards keep working. The check core is stopped.
+- **`make deploy-check`** waits for backend's production wiring (not on `origin/claude/nori-assistant-backend-9c520e` at 06:10). It is read-only by its code: `terraform init` with a local backend override, `terraform plan` into a temporary file, open-work and health reads, then "Nothing was changed".
+- **PR #165**: the description is rewritten. It stays a **draft** until the production wiring is merged and `deploy-check` is recorded.
+
 
 ## Last round, `real-c2e5dcb`, test account (2026-11-10, 22:13 to 22:22 PST)
 
