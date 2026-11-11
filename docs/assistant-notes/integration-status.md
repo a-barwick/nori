@@ -1,8 +1,35 @@
 # Integration status
 
-Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, ninth turn of the restart (pass on `02e0541`). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
+Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, tenth turn of the restart (last round, `c2e5dcb`). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
 
 **Provider verified: 0 of 44.**
+
+## Last round, `real-c2e5dcb`, test account (2026-11-10, 22:13 to 22:22 PST)
+
+**Build.** Merge head `c2e5dcb`:
+- backend `c73476e`: calendar delete with approval, Stop settles tasks on a dead build, a remembered account default, read-back fields;
+- frontend `5ce1a06`: the reload-loop guard, `result=` stripped from the URL, addresses in the chooser;
+- coordinator `4938779`.
+
+`make check` and `go test ./...` are green.
+
+**Restart.** Only the real core, web and a new `real-c2e5dcb` worker (set current) were restarted. The `real-cf76ae6` and `real-02e0541` workers stay up, because each holds one pending send card. One worker per build. The recorded stack still runs `int-cf76ae6`.
+
+| Check | Task (finished) | Result |
+| --- | --- | --- |
+| Stuck tasks can be stopped | `f793fa0e` | **Nothing stuck; not exercised on this build.** `f793fa0e` shows Stopped: it was drained in the previous round by a temporary `real-cfc0d6f` worker. Nothing was in Working after the restart, so "Stop settles tasks on a dead build" has had no case to act on. |
+| Delete the empty "Nori test" calendar | `c8b20e38` (waiting at its card) | **PASS up to the card**: "Permanently delete the calendar 'Nori test' and 0 events on it. This cannot be undone." **Left for Austin.** A permanent delete takes his own approval in this session, and the approvals he gave here tonight covered event writes, not removing a calendar. |
+| Move states the verified new time | create `0053f1d4` (22:20:01), move `e99d1526` (22:20:57), delete `c57475cb` (22:21:41) | **PASS**: "Moved 'Nori rehearsal 6' … to Wednesday, November 11, 4:00–4:30 PM PST", without the earlier hedging. Create, move and delete were all confirmed, with no account or date question. The move's ops are `event_get` then `event_update`; the stated time comes from the update's own read-back fields. |
+| Reload guard after restart | web.log | **Did not fire; no loop.** After the restart and several page loads, web.log has no guard line and two loads of `/`. With no loop, there is no cause to record. |
+
+**Still not exercised:**
+- **Reminder delivered with the app closed:** not exercised. No device with notifications allowed; the built-in pane blocks them.
+- **Austin's personal Gmail account:** not exercised. Every real-provider run tonight used his test account, so provider verified stays 0.
+
+**Waiting for Austin in Work (each expires 24 hours after it appeared):**
+- the own-address sends `5d25bbe6` (21:54) and `3509cc8b` (22:04);
+- the calendar delete `c8b20e38` (22:18).
+
 
 ## Pass on `real-02e0541`, test account (2026-11-10, 21:58 to 22:05 PST)
 

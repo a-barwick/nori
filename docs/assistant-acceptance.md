@@ -124,6 +124,20 @@ The table is at the top of `docs/assistant-notes/integration-status.md`. After b
 
 Not exercised: deleting a calendar (no tool), and delivery with the app closed.
 
+### Last round on `real-c2e5dcb` (2026-11-10, 22:13 to 22:22 PST)
+
+Graded real provider, Austin's test account:
+- **Event create, move and delete** (`0053f1d4`, `e99d1526`, `c57475cb`) **passed**. The move's reply states the new time from the update's read-back.
+- **Deleting the "Nori test" calendar** (`c8b20e38`) reached its approval card ("permanently delete … 0 events … cannot be undone"). It is **left for Austin**, so the calendar is not yet deleted.
+- **Stop on a dead build**: not exercised (nothing was stuck).
+- **Reload guard**: did not fire (no loop).
+
+Still **not exercised**:
+- the reminder delivered with the app closed;
+- any run on Austin's personal Gmail account.
+
+Provider verified stays 0.
+
 Earlier the same evening, before the sign-in, steps 2, 3 and 5 stopped at "Google is still connecting" without offering a sign-in (tasks `209d093d…`, `51b3dfbc…`, `fed43de1…`, `5e0c9ff8…`; R-1 in the status note).
 
 ## Matrix
