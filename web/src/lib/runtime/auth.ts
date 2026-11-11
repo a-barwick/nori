@@ -1,6 +1,7 @@
 import { runtimeHeaders } from "./credentials";
 import { oidcIdentity } from "./oidc";
 import { localDevelopment, runtimeMode, runtimeTarget, type RuntimeTarget } from "./target";
+import { SERVICE_UNAVAILABLE } from "./messages";
 import { OAuth2Client } from "google-auth-library";
 
 const LOCAL_EMAIL = (process.env.NORI_LOCAL_EMAIL?.trim() || process.env.OWNER_EMAIL?.trim() || "").toLowerCase();
@@ -24,7 +25,7 @@ async function identify(headers: Headers): Promise<Identity | null> {
 export type ScopedRuntime = RuntimeTarget & { userID: string };
 type AccessFailure = { status: 403 | 429 | 503; error: string; retryAfter?: string };
 const denied: AccessFailure = { status: 403, error: "Sign in with an account that has access to Nori." };
-const unavailable: AccessFailure = { status: 503, error: "Nori is temporarily unavailable. Try again shortly." };
+const unavailable: AccessFailure = { status: 503, error: SERVICE_UNAVAILABLE };
 
 export function accessFailureResponse(failure: AccessFailure, plainText = false) {
   const headers = new Headers({ "Cache-Control": "no-store" });

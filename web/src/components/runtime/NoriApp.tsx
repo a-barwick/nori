@@ -10,6 +10,7 @@ import { chatThread, withReceipt } from "@/lib/chat/thread";
 import { useAssistant } from "@/lib/assistant/context";
 import { useWide } from "@/lib/hooks";
 import { runtimePath } from "@/lib/runtime/paths";
+import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import type { Message, Part, Thread as Conversation, TextItem } from "@/lib/types";
 import { ChatList } from "./ChatList";
 import { DocumentViewer } from "./DocumentViewer";
@@ -144,7 +145,9 @@ export function ChatScreen() {
       onDismissCommand={runtime.dismissTaskCommand}
     />
   );
-  const notice = error || (session?.conversation?.routing_blocked && !runtime.conversationBusy
+  // An outage clears by itself (the stream and snapshot retry with a growing wait), so say that instead of an error.
+  const reconnecting = error === SERVICE_UNAVAILABLE || error === STREAM_RECONNECTING;
+  const notice = reconnecting ? "Can't reach Nori right now. Reconnecting on its own…" : error || (session?.conversation?.routing_blocked && !runtime.conversationBusy
     ? "Some work is waiting for this message to be resolved. Send a follow-up to retry or clarify."
     : "");
   const waitingCount = activeTasks.filter((run) => run.question ? !run.question.resolved_by : run.waiting).length;
@@ -244,7 +247,7 @@ export function ChatScreen() {
         {notice && (
           <div className="nova-runtime-notice w-full shrink-0 self-center px-6 pb-3">
             <div
-              role={error ? "alert" : "status"}
+              role={error && !reconnecting ? "alert" : "status"}
               className="rounded-tile bg-surface p-3 text-meta text-ink-2 shadow-pill"
             >
               {notice}{" "}
@@ -255,7 +258,7 @@ export function ChatScreen() {
                   disabled={loading}
                   onClick={() => void runtime.refreshHistory()}
                 >
-                  Refresh history to reconnect
+                  {reconnecting ? "Try now" : "Refresh history to reconnect"}
                 </button>
               )}
             </div>
