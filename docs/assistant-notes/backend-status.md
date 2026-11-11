@@ -4,6 +4,31 @@ Branch `claude/nori-assistant-backend-9c520e`, worked from worktree `.claude/wor
 
 Evidence label (rule 2): **provider verified: 0.** No real provider account was used. The D-053 and D-054 re-tests in the third assignment ran against the real models (OpenAI and OpenRouter, keys from `.env`); everything else is locally verified against a loopback model stub, Google answering from hand-written recordings, the local database and the local Temporal dev server.
 
+## Duplicate Google connection for one account (real stack defect)
+
+Commit `257f316`.
+
+**Cause.** "Add another account" creates a new connection, and its callback stored whatever account signed in. Choosing the account that was already connected therefore left two connected records for the same provider subject (`conn_376569c546155488accd` and `conn_c3ec41c528ad5973b454` on the real stack).
+
+**Fix:**
+- **Merge.** When a first sign-in on a new connection reaches an account the user already has live (same integration, same provider subject, not disconnected), the existing connection is updated instead. It gets the newest token (keeping its refresh token if Google sent none), the union of granted and desired scopes, recomputed capabilities and a new authorization epoch, with the health message "This account was already connected; its access was updated." The new, never-signed-in connection is deleted in the same write. The callback returns to the existing connection with `result=connected`, and tasks waiting on either connection resume.
+- **Contract.** r2.11 allows only `connected|cancelled|failed`, so I did not add a distinct `already_connected` result. If frontend wants to show that plainly, it is a small contract revision (coordinator's call). The health message carries the text meanwhile.
+- **Disconnect never revokes a shared grant.** Disconnecting a connection now skips the provider revoke while another live connection holds the same account. Google revokes per account and client, so revoking one duplicate would also cut off the one that stays. Only Nori's copy (credential, cache) is removed then.
+
+Verified on my stack (recorded Google, core `257f316`):
+
+| Case | Result |
+| --- | --- |
+| User B, `recorded.work@example.com` already connected (`conn_f191657c1166529bb7a1`): new connection `conn_fdd1c0a5895e59c9becb`, connect (calendar.read and mail.draft), callback for the same account | Redirected to `/apps/google?connection=conn_f191657c1166529bb7a1&result=connected`. The new connection answers 404, and one connection remains with the union and "This account was already connected; some requested access was not granted." (my recorded token lacks drafts, which is correct for what was granted). |
+| User C: two connections for `recorded.user@example.com` made with the previous build (`97c9c1d`, scratch worktree), as on the real stack; then on `257f316`, disconnect `conn_2e3585633a6f5be997e5` through the app's disconnect action | Disconnected; **no revoke request** in the core log; the remaining `conn_5a2b8344ee545e51be6f` still reads its resources (200). |
+| Control: then disconnect that last connection | One `POST oauth2.googleapis.com/revoke`, as before. |
+
+**Real stack: not cleaned up yet, deliberately.**
+- The real core (8085) runs integration's `cfc0d6f`, which does not have `257f316`. Its disconnect revokes the token at Google. That would most likely also invalidate the connection we keep, and it is a write to Austin's Google account.
+- The one to keep is `conn_c3ec41c528ad5973b454`, the wider grant: everything the other has, plus `calendar.create`. The one to disconnect is `conn_376569c546155488accd`.
+- Steps, once 8085 runs a build that includes `257f316`: disconnect `conn_376569c546155488accd` with `POST /v1/connections/conn_376569c546155488accd/actions {"action": "disconnect"}`, or Apps → Disconnect. Then confirm no `oauth2.googleapis.com/revoke` request in the core log, and that the kept connection still lists calendars.
+- Read-only check behind this: the two records in `nori_real` (status, capabilities, granted scopes); nothing there was changed.
+
 ## R-1, R-2 and creating a calendar (from integration's real runs)
 
 Commits `02989a5`, `97c9c1d`. Verified on my stack with the **real models** (`gpt-6.1-sol`, `openai/gpt-6.1-terra`). Google answered from recordings (a scratch copy of integration's, with a recorded calendar create and an extra token exchange). No real Google account was used, so these are not provider evidence.
