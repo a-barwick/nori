@@ -78,6 +78,13 @@ type Action struct {
 	Digest string            `json:"digest" firestore:"digest"`
 	Text   string            `json:"text" firestore:"text"`
 	Spec   map[string]string `json:"spec" firestore:"spec"`
+	// Intent marks a record saved with the whole prepared action before the first attempt: Precondition (the provider
+	// revision the action was approved against) and Keys (its provider idempotency keys). Recovery settles an
+	// interrupted attempt from this saved intent rather than from a fresh read of provider state, which would
+	// already show the attempt's own effect. Records without it predate this and recover from a fresh read.
+	Intent       bool              `json:"intent,omitempty" firestore:"intent,omitempty"`
+	Precondition string            `json:"precondition,omitempty" firestore:"precondition,omitempty"`
+	Keys         map[string]string `json:"keys,omitempty" firestore:"keys,omitempty"`
 }
 
 type CompletionProposal struct {

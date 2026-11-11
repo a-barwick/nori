@@ -134,7 +134,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		return nil, err
 	}
 	adapters := invoke.NewRegistry()
-	google.Register(adapters)
+	google.Register(adapters, s.Connections.MailRecipients)
 	microsoft.Register(adapters)
 	icloud.Register(adapters)
 	integrations := []connections.Integration{google.Integration{ClientID: s.Connections.GoogleClientID, ClientSecret: s.Connections.GoogleClientSecret},

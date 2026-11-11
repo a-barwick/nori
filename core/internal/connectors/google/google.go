@@ -31,7 +31,6 @@ const (
 	scopeCalendarWrite = "https://www.googleapis.com/auth/calendar.events"
 	scopeMailRead      = "https://www.googleapis.com/auth/gmail.readonly"
 	scopeMailCompose   = "https://www.googleapis.com/auth/gmail.compose"
-	scopeMailSend      = "https://www.googleapis.com/auth/gmail.send"
 	scopeMailModify    = "https://www.googleapis.com/auth/gmail.modify"
 	scopeContacts      = "https://www.googleapis.com/auth/contacts.readonly"
 	scopeOtherContacts = "https://www.googleapis.com/auth/contacts.other.readonly"
@@ -56,7 +55,7 @@ func (g Integration) Info() connections.Info {
 			{ID: "calendar.write", Title: "Create and change events, invitations and replies", Effect: "reversible_write", Supported: true, Scopes: []string{scopeCalendarRead, scopeCalendarWrite}},
 			{ID: "mail.read", Title: "Search and read email", Effect: "read", Supported: true, Scopes: []string{scopeMailRead}},
 			{ID: "mail.draft", Title: "Create and edit drafts", Effect: "reversible_write", Supported: true, Scopes: []string{scopeMailCompose}},
-			{ID: "mail.send", Title: "Send email", Effect: "sensitive_send", Supported: true, Scopes: []string{scopeMailCompose, scopeMailSend}},
+			{ID: "mail.send", Title: "Send email", Effect: "sensitive_send", Supported: true, Scopes: []string{scopeMailCompose}},
 			{ID: "mail.organize", Title: "Label, archive and mark email", Effect: "reversible_write", Supported: true, Scopes: []string{scopeMailModify}},
 			{ID: "contacts.read", Title: "Look up contacts", Effect: "read", Supported: true, Scopes: []string{scopeContacts, scopeOtherContacts}},
 			{ID: "files.read", Title: "Find and read Google Drive files", Effect: "read", Supported: true, Scopes: []string{scopeDriveRead}},
@@ -122,10 +121,11 @@ func (g Integration) Resources(ctx context.Context, client *http.Client) ([]conn
 
 func (g Integration) Definitions() []extensions.Definition { return definitions }
 
-// Register adds the Google adapters to an executor registry.
-func Register(registry *invoke.Registry) {
+// Register adds the Google adapters to an executor registry. mailRecipients is settings.Connections.MailRecipients:
+// "any" lets Gmail send to anyone; anything else sends only to the connected account's own address.
+func Register(registry *invoke.Registry, mailRecipients string) {
 	registry.Register(extensions.AdapterNative, "google.calendar", calendarAdapter{})
-	registry.Register(extensions.AdapterNative, "google.mail", mailAdapter{})
+	registry.Register(extensions.AdapterNative, "google.mail", mailAdapter{selfOnly: mailRecipients != "any"})
 	registry.Register(extensions.AdapterNative, "google.contacts", contactsAdapter{})
 	registry.Register(extensions.AdapterNative, "google.drive", driveAdapter{})
 }

@@ -2,7 +2,93 @@
 
 Branch `claude/nori-assistant-backend-9c520e`, worked from worktree `.claude/worktrees/backend-restart-26132e` on the new machine. The first run's version of this note is at `origin/claude/nori-assistant-integration-25ae45:docs/assistant-notes/backend-status.md`. This file is the current state.
 
-Evidence label (rule 2): **provider verified: 0.** Everything below is locally verified against a loopback model stub, the local database and the local Temporal dev server. Nothing here ran against a real model or a real provider account.
+Evidence label (rule 2): **provider verified: 0.** No real provider account was used. The D-053 and D-054 re-tests in the third assignment ran against the real models (OpenAI and OpenRouter, keys from `.env`); everything else is locally verified against a loopback model stub, Google answering from hand-written recordings, the local database and the local Temporal dev server.
+
+## Mailbox decided: Gmail for step 5 (coordination record "Mailbox decided; Pi Durable port already on main")
+
+Commit `7c58cc1`.
+
+**Scopes.** Step 5 uses three Google capabilities: `mail.read` (find one message: `gmail.readonly`), `mail.draft` (write the note as a draft: `gmail.compose`) and `mail.send` (send the draft). Nori only ever sends drafts (`users.drafts.send`), and Google's reference lists `mail.google.com`, `gmail.modify` and `gmail.compose` as the scopes for both `drafts.create` and `drafts.send`; `gmail.send` is not among them. `mail.send` used to ask for `gmail.compose` and `gmail.send`; the second was never used, so it now asks for `gmail.compose` alone. Step 5 therefore needs exactly `gmail.readonly` and `gmail.compose`. A consequence: a grant of drafts now also counts as a grant of sending, because Google's own `gmail.compose` consent already says "Manage drafts and send emails". Every send still needs its approval (see below). The test account's earlier grant (`compose` and `send`) still satisfies both.
+
+**Only to his own address.** New setting `NORI_MAIL_RECIPIENTS`, default `self` (stream's choice, following Austin's limit; `any` lifts it). With `self`, a Gmail send whose To, Cc or Bcc holds any address other than the connected account's own is refused. The own address is the account label, which Nori reads from Google's userinfo when the account connects. It never comes from the model, a setting, code or a committed file. The check runs at prepare, before an approval is shown, and again at the moment of sending. Drafts are not limited, since a draft sends nothing. The comparison ignores case only, so a Gmail alias or a dotted variant of the address counts as someone else.
+
+Verified on my stack (`be-7c58cc1`, `NORI_USER_SENDS=ask`, stub model, Gmail from recordings plus two recorded drafts in a scratch copy, recorded account `recorded.user@example.com`):
+
+| Case | Task | Result |
+| --- | --- | --- |
+| Send a draft addressed to `friend@example.com` | `780327f3-af0d-5715-add5-488506beb1cc` | Refused at prepare, not admitted, no approval shown, no send request made: "this Nori sends email only to the connected account's own address (recorded.user@example.com); the draft is also addressed to friend@example.com". |
+| Send a draft addressed to the account itself | `bb41c07f-509a-59a9-ae3f-be30b340452b` | Approval shown: `Send "Note to self" from recorded.user@example.com to recorded.user@example.com`. After approving it through the API, the send was made (recorded) and the operation is `confirmed`. |
+
+Two earlier runs of the second case (`7fe637c6`, `29d33acc`) failed because of my stub and my recording, not Nori. The stub did not re-issue the call after approval, and the recording's send matched a different draft id.
+
+**Does Google need anything from Austin?**
+- **Gmail API:** already enabled on the existing client's project. Integration's real `mail_search` and `mail_read` on his test account succeeded (task `f38b0eb2`), which they could not do with the API disabled.
+- **Scopes:** Nori asks for them in each sign-in request, so nothing needs adding for them to be requested. If the app is in Testing, Google lets a listed test user grant `gmail.compose` behind its unverified-app screen (it is a restricted scope).
+- **Only Austin can do:** add his **personal** Gmail address as a test user on the OAuth consent screen, if the app is in Testing and it is not listed yet. Then sign in with it and allow mail access. Listing the scopes on the consent screen's data-access page is only needed for verification, which the slice does not need.
+
+**For the run (not changed here):**
+- **Step 5's approval needs `NORI_USER_SENDS=ask`** on the real stack. The interim default `allow` sends a directly requested send with no approval click (D2's interim mechanism; Austin can flip it).
+- **Step 3 cannot show an approval as the code stands.** A direct request's reversible write (create or move an event) is always allowed: `permissions/rules.go`, the `user` plus `reversible_write` case, with no setting. The slice says "each after an approval he clicks". That is a D2 question for the coordinator and Austin; I have not changed it.
+- **Calendar invitations are email to other people.** An event with attendees and `send_updates` other than `none` makes Google email them. `NORI_MAIL_RECIPIENTS` does not cover that; such an event is a `sensitive_send`, so with `ask` it does need approval. Step 3's event has no attendees.
+- **Outlook sending is not limited by the setting.** No Microsoft client is configured on this machine.
+- **D-056 is not needed for step 5:** the note is a new message to himself, not a reply.
+
+## Pi Durable: starting from the port on main
+
+The port (AB-317 to AB-320, `5f2d841...2dd6126`) is already in this branch's history, so the third assignment's comparison below was made against code that includes it. The port did not touch the external-tool path: `task/external.go`, `connectors/**`, `invoke` and `scheduler` are unchanged in `5f2d841...2dd6126`. Gaps A and B below were therefore still open on the slice's path after it. They are fixed in `0c199b7` and `25480a6`. Nothing else from Pi was taken.
+
+## Third assignment (2026-11-10, coordination record "Slice and third assignments")
+
+Stack: core 8081, worker, database `nori_backend`, namespace `nori-backend`, queue `nori-tasks-backend`, user A. Integration's processes were not touched.
+
+### 1. D-053 and D-054 against the real models
+
+Build `be-ed59dc5` (integration's head, which holds both fixes), real keys from `.env` read in place: the conversation on `gpt-6.1-sol` through OpenAI, tasks on `openai/gpt-6.1-terra` through OpenRouter. The intent classifier is off (no key in `.env`).
+
+| Check | Task or message (UTC) | Result |
+| --- | --- | --- |
+| D-054, conversation, saved zone America/Los_Angeles | message 03:47:25 | "It's 7:47 p.m. on Tuesday, November 10, 2026, for you. I'm using America/Los_Angeles". Correct. |
+| D-054, after `PUT /v1/preferences` to Asia/Tokyo (revision 2), no restart | message 03:47:58 | "It's 12:47 p.m. on Wednesday, November 11, 2026, for you. I'm now using Asia/Tokyo". Correct (03:47 UTC is 12:47 JST). |
+| D-054, background task after the change | task `1b5290ff-6e7d-5cd1-aa6d-69ad30dd84be`, 03:48:25 to 03:48:27 | "Today is Wednesday, November 11, 2026, in Asia/Tokyo. The current local time was not provided." Correct: the task prompt carries the date and the zone, not the clock. No London anywhere. |
+| D-053, worker SIGKILLed during a real model request | task `1c92850d-0932-53d1-8072-3f1dfb1db276` (a 1,500-word story) | Request 03:49:24; worker killed 03:49:31 and restarted 03:49:35; the recovery attempt settled the request as interrupted at 03:53:24 (the dead attempt's 240 s window), recorded the `model-step-deadline` marker, asked once more, and the model answered at 03:54:12 (48 s). Completed at 4:48 with a result. Cost status "unknown", because the cut-off request's cost was never reported. |
+
+Not re-testable against a real model: the 2-minute hang. A real model that does not answer cannot be produced on demand, so that path stays verified against the stub only (task `62f3a126`, first turn). The ordinary real task above finished in under 3 s, so the 2-minute request bound did not get in the way.
+
+### 2. Pi Durable: what Nori already has, and the gaps on the slice's path
+
+Read: Pi at `682c7b9` (`packages/durable`, marked experimental): `docs/spec.md`, `src/harness/tool.ts`, `src/harness/types.ts`, `src/tool-search/tool-search.ts`. Compared with the plan's rows "Durable tool registration", "Durable execution" and "Tool discovery", with `core/README.md` (which cites Pi at `6e2222a` for task ownership intent, held completion, commit publication, inbox order, wake demand and context compaction, but says little about tool-level intent or replay policy), and with the code, which has both.
+
+| Pi | Nori before this turn | Gap on the slice's path? |
+| --- | --- | --- |
+| **Tool intent before execution.** The `execute` checkpoint (final arguments, replay policy) is committed before `execute()` runs. | `task.durableTool` admits the operation with its receipt deadline and writes an operation record (outcome `pending`, tool reference and digest, action digest, summary and spec, account, authority) before dispatch; `runExternal` saves the attempt count before each provider call; the arguments are in the Temporal activity input. | Adopted, except that the record did not hold the whole prepared action (the provider revision it was approved against, and its provider keys). See gap A. |
+| **Declared replay safety.** `replay: "safe" \| "unsafe"` per tool, default unsafe, stored with the intent; both the stored and the current declaration must say safe to re-run. | Each definition declares `retry`: `safe` (only reads and control may), `provider_key` or `reconcile_only`, pinned with the call; an adapter can implement `Reconcile`. An interrupted write is reconciled from provider state or settles `uncertain`, and holds the task's later writes until the user answers. Slice tools: calendar reads `safe`; create `provider_key` (client-chosen event id); change and cancel `reconcile_only`; the reminder create `provider_key` (request id). | Richer than Pi. One gap: the first-party adapter behind reminders (slice step 4) has a provider key but no reconciliation, so an interrupted reminder save stayed `uncertain` and asked the user, although Nori can read its own store. See gap B. |
+| **Recovery from committed state.** Reopening in the intent phase re-runs a safe tool with the stored arguments, else records "interrupted and may have partially run"; restart limit 5. | Waits out the dead attempt's receipt window, reuses a settled result, reconciles, else `uncertain`; Temporal allows three attempts; the model step is bounded by D-053. | **Gap A:** recovery prepared the action again from a fresh provider read instead of the saved intent. For `calendar_event_update` (slice step 3, the move) that read already shows the interrupted PATCH's new revision, so reconciliation compared the event with its own new revision and settled a move that had gone through as failed, "the interrupted attempt did not change the event". An event an interrupted cancel had deleted could not be prepared at all, so that settled `uncertain`. Also, a reconciled "did not happen" settled `failed` with no reason it was harmless, which holds every later write in the task until the user answers. |
+| **Deferred tool visibility.** `deferred` tools stay out of the request until `tool_search` loads them; the loaded set is stored per branch. | Exposure `discoverable` plus `capability_load`; the loaded set is read from the transcript, so it survives restarts and compaction; the catalog lists each capability and its tools. Google's tools are `direct`, but the inventory offers only definitions whose access the account granted. | Not a gap on the slice's path. With the calendar grant the model is offered the 10 Google Calendar tools, which steps 2 and 3 use; mail tools appear only once mail access is granted (step 5). Making them discoverable would add a `capability_load` round trip to every calendar task. Unchanged. |
+
+Left out deliberately: Pi's scheduler, task graph, structured concurrency, code mode, sessions and storage backends (Nori has Temporal and its database for these). Also left out: re-running a `provider_key` write on recovery in general. Pi would re-run a tool declared safe, but Drive's create declares `provider_key` while its Execute does not deduplicate, so a general re-run could create a second file. The calendar create's reconciliation already reads the event by its own id, which is what a re-run would establish.
+
+### 3. What was implemented (gaps A and B, nothing else from Pi)
+
+| Commit | What |
+| --- | --- |
+| `0c199b7`, `25480a6` | **Gap A, recovery from the saved intent.** The operation record now saves the whole prepared action before the first attempt: `action.intent`, `action.precondition` (the provider revision the action was approved against) and `action.keys` (its provider idempotency keys), next to the digest, summary and spec it already had. Recovering an interrupted **write** rebuilds the action from that record instead of preparing it again (`task.planExternal`), so reconciliation compares provider state with what was approved. Reads still re-run from a fresh prepare. Records saved before this change have no `intent` and recover as before. |
+| `0c199b7` | **Gap A, a proven "did not happen" stops holding the task.** On recovery, which runs only after the interrupted attempt's receipt window, a reconciliation that shows no effect settles `failed` with the reason `did_not_run`, so it no longer holds the task's later writes. Right after a timeout (not recovery) the request may still land, so a `failed` there keeps holding, as before. Google Drive, Outlook and iCloud already set that reason in their own reconciliation; Google Calendar and Gmail did not. |
+| `0c199b7` | **Gap B, reminders reconcile from Nori's store.** The first-party adapter now reconciles an interrupted `automation_create`: the automation saved under the call's request id (the save is one transaction) is reported `confirmed`; none saved is `failed` (`did_not_run`). Other first-party writes stay `uncertain`, as before. |
+
+No workflow command changed (all of this runs inside activities), so no version gate is needed. `make -C core check` and `go run ./cmd/contracts-check` (5 histories replayed, 0 failures) pass.
+
+How verified (stub model; Google answering from integration's recordings, copied to the session scratchpad and edited per case; user A's recorded Google connection). The recorded-provider state lives in the worker's memory, so each case started the worker with one recording set (the PATCH hangs for 120 s), SIGKILLed it about 5 s into the PATCH, and restarted it with a second set showing the provider after the cut-off attempt: either the move had landed (the event at 13:00 with revision `…41`) or it had not (12:30, revision `…40`). Recovery ran at the end of the dead attempt's 240 s window.
+
+| Case | Build | Task | Result |
+| --- | --- | --- | --- |
+| Move landed before the crash | `be-0c199b7` | `a120eacd-2750-5b79-ae6c-29e9872413a2` | Before the restart, the record already held `intent: true` and `precondition: "3400000000000040"`, outcome `pending`, attempt 1. Recovery at 04:02:13: one read of the event, no second PATCH, settled **confirmed** ("Changed"); task completed. |
+| Move had not landed | `be-25480a6` | `5f22ae98-a872-5358-aa77-518ade295d5d` | Recovery at 04:08:31: one read (revision `…40`, equal to the saved precondition), no second PATCH, settled **failed** with reason `did_not_run`, so later writes are not held; task completed. |
+| Same as the first row, on the code before this turn (negative control) | `be-old-ed59dc5` (scratch worktree at `ed59dc5`) | `e7922a91-1b0b-5f1d-9c54-153e6617fa15` | Recovery at 04:06:49 prepared again (its read already showed revision `…41`), then reconciled against that: settled **failed**, and the model was told "the interrupted attempt did not change the event" although the event had moved. This is the defect gap A fixes. |
+| Reminder saved, result lost | `be-25480a6`; before the kill, a scratch build of the same commit with an injected 120 s pause after the save (not committed) | `cae0aa3e-aa3c-51d8-af9f-f70e3728f4db` | Before the restart the automation existed and the operation was `pending`. Recovery at 04:12:51 found it by request id and settled **confirmed**; one automation, no question to the user. The code before this turn has no reconciliation here and settles `uncertain`, which asks the user (read from the code; not re-run). The test reminder was cancelled afterwards. |
+
+One earlier run of the "move had not landed" case (`5e7ecf29`) failed because of my recording edit, not the code: removing the PATCH exchange broke another recorded exchange that depends on it, so the restarted worker's recorded transport would not load. It was re-run with the PATCH exchange kept (above).
+
+Not verified: the delete path (an interrupted cancel whose event is gone now reconciles from the saved spec instead of settling `uncertain`; same code path, no recorded case), and anything against real Google or a real crash in Austin's run.
 
 ## Second assignment (2026-11-10, coordination record "After the first turn")
 
@@ -26,7 +112,7 @@ Notes:
 - A direct request does not raise an approval (`NORI_USER_SENDS=allow`, interim), so on the stack the summary showed on the operation, which Work displays; an approval shows the same text.
 - The action spec (the digest input) still holds the arguments as given, so a reply's spec has `subject: ""`. That is deliberate: the digest binds to what the model asked for.
 - The Team create came back uncertain because the recordings have no insert for that calendar (it is read-only there); the task asks the user what happened, as designed. Not a defect.
-- **Found, not fixed (outside this assignment):** a reply draft is not addressed from the original message. `saveDraft` writes only the `to`/`cc`/`bcc` it is given, so a reply without them is saved with no recipients. The summary now says so instead of hiding it. Filling reply recipients from the original's From/To/Cc (reply, reply_all) would be the fix; it is a change to what gets written to Austin's mailbox, so I'd like the coordinator's go-ahead first.
+- **Found, not fixed (outside this assignment):** a reply draft is not addressed from the original message. `saveDraft` writes only the `to`/`cc`/`bcc` it is given, so a reply without them is saved with no recipients. The summary now says so instead of hiding it. Filling reply recipients from the original's From/To/Cc (reply, reply_all) would be the fix; it is a change to what gets written to Austin's mailbox. The coordinator holds it as **D-056** (it would send mail to other people; Austin's limit is that email goes only to him) until the first slice and his word. Not changed.
 
 ## What changed in the first turn
 
@@ -110,11 +196,14 @@ Matches, after `2ed6bdb`:
 
 ## How to run this stack
 
-`scripts/backend-stack.sh` (`setup`, `users`, `core`, `worker`, `current`). With `NORI_MODEL_TEST_URL=http://127.0.0.1:<port>` it runs against a model stub with placeholder keys and no hosted telemetry. `NORI_BUILD_ID` overrides the build id only to drain tasks pinned to an older build. The stub used this turn is a 40-line Python server in the session scratchpad (records request bodies, answers from scripted JSON, or never answers); it is not in the repository.
+`scripts/backend-stack.sh` (`setup`, `users`, `core`, `worker`, `current`). With `NORI_MODEL_TEST_URL=http://127.0.0.1:<port>` it runs against a model stub with placeholder keys and no hosted telemetry. `NORI_BUILD_ID` overrides the build id only to drain tasks pinned to an older build. The stub is a small Python server in the session scratchpad (records request bodies, answers from scripted JSON, or never answers); it is not in the repository. The third assignment's interrupted-write cases used a scratchpad script that starts the worker with one recording set, kills it during the provider call, and restarts it with another; also not in the repository.
+
+State left running: core 8081 and a worker on `be-7c58cc1`, both in stub mode with recorded Google responses (a scratch copy with two extra drafts) and `NORI_USER_SENDS=ask` (user A's Google connection is a recorded one, so a real-model worker must not run tasks for user A against real Google). Real-model mode is `scripts/backend-stack.sh core|worker` without `NORI_MODEL_TEST_URL`.
 
 ## Unverified
 
-- Anything against a real model: this machine's `.env` has no model key, so no real model turn ran. The prompts and timeouts were checked against the stub only.
+- D-053's 2-minute hang against a real model (cannot be produced on demand; stub only). D-053's crash recovery and D-054 were re-tested against the real models in the third assignment.
+- Gaps A and B against real Google and a real worker crash in Austin's run: verified with recorded Google responses and an injected pause only (third assignment, section 3).
 - The `Interrupted` re-ask after a graceful stop (SIGTERM during a deploy) rather than SIGKILL; the code path is the same recovery read.
 - Side-chat prompts after a time zone change: same `Profile` wiring, not exercised on the stack.
 - The first-run task `29a69f42`'s exact 15-minute path (history not on this machine).
@@ -123,16 +212,14 @@ Matches, after `2ed6bdb`:
 
 - `a62a26e` (WIP hosted stdio, unverified) is on this branch below this turn's commits, so merging the branch brings it. It only changes packaged stdio MCP servers (`command_ref: package:…`) and needs the computer; the Google path does not touch it. Label it unverified when merged (rule 3), or tell me to revert it on this branch.
 - W8 packages, D-045, D-047, D-048, D-049: not on the Google path. D-045 (a crashed nested read inside `compose` waits about 4 minutes) only matters if the model uses `compose`.
-- **Likely to hurt the real run (not parked by me, found by frontend; next for backend):**
-  - The calendar approval summary names the calendar by its raw id (`Create "…" on primary`); on Austin's dedicated test calendar that is a long `…@group.calendar.google.com` id. It should use the calendar's name (`connectors/google/calendar.go` `prepareInsert`).
-  - The draft summary can be empty (`Draft "" to  (not sent)`).
+- The two summaries frontend found (calendar named by raw id, empty draft summary) were fixed in the second assignment (`11fdcfd`).
 - Worker restarts strand running tasks: running workflows stay pinned to the build that started them, so stopping a worker for a new build leaves its tasks "running" until a worker for that build polls again (seen this turn, drained with `NORI_BUILD_ID`). During the real run, keep the old worker up until its tasks finish.
 
 ## Needs
 
 ### From integration
 
-- Merge `2ed6bdb` and the commits before it (or this branch's head; see the `a62a26e` note above). Nothing in `contracts/**` changed.
+- Merge this branch's head (third assignment: `0c199b7`, `25480a6` and the status commit). Nothing in `contracts/**` changed. The new operation-record fields (`action.intent`, `action.precondition`, `action.keys`) are internal and optional; records without them recover as before.
 - Optional: `NORI_MODEL_TEST_URL` lets a stack run model turns against a loopback stub without keys; `NORI_STACK_NO_MODEL` could use it instead of a dead proxy if model-turn plumbing is worth checking.
 - If wanted as replay evidence: the interrupted-then-re-asked history from the old code (see "Replay of an old interrupted history") can be pinned under `contracts/assistant/histories`; it is `old-code-interrupted-history.json` in the shared notes folder.
 
@@ -143,9 +230,9 @@ Matches, after `2ed6bdb`:
 
 ### From the coordinator
 
-- D-053 and D-054 are fixed and locally verified (stub), ready to be re-tested in journeys once a model key exists.
+- D-053 and D-054 re-tested against the real models (task ids in the third assignment, section 1).
+- Pi Durable gap list and the two gaps implemented (sections 2 and 3). Nothing else from Pi was taken. D-056 stays held.
 
 ### From Austin
 
-- A model key in `.env` (`OPENAI_API_KEY` and/or `OPENROUTER_API_KEY`), and the Google OAuth client values, before any real run; the coordinator has recorded this.
 - HEY: whether to run the read-only CLI check in `backend-providers.md` ("The cheapest honest check"). Nothing on HEY is built.

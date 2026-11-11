@@ -312,6 +312,12 @@ func (s *Service) Preview(ctx context.Context, value Editable, unattendedMode st
 	return p, nil
 }
 
+// Created returns the automation a create with this request ID saved. state.ErrNotFound means it saved nothing: the
+// save is one transaction, so an interrupted create either saved the whole automation or none of it.
+func (s *Service) Created(ctx context.Context, requestID string) (Automation, error) {
+	return s.Get(ctx, automationID(requestID))
+}
+
 func automationID(requestID string) string {
 	return "auto_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte("automation:"+requestID)).String(), "-", "")[:20]
 }

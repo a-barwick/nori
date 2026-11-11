@@ -22,7 +22,26 @@ import (
 	"nori/internal/state"
 )
 
-type mailAdapter struct{}
+type mailAdapter struct {
+	// selfOnly sends only to the connected account's own address (settings.Connections.MailRecipients).
+	selfOnly bool
+}
+
+// othersThanSelf returns the recipients that are not the connected account's own address. The address is the account
+// label, which Identify reads from the account's profile at connect; it never comes from the model or a setting.
+func othersThanSelf(call invoke.Call, recipients []string) []string {
+	self := ""
+	if call.Grant != nil {
+		self = strings.ToLower(strings.TrimSpace(call.Grant.Connection.Account.Label))
+	}
+	others := []string{}
+	for _, r := range recipients {
+		if self == "" || strings.ToLower(strings.TrimSpace(r)) != self {
+			others = append(others, r)
+		}
+	}
+	return others
+}
 
 const maxMailText = 32 << 10
 
@@ -145,7 +164,7 @@ func messageID(operationID string) string {
 	return "<nori-" + hex.EncodeToString(sum[:16]) + "@mail.nori.invalid>"
 }
 
-func (mailAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared, error) {
+func (a mailAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared, error) {
 	_, operation, _ := strings.Cut(call.Exec.Binding.Target, "/")
 	args := call.Args
 	conn := connectionID(call)
@@ -202,6 +221,10 @@ func (mailAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepar
 		}
 		if len(recipients) == 0 {
 			return invoke.Prepared{}, fmt.Errorf("%w: the draft has no recipients", invoke.ErrInvalidArguments)
+		}
+		if others := othersThanSelf(call, recipients); a.selfOnly && len(others) > 0 {
+			return invoke.Prepared{}, fmt.Errorf("%w: this Nori sends email only to the connected account's own address (%s); the draft is also addressed to %s. Change the draft or tell the user",
+				invoke.ErrInvalidArguments, call.Grant.Connection.Account.Label, strings.Join(others, ", "))
 		}
 		sort.Strings(recipients)
 		body := bodyText(draft.Message.Payload)
@@ -295,6 +318,10 @@ func (a mailAdapter) Execute(ctx context.Context, call invoke.Call, p invoke.Pre
 		}
 		if current.Message.Id != p.Precondition {
 			return invoke.Result{Outcome: "failed", Err: errors.New("the draft changed after the send was prepared; review it again before sending")}
+		}
+		if a.selfOnly && len(othersThanSelf(call, strings.Split(p.Spec["recipients"], ","))) > 0 {
+			// Checked again at send: the prepared recipients are what the approval showed.
+			return invoke.Result{Outcome: "failed", Err: errors.New("this Nori sends email only to the connected account's own address"), Cleared: state.ClearedDidNotRun}
 		}
 		sent, err := service.Users.Drafts.Send("me", &gmail.Draft{Id: p.Spec["draft"]}).Context(ctx).Do()
 		if err != nil {

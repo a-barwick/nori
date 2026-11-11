@@ -61,6 +61,9 @@ type Connections struct {
 	CredentialKMSKey, CredentialKeyFile string
 	// UnattendedWrites and UserSends are the interim D2 mechanisms; see internal/permissions.
 	UnattendedWrites, UserSends string
+	// MailRecipients limits who Nori may send email to: "self" (the default) sends only to the connected account's
+	// own address, read from the account's profile at connect; "any" lifts the limit. Drafts are not limited.
+	MailRecipients string
 	// ProviderReplay names a directory of recorded provider responses (internal/connectors/replay). Local development
 	// only: platform refuses it unless NORI_CLOUD=local, and no provider is contacted while it is set.
 	ProviderReplay string
@@ -267,6 +270,7 @@ func connectionsFromEnvironment(localArtifacts string) Connections {
 		RedirectURL:     os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
 		CredentialKMSKey: os.Getenv("NORI_CREDENTIAL_KMS_KEY"), CredentialKeyFile: os.Getenv("NORI_CREDENTIAL_KEY_FILE"),
 		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"), UserSends: get("NORI_USER_SENDS", "allow"),
+		MailRecipients: get("NORI_MAIL_RECIPIENTS", "self"),
 		ProviderReplay: os.Getenv("NORI_PROVIDER_REPLAY"),
 		MCPCommands:    mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
 		SMTPHost:       os.Getenv("NORI_SMTP_HOST"), SMTPPort: os.Getenv("NORI_SMTP_PORT"), SMTPUsername: os.Getenv("NORI_SMTP_USERNAME"),

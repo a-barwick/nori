@@ -17,6 +17,7 @@ import (
 	"nori/internal/extensions"
 	"nori/internal/invoke"
 	"nori/internal/scheduler"
+	"nori/internal/state"
 )
 
 const Version = "1"
@@ -153,6 +154,27 @@ func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared
 	return invoke.Prepared{Summary: call.Exec.Binding.Target, Effect: extensions.EffectRead, Spec: spec}, nil
 }
 
+// Reconcile settles an interrupted reminder or routine create from Nori's own store: the saved automation under the
+// call's request ID, or proof that nothing was saved. Other first-party writes stay uncertain until the user answers.
+func (a Adapter) Reconcile(ctx context.Context, call invoke.Call, _ invoke.Prepared) (invoke.Result, bool) {
+	if call.Exec.Binding.Target != "nori.automations/create" {
+		return invoke.Result{}, false
+	}
+	created, err := a.Scheduler.Created(ctx, requestID(call))
+	if errors.Is(err, state.ErrNotFound) {
+		return invoke.Result{Outcome: "failed", Err: errors.New("the interrupted attempt did not save it")}, true
+	}
+	if err != nil {
+		return invoke.Result{}, false
+	}
+	return savedResult(created), true
+}
+
+func savedResult(created scheduler.Automation) invoke.Result {
+	return invoke.Result{Outcome: "confirmed", Content: map[string]any{"automation": created,
+		"summary": fmt.Sprintf("Saved %q; next run %v. The user can see and change it in Routines.", created.Title, created.NextAt)}}
+}
+
 func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepared) invoke.Result {
 	failed := func(err error) invoke.Result {
 		return invoke.Result{Outcome: "failed", Err: err}
@@ -175,8 +197,7 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepare
 		}
 		var created scheduler.Automation
 		_ = json.Unmarshal(receipt.Resource, &created)
-		return invoke.Result{Outcome: "confirmed", Content: map[string]any{"automation": created,
-			"summary": fmt.Sprintf("Saved %q; next run %v. The user can see and change it in Routines.", created.Title, created.NextAt)}}
+		return savedResult(created)
 	case "nori.uploads/read":
 		if call.Upload == nil {
 			return failed(errors.New("attachments are not available here"))
