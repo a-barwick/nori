@@ -4,6 +4,31 @@ Branch `claude/nori-assistant-backend-9c520e`, worked from worktree `.claude/wor
 
 Evidence label (rule 2): **provider verified: 0.** No real provider account was used. The D-053 and D-054 re-tests in the third assignment ran against the real models (OpenAI and OpenRouter, keys from `.env`); everything else is locally verified against a loopback model stub, Google answering from hand-written recordings, the local database and the local Temporal dev server.
 
+## Own address, leftover drafts, "tomorrow" (from integration's pass at `b33b356`)
+
+Commit `3acb70c`. **Integration:** restart the real stack's core **and** worker on this branch's head. The worker carries the Gmail checks and the task clock; the core carries the decline clean-up, the user facts and the duplicate repair below.
+
+**Causes and fixes:**
+1. **"Email me" went to the Nori sign-in address.**
+   - Cause: every prompt's user facts carried the Nori sign-in address under the key `email`.
+   - Fix: the key is now `nori_sign_in`, with a note that it is not the user's mailbox and that "email me" means the connected mail account's own address. The draft tool's description says the same.
+2. **Unsent drafts were left behind.** The draft was created before the recipient check. With `NORI_MAIL_RECIPIENTS=self`, now:
+   - A draft addressed to anyone else is refused before it is created, with the real reason: only the connected account's own address is allowed, and the given address is not it.
+   - A refused send deletes the draft if Nori wrote it.
+   - A declined send approval deletes the Nori draft before the decline is recorded (a new `OnDecline` hook in permissions), and the task is told "Nori deleted the unsent draft it had created for this message."
+   - "Nori wrote it" means the draft's Message-ID is Nori's (`<nori-…@mail.nori.invalid>`). Drafts the user wrote are never touched.
+3. **"Tomorrow" asked "11 or 12 November?"** In the evening Pacific, UTC is already the next day. The task clock note now states today's and tomorrow's dates in the user's zone, "whatever date UTC timestamps elsewhere show", and says not to ask which date is meant.
+
+Verified with the **real models** on my stack, user C (zone America/Los_Angeles, Nori sign-in `backend-c@nori.local`, Gmail from recordings as `recorded.user@example.com`), at 21:43 to 21:50 PST, which is already 11 November in UTC:
+
+| Case | Task | Result |
+| --- | --- | --- |
+| "Create an event called Nori rehearsal tomorrow at 3pm for 30 minutes on my primary Google calendar." | `f3a1bd89-38f2-5ec6-8886-acf4a0016a9c` | No question. `Create "Nori rehearsal" on your main calendar, Wed 11 Nov 2026 15:00–15:30 PST`, confirmed. |
+| "Email me a one-line note from my Gmail saying the Nori test reached step 5." | `977ec4d5-c4c2-5fb5-8329-5433452acf58` | It first asked for drafts access (`gmail.compose`, granted with a recorded code). Then `Draft "Nori test" to recorded.user@example.com`: the Gmail address, not the Nori sign-in. The approval card read `Send "Nori test" from recorded.user@example.com to recorded.user@example.com`. **Declined** through the API: the core read the draft and deleted it (`DELETE …/drafts/recdraft1`, 204) before recording the decline. The reply: "The email wasn't sent because you declined the send approval. The unsent draft was deleted." |
+| "Email someone@example.com a one-line hello from my Gmail." | `97f9d564-a6e3-59d3-b3bb-f97c6efbd064` | No draft created (the recorded draft-create count did not change), no approval card, nothing sent. The reply: "your current Gmail connection only permits sending to your own connected address, not someone@example.com … no draft was created". |
+
+Not exercised: the refused-send path that deletes a Nori draft made before this change. It is the same delete call. Drafts already left in the test account by earlier runs are not removed by this; they can be deleted in Gmail.
+
 ## For integration: restart the real core to repair the duplicate Google rows
 
 Restart the real stack's **core** (8085) on a build that includes `a500176` (this branch's head has it). Merged duplicates are only possible from that build on. On the first request for a user after the restart, the core combines that user's duplicate connections into one. Nothing else is needed: no disconnect, no manual step, no provider call. The worker does not need the new build for this, but it is fine to restart it on the same head.
