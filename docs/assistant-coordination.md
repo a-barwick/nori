@@ -232,6 +232,17 @@ Left as it is: the application state's `outer_model` output still says `meta/mus
 
 Still open: the runtime query quota (30 per minute; increase to 600 requested, not granted when this was written); push delivery (VAPID secrets empty, no device registered) and a reminder with the app closed; old worker builds that hold the Desktop client's refresh token; today's production task ids are not in `docs/assistant-acceptance.md`.
 
+### Query budget, second pass; no more production pauses (2026-11-11, 14:00 to 14:15 PST)
+
+Austin: "god damn it fucking leave production on fuck man". Rule from now: no `make deploy` (each one pauses production about three minutes) without his word for that release. Fixes merge to `main` and wait, or go out by a path that needs no pause.
+
+Austin, on the pending quota: "ok how do we fix it. why do you keep giving me issues like i need to solve them". And on reminders with the app closed: "i don't care about this" (push is dropped from the open list).
+
+- PR a-barwick/nori#169: the web tier shares six polled reads per user for eight seconds, so extra tabs and devices add no runtime queries; a write drops the user's shared answers. Rolled out as web revisions `nori-web-00055-wg2` and `nori-web-00056-mkg` (same image; the rollout command ran twice) with **no pause**; the site answered throughout. The worker and runtime are still `rel-02aee57c6473`; `main` is at `a407291`.
+- Measured before this change, after #166: no 429 in over an hour of testing, peaks of 21 to 39 runtime queries a minute.
+- Stress after the rollout: 240 scripted requests in about two minutes on top of an open page; 226 answered 200 and 14 answered 429 inside one 22-second stretch. The cap is still 30 a minute; ordinary use stays under it, a deliberate hammer does not.
+- The quota request was lowered from 600 to 120 a minute to make automatic approval more likely; still "reconciling" at 14:10.
+
 ## Baseline commits
 
 | What | Commit |
