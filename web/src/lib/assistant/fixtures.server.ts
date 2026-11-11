@@ -92,6 +92,13 @@ function seed(): Store {
       ],
       interactions: [
         { ...fixture("permissions/interaction.approval.valid.json"), task_title: "Book the dentist and invite Alex", expires_at: hours(2) },
+        // A send in core mail.go's summary shape: header line, then the message (display only; ids are made up).
+        (() => {
+          const base = fixture("permissions/interaction.approval.valid.json") as Record<string, unknown> & { payload: Record<string, unknown> };
+          const summary = "Send \"Dinner on Friday\" from personal@example.com to personal@example.com:\nThe reservation at Lupa is confirmed for Friday at 7:30 p.m. for two.\nConfirmation code: K7Q2.";
+          return { ...base, id: "int_send_note", task_id: "task_send_note", task_title: "Find the reservation email and send me a note", expires_at: hours(2), prompt: summary,
+            payload: { ...base.payload, summary, recipients: ["personal@example.com"], material_effects: ["One email is sent from your account"] } };
+        })(),
         { ...fixture("permissions/interaction.question.valid.json"), task_title: "Book the dentist and invite Alex" },
         { ...fixture("permissions/interaction.account-selection.valid.json"), status: "resolved", resolution: { kind: "choose_account", connection_id: google.id, at: hours(-1) }, task_title: "Book the dentist and invite Alex" },
         { ...fixture("permissions/interaction.sign-in.valid.json"), task_id: "task_12", task_title: "Check the school portal for this term's dates", expires_at: hours(1) },

@@ -57,13 +57,20 @@ function useRespond(interaction: Interaction, onDone?: () => void) {
   return { respond, ...action, current, legacy };
 }
 
+/** Core uses an approval's whole summary as its prompt (task external.go); the card shows that summary below, so the heading is a short question. */
+function heading(interaction: Interaction) {
+  const payload = interaction.payload as Partial<ApprovalPayload>;
+  if (interaction.kind !== "approval" || interaction.prompt !== payload.summary) return interaction.prompt;
+  return ({ sensitive_send: "Send this?", reversible_write: "Make this change?", read: "Allow this?" } as Record<string, string>)[payload.effect ?? ""] ?? "Approve this action?";
+}
+
 export function InteractionCard({ interaction, compact }: { interaction: Interaction; compact?: boolean }) {
   const [shown, setShown] = useState(interaction);
   const resolved = shown.status !== "pending";
   return (
-    <article aria-label={shown.prompt} className={cn("rounded-card border bg-surface p-4", resolved ? "border-hairline" : "border-hairline-strong shadow-[0_1px_0_var(--hairline)]")}>
+    <article aria-label={heading(shown)} className={cn("rounded-card border bg-surface p-4", resolved ? "border-hairline" : "border-hairline-strong shadow-[0_1px_0_var(--hairline)]")}>
       <div className="flex items-start gap-2">
-        <h3 className="min-w-0 flex-1 text-row font-semibold text-ink">{shown.prompt}</h3>
+        <h3 className="min-w-0 flex-1 text-row font-semibold text-ink">{heading(shown)}</h3>
         {resolved ? <Pill tone={shown.status === "resolved" ? "ok" : "neutral"}>{shown.status === "resolved" ? "Answered" : shown.status === "expired" ? "Expired" : "Replaced"}</Pill>
           : shown.expires_at ? <Pill tone="warning">Expires {relative(shown.expires_at)}</Pill> : null}
       </div>
@@ -129,12 +136,22 @@ function Question({ payload, state }: { payload: QuestionPayload; state: State }
 function Approval({ interaction, payload, state }: { interaction: Interaction; payload: ApprovalPayload; state: State }) {
   const busy = !!state.pending;
   const digest = interaction.action_digest!;
+  const send = payload.effect === "sensitive_send";
+  // A send's summary is `Send "subject" from … to …:` then the message on the following lines (core mail.go), with
+  // a trailing "…" when core shortened it. Show the message as its own block so it reads as exactly what is sent.
+  const cut = send ? payload.summary.indexOf("\n") : -1;
+  const heading = cut >= 0 ? payload.summary.slice(0, cut) : payload.summary;
+  const message = cut >= 0 ? payload.summary.slice(cut + 1) : "";
   return <div>
-    {/* A send's summary carries the message after a line break (core mail.go); keep the lines. */}
-    <p className="whitespace-pre-line text-body text-ink [overflow-wrap:anywhere]">{payload.summary}</p>
+    <p className="whitespace-pre-line text-body text-ink [overflow-wrap:anywhere]">{heading}</p>
+    {cut >= 0 && <>
+      <blockquote aria-label="Message to be sent" className="mt-2 rounded-tile border border-hairline bg-fill-1 px-3 py-2 text-body whitespace-pre-line text-ink [overflow-wrap:anywhere]">{message.trim() || "(No message text)"}</blockquote>
+      {message.trimEnd().endsWith("…") && <p className="mt-1 text-meta text-ink-2">Only the start of the message is shown here. The rest is sent too.</p>}
+    </>}
     <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-meta">
-      <dt className="text-ink-3">Account</dt><dd className="text-ink">{payload.account.label}</dd>
-      {!!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
+      {send && !!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
+      <dt className="text-ink-3">{send ? "From" : "Account"}</dt><dd className="text-ink">{payload.account.label}</dd>
+      {!send && !!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
       <dt className="text-ink-3">Effect</dt><dd><Pill tone={payload.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[payload.effect]}</Pill></dd>
     </dl>
     {!!payload.material_effects?.length && <ul className="mt-3 space-y-1 text-meta text-ink-2">{payload.material_effects.map((effect) => <li key={effect} className="flex gap-2"><ShieldCheck size={14} className="mt-0.5 shrink-0 text-ink-3" aria-hidden />{effect}</li>)}</ul>}

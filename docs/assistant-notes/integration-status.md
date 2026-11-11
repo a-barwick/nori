@@ -1,8 +1,23 @@
 # Integration status
 
-Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, fourth turn of the restart (slice rehearsal). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
+Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, fifth turn of the restart (slice writes on the test account). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
 
 **Provider verified: 0 of 44.**
+
+## Fifth turn: slice writes on the test account (2026-11-10, about 20:57 to 21:03)
+
+- **Approval.** The coordinator relayed Austin's "Just set this up". Before any write, I asked Austin directly in this session. He approved three things: the calendar event steps, one email to the account itself, and allowing notifications. The connection already had `calendar.write`, `mail.draft` and `mail.send` from his own Google consent. I started no sign-in.
+- **Step 3: passes as writes, with gaps.** Details are in `docs/assistant-acceptance.md` → "Real provider runs".
+  - "Nori test" could not be created: there is no create-calendar tool (`ca2260d9…`). The primary calendar of the test account was used, per the coordinator.
+  - Create, move and delete each ran once against Google and were confirmed (`c478478f…`, `0a93f9a7…` with a read-back, `e898a019…`). The run ends with the event removed.
+  - The create task first asked whether "tomorrow" meant 11 or 12 November, though it knew today is the 10th (frontend's B3).
+- **Step 5's send: passes, with a failure.** One note went to the account's own address only (`b7dab195…`). There was no approval card.
+- **Step 4 with the app closed: blocked in the built-in browser pane** ("Notifications are blocked for this site"). It needs a real browser or a phone where Austin allows notifications.
+- **Merged after the run**: coordinator `bf004ba`, backend `cb97cc8` and frontend `c7dffa0`. Backend's `7c58cc1` limits Gmail sends to the connected account's own address and drops `gmail.send`; its `0c199b7`/`25480a6` change recovery. Frontend's `c7dffa0`/`65eb487` cover the connect choice and the send approval block. Merge head `d9e0b03`. `make check` and `go test ./...` are green. **The stacks still run `1456cc9`**, so none of this was in the runs above. Restart the real stack on the new head (one worker, `set-current`) before the next run.
+- **No approval card for any write. This is for the coordinator and Austin, not settled here.**
+  - Calendar writes the user asks for directly are authorised by the request itself (`core/internal/permissions/rules.go`: `user_request` for `reversible_write`).
+  - Sends go out without approval because the interim D2 setting `NORI_USER_SENDS` defaults to `allow` (`core/internal/settings/settings.go:269`).
+  - The slice says each write happens "after an approval he clicks". I did not change the setting: D2 is open with Austin. If the slice rule stands, the real stack could set `NORI_USER_SENDS` to require approval for the run, but that is the coordinator's or Austin's call.
 
 ## Fourth turn: slice rehearsal (2026-11-10, evening)
 
