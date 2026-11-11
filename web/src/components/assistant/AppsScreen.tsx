@@ -154,9 +154,25 @@ function Catalog() {
   </>;
 }
 
+/**
+ * A sign-in returns with ?result= (and ?connection=). Read them once, then take them out of the address bar, so a
+ * reload, a dev-server restart or a shared link never shows a sign-in result again.
+ */
+function useReturnedResult() {
+  const params = useSearchParams();
+  const [returned] = useState(() => ({ result: params.get("result"), connection: params.get("connection") }));
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("result") && !url.searchParams.has("connection")) return;
+    url.searchParams.delete("result"); url.searchParams.delete("connection");
+    window.history.replaceState(window.history.state, "", url);
+  }, []);
+  return returned;
+}
+
 export function AppDetailScreen({ id }: { id: string }) {
   const { has } = useAssistant();
-  const params = useSearchParams();
+  const returnedFrom = useReturnedResult();
   const integration = useResource<Integration>(has("integrations") ? `/integrations/${encodeURIComponent(id)}` : null, { poll: 60_000 });
   const connections = useResource<List<Connection>>(has("connections") ? "/connections" : null, { poll: 10_000 });
   const action = useAction();
@@ -174,9 +190,9 @@ export function AppDetailScreen({ id }: { id: string }) {
   const signedIn = (connection: Connection) => !!connection.account?.provider_id || item.auth !== "oauth" && connection.status !== "not_connected";
   const accounts = mine.filter((connection) => connection.status !== "disconnected" && signedIn(connection));
   const unfinished = mine.find((connection) => connection.status !== "disconnected" && !signedIn(connection));
-  const result = params.get("result");
+  const result = returnedFrom.result;
   // The provider may grant less than was asked (Google lets the user untick items on its consent screen).
-  const returned = mine.find((connection) => connection.id === params.get("connection"));
+  const returned = mine.find((connection) => connection.id === returnedFrom.connection);
   const partial = !!returned && healthOf(returned) === "needs_more_access";
   const add = () => action.run("add", async () => {
     const connection = unfinished ?? (await mutate<Connection>("/connections", { request_id: newRequestID(), expected_revision: 0, value: { integration_id: item.id, title: item.title, selected_resource_ids: [] } })).resource as Connection;
@@ -602,7 +618,7 @@ export function MCPDetailScreen({ id }: { id: string }) {
   const server = useResource<MCPServer>(`/mcp/${encodeURIComponent(id)}`, { poll: 5_000 });
   const tools = useResource<List<MCPTool>>(`/mcp/${encodeURIComponent(id)}/tools`, { poll: 0 });
   const action = useAction();
-  const result = useSearchParams().get("result");
+  const { result } = useReturnedResult();
   const item = server.data;
   if (server.loading) return <Screen title="MCP server" back="/apps?tab=mcp"><Loading /></Screen>;
   if (!item) return <Screen title="MCP server" back="/apps?tab=mcp"><Failure error={server.error ?? "Not found."} /></Screen>;

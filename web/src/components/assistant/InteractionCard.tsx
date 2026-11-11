@@ -166,12 +166,19 @@ function AccountChoice({ payload, state }: { payload: AccountSelectionPayload; s
   const { data } = useResource<{ items: Connection[] }>("/connections", { poll: 0 });
   const [remember, setRemember] = useState(!!payload.remember_as_default);
   const busy = !!state.pending;
-  const eligible = payload.eligible_connection_ids.map((id) => data?.items.find((item) => item.id === id) ?? { id, title: id, account: { label: "" } } as Pick<Connection, "id" | "title" | "account">);
+  const eligible = payload.eligible_connection_ids.map((id) => ({ id, connection: data?.items.find((item) => item.id === id) }));
+  // The account address is what tells two connections of one app apart, so it leads. Two entries for the same
+  // address (a repeated sign-in) also say when each was connected.
+  const address = (connection?: Connection) => connection?.account?.label || "";
+  const repeated = (connection?: Connection) => !!address(connection) && eligible.filter((entry) => address(entry.connection) === address(connection)).length > 1;
   return <div className="space-y-2">
-    {eligible.map((connection) => <button key={connection.id} type="button" disabled={busy} onClick={() => void state.respond({ kind: "choose_account", connection_id: connection.id, remember_as_default: remember }, connection.id)}
+    {eligible.map(({ id, connection }) => <button key={id} type="button" disabled={busy} onClick={() => void state.respond({ kind: "choose_account", connection_id: id, remember_as_default: remember }, id)}
       className="flex min-h-12 w-full items-center gap-3 rounded-tile border border-hairline px-3 py-2 text-left hover:bg-fill-1 disabled:opacity-60">
-      <span className="min-w-0 flex-1"><span className="block text-row font-medium">{connection.title}</span>{connection.account?.label && <span className="block text-meta text-ink-2">{connection.account.label}</span>}</span>
-      {state.pending === connection.id && <span className="text-meta text-ink-3">Choosing…</span>}
+      <span className="min-w-0 flex-1">
+        <span className="block text-row font-medium [overflow-wrap:anywhere]">{address(connection) || connection?.title || (data ? "An account that is no longer connected" : "Loading account…")}</span>
+        {connection && <span className="block text-meta text-ink-2">{[connection.title, repeated(connection) && `connected ${relative(connection.created_at)}`].filter(Boolean).join(", ")}</span>}
+      </span>
+      {state.pending === id && <span className="text-meta text-ink-3">Choosing…</span>}
     </button>)}
     <label className="flex min-h-11 items-center gap-2 text-meta text-ink-2"><input type="checkbox" className="accent-[var(--accent)]" checked={remember} onChange={(event) => setRemember(event.target.checked)} />Use this account next time</label>
   </div>;
