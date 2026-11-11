@@ -11,6 +11,7 @@ import (
 
 	"nori/internal/computersession"
 	"nori/internal/connections"
+	"nori/internal/extensions"
 	"nori/internal/invoke"
 	"nori/internal/permissions"
 	"nori/internal/state"
@@ -109,7 +110,12 @@ func interactionID(prefix, operationID, digest string) string {
 // planExternal resolves a registry tool call before admission. A non-nil output ends the call without admitting
 // an operation: the tool is unavailable, the account must be chosen or connected, arguments are invalid, the
 // action is denied, or it waits on the user's approval.
-func (a *Activities) planExternal(ctx context.Context, in ToolInput, recovering bool) (*externalPlan, map[string]any, error) {
+// saved is the operation's record when an interrupted attempt is being recovered. An action saved whole before its
+// first attempt (Action.Intent) is used as it was approved instead of being prepared again: a fresh read of provider
+// state would already include the interrupted attempt's own effect (an event it moved has a new revision), and an
+// event it deleted can no longer be read.
+func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *state.OperationRecord) (*externalPlan, map[string]any, error) {
+	recovering := saved != nil
 	effect := string(in.Exec.Policy.Effect)
 	if in.Exec.Binding.Target == "nori.computer/handoff" && !recovering {
 		out, err := a.handoff(ctx, in)
@@ -194,6 +200,12 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, recovering 
 		}
 		call.Grant = &grant
 		connectionID, epoch = record.ID, record.AuthorizationEpoch
+	}
+	if recovering && saved.Action != nil && saved.Action.Intent {
+		intent := saved.Action
+		prepared := invoke.Prepared{Summary: intent.Text, Effect: extensions.Effect(saved.EffectClass), Precondition: intent.Precondition,
+			Spec: intent.Spec, Keys: intent.Keys}
+		return &externalPlan{adapter: adapter, call: call, prepared: prepared, digest: intent.Digest}, nil, nil
 	}
 	prepared, err := adapter.Prepare(ctx, call)
 	if err != nil {
@@ -429,6 +441,12 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 	if recovering {
 		if reconciler, ok := plan.adapter.(invoke.Reconciler); ok {
 			if result, ok := reconciler.Reconcile(ctx, plan.call, plan.prepared); ok {
+				if result.Outcome == "failed" && result.Cleared == "" {
+					// Recovery runs only after the interrupted attempt's receipt window, so provider state that shows
+					// no effect means the attempt changed nothing; it doesn't hold the task's later writes. (Right
+					// after a timeout, in the path below, the request may still land, so a "failed" there keeps holding.)
+					result.Cleared = state.ClearedDidNotRun
+				}
 				return settle(result)
 			}
 		}

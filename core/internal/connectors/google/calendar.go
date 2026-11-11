@@ -666,6 +666,8 @@ func (a calendarAdapter) Reconcile(ctx context.Context, call invoke.Call, p invo
 		if err != nil {
 			return invoke.Result{}, false
 		}
+		// Recovery passes the revision saved with the approved action (task.planExternal), so an unchanged revision
+		// shows the attempt changed nothing.
 		if event.Etag == p.Precondition {
 			return invoke.Result{Outcome: "failed", Err: errors.New("the interrupted attempt did not change the event")}, true
 		}

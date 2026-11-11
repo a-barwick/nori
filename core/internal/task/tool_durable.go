@@ -69,7 +69,7 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	var plan *externalPlan
 	if in.Exec != nil && !in.Exec.Builtin {
 		var stop map[string]any
-		plan, stop, err = a.planExternal(ctx, in, recovering != nil)
+		plan, stop, err = a.planExternal(ctx, in, recovering)
 		if recovering != nil && (err != nil || stop != nil) {
 			// The account or implementation is no longer usable; recovery can only settle what is known.
 			plan, err = &externalPlan{}, nil
@@ -114,7 +114,9 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		op.Tool = &state.DefinitionRef{ID: in.Exec.Tool.ID, Version: in.Exec.Tool.Version, Digest: in.Exec.Tool.Digest}
 	}
 	if plan != nil {
-		op.Action = &state.Action{Digest: plan.digest, Text: clip(plan.prepared.Summary, 2000), Spec: plan.prepared.Spec}
+		// The whole prepared action is saved before the first attempt, so recovery can settle from it.
+		op.Action = &state.Action{Digest: plan.digest, Text: clip(plan.prepared.Summary, 2000), Spec: plan.prepared.Spec,
+			Intent: true, Precondition: plan.prepared.Precondition, Keys: plan.prepared.Keys}
 		op.AuthorityRef = plan.authority.AuthorityRef
 		if plan.call.Grant != nil {
 			op.ConnectionID = plan.call.Grant.Connection.ID
