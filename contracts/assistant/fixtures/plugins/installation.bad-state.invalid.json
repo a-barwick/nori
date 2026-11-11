@@ -1,0 +1,36 @@
+{
+  "id": "inst_1",
+  "revision": 5,
+  "package": {
+    "id": "acme/linear",
+    "version": "0.4.1",
+    "digest": "sha256:pkg2"
+  },
+  "pinned": false,
+  "available_version": "0.5.0",
+  "enabled": true,
+  "state": "broken",
+  "configuration_revision": 2,
+  "approved_access": {
+    "connection_types": [
+      "linear"
+    ],
+    "action_classes": [
+      "read",
+      "reversible_write"
+    ]
+  },
+  "required_connection_types": [
+    "linear"
+  ],
+  "diagnostics": [],
+  "history": [
+    {
+      "at": "2026-11-09T09:00:00Z",
+      "event": "installed",
+      "version": "0.4.1"
+    }
+  ],
+  "created_at": "2026-11-09T09:00:00Z",
+  "updated_at": "2026-11-09T09:00:00Z"
+}

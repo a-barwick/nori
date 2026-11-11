@@ -25,6 +25,10 @@ type Client struct {
 	receipts  bool
 	taskTabs  bool
 	jobs      bool
+	sandbox   bool
+	sessions  bool
+	egress    bool
+	reopen    bool
 	files     bool
 	operation string
 	taskID    string
@@ -86,7 +90,9 @@ func (c *Client) Probe(ctx context.Context) (rpc.Health, error) {
 	if decodeErr != nil {
 		return rpc.Health{}, fmt.Errorf("%w: %v", ErrUnhealthy, decodeErr)
 	}
-	c.receipts, c.taskTabs, c.jobs, c.files = health.Receipts, health.TaskTabs, health.Jobs, health.Files
+	c.receipts, c.taskTabs, c.jobs, c.files, c.sandbox = health.Receipts, health.TaskTabs, health.Jobs, health.Files, health.Sandbox
+	c.sessions, c.egress = health.Sessions, health.Egress
+	c.reopen = health.Reopen
 	return health, nil
 }
 
@@ -126,6 +132,10 @@ func (c *Client) post(ctx context.Context, path string, body any, max int) (resp
 		operation = "job_stop"
 	case rpc.StopTaskJobsPath:
 		operation = "job_stop_task"
+	case rpc.SandboxRunPath:
+		operation = "sandbox_run"
+	case rpc.ReopenRunPath:
+		operation = "run_reopen"
 	}
 	ctx, span := otel.Tracer("nori/computer").Start(ctx, "computer."+operation, trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),
@@ -321,3 +331,68 @@ func (c *Client) RequireReceipts() error {
 
 // SetRun selects another cancellation scope on the same cleanup tunnel.
 func (c *Client) SetRun(id string) { c.run = id }
+
+// SandboxRun runs a packaged program in the guest's sandbox. It fails when the guest cannot enforce the limits.
+func (c *Client) SandboxRun(ctx context.Context, req rpc.SandboxRequest) (rpc.SandboxResult, error) {
+	var result rpc.SandboxResult
+	if !c.sandbox {
+		return result, errors.New("this computer cannot run sandboxed packages")
+	}
+	req.RunID, req.TaskID = c.run, c.taskID
+	data, err := c.post(ctx, rpc.SandboxRunPath, req, 512<<10)
+	if err != nil {
+		return result, err
+	}
+	err = json.Unmarshal(data, &result)
+	return result, err
+}
+
+// SandboxSession starts a packaged program as a long-lived sandboxed process and returns a stream connected to its
+// stdin and stdout, for example a stdio MCP server. Closing the stream ends the program.
+func (c *Client) SandboxSession(ctx context.Context, req rpc.SandboxRequest) (io.ReadWriteCloser, error) {
+	if !c.sessions {
+		return nil, errors.New("this computer cannot run sandboxed sessions")
+	}
+	if req.Network == "allowlist" && !c.egress {
+		return nil, errors.New("this computer cannot enforce an egress allowlist")
+	}
+	req.RunID, req.TaskID = c.run, c.taskID
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.conn.BaseURL+rpc.SandboxSessionPath, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Connection", "Upgrade")
+	httpReq.Header.Set("Upgrade", rpc.SandboxUpgrade)
+	for key, value := range observability.InjectTrace(ctx) {
+		httpReq.Header.Set(key, value)
+	}
+	resp, err := c.conn.HTTP.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		resp.Body.Close()
+		return nil, &RPCError{Path: rpc.SandboxSessionPath, Status: resp.StatusCode}
+	}
+	stream, ok := resp.Body.(io.ReadWriteCloser)
+	if !ok {
+		resp.Body.Close()
+		return nil, errors.New("the computer did not return a stream")
+	}
+	return stream, nil
+}
+
+// Reopen makes a run that was stopped while waiting accept operations again. Guests without the capability keep
+// the earlier behavior.
+func (c *Client) Reopen(ctx context.Context) error {
+	if !c.reopen {
+		return nil
+	}
+	_, err := c.post(ctx, rpc.ReopenRunPath, map[string]any{"run_id": c.run}, 4<<10)
+	return err
+}

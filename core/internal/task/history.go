@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.temporal.io/sdk/activity"
 	"nori/internal/agent"
+	"nori/internal/extensions"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -59,6 +60,9 @@ type RefModelInput struct {
 type CallRef struct {
 	ID, Name string
 	Index    int
+	// Exec pins the definition, binding and policy the call was offered under. Histories recorded before pinning
+	// have none and use the engine's name-based policy, so they replay unchanged.
+	Exec *extensions.Exec `json:",omitempty"`
 }
 type RefModelOutcome struct {
 	Ref       string
@@ -68,12 +72,15 @@ type RefModelOutcome struct {
 	NotSent   bool
 	Failure   string
 	Invalid   bool
+	// Interrupted marks a request whose worker stopped before its result was saved; the task may ask again.
+	Interrupted bool `json:",omitempty"`
 }
 type RefToolInput struct {
 	Step
 	Ref, OperationID string
 	Index            int
 	ReadOnly         bool
+	Exec             *extensions.Exec `json:",omitempty"`
 }
 type RefToolOutcome struct {
 	Ref, Outcome, EffectClass string
@@ -84,6 +91,9 @@ type RefToolOutcome struct {
 	// Unresolved names the operations a question about this result is for, and Clears lists those an answer releases.
 	Unresolved string
 	Clears     []string
+	// InteractionID and Prompt are set when a registry tool waits on the user's approval or account choice.
+	InteractionID string `json:",omitempty"`
+	Prompt        string `json:",omitempty"`
 }
 type RefInput struct {
 	Step
@@ -334,7 +344,7 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 		entries = append(entries, *response.Message)
 	}
 	if out.Failure == "" {
-		entries = finishModelRound(in, response.Calls, entries, &out)
+		entries = finishModelRound(in, response.Calls, response.Tools, entries, &out)
 	}
 	data, e := json.Marshal(out)
 	var messagesJSON []byte
@@ -360,19 +370,19 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	if e != nil {
 		observability.RecordErrorCategory(ctx, "task.model.checkpoint", e)
 		// Return known usage even if the checkpoint could not be committed.
-		out.Ref, out.Calls, out.Failure = in.Ref, nil, "The model result could not be saved."
+		out.Ref, out.Calls, out.Failure = in.Ref, nil, modelSaveFailure
 	}
 	span.SetAttributes(attribute.Int("nori.tool.call_count", len(out.Calls)))
 	return out, nil
 }
 
-func finishModelRound(in RefModelInput, calls []transcript.ToolCall, entries []transcript.Message, out *RefModelOutcome) []transcript.Message {
+func finishModelRound(in RefModelInput, calls []transcript.ToolCall, tools *extensions.Snapshot, entries []transcript.Message, out *RefModelOutcome) []transcript.Message {
 	if len(calls) == 0 {
 		out.Invalid = true
 		correction := transcript.UserText(prompts.Runtime("completion-protocol", nil))
 		return append(entries, correction)
 	}
-	if e := agent.ValidateCalls(calls, true, !in.Subtask); e != nil {
+	if e := agent.ValidateCalls(calls, true, !in.Subtask, tools); e != nil {
 		parts := []transcript.Part{}
 		for _, call := range calls {
 			rejected := map[string]any{"rejected": true, "reason": e.Error(), "executed": false}
@@ -382,7 +392,12 @@ func finishModelRound(in RefModelInput, calls []transcript.ToolCall, entries []t
 		return append(entries, transcript.Message{Role: transcript.RoleUser, Parts: parts})
 	}
 	for i, call := range calls {
-		out.Calls = append(out.Calls, CallRef{ID: call.ID, Name: call.Name, Index: i})
+		ref := CallRef{ID: call.ID, Name: call.Name, Index: i}
+		if definition, ok := tools.Lookup(call.Name); ok {
+			exec := definition.Exec()
+			ref.Exec = &exec
+		}
+		out.Calls = append(out.Calls, ref)
 	}
 	return entries
 }
@@ -399,7 +414,8 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 		return out, classified(e)
 	}
 	var result map[string]any
-	if in.ReadOnly && agent.TaskToolPolicy(call.Name).Effect != "read" {
+	// A compose call carries the read-only limit to each nested call instead.
+	if in.ReadOnly && call.Name != "compose" && agent.PolicyFor(call.Name, in.Exec).Effect != "read" {
 		result = map[string]any{
 			"outcome":      "needs_input",
 			"error":        prompts.Runtime("reads-only", nil),
@@ -407,12 +423,16 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 			"operation_id": in.OperationID,
 		}
 	} else {
-		result, e = a.durableTool(ctx, ToolInput{Step: in.Step, OperationID: in.OperationID, Call: call})
+		result, e = a.durableTool(ctx, ToolInput{Step: in.Step, OperationID: in.OperationID, Call: call, Exec: in.Exec, ReadOnly: in.ReadOnly})
 		if e != nil {
 			return out, e
 		}
 	}
 	result["evidence_ref"] = in.OperationID
+	if waiting, _ := result["awaiting_interaction"].(bool); waiting && call.Name == "compose" {
+		// A compose script stopped at a nested call that needs the user: the task asks, exactly as for a direct call.
+		result["outcome"] = "needs_interaction"
+	}
 	out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{transcript.ToolResultMessage(call.ID, call.Name, result)})
 	if e != nil {
 		return out, errors.New("The tool result could not be saved to task history.")
@@ -422,6 +442,10 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	out.Cost, _ = result["cost_usd"].(float64)
 	out.CostUnknown, _ = result["cost_unknown"].(bool)
 	out.StartedJob, out.EndedJob = jobTransition(call, result)
+	if out.Outcome == "needs_interaction" {
+		out.InteractionID, _ = result["interaction_id"].(string)
+		out.Prompt, _ = result["prompt"].(string)
+	}
 	if out.Outcome == "uncertain" && out.EffectClass != "read" {
 		out.Unresolved, out.Clears, e = a.nameUnresolved(ctx, in.RunID, messages)
 		if e != nil {

@@ -1,0 +1,5 @@
+{
+  "channel": "email",
+  "label": "Personal email",
+  "address": "user@example.com"
+}

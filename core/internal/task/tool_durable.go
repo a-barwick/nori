@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"nori/internal/agent"
 	"nori/internal/computer"
+	"nori/internal/extensions"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -24,7 +26,7 @@ type persistFunc func(outcome string, output map[string]any, cause error) (map[s
 // traces. Retrying an activity is never a substitute for an operation receipt.
 func (a *Activities) durableTool(parent context.Context, in ToolInput) (result map[string]any, err error) {
 	evidence := a.Store
-	policy := agent.TaskToolPolicy(in.Call.Name)
+	policy := agent.PolicyFor(in.Call.Name, in.Exec)
 	effect := policy.Effect
 	// A settled result remains evidence after a correction. Reuse it before
 	// applying the current revision and pause checks to any further work.
@@ -33,7 +35,11 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	err = a.waitForReceipt(parent, in.RunID, func() (time.Time, error) {
 		var err error
 		recovering, saved, err = a.savedOperation(parent, in)
-		if recovering != nil {
+		// A safe read can run again at once: if an earlier attempt is still alive and settles first, its result is
+		// reused. Anything else waits for the earlier attempt's receipt window.
+		// A compose call can also run again at once: its nested calls are deduplicated by their own identities.
+		rerunnable := effect == "read" && in.Exec != nil && in.Exec.Policy.Retry == "safe" || in.Call.Name == "compose" && policy.Runtime
+		if recovering != nil && !rerunnable {
 			return recovering.RecoveryUntil, err
 		}
 		return time.Time{}, err
@@ -56,7 +62,38 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		attribute.String("tool.name", policy.Name), attribute.String("nori.operation.id", in.OperationID),
 		attribute.String("nori.operation.effect_class", effect),
 	)
+	if in.ParentOperationID != "" {
+		span.SetAttributes(attribute.String("nori.operation.parent_id", in.ParentOperationID))
+	}
 	until := receiptDeadline(parent)
+	var plan *externalPlan
+	if in.Exec != nil && !in.Exec.Builtin {
+		var stop map[string]any
+		plan, stop, err = a.planExternal(ctx, in, recovering)
+		if recovering != nil && (err != nil || stop != nil) {
+			// The account or implementation is no longer usable; recovery can only settle what is known.
+			plan, err = &externalPlan{}, nil
+		} else if err != nil || stop != nil {
+			return stop, err
+		} else {
+			effect = string(plan.prepared.Effect)
+			span.SetAttributes(attribute.String("nori.tool.definition", in.Exec.Tool.ID), attribute.String("nori.tool.digest", in.Exec.Tool.Digest),
+				attribute.String("nori.tool.version", in.Exec.Tool.Version), attribute.String("nori.binding.adapter", string(in.Exec.Binding.Adapter)))
+			if in.Exec.Binding.Adapter == extensions.AdapterPlugin {
+				// A plugin binding's version is its package version; its target starts with the installation.
+				installation, _, _ := strings.Cut(in.Exec.Binding.Target, "/")
+				span.SetAttributes(attribute.String("nori.package.version", in.Exec.Binding.Version), attribute.String("nori.package.installation", installation))
+			}
+			if plan.call.Grant != nil {
+				span.SetAttributes(attribute.String("nori.connection.id", plan.call.Grant.Connection.ID))
+			}
+		}
+	}
+	if recovering == nil && plan == nil && !policy.Runtime && in.Call.Name != "complete" {
+		if gated, err := a.computerGate(ctx, in, effect); err != nil || gated != nil {
+			return gated, err
+		}
+	}
 	if recovering == nil {
 		if blocked, err := a.unresolvedWriteBlock(ctx, in.RunID, effect); err != nil || blocked != nil {
 			return blocked, err
@@ -71,7 +108,19 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	}
 	op := state.OperationRecord{
 		ID: in.OperationID, CallID: in.Call.ID, Name: in.Call.Name, Revision: in.Revision,
-		EffectClass: effect, Outcome: "pending", RecoveryUntil: until,
+		EffectClass: effect, Outcome: "pending", RecoveryUntil: until, ParentOperationID: in.ParentOperationID,
+	}
+	if in.Exec != nil {
+		op.Tool = &state.DefinitionRef{ID: in.Exec.Tool.ID, Version: in.Exec.Tool.Version, Digest: in.Exec.Tool.Digest}
+	}
+	if plan != nil {
+		// The whole prepared action is saved before the first attempt, so recovery can settle from it.
+		op.Action = &state.Action{Digest: plan.digest, Text: clip(plan.prepared.Summary, 2000), Spec: plan.prepared.Spec,
+			Intent: true, Precondition: plan.prepared.Precondition, Keys: plan.prepared.Keys}
+		op.AuthorityRef = plan.authority.AuthorityRef
+		if plan.call.Grant != nil {
+			op.ConnectionID = plan.call.Grant.Connection.ID
+		}
 	}
 	if recovering != nil {
 		op = *recovering
@@ -137,6 +186,13 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		return output, nil
 	}
 
+	if plan != nil {
+		return a.runExternal(ctx, in, &op, recovering != nil, plan, persist)
+	}
+	if policy.Runtime && in.Call.Name == "compose" {
+		// Running a compose call again is safe: nested calls reuse their saved results.
+		return a.composeTool(ctx, in, persist)
+	}
 	if policy.Runtime {
 		return a.runtimeTool(ctx, in, &op, recovering != nil, policy, persist)
 	}
@@ -289,6 +345,14 @@ func (a *Activities) computerTool(ctx context.Context, in ToolInput, op *state.O
 	}
 	defer c.Close()
 	c.SetTaskID(in.RunID)
+	if !existingJobTool(in.Call.Name) {
+		// A question or takeover stops the computer for this run without changing its revision; reopen the drained
+		// run so calls after the user answers are admitted. Calls that were in flight stay cancelled.
+		if err = c.Reopen(ctx); err != nil {
+			op.Cleared = state.ClearedDidNotRun
+			return persist("failed", nil, err)
+		}
+	}
 	if err = c.RequireReceipts(); err != nil {
 		op.Cleared = state.ClearedDidNotRun
 		return persist("failed", nil, err)

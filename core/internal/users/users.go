@@ -92,7 +92,17 @@ func ID(ctx context.Context) string { id, _ := ctx.Value(contextKey{}).(string);
 
 // Facts contains only the user details models need; credentials and infrastructure
 // addresses never enter a prompt.
-func (u User) Facts() string {
-	b, _ := json.Marshal(map[string]string{"display_name": u.DisplayName, "email": u.Email, "time_zone": u.TimeZone})
+func (u User) Facts() string { return u.FactsIn(u.TimeZone) }
+
+// FactsIn is Facts with the time zone the user currently prefers, which can differ from the zone the row was created
+// with (D-054).
+func (u User) FactsIn(zone string) string {
+	// The sign-in address is how the user reaches Nori, not a mailbox Nori sends from or to: "email me" means the
+	// connected mail account's own address. Labelled so the model doesn't take it for "my own address".
+	b, _ := json.Marshal(map[string]string{"display_name": u.DisplayName, "nori_sign_in": u.Email, "time_zone": zone,
+		"note": "nori_sign_in is the address the user signs in to Nori with, not their mailbox; for \"email me\" use the connected mail account's own address"})
 	return string(b)
 }
+
+// Profile returns, at the time of use, the user facts for model prompts and the time zone they are written in.
+type Profile func(ctx context.Context) (facts string, location *time.Location)

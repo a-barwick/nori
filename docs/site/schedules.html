@@ -3,13 +3,42 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Schedules · Nori</title>
+<title>Automations · Nori</title>
 <link rel="stylesheet" href="site.css">
 <script src="site.js" defer></script>
 </head>
 <body>
-<h1>Schedules</h1>
-<p class="lede">Nori’s built-in schedules, reminders and monitors were retired. You can still start and follow tasks in the assistant.</p>
-<p><a href="index.html">See what Nori does today</a></p>
+<h1>Automations</h1>
+<p class="lede">Reminders, routines and monitors that start work later, and how their results reach the user when the app is closed.</p>
+<div class="card"><p><span class="say me">Remind me to stretch at 3.</span></p>
+<div class="flow">
+<div class="node"><b>Automation</b><small>Saved with its trigger, time zone, missed-run policy, budget and where to deliver.</small></div>
+<div class="arrow">↓ <span class="lbl">due time reached</span></div>
+<div class="node outer"><b>Scheduler</b><small>Records one occurrence and accepts one task for it, together.</small></div>
+<div class="arrow">↓ <span class="lbl">task with origin automation and occurrence</span></div>
+<div class="node inner"><b>Task</b><small>Runs on the worker like any other task.</small></div>
+<div class="arrow">↓ <span class="lbl">result</span></div>
+<div class="node"><b>Delivery</b><small>One delivery per result and destination; the in-app inbox gets an item that links to the task.</small></div>
+</div></div>
+<section><h2>Triggers</h2>
+<div class="card"><table><tr><th>Trigger</th><th>Fires</th></tr>
+<tr><td>Once</td><td>At an instant. A later time zone change does not move it.</td></tr>
+<tr><td>Recurring</td><td>By a local start time, an IANA time zone and a repeat rule. A repeated local hour runs once; a skipped hour moves to the next valid time.</td></tr>
+<tr><td>Event-relative</td><td>An offset from a calendar event, following the event when it moves or is cancelled.</td></tr>
+<tr><td>Watch</td><td>When a typed condition on a source changes, at most as often as allowed.</td></tr>
+</table></div>
+<p>The editor previews the next runs, the standing access the automation will have and what happens to missed runs before anything is saved.</p>
+</section>
+<section><h2>Exactly one occurrence per slot</h2>
+<p>An occurrence's id comes from the automation, the slot and the schedule's generation, so a second scheduler pass or a duplicate wake finds the existing occurrence instead of starting another task. Editing or cancelling an automation advances its generation; slots from the old generation that had not started never run. Missed slots are recorded as skipped or expired with a reason rather than disappearing.</p>
+<p>After every pass and every edit, the scheduler arms a wake for the next due time: a named Cloud Tasks task or a chain of SQS delays. The resume pass repairs a wake that was lost. On a local stack the core loop checks every two seconds instead.</p>
+</section>
+<section><h2>Delivery</h2>
+<p>Running a task and delivering its result are recorded separately. A delivery is pending, attempting, accepted, delivered, failed or uncertain; "accepted" means the channel took it, not that the user saw it. Quiet hours delay a delivery; they do not cancel the work.</p>
+<p class="designed">Push and email delivery need provider credentials that are not configured; those destinations record a failed delivery with the reason.</p>
+</section>
+<section><h2>Goals</h2>
+<p>A goal is an outcome the user adopted, with completion criteria, progress, blockers and next actions, linked to the tasks and automations working on it. A failed attempt leaves the goal in place; completing it stops its monitors unless the user keeps them.</p>
+</section>
 </body>
 </html>

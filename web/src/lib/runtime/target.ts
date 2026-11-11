@@ -2,11 +2,15 @@ export type Mode = "hosted" | "local";
 export type RuntimeTarget = { mode: Mode; base: URL };
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+// Opt-in for testing on a phone: hosts named in NORI_DEV_ORIGINS (this Mac's LAN address) count as local
+// in development. Anyone on that network then acts as the local user, so set it only while testing.
+const DEV_ORIGINS = new Set((process.env.NORI_DEV_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter(Boolean));
 
 export function localDevelopment(headers: Headers) {
   if (process.env.NODE_ENV !== "development") return false;
   try {
-    return LOOPBACK.has(new URL(`http://${headers.get("host")}`).hostname);
+    const host = new URL(`http://${headers.get("host")}`).hostname;
+    return LOOPBACK.has(host) || DEV_ORIGINS.has(host);
   } catch {
     return false;
   }

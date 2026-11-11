@@ -1,0 +1,13 @@
+{
+  "name": "Message retry with the same id",
+  "obligation": "Acceptance with lost wake: retrying an accepted id never creates another turn",
+  "note": "The second POST stands in for a client that lost the first response. Both must report the same turn, and the conversation holds one user message for it.",
+  "users": {"a": "44444444-4444-4444-8444-444444444444"},
+  "steps": [
+    {"name": "create", "user": "a", "method": "POST", "path": "/v1/conversations", "body": {"title": "retry probe"}, "expect": {"status": [201]}, "capture": {"chat": "/id"}},
+    {"name": "send", "user": "a", "method": "POST", "path": "/v1/conversations/${var:chat}/messages", "body": {"id": "${uuid:m}", "text": "Reply with the single word ok."}, "expect": {"status": [202, 503], "match": {"/conversation/activeTurn": "${uuid:m}"}}},
+    {"name": "retry", "user": "a", "method": "POST", "path": "/v1/conversations/${var:chat}/messages", "body": {"id": "${uuid:m}", "text": "Reply with the single word ok."}, "expect": {"status": [202, 503], "match": {"/conversation/activeTurn": "${uuid:m}"}}},
+    {"name": "one-user-message", "user": "a", "method": "GET", "path": "/v1/conversations/${var:chat}", "expect": {"status": [200], "count": {"/messages|id=${uuid:m}-user": 1}}},
+    {"name": "cleanup", "user": "a", "method": "DELETE", "path": "/v1/conversations/${var:chat}", "expect": {"status": [200, 409]}}
+  ]
+}

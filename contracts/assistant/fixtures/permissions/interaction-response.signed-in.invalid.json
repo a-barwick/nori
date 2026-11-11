@@ -1,0 +1,7 @@
+{
+  "request_id": "9b8c7d6e-5f4a-4b3c-8d2e-1f0a9b8c7d6e",
+  "expected_revision": 1,
+  "value": {
+    "kind": "signed_in"
+  }
+}

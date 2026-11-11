@@ -1,0 +1,18 @@
+{
+  "query": "comparison from last week",
+  "items": [
+    {
+      "kind": "result",
+      "id": "res_3",
+      "title": "Laptop comparison",
+      "snippet": "...the Framework 13 wins on repairability...",
+      "jump": {
+        "kind": "conversation",
+        "conversation_id": "conv_1",
+        "message_id": "msg_55"
+      },
+      "freshness": "2026-11-09T09:00:00Z",
+      "score": 0.82
+    }
+  ]
+}

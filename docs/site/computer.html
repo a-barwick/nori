@@ -80,5 +80,9 @@
 <tr><td>Dial</td><td>A base URL, an HTTP client and a close hook for the guest RPC, and optionally a channel that closes when the transport dies.</td><td><code>gcloud compute start-iap-tunnel</code> on a free loopback port. Closing the client kills the process.</td></tr></table></div>
 <p>The host setup scripts read Compute Engine's metadata server and disk paths, and the Terraform creates a Compute Engine instance.</p></details>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/computerd/jobs.go</code> · <code>core/internal/computerd/server.go</code> · <code>core/internal/computerd/files.go</code> · <code>core/internal/computer/</code> · <code>core/internal/computerd/</code> · <code>core/cmd/computer-agent/main.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/infrastructure/microvm/</code> · <code>core/infrastructure/app/computer-startup.sh</code></p></details>
+<section><h2>Taking over the computer</h2>
+<p>The user can take over the computer, for example to sign in somewhere. Taking over gives the user a 15-minute lease that can be renewed. While the user holds it, a task that needs the computer stops before touching the screen and waits with a takeover request in Work; other tasks are refused and listed as waiting. Resuming names the lease, the task and the task's current instruction revision, so a stale resume is refused. The resumed task gets a fresh run on the computer: calls cancelled when the user took over stay cancelled, and new calls go through.</p>
+<p>Checking whether the computer is available never starts a stopped computer.</p>
+</section>
 </body>
 </html>

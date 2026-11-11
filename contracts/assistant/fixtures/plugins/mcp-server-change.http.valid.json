@@ -1,0 +1,14 @@
+{
+  "request_id": "8b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d",
+  "expected_revision": 0,
+  "value": {
+    "name": "Team wiki",
+    "transport": "http",
+    "endpoint": "https://mcp.example.com/mcp",
+    "auth": "oauth",
+    "enabled": true,
+    "exposure": {
+      "default": "discoverable"
+    }
+  }
+}

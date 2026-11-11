@@ -26,6 +26,9 @@ variable "request_worker_targets" {
     per_user_settings = optional(bool, false)
     # Preserve Jev references on retained binaries that used completion checks.
     jev_completion = optional(bool, false)
+    # Connected accounts (first slice): database credential store with the KMS key, the OAuth callback and the safe
+    # send defaults. New builds set it; retained builds keep their original environment.
+    connected_accounts = optional(bool, false)
   }))
   default = {}
   validation {
@@ -200,7 +203,7 @@ resource "google_cloud_run_v2_service" "worker" {
           NORI_WORKER_WAKE_QUEUE   = google_cloud_tasks_queue.worker[var.request_worker_targets[each.key].wake_queue_name].id
           NORI_WORKER_POLL_WINDOW  = "${var.request_worker_targets[each.key].poll_window_seconds}s"
           NORI_WORKER_IDLE_WINDOW  = "15s"
-        })
+        }, var.request_worker_targets[each.key].connected_accounts ? local.connected_accounts_env : {})
         content {
           name  = env.key
           value = env.value
@@ -255,6 +258,11 @@ resource "google_cloud_run_v2_service" "worker" {
         for_each = merge(
           var.request_worker_targets[each.key].capabilities ? (var.request_worker_targets[each.key].per_user_settings ? local.capability_secrets : local.retained_capability_secrets) : {},
           var.request_worker_targets[each.key].brave_search ? { BRAVE_SEARCH_API_KEY = local.capability_secrets.BRAVE_SEARCH_API_KEY } : {},
+          # Token refresh for connected accounts needs the OAuth client, independently of the Brave key.
+          var.request_worker_targets[each.key].connected_accounts ? {
+            GOOGLE_CALENDAR_CLIENT_ID     = local.capability_secrets.GOOGLE_CALENDAR_CLIENT_ID
+            GOOGLE_CALENDAR_CLIENT_SECRET = local.capability_secrets.GOOGLE_CALENDAR_CLIENT_SECRET
+          } : {},
         )
         content {
           name = env.key

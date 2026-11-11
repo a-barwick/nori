@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"nori/internal/users"
+	"time"
 )
 
 // ErrNotConfigured is returned by a Waker that has no target for the requested
@@ -79,4 +80,30 @@ func (w userWaker) WakeConversation(ctx context.Context) error {
 }
 func (w userWaker) WakeWorker(ctx context.Context, build string, ids ...string) error {
 	return w.Waker.WakeWorker(users.WithID(ctx, w.id), build, ids...)
+}
+
+// DelayedWaker is implemented by hosting adapters that can wake the conversation process at a future time, so due
+// automations run when nothing else is awake. Duplicate delayed wakes are harmless: the Scheduler keys every
+// occurrence by a stable identity. A lost one is repaired by the next pass that reads durable state.
+type DelayedWaker interface {
+	WakeConversationAt(ctx context.Context, at time.Time) error
+}
+
+// At arms a delayed conversation wake when the adapter supports it. Adapters whose process polls (local
+// development) need none and report nil.
+func At(ctx context.Context, w Waker, at time.Time) error {
+	if delayed, ok := w.(DelayedWaker); ok {
+		return delayed.WakeConversationAt(ctx, at)
+	}
+	if !w.WorkersNeedWake() {
+		return nil
+	}
+	return ErrNotConfigured
+}
+
+// WakeConversationAt is not needed in process: the local loop polls the Scheduler.
+func (*InProcess) WakeConversationAt(context.Context, time.Time) error { return nil }
+
+func (w userWaker) WakeConversationAt(ctx context.Context, at time.Time) error {
+	return At(users.WithID(ctx, w.id), w.Waker, at)
 }

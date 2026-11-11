@@ -1,0 +1,21 @@
+{
+  "from_version": "2.0.0",
+  "to_version": "2.1.0",
+  "tools_added": [
+    "linear__issue_comment"
+  ],
+  "tools_removed": [],
+  "schemas_changed": [
+    "linear__issue_create"
+  ],
+  "access_added": [
+    "reversible_write"
+  ],
+  "access_removed": [],
+  "dependents": {
+    "automation_ids": [
+      "auto_1"
+    ],
+    "goal_ids": []
+  }
+}

@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import { ignoredRequestSpans, privacyOptions, protectEnvelopeHeaders } from "@/lib/observability/privacy";
+import { installReloadGuard } from "@/lib/dev/reloadGuard";
+
+// Before Next opens its dev-server socket: stop a reload loop and record why it happened (development only).
+if (process.env.NODE_ENV === "development") installReloadGuard();
 
 type BrowserConfig = { dsn?: string; environment?: string; release?: string; tracesSampleRate?: string };
 

@@ -14,7 +14,7 @@
   --overlay: rgba(22, 5, 49, 0.26);
   --text-primary: #190936;
   --text-secondary: #726d82;
-  --text-tertiary: #777185;
+  --text-tertiary: #6e6880;
   --text-on-accent: #ffffff;
   --accent: #5000ff;
   --accent-hover: #4200d6;
@@ -24,9 +24,9 @@
   --accent-subtle: #f1ebff;
   --accent-muted: #e9dfff;
   --focus-ring: #7943ff;
-  --warning-text: #a56800;
+  --warning-text: #946000;
   --warning-bg: #fff4dc;
-  --danger-text: #e82b40;
+  --danger-text: #cc1f33;
   --danger-bg: #fff0f2;
   --soul-from: #5000ff;
   --soul-to: #ff4e60;
@@ -445,4 +445,26 @@ button.nova-assistant-name:hover { background: var(--fill-1); }
   .nova-runtime-notice { padding-left: 16px; padding-right: 16px; }
   .nova-activity-button { padding: 7px; }
   .nova-activity-button > span:not(.nova-working-dot) { display: none; }
+}
+
+/* Assistant navigation: labelled rail on desktop, icon rail on tablets, tab bar on phones. */
+.nori-rail { width: 196px; }
+.nori-tab { display: flex; flex: 1; min-height: 56px; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; line-height: 14px; font-weight: 500; color: var(--text-secondary); }
+.nori-tabbar { padding-bottom: env(safe-area-inset-bottom); }
+@media (max-width: 1100px) {
+  .nori-rail { width: 68px; align-items: center; }
+  .nori-rail a { width: 44px; height: 44px; justify-content: center; padding: 0; }
+  .nori-rail-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .nori-rail-badge { position: absolute; top: 2px; right: 0; }
+}
+@media (max-width: 600px) {
+  .nori-screen { padding-left: 18px; padding-right: 18px; padding-top: 20px; }
+}
+
+main h1[tabindex="-1"]:focus, main h1[tabindex="-1"]:focus-visible { outline: none; }
+
+/* Touch screens: every control in the assistant screens is at least 44px. */
+@media (pointer: coarse) {
+  .nori-screen button, .nori-screen select, .nori-screen [role="tab"], .nori-chat-toolbar button, .nori-rail a { min-height: 44px; }
+  .nori-screen button:not(:has(> span)), .nori-chat-toolbar button { min-width: 44px; }
 }

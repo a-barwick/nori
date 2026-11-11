@@ -1,0 +1,21 @@
+{
+  "request_id": "6f1c2a0e-1b7e-4f0a-9c2d-3e4f5a6b7c8d",
+  "expected_revision": 0,
+  "value": {
+    "title": "x",
+    "instruction": "y",
+    "trigger": {
+      "kind": "recurring",
+      "local_start": "2026-11-10T07:30",
+      "timezone": "Europe/London",
+      "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+    },
+    "connection_ids": [],
+    "authority_ref": "authority://forged",
+    "budget_usd": 1,
+    "max_active_runs": 1,
+    "missed_run": "skip",
+    "execution_window_seconds": 0,
+    "destination_ids": []
+  }
+}

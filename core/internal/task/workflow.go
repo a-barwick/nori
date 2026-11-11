@@ -30,11 +30,13 @@ type Checkpoint struct {
 	Spent, Budget         float64
 	CostUnknown           bool
 	Models, Tools, Checks int
-	Question              *state.Question
-	QuestionPublished     bool
-	ComputerRevisions     []int64
-	Stopped               bool
-	Request               string
+	// ModelRetries counts model requests asked again after a worker stopped mid-request.
+	ModelRetries      int `json:",omitempty"`
+	Question          *state.Question
+	QuestionPublished bool
+	ComputerRevisions []int64
+	Stopped           bool
+	Request           string
 	// Jobs are started and not yet observed ended. They outlive a revision, so
 	// only terminal cleanup stops them, not a correction or a question.
 	Jobs        []string
@@ -410,7 +412,7 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 		return nextCall, err
 	}
 	// A tool the worker runs itself never touches the computer, so it leaves nothing to stop.
-	policy := agent.TaskToolPolicy(call.Name)
+	policy := agent.PolicyFor(call.Name, call.Exec)
 	if !policy.Runtime {
 		if len(c.ComputerRevisions) == 0 || c.ComputerRevisions[len(c.ComputerRevisions)-1] != c.Revision {
 			c.ComputerRevisions = append(c.ComputerRevisions, c.Revision)
@@ -420,7 +422,7 @@ func (r *taskRun) runTool(call CallRef) (callStep, error) {
 	c.JobsStarted = c.JobsStarted || call.Name == "job_start"
 	var output RefToolOutcome
 	err = workflow.ExecuteActivity(r.recovering, a.ToolRef, RefToolInput{
-		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.Inherited,
+		Step: r.step(), Ref: c.Ref, OperationID: operation, Index: call.Index, ReadOnly: c.Inherited, Exec: call.Exec,
 	}).Get(r.ctx, &output)
 	retry, err = r.boundary(err)
 	if retry {
@@ -484,6 +486,9 @@ func (c *Checkpoint) afterTool(output RefToolOutcome, id string) bool {
 			Text:     prompts.Runtime("read-only-question", nil),
 			Revision: c.Revision,
 		}
+	case output.Outcome == "needs_interaction" && output.InteractionID != "":
+		// Only registry tools produce this outcome, so histories recorded before it existed never reach here.
+		c.Question = &state.Question{ID: output.InteractionID, Kind: "input", Text: output.Prompt, Revision: c.Revision}
 	case output.Outcome == "uncertain" && output.EffectClass != "read":
 		text := prompts.Runtime("uncertain-action-question", nil)
 		if output.Unresolved != "" {
@@ -517,7 +522,30 @@ func (c *Checkpoint) applySync(synced HistorySync) {
 }
 
 // callModel retains and accounts for the response before any newer-input check.
+// D-053: a re-ask after an interrupted model request starts only while a normal pass (one request plus its checkpoint
+// save) still fits within modelStepDeadline of the step's start. A request that hangs ends after 2 minutes and is not
+// asked again; a request cut off by a worker stop is recovered (about 4 to 5.5 minutes, the 240-second activity window
+// plus restart) and asked once more, so such a step ends within about 9 minutes. Only a second stop during the re-ask
+// can take longer, and it is not asked again.
+const modelStepDeadline = 9 * time.Minute
+
+const modelPassLimit = modelRequestLimit + modelSaveReserve
+
 func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string) (RefModelOutcome, error) {
+	return c.askModel(ctx, quick, spending, id, workflow.Now(ctx))
+}
+
+// mayAskAgain reports whether an interrupted model request may be asked again. Histories recorded before the deadline
+// carry no "model-step-deadline" marker and keep re-asking unconditionally, so they replay unchanged; the marker is
+// only recorded when a request was interrupted.
+func mayAskAgain(ctx workflow.Context, started time.Time) bool {
+	if workflow.GetVersion(ctx, "model-step-deadline", workflow.DefaultVersion, 1) == workflow.DefaultVersion {
+		return true
+	}
+	return workflow.Now(ctx).Sub(started) <= modelStepDeadline-modelPassLimit
+}
+
+func (c *Checkpoint) askModel(ctx, quick, spending workflow.Context, id string, started time.Time) (RefModelOutcome, error) {
 	var a *Activities
 	var model RefModelOutcome
 	err := workflow.ExecuteActivity(quick, a.Project, Projection{Step: Step{id, c.Revision}, Kind: "model", Text: "Thinking"}).Get(ctx, nil)
@@ -537,6 +565,12 @@ func (c *Checkpoint) callModel(ctx, quick, spending workflow.Context, id string)
 	c.CostUnknown = c.CostUnknown || (!model.CostKnown && !model.NotSent)
 	c.Ref = model.Ref
 	c.projectSpend(spending, id)
+	// A worker that stopped mid-request (a deploy or graceful stop) leaves no answer; asking again is a read whose
+	// lost cost is already counted as unknown. Histories recorded before this flag existed never set it.
+	if model.Interrupted && c.ModelRetries < 2 && mayAskAgain(ctx, started) {
+		c.ModelRetries++
+		return c.askModel(ctx, quick, spending, id, started)
+	}
 	if model.Failure != "" {
 		err = errors.New(model.Failure)
 		return model, err

@@ -30,6 +30,9 @@ const (
 type Run struct {
 	ID      string `json:"id" firestore:"id"`
 	Request string `json:"request,omitempty" firestore:"request,omitempty"`
+	// Origin says what the task acts for. Tasks accepted before origins existed have none and belong to the
+	// assistant conversation.
+	Origin *TaskOrigin `json:"origin,omitempty" firestore:"origin,omitempty"`
 
 	// Lifecycle. Waiting and Question describe what the task needs from the user; Result or Error ends it. Progress is the
 	// latest line from a long job the task is watching; it is replaced in place, so it never grows the saved task.
@@ -102,6 +105,17 @@ type Question struct {
 	ReadOnly bool `json:"read_only,omitempty" firestore:"read_only,omitempty"`
 	// Clears lists the operations this question names. An answer stops them blocking later commands.
 	Clears []string `json:"clears,omitempty" firestore:"clears,omitempty"`
+}
+
+// TaskOrigin links a task to the conversation message, automation occurrence or goal it serves.
+type TaskOrigin struct {
+	ConversationID string `json:"conversation_id,omitempty" firestore:"conversation_id,omitempty"`
+	MessageID      string `json:"message_id,omitempty" firestore:"message_id,omitempty"`
+	AutomationID   string `json:"automation_id,omitempty" firestore:"automation_id,omitempty"`
+	OccurrenceID   string `json:"occurrence_id,omitempty" firestore:"occurrence_id,omitempty"`
+	GoalID         string `json:"goal_id,omitempty" firestore:"goal_id,omitempty"`
+	// ContinuesTaskID names the task this one explicitly continues after it stopped, for example at its budget.
+	ContinuesTaskID string `json:"continues_task_id,omitempty" firestore:"continues_task_id,omitempty"`
 }
 
 // TaskEvent is a task outcome or need that the outer loop reads from the conversation inbox.

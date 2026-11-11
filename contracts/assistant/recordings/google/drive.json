@@ -1,0 +1,292 @@
+{
+ "exchanges": [
+  {
+   "name": "drive-reconcile-none",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files",
+   "body_contains": [],
+   "query": {
+    "fields": "files(id)"
+   },
+   "response": {
+    "status": 200,
+    "body": {
+     "files": []
+    }
+   }
+  },
+  {
+   "name": "drive-search",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files",
+   "response": {
+    "status": 200,
+    "body": {
+     "kind": "drive#fileList",
+     "files": [
+      {
+       "id": "recdrivedoc1",
+       "name": "Lisbon trip plan",
+       "mimeType": "application/vnd.google-apps.document",
+       "modifiedTime": "2026-11-05T18:20:00.000Z",
+       "webViewLink": "https://docs.google.com/document/d/recdrivedoc1/edit",
+       "owners": [
+        {
+         "emailAddress": "recorded.user@example.com"
+        }
+       ],
+       "version": "12",
+       "parents": [
+        "recfolder1"
+       ]
+      },
+      {
+       "id": "recdrivetxt1",
+       "name": "packing.txt",
+       "mimeType": "text/plain",
+       "modifiedTime": "2026-11-06T09:00:00.000Z",
+       "size": "58",
+       "webViewLink": "https://drive.google.com/file/d/recdrivetxt1/view",
+       "owners": [
+        {
+         "emailAddress": "recorded.user@example.com"
+        }
+       ],
+       "version": "3",
+       "parents": [
+        "recfolder1"
+       ]
+      },
+      {
+       "id": "recdrivepdf1",
+       "name": "boarding-pass.pdf",
+       "mimeType": "application/pdf",
+       "modifiedTime": "2026-11-07T07:45:00.000Z",
+       "size": "184233",
+       "webViewLink": "https://drive.google.com/file/d/recdrivepdf1/view",
+       "owners": [
+        {
+         "emailAddress": "recorded.user@example.com"
+        }
+       ],
+       "version": "1",
+       "parents": [
+        "recfolder1"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "drive-get-doc",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files/recdrivedoc1",
+   "response": {
+    "status": 200,
+    "body": {
+     "id": "recdrivedoc1",
+     "name": "Lisbon trip plan",
+     "mimeType": "application/vnd.google-apps.document",
+     "modifiedTime": "2026-11-05T18:20:00.000Z",
+     "webViewLink": "https://docs.google.com/document/d/recdrivedoc1/edit",
+     "owners": [
+      {
+       "emailAddress": "recorded.user@example.com"
+      }
+     ],
+     "version": "12",
+     "parents": [
+      "recfolder1"
+     ]
+    }
+   }
+  },
+  {
+   "name": "drive-export-doc",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files/recdrivedoc1/export",
+   "query": {
+    "mimeType": "text/plain"
+   },
+   "response": {
+    "status": 200,
+    "headers": {
+     "Content-Type": "text/plain; charset=utf-8"
+    },
+    "text": "Lisbon trip plan\r\nDates: 12 to 16 December 2026.\r\nHotel: Casa Azul, Alfama. Check-in after 15:00.\r\nDay 2: Bel\u00e9m and the tile museum.\r\n"
+   }
+  },
+  {
+   "name": "drive-download-txt",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files/recdrivetxt1",
+   "query": {
+    "alt": "media"
+   },
+   "response": {
+    "status": 200,
+    "headers": {
+     "Content-Type": "text/plain"
+    },
+    "text": "passport\ncharger\nrain jacket\nwalking shoes\ntram card\n"
+   }
+  },
+  {
+   "name": "drive-get-txt",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files/recdrivetxt1",
+   "response": {
+    "status": 200,
+    "body": {
+     "id": "recdrivetxt1",
+     "name": "packing.txt",
+     "mimeType": "text/plain",
+     "modifiedTime": "2026-11-06T09:00:00.000Z",
+     "size": "58",
+     "webViewLink": "https://drive.google.com/file/d/recdrivetxt1/view",
+     "owners": [
+      {
+       "emailAddress": "recorded.user@example.com"
+      }
+     ],
+     "version": "3",
+     "parents": [
+      "recfolder1"
+     ]
+    }
+   }
+  },
+  {
+   "name": "drive-get-pdf",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files/recdrivepdf1",
+   "response": {
+    "status": 200,
+    "body": {
+     "id": "recdrivepdf1",
+     "name": "boarding-pass.pdf",
+     "mimeType": "application/pdf",
+     "modifiedTime": "2026-11-07T07:45:00.000Z",
+     "size": "184233",
+     "webViewLink": "https://drive.google.com/file/d/recdrivepdf1/view",
+     "owners": [
+      {
+       "emailAddress": "recorded.user@example.com"
+      }
+     ],
+     "version": "1",
+     "parents": [
+      "recfolder1"
+     ]
+    }
+   }
+  },
+  {
+   "name": "drive-create",
+   "method": "POST",
+   "host": "www.googleapis.com",
+   "path": "/upload/drive/v3/files",
+   "body_contains": [
+    "Lisbon packing list"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "id": "recdrivenew1",
+     "name": "Lisbon packing list",
+     "mimeType": "application/vnd.google-apps.document",
+     "modifiedTime": "2026-11-09T08:00:00.000Z",
+     "webViewLink": "https://docs.google.com/document/d/recdrivenew1/edit",
+     "owners": [
+      {
+       "emailAddress": "recorded.user@example.com"
+      }
+     ],
+     "version": "1",
+     "parents": [
+      "root"
+     ],
+     "appProperties": {}
+    }
+   }
+  },
+  {
+   "name": "drive-get-new",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files/recdrivenew1",
+   "after": [
+    "drive-create"
+   ],
+   "response": {
+    "status": 200,
+    "body": {
+     "id": "recdrivenew1",
+     "name": "Lisbon packing list",
+     "mimeType": "application/vnd.google-apps.document",
+     "modifiedTime": "2026-11-09T08:00:00.000Z",
+     "webViewLink": "https://docs.google.com/document/d/recdrivenew1/edit",
+     "owners": [
+      {
+       "emailAddress": "recorded.user@example.com"
+      }
+     ],
+     "version": "1",
+     "parents": [
+      "root"
+     ],
+     "appProperties": {}
+    }
+   }
+  },
+  {
+   "name": "drive-export-new",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files/recdrivenew1/export",
+   "query": {
+    "mimeType": "text/plain"
+   },
+   "after": [
+    "drive-create"
+   ],
+   "response": {
+    "status": 200,
+    "headers": {
+     "Content-Type": "text/plain; charset=utf-8"
+    },
+    "text": "Lisbon packing list\r\n- passport\r\n- charger\r\n- rain jacket\r\n- walking shoes\r\n- tram card\r\n"
+   }
+  },
+  {
+   "name": "drive-get-missing",
+   "method": "GET",
+   "host": "www.googleapis.com",
+   "path": "/drive/v3/files/*",
+   "response": {
+    "status": 404,
+    "body": {
+     "error": {
+      "code": 404,
+      "message": "File not found.",
+      "errors": [
+       {
+        "domain": "global",
+        "reason": "notFound",
+        "message": "File not found."
+       }
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,19 @@
+{
+  "id": "rule_auto_1",
+  "revision": 1,
+  "effect": "allow",
+  "tool_ids": [
+    "nori.google/calendar/events.list"
+  ],
+  "connection_ids": [
+    "conn_google_personal"
+  ],
+  "resource_ids": [
+    "primary"
+  ],
+  "action_classes": [
+    "read"
+  ],
+  "automation_id": "auto_1",
+  "summary": "Read events on Personal (primary) for the morning briefing"
+}

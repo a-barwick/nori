@@ -125,7 +125,9 @@ func Computer(s settings.Settings) computer.Provider {
 		return computer.Traced(local.New(address))
 	}
 	if s.Cloud == "local" {
-		return computer.Traced(local.New(s.Computer.LocalURL))
+		// A local user without a computer URL has no computer: tools that need one are not offered and cleanup
+		// treats it as stopped.
+		return nil
 	}
 	if s.Cloud == "aws" {
 		return computer.Traced(ec2.New(ec2.Config{Region: s.AWS.Region, Instance: s.Computer.Instance}))

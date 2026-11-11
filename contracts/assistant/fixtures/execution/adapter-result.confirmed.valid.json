@@ -1,0 +1,21 @@
+{
+  "outcome": "confirmed",
+  "content": {
+    "event_id": "evt_123"
+  },
+  "result_ids": [
+    "res_1"
+  ],
+  "provider_refs": [
+    {
+      "connection_id": "conn_google_personal",
+      "kind": "calendar_event",
+      "provider_id": "evt_123",
+      "provider_revision": "etag-9"
+    }
+  ],
+  "cost": {
+    "amount_usd": 0,
+    "status": "known"
+  }
+}

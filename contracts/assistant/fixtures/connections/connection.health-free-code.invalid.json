@@ -1,0 +1,17 @@
+{
+  "id": "c",
+  "revision": 1,
+  "integration_id": "g",
+  "title": "t",
+  "account": {
+    "provider_id": "p",
+    "label": "l"
+  },
+  "status": "connected",
+  "granted_scopes": [],
+  "selected_resource_ids": [],
+  "health": {
+    "code": "token expired, see logs"
+  },
+  "defaults": []
+}

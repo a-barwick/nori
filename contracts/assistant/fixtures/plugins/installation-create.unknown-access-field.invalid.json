@@ -1,0 +1,19 @@
+{
+  "request_id": "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+  "expected_revision": 0,
+  "value": {
+    "package": {
+      "id": "deepwiki/mcp",
+      "version": "1.0.0"
+    },
+    "approved_access": {
+      "connection_types": [],
+      "action_classes": [
+        "read"
+      ],
+      "processes": [
+        "*"
+      ]
+    }
+  }
+}

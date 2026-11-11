@@ -1,0 +1,587 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.nori.local/assistant/connections.schema.json",
+  "title": "Connections and account credentials (C3)",
+  "$defs": {
+    "ConnectionStatus": {
+      "enum": [
+        "not_connected",
+        "connecting",
+        "connected",
+        "needs_attention",
+        "disabled",
+        "disconnecting",
+        "disconnected"
+      ]
+    },
+    "Health": {
+      "type": "object",
+      "properties": {
+        "checked_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "code": {
+          "$ref": "#/$defs/HealthCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "last_success_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "recovery": {
+          "$ref": "#/$defs/Recovery"
+        },
+        "affected_capability_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "retry_after": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Connection": {
+      "description": "Public projection. Never carries tokens, credential references, provider payloads from refresh errors, or secret-bearing endpoint URLs.",
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "integration_id",
+        "title",
+        "status",
+        "granted_scopes",
+        "selected_resource_ids",
+        "health",
+        "defaults"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "integration_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "account": {
+          "type": "object",
+          "required": [
+            "provider_id",
+            "label"
+          ],
+          "properties": {
+            "provider_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Absent until the first successful sign-in identifies the provider account (r2.2); never an empty placeholder"
+        },
+        "status": {
+          "$ref": "#/$defs/ConnectionStatus"
+        },
+        "granted_scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "selected_resource_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "health": {
+          "$ref": "#/$defs/Health"
+        },
+        "defaults": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Read-only, derived from Preferences.account_defaults (B8)."
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "updated_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "missing_scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Desired minus granted scopes"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Purposes this grant supports, e.g. calendar.read, calendar.write, mail.send"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "access_token"
+            ]
+          },
+          {
+            "required": [
+              "refresh_token"
+            ]
+          },
+          {
+            "required": [
+              "credential_ref"
+            ]
+          },
+          {
+            "required": [
+              "credential_version"
+            ]
+          },
+          {
+            "required": [
+              "client_secret"
+            ]
+          },
+          {
+            "required": [
+              "authorization_epoch"
+            ]
+          },
+          {
+            "required": [
+              "password"
+            ]
+          },
+          {
+            "required": [
+              "username"
+            ]
+          }
+        ]
+      }
+    },
+    "ConnectionEditable": {
+      "type": "object",
+      "required": [
+        "integration_id",
+        "title",
+        "selected_resource_ids"
+      ],
+      "properties": {
+        "integration_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "selected_resource_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "configuration": {
+          "type": "object",
+          "description": "Ordinary, non-secret configuration. Secret inputs are supplied through a sign-in interaction or a dedicated secret input, never here."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ConnectionChange": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Change"
+        },
+        {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/ConnectionEditable"
+            }
+          }
+        }
+      ]
+    },
+    "ConnectionAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "connect"
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Purposes to request access for; the server maps them to scopes"
+                    },
+                    "return_to": {
+                      "type": "string",
+                      "pattern": "^/([^/].*)?$",
+                      "description": "Relative path inside the web app"
+                    },
+                    "username": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 320,
+                      "description": "App-password integrations only (Integration.auth app_password): the account name, such as an Apple ID. Write-only."
+                    },
+                    "password": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "description": "App-password integrations only: an app-specific password. Write-only: stored as the credential, never returned or kept in receipts. A rejected pair answers 400 validation_failed and changes nothing."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "dependentRequired": {
+                    "username": [
+                      "password"
+                    ],
+                    "password": [
+                      "username"
+                    ]
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "repair"
+                    },
+                    "return_to": {
+                      "type": "string",
+                      "pattern": "^/([^/].*)?$"
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "username": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 320,
+                      "description": "App-password integrations only (Integration.auth app_password): the account name, such as an Apple ID. Write-only."
+                    },
+                    "password": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "description": "App-password integrations only: an app-specific password. Write-only: stored as the credential, never returned or kept in receipts. A rejected pair answers 400 validation_failed and changes nothing."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "dependentRequired": {
+                    "username": [
+                      "password"
+                    ],
+                    "password": [
+                      "username"
+                    ]
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "disconnect"
+                    },
+                    "purge_cache": {
+                      "type": "boolean",
+                      "description": "Remove transient connector caches (D4 interim flag)"
+                    },
+                    "delete_imported_content": {
+                      "type": "boolean",
+                      "description": "Separate explicit deletion of imported content (D4 interim flag)"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "enable",
+                        "disable"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Resource": {
+      "type": "object",
+      "required": [
+        "ref",
+        "title",
+        "kind"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "common.schema.json#/$defs/ResourceRef"
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "selected": {
+          "type": "boolean"
+        },
+        "writable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "HealthCode": {
+      "enum": [
+        "ready",
+        "needs_sign_in",
+        "needs_more_access",
+        "revoked",
+        "rate_limited",
+        "temporarily_failing",
+        "provider_unavailable",
+        "credential_store_unavailable"
+      ]
+    },
+    "Recovery": {
+      "enum": [
+        "connect",
+        "repair",
+        "request_access",
+        "wait",
+        "none"
+      ]
+    },
+    "OAuthCallback": {
+      "description": "GET /v1/connections/oauth/callback query (B7). The attempt is found by state within the owner only; the response is 303 to the attempt's return_to with ?connection=<id>&result=connected|cancelled|failed.",
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "minLength": 16
+        },
+        "code": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "required": [
+            "error"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "Integration": {
+      "description": "Apps catalog entry (F1). GET /v1/integrations[?q=&category=], /v1/integrations/{id}.",
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "description",
+        "categories",
+        "source",
+        "auth",
+        "multiple_accounts",
+        "purposes",
+        "capabilities",
+        "availability",
+        "connection_ids"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "icon": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]{1,64}$",
+          "description": "Known icon key, never a URL"
+        },
+        "source": {
+          "enum": [
+            "native",
+            "plugin",
+            "mcp"
+          ]
+        },
+        "installation_id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "auth": {
+          "enum": [
+            "oauth",
+            "app_password",
+            "api_key",
+            "none"
+          ]
+        },
+        "multiple_accounts": {
+          "type": "boolean"
+        },
+        "purposes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "effect",
+              "supported"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "effect": {
+                "$ref": "common.schema.json#/$defs/Effect"
+              },
+              "supported": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "scopes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable",
+            "blocked"
+          ]
+        },
+        "availability_reason": {
+          "type": "string"
+        },
+        "connection_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ID"
+          }
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "client_secret"
+            ]
+          },
+          {
+            "required": [
+              "client_id"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

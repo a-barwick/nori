@@ -117,10 +117,11 @@ func loadedCapabilities(results []map[string]any) map[string]bool {
 
 // capabilityLoad checks the names against the catalog and reports each one's account and availability. Loading grants
 // nothing: every call is still checked when it runs.
-func (s *Service) capabilityLoad(names []string) (map[string]any, error) {
+func (s *Service) capabilityLoad(ctx context.Context, names []string) (map[string]any, error) {
 	byName := map[string]Capability{}
 	valid := []string{}
-	for _, capability := range s.catalog() {
+	snapshot, dynamic := s.Tools(ctx)
+	for _, capability := range s.catalog(dynamic, snapshot) {
 		if !capability.Default {
 			byName[strings.ToLower(capability.Name)] = capability
 			valid = append(valid, capability.Name)

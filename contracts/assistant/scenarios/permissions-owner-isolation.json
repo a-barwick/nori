@@ -1,0 +1,23 @@
+{
+  "name": "Permission rule owner isolation and revoke",
+  "obligation": "A38 forged identifiers cannot cross ownership; C5 rules are owner-scoped",
+  "note": "User A creates a rule; user B cannot read, update or revoke it by id, and B's list never shows it. A then revokes it with a revision guard.",
+  "requires": ["permissions"],
+  "users": {"a": "44444444-4444-4444-8444-444444444444", "b": "55555555-5555-4555-8555-555555555555"},
+  "steps": [
+    {"name": "a-create", "user": "a", "method": "POST", "path": "/v1/permissions", "body_schema": "permissions.schema.json#/$defs/PermissionRuleChange",
+     "body": {"request_id": "${uuid:create}", "expected_revision": 0, "value": {"effect": "allow", "tool_ids": ["nori/builtin/web-search"], "connection_ids": [], "resource_ids": [], "action_classes": ["read"], "title": "Scenario rule"}},
+     "expect": {"status": [201], "schema": "common.schema.json#/$defs/MutationReceipt", "resource_schema": "permissions.schema.json#/$defs/PermissionRule", "match": {"/resource/revision": 1}},
+     "capture": {"rule": "/resource/id"}},
+    {"name": "b-read", "user": "b", "method": "GET", "path": "/v1/permissions/${var:rule}", "expect": {"status": [404]}},
+    {"name": "b-update", "user": "b", "method": "PUT", "path": "/v1/permissions/${var:rule}",
+     "body": {"request_id": "${uuid:b1}", "expected_revision": 1, "value": {"effect": "allow", "tool_ids": ["*"], "connection_ids": ["*"], "resource_ids": ["*"], "action_classes": ["sensitive_send"]}}, "expect": {"status": [404]}},
+    {"name": "b-revoke", "user": "b", "method": "POST", "path": "/v1/permissions/${var:rule}/actions", "body": {"request_id": "${uuid:b2}", "expected_revision": 1, "value": {"action": "revoke"}}, "expect": {"status": [404]}},
+    {"name": "b-list", "user": "b", "method": "GET", "path": "/v1/permissions", "expect": {"status": [200], "count": {"/items|id=${var:rule}": 0}}},
+    {"name": "a-unchanged", "user": "a", "method": "GET", "path": "/v1/permissions/${var:rule}", "expect": {"status": [200], "schema": "permissions.schema.json#/$defs/PermissionRule", "match": {"/revision": 1, "/action_classes": ["read"]}}},
+    {"name": "a-revoke-stale", "user": "a", "method": "POST", "path": "/v1/permissions/${var:rule}/actions", "body": {"request_id": "${uuid:a1}", "expected_revision": 7, "value": {"action": "revoke"}},
+     "expect": {"status": [409], "match": {"/code": "revision_conflict", "/current/revision": 1}}},
+    {"name": "a-revoke", "user": "a", "method": "POST", "path": "/v1/permissions/${var:rule}/actions", "body": {"request_id": "${uuid:a2}", "expected_revision": 1, "value": {"action": "revoke"}},
+     "expect": {"status": [200, 202], "schema": "common.schema.json#/$defs/MutationReceipt"}}
+  ]
+}

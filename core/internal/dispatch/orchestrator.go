@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"nori/internal/state"
@@ -33,6 +34,9 @@ type Orchestrator interface {
 	// PendingWork lists the tasks whose running executions have work waiting for
 	// a worker. A non-nil error can accompany a partial list.
 	PendingWork(ctx context.Context) ([]string, error)
+	// Terminate ends the task's execution without running any more of it. Recovery uses it only for a Stop that no
+	// worker can deliver because nothing serves the build the task is pinned to.
+	Terminate(ctx context.Context, runID, reason string) error
 	Close()
 }
 
@@ -41,6 +45,9 @@ type Execution struct {
 	// NeedsWorker is true while the execution has a workflow step, activity or
 	// operation waiting for a worker.
 	NeedsWorker bool
+	// UnservedSince is when a workflow step became ready and has waited since without any worker starting it; zero
+	// when none is waiting. A worker for the task's build starts such a step within seconds.
+	UnservedSince time.Time
 }
 
 type Recovery interface {

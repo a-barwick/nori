@@ -1,0 +1,96 @@
+---
+config:
+  theme: base
+  layout: dagre
+  themeCSS: "text, .nodeLabel, .cluster-label { font-family: Arial, sans-serif !important; }"
+  themeVariables:
+    fontFamily: 'Arial, sans-serif'
+    fontSize: '17px'
+    lineColor: '#64748b'
+    primaryTextColor: '#172033'
+    clusterBkg: '#f8fafc'
+    clusterBorder: '#cbd5e1'
+  flowchart:
+    curve: linear
+    nodeSpacing: 32
+    rankSpacing: 48
+    padding: 20
+    htmlLabels: false
+---
+flowchart TB
+    subgraph Tools["TOOLS"]
+        direction TB
+        Packages["Plugins and built-in tools"]
+        Registry["Extension registry"]
+        Catalog["Available tools"]
+        Packages -.-> Registry
+        Registry -.-> Catalog
+    end
+
+    subgraph Accounts["ACCOUNTS"]
+        direction TB
+        Settings["Account settings"]
+        Connections["Connections"]
+        Settings -.-> Connections
+    end
+
+    subgraph Automation["AUTOMATION"]
+        direction TB
+        Automations["Automations"]
+        Scheduler["Scheduler"]
+        Automations --> Scheduler
+    end
+
+    subgraph Execution["EXECUTION"]
+        direction TB
+        Agent["Agent runtime"]
+        Auth["Permission checks"]
+        Executor["Tool executor"]
+        Agent --> Executor
+        Auth -.-> Executor
+    end
+
+    subgraph Integrations["INTEGRATIONS"]
+        direction LR
+        Native["App connectors"]
+        MCP["MCP client"]
+        Computer["Computer runtime"]
+    end
+
+    subgraph Product["APP AND HISTORY"]
+        direction LR
+        Records["Execution records"]
+        App["Nori app"]
+        Records --> App
+    end
+
+    Connections -.-> Catalog
+    Connections -.-> Auth
+    Catalog -.-> Agent
+    Catalog -.-> App
+    Scheduler --> Agent
+    Executor --> Native
+    Executor --> MCP
+    Executor --> Computer
+    Native --> Records
+    MCP --> Records
+    Computer --> Records
+
+    classDef tools fill:#e8eefe,stroke:#6178c1,color:#24356b,stroke-width:1.5px,rx:7,ry:7
+    classDef accounts fill:#f0e9fb,stroke:#9272ba,color:#523677,stroke-width:1.5px,rx:7,ry:7
+    classDef automation fill:#fff1dc,stroke:#c5943d,color:#785018,stroke-width:1.5px,rx:7,ry:7
+    classDef execution fill:#e5effb,stroke:#477cab,color:#193f68,stroke-width:1.5px,rx:7,ry:7
+    classDef integrations fill:#e2f3ec,stroke:#4d947b,color:#235645,stroke-width:1.5px,rx:7,ry:7
+    classDef product fill:#e3f2f5,stroke:#4f929e,color:#225761,stroke-width:1.5px,rx:7,ry:7
+    class Packages,Registry,Catalog tools
+    class Settings,Connections accounts
+    class Automations,Scheduler automation
+    class Agent,Auth,Executor execution
+    class Native,MCP,Computer integrations
+    class Records,App product
+    style Tools fill:#f7f9ff,stroke:#bac7e8,stroke-width:1px,color:#465989
+    style Accounts fill:#fbf8ff,stroke:#d4c2e8,stroke-width:1px,color:#74528f
+    style Automation fill:#fffaf2,stroke:#e8d4ad,stroke-width:1px,color:#967138
+    style Execution fill:#f5f9fe,stroke:#b6cde4,stroke-width:1px,color:#42688c
+    style Integrations fill:#f4fbf7,stroke:#b7d7c7,stroke-width:1px,color:#4c7b64
+    style Product fill:#f4fafb,stroke:#b8d5db,stroke-width:1px,color:#527e86

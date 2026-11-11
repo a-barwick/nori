@@ -1,0 +1,25 @@
+{
+  "name": "Skill create, revise, isolate, delete",
+  "obligation": "A08 skill creation and editing creates a traceable revision; skills grant no authority",
+  "requires": ["skills"],
+  "users": {"a": "44444444-4444-4444-8444-444444444444", "b": "55555555-5555-4555-8555-555555555555"},
+  "steps": [
+    {"name": "create", "user": "a", "method": "POST", "path": "/v1/skills", "body_schema": "plugins.schema.json#/$defs/SkillChange",
+     "body": {"request_id": "${uuid:c}", "expected_revision": 0, "value": {"title": "Scenario weekly report", "description": "Summarise the week.", "instructions": "List this week's finished tasks with their results.", "inputs": {"type": "object"}, "required_tool_ids": [], "scope": "user"}},
+     "expect": {"status": [201], "schema": "common.schema.json#/$defs/MutationReceipt", "resource_schema": "plugins.schema.json#/$defs/SkillView"},
+     "capture": {"skill": "/resource/id", "v1": "/resource/ref/version"}},
+    {"name": "read", "user": "a", "method": "GET", "path": "/v1/skills/${var:skill}", "expect": {"status": [200], "schema": "plugins.schema.json#/$defs/SkillView", "match": {"/revision": 1}}},
+    {"name": "revise", "user": "a", "method": "PUT", "path": "/v1/skills/${var:skill}",
+     "body": {"request_id": "${uuid:r}", "expected_revision": 1, "value": {"title": "Scenario weekly report", "description": "Summarise the week.", "instructions": "List this week's finished tasks with their results and costs.", "inputs": {"type": "object"}, "required_tool_ids": [], "scope": "user"}},
+     "expect": {"status": [200], "resource_schema": "plugins.schema.json#/$defs/SkillView", "match": {"/resource/revision": 2}}},
+    {"name": "new-version", "user": "a", "method": "GET", "path": "/v1/skills/${var:skill}", "expect": {"status": [200], "absent": []}, "capture": {"v2": "/ref/version"}},
+    {"name": "grants-nothing", "user": "a", "method": "POST", "path": "/v1/skills",
+     "body": {"request_id": "${uuid:g}", "expected_revision": 0, "value": {"title": "x", "description": "", "instructions": "i", "inputs": {}, "required_tool_ids": [], "scope": "user", "connection_ids": ["conn_1"]}},
+     "expect": {"status": [400], "match": {"/code": "validation_failed"}}},
+    {"name": "b-read", "user": "b", "method": "GET", "path": "/v1/skills/${var:skill}", "expect": {"status": [404]}},
+    {"name": "b-edit", "user": "b", "method": "PUT", "path": "/v1/skills/${var:skill}",
+     "body": {"request_id": "${uuid:b}", "expected_revision": 2, "value": {"title": "taken", "description": "", "instructions": "i", "inputs": {}, "required_tool_ids": [], "scope": "user"}}, "expect": {"status": [404]}},
+    {"name": "delete", "user": "a", "method": "POST", "path": "/v1/skills/${var:skill}/actions", "body": {"request_id": "${uuid:d}", "expected_revision": 2, "value": {"action": "delete"}}, "expect": {"status": [200, 202]}},
+    {"name": "gone", "user": "a", "method": "GET", "path": "/v1/skills/${var:skill}", "expect": {"status": [404]}}
+  ]
+}

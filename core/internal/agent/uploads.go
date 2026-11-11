@@ -77,3 +77,13 @@ func (s *Service) uploadInspect(ctx context.Context, run, id, question string) (
 	}
 	return result, err
 }
+
+// TaskUpload returns an upload the task was given and its bytes, for registry tools that read attachments.
+func (s *Service) TaskUpload(ctx context.Context, run, id string) (state.Attachment, []byte, error) {
+	attachment, err := s.taskUpload(ctx, run, id)
+	if err != nil {
+		return attachment, nil, err
+	}
+	data, err := s.uploadBytes(ctx, attachment)
+	return attachment, data, err
+}

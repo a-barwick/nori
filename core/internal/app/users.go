@@ -106,6 +106,7 @@ func (s *Service) LocalLoop(ctx context.Context, notifications <-chan struct{}) 
 	}{
 		{"assistant", (*App).processAssistant},
 		{"chats", func(a *App, ctx context.Context) error { return a.Chats.Process(ctx) }},
+		{"scheduler", (*App).Schedule},
 	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()

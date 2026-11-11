@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"go.temporal.io/sdk/activity"
@@ -55,11 +56,25 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 	}
 	_, taskKey := cfg.Models.TaskCredential()
 	model := responses.New(taskKey, cfg.Models.Inner, store)
+	model.TestURL = cfg.Models.TestURL
 	service := agent.New(store, model, platform.Computer(cfg))
 	service.Capabilities = caps
 	service.UserFacts = row.Facts()
 	waker := wake.ForUser(g.waker, row.ID)
-	activities := &task.Activities{Agent: service, Store: store}
+	services, err := platform.Assistant(cfg, row, store)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	service.Extensions = services.Tools
+	service.Profile = platform.Profile(row, services.Connections)
+	service.Hidden = func(ctx context.Context, id string) bool {
+		r, err := store.Resource(ctx, "library_overlay", id)
+		return err == nil && strings.Contains(string(r.Body), `"deleted_at"`)
+	}
+	activities := &task.Activities{Agent: service, Store: store, Executor: &task.Executor{
+		Adapters: services.Adapters, Connections: services.Connections, Permissions: services.Permissions, Sessions: services.Sessions,
+	}}
 	entry := &userWorker{activities: activities, store: store, dispatcher: platform.Dispatcher(cfg, store, task.NewEngine(g.client, cfg.Temporal, row.ID), waker, row.ID)}
 	g.entries[row] = entry
 	return entry, nil

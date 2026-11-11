@@ -78,11 +78,19 @@ func (e *Engine) Inspect(ctx context.Context, runID string) (dispatch.Execution,
 	if err = noExecution(err); err != nil {
 		return dispatch.Execution{}, err
 	}
-	return dispatch.Execution{
+	execution := dispatch.Execution{
 		Closed: d.GetWorkflowExecutionInfo().GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
 		NeedsWorker: d.GetPendingWorkflowTask() != nil || len(d.GetPendingActivities()) > 0 ||
 			len(d.GetPendingNexusOperations()) > 0,
-	}, nil
+	}
+	if pending := d.GetPendingWorkflowTask(); pending != nil && pending.GetState() == enumspb.PENDING_WORKFLOW_TASK_STATE_SCHEDULED && pending.GetScheduledTime() != nil {
+		execution.UnservedSince = pending.GetScheduledTime().AsTime()
+	}
+	return execution, nil
+}
+
+func (e *Engine) Terminate(ctx context.Context, runID, reason string) error {
+	return noExecution(e.c.TerminateWorkflow(ctx, e.workflowID(runID), "", reason))
 }
 
 // noExecution maps Temporal's not-found error onto the contract's, keeping the

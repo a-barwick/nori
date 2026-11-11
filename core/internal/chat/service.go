@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/usage"
+	"nori/internal/users"
 )
 
 const (
@@ -36,15 +38,20 @@ type Store interface {
 }
 
 type Service struct {
+	// StartTask accepts durable task work for a chat through the assistant's task engine, with the chat as origin.
+	// Nil leaves the chat without background work.
+	StartTask func(ctx context.Context, commandID, chatID, messageID, request string, attachments []state.Attachment) (state.Run, error)
 	Store     Store
 	model     conversation.ReplyModel
 	userFacts string
-	owner     string
-	mu        sync.Mutex
-	running   map[chatTurn]context.CancelFunc
-	runEnded  chan struct{}
-	closed    bool
-	wg        sync.WaitGroup
+	// Profile, when set, supplies the user facts at the time of each reply instead of userFacts.
+	Profile  users.Profile
+	owner    string
+	mu       sync.Mutex
+	running  map[chatTurn]context.CancelFunc
+	runEnded chan struct{}
+	closed   bool
+	wg       sync.WaitGroup
 }
 
 func New(store Store, model conversation.ReplyModel, userFacts string) *Service {
@@ -52,6 +59,14 @@ func New(store Store, model conversation.ReplyModel, userFacts string) *Service 
 		Store: store, model: model, userFacts: userFacts, owner: uuid.NewString(),
 		running: map[chatTurn]context.CancelFunc{}, runEnded: make(chan struct{}),
 	}
+}
+
+func (s *Service) facts(ctx context.Context) string {
+	if s.Profile != nil {
+		facts, _ := s.Profile(ctx)
+		return facts
+	}
+	return s.userFacts
 }
 
 func (s *Service) Create(ctx context.Context, title string) (state.Chat, error) {
@@ -376,7 +391,7 @@ func raw(role string, content any) json.RawMessage {
 
 func (s *Service) respond(ctx context.Context, id, turn string, messages []json.RawMessage) (conversation.Reply, error) {
 	saved := time.Time{}
-	messages = append(append([]json.RawMessage{}, messages...), raw("system", "User details (data): "+s.userFacts))
+	messages = append(append([]json.RawMessage{}, messages...), raw("system", "User details (data): "+s.facts(ctx)))
 	request := conversation.ReplyRequest{Messages: messages, NoDispatch: true, Foreground: true, Tools: chatToolSchema, Stream: func(text string) error {
 		if time.Since(saved) < persistEvery {
 			return ctx.Err()
@@ -451,6 +466,9 @@ func (s *Service) generate(ctx context.Context, id, turn string) (state.Chat, er
 		return c, err
 	}
 	operationID := uuid.NewString()
+	if len(reply.Calls) == 1 && reply.Calls[0].Function.Name == "start_task" {
+		return s.startTask(ctx, id, turn, c, reply.Calls[0].ID, reply.Calls[0].Function.Arguments)
+	}
 	return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
 		if len(reply.Calls) == 0 {
 			m.Text = reply.Text
@@ -556,7 +574,7 @@ func (s *Service) readUpload(ctx context.Context, id, upload string) (map[string
 	if err != nil {
 		return nil, err
 	}
-	return agent.ReadAttachedCSV(u.Attachment, data)
+	return agent.ReadAttached(u.Attachment, data)
 }
 
 func boundedResult(result map[string]any) map[string]any {
@@ -565,6 +583,28 @@ func boundedResult(result map[string]any) map[string]any {
 		return map[string]any{"error": prompts.Runtime("chat-result-too-large", nil)}
 	}
 	return result
+}
+
+// chatAttachments gives a task started from a chat the files attached in that chat, newest first and at most ten.
+// The attachment ID is the chat upload's storage ID, so the task reads the same stored bytes.
+func chatAttachments(chat string, c state.Chat) []state.Attachment {
+	var out []state.Attachment
+	seen := map[string]bool{}
+	for i := len(c.Messages) - 1; i >= 0 && len(out) < 10; i-- {
+		for _, a := range c.Messages[i].Attachments {
+			if seen[a.ID] || len(out) >= 10 {
+				continue
+			}
+			seen[a.ID] = true
+			a.ID = chatUploadID(chat, a.ID)
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func chatUploadID(chat, id string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("chat/"+chat+"/"+id)).String()
 }
 
 func uploadKey(chat, id string) string {
@@ -592,3 +632,92 @@ func (s *Service) ReadUpload(ctx context.Context, id, upload string) (state.Uplo
 }
 
 var chatToolSchema = json.RawMessage(prompts.ChatTools)
+
+// startTask hands a chat request to the durable task engine. The same tools, authority and operation records as the
+// main assistant apply; the chat records the task as a submitted operation and its result is appended when it ends.
+func (s *Service) startTask(ctx context.Context, id, turn string, c state.Chat, callID, arguments string) (state.Chat, error) {
+	var args struct {
+		Request string `json:"request"`
+	}
+	if s.StartTask == nil || json.Unmarshal([]byte(arguments), &args) != nil || strings.TrimSpace(args.Request) == "" || len(args.Request) > state.MaxMessageBytes-16 {
+		return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
+			m.Text = "Background work is not available here right now."
+			return endTurn(c, m, "failed"), nil
+		})
+	}
+	messageID := ""
+	if len(c.Messages) > 0 {
+		messageID = c.Messages[len(c.Messages)-1].ID
+	}
+	commandID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("chat-task:"+id+":"+turn+":"+callID)).String()
+	run, err := s.StartTask(ctx, commandID, id, messageID, args.Request, chatAttachments(id, c))
+	if err != nil && !errors.Is(err, state.ErrDuplicate) {
+		return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
+			m.Text = "The task could not be started: " + err.Error()
+			return endTurn(c, m, "failed"), nil
+		})
+	}
+	taskID := run.ID
+	if taskID == "" {
+		taskID = commandID
+	}
+	return s.update(ctx, id, turn, func(c *state.Chat, m *state.ChatMessage) (string, error) {
+		c.Checkpoint.ModelPending = false
+		m.Operations = append(m.Operations, state.ChatOperation{Arguments: arguments, Result: map[string]any{"task_id": taskID},
+			OperationRecord: state.OperationRecord{ID: "chat-task-" + commandID, CallID: callID, Name: "start_task", EffectClass: "control", Outcome: "submitted", Attempt: 1}})
+		m.Text = "I started this as a task. Its progress is in Work, and its result will appear here."
+		return endTurn(c, m, "completed"), nil
+	})
+}
+
+// DeliverTasks appends the results of finished chat tasks to the chats that started them, once each.
+func (s *Service) DeliverTasks(ctx context.Context, run func(context.Context, string) (state.Run, error)) error {
+	summaries, err := s.Store.ChatSummaries(ctx)
+	if err != nil {
+		return err
+	}
+	for _, summary := range summaries {
+		c, err := s.Store.Chat(ctx, summary.ID)
+		if err != nil {
+			continue
+		}
+		for _, m := range c.Messages {
+			for _, op := range m.Operations {
+				if op.Name != "start_task" || op.Outcome != "submitted" {
+					continue
+				}
+				taskID, _ := op.Result["task_id"].(string)
+				task, err := run(ctx, taskID)
+				if err != nil || task.Status == state.RunRunning {
+					continue
+				}
+				text := task.Result
+				switch task.Status {
+				case state.RunFailed:
+					text = "The task did not finish: " + task.Error
+				case state.RunCancelled:
+					text = "The task was stopped."
+				}
+				messageID, opID := m.ID, op.ID
+				_, _ = s.Store.UpdateChat(ctx, summary.ID, func(c *state.Chat) (string, error) {
+					for i := range c.Messages {
+						if c.Messages[i].ID != messageID {
+							continue
+						}
+						for j := range c.Messages[i].Operations {
+							o := &c.Messages[i].Operations[j]
+							if o.ID == opID && o.Outcome == "submitted" {
+								o.Outcome = "confirmed"
+								c.Messages = append(c.Messages, state.ChatMessage{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("chat-task-result:"+opID)).String(),
+									Role: "assistant", Text: text, Status: "completed"})
+								return "reply.updated", nil
+							}
+						}
+					}
+					return "", nil
+				}, messageID)
+			}
+		}
+	}
+	return nil
+}

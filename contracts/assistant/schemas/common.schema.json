@@ -1,0 +1,674 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.nori.local/assistant/common.schema.json",
+  "title": "Nori assistant shared primitives",
+  "description": "Baseline r2 encoding of docs/assistant-contract-baseline.md C1 common conventions.",
+  "$defs": {
+    "ID": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "UUID": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "Revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "Instant": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "LocalDate": {
+      "type": "string",
+      "format": "date"
+    },
+    "Timezone": {
+      "type": "string",
+      "minLength": 1,
+      "description": "IANA time zone name"
+    },
+    "JSON": {
+      "description": "Any JSON value"
+    },
+    "Effect": {
+      "enum": [
+        "read",
+        "reversible_write",
+        "sensitive_send",
+        "unknown",
+        "control"
+      ]
+    },
+    "Outcome": {
+      "description": "Existing operation vocabulary from core/internal/state/evidence.go; not renamed by this baseline.",
+      "enum": [
+        "pending",
+        "ready",
+        "attempted",
+        "submitted",
+        "confirmed",
+        "failed",
+        "uncertain",
+        "skipped",
+        "voided"
+      ]
+    },
+    "DefinitionRef": {
+      "type": "object",
+      "required": [
+        "id",
+        "version",
+        "digest"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Namespaced publisher/package/tool identity"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Content digest over schema, binding and execution-relevant policy"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ResourceRef": {
+      "type": "object",
+      "required": [
+        "connection_id",
+        "kind",
+        "provider_id"
+      ],
+      "properties": {
+        "connection_id": {
+          "$ref": "#/$defs/ID"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_revision": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Change": {
+      "description": "Create/update request. value is the complete editable value, not a merge patch. Request schemas reject unknown fields.",
+      "type": "object",
+      "required": [
+        "request_id",
+        "expected_revision",
+        "value"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "expected_revision": {
+          "$ref": "#/$defs/Revision",
+          "description": "0 for create; current revision otherwise"
+        },
+        "value": {
+          "$ref": "#/$defs/JSON"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActionRequest": {
+      "description": "Command action (disconnect, pause, run-now, ...). value carries the action's typed parameters.",
+      "type": "object",
+      "required": [
+        "request_id",
+        "expected_revision",
+        "value"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "expected_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "value": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkRef": {
+      "type": "object",
+      "required": [
+        "task_id"
+      ],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "MutationReceipt": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "request_id",
+            "accepted",
+            "status",
+            "resource"
+          ],
+          "properties": {
+            "request_id": {
+              "$ref": "#/$defs/UUID"
+            },
+            "accepted": {
+              "const": true
+            },
+            "status": {
+              "const": "applied"
+            },
+            "resource": {
+              "$ref": "#/$defs/JSON"
+            },
+            "auth": {
+              "$ref": "#/$defs/AuthAttempt"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "request_id",
+            "accepted",
+            "status",
+            "resource"
+          ],
+          "properties": {
+            "request_id": {
+              "$ref": "#/$defs/UUID"
+            },
+            "accepted": {
+              "const": true
+            },
+            "status": {
+              "const": "queued"
+            },
+            "resource": {
+              "$ref": "#/$defs/JSON"
+            },
+            "work": {
+              "$ref": "#/$defs/WorkRef"
+            },
+            "auth": {
+              "$ref": "#/$defs/AuthAttempt"
+            }
+          }
+        }
+      ]
+    },
+    "APIError": {
+      "type": "object",
+      "required": [
+        "error",
+        "code",
+        "retryable",
+        "accepted"
+      ],
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One of ErrorCode for new endpoints; existing endpoints keep their codes"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "accepted": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "receipt": {
+          "$ref": "#/$defs/MutationReceipt"
+        },
+        "current": {
+          "description": "Latest resource projection. Present on 409 revision_conflict and interaction_stale, absent on idempotency_conflict; enforced by the live scenarios, not by this schema, so code stays an open string for existing codes such as wake_unavailable."
+        }
+      }
+    },
+    "ErrorDetail": {
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ListResponse": {
+      "type": "object",
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Cost": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "amount_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "status": {
+          "enum": [
+            "known",
+            "unknown",
+            "not_applicable"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "AuthAttempt": {
+      "description": "Server-created, one-time, owner-bound sign-in attempt (B7). Never carries credentials.",
+      "type": "object",
+      "required": [
+        "id",
+        "authorize_url",
+        "expires_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "authorize_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "expires_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AssistantSummary": {
+      "description": "Navigation badges (F3). GET /v1/assistant/summary.",
+      "type": "object",
+      "required": [
+        "revision",
+        "needs_you",
+        "working",
+        "apps_attention",
+        "inbox_unread"
+      ],
+      "properties": {
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "needs_you": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "working": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "apps_attention": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inbox_unread": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "next_scheduled_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      }
+    },
+    "AssistantCapabilities": {
+      "description": "Additive fields on the existing GET /v1/capabilities payload (F4). Each feature is true only when its route family is implemented and verified; the contract label is advertised only then.",
+      "type": "object",
+      "required": [
+        "assistant_features"
+      ],
+      "properties": {
+        "assistant_contract": {
+          "const": "nori-assistant-1"
+        },
+        "assistant_features": {
+          "type": "object",
+          "properties": {
+            "integrations": {
+              "type": "boolean"
+            },
+            "connections": {
+              "type": "boolean"
+            },
+            "plugins": {
+              "type": "boolean"
+            },
+            "mcp": {
+              "type": "boolean"
+            },
+            "interactions": {
+              "type": "boolean"
+            },
+            "work": {
+              "type": "boolean"
+            },
+            "automations": {
+              "type": "boolean"
+            },
+            "goals": {
+              "type": "boolean"
+            },
+            "library": {
+              "type": "boolean"
+            },
+            "search": {
+              "type": "boolean"
+            },
+            "permissions": {
+              "type": "boolean"
+            },
+            "preferences": {
+              "type": "boolean"
+            },
+            "memory": {
+              "type": "boolean"
+            },
+            "computer_sessions": {
+              "type": "boolean"
+            },
+            "inbox": {
+              "type": "boolean"
+            },
+            "operations": {
+              "type": "boolean"
+            },
+            "skills": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        },
+        "upload_accept": {
+          "$ref": "library.schema.json#/$defs/UploadAccept"
+        },
+        "push_public_key": {
+          "description": "VAPID application server public key (base64url), present only when push delivery is configured.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      }
+    },
+    "WorkingHours": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "day",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "day": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6
+          },
+          "start": {
+            "type": "string",
+            "pattern": "^\\d{2}:\\d{2}$"
+          },
+          "end": {
+            "type": "string",
+            "pattern": "^\\d{2}:\\d{2}$"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "Preferences": {
+      "description": "GET /v1/preferences. One revision guards every field, including account defaults.",
+      "type": "object",
+      "required": [
+        "revision",
+        "timezone",
+        "working_hours",
+        "default_destination_ids",
+        "account_defaults",
+        "budgets"
+      ],
+      "properties": {
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "timezone": {
+          "$ref": "common.schema.json#/$defs/Timezone"
+        },
+        "locale": {
+          "type": "string"
+        },
+        "working_hours": {
+          "$ref": "#/$defs/WorkingHours"
+        },
+        "quiet_hours": {
+          "type": "object",
+          "required": [
+            "start",
+            "end"
+          ],
+          "properties": {
+            "start": {
+              "type": "string",
+              "pattern": "^\\d{2}:\\d{2}$"
+            },
+            "end": {
+              "type": "string",
+              "pattern": "^\\d{2}:\\d{2}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "default_destination_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ID"
+          }
+        },
+        "account_defaults": {
+          "type": "object",
+          "description": "Purpose (e.g. calendar.create) -> connection id. Source of truth for account defaults (B8); Connection.defaults is derived from it.",
+          "additionalProperties": {
+            "$ref": "common.schema.json#/$defs/ID"
+          }
+        },
+        "budgets": {
+          "type": "object",
+          "required": [
+            "task_usd"
+          ],
+          "properties": {
+            "task_usd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "monthly_usd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "input": {
+          "type": "object",
+          "properties": {
+            "dictation_language": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "updated_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      }
+    },
+    "PreferencesEditable": {
+      "type": "object",
+      "required": [
+        "timezone",
+        "working_hours",
+        "default_destination_ids",
+        "account_defaults",
+        "budgets"
+      ],
+      "properties": {
+        "timezone": {
+          "$ref": "common.schema.json#/$defs/Timezone"
+        },
+        "locale": {
+          "type": "string"
+        },
+        "working_hours": {
+          "$ref": "#/$defs/WorkingHours"
+        },
+        "quiet_hours": {
+          "type": "object",
+          "required": [
+            "start",
+            "end"
+          ],
+          "properties": {
+            "start": {
+              "type": "string",
+              "pattern": "^\\d{2}:\\d{2}$"
+            },
+            "end": {
+              "type": "string",
+              "pattern": "^\\d{2}:\\d{2}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "default_destination_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/ID"
+          }
+        },
+        "account_defaults": {
+          "type": "object",
+          "description": "Purpose (e.g. calendar.create) -> connection id. Source of truth for account defaults (B8); Connection.defaults is derived from it.",
+          "additionalProperties": {
+            "$ref": "common.schema.json#/$defs/ID"
+          }
+        },
+        "budgets": {
+          "type": "object",
+          "required": [
+            "task_usd"
+          ],
+          "properties": {
+            "task_usd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "monthly_usd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "input": {
+          "type": "object",
+          "properties": {
+            "dictation_language": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "PreferencesChange": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Change"
+        },
+        {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/PreferencesEditable"
+            }
+          }
+        }
+      ]
+    },
+    "ErrorCode": {
+      "description": "Codes agreed for new endpoints in r2. Clients treat an unknown code by its HTTP status.",
+      "enum": [
+        "revision_conflict",
+        "idempotency_conflict",
+        "interaction_stale",
+        "validation_failed",
+        "not_found",
+        "credential_store_unavailable",
+        "provider_unavailable",
+        "subscription_expired"
+      ]
+    }
+  }
+}

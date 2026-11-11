@@ -82,7 +82,7 @@ func serveFile(w http.ResponseWriter, name, mediaType string, data []byte) {
 
 func (s *server) readResult(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !state.ValidUploadID(id) {
+	if !state.ValidUploadID(id) || (s.Assistant != nil && s.Assistant.Deleted(r.Context(), id)) {
 		writeJSON(w, 404, map[string]string{"error": "That result doesn't exist."})
 		return
 	}
@@ -96,7 +96,7 @@ func (s *server) readResult(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) readResultFile(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !state.ValidUploadID(id) {
+	if !state.ValidUploadID(id) || (s.Assistant != nil && s.Assistant.Deleted(r.Context(), id)) {
 		writeJSON(w, 404, map[string]string{"error": "That result doesn't exist."})
 		return
 	}

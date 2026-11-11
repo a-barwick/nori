@@ -1,0 +1,17 @@
+{
+  "id": "int_8",
+  "revision": 1,
+  "task_id": "task_9",
+  "instruction_revision": 3,
+  "kind": "account_selection",
+  "status": "pending",
+  "prompt": "Which calendar account?",
+  "payload": {
+    "purpose": "calendar.create",
+    "eligible_connection_ids": [
+      "conn_google_personal",
+      "conn_google_work"
+    ],
+    "remember_as_default": true
+  }
+}

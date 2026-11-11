@@ -98,6 +98,19 @@ func omitOutputs(message transcript.Message) transcript.Message {
 }
 
 func (a *Activities) operationRead(ctx context.Context, runID, id string) (map[string]any, error) {
+	// A continuation may read the operations of the tasks it continues, whose IDs start with their task ID.
+	if run, err := a.Store.GetRun(ctx, runID); err == nil {
+		for hops := 0; hops < 8 && run.Origin != nil && run.Origin.ContinuesTaskID != ""; hops++ {
+			previous := run.Origin.ContinuesTaskID
+			if strings.HasPrefix(id, previous+"-") {
+				runID = previous
+				break
+			}
+			if run, err = a.Store.GetRun(ctx, previous); err != nil {
+				break
+			}
+		}
+	}
 	ops, err := a.Store.Operations(ctx, runID)
 	if err != nil {
 		return nil, err

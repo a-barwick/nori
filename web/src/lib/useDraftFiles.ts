@@ -4,12 +4,14 @@ import { useCallback, useRef, useState } from "react";
 import { MAX_FILE_BYTES, MAX_FILES } from "./submission";
 import type { Attachment, DraftFile } from "./types";
 
-type Upload = (item: DraftFile) => Promise<Attachment>;
+export type UploadContext = { signal: AbortSignal; progress: (fraction: number) => void };
+type Upload = (item: DraftFile, context: UploadContext) => Promise<Attachment>;
 
 export function useDraftFiles() {
   const [files, setFiles] = useState<DraftFile[]>([]);
   const current = useRef<DraftFile[]>([]);
   const generation = useRef(0);
+  const uploads = useRef(new Map<string, AbortController>());
   const update = useCallback((transform: (files: DraftFile[]) => DraftFile[]) => {
     current.current = transform(current.current);
     setFiles(current.current);
@@ -27,17 +29,23 @@ export function useDraftFiles() {
       ...item, status: "error", error: "The upload could not be confirmed. Retry this file.",
     }));
   }, [update]);
-  const remove = (id: string) => update((rows) => rows.filter((item) => item.id !== id));
+  // Removing a file that is still uploading cancels its upload.
+  const remove = (id: string) => { uploads.current.get(id)?.abort(); uploads.current.delete(id); update((rows) => rows.filter((item) => item.id !== id)); };
 
   const save = async (item: DraftFile, upload: Upload) => {
     const startedIn = generation.current;
+    const controller = new AbortController();
+    uploads.current.set(item.id, controller);
     try {
-      const saved = await upload(item);
-      if (generation.current === startedIn) change(item.id, { ...saved, status: "ready" });
+      const saved = await upload(item, { signal: controller.signal, progress: (fraction) => change(item.id, { progress: fraction }) });
+      if (generation.current === startedIn) change(item.id, { ...saved, status: "ready", progress: undefined });
     } catch (error) {
+      if (controller.signal.aborted) return;
       if (generation.current === startedIn) {
-        change(item.id, { status: "error", error: error instanceof Error ? error.message : "Upload failed. Try again." });
+        change(item.id, { status: "error", progress: undefined, error: error instanceof Error ? error.message : "Upload failed. Try again." });
       }
+    } finally {
+      if (uploads.current.get(item.id) === controller) uploads.current.delete(item.id);
     }
   };
 

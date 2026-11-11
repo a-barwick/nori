@@ -118,6 +118,10 @@ var guestRoutes = map[string]guestRoute{
 	http.MethodPost + " " + rpc.StopTaskJobsPath: {serve: (*server).stopTaskJobs},
 	http.MethodPost + " " + rpc.OperationPath:    {serve: (*server).operationStatus},
 	http.MethodPost + " " + rpc.CancelReadPath:   {serve: (*server).cancelRead},
+	http.MethodPost + " " + rpc.ReopenRunPath:    {serve: (*server).reopenRun},
+	http.MethodPost + " " + rpc.SandboxRunPath:   {serve: (*server).sandboxRun, receipt: durableReceipt, requestLimit: maxFileRequest},
+	// A session is a live stream, not a receipted operation; each MCP call inside it carries its own receipt.
+	http.MethodPost + " " + rpc.SandboxSessionPath: {serve: (*server).sandboxSession, requestLimit: maxFileRequest},
 }
 
 func (*server) health(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +134,7 @@ func (*server) health(w http.ResponseWriter, r *http.Request) {
 	}
 	// Probe the CDP connection without creating a task tab.
 	_ = c.conn.CloseNow()
-	respond(w, rpc.Health{Ready: true, Receipts: true, TaskTabs: true, Jobs: true, Files: true})
+	respond(w, rpc.Health{Ready: true, Receipts: true, TaskTabs: true, Jobs: true, Files: true, Sandbox: sandboxSupported(), Egress: egressSupported(), Sessions: sandboxSupported(), Reopen: true})
 }
 
 type activityState struct {
@@ -487,4 +491,32 @@ func (s *server) stopFailed(id string, err error) {
 	if state := s.runs[id]; state != nil {
 		state.stopErr = err
 	}
+}
+
+// reopenRun lets a run that was stopped while it waited (for a question or a user takeover) take new operations
+// again. Only a drained run reopens: operations that were in flight when it was cancelled stay cancelled.
+func (s *server) reopenRun(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RunID string `json:"run_id"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if !runPattern.MatchString(req.RunID) {
+		http.Error(w, "invalid run_id", 400)
+		return
+	}
+	s.runsMu.Lock()
+	defer s.runsMu.Unlock()
+	state := s.runs[req.RunID]
+	if state != nil && state.active > 0 {
+		http.Error(w, "run still has operations in flight", 409)
+		return
+	}
+	delete(s.runs, req.RunID)
+	if root, err := s.receiptRoot(); err == nil {
+		_ = root.Remove(req.RunID + ".cancelled")
+		root.Close()
+	}
+	respond(w, map[string]bool{"reopened": true})
 }

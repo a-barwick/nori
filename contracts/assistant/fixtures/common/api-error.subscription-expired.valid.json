@@ -1,0 +1,14 @@
+{
+  "error": "the push subscription has expired; enroll this browser again",
+  "code": "subscription_expired",
+  "retryable": false,
+  "accepted": false,
+  "request_id": "6b0e1f2a-3c4d-4e5f-8a6b-7c8d9e0f1a2b",
+  "current": {
+    "id": "dest_push",
+    "revision": 3,
+    "channel": "push",
+    "label": "This browser",
+    "status": "failed"
+  }
+}

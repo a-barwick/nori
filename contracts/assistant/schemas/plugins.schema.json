@@ -1,0 +1,1828 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.nori.local/assistant/plugins.schema.json",
+  "title": "Plugins, MCP configuration, managed processes and computer sessions (C6)",
+  "$defs": {
+    "Contribution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "tool"
+          ],
+          "properties": {
+            "kind": {
+              "const": "tool"
+            },
+            "tool": {
+              "allOf": [
+                {
+                  "$ref": "tools.schema.json#/$defs/ToolDefinition"
+                },
+                {
+                  "description": "External packages cannot register runtime control tools or claim reserved names.",
+                  "properties": {
+                    "policy": {
+                      "properties": {
+                        "effect": {
+                          "not": {
+                            "const": "control"
+                          }
+                        }
+                      }
+                    },
+                    "model_name": {
+                      "not": {
+                        "$ref": "#/$defs/ReservedToolName"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "skill"
+          ],
+          "properties": {
+            "kind": {
+              "const": "skill"
+            },
+            "skill": {
+              "$ref": "#/$defs/Skill"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "name",
+            "text"
+          ],
+          "properties": {
+            "kind": {
+              "const": "prompt"
+            },
+            "name": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "server"
+          ],
+          "properties": {
+            "kind": {
+              "const": "mcp_server"
+            },
+            "server": {
+              "$ref": "#/$defs/MCPServerTemplate"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "hook",
+            "handler"
+          ],
+          "properties": {
+            "kind": {
+              "const": "hook"
+            },
+            "hook": {
+              "enum": [
+                "context",
+                "pre_invocation",
+                "progress",
+                "result",
+                "task_lifecycle"
+              ]
+            },
+            "handler": {
+              "type": "string"
+            },
+            "deadline_ms": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "component",
+            "renders"
+          ],
+          "properties": {
+            "kind": {
+              "const": "ui"
+            },
+            "component": {
+              "type": "string",
+              "description": "A documented declarative component type; never application script"
+            },
+            "renders": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Skill": {
+      "type": "object",
+      "required": [
+        "ref",
+        "title",
+        "description",
+        "instructions",
+        "inputs",
+        "required_tool_ids"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "common.schema.json#/$defs/DefinitionRef"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputs": {
+          "type": "object",
+          "description": "JSON Schema for the skill's parameters"
+        },
+        "required_tool_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scope": {
+          "enum": [
+            "user",
+            "chat",
+            "project"
+          ]
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "authority_ref"
+            ]
+          },
+          {
+            "required": [
+              "connection_ids"
+            ]
+          }
+        ]
+      }
+    },
+    "PackageManifest": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "package",
+        "publisher",
+        "contract_version",
+        "contributions",
+        "requested_access"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "package": {
+          "$ref": "common.schema.json#/$defs/DefinitionRef"
+        },
+        "publisher": {
+          "type": "object",
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "source_url": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contract_version": {
+          "type": "string",
+          "description": "Compatible Nori assistant contract revision, e.g. r1"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "version_range"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version_range": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "contributions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Contribution"
+          }
+        },
+        "configuration_schema": {
+          "type": "object"
+        },
+        "requested_access": {
+          "type": "object",
+          "required": [
+            "connection_types",
+            "action_classes"
+          ],
+          "properties": {
+            "connection_types": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "action_classes": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/Effect"
+              }
+            },
+            "network": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "filesystem": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "executor": {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "none",
+                "in_process",
+                "isolated"
+              ]
+            },
+            "runtime": {
+              "type": "string"
+            },
+            "entry": {
+              "type": "string"
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "memory_mb": {
+                  "type": "integer"
+                },
+                "cpu_ms": {
+                  "type": "integer"
+                },
+                "wall_ms": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "migrations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to",
+              "handler"
+            ],
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "handler": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "uninstall": {
+          "enum": [
+            "keep_state",
+            "remove_state"
+          ]
+        },
+        "setup_examples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "Installation": {
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "package",
+        "enabled",
+        "state",
+        "configuration_revision",
+        "approved_access"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "package": {
+          "$ref": "common.schema.json#/$defs/DefinitionRef"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "available_version": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "installing",
+            "ready",
+            "updating",
+            "disabling",
+            "disabled",
+            "removing",
+            "failed"
+          ]
+        },
+        "configuration_revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "approved_access": {
+          "type": "object",
+          "required": [
+            "connection_types",
+            "action_classes"
+          ],
+          "properties": {
+            "connection_types": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "action_classes": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/Effect"
+              }
+            },
+            "network": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Hosts the user approved the package to reach (r2.8)"
+            },
+            "filesystem": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Paths the user approved (r2.8)"
+            }
+          },
+          "additionalProperties": false
+        },
+        "required_connection_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Redacted"
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "at",
+              "event"
+            ],
+            "properties": {
+              "at": {
+                "$ref": "common.schema.json#/$defs/Instant"
+              },
+              "event": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "updated_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      }
+    },
+    "InstallationAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "enable",
+                        "disable",
+                        "uninstall"
+                      ]
+                    },
+                    "remove_state": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action",
+                    "version"
+                  ],
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "update",
+                        "rollback",
+                        "pin"
+                      ]
+                    },
+                    "version": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "approved_access": {
+                      "$ref": "#/$defs/Installation/properties/approved_access"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "MCPServerTemplate": {
+      "type": "object",
+      "required": [
+        "name",
+        "transport"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transport": {
+          "enum": [
+            "http",
+            "stdio"
+          ]
+        },
+        "endpoint": {
+          "type": "string",
+          "format": "uri"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "working_directory": {
+          "type": "string"
+        },
+        "environment_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Names of secret or configuration references, never literal values"
+        },
+        "auth": {
+          "enum": [
+            "none",
+            "oauth",
+            "configured"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "token"
+            ]
+          },
+          {
+            "required": [
+              "api_key"
+            ]
+          },
+          {
+            "required": [
+              "environment"
+            ]
+          }
+        ]
+      }
+    },
+    "MCPServer": {
+      "description": "Configured state plus observed state. Negotiated version and capabilities are observations, not copied claims.",
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "source",
+        "name",
+        "transport",
+        "enabled",
+        "observed"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "user"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "installation_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "installation"
+                },
+                "installation_id": {
+                  "$ref": "common.schema.json#/$defs/ID"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "transport": {
+          "enum": [
+            "http",
+            "stdio"
+          ]
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "connection_id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "exposure": {
+          "type": "object",
+          "properties": {
+            "default": {
+              "enum": [
+                "direct",
+                "discoverable",
+                "disabled"
+              ]
+            },
+            "overrides": {
+              "type": "object",
+              "additionalProperties": {
+                "enum": [
+                  "direct",
+                  "discoverable",
+                  "programmatic",
+                  "disabled"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "observed": {
+          "type": "object",
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "disconnected",
+                "connecting",
+                "connected",
+                "needs_sign_in",
+                "failed",
+                "disabled"
+              ]
+            },
+            "protocol_version": {
+              "type": "string"
+            },
+            "capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "discovery_revision": {
+              "type": "string"
+            },
+            "tool_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "resource_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "prompt_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "last_success_at": {
+              "$ref": "common.schema.json#/$defs/Instant"
+            },
+            "error": {
+              "$ref": "common.schema.json#/$defs/ErrorDetail"
+            },
+            "process_id": {
+              "$ref": "common.schema.json#/$defs/ID"
+            },
+            "diagnostics": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "required": [
+                  "at",
+                  "level",
+                  "message"
+                ],
+                "properties": {
+                  "at": {
+                    "$ref": "common.schema.json#/$defs/Instant"
+                  },
+                  "level": {
+                    "enum": [
+                      "info",
+                      "warning",
+                      "error"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                },
+                "additionalProperties": false
+              },
+              "description": "Redacted"
+            },
+            "credential": {
+              "enum": [
+                "missing",
+                "present"
+              ],
+              "description": "Whether a configured credential is stored; never its value"
+            }
+          }
+        },
+        "auth": {
+          "enum": [
+            "none",
+            "oauth",
+            "configured"
+          ]
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "token"
+            ]
+          },
+          {
+            "required": [
+              "api_key"
+            ]
+          },
+          {
+            "required": [
+              "headers"
+            ]
+          },
+          {
+            "required": [
+              "credential"
+            ]
+          }
+        ]
+      }
+    },
+    "ManagedProcess": {
+      "type": "object",
+      "required": [
+        "id",
+        "owner_kind",
+        "owner_id",
+        "generation",
+        "desired",
+        "observed"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "owner_kind": {
+          "enum": [
+            "mcp_server",
+            "installation"
+          ]
+        },
+        "owner_id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "desired": {
+          "enum": [
+            "running",
+            "stopped"
+          ]
+        },
+        "observed": {
+          "enum": [
+            "starting",
+            "running",
+            "stopping",
+            "stopped",
+            "failed",
+            "unknown"
+          ]
+        },
+        "computer_id": {
+          "type": "string"
+        },
+        "restart_policy": {
+          "enum": [
+            "never",
+            "on_failure",
+            "always"
+          ]
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "memory_mb": {
+              "type": "integer"
+            },
+            "cpu_ms": {
+              "type": "integer"
+            },
+            "wall_ms": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        },
+        "log_ref": {
+          "type": "string"
+        },
+        "started_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "exited_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "error": {
+          "$ref": "common.schema.json#/$defs/ErrorDetail"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "command"
+            ]
+          },
+          {
+            "required": [
+              "environment"
+            ]
+          }
+        ]
+      }
+    },
+    "ComputerSession": {
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "availability",
+        "controller"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "availability": {
+          "enum": [
+            "stopped",
+            "starting",
+            "ready",
+            "busy",
+            "stopping",
+            "failed"
+          ]
+        },
+        "controller": {
+          "enum": [
+            "agent",
+            "user",
+            "none"
+          ]
+        },
+        "lease": {
+          "type": "object",
+          "required": [
+            "id",
+            "holder",
+            "expires_at"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "holder": {
+              "enum": [
+                "agent",
+                "user"
+              ]
+            },
+            "expires_at": {
+              "$ref": "common.schema.json#/$defs/Instant"
+            }
+          },
+          "additionalProperties": false
+        },
+        "screen_url": {
+          "type": "string"
+        },
+        "blocked_reason": {
+          "type": "string"
+        },
+        "updated_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "waiting_task_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "task_title": {
+          "type": "string"
+        }
+      }
+    },
+    "ComputerSessionAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "take_over"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action",
+                    "lease_id"
+                  ],
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "renew",
+                        "release"
+                      ]
+                    },
+                    "lease_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action",
+                    "lease_id",
+                    "task_id",
+                    "instruction_revision"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "resume"
+                    },
+                    "lease_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "task_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "instruction_revision": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ReservedToolName": {
+      "description": "Runtime orchestration names that no external definition can claim. Built-in model names are also protected by the uniqueness rule on ToolDefinition.model_name (B10).",
+      "enum": [
+        "complete",
+        "request_input",
+        "request_work",
+        "capability_load",
+        "job_start",
+        "job_status",
+        "job_stop",
+        "job_wait",
+        "answer",
+        "dispatch",
+        "forget",
+        "hold",
+        "remember",
+        "show_result",
+        "steer",
+        "stop",
+        "operation_read",
+        "task_history_read",
+        "tool_search"
+      ]
+    },
+    "CatalogEntry": {
+      "type": "object",
+      "required": [
+        "package",
+        "title",
+        "description",
+        "publisher",
+        "categories",
+        "latest_version",
+        "provenance",
+        "requested_access",
+        "contributions_summary"
+      ],
+      "properties": {
+        "package": {
+          "$ref": "common.schema.json#/$defs/DefinitionRef"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "object",
+          "required": [
+            "id",
+            "name"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "latest_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provenance": {
+          "type": "object",
+          "required": [
+            "source",
+            "verified"
+          ],
+          "properties": {
+            "source": {
+              "enum": [
+                "registry",
+                "repository",
+                "upload"
+              ]
+            },
+            "verified": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "requested_access": {
+          "$ref": "#/$defs/PackageManifest/properties/requested_access"
+        },
+        "contributions_summary": {
+          "type": "object",
+          "required": [
+            "tools",
+            "skills",
+            "prompts",
+            "mcp_servers"
+          ],
+          "properties": {
+            "tools": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skills": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "prompts": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mcp_servers": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "installation_id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        }
+      }
+    },
+    "InstallationCreate": {
+      "type": "object",
+      "required": [
+        "package",
+        "approved_access"
+      ],
+      "properties": {
+        "package": {
+          "type": "object",
+          "required": [
+            "id",
+            "version"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "approved_access": {
+          "$ref": "#/$defs/Installation/properties/approved_access"
+        },
+        "configuration": {
+          "type": "object",
+          "description": "Non-secret configuration only"
+        }
+      },
+      "additionalProperties": false
+    },
+    "InstallationCreateChange": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Change"
+        },
+        {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/InstallationCreate"
+            }
+          }
+        }
+      ]
+    },
+    "InstallationReview": {
+      "description": "GET /v1/plugins/installations/{id}/review?version= (update) or without version (uninstall).",
+      "type": "object",
+      "required": [
+        "from_version",
+        "tools_added",
+        "tools_removed",
+        "schemas_changed",
+        "access_added",
+        "access_removed",
+        "dependents"
+      ],
+      "properties": {
+        "from_version": {
+          "type": "string"
+        },
+        "to_version": {
+          "type": "string"
+        },
+        "tools_added": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tools_removed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "schemas_changed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "access_added": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "access_removed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dependents": {
+          "type": "object",
+          "required": [
+            "automation_ids",
+            "goal_ids"
+          ],
+          "properties": {
+            "automation_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/ID"
+              }
+            },
+            "goal_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/ID"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "MCPServerEditable": {
+      "type": "object",
+      "required": [
+        "name",
+        "transport",
+        "auth",
+        "enabled",
+        "exposure"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "transport": {
+          "enum": [
+            "http",
+            "stdio"
+          ]
+        },
+        "endpoint": {
+          "type": "string",
+          "format": "uri"
+        },
+        "command_ref": {
+          "type": "string",
+          "description": "Reference to a declared managed command, not a literal command line"
+        },
+        "environment_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Names of secret or configuration references, never literal values"
+        },
+        "auth": {
+          "enum": [
+            "none",
+            "oauth",
+            "configured"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "exposure": {
+          "$ref": "#/$defs/MCPServer/properties/exposure"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "transport": {
+                "const": "http"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "endpoint"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "transport": {
+                "const": "stdio"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "command_ref"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "MCPServerChange": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Change"
+        },
+        {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/MCPServerEditable"
+            }
+          }
+        }
+      ]
+    },
+    "MCPServerAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "connect",
+                        "reconnect",
+                        "sign_in",
+                        "sign_out",
+                        "start",
+                        "stop",
+                        "restart"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action",
+                    "tool",
+                    "exposure"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "set_exposure"
+                    },
+                    "tool": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "exposure": {
+                      "enum": [
+                        "direct",
+                        "discoverable",
+                        "programmatic",
+                        "disabled"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "MCPServerTool": {
+      "type": "object",
+      "required": [
+        "name",
+        "title",
+        "exposure",
+        "definition",
+        "availability"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "exposure": {
+          "enum": [
+            "direct",
+            "discoverable",
+            "programmatic",
+            "disabled"
+          ]
+        },
+        "definition": {
+          "$ref": "common.schema.json#/$defs/DefinitionRef"
+        },
+        "availability": {
+          "$ref": "tools.schema.json#/$defs/AvailableTool/properties/availability"
+        }
+      }
+    },
+    "SkillEditable": {
+      "type": "object",
+      "required": [
+        "title",
+        "description",
+        "instructions",
+        "inputs",
+        "required_tool_ids",
+        "scope"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "required_tool_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scope": {
+          "enum": [
+            "user",
+            "chat",
+            "project"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SkillChange": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Change"
+        },
+        {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/SkillEditable"
+            }
+          }
+        }
+      ],
+      "description": "Each accepted change creates a new Skill.ref.version; earlier versions stay readable for runs that used them."
+    },
+    "MCPCredentialInput": {
+      "description": "POST /v1/mcp/{id}/credential (r2.3). Write-only; the receipt's resource is the MCPServer and never echoes the token. Custody stays behind D1.",
+      "type": "object",
+      "required": [
+        "request_id",
+        "token"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        }
+      },
+      "additionalProperties": false
+    },
+    "SkillView": {
+      "description": "GET /v1/skills and /v1/skills/{id} items (r2.4). Plugin skills carry installation_id and are read-only.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Skill"
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "revision",
+            "enabled"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "common.schema.json#/$defs/ID"
+            },
+            "revision": {
+              "$ref": "common.schema.json#/$defs/Revision"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "installation_id": {
+              "$ref": "common.schema.json#/$defs/ID"
+            }
+          }
+        }
+      ]
+    },
+    "MCPClient": {
+      "description": "An external MCP client allowed to call Nori's MCP endpoint (A13, r2.5). Never carries the token or its hash.",
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "name",
+        "scopes",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "read",
+              "mutate"
+            ]
+          }
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "revoked_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "last_used_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "token"
+            ]
+          },
+          {
+            "required": [
+              "token_hash"
+            ]
+          }
+        ]
+      }
+    },
+    "MCPClientEditable": {
+      "type": "object",
+      "required": [
+        "name",
+        "scopes"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "read",
+              "mutate"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "MCPClientChange": {
+      "description": "Create only (expected_revision 0).",
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Change"
+        },
+        {
+          "properties": {
+            "expected_revision": {
+              "const": 0
+            },
+            "value": {
+              "$ref": "#/$defs/MCPClientEditable"
+            }
+          }
+        }
+      ]
+    },
+    "MCPClientCreated": {
+      "description": "The first response to a create carries the token once; an idempotent retry returns the plain MutationReceipt without it.",
+      "type": "object",
+      "required": [
+        "request_id",
+        "accepted",
+        "status",
+        "resource",
+        "token"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "accepted": {
+          "const": true
+        },
+        "status": {
+          "const": "applied"
+        },
+        "resource": {
+          "$ref": "#/$defs/MCPClient"
+        },
+        "token": {
+          "type": "string",
+          "pattern": "^nori_[0-9a-f-]{36}_[A-Za-z0-9_-]{43}$"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "MCPClientAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "type": "object",
+              "required": [
+                "action"
+              ],
+              "properties": {
+                "action": {
+                  "const": "revoke"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "int_9",
+  "revision": 1,
+  "task_id": "task_12",
+  "instruction_revision": 1,
+  "kind": "computer_takeover",
+  "status": "pending",
+  "prompt": "Sign in to the airline site",
+  "payload": {
+    "session_id": "cs_1",
+    "reason": "sign_in"
+  }
+}

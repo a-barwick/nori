@@ -20,7 +20,18 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 	if s.Features.DisableBackgroundTasks {
 		modes = []string{"chat"}
 	}
-	writeJSON(w, 200, map[string]any{"conversationContract": "nori-conversations-1", "contract": ChatContract, "service": "nori", "persistence": "durable", "provider": "openai", "model": s.Model, "conversationModes": modes, "features": map[string]bool{"backgroundTasks": !s.Features.DisableBackgroundTasks, "jev": !s.Features.DisableBackgroundTasks && !s.Features.DisableJev, "computer": !s.Features.DisableComputer}})
+	body := map[string]any{"conversationContract": "nori-conversations-1", "contract": ChatContract, "service": "nori", "persistence": "durable", "provider": "openai", "model": s.Model, "conversationModes": modes, "features": map[string]bool{"backgroundTasks": !s.Features.DisableBackgroundTasks, "jev": !s.Features.DisableBackgroundTasks && !s.Features.DisableJev, "computer": !s.Features.DisableComputer}}
+	if s.Assistant != nil {
+		// The assistant contract label is advertised only once every family it names is live; until then each
+		// family reports itself.
+		body["assistant_features"] = s.Assistant.Features
+		body["upload_accept"] = uploadAccept()
+		// The browser subscribes to push with this key; it is absent when push has no transport.
+		if s.Assistant.PushPublicKey != "" {
+			body["push_public_key"] = s.Assistant.PushPublicKey
+		}
+	}
+	writeJSON(w, 200, body)
 }
 func (s *server) listChats(w http.ResponseWriter, r *http.Request) {
 	chats, err := s.Chats.List(r.Context())

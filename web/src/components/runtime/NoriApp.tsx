@@ -1,17 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MotionConfig } from "motion/react";
-import { Dialog, Tooltip } from "radix-ui";
-import { Activity, ArrowLeft, Bug, RefreshCw, Trash2 } from "lucide-react";
+import { Dialog } from "radix-ui";
+import { Activity, ArrowLeft, RefreshCw, Trash2, Volume2, VolumeX } from "lucide-react";
+import { useSpeech } from "@/lib/assistant/voice";
 import { Thread } from "@/components/chat/Thread";
-import { NovaShell } from "@/components/nova/NovaShell";
 import { IconButton } from "@/components/ui/primitives";
-import { chatThread } from "@/lib/chat/thread";
-import { useChat } from "@/lib/chat/useChat";
-import { useHydrated, useWide } from "@/lib/hooks";
+import { chatThread, withReceipt } from "@/lib/chat/thread";
+import { useAssistant } from "@/lib/assistant/context";
+import { useWide } from "@/lib/hooks";
 import { runtimePath } from "@/lib/runtime/paths";
-import { useRuntime } from "@/lib/runtime/useRuntime";
+import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import type { Message, Part, Thread as Conversation, TextItem } from "@/lib/types";
 import { ChatList } from "./ChatList";
 import { DocumentViewer } from "./DocumentViewer";
@@ -33,29 +32,18 @@ function partsOf(message: Pick<Message, "text" | "parts">, agentMode: boolean) {
   };
 }
 
-export function NoriApp({ agentMode }: { agentMode: boolean }) {
-  const hydrated = useHydrated();
-  if (!hydrated) return <div className="fixed inset-0 bg-canvas" />;
-  return (
-    <Tooltip.Provider delayDuration={500}>
-      <MotionConfig reducedMotion="user">
-        <RuntimeChat agentMode={agentMode} />
-      </MotionConfig>
-    </Tooltip.Provider>
-  );
-}
-
-function RuntimeChat({ agentMode }: { agentMode: boolean }) {
-  const runtime = useRuntime(agentMode);
-  const chat = useChat();
+/** The main conversation and side chats. Runtime state lives in AssistantProvider so it survives navigation. */
+export function ChatScreen() {
+  const { runtime, chat, agentMode, debug, capabilities } = useAssistant();
+  // The main composer offers exactly what the core's uploader accepts (including calendar .ics files).
+  const accepted = capabilities?.upload_accept;
+  const uploadAccept = accepted ? [...accepted.media_types, ...(accepted.extensions ?? [])].join(",") : undefined;
   const [tab, setTab] = useState<PanelTab>(() => new URL(window.location.href).searchParams.has("chat") ? "chats" : "activity");
-  const [debug, setDebug] = useState(false);
   const {
     session,
     pending,
     activeTasks,
     selected,
-    busy,
     loading,
     error,
   } = runtime;
@@ -76,6 +64,14 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       wide ? setDockOpen((open) => !open) : setOverlayOpen((open) => !open),
     [wide],
   );
+  const speech = useSpeech();
+  const lastReply = session?.messages.findLast((message) => message.role === "assistant");
+  const spoken = useRef<string | undefined>(lastReply?.id);
+  useEffect(() => {
+    if (!lastReply || spoken.current === lastReply.id) return;
+    spoken.current = lastReply.id;
+    speech.say(lastReply.text);
+  }, [lastReply, speech]);
   const [unread, setUnread] = useState<{ count: number; jump: () => void }>({
     count: 0,
     jump: () => {},
@@ -95,18 +91,22 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
         ? { run: session?.runs.find((run) => run.id === message.run_id), turns: session?.traces?.filter((trace) => trace.turn_id === (message.turn_id || message.id.replace(/-assistant$/, ""))), agentMode, turnId: message.turn_id }
         : undefined,
     }));
+    // Saved: the core has the message (its receipt or the stream returned it) and Nori hasn't replied yet.
+    const lastNori = items.findLast((item) => item.sender === "nori");
+    const lastMine = items.findLast((item) => item.sender === "me");
+    if (lastMine && (!lastNori || lastNori.at < lastMine.at) && (session?.conversation?.pending || session?.conversation?.processing)) lastMine.receipt = "saved";
     for (const item of pending) {
       if (!session?.messages.some((message) => message.id === `${item.id}-user`)) items.push({
-        id: `${item.id}-user`, sender: "me", at: item.started, text: item.text,
+        id: `${item.id}-user`, sender: "me", at: item.started, text: item.text, receipt: item.error ? undefined : "sending",
         parts: item.attachments?.map((file) => ({ type: "attachment", ...file, url: runtimePath(agentMode, `v1/uploads/${file.id}`) })),
       });
     }
     items.sort((a, b) => a.at - b.at);
     return { title: "Nori", items };
-  }, [session?.messages, session?.runs, session?.dispatches, session?.traces, pending, debug, agentMode]);
+  }, [session?.messages, session?.runs, session?.dispatches, session?.traces, session?.conversation?.pending, session?.conversation?.processing, pending, debug, agentMode]);
 
   const openChat = chat.current;
-  const chatConversation = useMemo(() => chatThread(openChat), [openChat]);
+  const chatConversation = useMemo(() => withReceipt(chatThread(openChat), chat.outgoing, !!openChat?.activeTurn), [openChat, chat.outgoing]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -145,34 +145,31 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
       onDismissCommand={runtime.dismissTaskCommand}
     />
   );
-  const notice = error || (session?.conversation?.routing_blocked && !runtime.conversationBusy
+  // An outage clears by itself (the stream and snapshot retry with a growing wait), so say that instead of an error.
+  const reconnecting = error === SERVICE_UNAVAILABLE || error === STREAM_RECONNECTING;
+  const notice = reconnecting ? "Can't reach Nori right now. Reconnecting on its own…" : error || (session?.conversation?.routing_blocked && !runtime.conversationBusy
     ? "Some work is waiting for this message to be resolved. Send a follow-up to retry or clarify."
     : "");
   const waitingCount = activeTasks.filter((run) => run.question ? !run.question.resolved_by : run.waiting).length;
-  const work = runtime.conversationBusy ? "Nori is thinking…" : pending.some((item) => !item.error) ? "Sending your message…" : activeTasks.length
+  // Before the core's receipt the message itself says "Sending…"; progress starts once it is saved.
+  const work = runtime.conversationBusy ? "Nori is thinking…" : activeTasks.length
     ? runtime.tasksUnavailable ? "Task execution is paused. You can still chat with Nori."
       : `${activeTasks.length} ${activeTasks.length === 1 ? "task" : "tasks"} in progress${waitingCount ? ` · ${waitingCount} waiting for you` : ""}`
     : undefined;
 
   return (
-    <NovaShell
-      state={busy ? "thinking" : runtime.draft.trim() ? "attentive" : "idle"}
-      status={loading ? "Connecting…" : error || !session ? "Disconnected" : waitingCount ? "Waiting for you" : busy ? "Working…" : "Ready when you are"}
-      activityOpen={panelOpen}
-      onToggleActivity={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}
-      actions={
-      <>
-        <IconButton label={debug ? "Hide debug info" : "Show debug info"} size={32} onClick={() => setDebug((on) => !on)}>
-          <Bug size={16} strokeWidth={1.5} className={debug ? "text-accent-text" : undefined} />
-        </IconButton>
-        <IconButton label={loading ? "Loading history" : "Refresh history"} size={32} disabled={loading} onClick={() => void runtime.refreshHistory()}>
-          <RefreshCw size={16} strokeWidth={1.5} />
-        </IconButton>
-        <button ref={activityButton} type="button" className="nova-activity-button" aria-label="Activity" aria-expanded={panelOpen} onClick={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}>
-          <Activity size={16} /><span>Activity</span>{busy && <span className="nova-working-dot" />}
-        </button>
-      </>
-    }>
+    <>
+    <div className="nori-chat-toolbar flex shrink-0 items-center justify-end gap-2 px-4 pt-3">
+      {speech.supported && <IconButton label={speech.on ? "Stop reading replies aloud" : "Read replies aloud"} size={32} active={speech.on} aria-pressed={speech.on} onClick={() => speech.setOn(!speech.on)}>
+        {speech.on ? <Volume2 size={16} strokeWidth={1.5} /> : <VolumeX size={16} strokeWidth={1.5} />}
+      </IconButton>}
+      <IconButton label={loading ? "Loading history" : "Refresh history"} size={32} disabled={loading} onClick={() => void runtime.refreshHistory()}>
+        <RefreshCw size={16} strokeWidth={1.5} />
+      </IconButton>
+      <button ref={activityButton} type="button" className="nova-activity-button" aria-label="Activity" aria-expanded={panelOpen} onClick={(event) => { activityButton.current = event.currentTarget; togglePanel(); }}>
+        <Activity size={16} /><span>Activity</span>{runtime.busy && <span className="nova-working-dot" />}
+      </button>
+    </div>
     <div className="nova-live-body flex min-h-0 flex-1 overflow-clip text-ink">
       {chat.open ? <main className="relative flex min-w-0 flex-1 flex-col overflow-clip" aria-label="Chat">
         <div className="flex shrink-0 items-center gap-2 border-b border-hairline px-4 py-2">
@@ -199,7 +196,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
           </div>
         )}
         <RuntimeComposer
-          accept=".csv,text/csv"
+          accept={uploadAccept}
           draft={chat.draft}
           setDraft={chat.setDraft}
           disabled={chat.sending || chat.opening}
@@ -213,6 +210,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
           onJump={unread.jump}
         />
       </main> : <main className="relative flex min-w-0 flex-1 flex-col overflow-clip" aria-label="Chat">
+        <h1 className="sr-only">Chat</h1>
         <div className="min-h-0 flex-1">
           <Thread
             conversation={conversation}
@@ -249,7 +247,7 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
         {notice && (
           <div className="nova-runtime-notice w-full shrink-0 self-center px-6 pb-3">
             <div
-              role={error ? "alert" : "status"}
+              role={error && !reconnecting ? "alert" : "status"}
               className="rounded-tile bg-surface p-3 text-meta text-ink-2 shadow-pill"
             >
               {notice}{" "}
@@ -260,13 +258,15 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
                   disabled={loading}
                   onClick={() => void runtime.refreshHistory()}
                 >
-                  Refresh history to reconnect
+                  {reconnecting ? "Try now" : "Refresh history to reconnect"}
                 </button>
               )}
             </div>
           </div>
         )}
         <RuntimeComposer
+          accept={uploadAccept}
+          onDictationStart={speech.interrupt}
           draft={runtime.draft}
           setDraft={runtime.setDraft}
           disabled={!session || loading || !!session.conversation?.introducing}
@@ -309,6 +309,6 @@ function RuntimeChat({ agentMode }: { agentMode: boolean }) {
         </Dialog.Root>
       )}
     </div>
-    </NovaShell>
+    </>
   );
 }

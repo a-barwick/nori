@@ -1,0 +1,18 @@
+{
+  "name": "Conversation owner isolation",
+  "obligation": "A38 forged identifiers cannot cross ownership",
+  "note": "User B addresses user A's conversation by its real id through every conversation route. Each must answer 404, and A's conversation must survive B's delete attempt.",
+  "users": {"a": "44444444-4444-4444-8444-444444444444", "b": "55555555-5555-4555-8555-555555555555"},
+  "steps": [
+    {"name": "a-create", "user": "a", "method": "POST", "path": "/v1/conversations", "body": {"title": "isolation probe"}, "expect": {"status": [201], "match": {"/mode": "chat"}}, "capture": {"chat": "/id"}},
+    {"name": "b-read", "user": "b", "method": "GET", "path": "/v1/conversations/${var:chat}", "expect": {"status": [404]}},
+    {"name": "b-history", "user": "b", "method": "GET", "path": "/v1/conversations/${var:chat}/messages", "expect": {"status": [404]}},
+    {"name": "b-operations", "user": "b", "method": "GET", "path": "/v1/conversations/${var:chat}/operations?ownerId=${uuid:none}", "expect": {"status": [404]}},
+    {"name": "b-message", "user": "b", "method": "POST", "path": "/v1/conversations/${var:chat}/messages", "body": {"id": "${uuid:bm}", "text": "forged"}, "expect": {"status": [404]}},
+    {"name": "b-cancel", "user": "b", "method": "POST", "path": "/v1/conversations/${var:chat}/cancel", "body": {"turnId": "${uuid:bm}"}, "expect": {"status": [404]}},
+    {"name": "b-delete", "user": "b", "method": "DELETE", "path": "/v1/conversations/${var:chat}", "expect": {"status": [404]}},
+    {"name": "b-list", "user": "b", "method": "GET", "path": "/v1/conversations", "expect": {"status": [200], "count": {"/conversations|id=${var:chat}": 0}}},
+    {"name": "a-still-there", "user": "a", "method": "GET", "path": "/v1/conversations/${var:chat}", "expect": {"status": [200], "match": {"/id": "${var:chat}"}}},
+    {"name": "a-delete", "user": "a", "method": "DELETE", "path": "/v1/conversations/${var:chat}", "expect": {"status": [200]}}
+  ]
+}

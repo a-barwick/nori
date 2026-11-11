@@ -1,0 +1,21 @@
+{
+  "id": "int_11",
+  "revision": 2,
+  "task_id": "task_1",
+  "kind": "sign_in",
+  "status": "resolved",
+  "prompt": "Sign in to Google to continue",
+  "payload": {
+    "auth": "oauth",
+    "auth_attempt_id": "auth_3",
+    "integration_id": "google",
+    "connection_id": "conn_google",
+    "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=opaque",
+    "expires_at": "2026-11-09T10:00:00Z"
+  },
+  "resolution": {
+    "kind": "decline",
+    "at": "2026-11-09T09:06:00Z"
+  },
+  "resolved_at": "2026-11-09T09:06:00Z"
+}

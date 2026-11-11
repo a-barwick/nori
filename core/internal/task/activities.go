@@ -18,7 +18,9 @@ import (
 	"nori/internal/computer"
 	"nori/internal/contextview"
 	"nori/internal/dispatch"
+	"nori/internal/extensions"
 	"nori/internal/observability"
+	"nori/internal/permissions"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/transcript"
@@ -28,6 +30,9 @@ import (
 type Activities struct {
 	Agent *agent.Service
 	Store state.TaskStore
+	// Executor runs registry tools through App connectors, the MCP client and plugin executors. Nil leaves them
+	// unavailable.
+	Executor *Executor
 }
 type Step struct {
 	RunID    string
@@ -52,6 +57,11 @@ type ToolInput struct {
 	Step
 	OperationID string
 	Call        transcript.ToolCall
+	Exec        *extensions.Exec `json:",omitempty"`
+	// ReadOnly limits a compose call's nested calls to reads; ParentOperationID names the compose call a nested
+	// call belongs to.
+	ReadOnly          bool   `json:",omitempty"`
+	ParentOperationID string `json:",omitempty"`
 }
 type Publication struct {
 	Step
@@ -239,7 +249,9 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	a.recordStep(in.RunID, trace)
 	// Detailed answers share the output allowance with thinking. Keep a bounded
 	// model deadline that leaves room for both, while bounded still observes Stop.
-	modelCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
+	// The request also ends early enough to leave the activity time to save its checkpoint (D-053): a request that ran
+	// into the activity's own deadline lost its result and was then asked again after recovery, for about 15 minutes.
+	modelCtx, stop := context.WithDeadline(ctx, modelRequestDeadline(ctx, time.Now()))
 	defer stop()
 	response, e := a.Agent.Decide(observability.SuppressErrorCapture(modelCtx), in.Messages, true, !in.Subtask)
 	span.SetAttributes(attribute.Bool("nori.output.present", response.Answer != ""), attribute.Int("nori.tool.call_count", len(response.Calls)))
@@ -247,6 +259,9 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	outcome := ModelOutcome{Response: response, ContextOverflow: errors.Is(e, contextview.ErrOverflow)}
 	if e != nil {
 		outcome.Failure = e.Error()
+		if errors.Is(modelCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			outcome.Failure = modelTimeoutFailure
+		}
 	}
 	if response.Usage != nil {
 		u := response.Usage
@@ -269,6 +284,28 @@ func (a *Activities) Model(ctx context.Context, in ModelInput) (ModelOutcome, er
 	a.recordStep(in.RunID, trace)
 	return outcome, nil
 }
+
+const (
+	// modelRequestLimit bounds one model request; modelSaveReserve is kept back from the activity deadline for the
+	// checkpoint write, which receiptContext allows up to 10 seconds.
+	modelRequestLimit = 2 * time.Minute
+	modelSaveReserve  = 15 * time.Second
+	// modelTimeoutFailure is what the user reads when the model does not answer in time.
+	modelTimeoutFailure = "The model did not answer within 2 minutes, so the task stopped. This step changed nothing; ask again to retry."
+	// modelSaveFailure is what the user reads when the answer arrived but could not be stored.
+	modelSaveFailure = "Nori could not store the model's answer, so the task stopped. This step changed nothing; ask again to retry."
+)
+
+// modelRequestDeadline is the earlier of now plus modelRequestLimit and the activity deadline less modelSaveReserve. A
+// context-size retry in the same activity shares the remainder instead of adding a second full request.
+func modelRequestDeadline(ctx context.Context, now time.Time) time.Time {
+	until := now.Add(modelRequestLimit)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Add(-modelSaveReserve).Before(until) {
+		until = deadline.Add(-modelSaveReserve)
+	}
+	return until
+}
+
 func finishStep(step *state.TaskStep, err error) {
 	now := time.Now().UTC()
 	step.FinishedAt, step.DurationMS, step.Status = &now, now.Sub(step.StartedAt).Milliseconds(), "completed"
@@ -371,6 +408,21 @@ func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) 
 	defer func() { recordActivityFailure(ctx, err, "task.question"); span.End() }()
 	if err := a.Store.ProjectQuestion(ctx, p.RunID, p.Revision, p.Question); err != nil {
 		return classified(err)
+	}
+	// Every task question is also an Interaction, so it stays readable after it is answered or superseded.
+	// Approvals and account choices were opened by the executor under the same ID and are left as they are.
+	if a.Executor != nil && a.Executor.Permissions != nil {
+		revision := p.Revision
+		title := ""
+		if run, err := a.Store.GetRun(ctx, p.RunID); err == nil {
+			title = clip(run.Request, 200)
+		}
+		if _, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
+			ID: p.Question.ID, TaskID: p.RunID, InstructionRevision: &revision, Kind: "question", Prompt: p.Question.Text,
+			Payload: json.RawMessage(`{"input":"text"}`), LegacyQuestionID: p.Question.ID, TaskTitle: title,
+		}, ""); err != nil {
+			return classified(err)
+		}
 	}
 	return nil
 }

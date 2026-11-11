@@ -1,0 +1,12 @@
+{
+  "request_id": "6f1c2a0e-1b7e-4f0a-9c2d-3e4f5a6b7c8d",
+  "accepted": true,
+  "status": "queued",
+  "resource": {
+    "id": "inst_1",
+    "state": "installing"
+  },
+  "work": {
+    "task_id": "task_9"
+  }
+}

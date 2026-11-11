@@ -1,0 +1,10 @@
+{
+  "id": "mcpc_1",
+  "revision": 1,
+  "name": "Laptop agent",
+  "scopes": [
+    "read"
+  ],
+  "created_at": "2026-11-09T09:00:00Z",
+  "token_hash": "sha256:aa"
+}

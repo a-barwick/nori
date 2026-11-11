@@ -17,7 +17,10 @@ export function chatThread(chat: Conversation | null): Thread {
     const operations = message.operations ?? [];
     const parts: Part[] = (message.attachments ?? []).map((file) => ({ type: "attachment", ...file, url: `${base}/uploads/${file.id}` }));
     for (const operation of operations) {
-      if (operation.action) parts.push({ type: "action", name: label(operation), text: operation.action.text });
+      // A task started from this chat shows as a live task card that updates in place.
+      const taskID = typeof operation.result?.task_id === "string" ? operation.result.task_id : undefined;
+      if (taskID) parts.push({ type: "card", schema_version: 1, kind: "progress", resource: { kind: "task", id: taskID }, fallback: "Started a task. Its progress is in Work." });
+      else if (operation.action) parts.push({ type: "action", name: label(operation), text: operation.action.text });
       else parts.push({ type: "note", text: label(operation) });
     }
     if (message.status === "cancelled") parts.push({ type: "note", text: "Stopped" });
@@ -27,4 +30,15 @@ export function chatThread(chat: Conversation | null): Thread {
     items.push({ id: message.id, sender: message.role === "user" ? "me" : "nori", at, text, parts });
   }
   return { title: chat.title, items };
+}
+
+/** Marks the user's latest message: sending until the core saves it, then saved until a reply starts. */
+export function withReceipt(thread: Thread, outgoing: { text: string; at: number } | undefined, replying: boolean): Thread {
+  const items = thread.items.map((item) => ({ ...item }));
+  if (outgoing) {
+    items.push({ id: "outgoing", sender: "me", at: Math.max(outgoing.at, items.at(-1)?.at ?? 0), text: outgoing.text, receipt: "sending" });
+  } else if (replying && items.at(-1)?.sender === "me") {
+    items[items.length - 1].receipt = "saved";
+  }
+  return { ...thread, items };
 }

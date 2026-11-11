@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"nori/internal/extensions"
 	"nori/internal/prompts"
 )
 
@@ -32,7 +33,7 @@ const (
 
 func (c Capability) ToolList() string { return strings.Join(c.Tools, ", ") }
 
-func (s *Service) catalog() []Capability {
+func (s *Service) catalog(dynamic []extensions.CapabilityState, snapshot *extensions.Snapshot) []Capability {
 	tools := map[string][]string{}
 	for _, definition := range taskToolDefinitions {
 		if definition.capability != "" {
@@ -47,7 +48,7 @@ func (s *Service) catalog() []Capability {
 	if s.Computer == nil {
 		computerAvailability = "Computer is not enabled in this deployment."
 	}
-	return []Capability{
+	catalog := []Capability{
 		{Name: searchCapability, Tools: tools[searchCapability], Account: prompts.Runtime("catalog-web-search-account", nil), Availability: search, OnFailure: prompts.Runtime("catalog-web-search-onfailure", nil), Verify: prompts.Runtime("catalog-web-search-verify", nil), Default: true},
 		{Name: browserCapability, Tools: tools[browserCapability], Account: prompts.Runtime("catalog-browser-navigate-account", nil), Availability: computerAvailability, OnFailure: prompts.Runtime("catalog-browser-navigate-onfailure", nil), Verify: prompts.Runtime("catalog-browser-navigate-verify", nil), Default: true},
 		{Name: attachmentCapability, Tools: tools[attachmentCapability], Account: prompts.Runtime("catalog-upload-open-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-upload-open-onfailure", nil), Verify: prompts.Runtime("catalog-upload-open-verify", nil)},
@@ -55,6 +56,22 @@ func (s *Service) catalog() []Capability {
 		{Name: memoryCapability, Tools: tools[memoryCapability], Account: prompts.Runtime("catalog-memory-read-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-memory-read-onfailure", nil), Verify: prompts.Runtime("catalog-memory-read-verify", nil), Default: true},
 		{Name: shellCapability, Tools: tools[shellCapability], Account: prompts.Runtime("catalog-shell-account", nil), Availability: computerAvailability, OnFailure: prompts.Runtime("catalog-shell-onfailure", nil), Verify: prompts.Runtime("catalog-shell-verify", nil), Default: true},
 	}
+	// Connected apps, MCP servers and plugins. Their text comes from connection metadata only, never from reading
+	// the account's content.
+	byCapability := map[string][]string{}
+	for _, d := range snapshot.Definitions() {
+		if !d.Builtin() && d.Exposure != extensions.ExposureDisabled && d.Exposure != extensions.ExposureProgrammatic {
+			byCapability[d.Capability] = append(byCapability[d.Capability], d.ModelName)
+		}
+	}
+	for _, state := range dynamic {
+		catalog = append(catalog, Capability{
+			Name: state.Title, Tools: byCapability[state.Capability], Account: state.Account, Availability: state.Availability,
+			OnFailure: "Report the account's state and the repair step Apps shows; do not switch accounts.",
+			Verify:    "Read back the provider's record before reporting a change as done.",
+		})
+	}
+	return catalog
 }
 
 func (s *Service) location() *time.Location {
@@ -68,9 +85,13 @@ func (s *Service) now() time.Time { return time.Now().In(s.location()) }
 
 // catalogInstruction changes at most daily unless an account changes, so it doesn't
 // disturb the provider's prompt cache between model calls.
-func (s *Service) catalogInstruction(catalog []Capability) string {
+// location is the user's current zone (see Profile); nil means the zone the worker opened the user with.
+func (s *Service) catalogInstruction(catalog []Capability, location *time.Location) string {
+	if location == nil {
+		location = s.location()
+	}
 	return prompts.Runtime("capability-catalog", map[string]any{
-		"Date": s.now().Format("Monday, 2 January 2006"), "Zone": s.location().String(), "Capabilities": catalog,
+		"Date": time.Now().In(location).Format("Monday, 2 January 2006"), "Zone": location.String(), "Capabilities": catalog,
 	})
 }
 
@@ -107,7 +128,7 @@ func (s *Service) CallRuntimeTool(ctx context.Context, run, name string, args ma
 			name, _ := value.(string)
 			names = append(names, name)
 		}
-		return s.capabilityLoad(names)
+		return s.capabilityLoad(ctx, names)
 	}
 	return nil, errors.New(prompts.Runtime("tool-unknown-tool", nil))
 }

@@ -1,0 +1,30 @@
+{
+  "id": "auto_1",
+  "revision": 3,
+  "title": "Morning briefing",
+  "instruction": "Summarize today's agenda, urgent mail and due tasks.",
+  "status": "enabled",
+  "trigger": {
+    "kind": "recurring",
+    "local_start": "2026-11-10T07:30",
+    "timezone": "Europe/London",
+    "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+  },
+  "connection_ids": [
+    "conn_google_personal"
+  ],
+  "budget_usd": 0.5,
+  "max_active_runs": 1,
+  "missed_run": "latest",
+  "execution_window_seconds": 3600,
+  "destination_ids": [
+    "dest_inapp",
+    "dest_push"
+  ],
+  "next_at": "2026-11-10T07:30:00Z",
+  "created_at": "2026-11-09T09:00:00Z",
+  "updated_at": "2026-11-09T09:00:00Z",
+  "authority_rule_ids": [
+    "rule_auto_1"
+  ]
+}

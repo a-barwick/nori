@@ -1,0 +1,8 @@
+{
+  "id": "dest_email",
+  "revision": 2,
+  "channel": "email",
+  "label": "Personal email",
+  "status": "pending_verification",
+  "address": "user@example.com"
+}

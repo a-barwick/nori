@@ -1,0 +1,13 @@
+{
+  "id": "int_1",
+  "revision": 1,
+  "task_id": "task_9",
+  "instruction_revision": 3,
+  "kind": "question",
+  "status": "pending",
+  "prompt": "Which Alex do you mean?",
+  "payload": {
+    "html": "<b>x</b>"
+  },
+  "created_at": "2026-11-09T09:00:00Z"
+}

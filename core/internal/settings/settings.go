@@ -7,8 +7,11 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +42,40 @@ type Settings struct {
 	// TaskBudgetUSD is recorded as the spending ceiling when a background task starts.
 	TaskBudgetUSD float64
 	Observability Observability
+	Connections   Connections
+}
+
+// Connections configures connected accounts. Provider app credentials are project keys from the env file; account
+// credentials go to the credential store, which exists only for local development until decision D1 is made.
+type Connections struct {
+	GoogleClientID, GoogleClientSecret string
+	// MicrosoftClientID and MicrosoftClientSecret come from an Entra app registration (personal and work accounts).
+	MicrosoftClientID, MicrosoftClientSecret string
+	MicrosoftTenant                          string
+	// RedirectURL is the OAuth callback through the web proxy, for example http://127.0.0.1:3211/api/v1/connections/oauth/callback.
+	RedirectURL string
+	// CredentialStore is "local" (file vault, development only, requires NORI_CLOUD=local), "database" (envelope-
+	// encrypted rows, D1) or empty (unavailable). The database store wraps data keys with NORI_CREDENTIAL_KMS_KEY (a
+	// Cloud KMS key) or, on the local stack only, NORI_CREDENTIAL_KEY_FILE.
+	CredentialStore, CredentialDir      string
+	CredentialKMSKey, CredentialKeyFile string
+	// UnattendedWrites and UserSends are the interim D2 mechanisms; see internal/permissions.
+	UnattendedWrites, UserSends string
+	// MailRecipients limits who Nori may send email to: "self" (the default) sends only to the connected account's
+	// own address, read from the account's profile at connect; "any" lifts the limit. Drafts are not limited.
+	MailRecipients string
+	// ProviderReplay names a directory of recorded provider responses (internal/connectors/replay). Local development
+	// only: platform refuses it unless NORI_CLOUD=local, and no provider is contacted while it is set.
+	ProviderReplay string
+	// MCPCommands declares local stdio MCP servers by command_ref → argument vector (NORI_MCP_COMMANDS, a JSON
+	// object). Honoured only with NORI_CLOUD=local; requests name a command_ref, never a command line.
+	MCPCommands map[string][]string
+	// Delivery transports for push and email destinations (A28). Unset leaves the channel without a transport.
+	SMTPHost, SMTPPort, SMTPUsername, SMTPPassword, EmailFrom string
+	VAPIDPublicKey, VAPIDPrivateKey, VAPIDSubject             string
+	// DeliveryTestCAFile is a PEM root trusted, in addition to the system roots, by the push and email transports so
+	// they can be verified against local sinks with self-signed certificates. Local development only.
+	DeliveryTestCAFile string
 }
 
 // Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
@@ -55,6 +92,9 @@ type Models struct {
 	OpenAIKey, JevKey, OpenRouterKey string
 	// Outer is the outer conversation model and Inner the task worker model.
 	Outer, Inner string
+	// TestURL sends every model request to a loopback HTTP stub instead of the provider. Local development only
+	// (NORI_MODEL_TEST_URL, refused unless NORI_CLOUD=local), for checking timeouts and prompts without provider keys.
+	TestURL string
 }
 
 func (m Models) UsesOpenAIForTasks() bool { return m.Inner == "gpt-6.1-terra" }
@@ -208,10 +248,38 @@ func Load() (Settings, error) {
 	if err := s.Metering.Validate(); err != nil {
 		return Settings{}, err
 	}
+	if s.Models.TestURL != "" {
+		u, err := url.Parse(s.Models.TestURL)
+		if err != nil || s.Cloud != "local" || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost") {
+			return Settings{}, fmt.Errorf("NORI_MODEL_TEST_URL is for local development only: an http loopback URL with NORI_CLOUD=local")
+		}
+	}
 	return s, nil
 }
 
 // FromEnvironment supplies settings for the computer agent without loading a project env file.
+func connectionsFromEnvironment(localArtifacts string) Connections {
+	dir := os.Getenv("NORI_CREDENTIAL_DIR")
+	if dir == "" && localArtifacts != "" {
+		dir = filepath.Join(localArtifacts, "credentials")
+	}
+	return Connections{
+		GoogleClientID: os.Getenv("GOOGLE_CALENDAR_CLIENT_ID"), GoogleClientSecret: os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET"),
+		MicrosoftClientID: os.Getenv("MICROSOFT_CLIENT_ID"), MicrosoftClientSecret: os.Getenv("MICROSOFT_CLIENT_SECRET"),
+		MicrosoftTenant: os.Getenv("MICROSOFT_TENANT"),
+		RedirectURL:     os.Getenv("NORI_OAUTH_REDIRECT_URL"), CredentialStore: os.Getenv("NORI_CREDENTIAL_STORE"), CredentialDir: dir,
+		CredentialKMSKey: os.Getenv("NORI_CREDENTIAL_KMS_KEY"), CredentialKeyFile: os.Getenv("NORI_CREDENTIAL_KEY_FILE"),
+		UnattendedWrites: get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"), UserSends: get("NORI_USER_SENDS", "allow"),
+		MailRecipients: get("NORI_MAIL_RECIPIENTS", "self"),
+		ProviderReplay: os.Getenv("NORI_PROVIDER_REPLAY"),
+		MCPCommands:    mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
+		SMTPHost:       os.Getenv("NORI_SMTP_HOST"), SMTPPort: os.Getenv("NORI_SMTP_PORT"), SMTPUsername: os.Getenv("NORI_SMTP_USERNAME"),
+		SMTPPassword: os.Getenv("NORI_SMTP_PASSWORD"), EmailFrom: os.Getenv("NORI_EMAIL_FROM"),
+		VAPIDPublicKey: os.Getenv("NORI_VAPID_PUBLIC_KEY"), VAPIDPrivateKey: os.Getenv("NORI_VAPID_PRIVATE_KEY"), VAPIDSubject: os.Getenv("NORI_VAPID_SUBJECT"),
+		DeliveryTestCAFile: os.Getenv("NORI_DELIVERY_TEST_CA_FILE"),
+	}
+}
+
 func FromEnvironment() Settings {
 	taskBudget, err := strconv.ParseFloat(get("NORI_TASK_BUDGET_USD", "1"), 64)
 	if err != nil {
@@ -236,12 +304,13 @@ func FromEnvironment() Settings {
 		CloudRunID: os.Getenv("TEMPORAL_CLOUD_RUN_ID") == "true",
 	}
 	var credentials []string
-	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL", "NORI_SERVICE_TOKEN_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL", "NORI_SERVICE_TOKEN_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "NORI_SMTP_PASSWORD", "NORI_VAPID_PRIVATE_KEY", "MICROSOFT_CLIENT_SECRET"} {
 		if value := os.Getenv(name); value != "" {
 			credentials = append(credentials, value)
 		}
 	}
 	return Settings{
+		Connections: connectionsFromEnvironment(store.LocalArtifactDir),
 		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") == "false", DisableComputer: os.Getenv("NORI_COMPUTER_ENABLED") == "false"},
 		Cloud:       cloud,
 		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION")), WakeQueueURL: os.Getenv("NORI_AWS_WAKE_QUEUE_URL")},
@@ -250,6 +319,7 @@ func FromEnvironment() Settings {
 		Models: Models{
 			OpenAIKey: os.Getenv("OPENAI_API_KEY"), JevKey: os.Getenv("JEV_API_KEY"), OpenRouterKey: os.Getenv("OPENROUTER_API_KEY"),
 			Outer: get("NORI_AGENT_MODEL", "gpt-6.1-sol"), Inner: get("MODEL_NAME", "openai/gpt-6.1-terra"),
+			TestURL: os.Getenv("NORI_MODEL_TEST_URL"),
 		},
 		Store:         store,
 		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN")},
@@ -314,4 +384,21 @@ func loadFile(path string) error {
 		}
 	}
 	return nil
+}
+
+func mcpCommands(raw string) map[string][]string {
+	commands := map[string][]string{}
+	if raw == "" {
+		return commands
+	}
+	if err := json.Unmarshal([]byte(raw), &commands); err != nil {
+		log.Printf("NORI_MCP_COMMANDS is not a JSON object of command_ref to argument arrays; no stdio servers are declared")
+		return map[string][]string{}
+	}
+	for ref, argv := range commands {
+		if len(argv) == 0 {
+			delete(commands, ref)
+		}
+	}
+	return commands
 }

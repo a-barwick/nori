@@ -98,7 +98,7 @@ func (d *Database) putOperation(ctx context.Context, runID string, op state.Oper
 		if event, notify := state.LateWriteEvent(run, saved, op, time.Now().UTC()); notify {
 			// Reading the run in this transaction serializes the result with Stop:
 			// either its terminal notification can see the answer, or this one follows it.
-			inserted, err := d.appendTaskEvent(tx, event, run.TraceContext)
+			inserted, err := d.appendTaskEvent(tx, run, event, run.TraceContext)
 			if err != nil {
 				return err
 			}
@@ -128,6 +128,22 @@ func (d *Database) putOperation(ctx context.Context, runID string, op state.Oper
 		}
 		if op.Cleared != "" {
 			data["cleared"] = op.Cleared
+		}
+		// Identity and provenance fields are fixed once recorded (PlanOperation checks them), so they must be saved.
+		if op.Tool != nil {
+			data["tool"] = op.Tool
+		}
+		if op.ConnectionID != "" {
+			data["connection_id"] = op.ConnectionID
+		}
+		if op.AuthorityRef != "" {
+			data["authority_ref"] = op.AuthorityRef
+		}
+		if op.ParentOperationID != "" {
+			data["parent_operation_id"] = op.ParentOperationID
+		}
+		if len(op.ProviderRefs) > 0 {
+			data["provider_refs"] = op.ProviderRefs
 		}
 		if err := tx.Set(ref, data, docstore.MergeAll); err != nil {
 			return err
@@ -268,14 +284,37 @@ func (d *Database) ReadTaskOutcome(ctx context.Context, runID string) (state.Tas
 	if err != nil {
 		return state.TaskOutcome{}, err
 	}
-	for _, op := range state.CitedOperations(proposal, ops) {
-		blocks, err := d.ReadHistory(ctx, runID, op.ResultRef)
-		if err != nil {
-			return state.TaskOutcome{}, err
+	cite := func(owner string, ops []state.OperationRecord) error {
+		for _, op := range state.CitedOperations(proposal, ops) {
+			blocks, err := d.ReadHistory(ctx, owner, op.ResultRef)
+			if err != nil {
+				return err
+			}
+			result := bytes.Join(blocks, []byte("\n"))
+			outcome.Evidence = append(outcome.Evidence, state.CitedResult{
+				Operation: op.ID, Tool: op.Name, Summary: state.CitedSummary(result), Result: string(result),
+			})
 		}
-		outcome.Evidence = append(outcome.Evidence, state.CitedResult{
-			Operation: op.ID, Tool: op.Name, Result: string(bytes.Join(blocks, []byte("\n"))),
-		})
+		return nil
+	}
+	if err := cite(runID, ops); err != nil {
+		return state.TaskOutcome{}, err
+	}
+	// A continuation can cite results the task it continues saved.
+	if run, err := d.GetRun(ctx, runID); err == nil {
+		for hops := 0; hops < 8 && run.Origin != nil && run.Origin.ContinuesTaskID != ""; hops++ {
+			previous := run.Origin.ContinuesTaskID
+			earlier, err := d.Operations(ctx, previous)
+			if err != nil {
+				break
+			}
+			if err := cite(previous, earlier); err != nil {
+				return state.TaskOutcome{}, err
+			}
+			if run, err = d.GetRun(ctx, previous); err != nil {
+				break
+			}
+		}
 	}
 	outcome.FitEvidence()
 	return outcome, nil

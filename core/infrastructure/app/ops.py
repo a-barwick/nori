@@ -138,6 +138,11 @@ def temporal_config():
     return value
 
 
+# The hosted Temporal Cloud namespace that production and sandbox workers use (their Terraform and runtime env agree).
+TEMPORAL_ADDRESS = "quickstart-nori.qtjow.tmprl.cloud:7233"
+TEMPORAL_NAMESPACE = "quickstart-nori.qtjow"
+
+
 def temporal_env():
     env = os.environ.copy()
     env_file = Path(env.get("NORI_ENV_FILE", str(ROOT.parents[2] / ".env")))
@@ -151,8 +156,12 @@ def temporal_env():
                 env.setdefault(key, value)
     if not env.get("TEMPORAL_API_KEY"):
         raise RuntimeError("TEMPORAL_API_KEY is missing; configure it in the project root .env (or select the existing file with NORI_ENV_FILE)")
-    env.setdefault("TEMPORAL_ADDRESS", "quickstart-nori.qtjow.tmprl.cloud:7233")
-    env.setdefault("TEMPORAL_NAMESPACE", "quickstart-nori.qtjow")
+    # A developer's .env or shell points TEMPORAL_ADDRESS/NAMESPACE at a local stack; a release must never follow it.
+    # Only the release-specific variables can override the hosted namespace.
+    env["TEMPORAL_ADDRESS"] = os.environ.get("NORI_RELEASE_TEMPORAL_ADDRESS") or TEMPORAL_ADDRESS
+    env["TEMPORAL_NAMESPACE"] = os.environ.get("NORI_RELEASE_TEMPORAL_NAMESPACE") or TEMPORAL_NAMESPACE
+    for local_only in ("TEMPORAL_LOCAL", "TEMPORAL_TLS_DISABLE_HOST_VERIFICATION"):
+        env.pop(local_only, None)
     return env
 
 
@@ -530,15 +539,20 @@ def deploy_runtime(c, workers, image):
         "NORI_WAKE_QUEUE": c["conversation_queue"],
         "NORI_WAKE_SERVICE_ACCOUNT": c["conversation_wake_service_account"],
         "NORI_RUNTIME_URL": c["runtime_url"],
-        "TEMPORAL_ADDRESS": "quickstart-nori.qtjow.tmprl.cloud:7233",
-        "TEMPORAL_NAMESPACE": "quickstart-nori.qtjow",
+        "TEMPORAL_ADDRESS": TEMPORAL_ADDRESS,
+        "TEMPORAL_NAMESPACE": TEMPORAL_NAMESPACE,
         "TEMPORAL_TASK_QUEUE": TASK_QUEUE,
         "TEMPORAL_DEPLOYMENT_NAME": DEPLOYMENT,
         "TEMPORAL_API_KEY_SECRET_VERSION": f"projects/{PROJECT}/secrets/nori-temporal-api-key/versions/latest",
     }.items()})
     env.pop("NORI_EXECUTION_MODE", None)
     env.pop("OPENAI_API_KEY", None)
+    # Connected accounts (credential store, OAuth callback, send defaults, push) come from the application state's
+    # outputs; a state applied before they existed leaves the runtime as it is.
+    env.update({key: {"name": key, "value": value} for key, value in c.get("connected_accounts_env", {}).items()})
     secret_env = {entry["name"]: entry for entry in spec.get("secretEnv", [])}
+    secret_env.update({key: {"name": key, "secretRef": {"secret": secret, "version": "latest"}}
+                       for key, secret in c.get("connected_accounts_secret_env", {}).items()})
     secret_env["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "secretRef": {
         "secret": "nori-sandbox-openai-api-key" if ENVIRONMENT == "sandbox" else "nori-openai-api-key", "version": "latest"}}
     if ENVIRONMENT == "sandbox":

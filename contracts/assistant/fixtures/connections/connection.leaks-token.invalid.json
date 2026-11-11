@@ -1,0 +1,30 @@
+{
+  "id": "conn_google_personal",
+  "revision": 4,
+  "integration_id": "google",
+  "title": "Personal Google",
+  "account": {
+    "provider_id": "acct_123",
+    "label": "personal@example.com"
+  },
+  "status": "connected",
+  "granted_scopes": [
+    "calendar.readonly",
+    "calendar.events"
+  ],
+  "selected_resource_ids": [
+    "primary",
+    "family"
+  ],
+  "health": {
+    "checked_at": "2026-11-09T09:00:00Z",
+    "code": "ready",
+    "last_success_at": "2026-11-09T09:00:00Z"
+  },
+  "defaults": [
+    "calendar.create"
+  ],
+  "created_at": "2026-11-09T09:00:00Z",
+  "updated_at": "2026-11-09T09:00:00Z",
+  "refresh_token": "ya29.x"
+}

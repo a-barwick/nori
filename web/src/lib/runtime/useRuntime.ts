@@ -6,8 +6,9 @@ import type { Span } from "@sentry/nextjs";
 import type { Attachment, DraftFile, Message, PendingTaskCommand, ReadPosition, Run, SavedResult, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
 import { taskControlKinds } from "@/lib/types";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
-import { useDraftFiles } from "@/lib/useDraftFiles";
+import { useDraftFiles, type UploadContext } from "@/lib/useDraftFiles";
 import { runtimePath } from "./paths";
+import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "./messages";
 
 class RequestError extends Error {
   constructor(message: string, readonly status: number, readonly details?: TaskCommandResponse) { super(message); }
@@ -48,15 +49,29 @@ type Pending = { id: string; text: string; started: number; error?: string; atta
 const TURN_ACCEPTANCE_UNKNOWN = "Message acceptance could not be confirmed.";
 const COMMAND_ACCEPTANCE_UNKNOWN = "Task command acceptance could not be confirmed.";
 
-async function uploadFile(item: DraftFile, agentMode: boolean): Promise<Attachment> {
+/** Uploads with progress and cancel (XMLHttpRequest reports upload progress; fetch does not). */
+function uploadFile(item: DraftFile, agentMode: boolean, { signal, progress }: UploadContext): Promise<Attachment> {
   const query = new URLSearchParams({ id: item.id, filename: item.name });
-  const response = await fetch(runtimePath(agentMode, `v1/uploads?${query}`), {
-    method: "POST", body: item.file, cache: "no-store", headers: { "Content-Type": item.file.type || "application/octet-stream" },
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", runtimePath(agentMode, `v1/uploads?${query}`));
+    request.setRequestHeader("Content-Type", item.file.type || "application/octet-stream");
+    request.upload.onprogress = (event) => { if (event.lengthComputable) progress(event.loaded / event.total); };
+    request.onload = () => {
+      let data: { error?: string } & Partial<Attachment> | null = null;
+      try { data = JSON.parse(request.responseText); } catch { /* handled below */ }
+      if (request.status >= 200 && request.status < 300 && data) resolve(data as Attachment);
+      else reject(new Error(data?.error || (request.status ? `Upload failed (${request.status}).` : "Upload failed. Try again.")));
+    };
+    request.onerror = () => reject(new Error("The upload was interrupted. Retry this file."));
+    request.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
+    signal.addEventListener("abort", () => request.abort(), { once: true });
+    request.send(item.file);
   });
-  return readJSON<Attachment>(response, "Upload failed");
 }
 type ReplyTiming = { started: number; span: Span; timer: ReturnType<typeof setTimeout> };
 const STORAGE_KEY = "nori-pending-turns-v1";
+const DRAFT_KEY = "nori-draft-assistant-v1";
 const MAX_PENDING = 20;
 const TIMING_STORAGE_KEY = "nori-reply-timings-v1";
 function saveTimings(timings: Map<string, ReplyTiming>) {
@@ -125,11 +140,18 @@ function mergeRuns(older: Run[], newer: Run[]): Run[] {
 
 export function useRuntime(agentMode = false) {
   const [session, setSession] = useState<Session>();
-  const [draft, setDraftState] = useState("");
+  // The unsent draft survives reloads and reconnects; it is cleared when the message is accepted for sending.
+  const [draft, setDraftState] = useState(() => { try { return localStorage.getItem(DRAFT_KEY) ?? ""; } catch { return ""; } });
   const { files: draftFiles, attach, retry, clear: clearFiles, remove: removeFile, invalidateUploads } = useDraftFiles();
-  const draftValue = useRef("");
-  const setDraft = (text: string) => { draftValue.current = text; setDraftState(text); };
+  const draftValue = useRef(draft);
+  const setDraft = (text: string) => {
+    draftValue.current = text; setDraftState(text);
+    try { if (text) localStorage.setItem(DRAFT_KEY, text); else localStorage.removeItem(DRAFT_KEY); } catch { /* storage off */ }
+  };
   const [error, setError] = useState("");
+  // Mirrors an outage error so the stream can clear it when the service answers again.
+  const outage = useRef(false);
+  useEffect(() => { outage.current = error === SERVICE_UNAVAILABLE; }, [error]);
   const [streamError, setStreamError] = useState("");
   const [streamAwake, setStreamAwake] = useState(true);
   const position = useRef(0);
@@ -447,7 +469,12 @@ export function useRuntime(agentMode = false) {
         }
         failures = 0;
       });
-      stream.onopen = () => { if (!stopped && stream === source) setStreamError(""); };
+      stream.onopen = () => {
+        if (stopped || stream !== source) return;
+        setStreamError("");
+        // The service is back after an outage: read the snapshot once so the reconnecting notice clears by itself.
+        if (outage.current) void refresh(controller.signal).then((data) => { if (data) setError(""); }, () => undefined);
+      };
       listen<{ message: Message }>("message", ({ message }) => {
         setSession((current) => current && { ...current, messages: mergeById(current.messages, [message]).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)) });
         updatePending((current) => current.filter((item) => message.id !== `${item.id}-user`));
@@ -492,7 +519,7 @@ export function useRuntime(agentMode = false) {
       stream.onerror = () => {
         if (stream !== source || stopped || stream.readyState !== EventSource.CLOSED) return;
         failures++;
-        if (failures >= 3) setStreamError("Live updates are reconnecting.");
+        if (failures >= 3) setStreamError(STREAM_RECONNECTING);
         timer = setTimeout(open, Math.min(30_000, 1000 * 2 ** failures));
       };
     }
@@ -537,7 +564,7 @@ export function useRuntime(agentMode = false) {
     await submit(item);
   }
 
-  const upload = (item: DraftFile) => uploadFile(item, agentMode);
+  const upload = (item: DraftFile, context: UploadContext) => uploadFile(item, agentMode, context);
 
   async function commandTask(runId: string, kind: TaskCommand["kind"], text?: string, questionId?: string) {
     if (replacingSnapshot.current) return;

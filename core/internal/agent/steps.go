@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"nori/internal/extensions"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/transcript"
@@ -86,17 +87,34 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 		}
 		span.End()
 	}()
-	catalog := s.catalog()
-	return s.Model.Respond(ctx, Request{
-		Instructions:    prompts.TaskWorker + "\nUser details (data): " + s.UserFacts + "\n" + s.catalogInstruction(catalog),
-		Messages:        messages,
-		Tools:           offeredTools(catalog, messages, wait, work),
+	snapshot, dynamic := s.Tools(ctx)
+	catalog := s.catalog(dynamic, snapshot)
+	facts, location := s.UserFacts, (*time.Location)(nil)
+	if s.Profile != nil {
+		facts, location = s.Profile(ctx)
+	}
+	if location == nil {
+		location = s.location()
+	}
+	// The current time goes last, after the saved history, so the cached prompt prefix still changes at most daily
+	// (the catalog line carries only the date). It is not saved in the task history.
+	now := time.Now().In(location)
+	clock := transcript.Message{Role: transcript.RoleUser, Parts: []transcript.Part{{Text: prompts.Runtime("task-clock", map[string]any{
+		"Now":   now.Format("Monday, 2 January 2006 15:04 MST") + " (" + location.String() + ")",
+		"Today": now.Format("Monday, 2 January 2006"), "Tomorrow": now.AddDate(0, 0, 1).Format("Monday, 2 January 2006")})}}}
+	resp, err = s.Model.Respond(ctx, Request{
+		Instructions:    prompts.TaskWorker + "\nUser details (data): " + facts + "\n" + s.catalogInstruction(catalog, location),
+		Messages:        append(messages[:len(messages):len(messages)], clock),
+		Tools:           offeredTools(catalog, snapshot, messages, wait, work, s.Computer != nil),
 		MaxOutputTokens: modelOutputTokenLimit,
 	})
+	resp.Tools = snapshot
+	return resp, err
 }
 
 // Leaving a schema out shortens the request. Execution still checks every call.
-func offeredTools(catalog []Capability, messages []transcript.Message, wait, work bool) []transcript.Tool {
+// Without a computer, tools that run on it are left out: the catalog still shows the capability as unavailable.
+func offeredTools(catalog []Capability, snapshot *extensions.Snapshot, messages []transcript.Message, wait, work, computer bool) []transcript.Tool {
 	results := []map[string]any{}
 	for _, message := range messages {
 		for _, part := range message.Parts {
@@ -114,8 +132,19 @@ func offeredTools(catalog []Capability, messages []transcript.Message, wait, wor
 	access := availableTools(wait, work)
 	selected := make([]transcript.Tool, 0, len(taskToolDefinitions))
 	for _, definition := range taskToolDefinitions {
+		if !computer && !definition.policy.Runtime && definition.capability != "" {
+			continue
+		}
 		if definition.access <= access && (definition.capability == "" || loaded[definition.capability]) {
 			selected = append(selected, definition.Tool)
+		}
+	}
+	for _, d := range snapshot.Definitions() {
+		if d.Builtin() || (d.Exposure != extensions.ExposureDirect && !(d.Exposure == extensions.ExposureDiscoverable && loaded[d.CapabilityTitle])) {
+			continue
+		}
+		if tool, ok := modelTool(d); ok {
+			selected = append(selected, tool)
 		}
 	}
 	return selected

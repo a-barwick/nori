@@ -1,0 +1,264 @@
+{
+ "name": "Recorded iCloud app-password sign-in",
+ "obligation": "A01/A02 for iCloud (r2.10): a rejected pair saves nothing and answers validation_failed; an accepted pair connects with the CalDAV principal and lists event calendars with their write access; the password is never returned or kept in receipts",
+ "note": "Needs core started with NORI_PROVIDER_REPLAY pointing at contracts/assistant/recordings; the credentials are made up and match the iCloud recordings. Nothing is sent to Apple.",
+ "requires": [
+  "connections",
+  "recorded_provider"
+ ],
+ "users": {
+  "a": "44444444-4444-4444-8444-444444444444",
+  "b": "55555555-5555-4555-8555-555555555555"
+ },
+ "steps": [
+  {
+   "name": "create",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/connections",
+   "body": {
+    "request_id": "${uuid:create}",
+    "expected_revision": 0,
+    "value": {
+     "integration_id": "icloud",
+     "title": "Recorded iCloud",
+     "selected_resource_ids": []
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     201
+    ],
+    "absent": [
+     "/resource/account"
+    ]
+   },
+   "capture": {
+    "conn": "/resource/id",
+    "rev": "/resource/revision"
+   }
+  },
+  {
+   "name": "rejected-pair",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/connections/${var:conn}/actions",
+   "body_schema": "connections.schema.json#/$defs/ConnectionAction",
+   "body": {
+    "request_id": "${uuid:bad}",
+    "expected_revision": "${int:rev}",
+    "value": {
+     "action": "connect",
+     "username": "recorded.user@icloud.com",
+     "password": "zzzz-zzzz-zzzz-zzzz"
+    }
+   },
+   "expect": {
+    "status": [
+     400
+    ],
+    "match": {
+     "/code": "validation_failed",
+     "/accepted": false
+    },
+    "absent": [
+     "/current/password"
+    ]
+   }
+  },
+  {
+   "name": "nothing-saved",
+   "user": "a",
+   "method": "GET",
+   "path": "/v1/connections/${var:conn}",
+   "expect": {
+    "status": [
+     200
+    ],
+    "schema": "connections.schema.json#/$defs/Connection",
+    "absent": [
+     "/account",
+     "/password",
+     "/username"
+    ],
+    "match": {
+     "/revision": "${int:rev}"
+    }
+   }
+  },
+  {
+   "name": "b-cannot-connect-a",
+   "user": "b",
+   "method": "POST",
+   "path": "/v1/connections/${var:conn}/actions",
+   "body": {
+    "request_id": "${uuid:bconn}",
+    "expected_revision": "${int:rev}",
+    "value": {
+     "action": "connect",
+     "username": "recorded.user@icloud.com",
+     "password": "abcd-efgh-ijkl-mnop"
+    }
+   },
+   "expect": {
+    "status": [
+     404
+    ],
+    "match": {
+     "/code": "not_found"
+    }
+   }
+  },
+  {
+   "name": "accepted-pair",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/connections/${var:conn}/actions",
+   "body": {
+    "request_id": "${uuid:good}",
+    "expected_revision": "${int:rev}",
+    "value": {
+     "action": "connect",
+     "username": "recorded.user@icloud.com",
+     "password": "abcd-efgh-ijkl-mnop"
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     202
+    ],
+    "match": {
+     "/accepted": true
+    },
+    "absent": [
+     "/resource/password",
+     "/resource/username",
+     "/auth"
+    ]
+   }
+  },
+  {
+   "name": "connected",
+   "user": "a",
+   "method": "GET",
+   "path": "/v1/connections/${var:conn}",
+   "expect": {
+    "status": [
+     200
+    ],
+    "schema": "connections.schema.json#/$defs/Connection",
+    "match": {
+     "/status": "connected",
+     "/account/label": "recorded.user@icloud.com",
+     "/account/provider_id": "https://caldav.icloud.com/123456789/principal/"
+    },
+    "absent": [
+     "/password",
+     "/username"
+    ]
+   },
+   "capture": {
+    "rev2": "/revision"
+   }
+  },
+  {
+   "name": "resources",
+   "user": "a",
+   "method": "GET",
+   "path": "/v1/connections/${var:conn}/resources",
+   "expect": {
+    "status": [
+     200
+    ],
+    "count": {
+     "/items": 2
+    },
+    "match": {
+     "/items/[title=Home]/writable": true,
+     "/items/[title=Family]/writable": false
+    },
+    "absent": [
+     "/items/[title=Reminders]"
+    ]
+   }
+  },
+  {
+   "name": "retry-accepted-pair",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/connections/${var:conn}/actions",
+   "body": {
+    "request_id": "${uuid:good}",
+    "expected_revision": "${int:rev}",
+    "value": {
+     "action": "connect",
+     "username": "recorded.user@icloud.com",
+     "password": "abcd-efgh-ijkl-mnop"
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     202
+    ],
+    "match": {
+     "/accepted": true
+    },
+    "absent": [
+     "/resource/password"
+    ]
+   }
+  },
+  {
+   "name": "receipt-has-no-password",
+   "user": "a",
+   "method": "GET",
+   "path": "/v1/mutations/${uuid:good}",
+   "expect": {
+    "status": [
+     200,
+     404
+    ],
+    "absent": [
+     "/payload/password",
+     "/resource/password"
+    ]
+   }
+  },
+  {
+   "name": "disconnect",
+   "user": "a",
+   "method": "POST",
+   "path": "/v1/connections/${var:conn}/actions",
+   "body": {
+    "request_id": "${uuid:disc}",
+    "expected_revision": "${int:rev2}",
+    "value": {
+     "action": "disconnect"
+    }
+   },
+   "expect": {
+    "status": [
+     200,
+     202
+    ]
+   }
+  },
+  {
+   "name": "disconnected",
+   "user": "a",
+   "method": "GET",
+   "path": "/v1/connections/${var:conn}",
+   "expect": {
+    "status": [
+     200
+    ],
+    "match": {
+     "/status": "disconnected"
+    }
+   }
+  }
+ ]
+}

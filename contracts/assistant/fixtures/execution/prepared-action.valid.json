@@ -1,0 +1,17 @@
+{
+  "digest": "sha256:act1",
+  "summary": "Create 'Dentist' on Personal, Tue 10:00-10:30 Europe/London, invite alex@example.com",
+  "effect": "sensitive_send",
+  "resources": [
+    {
+      "connection_id": "conn_google_personal",
+      "kind": "calendar",
+      "provider_id": "primary",
+      "provider_revision": "etag-7"
+    }
+  ],
+  "recipients": [
+    "alex@example.com"
+  ],
+  "provider_precondition": "etag-7"
+}

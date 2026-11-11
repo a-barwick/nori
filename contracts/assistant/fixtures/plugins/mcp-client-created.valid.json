@@ -1,0 +1,16 @@
+{
+  "request_id": "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+  "accepted": true,
+  "status": "applied",
+  "resource": {
+    "id": "mcpc_1",
+    "revision": 1,
+    "name": "Laptop agent",
+    "scopes": [
+      "read"
+    ],
+    "created_at": "2026-11-09T09:00:00Z"
+  },
+  "token": "nori_11111111-1111-4111-8111-111111111111_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "note": "Copy this token now; Nori stores only its hash."
+}

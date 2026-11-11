@@ -1,0 +1,852 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.nori.local/assistant/library.schema.json",
+  "title": "Library, typed card parts, search and input (C8)",
+  "$defs": {
+    "CardPart": {
+      "description": "A typed message part that references an authoritative server resource. Older clients show fallback. Never carries executable handlers. Carried as a state.Part with type 'card' on existing messages (F9).",
+      "type": "object",
+      "required": [
+        "type",
+        "schema_version",
+        "kind",
+        "resource",
+        "fallback"
+      ],
+      "properties": {
+        "type": {
+          "const": "card"
+        },
+        "schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "enum": [
+            "connection_request",
+            "question",
+            "approval",
+            "progress",
+            "calendar_event",
+            "mail_draft",
+            "mail_message",
+            "automation",
+            "goal",
+            "file",
+            "outcome",
+            "computer_session",
+            "plugin",
+            "availability"
+          ]
+        },
+        "resource": {
+          "type": "object",
+          "required": [
+            "kind",
+            "id"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "interaction",
+                "automation",
+                "goal",
+                "connection",
+                "installation",
+                "computer_session",
+                "task",
+                "result"
+              ],
+              "description": "Maps to a read route (F8): interaction→/v1/interactions/{id}, automation→/v1/automations/{id}, goal→/v1/goals/{id}, connection→/v1/connections/{id}, installation→/v1/plugins/installations/{id}, computer_session→/v1/computer/sessions/{id}, task→/v1/work/{id}, result→/v1/library/{id}"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "$ref": "common.schema.json#/$defs/Revision"
+            }
+          },
+          "additionalProperties": false
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z_]{1,32}$"
+          },
+          "description": "Known action kinds the client may offer after re-fetching current state"
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "display": {
+          "enum": [
+            "page",
+            "bubble"
+          ]
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "html"
+            ]
+          },
+          {
+            "required": [
+              "script"
+            ]
+          },
+          {
+            "required": [
+              "onclick"
+            ]
+          }
+        ]
+      }
+    },
+    "Provenance": {
+      "type": "object",
+      "required": [
+        "content"
+      ],
+      "properties": {
+        "content": {
+          "enum": [
+            "generated",
+            "uploaded",
+            "copied",
+            "live"
+          ]
+        },
+        "source": {
+          "$ref": "common.schema.json#/$defs/ResourceRef"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "retrieved_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "connection_status": {
+          "$ref": "connections.schema.json#/$defs/ConnectionStatus",
+          "description": "Current access status of the originating connection, for copied/live content"
+        }
+      },
+      "additionalProperties": false
+    },
+    "LibraryItem": {
+      "description": "Projects the existing SavedResult (root_id/version/revises) plus provenance and associations. Existing result URLs remain valid.",
+      "type": "object",
+      "required": [
+        "id",
+        "root_id",
+        "version",
+        "kind",
+        "title",
+        "created_at",
+        "provenance",
+        "revision"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "root_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "revises": {
+          "type": "string"
+        },
+        "superseded_by": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "answer",
+            "file",
+            "screenshot",
+            "link",
+            "document",
+            "event",
+            "message",
+            "report"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "url": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "goal_id": {
+          "type": "string"
+        },
+        "automation_id": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "index_status": {
+          "enum": [
+            "indexed",
+            "pending",
+            "unsupported",
+            "failed",
+            "stale"
+          ]
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "updated_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "deleted_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "data_kind": {
+          "enum": [
+            "calendar_event",
+            "mail_draft",
+            "mail_message",
+            "availability"
+          ]
+        },
+        "data": {
+          "description": "Typed domain object for saved event/mail/availability results, discriminated by data_kind"
+        },
+        "collection": {
+          "type": "string"
+        },
+        "preview_text": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "delete_effect": {
+          "type": "string",
+          "description": "Server-stated effect of delete, e.g. that the provider copy stays with the provider"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision",
+          "description": "Resource revision for LibraryItemChange and LibraryAction expected_revision; distinct from the content version. Not state.Result.revision, which is the task's instruction revision: map it explicitly rather than embedding Result."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "data"
+            ]
+          },
+          "then": {
+            "required": [
+              "data_kind"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "data_kind": {
+                "const": "calendar_event"
+              }
+            },
+            "required": [
+              "data_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "domain.schema.json#/$defs/CalendarEvent"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "data_kind": {
+                "const": "mail_draft"
+              }
+            },
+            "required": [
+              "data_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "domain.schema.json#/$defs/MailDraft"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "data_kind": {
+                "const": "mail_message"
+              }
+            },
+            "required": [
+              "data_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "domain.schema.json#/$defs/MailMessage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "data_kind": {
+                "const": "availability"
+              }
+            },
+            "required": [
+              "data_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/AvailabilityProposal"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "SearchHit": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id",
+        "title",
+        "snippet"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "result",
+            "message",
+            "task",
+            "goal",
+            "automation",
+            "file"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "snippet": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "jump": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "conversation_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "conversation"
+                },
+                "conversation_id": {
+                  "type": "string"
+                },
+                "message_id": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "task_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "task"
+                },
+                "task_id": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "item_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "library"
+                },
+                "item_id": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "goal_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "goal"
+                },
+                "goal_id": {
+                  "$ref": "common.schema.json#/$defs/ID"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "automation_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "automation"
+                },
+                "automation_id": {
+                  "$ref": "common.schema.json#/$defs/ID"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "freshness": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "score": {
+          "type": "number"
+        }
+      }
+    },
+    "SearchResponse": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ListResponse"
+        },
+        {
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SearchHit"
+              }
+            },
+            "query": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "UploadAccept": {
+      "description": "Supported upload media types declared by the server, so the composer never suggests an unsupported fallback.",
+      "type": "object",
+      "required": [
+        "media_types",
+        "max_bytes"
+      ],
+      "properties": {
+        "media_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "extensions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\.[a-z0-9]{1,8}$"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "AvailabilityProposal": {
+      "type": "object",
+      "required": [
+        "slots",
+        "duration_minutes",
+        "attendees",
+        "status"
+      ],
+      "properties": {
+        "slots": {
+          "type": "array",
+          "items": {
+            "$ref": "domain.schema.json#/$defs/AvailabilitySlot"
+          }
+        },
+        "duration_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attendees": {
+          "type": "array",
+          "items": {
+            "$ref": "domain.schema.json#/$defs/MailAddress"
+          }
+        },
+        "status": {
+          "enum": [
+            "proposed",
+            "booked"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "LibraryItemEditable": {
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "collection": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "LibraryItemChange": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Change"
+        },
+        {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/LibraryItemEditable"
+            }
+          }
+        }
+      ]
+    },
+    "LibraryAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "action",
+                    "instruction"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "revise"
+                    },
+                    "instruction": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8192
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action",
+                    "format"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "export"
+                    },
+                    "format": {
+                      "enum": [
+                        "md",
+                        "pdf",
+                        "docx",
+                        "csv",
+                        "ics",
+                        "original"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "action",
+                    "scope"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "delete"
+                    },
+                    "scope": {
+                      "enum": [
+                        "version",
+                        "all_versions"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "MemoryFact": {
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "text",
+        "scope",
+        "origin",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "enum": [
+            "user",
+            "chat"
+          ]
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "conversation_id": {
+              "type": "string"
+            },
+            "message_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "updated_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      }
+    },
+    "MemoryFactEditable": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "MemoryFactChange": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Change"
+        },
+        {
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/MemoryFactEditable"
+            }
+          }
+        }
+      ]
+    },
+    "MemoryAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "type": "object",
+              "required": [
+                "action"
+              ],
+              "properties": {
+                "action": {
+                  "const": "forget"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ],
+      "description": "Forgetting stops future use of the fact; it does not delete transcripts or external documents, and the receipt says only what was done."
+    },
+    "InboxItem": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "body",
+        "link",
+        "created_at",
+        "revision"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        },
+        "delivery_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "link": {
+          "type": "object",
+          "required": [
+            "kind",
+            "id"
+          ],
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/CardPart/properties/resource/properties/kind"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "$ref": "common.schema.json#/$defs/Revision"
+            }
+          },
+          "additionalProperties": false
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "acknowledged_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/Revision"
+        }
+      }
+    },
+    "InboxAction": {
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/ActionRequest"
+        },
+        {
+          "properties": {
+            "value": {
+              "type": "object",
+              "required": [
+                "action"
+              ],
+              "properties": {
+                "action": {
+                  "const": "acknowledge"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -17,9 +17,20 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 	}
 	var receipts []state.CommandReceipt
 	traceContext := observability.InjectTrace(ctx)
+	budget := d.preferredTaskBudget(ctx)
 	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		receipts = make([]state.CommandReceipt, 0, len(commands))
 		batch, err := d.readCommandBatch(tx, commands)
+		if err != nil {
+			return err
+		}
+		before := map[string]int64{}
+		runIDs := []string{}
+		for id, run := range batch.Runs {
+			before[id] = run.Revision
+			runIDs = append(runIDs, id)
+		}
+		pending, err := d.readPendingInteractions(tx, runIDs)
 		if err != nil {
 			return err
 		}
@@ -27,12 +38,15 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 		if err != nil {
 			return err
 		}
-		prepared, err := batch.Prepare(commands, control, time.Now().UTC(), traceContext, d.taskBudgetUSD)
+		prepared, err := batch.Prepare(commands, control, time.Now().UTC(), traceContext, budget)
 		receipts = prepared.Receipts
 		if err != nil {
 			return err
 		}
-		return d.writeCommandBatch(tx, batch, prepared, traceContext)
+		if err = d.writeCommandBatch(tx, batch, prepared, traceContext); err != nil {
+			return err
+		}
+		return d.supersedeInteractions(tx, pending, before, batch, commands)
 	})
 	return receipts, err
 }
@@ -181,7 +195,12 @@ func (d *Database) appendHeldEvents(tx *docstore.Transaction, events []state.Tas
 
 // appendTaskEvent is called after the task transaction's other reads and before its writes. The state transition and
 // outer inbox insertion commit together. It reports false when the same event was already in the inbox.
-func (d *Database) appendTaskEvent(tx *docstore.Transaction, event state.TaskEvent, traceContext map[string]string) (bool, error) {
+func (d *Database) appendTaskEvent(tx *docstore.Transaction, run state.Run, event state.TaskEvent, traceContext map[string]string) (bool, error) {
+	// A task started from a separate chat reports to that chat and to Work, never through the assistant
+	// conversation.
+	if run.Origin != nil && run.Origin.ConversationID != "" && run.Origin.ConversationID != "assistant" {
+		return false, nil
+	}
 	ref := d.conversationInputs().Doc(state.TaskEventInputID(event.ID))
 	doc, err := tx.Get(ref)
 	if err == nil {
@@ -203,4 +222,22 @@ func (d *Database) appendTaskEvent(tx *docstore.Transaction, event state.TaskEve
 		return false, err
 	}
 	return true, tx.Create(ref, input)
+}
+
+// preferredTaskBudget is the user's saved per-task budget (Preferences.budgets.task_usd), bounded like an explicit
+// continuation's, or the deployment default when none is saved.
+func (d *Database) preferredTaskBudget(ctx context.Context) float64 {
+	r, err := d.Resource(ctx, "preferences", "preferences")
+	if err != nil {
+		return d.taskBudgetUSD
+	}
+	var prefs struct {
+		Budgets struct {
+			TaskUSD float64 `json:"task_usd"`
+		} `json:"budgets"`
+	}
+	if r.Decode(&prefs) != nil || prefs.Budgets.TaskUSD <= 0 {
+		return d.taskBudgetUSD
+	}
+	return min(prefs.Budgets.TaskUSD, state.MaxContinuationBudgetUSD)
 }
