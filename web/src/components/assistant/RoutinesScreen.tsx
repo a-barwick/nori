@@ -31,7 +31,11 @@ function snoozeOptions(): [string, string][] {
   return [["For an hour", new Date(Date.now() + 3_600_000).toISOString()], ["Until tomorrow", at(1, 8)], ["Until next week", at(monday, 8)]];
 }
 
+/** A one-off reminder that already ran stays enabled with no next run (core scheduler); it is done, not on. */
+const spent = (item: Automation) => item.status === "enabled" && !item.next_at && item.trigger.kind === "once";
+
 function stateOf(item: Automation, long = false) {
+  if (spent(item)) return { tone: "neutral" as Tone, label: "Done" };
   if (item.status === "enabled" && item.snoozed_until && Date.parse(item.snoozed_until) > Date.now()) return { tone: "neutral" as Tone, label: long ? `Snoozed until ${when(item.snoozed_until)}` : "Snoozed" };
   return STATUS[item.status];
 }
@@ -82,15 +86,15 @@ export function RoutineDetailScreen({ id }: { id: string }) {
   const state = stateOf(item, true);
   const destinationLabel = (destinationID: string) => destinations.data?.items.find((destination) => destination.id === destinationID)?.label ?? "a destination";
   return (
-    <Screen title={item.title} back="/routines" line={item.status === "enabled" && item.next_at ? `Next run ${when(item.next_at, item.trigger.kind === "recurring" ? item.trigger.timezone : undefined)}.` : item.status === "paused" ? "Paused. Nothing runs until you resume it." : "Cancelled."}
+    <Screen title={item.title} back="/routines" line={item.status === "enabled" && item.next_at ? `Next run ${when(item.next_at, item.trigger.kind === "recurring" ? item.trigger.timezone : undefined)}.` : spent(item) ? "This one-time automation has run. It won’t run again." : item.status === "paused" ? "Paused. Nothing runs until you resume it." : "Cancelled."}
       actions={<><Pill tone={state.tone}>{state.label}</Pill><RefreshButton onClick={() => { void routine.reload(); void occurrences.reload(); }} /></>}>
       {action.error && <div className="mb-4"><Notice tone="danger">{action.error}</Notice></div>}
       {started && !action.error && <div className="mb-4"><Notice tone="accent">Starting a run now. It shows in History and Work when it begins.</Notice></div>}
       {item.status !== "cancelled" && <div className="flex flex-wrap gap-2">
         <Button variant="primary" disabled={!!action.pending} onClick={() => void act({ action: "run_now" }, "run")}><Zap size={15} aria-hidden />{action.pending === "run" ? "Starting…" : "Run now"}</Button>
-        {item.status === "enabled" ? <Button disabled={!!action.pending} onClick={() => void act({ action: "pause" }, "pause")}><Pause size={14} aria-hidden />Pause</Button>
+        {spent(item) ? null : item.status === "enabled" ? <Button disabled={!!action.pending} onClick={() => void act({ action: "pause" }, "pause")}><Pause size={14} aria-hidden />Pause</Button>
           : <Button disabled={!!action.pending} onClick={() => void act({ action: "resume" }, "resume")}><Play size={14} aria-hidden />Resume</Button>}
-        {item.status === "enabled" && <DropdownMenu.Root>
+        {item.status === "enabled" && !spent(item) && <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild><Button disabled={!!action.pending}><TimerReset size={14} aria-hidden />Snooze</Button></DropdownMenu.Trigger>
           <DropdownMenu.Portal><DropdownMenu.Content sideOffset={6} className="anim-pop z-50 min-w-48 rounded-tile bg-surface p-1 shadow-pop">
             {snoozeOptions().map(([label, until]) => <DropdownMenu.Item key={label} onSelect={() => void act({ action: "snooze", until }, "snooze")} className="flex h-10 cursor-pointer items-center rounded-chip px-3 text-row outline-none data-[highlighted]:bg-fill-1">{label}</DropdownMenu.Item>)}
@@ -105,7 +109,9 @@ export function RoutineDetailScreen({ id }: { id: string }) {
         <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
           <dt className="text-ink-3">When</dt><dd>{cadence(item.trigger)}{item.trigger.kind === "recurring" ? ` (${item.trigger.timezone})` : ""}</dd>
           <dt className="text-ink-3">If missed</dt><dd>{{ latest: "Runs once when Nori is back", skip: "Skipped and shown below", all: "Every missed run happens" }[item.missed_run]}</dd>
-          <dt className="text-ink-3">Sends to</dt><dd>{item.destination_ids.map(destinationLabel).join(", ") || "Nowhere; results stay in Library"}</dd>
+          <dt className="text-ink-3">Sends to</dt><dd>{item.destination_ids.length ? item.destination_ids.map(destinationLabel).join(", ")
+            // No destination means core's in-app inbox (scheduler deliver), which only shows while Nori is open.
+            : <>Nori inbox only (<Link className="text-accent-text hover:underline" href="/settings/notifications">Settings → Notifications</Link>), so nothing reaches you while Nori is closed. Choose push or email under <Link className="text-accent-text hover:underline" href={`/routines/${encodeURIComponent(id)}/edit`}>Edit</Link>.</>}</dd>
           <dt className="text-ink-3">Budget</dt><dd>{money(item.budget_usd)} per run</dd>
           {item.end_at && <><dt className="text-ink-3">Ends</dt><dd>{when(item.end_at)}</dd></>}
           {item.goal_id && <><dt className="text-ink-3">For goal</dt><dd><Link className="text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.goal_id)}`}>Open goal</Link></dd></>}
