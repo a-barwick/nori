@@ -100,6 +100,13 @@ Restarted on merge head `5ef24d5` (backend `cb97cc8`: Gmail sends only to the co
 
 Step 4 with the app closed stays **not exercised** (no device with notifications allowed; the built-in pane blocks them).
 
+### Full pass on `real-cfc0d6f` (2026-11-10, 21:27 to 21:38 PST)
+
+The pass/fail table is at the top of `docs/assistant-notes/integration-status.md`. In short, graded real provider, Austin's test account:
+- **Passed**: the week (`0c9079c2`); event create, move and delete on the primary calendar (`b0a285d8`, `002c3181`, `da45bb31`); the relative reminder with no clock question, delivered in the app (`c3ddff6f` → `f880afd3`); the message search (`d9b23044`); the own-address approval card, declined (`eca719f8`); another address refused with nothing sent (`20b71f1d`).
+- **Blocked**: creating a "Nori test" calendar waits on Austin's sign-in for `calendar.create` (`f793fa0e`).
+- **Failed**: account questions caused by a duplicate connection; "my own address" resolved to the Nori profile address; drafts left behind after refused or declined sends.
+
 Earlier the same evening, before the sign-in, steps 2, 3 and 5 stopped at "Google is still connecting" without offering a sign-in (tasks `209d093d…`, `51b3dfbc…`, `fed43de1…`, `5e0c9ff8…`; R-1 in the status note).
 
 ## Matrix

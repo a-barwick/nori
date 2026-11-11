@@ -1,8 +1,32 @@
 # Integration status
 
-Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, sixth turn of the restart (re-run on the merged build). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
+Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, seventh turn of the restart (full slice pass on `cfc0d6f`). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
 
 **Provider verified: 0 of 44.**
+
+## Full slice pass on `real-cfc0d6f`, test account (2026-11-10, 21:27 to 21:38 PST)
+
+Build: merge head `cfc0d6f` (backend `f14264b`: sign-in instead of giving up, relative times, `calendar_create`). No frontend fix for the reload loop had been pushed. Models are on; one worker per build; `NORI_USER_SENDS=ask` on the real stack. Recorded stack: 12 of 12 scenarios, 0 failures. Austin was away. Reads and calendar writes ran; the own-address send was taken to its approval card and **declined**, because sending email needs Austin's own approval each time and earlier approvals covered single sends.
+
+| Step | Task (finished) | Result |
+| --- | --- | --- |
+| 2. Week, with sources | `0c9079c2` (21:28:38) | **PASS**: calendar and mail read with sources; `drive_search` fails (Drive API disabled) |
+| 3a. Create a "Nori test" calendar | `f793fa0e` (waiting) | **BLOCKED on Austin**: the task raised a sign-in card ("Create new calendars", `calendar.create`) instead of giving up. That is R-1 working. The card is left pending; nobody but Austin may sign in. |
+| 3b. Create event, primary calendar | `b0a285d8` (21:30:08) | **PASS**: no date question this time |
+| 3c. Move it | `002c3181` (21:30:54) | **PASS**, with a read-back |
+| 3d. Delete the event | `da45bb31` (21:31:26) | **PASS**, with a read-back. The calendar delete was not reached (3a blocked). |
+| 4. "Remind me in 3 minutes" | `c3ddff6f` (21:31:51), fired as `f880afd3` (21:34:03) | **PASS**: no clock-time question (R-2 fixed); set for 9:34 and delivered in the app at 21:34. App closed: **not exercised**. |
+| 5a. Find a message | `d9b23044` (21:33:37) | **PASS** after a **FAIL**: it first asked which Gmail account to search (see "duplicate connection" below) |
+| 5b. Send to own address with the approval card | `eca719f8` (21:36:20, incomplete) | **PASS for the card, two FAILs before it**. It first asked which account to use for `mail.draft`. Then it addressed "my own address" to the Nori profile address (`real-a@nori.local`). Backend's own-address guard blocked that and saved a draft; the task asked whether to use the Gmail address instead. After "yes", the card showed To and From (the account), the full text and "cannot be recalled". **Declined**, so nothing was sent; a draft remains. |
+| 5c. Send to another address (`someone@example.com`) | `20b71f1d` (21:37:38, incomplete) | **PASS** for the limit: no send operation and no approval card, nothing sent. **FAIL**: the account question again, and an unsent draft left. Nori's reply also said the tool result "confirms only the saved draft—not the reason sending failed". |
+
+New problems found in this pass (for backend and frontend; not fixed here):
+- **Duplicate Google connections.** At 21:28:58 a second connection for the same Gmail account, `conn_c3ec41c528ad5973b454`, was created and signed in through the web app (`POST /api/v1/connections`, then a connect action), with `calendar.create` included. It was not this session. Since then, mail tasks ask which account to use, and the chooser lists the same address three times. The original `conn_376569c546155488accd` was chosen each time. Someone needs to say which connection is meant to stay.
+- **"My own address" resolves to the Nori profile address**, not the connected Gmail address.
+- **Drafts are left behind** whenever a send is refused or declined. The test account now holds unsent drafts to `someone@example.com` (twice) and to itself.
+- The 3a sign-in card is waiting in Work for Austin.
+
+
 
 ## Sixth turn: restart on `5ef24d5` and re-run (2026-11-10, 21:05 to 21:25)
 
