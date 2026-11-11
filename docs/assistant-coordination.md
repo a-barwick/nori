@@ -173,6 +173,12 @@ Coordinator's choices under that go-ahead (not Austin's decisions; reversible be
 
 Assignments: backend wires production (KMS key and IAM, credential store, OAuth redirect, the defaults, hosted reminder delivery) and verifies with `terraform validate`/plan off production; integration merges `main`, runs `make check`, core tests and a production web build, checks the database credential store locally, runs the read-only `make deploy-check`, rewrites the PR description and marks it ready; frontend checks the production build. Nothing is applied to production.
 
+### Key handling changed (2026-11-11)
+
+Austin: "I think the whole 'i promise not to look at your keys' is security theater. a charade. you're running with nearly admin access to my device ... why would i care?"
+
+Rule from now (replaces "sessions do not fetch keys from production or any other store"): sessions may fetch a key from Secret Manager into the private `.env` themselves when a task needs it. What still holds: a key value never appears in command output, a transcript, a log, a commit or a message, because those leave the machine; write it straight from the source into the file, and check keys by name or set/empty only.
+
 ## Baseline commits
 
 | What | Commit |
