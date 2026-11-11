@@ -563,6 +563,9 @@ def deploy_runtime(c, workers, image):
         secret_env["OPENROUTER_API_KEY"] = {"name": "OPENROUTER_API_KEY", "secretRef": {"secret": "nori-sandbox-openrouter-api-key", "version": "latest"}}
     else:
         env["MODEL_NAME"] = {"name": "MODEL_NAME", "value": "gpt-6.1-terra"}
+        # Production calls OpenAI directly, which accepts only this conversation model. The state's outer_model output
+        # can hold an older OpenRouter name, and that made every reply fail.
+        env["NORI_AGENT_MODEL"] = {"name": "NORI_AGENT_MODEL", "value": "gpt-6.1-sol"}
         env["NORI_JEV_ENABLED"] = {"name": "NORI_JEV_ENABLED", "value": "false"}
         for name in ("OPENROUTER_API_KEY", "OPENROUTER_MANAGEMENT_KEY", "JEV_API_KEY"):
             env.pop(name, None)
