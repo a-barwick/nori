@@ -727,6 +727,13 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 	if record.Account.ProviderID != "" && record.Account.ProviderID != account.ProviderID {
 		return finish("failed", ErrWrongAccount.Error())
 	}
+	if record.Account.ProviderID == "" {
+		// "Add another account" signed in to an account the user already has: update that connection instead of
+		// keeping a second one for the same account.
+		if existing, ok := s.sameAccount(ctx, a.IntegrationID, account.ProviderID, a.ConnectionID); ok {
+			return s.mergeSignIn(ctx, a, r, existing, account, integration, token, granted, finish)
+		}
+	}
 	if err = s.storeToken(ctx, a.ConnectionID, token); err != nil {
 		reason := "The account's credential could not be saved."
 		if errors.Is(err, secret.ErrCredentialUnavailable) {
@@ -778,6 +785,115 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 		s.OnConnected(context.WithoutCancel(ctx), a.ConnectionID)
 	}
 	return redirect("connected"), nil
+}
+
+// sameAccount returns another live connection of the integration signed in to this provider account.
+func (s *Service) sameAccount(ctx context.Context, integrationID, providerID, except string) (Record, bool) {
+	if providerID == "" {
+		return Record{}, false
+	}
+	records, _, err := s.Records(ctx)
+	if err != nil {
+		return Record{}, false
+	}
+	for _, record := range records {
+		if record.ID != except && record.IntegrationID == integrationID && record.Account.ProviderID == providerID &&
+			record.Status != StatusDisconnected && record.Status != StatusDisconnecting {
+			return record, true
+		}
+	}
+	return Record{}, false
+}
+
+// mergeSignIn completes a sign-in that reached an account the user already has connected. The existing connection
+// gets the newest token (keeping its refresh token if Google sent none) and the union of both grants; the new,
+// never-signed-in connection is deleted. The callback returns to the existing connection as connected.
+func (s *Service) mergeSignIn(ctx context.Context, a attempt, attemptResource state.Resource, existing Record, account Account,
+	integration Integration, token *oauth2.Token, granted []string, finish func(status, reason string) (string, error)) (string, error) {
+	if token.RefreshToken == "" {
+		if credential, err := s.Credentials.Get(ctx, existing.ID); err == nil {
+			var old oauth2.Token
+			if json.Unmarshal(credential.Data, &old) == nil {
+				token.RefreshToken = old.RefreshToken
+			}
+		}
+	}
+	if err := s.storeToken(ctx, existing.ID, token); err != nil {
+		reason := "The account's credential could not be saved."
+		if errors.Is(err, secret.ErrCredentialUnavailable) {
+			reason = secret.ErrCredentialUnavailable.Error()
+		}
+		return finish("failed", reason)
+	}
+	prefs, _, err := s.Preferences(ctx)
+	if err != nil {
+		return "", err
+	}
+	var desired []string
+	if added, _, err := s.record(ctx, a.ConnectionID); err == nil {
+		desired = added.DesiredScopes
+	}
+	_, err = s.Store.Mutate(ctx, state.Mutation{
+		RequestID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("callback:"+a.ID)).String(), Method: "CALLBACK", Target: a.ID,
+		Payload: a.ID, Collection: CollectionConnections, ID: existing.ID, SkipRevisionCheck: true,
+		Apply: func(cur *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
+			if cur == nil {
+				return state.MutationResult{}, state.ErrNotFound
+			}
+			var record Record
+			if err := cur.Decode(&record); err != nil {
+				return state.MutationResult{}, err
+			}
+			if record.Status == StatusDisconnecting || record.Status == StatusDisconnected {
+				return state.MutationResult{}, ErrInvalidAction
+			}
+			now := s.now()
+			union := func(a, b []string) []string {
+				out := append([]string{}, a...)
+				for _, v := range b {
+					if !slices.Contains(out, v) {
+						out = append(out, v)
+					}
+				}
+				return out
+			}
+			record.Account, record.Status = account, StatusConnected
+			record.GrantedScopes = union(record.GrantedScopes, granted)
+			record.DesiredScopes = union(record.DesiredScopes, desired)
+			record.Capabilities = s.grantedCapabilities(integration, record.GrantedScopes)
+			record.AuthorizationEpoch++
+			record.Health = Health{CheckedAt: &now, Code: HealthReady, Recovery: "none", LastSuccessAt: &now,
+				Message: "This account was already connected; its access was updated."}
+			if missing := missingScopes(record.DesiredScopes, record.GrantedScopes); len(missing) > 0 {
+				record.Status = StatusAttention
+				record.Health.Code, record.Health.Recovery = HealthNeedsMoreAccess, "request_access"
+				record.Health.Message = "This account was already connected; some requested access was not granted."
+			}
+			done := a
+			done.Status = "connected"
+			attemptNext, err := state.NewResource(CollectionAttempts, a.ID, attemptResource.Revision+1, done, attemptResource.Index, now)
+			if err != nil {
+				return state.MutationResult{}, err
+			}
+			result, err := s.write(record, cur.Revision+1, "applied", prefs, attemptNext)
+			result.Deletes = append(result.Deletes, state.ResourceKey{Collection: CollectionConnections, ID: a.ConnectionID})
+			return result, err
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if s.OnConnected != nil {
+		// Tasks waiting on either connection resume; they then select the existing one.
+		s.OnConnected(context.WithoutCancel(ctx), a.ConnectionID)
+		s.OnConnected(context.WithoutCancel(ctx), existing.ID)
+	}
+	values := url.Values{"connection": {existing.ID}, "result": {"connected"}}
+	separator := "?"
+	if strings.Contains(a.ReturnTo, "?") {
+		separator = "&"
+	}
+	return a.ReturnTo + separator + values.Encode(), nil
 }
 
 func (s *Service) settleFailedAttempt(ctx context.Context, connectionID, reason string) {
@@ -911,7 +1027,10 @@ func (s *Service) finishDisconnect(ctx context.Context, id string, action Action
 		return
 	}
 	var problems []string
-	if integration := s.Integrations[record.IntegrationID]; integration != nil {
+	// Revoking is per account and client at the provider, so it would also cut off another connection signed in to
+	// the same account (a duplicate from before sign-ins were merged). Then only Nori's copy is removed here.
+	_, shared := s.sameAccount(ctx, record.IntegrationID, record.Account.ProviderID, id)
+	if integration := s.Integrations[record.IntegrationID]; integration != nil && !shared {
 		if credential, err := s.Credentials.Get(ctx, id); err == nil {
 			var token oauth2.Token
 			if json.Unmarshal(credential.Data, &token) == nil {
