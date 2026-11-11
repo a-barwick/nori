@@ -32,6 +32,18 @@ Austin said "Yes, get it ready" (coordinator record `293399c`); the deploy waits
   - Terraform state init and the open-work check passed. The worker plan, the application plan and the health read did not run.
   - Only ignored local Terraform files were created (`.terraform/`, `release_backend_override.tf`). Nothing changed in production.
   - **PR #165 stays a draft.** Its description now carries this output, backend's production changes and Austin's steps (step 0: the Temporal API key, so the check can run).
+- **`make deploy-check`, green at 06:22** (after Austin put `TEMPORAL_API_KEY` in the main `.env`):
+  - "Ready to deploy. Nothing was changed."
+  - Worker plan: 2 creates (the rehearsal build `rel-936ca39b9220` and its invoke binding) and 35 updates.
+  - **The 35 updates were checked attribute by attribute** through the same plan, read-only, printing names only. Each adds only the new build's URL to `NORI_WORKER_SERVICES`: nothing removed or changed, and no other environment variable differs. Expected for any new build.
+  - The same check from a throwaway worktree at `origin/main` planned no change (main's build is deployed). That worktree is removed.
+  - **It took two retries:**
+    - First, `TEMPORAL_API_KEY` was missing.
+    - Then "Temporal worker deployment describe failed". The main `.env` points `TEMPORAL_ADDRESS` at local Compose with namespace `default`, and `ops.temporal_env()` lets file values override its production defaults.
+    - The green run set `TEMPORAL_ADDRESS`/`TEMPORAL_NAMESPACE` to `ops.py`'s production values in the process environment. `.env` was not edited.
+    - For backend: the release scripts should not read Temporal's address from a development `.env`.
+  - The application state (KMS, IAM, runtime environment) is not part of `deploy-check` and has not been planned against production.
+- **PR #165 marked ready for review** (`gh pr ready`). The description carries the output above, the production changes and Austin's steps. Deploying waits for his explicit go.
 - **`make deploy-check`** waits for backend's production wiring (not on `origin/claude/nori-assistant-backend-9c520e` at 06:10). It is read-only by its code: `terraform init` with a local backend override, `terraform plan` into a temporary file, open-work and health reads, then "Nothing was changed".
 - **PR #165**: the description is rewritten. It stays a **draft** until the production wiring is merged and `deploy-check` is recorded.
 
