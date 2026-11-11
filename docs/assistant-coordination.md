@@ -146,6 +146,13 @@ Austin, about the read-only connect and the four separate Allow buttons: "This i
 
 Coordinator's allocation following that: integration runs slice steps 3 and 5 on the test account and may click the in-app approvals itself for those two writes only. Frontend makes write access a one-step choice at connect and a single Allow on a connected account.
 
+### First real reads; slice step 3 wording changed (2026-11-10)
+
+- Integration, real provider on Austin's test account (`df3273e`): step 2 passed (task `b4a79d12`, real calendar list and events; the week is empty) and the read half of step 5 passed (task `f38b0eb2`). `drive_search` failed: the Drive API is disabled in the Google Cloud project that owns the client. Step 4 delivered in-app only; no push destination is set up, so "with the app closed" is not exercised. Writes not run yet.
+- Backend `cb97cc8`: Gmail sends are refused unless every recipient is the connected account's own address (default setting); `mail.send` needs only `gmail.compose`; Pi gaps A (recover a write from its saved intent) and B (reminder reconciliation) implemented, checked on recordings and a stub model only.
+- Frontend `c7dffa0`: connect offers "Read only" or "Read, change and send"; a connected account gets one Allow for everything. Connected-account button checked on fixtures only.
+- **Coordinator's change to its own slice wording:** step 3 no longer requires an approval click. A reversible calendar write the user asked for directly runs without one under the interim D2 mechanism, and adding a click there is not wanted. The send in step 5 keeps its approval (`NORI_USER_SENDS=ask` on the real stack). D2 itself is still Austin's.
+
 ## Baseline commits
 
 | What | Commit |
