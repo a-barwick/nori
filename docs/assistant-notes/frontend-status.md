@@ -4,6 +4,48 @@ Updated 2026-11-10, third turn after the restart ("Slice and third assignments")
 
 **Provider verified: 0.** Nothing here touched a real Google account; nobody signed in. This turn ran **real models** (OpenAI `gpt-6.1-sol` for chat, OpenRouter for tasks) and **real providers with no recordings**, on my own stack. Without a Google sign-in, the steps stop where the grant is missing, as recorded below.
 
+## Reload loop, second time (after integration's ~21:56 restart, with `e3644ba` merged)
+
+**What was reported.** About 900 loads in three minutes, of `/` and of `/apps/google?connection=…&result=connected` (the sign-in landing page, open in the browser pane). A web-only restart cleared it (integration `27146cf`).
+
+**Cause: still not proven.**
+- **The log was lost.** The intact log the coordinator pointed to is from the web process started after that restart, and it was overwritten again by about 21:57. It began with two `[browser] ⨯ unhandledRejection: ChunkLoadError` lines: a tab left open from before the restart was loading chunk names that the new server did not serve.
+- **Not reproduced on my stack** (8082/3212, browser pane hidden as on 3213), with tabs on `/` and on the callback URL:
+  - restart core, then web: 1 reload per tab;
+  - restart web with changed client code in between: 1 reload per tab;
+  - start web on `4867f35`, open the tabs, stop web, switch to the current head, start web: 1 reload per tab;
+  - no `ChunkLoadError`, no "Compiled", no loop in any of them.
+- **Ruled out:**
+  - our code (no reload calls);
+  - a leftover `next dev` parent restarting its server (killing the listener ends the parent too);
+  - stale browser-cached chunks (the dev server sends `no-cache, must-revalidate`);
+  - a hidden pane on its own.
+- **Not ruled out:** Turbopack's on-disk dev cache out of step with code merged while the server was down. That fits the `ChunkLoadError`s, the loop following merges, and a second restart (same code) clearing it. Integration's cache is 615 MB under `web/.next/dev/cache/turbopack`.
+
+**What changed now.**
+1. **Development-only reload guard** (`lib/dev/reloadGuard.ts`, installed from `instrumentation-client.ts` before Next opens its dev-server socket).
+   - It counts full page loads per tab (`sessionStorage`). After 5 within 15 s it holds back the dev-server messages that can reload that tab:
+     - `reloadPage`, `serverComponentChanges`, `staticParamsChanged`, `turbopack-message`, `clientChanges`, `serverOnlyChanges`, `middlewareChanges`;
+     - on a reconnect, also `turbopack-connected` and `sync`, which reload when the server's id or hash changed.
+   - Everything else still flows; holding all of it blanked the page, because React's debug chunks arrive the same way.
+   - It raises one uncaught error, which Next forwards to the dev server's terminal. The line starts `[nori dev] <path> loaded N times in 15 s`, followed by the dev-server messages and errors each earlier load saw before it went away. **The next loop will name its own cause in `web.log`.**
+   - A reload by hand after 15 s quiet brings live reload back. Not in production builds (`NODE_ENV` check).
+   - Verified on 3212:
+     - six quick loads paused the tab, and the line appeared in `web.log` as `[browser] Uncaught Error: [nori dev] / loaded 6 times …`;
+     - the paused tab still rendered;
+     - a web restart did **not** reload it (same `performance.timeOrigin` before and after);
+     - a normal load records `turbopack-connected`, two binary chunks, `sync`, `building`, `built`.
+2. **The sign-in result is read once.**
+   - Before: `?result=connected` stayed in the address bar, so every reload, including Next's reload after a dev-server restart, showed "Connected." again for a sign-in that happened earlier.
+   - After: the app page and the MCP server page read `result` and `connection` once, then remove them with `history.replaceState`.
+   - Verified: `/apps/google?connection=…&result=connected` shows "Connected." and the address becomes `/apps/google`.
+3. **Account chooser.**
+   - Before: each entry led with the connection title, so two Google connections read "Google", "Google".
+   - After: each entry leads with the account address, then the app name. Two entries with the same address also say when each was connected. An id the list doesn't have reads "An account that is no longer connected" instead of the raw id.
+   - Checked by typecheck only: the fixture's account question is already answered, and the real stack now has one Google connection (its label is the Gmail address).
+
+**For integration.** Before restarting web after a merge, clearing `web/.next/dev/cache` would test the cache explanation, at the cost of a slower first compile. If it loops again, the `[nori dev]` line in `web.log` is the evidence to send me.
+
 ## Reload loop on 3213, 21:05 to 21:16 (coordinator report)
 
 **What was seen.** Integration's web on 3213 (`next dev`, started 21:04 on the merged head) kept reloading `/`. Integration's core log (since overwritten by the 21:26 restart) showed 1,000 to 1,500 cancelled requests a minute from 21:05:01 to 21:16, mostly `/v1/snapshot` (the "saved work wake repair failed: context canceled" line). That is a page reloading itself about every half second. Core was up the whole time (one start, 21:04:54).
