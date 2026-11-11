@@ -1,8 +1,39 @@
 # Integration status
 
-Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, eighth turn of the restart (3a and 5 on `cf76ae6`). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
+Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, ninth turn of the restart (pass on `02e0541`). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
 
 **Provider verified: 0 of 44.**
+
+## Pass on `real-02e0541`, test account (2026-11-10, 21:58 to 22:05 PST)
+
+**Build.** Merge head `02e0541` (backend `919c36d`: duplicate-connection repair, own address is the sending account, no leftover drafts, the "tomorrow" fix). `make check` and `go test ./...` are green.
+
+**Restart.** Only the real core and web (by port) were restarted. Workers on `nori-real`, one per build:
+- `real-02e0541`: new, set current.
+- `real-cf76ae6`: kept, because the 21:54 own-address card `5d25bbe6` is pinned to it.
+- `real-cfc0d6f`: started from a throwaway worktree only to drain `f793fa0e`. That task reached Stopped (Temporal status FAILED, after the user's stop), and this worker and worktree were then removed.
+
+**Repair.** Core log at 21:57:03: "combined duplicate connections [conn_376569c546155488accd conn_c3ec41c528ad5973b454] into conn_295df0b9ca785025bbd0". There is no revoke call in the core log. **Apps shows the test account once**, Ready, with `calendar.create` and send granted.
+
+The recorded stack still runs `int-cf76ae6`.
+
+| Step | Task (finished) | Expectation | Result |
+| --- | --- | --- | --- |
+| Week | `52b142bf` (21:59:43) | sources | **PASS**: the primary and "Nori test" calendars read, with sources, no account question |
+| Event create "tomorrow" on "Nori test" | `05ba80ac` (22:00:27) | no account or date question | **PASS**: Wed 11 Nov 3:00–3:30 PM, with no question of either kind |
+| Move | `6d5736f0` (22:01:52) | | **PASS**, with an `event_get` read-back |
+| Delete the event | `100a5827` (22:02:44) | | **PASS** |
+| Find a message | `d09b66a9` (22:03:24) | no account question | **PASS** |
+| "Email me a note" | `3509cc8b` (waiting at its card) | the card, to the account itself | **PASS up to the card**: "me" resolved to the Gmail account (From and To both), with the full text. **Left pending for Austin.** |
+| Send to `someone@example.com` | `7da489f7` (22:04:49, incomplete) | refused, no draft | **PASS**: no Google call at all (no draft, no send), and nothing sent. Nori's reply hedged that its evidence "doesn't independently confirm" the restriction. |
+
+**Still open:**
+- **Two own-address cards wait for Austin:** `5d25bbe6` (21:54, on `real-cf76ae6`) and `3509cc8b` (22:04). They expire 24 hours after they were raised.
+- **The empty "Nori test" calendar remains.** There is no calendar-delete tool. It can be removed in Google Calendar settings.
+- **Older drafts** from earlier passes (to `someone@example.com` and to the account itself) are still in the test account's Drafts. The fix stops new ones; it does not remove old ones.
+- **Nori's replies hedge** about their own evidence ("shortened details", "doesn't independently confirm"), even when a read-back ran. This is for backend: the summary's evidence view.
+- **Delivery with the app closed** is still not exercised.
+
 
 ## Re-run of 3a and 5 on `real-cf76ae6`, test account (2026-11-10, 21:41 to 21:56 PST)
 
