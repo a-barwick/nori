@@ -4,6 +4,50 @@ Branch `claude/nori-assistant-backend-9c520e`, worked from worktree `.claude/wor
 
 Evidence label (rule 2): **provider verified: 0.** No real provider account was used. The D-053 and D-054 re-tests in the third assignment ran against the real models (OpenAI and OpenRouter, keys from `.env`); everything else is locally verified against a loopback model stub, Google answering from hand-written recordings, the local database and the local Temporal dev server.
 
+## R-1, R-2 and creating a calendar (from integration's real runs)
+
+Commits `02989a5`, `97c9c1d`. Verified on my stack with the **real models** (`gpt-6.1-sol`, `openai/gpt-6.1-terra`). Google answered from recordings (a scratch copy of integration's, with a recorded calendar create and an extra token exchange). No real Google account was used, so these are not provider evidence.
+
+### R-1: a task asks to connect instead of giving up
+
+Cause, from the code:
+- While an account was only "connecting", the inventory offered none of its tools: only granted definitions were offered. So the model could not reach the executor path that raises the sign-in interaction, and it replied "still connecting".
+- A connecting record whose sign-in attempt lapsed stayed "connecting" for good.
+- The conversation prompt said "New connectors are not available in this slice", which is where "new connections aren't available here" came from.
+
+Fix:
+- **Lapsed attempts.** A record still connecting more than 15 minutes (the attempt's life) after its last write reads as not connected, with health "The last sign-in was not finished." It reads as needs-sign-in if the account had signed in before. This is applied when records are read; nothing is rewritten. Apps and the assistant then show a normal Connect.
+- **Ungranted tools are offered.** For an OAuth integration configured in this deployment (Google here), tools whose access is not granted are offered too. With a usable account they appear like its other tools; with none, they appear once the task loads the capability, so unrelated tasks don't carry them. The catalog line says that calling a tool asks the user from the task. Exposure is not part of a definition's digest, so pinning is unchanged.
+- **Connect from the task.** Calling such a tool with no usable account opens a `sign_in` interaction ("Connect your Google account so Nori can continue this task.") for exactly the access that call needs. It reuses a record that never finished its first sign-in, or creates one, named by the operation so a retry reuses it. The task resumes when the callback completes (the existing `OnConnected` path).
+- **Conversation prompt.** Accounts connect in Apps or from a task's sign-in card; when a task waits on one, the conversation tells the user to use the card. Only apps with no Nori integration cannot be added.
+
+| Case | Task | Result |
+| --- | --- | --- |
+| User B with only a stale connecting Google record (backdated 20 minutes in my local database): "What does my week look like on my Google calendar?" | `82976bfd-3ec4-5b04-b0cf-6fc29a9c1b2f` | The record read as `not_connected`. The task opened "Connect your Google account so Nori can continue this task." on that same record, asking for `calendar.readonly` only. After the recorded callback the account was connected and the task resumed and read the calendar (6 operations). It ended "incomplete" because account B's recordings have no events in this week and no recorded single-event read; that is my recordings, not the flow. This run was before the prompt fix, and the conversation still said "New connections aren't available here". |
+| User C with no Google record: "What's on my Google calendar tomorrow?" (after the prompt fix) | `039c5a95-17ba-53df-b31e-6d9db8978dc2` | A connection was created and the task opened the connect card for `calendar.readonly`. The conversation said "Please use the sign-in card to connect your Google account. Once connected, I can continue checking your calendar." Left waiting. |
+
+Not done: a way to delete a never-connected connection (integration's optional ask). A lapsed one now reads as not connected and is reused by the next connect from a task.
+
+### R-2: relative times resolve from the clock
+
+Cause: the task prompt carried only "Today is <date> in <zone>". The clock was left out so the cached prompt prefix changes at most daily, so the task could not resolve "in 3 minutes". Fix: each task model request now ends with a short runtime note giving the current time in the user's zone, telling it to resolve relative times from it and not to ask. It comes after the saved history, so the cached prefix is unchanged, and it is not saved in the task history.
+
+| Case | Task | Result |
+| --- | --- | --- |
+| User A (zone Asia/Tokyo), sent 05:12:29 UTC: "Remind me in 3 minutes to stretch." | `20077ed4-d9f1-56eb-a4d3-1df5d4cd02f8` | No question. Reminder `once` at `2026-11-11T14:15:00+09:00` (05:15 UTC, rounded to the minute); the reply said "set for 2:15 PM JST". It fired as automation task `6e4d2999-94fb-59ef-88ce-1e6f6338d989` at 05:15:00 and completed. |
+
+### Creating a calendar
+
+- **Scope.** Google's `calendars.insert` accepts `calendar`, `calendar.app.created` or `calendar.calendars`; `calendar.events` (what `calendar.write` holds) is **not enough**. The narrowest is `calendar.app.created`: make secondary calendars, and manage events on the calendars Nori made.
+- **Capability.** A new capability `calendar.create` ("Create new calendars", reversible write) asks for `calendar.readonly` and `calendar.app.created`. `calendar.write` is unchanged.
+- **Tool.** New tool `calendar_create` (title, optional description and time zone, default the user's). Before creating, it reads the calendar list and refuses a title the account already has, giving that calendar's id to use instead. So an interrupted create reconciles by title (`reconcile_only`).
+- **Events on it.** Adding events to the new calendar uses the existing `calendar_event_create`, under `calendar.write`.
+- **On Google's side:** nothing to enable; the Calendar API is already in use. Austin accepts the extra access when a task asks for it (one Google consent), or allows it in Apps. With the app in Testing, a listed test user can grant it.
+
+| Case | Task | Result |
+| --- | --- | --- |
+| User A (recorded account with `calendar.write`, without `calendar.create`): "Put a 30-minute event called Planning on my Nori test calendar on Thursday, November 12 at 10 am Pacific. If that calendar doesn't exist yet, create it." | `80c720fe-dda3-585c-ad4f-4514fd967bb3` | The real model listed calendars, found no "Nori test" and called `calendar_create`. Nori asked for exactly `calendar.readonly` and `calendar.app.created` on the existing account ("Give Nori more access…"), and the conversation pointed to the card. After the recorded grant: `calendar_create` confirmed ("Create a new calendar "Nori test" (America/Los_Angeles)"), then `calendar_event_create` on it confirmed with a read-back. 4 operations, none failed. The event summary names the calendar by its id only because my recorded calendar list does not include the new calendar; real Google's would. |
+
 ## Mailbox decided: Gmail for step 5 (coordination record "Mailbox decided; Pi Durable port already on main")
 
 Commit `7c58cc1`.
@@ -198,7 +242,7 @@ Matches, after `2ed6bdb`:
 
 `scripts/backend-stack.sh` (`setup`, `users`, `core`, `worker`, `current`). With `NORI_MODEL_TEST_URL=http://127.0.0.1:<port>` it runs against a model stub with placeholder keys and no hosted telemetry. `NORI_BUILD_ID` overrides the build id only to drain tasks pinned to an older build. The stub is a small Python server in the session scratchpad (records request bodies, answers from scripted JSON, or never answers); it is not in the repository. The third assignment's interrupted-write cases used a scratchpad script that starts the worker with one recording set, kills it during the provider call, and restarts it with another; also not in the repository.
 
-State left running: core 8081 and a worker on `be-7c58cc1`, both in stub mode with recorded Google responses (a scratch copy with two extra drafts) and `NORI_USER_SENDS=ask` (user A's Google connection is a recorded one, so a real-model worker must not run tasks for user A against real Google). Real-model mode is `scripts/backend-stack.sh core|worker` without `NORI_MODEL_TEST_URL`.
+State left running: core 8081 and a worker on `be-97c9c1d`, with the real models, recorded Google responses (a scratch copy with a calendar create and an extra token exchange) and `NORI_USER_SENDS=ask`. User C's connect task `039c5a95` is left waiting on its card (user A's Google connection is a recorded one, so a real-model worker must not run tasks for user A against real Google). Real-model mode is `scripts/backend-stack.sh core|worker` without `NORI_MODEL_TEST_URL`.
 
 ## Unverified
 
