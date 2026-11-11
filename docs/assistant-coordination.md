@@ -18,7 +18,7 @@ These are Austin's statements from his restart message, quoted or closely paraph
 - Limits: keep production available (`AGENTS.md`). Austin does all sign-ins himself. Writes to his accounts stay reversible and contained, and email goes only to him. No deploys, no external messages, no force-pushes. Disagreements go to Austin instead of being settled quietly.
 - Open with Austin, by his list: D1 to D4, the r2.11 proposal, which mailbox counts for email (his backlog asked about HEY and it was never checked against his account), and what this machine needs from him.
 
-The first slice itself is defined by Austin's original backlog, which is not in the repository yet. Until it is recorded here, no stream expands scope.
+The original backlog was never found (see "Slice and third assignments" below, where Austin's later words and the coordinator's choice of slice are recorded).
 
 ### Working rules (coordinator's, following the statements above)
 
@@ -31,6 +31,10 @@ The first slice itself is defined by Austin's original backlog, which is not in 
 7. **Austin's accounts.** No session signs in, enters a password or app-specific password, or handles a token value. No write reaches his accounts until he has signed in and the slice run is agreed with him; then writes go to a dedicated test calendar, are reversible and cleaned up, and email goes only to his own address after an approval he clicks.
 8. **Personal identifiers** (Austin's addresses) never go into a command line, tool input or committed file. Load them from an env file.
 9. **Production** is not touched: no deploy, no `make pause`, nothing against the hosted project.
+
+### Environment recovery, 2026-11-10
+
+Codex restored the existing OpenRouter key and Google OAuth client configuration into the private root `.env`. The integration stack now completes real OpenAI chats and OpenRouter background tasks, and Google accepts its local authorization link. Account sign-in and the backlog's first workflow remain open. See [environment recovery handoff](assistant-notes/environment-restored.md) for task IDs, checks, running stacks and the earlier incomplete smoke task.
 
 ### This machine
 
@@ -93,6 +97,36 @@ Second assignments (coordinator's allocation, all on the path to a real Google r
 - Integration `aecc338`: coordinator, frontend `f7ed24a` and backend `bd5a7d6` merged, including the hosted stdio WIP `a62a26e` labelled unverified; `make check` and `go test ./...` green; 12 of 12 scenarios on 8083, still without a model. The model-backed restart and the Google authorize-URL check wait on `OPENROUTER_API_KEY` and the Google client, both still missing from `.env`.
 - Backend `ae7ac07`: `.env.example` names the Google client and redirect; calendar approvals name the calendar; draft summaries are never empty. Verified with the model stub and recorded Google responses, not real Google. Integration is asked to merge `11fdcfd` to `ae7ac07`.
 - D-056 (backend found, open, held by the coordinator): a reply draft is saved with no recipients unless the model supplies them. The fix would address replies from the original message, which sends mail to other people; Austin's limit is that email goes only to him. Held until the first slice says whether replies are in it, and then raised with Austin if they are.
+
+### Slice and third assignments (2026-11-10)
+
+**What Austin said**, after the Linear search found nothing: "Just do your best, its probably lost", then "The intent was, review the doc pasted above, then implement. Take what we need from pi durable, add usability to the app." The pasted document did not reach this session. Its surviving form is [the integration plan](assistant-integration-plan.md), which was written from it and links the original audit.
+
+Everything below in this section is the **coordinator's choice**, not Austin's decision, and can be changed without asking him.
+
+**The first slice** is the plan's own headline request ("What does my week look like, find the reservation email, move the conflicting appointment, tell the people involved, and remind me before I leave"), cut to what Austin's limits allow, run in the real app on the real stack (web 3213):
+
+1. Austin connects his Google account in Apps (his sign-in; nobody else's).
+2. "What does my week look like" answers from his real calendar, with sources.
+3. Nori creates an event on the "Nori test" calendar, then moves it, each after an approval he clicks; the run ends with the event removed.
+4. "Remind me before I leave" produces a reminder that is delivered with the app closed.
+5. Email, only once the mailbox question is answered: find one message, and send one note to Austin's own address after an approval he clicks. Steps 1 to 4 do not wait for this. HEY is not replaced by Gmail silently.
+
+A step counts as provider verified only with the task id and time recorded in `docs/assistant-acceptance.md`.
+
+**Pi Durable.** Take only what the slice needs. Backend compares the plan's "What Nori should borrow" table and Pi Durable at its current head with what `core/README.md` says is already adopted, and writes the gaps that sit on the slice's path (tool intent stored before execution, declared replay safety, recovery from committed state, deferred tool visibility). It implements those and nothing else from Pi.
+
+**Usability.** Frontend walks the slice in the real app with the real models, as a person would, on desktop and phone width, and fixes what gets in the way of those five steps: unclear state, dead ends, missing feedback, confusing approvals, slow acknowledgement. No new screens or areas.
+
+**Assignments**
+
+| Stream | Now (no sign-in needed) | After Austin signs in |
+| --- | --- | --- |
+| Integration | Merge everything, keep one model-enabled worker per build (see the environment handoff about duplicates). Rehearse steps 2 to 4 on the real stack as far as the missing grant allows and record exactly where each stops. | Run the slice with Austin, record task ids and times, regrade. |
+| Backend | Re-test D-053 and D-054 against the real models. Pi Durable gap list for the slice, then the gaps. D-056 (reply recipients) stays held until email is in play. | Fix what the real provider shows. |
+| Frontend | Usability walk of steps 1 to 4 on the real stack with real models (no hand-written recordings), fixes, before and after notes in the status file. | Fix what the real run shows. |
+
+Note on keys: the working rule that sessions do not fetch keys still holds for these sessions. The keys now in `.env` were restored by Codex at Austin's request (see the environment handoff).
 
 ## Baseline commits
 
