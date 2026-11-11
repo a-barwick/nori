@@ -29,11 +29,14 @@ const Version = "1"
 const (
 	scopeCalendarRead  = "https://www.googleapis.com/auth/calendar.readonly"
 	scopeCalendarWrite = "https://www.googleapis.com/auth/calendar.events"
-	scopeMailRead      = "https://www.googleapis.com/auth/gmail.readonly"
-	scopeMailCompose   = "https://www.googleapis.com/auth/gmail.compose"
-	scopeMailModify    = "https://www.googleapis.com/auth/gmail.modify"
-	scopeContacts      = "https://www.googleapis.com/auth/contacts.readonly"
-	scopeOtherContacts = "https://www.googleapis.com/auth/contacts.other.readonly"
+	// scopeCalendarCreate is the narrowest scope calendars.insert accepts (calendar.events does not): it makes
+	// secondary calendars and manages events on the calendars Nori made, nothing else.
+	scopeCalendarCreate = "https://www.googleapis.com/auth/calendar.app.created"
+	scopeMailRead       = "https://www.googleapis.com/auth/gmail.readonly"
+	scopeMailCompose    = "https://www.googleapis.com/auth/gmail.compose"
+	scopeMailModify     = "https://www.googleapis.com/auth/gmail.modify"
+	scopeContacts       = "https://www.googleapis.com/auth/contacts.readonly"
+	scopeOtherContacts  = "https://www.googleapis.com/auth/contacts.other.readonly"
 )
 
 // Integration implements connections.Integration for Google.
@@ -53,6 +56,7 @@ func (g Integration) Info() connections.Info {
 		Capabilities: []connections.Capability{
 			{ID: "calendar.read", Title: "See calendars and events", Effect: "read", Supported: true, Scopes: []string{scopeCalendarRead}},
 			{ID: "calendar.write", Title: "Create and change events, invitations and replies", Effect: "reversible_write", Supported: true, Scopes: []string{scopeCalendarRead, scopeCalendarWrite}},
+			{ID: "calendar.create", Title: "Create new calendars", Effect: "reversible_write", Supported: true, Scopes: []string{scopeCalendarRead, scopeCalendarCreate}},
 			{ID: "mail.read", Title: "Search and read email", Effect: "read", Supported: true, Scopes: []string{scopeMailRead}},
 			{ID: "mail.draft", Title: "Create and edit drafts", Effect: "reversible_write", Supported: true, Scopes: []string{scopeMailCompose}},
 			{ID: "mail.send", Title: "Send email", Effect: "sensitive_send", Supported: true, Scopes: []string{scopeMailCompose}},

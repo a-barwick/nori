@@ -73,6 +73,9 @@ var specs = []spec{
 		`{"type": "object", "properties": {` + account + `, "calendar_id": {"type": "string"}, "event_id": {"type": "string"},
 			"response": {"enum": ["accepted", "declined", "tentative"]}, "comment": {"type": "string", "maxLength": 1000}
 		}, "required": ["calendar_id", "event_id", "response"], "additionalProperties": false}`},
+	{"calendar_create", "Create a calendar", "calendar", "calendar.create", "google.calendar/calendars.insert", "reversible_write", "reconcile_only",
+		"Create a new secondary calendar in the connected Google account, for example a dedicated calendar the user names. Check calendar_list_calendars first: a calendar with the same name is refused, so use the existing one instead. Then create events on it with calendar_event_create and its calendar_id.",
+		`{"type": "object", "properties": {` + account + `, "title": {"type": "string", "minLength": 1, "maxLength": 200}, "description": {"type": "string", "maxLength": 2000}, "timezone": {"type": "string", "description": "IANA time zone; default the user's"}}, "required": ["title"], "additionalProperties": false}`},
 	{"calendar_ics_preview", "Preview an ICS file", "calendar", "calendar.read", "google.calendar/ics.preview", "read", "safe",
 		"Show the events in an uploaded .ics calendar file the task was given, and which already exist on the target calendar. An imported file is not a live calendar connection.",
 		`{"type": "object", "properties": {` + account + `, "upload_id": {"type": "string"}, "calendar_id": {"type": "string"}}, "required": ["upload_id"], "additionalProperties": false}`},
