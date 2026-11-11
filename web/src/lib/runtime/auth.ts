@@ -34,11 +34,19 @@ export function accessFailureResponse(failure: AccessFailure, plainText = false)
   return plainText ? new Response(failure.error, init) : Response.json({ error: failure.error }, init);
 }
 
+// The hosted runtime allows few queries per minute, and every page and API request resolves the caller first.
+// Remember successful resolutions briefly; failures are never remembered, and the runtime still checks each request.
+const RESOLVED_TTL_MS = 5 * 60_000;
+const resolved = new Map<string, { userID: string; expires: number }>();
+
 export async function resolveUser(headers: Headers, target = runtimeTarget(runtimeMode(headers))): Promise<ScopedRuntime | AccessFailure> {
   if (target instanceof Response) return unavailable;
   if (target.mode === "local" && !localDevelopment(headers)) return denied;
   const identity = await identify(headers);
   if (!identity) return denied;
+  const key = target.mode + "\n" + target.base + "\n" + identity.email;
+  const known = resolved.get(key);
+  if (known && known.expires > Date.now()) return { ...target, userID: known.userID };
   try {
     const response = await fetch(new URL("api/users/resolve", target.base), {
       method: "POST", headers: { "Content-Type": "application/json", ...await runtimeHeaders(target.mode) },
@@ -56,6 +64,8 @@ export async function resolveUser(headers: Headers, target = runtimeTarget(runti
     }
     const value = await response.json();
     if (typeof value.id !== "string" || !(value.id === "owner" || /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.id))) return unavailable;
+    if (resolved.size >= 1000) resolved.clear();
+    resolved.set(key, { userID: value.id, expires: Date.now() + RESOLVED_TTL_MS });
     return { ...target, userID: value.id };
   } catch {
     rejected("user_resolution_connection");
