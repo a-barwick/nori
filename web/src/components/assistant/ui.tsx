@@ -9,6 +9,7 @@ import { Medallion } from "@/components/mark/NoriMark";
 import { Button, IconButton } from "@/components/ui/primitives";
 import { useAssistant } from "@/lib/assistant/context";
 import { cn } from "@/lib/utils";
+import { SERVICE_UNAVAILABLE } from "@/lib/runtime/messages";
 
 /** A screen: an optional back link, the title, a short line from Nori, then the content. */
 export function Screen({ title, line, back, actions, children, wide }: {
@@ -113,6 +114,11 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
 
 export function Failure({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const message = error instanceof Error ? error.message : String(error ?? "");
+  // The service being down for a moment is not this screen's failure: say so plainly, without the error styling.
+  if (message === SERVICE_UNAVAILABLE) return <div role="status" className="flex items-center gap-3 rounded-card bg-fill-1 px-4 py-3 text-meta text-ink-2">
+    <span className="min-w-0 flex-1">Can&apos;t reach Nori right now.</span>
+    {onRetry && <Button size="sm" variant="neutral" onClick={onRetry}><RefreshCw size={14} aria-hidden />Try again</Button>}
+  </div>;
   return <div role="alert" className="flex items-center gap-3 rounded-card bg-danger-bg px-4 py-3 text-meta text-danger">
     <span className="min-w-0 flex-1">{message || "Something went wrong."}</span>
     {onRetry && <Button size="sm" variant="neutral" onClick={onRetry}><RefreshCw size={14} aria-hidden />Try again</Button>}
