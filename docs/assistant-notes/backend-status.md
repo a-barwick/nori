@@ -4,6 +4,63 @@ Branch `claude/nori-assistant-backend-9c520e`, worked from worktree `.claude/wor
 
 Evidence label (rule 2): **provider verified: 0.** No real provider account was used. The D-053 and D-054 re-tests in the third assignment ran against the real models (OpenAI and OpenRouter, keys from `.env`); everything else is locally verified against a loopback model stub, Google answering from hand-written recordings, the local database and the local Temporal dev server.
 
+## Production wiring for the slice (PR a-barwick/nori#165, "get it ready"; nothing applied)
+
+Commits `d26bbf5`, the commit after it, and this note. **Nothing was applied, deployed or paused.**
+
+**Credential custody** is the coordinator's choice under Austin's "get it ready", not a D1 decision: the existing `database` store with Cloud KMS envelope keys. The mechanism stays configurable.
+
+### Production changes, by Terraform state
+
+**Application state** (`core/infrastructure/app/terraform`, new file `connected-accounts.tf`, plus the runtime's environment in `main.tf`):
+- Enables `cloudkms.googleapis.com`.
+- Key ring `nori-credentials` (us-central1) with key `connected-accounts`: `ENCRYPT_DECRYPT`, rotation every 90 days, `prevent_destroy`. The sandbox uses `nori-sandbox-credentials`.
+- `roles/cloudkms.cryptoKeyEncrypterDecrypter` on that one key for `nori-poc-runtime@`, and nothing else. That one account runs both the API runtime and the request workers, so it is the core and worker identity. No key-admin role.
+- Read access for the Agent Platform service agent to `nori-google-calendar-client-id` and `nori-google-calendar-client-secret`, which it resolves at deployment. The runtime account already reads them through the temporal state's `capability_runner`.
+- **Runtime environment** (Agent Runtime `deployment_spec`):
+  - `NORI_CREDENTIAL_STORE=database`
+  - `NORI_CREDENTIAL_KMS_KEY=projects/bot-111549/locations/us-central1/keyRings/nori-credentials/cryptoKeys/connected-accounts`
+  - `NORI_OAUTH_REDIRECT_URL=https://noribot.chat/api/v1/connections/oauth/callback`
+  - `NORI_USER_SENDS=ask`, `NORI_MAIL_RECIPIENTS=self`
+  - secret environment `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` from the existing secrets.
+- **VAPID:** empty secret containers `nori-vapid-public-key` and `nori-vapid-private-key`, with read access for the runtime account and the Agent Platform agent. A new variable `push_delivery` (default **false**) adds `NORI_VAPID_PUBLIC_KEY` and `NORI_VAPID_PRIVATE_KEY` as secret references plus `NORI_VAPID_SUBJECT` (default `https://noribot.chat`). It is off by default because a secret reference without a version would make the runtime deployment fail.
+- New outputs: `credential_kms_key`, `oauth_redirect_url`.
+
+**Temporal state** (`core/infrastructure/temporal/terraform`):
+- Request-worker targets gain `connected_accounts`, default false, so **retained builds keep their environment**.
+- A build with it gets the same credential store, key, redirect URL and `ask`/`self`, plus the Google client ID and secret. Workers refresh account tokens, so they need the client and the redirect URL. The Brave key is not pulled in.
+- `release/deploy.py` creates new production worker targets with `connected_accounts: true`.
+
+**How this was verified:**
+- `terraform validate` passes for both states.
+- `terraform plan` ran only against **empty local scratch state for the sandbox** (`-lock=false -refresh=false`, Terraform working data in the session scratchpad, placeholder image digests). Temporal: a new sandbox worker build, 4 to add, environment as above. Application: runtime, key and VAPID targets, 19 to add, with the runtime environment and secret references as above.
+- No production state was read or written.
+
+### Hosted reminder path (GCP)
+
+- **In code, end to end:** saving a reminder arms a Cloud Tasks task on the conversation queue at its due minute (`wake/cloudtasks` `WakeConversationAt`, `app.go` `Scheduler.Arm`). The task calls the runtime's process endpoint, which runs `App.Schedule`: `Scheduler.Tick` creates the run, and its result is delivered.
+- `nori-wake-consumer` is the AWS adapter and is not on this path.
+- **Not exercised hosted.** On the local stack the same scheduler fired on time (task `6e4d2999`).
+- **Missing for "delivered with the app closed":**
+  - Web Push needs a VAPID key pair: the containers exist once applied, but no values.
+  - Email delivery has no SMTP settings in production.
+  - Until a key pair is added and `push_delivery=true` is applied, a due reminder is delivered in the app's inbox and chat only.
+
+### Steps only Austin can do (in this order)
+
+1. **Google OAuth client** (Cloud Console → APIs & Services → Credentials → the client whose ID is in `nori-google-calendar-client-id`). Add this to *Authorized redirect URIs*: **`https://noribot.chat/api/v1/connections/oauth/callback`**
+2. **OAuth consent screen.**
+   - If the app is in *Testing*, add his personal Gmail address as a test user.
+   - Google expires refresh tokens of Testing-mode apps after 7 days, so the connection will need signing in again weekly until the app is published, which for the Gmail scopes means Google's restricted-scope verification. That is his call.
+3. **Push (optional for the slice).**
+   - Generate a P-256 VAPID key pair outside the repository, for example `npx web-push generate-vapid-keys`.
+   - Add the public key as a version of `nori-vapid-public-key` and the private key as a version of `nori-vapid-private-key`.
+   - Then the release sets `push_delivery=true`. Allow notifications on the device he wants reminders on.
+4. **Go for the release.** Once he says so, an authorized release applies the application state (KMS, IAM, runtime environment) and deploys a new worker build, which gets `connected_accounts`. Production must be available again afterwards (AGENTS.md).
+5. **Sign in** to Google in Apps on noribot.chat with the account for the run, and allow calendar and mail access.
+
+Nothing else is needed from him for this wiring. D1 to D4 remain his decisions. `NORI_USER_SENDS=ask` and `NORI_MAIL_RECIPIENTS=self` are interim settings, changeable without a code release.
+
 ## Calendar delete, stuck Stop, remembered account, read-back (from integration's re-run at `27146cf`)
 
 Commit `4a53c1d`. **Integration:** restart the real stack's core and worker on this branch's head.
