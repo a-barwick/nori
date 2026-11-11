@@ -34,15 +34,23 @@ func calendarService(ctx context.Context, call invoke.Call) (*calendar.Service, 
 }
 
 func listCalendars(ctx context.Context, client *http.Client) ([]connections.Resource, error) {
+	out, _, err := listCalendarsWithZones(ctx, client)
+	return out, err
+}
+
+// listCalendarsWithZones also returns each calendar's IANA time zone by calendar ID, so a task can place an event
+// on a calendar without asking the user which zone it is in.
+func listCalendarsWithZones(ctx context.Context, client *http.Client) ([]connections.Resource, map[string]string, error) {
 	service, err := calendar.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	list, err := service.CalendarList.List().MaxResults(250).Context(ctx).Do()
 	if err != nil {
-		return nil, classify(err)
+		return nil, nil, classify(err)
 	}
 	out := make([]connections.Resource, 0, len(list.Items))
+	zones := map[string]string{}
 	for _, item := range list.Items {
 		title := item.SummaryOverride
 		if title == "" {
@@ -56,8 +64,11 @@ func listCalendars(ctx context.Context, client *http.Client) ([]connections.Reso
 			Ref:   connections.ResourceRef{Kind: "calendar", ProviderID: id, ProviderRevision: item.Etag},
 			Title: title, Kind: "calendar", Writable: item.AccessRole == "owner" || item.AccessRole == "writer",
 		})
+		if item.TimeZone != "" {
+			zones[id] = item.TimeZone
+		}
 	}
-	return out, nil
+	return out, zones, nil
 }
 
 // eventID derives Google's client-chosen event ID from the operation, so a repeated insert names the same event
@@ -259,7 +270,12 @@ func calendarLabel(ctx context.Context, call invoke.Call, calendarID string) str
 
 func prepareInsert(ctx context.Context, call invoke.Call) (invoke.Prepared, error) {
 	args := call.Args
-	when, err := parseEventTime(invoke.String(args, "start"), invoke.String(args, "end"), invoke.String(args, "timezone"))
+	// A timed event with no zone given uses the user's saved time zone instead of failing or asking.
+	timezone := invoke.String(args, "timezone")
+	if timezone == "" {
+		timezone = call.TimeZone
+	}
+	when, err := parseEventTime(invoke.String(args, "start"), invoke.String(args, "end"), timezone)
 	if err != nil {
 		return invoke.Prepared{}, err
 	}
@@ -284,7 +300,7 @@ func prepareInsert(ctx context.Context, call invoke.Call) (invoke.Prepared, erro
 		Resources: []state.ProviderRef{calendarRef(connectionID(call), calendarID)},
 		Spec: map[string]string{
 			"calendar": calendarID, "title": title, "time": when.String(), "start": invoke.String(args, "start"), "end": invoke.String(args, "end"),
-			"timezone": invoke.String(args, "timezone"), "location": invoke.String(args, "location"), "description": invoke.String(args, "description"),
+			"timezone": timezone, "location": invoke.String(args, "location"), "description": invoke.String(args, "description"),
 			"attendees": strings.Join(attendees, ","), "recurrence": strings.Join(invoke.Strings(args, "recurrence"), "\n"), "send_updates": updates,
 			"meeting_link": fmt.Sprint(invoke.Bool(args, "add_meeting_link")),
 		},
@@ -392,11 +408,11 @@ func (a calendarAdapter) Execute(ctx context.Context, call invoke.Call, p invoke
 	_, operation, _ := strings.Cut(call.Exec.Binding.Target, "/")
 	switch operation {
 	case "calendars.list":
-		list, err := listCalendars(ctx, call.Grant.Client)
+		list, zones, err := listCalendarsWithZones(ctx, call.Grant.Client)
 		if err != nil {
 			return invoke.Result{Outcome: "failed", Err: err}
 		}
-		return invoke.Result{Outcome: "confirmed", Content: map[string]any{"account": call.Grant.Connection.Account.Label, "calendars": list}}
+		return invoke.Result{Outcome: "confirmed", Content: map[string]any{"account": call.Grant.Connection.Account.Label, "calendars": list, "time_zones": zones}}
 	case "events.list":
 		return listEvents(ctx, service, call, p)
 	case "events.get":
