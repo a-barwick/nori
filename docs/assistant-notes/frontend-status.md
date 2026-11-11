@@ -4,6 +4,35 @@ Updated 2026-11-10, third turn after the restart ("Slice and third assignments")
 
 **Provider verified: 0.** Nothing here touched a real Google account; nobody signed in. This turn ran **real models** (OpenAI `gpt-6.1-sol` for chat, OpenRouter for tasks) and **real providers with no recordings**, on my own stack. Without a Google sign-in, the steps stop where the grant is missing, as recorded below.
 
+## Production build check for the slice (a-barwick/nori#165, 2026-11-11)
+
+**How it ran.** `bun run build`, then the standalone `server.js` with `.next/static` and `public` copied in, the way `web/Dockerfile` runs it. It served on 127.0.0.1:3212 against my local core (8082, real models, test user `frontend.real@example.com`, not a real address).
+- **No production check was loosened.** Production only accepts an `https` runtime and a verified OIDC or IAP user; local sign-in stays development-only. The new `web/scripts/prod-check.mjs` stands up, on loopback only:
+  - a throwaway HTTPS OIDC issuer that signs one ID token for an `@example.com` test address;
+  - an HTTPS front for the local core, so the web's hosted path (OIDC user, signed service token to the runtime) is what runs;
+  - a `/sign-in` redirect that sets the token cookie, so the token never passes through a command or the chat.
+  - Its files (CA, keys, token) live in `$TMPDIR/nori-prod-check`. The image doesn't include it: the Dockerfile ships only `.next/standalone`.
+- **`NORI_APP_ORIGIN` is required over plain http.** Without it, every write returned "Forbidden." That is intended: writes must come from an `https` origin unless `NORI_APP_ORIGIN` names one. The harness prints it.
+
+**Checked in the production build.**
+
+| Check | Result |
+| --- | --- |
+| Build warnings | **0** (TypeScript and the build both clean) |
+| Dev reload guard | **Absent** from the client bundle (`nori-dev-reload-guard`: 0 files) |
+| Dev-server client | **Absent** (`_next/hmr`: 0 files, no Fast Refresh) |
+| Fixture store | **Fixed:** the fixtures route answered 404 in production, but `fixtures.server.ts` was still compiled into the server bundle. Now it is imported only when `NODE_ENV` is development, so production has none of it (0 server JS files; only a source map names the route). Client fixture mode was already development-only. |
+| Recordings | None in `web/`; provider replay lives in core. |
+| Sign-in gate | Without the cookie, `/` returns 403; with the test token, 200. |
+| Chat `/` | History loads from the local core, and no dev-server connection is opened. |
+| Apps → Google, first connect | Renders at desktop and phone width. "Read, change and send", then Connect, reached Google's account chooser with one consent for all scopes (`calendar.readonly calendar.events gmail.readonly gmail.compose gmail.send gmail.modify contacts.readonly contacts.other.readonly drive.readonly drive.file`) and `redirect_uri` `http://127.0.0.1:3212/api/v1/connections/oauth/callback`. Nothing was chosen; I went back. |
+| Sign-in landing | `/apps/google?connection=…&result=cancelled` showed "Sign-in was cancelled. Nothing changed." and the address became `/apps/google`. |
+| Work | Loads Needs you, Working, Scheduled and Finished. A task question was answered through the same respond request approvals use; the card cleared and the task moved to Working. |
+| Approval cards ("Send this?") | **Not exercised in production.** A send approval needs a connected Google account, and fixtures are development-only. The card's code path is the same component checked on fixtures in development. |
+| Reconnecting, open tab | Core stopped: the header said "Reconnecting…", and the open Work list showed an error-styled "Nori is temporarily unavailable. Try again shortly." **Fixed:** lists now show a neutral "Can't reach Nori right now." with **Try again**. No reload. |
+| Reconnecting, new page | `/apps` opened with core down served the reconnecting page (503). After core came back it opened `/apps` by itself, once. |
+| Local-stack wording | Settings → Diagnostics says "Runtime: Hosted". No screen text mentions localhost, the stack, fixtures or test users. Two lines come from core, not the web: the chat reply "new calendar connections aren't available here" (backend B1), and "Push notifications aren't set up on this Nori" on a core without VAPID keys. |
+
 ## Reload loop, second time (after integration's ~21:56 restart, with `e3644ba` merged)
 
 **What was reported.** About 900 loads in three minutes, of `/` and of `/apps/google?connection=…&result=connected` (the sign-in landing page, open in the browser pane). A web-only restart cleared it (integration `27146cf`).
