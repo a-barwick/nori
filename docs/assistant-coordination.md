@@ -153,6 +153,16 @@ Coordinator's allocation following that: integration runs slice steps 3 and 5 on
 - Frontend `c7dffa0`: connect offers "Read only" or "Read, change and send"; a connected account gets one Allow for everything. Connected-account button checked on fixtures only.
 - **Coordinator's change to its own slice wording:** step 3 no longer requires an approval click. A reversible calendar write the user asked for directly runs without one under the interim D2 mechanism, and adding a click there is not wanted. The send in step 5 keeps its approval (`NORI_USER_SENDS=ask` on the real stack). D2 itself is still Austin's.
 
+### Slice on the test account, state at the end of 2026-11-10
+
+Austin, during the evening: "Dude I don't care why tf are you asking me? Just do this shit". Coordinator's reading: routine engineering, configuration and setup choices are made by the coordinator and streams without asking him; his limits from the restart message stand.
+
+Integration `013f3a0`, build `02e0541`, real Google on Austin's test account: the account appears once (backend's repair collapsed three duplicate connections that repeat sign-ins had created); week, "Nori test" calendar create, event create, move and delete, find a message, and refusal of a send to another address all pass with no account or date question and no leftover draft. Two sends to the account's own address wait at approval cards for Austin; integration approves sends only on his direct word. Reminder delivery passes in the app; with the app closed it is not exercised (no push destination registered). His personal Gmail is not connected: each sign-in so far chose the test account. Provider verified on his personal account: 0.
+
+In flight: backend `c73476e` (calendar delete with approval, Stop settles tasks pinned to a dead build, remembered account default, read-back fields) and frontend `5ce1a06` (dev-only reload-loop guard that logs its cause; the loop's cause is still unproven) are being merged and checked by integration.
+
+Defects found by the real runs and fixed the same evening: no sign-in offered when Google was not connected; relative times asking for a clock time; duplicate connections for one account; "my own address" resolving to the Nori profile address; drafts left after refused sends; four separate consent trips for write access.
+
 ## Baseline commits
 
 | What | Commit |
