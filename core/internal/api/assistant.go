@@ -673,13 +673,19 @@ func (a *Assistant) rememberDefault(ctx context.Context, purpose, connectionID s
 	}
 	defaults := map[string]string{}
 	for k, v := range prefs.AccountDefaults {
-		defaults[k] = v
+		// A default naming a connection that no longer exists would make the whole save invalid.
+		if _, err := a.Connections.Get(ctx, v); err == nil {
+			defaults[k] = v
+		}
 	}
 	defaults[purpose] = connectionID
-	_, _ = a.Connections.SavePreferences(ctx, newRequestID(), prefs.Revision, connections.PreferencesEditable{
+	_, err = a.Connections.SavePreferences(ctx, newRequestID(), prefs.Revision, connections.PreferencesEditable{
 		Timezone: prefs.Timezone, Locale: prefs.Locale, WorkingHours: prefs.WorkingHours, QuietHours: prefs.QuietHours,
 		DefaultDestinationIDs: prefs.DefaultDestinationIDs, AccountDefaults: defaults, Budgets: prefs.Budgets, Input: prefs.Input,
 	})
+	if err != nil {
+		log.Printf("connections: the account default for %s could not be saved: %v", purpose, err)
+	}
 }
 
 func (a *Assistant) mutation(w http.ResponseWriter, r *http.Request) {

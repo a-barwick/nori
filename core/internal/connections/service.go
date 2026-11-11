@@ -1391,8 +1391,39 @@ func (s *Service) Select(ctx context.Context, integrationID, purpose, requested 
 			}
 		}
 	}
+	// "Use this account next time" was answered for one purpose; an account the user chose for this app serves its
+	// other purposes too, as long as it is eligible here.
+	purposes := make([]string, 0, len(prefs.AccountDefaults))
+	for p := range prefs.AccountDefaults {
+		purposes = append(purposes, p)
+	}
+	sort.Strings(purposes)
+	for _, p := range purposes {
+		id := prefs.AccountDefaults[p]
+		for _, i := range eligible {
+			if records[i].ID == id {
+				return records[i], resources[i].Revision, nil
+			}
+		}
+	}
 	if len(eligible) == 1 {
 		return records[eligible[0]], resources[eligible[0]].Revision, nil
+	}
+	// Several connections to the same provider account (duplicates from before sign-ins were merged) are not a
+	// choice to put to the user: use the one with the most access, then the most recently written.
+	same := records[eligible[0]].Account.ProviderID != ""
+	for _, i := range eligible[1:] {
+		same = same && records[i].Account.ProviderID == records[eligible[0]].Account.ProviderID
+	}
+	if same {
+		best := eligible[0]
+		for _, i := range eligible[1:] {
+			if len(records[i].Capabilities) > len(records[best].Capabilities) ||
+				len(records[i].Capabilities) == len(records[best].Capabilities) && resources[i].UpdatedAt.After(resources[best].UpdatedAt) {
+				best = i
+			}
+		}
+		return records[best], resources[best].Revision, nil
 	}
 	choice := &ChooseAccount{Purpose: purpose}
 	for _, i := range eligible {

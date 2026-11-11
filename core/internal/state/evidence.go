@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -412,7 +413,34 @@ func (s *SourceInputs) Inputs() []ConversationInput {
 type CitedResult struct {
 	Operation string `json:"operation"`
 	Tool      string `json:"tool"`
-	Result    string `json:"result"`
+	// Summary is the result's own one-line summary (or its error), kept whole when Result is shortened, so a report
+	// can still be checked against what the tool said it did.
+	Summary string `json:"summary,omitempty"`
+	Result  string `json:"result"`
+}
+
+// CitedSummary returns a saved tool result's summary, or its error, bounded to 600 bytes.
+func CitedSummary(result []byte) string {
+	var fields struct {
+		Summary string `json:"summary"`
+		Error   string `json:"error"`
+		Outcome string `json:"outcome"`
+	}
+	if json.Unmarshal(result, &fields) != nil {
+		return ""
+	}
+	text := fields.Summary
+	if text == "" && fields.Error != "" {
+		text = fields.Outcome + ": " + fields.Error
+	}
+	if len(text) > 600 {
+		cut := 600
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		text = text[:cut] + "…"
+	}
+	return text
 }
 
 // TaskOutcome is what a task's last completion proposal claims and cites.

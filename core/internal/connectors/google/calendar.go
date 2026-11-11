@@ -192,6 +192,8 @@ func (calendarAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Pr
 		return prepareInsert(ctx, call)
 	case "calendars.insert":
 		return prepareCalendar(ctx, call)
+	case "calendars.delete":
+		return prepareCalendarDelete(ctx, call)
 	case "events.patch", "events.delete", "events.respond":
 		return prepareChange(ctx, call, operation)
 	case "ics.preview", "ics.import":
@@ -410,6 +412,15 @@ func (a calendarAdapter) Execute(ctx context.Context, call invoke.Call, p invoke
 		return insertEvent(ctx, service, call, p)
 	case "calendars.insert":
 		return insertCalendar(ctx, service, call, p)
+	case "calendars.delete":
+		if err := service.Calendars.Delete(p.Spec["calendar"]).Context(ctx).Do(); err != nil {
+			if definite(err) {
+				return invoke.Result{Outcome: "failed", Err: classify(err)}
+			}
+			return invoke.Result{Outcome: "uncertain", Err: classify(err)}
+		}
+		return invoke.Result{Outcome: "confirmed", Content: map[string]any{"calendar_id": p.Spec["calendar"],
+			"summary": fmt.Sprintf("Deleted the calendar %q and its events.", p.Spec["title"])}}
 	case "events.patch":
 		return patchEvent(ctx, service, call, p)
 	case "events.delete":
@@ -635,8 +646,14 @@ func readBack(ctx context.Context, service *calendar.Service, call invoke.Call, 
 		return invoke.Result{Outcome: "submitted", Err: fmt.Errorf("google accepted the change but the read-back failed: %v", classify(err)),
 			ProviderRefs: []state.ProviderRef{{ConnectionID: connectionID(call), Kind: "calendar_event", ProviderID: id}}}
 	}
+	// The summary carries the event's time as Google now has it, so a report checked against a shortened copy of this
+	// result can still confirm what was read back.
+	summary := verb + " " + fmt.Sprintf("%q", event.Summary)
+	if when := readBackTime(event, call.TimeZone); when != "" {
+		summary += ", now " + when
+	}
 	return invoke.Result{Outcome: "confirmed", ProviderRefs: []state.ProviderRef{eventRef(call, event)}, Content: map[string]any{
-		"summary": verb + " " + fmt.Sprintf("%q", event.Summary) + " on " + call.Grant.Connection.Account.Label,
+		"summary": summary + " (read back from Google, " + call.Grant.Connection.Account.Label + ")",
 		"event":   projectEvent(event, connectionID(call), calendarID),
 	}}
 }
@@ -658,6 +675,17 @@ func (a calendarAdapter) Reconcile(ctx context.Context, call invoke.Call, p invo
 			return invoke.Result{}, false
 		}
 		return readBack(ctx, service, call, p.Spec["calendar"], event.Id, "Created"), true
+	case "calendars.delete":
+		_, err := service.Calendars.Get(p.Spec["calendar"]).Context(ctx).Do()
+		var apiErr *googleapi.Error
+		if errors.As(err, &apiErr) && (apiErr.Code == http.StatusNotFound || apiErr.Code == http.StatusGone) {
+			return invoke.Result{Outcome: "confirmed", Content: map[string]any{"calendar_id": p.Spec["calendar"],
+				"summary": fmt.Sprintf("Deleted the calendar %q and its events.", p.Spec["title"])}}, true
+		}
+		if err == nil {
+			return invoke.Result{Outcome: "failed", Err: errors.New("the interrupted attempt did not delete the calendar")}, true
+		}
+		return invoke.Result{}, false
 	case "calendars.insert":
 		// Prepare refused a title that already existed, so a calendar with this title now is the one the attempt made.
 		found, err := calendarNamed(ctx, call, p.Spec["title"])
@@ -978,4 +1006,66 @@ func createdCalendar(call invoke.Call, id, title, zone string) invoke.Result {
 		Content: map[string]any{"calendar_id": id, "title": title, "timezone": zone,
 			"summary": fmt.Sprintf("Created the calendar %q. Use calendar_id %s to add events to it.", title, id)},
 		ProviderRefs: []state.ProviderRef{calendarRef(connectionID(call), id)}}
+}
+
+// readBackTime writes an event's time as Google returned it, in the user's zone when known.
+func readBackTime(event *calendar.Event, userZone string) string {
+	if event.Start == nil || event.End == nil {
+		return ""
+	}
+	if event.Start.Date != "" {
+		if t, err := parseEventTime(event.Start.Date, event.End.Date, ""); err == nil {
+			return t.String()
+		}
+		return ""
+	}
+	zone := userZone
+	if zone == "" {
+		zone = event.Start.TimeZone
+	}
+	if zone == "" {
+		zone = "UTC"
+	}
+	t, err := parseEventTime(event.Start.DateTime, event.End.DateTime, zone)
+	if err != nil {
+		return ""
+	}
+	return t.String()
+}
+
+// prepareCalendarDelete names the calendar and how many events go with it. Nori's calendar.app.created access reaches
+// only calendars Nori created, so any other calendar cannot be read here and is refused.
+func prepareCalendarDelete(ctx context.Context, call invoke.Call) (invoke.Prepared, error) {
+	id := strings.TrimSpace(invoke.String(call.Args, "calendar_id"))
+	if id == "" || id == "primary" || strings.EqualFold(id, call.Grant.Connection.Account.Label) {
+		return invoke.Prepared{}, fmt.Errorf("%w: the account's main calendar cannot be deleted", invoke.ErrInvalidArguments)
+	}
+	service, err := calendarService(ctx, call)
+	if err != nil {
+		return invoke.Prepared{}, err
+	}
+	cal, err := service.Calendars.Get(id).Context(ctx).Do()
+	if err != nil {
+		if definite(err) {
+			return invoke.Prepared{}, fmt.Errorf("%w: Nori can delete only a calendar it created, and %s is not one it can see (%v)", invoke.ErrInvalidArguments, id, classify(err))
+		}
+		return invoke.Prepared{}, classify(err)
+	}
+	count, more := 0, false
+	if events, err := service.Events.List(id).MaxResults(250).Context(ctx).Do(); err == nil {
+		count, more = len(events.Items), events.NextPageToken != ""
+	}
+	what := fmt.Sprintf("%d events", count)
+	if count == 1 {
+		what = "1 event"
+	}
+	if more {
+		what = "more than " + what
+	}
+	return invoke.Prepared{
+		Summary: fmt.Sprintf("Permanently delete the calendar %q and %s on it. This cannot be undone.", cal.Summary, what),
+		Effect:  extensions.EffectUnknown, Spec: map[string]string{"calendar": id, "title": cal.Summary},
+		Resources:       []state.ProviderRef{calendarRef(connectionID(call), id)},
+		MaterialEffects: []string{"The calendar and every event on it are deleted from Google Calendar and cannot be restored."},
+	}, nil
 }

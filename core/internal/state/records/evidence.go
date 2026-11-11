@@ -290,8 +290,9 @@ func (d *Database) ReadTaskOutcome(ctx context.Context, runID string) (state.Tas
 			if err != nil {
 				return err
 			}
+			result := bytes.Join(blocks, []byte("\n"))
 			outcome.Evidence = append(outcome.Evidence, state.CitedResult{
-				Operation: op.ID, Tool: op.Name, Result: string(bytes.Join(blocks, []byte("\n"))),
+				Operation: op.ID, Tool: op.Name, Summary: state.CitedSummary(result), Result: string(result),
 			})
 		}
 		return nil

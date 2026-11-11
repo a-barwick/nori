@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"nori/internal/agent"
 	"nori/internal/computer"
@@ -69,7 +70,15 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 			continue
 		}
 		if !neverStarted && !finishing && !execution.Closed {
-			continue
+			// A Stop no worker can deliver: the execution's next step has waited unstarted, so nothing serves the
+			// build it is pinned to (a stopped or replaced worker). End it here instead of leaving it stopping for good.
+			if !run.CancelRequested || execution.UnservedSince.IsZero() || time.Since(execution.UnservedSince) < stopUnservedAfter {
+				continue
+			}
+			if e := engine.Terminate(ctx, run.ID, "Stop requested and no worker serves this task's build"); e != nil && !errors.Is(e, dispatch.ErrNoExecution) {
+				failures = append(failures, e)
+				continue
+			}
 		}
 		if run.Finishing != nil {
 			if e := repairCleanup(ctx, store, config, run); e != nil {
@@ -94,6 +103,11 @@ func RepairClosed(ctx context.Context, store state.TaskStore, engine dispatch.Or
 	}
 	return errors.Join(failures...)
 }
+
+// stopUnservedAfter is how long a stopped task's next step may wait unstarted before recovery ends it from the API.
+// Workers start a ready step within seconds, and a request-bound worker is woken for it, so this only fires when no
+// worker exists for the build.
+const stopUnservedAfter = 2 * time.Minute
 
 func attemptedWrites(ctx context.Context, store state.TaskStore, id string) string {
 	ops, err := store.Operations(ctx, id)
