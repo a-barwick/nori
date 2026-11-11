@@ -19,6 +19,8 @@ import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 import time
 import uuid
 from urllib.parse import quote, urlencode
@@ -130,10 +132,12 @@ def refuse_user_work(root, paused):
     if control:
         f = control.get("fields", {})
         count = lambda key: int(f.get(key, {}).get("integerValue", "0"))
-        # A failed turn consumes its attempt but leaves user_routed behind.
-        # While paused, its saved input can survive a repair deployment. It is
-        # retried only after a user follow-up; never mark it routed here.
-        routed_or_waiting = count("user_received") == count("user_routed") or (paused and count("protocol_version") == 2)
+        # A failed turn consumes its attempt but leaves user_routed behind. Its saved
+        # input survives a deployment and is retried only after a user follow-up; never
+        # mark it routed here. Nothing is in flight in that state (received equals
+        # consumed and no turn is active), so it must not block the release that
+        # repairs whatever made the turn fail.
+        routed_or_waiting = count("user_received") == count("user_routed") or count("protocol_version") == 2
         require(count("received") == count("consumed") and routed_or_waiting and not f.get("active", {}).get("stringValue"),
                 "Nori has unprocessed messages. Wait for them to settle, then deploy again.")
     cursor = ""
@@ -207,6 +211,22 @@ def build_all(state):
     binary = DIR / "computer-agent"
     run(["go", "build", "-trimpath", "-o", str(binary), "./cmd/computer-agent"], cwd=CORE, env={**os.environ, "CGO_ENABLED": "0", "GOOS": "linux", "GOARCH": "amd64"})
     state["computer_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
+
+
+def models_ready():
+    """Production calls OpenAI directly. Refuse a release whose key or models OpenAI would reject."""
+    if ops.ENVIRONMENT != "production":
+        return
+    key = run(["gcloud", "--project", PROJECT, "secrets", "versions", "access", "latest", "--secret=nori-openai-api-key"])
+    for model in ops.PRODUCTION_MODELS:
+        request = urllib.request.Request("https://api.openai.com/v1/models/" + model, headers={"Authorization": "Bearer " + key})
+        try:
+            with urllib.request.urlopen(request, timeout=20, context=ops.SSL_CONTEXT):
+                pass
+        except urllib.error.HTTPError as error:
+            raise RuntimeError(f"OpenAI answered {error.code} for {model} with the key in nori-openai-api-key; replies would fail") from None
+        except OSError as error:
+            raise RuntimeError(f"Could not reach OpenAI to check {model}: {error}") from None
 
 
 def read_previous(c):
@@ -345,6 +365,10 @@ def verify(c, state, workers):
     web = ops.api("GET", ops.web_resource())
     require(web.get("terminalCondition", {}).get("state") == "CONDITION_SUCCEEDED", "The web service is not ready")
     ops.compatible_builds(workers)
+    if ops.ENVIRONMENT == "production":
+        live = {entry["name"]: entry.get("value") for entry in ops.api("GET", ops.runtime_resource(c))["spec"]["deploymentSpec"].get("env", [])}
+        require(live.get("NORI_AGENT_MODEL") == ops.PRODUCTION_MODELS[0] and live.get("MODEL_NAME") == ops.PRODUCTION_MODELS[1],
+                "The live runtime names a model the direct OpenAI path refuses")
     end = time.monotonic() + 180
     while True:
         try:
@@ -444,6 +468,7 @@ def deploy_locked(commit):
     c = None
     try:
         ops.runtime_settings()  # Refuse invalid capacity policy before building or changing production.
+        models_ready()
         step("build", lambda: build_all(state))
         init_terraform()
         c = ops.config()
@@ -508,6 +533,8 @@ def check(_args):
         log("Terraform changes: " + (", ".join(changes) or "none"))
     log("Runtime health")
     ops.api("POST", c["runtime_url"].rstrip("/") + "/api/healthz", {})
+    log("Model access")
+    models_ready()
     log("Ready to deploy. Nothing was changed.")
 
 

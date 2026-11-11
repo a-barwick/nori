@@ -213,12 +213,16 @@ async function oauthCallback(request: Request, mode: Mode, path: string) {
   const user = await resolveUser(request.headers, target);
   if ("status" in user) return accessFailureResponse(user);
   try {
-    const upstream = await fetch(new URL(`users/${encodeURIComponent(user.userID)}/${path}`, user.base), {
-      headers: { ...await runtimeHeaders(mode), ...upstreamTraceHeaders(request) }, redirect: "manual", cache: "no-store",
+    const upstream = await fetch(new URL(`users/${encodeURIComponent(user.userID)}/${path}${path.includes("?") ? "&" : "?"}nori_redirect=json`, user.base), {
+      // The hosted gateway drops a redirect's Location, so core returns the destination as JSON when asked.
+      headers: { ...await runtimeHeaders(mode), ...upstreamTraceHeaders(request), "X-Nori-Redirect": "json" }, redirect: "manual", cache: "no-store",
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
     });
-    void upstream.body?.cancel().catch(() => undefined);
-    const location = upstream.headers.get("location") ?? "";
+    let location = upstream.headers.get("location") ?? "";
+    if (!location && upstream.ok && json(upstream.headers.get("content-type") ?? "")) {
+      const value = await upstream.json().catch(() => null) as { location?: unknown } | null;
+      if (typeof value?.location === "string") location = value.location;
+    } else void upstream.body?.cancel().catch(() => undefined);
     const safe = location.startsWith("/") && !location.startsWith("//") ? location : "/apps?result=failed";
     return new Response(null, { status: 303, headers: { Location: safe, "Cache-Control": "no-store" } });
   } catch {

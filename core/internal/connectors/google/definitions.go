@@ -24,7 +24,7 @@ type spec struct {
 
 var specs = []spec{
 	{"calendar_list_calendars", "List calendars", "calendar", "calendar.read", "google.calendar/calendars.list", "read", "safe",
-		"List the calendars of the user's connected Google accounts, with which are selected and writable.",
+		"List the calendars of the user's connected Google accounts, with which are selected and writable, and each calendar's time zone (time_zones, by calendar id).",
 		`{"type": "object", "properties": {` + account + `}, "additionalProperties": false}`},
 	{"calendar_events", "Find calendar events", "calendar", "calendar.read", "google.calendar/events.list", "read", "safe",
 		"List or search events between two times on the selected calendars (or the calendars named). Results carry the account, calendar, source link and the provider revision needed for later changes.",

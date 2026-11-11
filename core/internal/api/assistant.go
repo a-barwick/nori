@@ -371,7 +371,7 @@ func (a *Assistant) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	if a.MCP != nil {
 		location, err := a.MCP.Callback(r.Context(), state, code, providerError)
 		if err == nil {
-			http.Redirect(w, r, location, http.StatusSeeOther)
+			callbackRedirect(w, r, location)
 			return
 		}
 		if !errors.Is(err, mcp.ErrNotMCPAttempt) {
@@ -381,11 +381,22 @@ func (a *Assistant) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	location, err := a.Connections.Callback(r.Context(), state, code, providerError)
 	if errors.Is(err, connections.ErrAttemptInvalid) {
-		http.Redirect(w, r, "/apps?result=failed", http.StatusSeeOther)
+		callbackRedirect(w, r, "/apps?result=failed")
 		return
 	}
 	if err != nil {
 		writeAPIError(w, err, "", nil)
+		return
+	}
+	callbackRedirect(w, r, location)
+}
+
+// callbackRedirect answers the sign-in callback. The hosted runtime's gateway does not pass a redirect's Location
+// through to the web tier, which then reported every sign-in as failed. The web tier therefore asks for the
+// destination as JSON; a browser reaching core directly still gets the redirect.
+func callbackRedirect(w http.ResponseWriter, r *http.Request, location string) {
+	if r.Header.Get("X-Nori-Redirect") == "json" || r.URL.Query().Get("nori_redirect") == "json" {
+		writeJSON(w, 200, map[string]string{"location": location})
 		return
 	}
 	http.Redirect(w, r, location, http.StatusSeeOther)
