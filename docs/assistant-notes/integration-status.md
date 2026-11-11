@@ -56,6 +56,8 @@ From `core/internal/connectors/google/google.go` and `core/internal/connections/
 
 The write itself then still needs the approval Austin clicks (calendar writes are `reversible_write`, send is `sensitive_send`).
 
+**Update after the reads (coordinator record `8626371`):** the coordinator started one combined access request (calendar.write, mail.draft, mail.send) on `conn_376569c546155488accd`, and Austin approved Google's consent himself. So the grant item below is done for the test account; integration has not yet observed it in a run. Steps 3 and 5's send were **not** run this turn: my assignment for this turn was reads only. They wait for the coordinator's go-ahead to me, and step 3 also needs a "Nori test" calendar, which the test account did not have at 19:58.
+
 **What Austin must do before steps 3 and 5's send:**
 - Create a **"Nori test"** calendar on the account used for the run. The test account has none.
 - Grant `calendar.write` and `mail.send` by one of the routes above. With the app in Testing, the account must be a test user. Gmail send is a restricted scope, so Google shows the unverified-app screen again.
