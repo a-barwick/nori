@@ -6,6 +6,30 @@ Evidence label (rule 2): **provider verified: 0.** No real provider account was 
 
 ## Production wiring for the slice (PR a-barwick/nori#165, "get it ready"; nothing applied)
 
+**Wiring pushed, with credential-store tests: integration can run `make deploy-check`.** The branch head carries the Terraform wiring (`d26bbf5`, `059b0ca`) and the rowstore tests below.
+
+### Credential store tests (`go test ./internal/secret/rowstore`)
+
+Integration found that `internal/secret/rowstore` had no committed tests. They are added here. The repository's earlier rule was "no `_test.go` files; the check is the command"; this package is the coordinator's exception.
+
+- **Round trip, local key file:** store, load, a refused stale write, replace, load, delete, and load after delete (not found). Deleting again is not an error. A reopened key file reads earlier rows.
+- **Round trip through KMS:** data keys are wrapped and unwrapped through a new `KMSClient` interface. In the test it is a fake that encrypts under its own master key and checks the associated data. The production client sends the same requests as before: base64 bodies, the `nori-data-key` associated data, and the `kms:<key>` id.
+- **Wrong key:**
+  - Another key name is refused before any key-service call.
+  - The same key name with different key material (a re-created key) fails at the key service.
+  - A local key cannot read a KMS row.
+- **Tampering:** one flipped byte in the ciphertext, the wrapped key or the nonce makes the read fail.
+- **No plaintext:** the stored row contains neither the access nor the refresh token, in the clear or base64, and only the expected fields.
+- **Per-user isolation:**
+  - User B's store neither sees nor deletes user A's row.
+  - A row copied into B's store under the same connection id does not decrypt.
+  - A row moved to another connection id does not decrypt.
+- **Change made for that:** new rows bind their ciphertext to owner and connection; `platform.Credentials` passes the user id. Before this, the binding was the connection id only, so a copied row would have decrypted for another user under the shared deployment key. Rows written before this carry no owner flag and still load (tested). Such rows exist only on local stacks.
+- **Checked the tests can fail:** with the owner left out of the binding, the isolation test fails.
+
+`go test ./...` passes; `make -C core check` and the contracts check pass.
+
+
 Commits `d26bbf5`, the commit after it, and this note. **Nothing was applied, deployed or paused.**
 
 **Credential custody** is the coordinator's choice under Austin's "get it ready", not a D1 decision: the existing `database` store with Cloud KMS envelope keys. The mechanism stays configurable.
