@@ -182,6 +182,19 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 				out, err := a.signIn(ctx, in, run, record, "")
 				return nil, out, err
 			}
+			// No account yet, or only one whose first sign-in never finished: ask the user to connect from the task,
+			// for the access this call needs, and resume once they have. A named account that is not connected is
+			// not created here.
+			if requested == "" && !recovering {
+				record, err := a.Executor.Connections.ConnectTarget(ctx, in.Exec.ConnectionType, interactionID("con_", in.OperationID, in.Exec.ConnectionType))
+				if err == nil {
+					out, err := a.signIn(ctx, in, run, record, in.Exec.RequiredCapability)
+					return nil, out, err
+				}
+				if !errors.Is(err, connections.ErrNotConfigured) {
+					return nil, nil, err
+				}
+			}
 			return nil, denial(in, effect, "failed", "No account for this app is connected. The user can connect one in Apps.", map[string]any{"recovery": "connect", "integration_id": in.Exec.ConnectionType}), nil
 		case err != nil:
 			return nil, nil, err
@@ -347,6 +360,10 @@ func (a *Activities) signIn(ctx context.Context, in ToolInput, run state.Run, re
 	if capability != "" {
 		capabilities, scopes = []string{capability}, a.Executor.Connections.ScopesFor(record.IntegrationID, capability)
 		prompt = fmt.Sprintf("Give Nori more access to %s so it can continue this task.", label)
+	}
+	if record.Account.ProviderID == "" {
+		// The account has never signed in: this is its first connection.
+		prompt = fmt.Sprintf("Connect your %s account so Nori can continue this task.", record.Title)
 	}
 	returnTo := "/work/" + in.RunID
 	// r2.11's SignInPayload allows no other fields; why the account needs sign-in is on the Connection's health.

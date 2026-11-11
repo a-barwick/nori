@@ -190,6 +190,8 @@ func (calendarAdapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Pr
 			Resources: []state.ProviderRef{{ConnectionID: conn, Kind: "calendar_event", ProviderID: invoke.String(args, "event_id")}}}, nil
 	case "events.insert":
 		return prepareInsert(ctx, call)
+	case "calendars.insert":
+		return prepareCalendar(ctx, call)
 	case "events.patch", "events.delete", "events.respond":
 		return prepareChange(ctx, call, operation)
 	case "ics.preview", "ics.import":
@@ -406,6 +408,8 @@ func (a calendarAdapter) Execute(ctx context.Context, call invoke.Call, p invoke
 		return freeBusy(ctx, service, call, p)
 	case "events.insert":
 		return insertEvent(ctx, service, call, p)
+	case "calendars.insert":
+		return insertCalendar(ctx, service, call, p)
 	case "events.patch":
 		return patchEvent(ctx, service, call, p)
 	case "events.delete":
@@ -654,6 +658,16 @@ func (a calendarAdapter) Reconcile(ctx context.Context, call invoke.Call, p invo
 			return invoke.Result{}, false
 		}
 		return readBack(ctx, service, call, p.Spec["calendar"], event.Id, "Created"), true
+	case "calendars.insert":
+		// Prepare refused a title that already existed, so a calendar with this title now is the one the attempt made.
+		found, err := calendarNamed(ctx, call, p.Spec["title"])
+		if err != nil {
+			return invoke.Result{}, false
+		}
+		if found == nil {
+			return invoke.Result{Outcome: "failed", Err: errors.New("the interrupted attempt did not create the calendar")}, true
+		}
+		return createdCalendar(call, found.Id, found.Summary, found.TimeZone), true
 	case "events.delete":
 		event, err := service.Events.Get(p.Spec["calendar"], p.Spec["target"]).Context(ctx).Do()
 		var apiErr *googleapi.Error
@@ -895,4 +909,73 @@ func respondEvent(ctx context.Context, service *calendar.Service, call invoke.Ca
 		return invoke.Result{Outcome: "uncertain", Err: classify(err)}
 	}
 	return readBack(ctx, service, call, spec["calendar"], spec["target"], "Replied "+spec["response"]+" to")
+}
+
+// calendarNamed returns the account's calendar with exactly this title (case-insensitive), or nil.
+func calendarNamed(ctx context.Context, call invoke.Call, title string) (*calendar.CalendarListEntry, error) {
+	service, err := calendarService(ctx, call)
+	if err != nil {
+		return nil, err
+	}
+	list, err := service.CalendarList.List().MaxResults(250).ShowHidden(true).Context(ctx).Do()
+	if err != nil {
+		return nil, classify(err)
+	}
+	for _, item := range list.Items {
+		if strings.EqualFold(strings.TrimSpace(item.Summary), strings.TrimSpace(title)) ||
+			item.SummaryOverride != "" && strings.EqualFold(strings.TrimSpace(item.SummaryOverride), strings.TrimSpace(title)) {
+			return item, nil
+		}
+	}
+	return nil, nil
+}
+
+// prepareCalendar refuses a title the account already has, so the user never ends up with two calendars of the same
+// name, and an interrupted create can be reconciled by its title.
+func prepareCalendar(ctx context.Context, call invoke.Call) (invoke.Prepared, error) {
+	title := strings.TrimSpace(invoke.String(call.Args, "title"))
+	if title == "" {
+		return invoke.Prepared{}, fmt.Errorf("%w: a calendar needs a title", invoke.ErrInvalidArguments)
+	}
+	zone := invoke.String(call.Args, "timezone")
+	if zone == "" {
+		zone = call.TimeZone
+	}
+	if zone != "" {
+		if _, err := time.LoadLocation(zone); err != nil {
+			return invoke.Prepared{}, fmt.Errorf("%w: unknown time zone %q", invoke.ErrInvalidArguments, zone)
+		}
+	}
+	existing, err := calendarNamed(ctx, call, title)
+	if err != nil {
+		return invoke.Prepared{}, err
+	}
+	if existing != nil {
+		return invoke.Prepared{}, fmt.Errorf("%w: the account already has a calendar named %q (calendar_id %s); use it instead of creating another",
+			invoke.ErrInvalidArguments, title, existing.Id)
+	}
+	summary := fmt.Sprintf("Create a new calendar %q", title)
+	if zone != "" {
+		summary += " (" + zone + ")"
+	}
+	return invoke.Prepared{Summary: summary, Effect: extensions.EffectReversibleWrite,
+		Spec: map[string]string{"title": title, "description": invoke.String(call.Args, "description"), "timezone": zone}}, nil
+}
+
+func insertCalendar(ctx context.Context, service *calendar.Service, call invoke.Call, p invoke.Prepared) invoke.Result {
+	created, err := service.Calendars.Insert(&calendar.Calendar{Summary: p.Spec["title"], Description: p.Spec["description"], TimeZone: p.Spec["timezone"]}).Context(ctx).Do()
+	if err != nil {
+		if definite(err) {
+			return invoke.Result{Outcome: "failed", Err: classify(err)}
+		}
+		return invoke.Result{Outcome: "uncertain", Err: classify(err)}
+	}
+	return createdCalendar(call, created.Id, created.Summary, created.TimeZone)
+}
+
+func createdCalendar(call invoke.Call, id, title, zone string) invoke.Result {
+	return invoke.Result{Outcome: "confirmed",
+		Content: map[string]any{"calendar_id": id, "title": title, "timezone": zone,
+			"summary": fmt.Sprintf("Created the calendar %q. Use calendar_id %s to add events to it.", title, id)},
+		ProviderRefs: []state.ProviderRef{calendarRef(connectionID(call), id)}}
 }

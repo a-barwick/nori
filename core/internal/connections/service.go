@@ -183,7 +183,7 @@ func (s *Service) Records(ctx context.Context) ([]Record, []state.Resource, erro
 			if err := r.Decode(&record); err != nil {
 				return nil, nil, err
 			}
-			records, resources = append(records, record), append(resources, r)
+			records, resources = append(records, s.lapsed(record, r)), append(resources, r)
 		}
 		if next == "" {
 			return records, resources, nil
@@ -199,7 +199,55 @@ func (s *Service) record(ctx context.Context, id string) (Record, state.Resource
 	}
 	var record Record
 	err = r.Decode(&record)
-	return record, r, err
+	return s.lapsed(record, r), r, err
+}
+
+// lapsed reads a connection left connecting after its sign-in attempt expired (the browser was closed, or a probe
+// never finished) as what it is: not connected, or needing sign-in for an account that had signed in before. It is
+// not written back; the next connect or callback writes the record. Without this, a stale attempt kept the account
+// "connecting" for good, the assistant told the user to wait, and no tool could ask for the sign-in.
+func (s *Service) lapsed(record Record, r state.Resource) Record {
+	if record.Status != StatusConnecting || r.UpdatedAt.IsZero() || s.now().Sub(r.UpdatedAt) <= attemptLifetime {
+		return record
+	}
+	record.Status = StatusNotConnected
+	if record.Account.ProviderID != "" {
+		record.Status = StatusAttention
+	}
+	record.Health = Health{Code: HealthNeedsSignIn, Recovery: "connect", Message: "The last sign-in was not finished."}
+	return record
+}
+
+// ConnectTarget returns the connection a task should ask the user to sign in to when no account of the integration
+// is usable: an existing one that never finished its first sign-in, or a new one. requestID names the new one, so a
+// retried call reuses it. Only OAuth integrations configured in this deployment qualify.
+func (s *Service) ConnectTarget(ctx context.Context, integrationID, requestID string) (Record, error) {
+	integration := s.Integrations[integrationID]
+	if integration == nil || integration.Info().Auth != "oauth" || integration.OAuth(s.RedirectURL) == nil {
+		return Record{}, ErrNotConfigured
+	}
+	records, _, err := s.Records(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	for _, record := range records {
+		if record.IntegrationID == integrationID && record.Account.ProviderID == "" &&
+			(record.Status == StatusNotConnected || record.Status == StatusConnecting) {
+			return record, nil
+		}
+	}
+	receipt, err := s.Create(ctx, requestID, Editable{IntegrationID: integrationID})
+	if err != nil {
+		return Record{}, err
+	}
+	var projection struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(receipt.Resource, &projection); err != nil || projection.ID == "" {
+		return Record{}, errors.New("the connection could not be created")
+	}
+	record, _, err := s.record(ctx, projection.ID)
+	return record, err
 }
 
 // Project builds the public connection view.
@@ -1166,6 +1214,7 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 		}
 		groups := map[string]string{}
 		usable := map[string]bool{}
+		askable := integration.Info().Auth == "oauth" && integration.OAuth(s.RedirectURL) != nil
 		var groupOrder []string
 		for _, d := range integration.Definitions() {
 			if _, seen := groups[d.Capability]; !seen {
@@ -1175,18 +1224,36 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 			if d.RequiredCapability == "" || granted[d.RequiredCapability] {
 				inventory.Definitions = append(inventory.Definitions, d)
 				usable[d.Capability] = true
+			} else if askable {
+				// Not granted yet. Calling it asks the user to grant this access, or to connect, from the task. With a
+				// usable account it is offered like the account's other tools; with none, once the task loads the
+				// capability, so tasks that never need the app don't carry its tools (the exposure is not part of the
+				// definition's digest).
+				if len(labels) == 0 {
+					d.Exposure = extensions.ExposureDiscoverable
+				}
+				inventory.Definitions = append(inventory.Definitions, d)
 			}
 		}
 		for _, capability := range groupOrder {
 			stateText := "Not connected. The user can connect it in Apps."
+			if askable {
+				stateText = "Not connected. Load it and call the tool the request needs: that asks the user to connect the account from this task, and the task resumes once they have"
+			}
 			// A group is ready when the connected accounts granted at least one of its tools.
 			ready := len(labels) > 0 && usable[capability]
 			if ready {
 				stateText = "Connected"
 			} else if len(labels) > 0 {
 				stateText = "Connected, but this access was not granted. The user can grant it in Apps."
+				if askable {
+					stateText = "Connected, but this access was not granted. Load it and call the tool the request needs: that asks the user for the access from this task"
+				}
 			} else if len(attention) > 0 {
 				stateText = "Needs attention in Apps: " + strings.Join(attention, ", ")
+				if askable {
+					stateText += ". Load it and call the tool the request needs: that asks the user to sign in from this task"
+				}
 			}
 			inventory.Capabilities = append(inventory.Capabilities, extensions.CapabilityState{
 				Capability: capability, Title: groups[capability], Account: strings.Join(labels, ", "), Availability: stateText, Ready: ready,
