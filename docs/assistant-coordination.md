@@ -183,6 +183,12 @@ Rule from now (replaces "sessions do not fetch keys from production or any other
 
 Integration: `make deploy-check` green (read-only; worker plan 2 creates for the rehearsal build and 35 updates, each adding the new build's URL to `NORI_WORKER_SERVICES`; the same check from `main` plans nothing). PR marked ready for review. Not yet covered: the application state (KMS, IAM, runtime environment) has not been planned against production; backend is running that plan read-only and fixing `ops.temporal_env()` letting a developer `.env` point release commands at local Temporal. No deploy, apply or pause.
 
+### Released to production (2026-11-11)
+
+Austin: "Go, release". The coordinator merged PR #165 (`d7b6ffb`), applied the application state from a saved plan matching the reviewed one (12 added, 1 changed: the browser VM's `computer-telemetry` metadata, no restart; 0 destroyed), then ran `make deploy` from `main`. A first attempt failed at the image push before touching production (Docker on this machine had no Artifact Registry credentials; fixed with `gcloud auth configure-docker`). The second finished at 06:51: worker build `rel-d7b6ffb27fd6`, production paused about three minutes and is open again (`paused: false`; noribot.chat redirects to Google sign-in as before).
+
+Not yet done: the OAuth redirect `https://noribot.chat/api/v1/connections/oauth/callback` is not on the Google client, so connecting a Google account on noribot.chat fails until it is added (Austin's console sign-in). Push stays off (VAPID secrets have no versions). No real account has connected in production.
+
 ## Baseline commits
 
 | What | Commit |
