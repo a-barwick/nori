@@ -23,6 +23,15 @@ Austin said "Yes, get it ready" (coordinator record `293399c`); the deploy waits
 
     Cloud KMS wrapping (`OpenCloudKMS`) is not exercised anywhere. **For backend:** commit tests for `rowstore` (and KMS wrapping against a fake).
   - The real stack on 8085 was left on the file vault so its pending cards keep working. The check core is stopped.
+- **Second pass (06:13 to 06:20):**
+  - Merged backend `b31eae7` (production wiring and committed `rowstore` tests) and frontend `5d34520` (fixture store out of the production bundle); merge head `9eb87e3`.
+  - `make check`, `go test ./...` (including `rowstore`) and `bun run build` are green.
+  - Frontend's `scripts/prod-check.mjs` is a long-running helper for a manual browser check, not a pass/fail check. I started it by mistake, stopped it at once, and left nothing running.
+- **`make deploy-check` failed before the worker plan:** "TEMPORAL_API_KEY is missing; configure it in the project root .env".
+  - This worktree has no `.env`, and the main checkout's `.env` has no `TEMPORAL_API_KEY`. The value is in Secret Manager (`nori-temporal-api-key`), and integration does not fetch key values.
+  - Terraform state init and the open-work check passed. The worker plan, the application plan and the health read did not run.
+  - Only ignored local Terraform files were created (`.terraform/`, `release_backend_override.tf`). Nothing changed in production.
+  - **PR #165 stays a draft.** Its description now carries this output, backend's production changes and Austin's steps (step 0: the Temporal API key, so the check can run).
 - **`make deploy-check`** waits for backend's production wiring (not on `origin/claude/nori-assistant-backend-9c520e` at 06:10). It is read-only by its code: `terraform init` with a local backend override, `terraform plan` into a temporary file, open-work and health reads, then "Nothing was changed".
 - **PR #165**: the description is rewritten. It stays a **draft** until the production wiring is merged and `deploy-check` is recorded.
 
