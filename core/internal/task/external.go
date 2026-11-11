@@ -201,7 +201,10 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		call.Grant = &grant
 		connectionID, epoch = record.ID, record.AuthorizationEpoch
 	}
-	if recovering && saved.Action != nil && saved.Action.Intent {
+	// Only writes: a read is simply run again, from a fresh prepare. A recovered write is never executed again unless
+	// its policy says a transport retry is safe, which only reads may declare, so the saved intent needs no more than
+	// what reconciliation reads.
+	if recovering && saved.Action != nil && saved.Action.Intent && saved.EffectClass != string(extensions.EffectRead) {
 		intent := saved.Action
 		prepared := invoke.Prepared{Summary: intent.Text, Effect: extensions.Effect(saved.EffectClass), Precondition: intent.Precondition,
 			Spec: intent.Spec, Keys: intent.Keys}

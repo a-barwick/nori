@@ -2,7 +2,41 @@
 
 Branch `claude/nori-assistant-backend-9c520e`, worked from worktree `.claude/worktrees/backend-restart-26132e` on the new machine. The first run's version of this note is at `origin/claude/nori-assistant-integration-25ae45:docs/assistant-notes/backend-status.md`. This file is the current state.
 
-Evidence label (rule 2): **provider verified: 0.** Everything below is locally verified against a loopback model stub, the local database and the local Temporal dev server. Nothing here ran against a real model or a real provider account.
+Evidence label (rule 2): **provider verified: 0.** No real provider account was used. The D-053 and D-054 re-tests in the third assignment ran against the real models (OpenAI and OpenRouter, keys from `.env`); everything else is locally verified against a loopback model stub, Google answering from hand-written recordings, the local database and the local Temporal dev server.
+
+## Third assignment (2026-11-10, coordination record "Slice and third assignments")
+
+Stack: core 8081, worker, database `nori_backend`, namespace `nori-backend`, queue `nori-tasks-backend`, user A. Integration's processes were not touched.
+
+### 1. D-053 and D-054 against the real models
+
+Build `be-ed59dc5` (integration's head, which holds both fixes), real keys from `.env` read in place: the conversation on `gpt-6.1-sol` through OpenAI, tasks on `openai/gpt-6.1-terra` through OpenRouter. The intent classifier is off (no key in `.env`).
+
+| Check | Task or message (UTC) | Result |
+| --- | --- | --- |
+| D-054, conversation, saved zone America/Los_Angeles | message 03:47:25 | "It's 7:47 p.m. on Tuesday, November 10, 2026, for you. I'm using America/Los_Angeles". Correct. |
+| D-054, after `PUT /v1/preferences` to Asia/Tokyo (revision 2), no restart | message 03:47:58 | "It's 12:47 p.m. on Wednesday, November 11, 2026, for you. I'm now using Asia/Tokyo". Correct (03:47 UTC is 12:47 JST). |
+| D-054, background task after the change | task `1b5290ff-6e7d-5cd1-aa6d-69ad30dd84be`, 03:48:25 to 03:48:27 | "Today is Wednesday, November 11, 2026, in Asia/Tokyo. The current local time was not provided." Correct: the task prompt carries the date and the zone, not the clock. No London anywhere. |
+| D-053, worker SIGKILLed during a real model request | task `1c92850d-0932-53d1-8072-3f1dfb1db276` (a 1,500-word story) | Request 03:49:24; worker killed 03:49:31 and restarted 03:49:35; the recovery attempt settled the request as interrupted at 03:53:24 (the dead attempt's 240 s window), recorded the `model-step-deadline` marker, asked once more, and the model answered at 03:54:12 (48 s). Completed at 4:48 with a result. Cost status "unknown", because the cut-off request's cost was never reported. |
+
+Not re-testable against a real model: the 2-minute hang. A real model that does not answer cannot be produced on demand, so that path stays verified against the stub only (task `62f3a126`, first turn). The ordinary real task above finished in under 3 s, so the 2-minute request bound did not get in the way.
+
+### 2. Pi Durable: what Nori already has, and the gaps on the slice's path
+
+Read: Pi at `682c7b9` (`packages/durable`, marked experimental): `docs/spec.md`, `src/harness/tool.ts`, `src/harness/types.ts`, `src/tool-search/tool-search.ts`. Compared with the plan's rows "Durable tool registration", "Durable execution" and "Tool discovery", with `core/README.md` (which cites Pi at `6e2222a` for task ownership intent, held completion, commit publication, inbox order, wake demand and context compaction, but says little about tool-level intent or replay policy), and with the code, which has both.
+
+| Pi | Nori before this turn | Gap on the slice's path? |
+| --- | --- | --- |
+| **Tool intent before execution.** The `execute` checkpoint (final arguments, replay policy) is committed before `execute()` runs. | `task.durableTool` admits the operation with its receipt deadline and writes an operation record (outcome `pending`, tool reference and digest, action digest, summary and spec, account, authority) before dispatch; `runExternal` saves the attempt count before each provider call; the arguments are in the Temporal activity input. | Adopted, except that the record did not hold the whole prepared action (the provider revision it was approved against, and its provider keys). See gap A. |
+| **Declared replay safety.** `replay: "safe" \| "unsafe"` per tool, default unsafe, stored with the intent; both the stored and the current declaration must say safe to re-run. | Each definition declares `retry`: `safe` (only reads and control may), `provider_key` or `reconcile_only`, pinned with the call; an adapter can implement `Reconcile`. An interrupted write is reconciled from provider state or settles `uncertain`, and holds the task's later writes until the user answers. Slice tools: calendar reads `safe`; create `provider_key` (client-chosen event id); change and cancel `reconcile_only`; the reminder create `provider_key` (request id). | Richer than Pi. One gap: the first-party adapter behind reminders (slice step 4) has a provider key but no reconciliation, so an interrupted reminder save stayed `uncertain` and asked the user, although Nori can read its own store. See gap B. |
+| **Recovery from committed state.** Reopening in the intent phase re-runs a safe tool with the stored arguments, else records "interrupted and may have partially run"; restart limit 5. | Waits out the dead attempt's receipt window, reuses a settled result, reconciles, else `uncertain`; Temporal allows three attempts; the model step is bounded by D-053. | **Gap A:** recovery prepared the action again from a fresh provider read instead of the saved intent. For `calendar_event_update` (slice step 3, the move) that read already shows the interrupted PATCH's new revision, so reconciliation compared the event with its own new revision and settled a move that had gone through as failed, "the interrupted attempt did not change the event". An event an interrupted cancel had deleted could not be prepared at all, so that settled `uncertain`. Also, a reconciled "did not happen" settled `failed` with no reason it was harmless, which holds every later write in the task until the user answers. |
+| **Deferred tool visibility.** `deferred` tools stay out of the request until `tool_search` loads them; the loaded set is stored per branch. | Exposure `discoverable` plus `capability_load`; the loaded set is read from the transcript, so it survives restarts and compaction; the catalog lists each capability and its tools. Google's tools are `direct`, but the inventory offers only definitions whose access the account granted. | Not a gap on the slice's path. With the calendar grant the model is offered the 10 Google Calendar tools, which steps 2 and 3 use; mail tools appear only once mail access is granted (step 5). Making them discoverable would add a `capability_load` round trip to every calendar task. Unchanged. |
+
+Left out deliberately: Pi's scheduler, task graph, structured concurrency, code mode, sessions and storage backends (Nori has Temporal and its database for these). Also left out: re-running a `provider_key` write on recovery in general. Pi would re-run a tool declared safe, but Drive's create declares `provider_key` while its Execute does not deduplicate, so a general re-run could create a second file. The calendar create's reconciliation already reads the event by its own id, which is what a re-run would establish.
+
+### 3. What was implemented (gaps A and B, nothing else from Pi)
+
+PENDING_IMPL
 
 ## Second assignment (2026-11-10, coordination record "After the first turn")
 
