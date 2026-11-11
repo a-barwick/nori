@@ -75,6 +75,11 @@ function recoveryOf(connection: Connection) {
   return connection.health.recovery;
 }
 
+/** Every capability this app supports: one consent for everything Nori can do with it. */
+function allCapabilities(integration: Integration) {
+  return integration.capabilities.filter((capability) => capability.supported).map((capability) => capability.id);
+}
+
 /** Start a server-issued sign-in and send the browser to it. */
 export async function startSignIn(connection: Pick<Connection, "id" | "revision">, action: "connect" | "repair", returnTo: string, capabilities?: string[]) {
   const receipt = await mutate<Connection>(`/connections/${encodeURIComponent(connection.id)}/actions`, {
@@ -156,6 +161,9 @@ export function AppDetailScreen({ id }: { id: string }) {
   const connections = useResource<List<Connection>>(has("connections") ? "/connections" : null, { poll: 10_000 });
   const action = useAction();
   const [passwordForm, setPasswordForm] = useState(false);
+  // First connect: read only, or everything Nori can do here, in one consent either way. Read only is preselected
+  // as the smaller grant (frontend's choice); one tap switches it.
+  const [grant, setGrant] = useState<"read" | "all">("read");
   if (!has("integrations")) return <Screen title="App" back="/apps"><NotYet what="Connecting apps" /></Screen>;
   if (integration.loading) return <Screen title="App" back="/apps"><Loading /></Screen>;
   const item = integration.data;
@@ -172,14 +180,19 @@ export function AppDetailScreen({ id }: { id: string }) {
   const partial = !!returned && healthOf(returned) === "needs_more_access";
   const add = () => action.run("add", async () => {
     const connection = unfinished ?? (await mutate<Connection>("/connections", { request_id: newRequestID(), expected_revision: 0, value: { integration_id: item.id, title: item.title, selected_resource_ids: [] } })).resource as Connection;
-    await startSignIn(connection, "connect", `/apps/${encodeURIComponent(item.id)}`);
+    // An empty list makes core ask for the read capabilities (scopesFor); "all" names every supported capability.
+    await startSignIn(connection, "connect", `/apps/${encodeURIComponent(item.id)}`, grant === "all" ? allCapabilities(item) : undefined);
   });
   const line = item.availability !== "available" ? item.availability_reason : undefined;
   // With one signed-in account, a capability it hasn't granted can be added by signing in again for it.
   const single = item.auth === "oauth" && accounts.length === 1 && accounts[0].account?.provider_id ? accounts[0] : undefined;
   const firstConnect = item.auth === "oauth" && item.availability === "available" && accounts.length === 0;
+  const offersMore = item.capabilities.some((capability) => capability.supported && capability.effect !== "read");
   const readTitles = item.capabilities.filter((capability) => capability.supported && capability.effect === "read").map((capability) => capability.title.charAt(0).toLowerCase() + capability.title.slice(1));
   const andList = (words: string[]) => words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+  const lower = (title: string) => title.charAt(0).toLowerCase() + title.slice(1);
+  const writeTitles = item.capabilities.filter((capability) => capability.supported && capability.effect !== "read").map((capability) => lower(capability.title));
+  const sendTitles = item.capabilities.filter((capability) => capability.supported && capability.effect === "sensitive_send");
   const canAllow = (capability: Integration["capabilities"][number]) => !!single && capability.supported && !(single.capabilities ?? []).includes(capability.id);
   return (
     <Screen title={item.title} back="/apps" line={line} actions={<AppIcon icon={item.icon} />}>
@@ -187,14 +200,25 @@ export function AppDetailScreen({ id }: { id: string }) {
       {action.error && <div className="mb-6"><Notice tone="danger">{action.error}</Notice></div>}
       <Section title="Accounts" actions={item.availability === "available" && (accounts.length === 0 || item.multiple_accounts) ? <Button variant="primary" size="sm" disabled={!!action.pending} onClick={() => item.auth === "app_password" ? setPasswordForm(true) : void add()}><Plus size={15} aria-hidden />{action.pending ? "Opening sign-in…" : accounts.length ? "Add another account" : "Connect"}</Button> : undefined}>
         {/* Connect asks the provider for exactly the read capabilities (core scopesFor), all in one consent; say which, in plain words, before the click. */}
-        {firstConnect && readTitles.length > 0 && <p className="mb-3 text-body text-ink-2">One {item.title} sign-in lets Nori read your {andList(item.categories.length ? item.categories : readTitles)}. Nori can’t change or send anything yet: it asks again, with a new {item.title} sign-in, the first time it needs to.</p>}
+        {firstConnect && readTitles.length > 0 && !offersMore && <p className="mb-3 text-body text-ink-2">One {item.title} sign-in lets Nori read your {andList(item.categories.length ? item.categories : readTitles)}.</p>}
+        {firstConnect && readTitles.length > 0 && offersMore && <fieldset className="mb-3">
+          <legend className="mb-2 text-body text-ink-2">What should Nori be able to do with your {item.title} account? Either way it is one {item.title} sign-in.</legend>
+          <div className="space-y-2">{([["read", "Read only", `Read your ${andList(item.categories.length ? item.categories : readTitles)}. Nori asks for a new ${item.title} sign-in the first time it needs to change or send something.`],
+            ["all", "Read, change and send", `Everything in Read only, and also: ${writeTitles.join("; ")}.`]] as const).map(([value, label, detail]) =>
+            <label key={value} className={cn("flex cursor-pointer items-start gap-3 rounded-tile border px-3 py-2.5", grant === value ? "border-accent bg-accent-subtle" : "border-hairline")}>
+              <input type="radio" name="grant" value={value} checked={grant === value} onChange={() => setGrant(value)} className="mt-1 accent-[var(--accent)]" />
+              <span className="min-w-0 flex-1"><span className="block text-row font-medium text-ink">{label}</span><span className="block text-meta text-ink-2">{detail}</span></span>
+            </label>)}</div>
+          {grant === "all" && sendTitles.length > 0 && <p className="mt-2 text-meta text-ink-2">Sending still follows your approval settings in Settings → Permissions; nothing about that changes here.</p>}
+        </fieldset>}
         {passwordForm && <div className="mb-3 rounded-card border border-hairline bg-surface p-4"><PasswordSignIn integration={item} connection={unfinished} onDone={() => setPasswordForm(false)} /></div>}
         {connections.loading ? <Loading /> : accounts.length ? <div className="space-y-3">{accounts.map((connection) => <ConnectionCard key={connection.id} connection={connection} integration={item} />)}</div>
           : <Empty>{item.availability === "available" ? `No ${item.title} account yet.` : item.availability_reason ?? "Not available yet."}</Empty>}
       </Section>
-      <Section title="What Nori can do">
-        {/* Connect asks the provider for the read capabilities only (core scopesFor); anything else is a second sign-in. */}
-        <Rows>{item.capabilities.map((capability) => <Row key={capability.id} wrapTitle leading={!capability.supported ? <CircleSlash size={18} className="text-ink-3" aria-hidden /> : canAllow(capability) || firstConnect && capability.effect !== "read" ? <Circle size={18} className="text-ink-3" aria-hidden /> : <Check size={18} className="text-[#1c7a43]" aria-hidden />}
+      <Section title="What Nori can do" actions={single && item.capabilities.filter(canAllow).length > 1 ? <Button size="sm" variant="primary" disabled={!!action.pending}
+          onClick={() => void action.run("allow-all", () => startSignIn(single, "repair", `/apps/${encodeURIComponent(item.id)}`, allCapabilities(item)))}>{action.pending === "allow-all" ? "Opening sign-in…" : "Allow everything"}</Button> : undefined}>
+        {single && item.capabilities.filter(canAllow).length > 1 && <p className="mb-2 text-meta text-ink-2">Allow everything asks {item.title} once for all the items below that aren’t allowed yet. Allow on one item asks for just that one.</p>}
+        <Rows>{item.capabilities.map((capability) => <Row key={capability.id} wrapTitle leading={!capability.supported ? <CircleSlash size={18} className="text-ink-3" aria-hidden /> : canAllow(capability) || firstConnect && capability.effect !== "read" && grant === "read" ? <Circle size={18} className="text-ink-3" aria-hidden /> : <Check size={18} className="text-[#1c7a43]" aria-hidden />}
           title={capability.title} detail={capability.supported ? undefined : capability.reason}
           trailing={<>{canAllow(capability) && <Button size="sm" variant="quiet" className="text-accent-text!" disabled={!!action.pending} aria-label={`Allow: ${capability.title}`}
             onClick={() => void action.run("allow", () => startSignIn(single!, "repair", `/apps/${encodeURIComponent(item.id)}`, [...(single!.capabilities ?? []), capability.id]))}>{action.pending === "allow" ? "Opening sign-in…" : "Allow"}</Button>}
@@ -331,6 +355,11 @@ function ConnectionDetails({ connection, integration }: { connection: Connection
     </div>
     {integration.auth === "oauth" && notAllowed.length > 0 && <div>
       <h4 className="mb-2 text-meta font-semibold">Not allowed yet</h4>
+      {notAllowed.length > 1 && <div className="mb-3">
+        <Button size="sm" variant="primary" disabled={!!action.pending} aria-label={`Allow everything Nori can do for ${connection.account?.label ?? "this account"}`}
+          onClick={() => void action.run("allow-all", () => startSignIn(connection, "repair", `/apps/${encodeURIComponent(integration.id)}`, allCapabilities(integration)))}>{action.pending === "allow-all" ? "Opening sign-in…" : "Allow everything Nori can do here"}</Button>
+        <p className="mt-1.5 text-meta text-ink-2">One {integration.title} sign-in for all of these. Allow on one item asks for just that one.</p>
+      </div>}
       <ul className="space-y-1">{notAllowed.map((capability) => <li key={capability.id} className="flex min-h-11 items-center gap-3 text-meta">
         <span className="min-w-0 flex-1">{capability.title}</span>
         <Button size="sm" variant="quiet" className="text-accent-text!" disabled={!!action.pending} aria-label={`Allow for ${connection.account?.label ?? "this account"}: ${capability.title}`}

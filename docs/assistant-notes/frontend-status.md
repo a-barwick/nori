@@ -28,6 +28,13 @@ Acknowledgement is not slow: my message shows 17 ms after Return, "Nori is think
 
 ## Fixes in `web/` (before and after)
 
+0. **Write access took four Google trips (from Austin's real connect, reported by the coordinator; top priority).**
+   - Before: Connect asked only for read access. After connecting, each change or send capability had its own Allow button, and each one was a full Google consent trip.
+   - After, at first connect: two choices before going to Google, each one consent. "Read only" reads calendar, email, contacts and files, and Nori asks for a new Google sign-in the first time it needs to change or send something. "Read, change and send" is everything in Read only, plus each change and send item listed by name. Under that choice: "Sending still follows your approval settings in Settings → Permissions; nothing about that changes here." The "What Nori can do" checks follow the choice.
+   - Read only is preselected as the smaller grant. **That is frontend's choice, not Austin's decision**, and it can be flipped.
+   - After, on a connected account: where two or more items aren't allowed yet, one "Allow everything Nori can do here" button, above the per-item Allow buttons: "One Google sign-in for all of these. Allow on one item asks for just that one." With a single account, "Allow everything" also appears on "What Nori can do". Both send every supported capability through the existing connect and repair action (`allCapabilities`). (`AppsScreen.tsx`)
+   - Verified on my stack with the real Google client at 20:05. "Read, change and send" → Connect opened one Google page requesting `calendar.readonly calendar.events gmail.readonly gmail.compose gmail.send gmail.modify contacts.readonly contacts.other.readonly drive.readonly drive.file` (plus `openid email`). It was Google's account chooser; I chose nothing and went back. The connected-account button was checked on fixtures at phone and desktop width only; a real repair needs a signed-in account.
+
 1. **Reminder destination said "Nowhere".**
    - Before: a reminder made in chat showed "Sends to: Nowhere; results stay in Library". It did reach the in-app inbox, and nothing said it would not reach Austin with the app closed.
    - After: "Nori inbox only (Settings → Notifications), so nothing reaches you while Nori is closed. Choose push or email under Edit.", with both links. Edit already offers the destinations. (`RoutinesScreen.tsx`)
