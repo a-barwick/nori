@@ -1,10 +1,10 @@
-# What this Mac needs from Austin before a real Google run
+# What this Mac needs from Austin before a real Google run (calendar and Gmail)
 
 Rewritten 2026-11-10 by integration for the new machine. It covers Google only. Microsoft and iCloud come later (see the end).
 
 Local Nori for real accounts runs on this Mac at **http://127.0.0.1:3213**. It has its own database (`nori_real`), its own Temporal namespace (`nori-real`) and a new, empty local credential vault under `~/.nori-stacks/real/`. Production is not touched. Integration restarts it with `scripts/local-stacks/stack.sh real …` (see `scripts/local-stacks/README.md`).
 
-Today it answers, but only as plumbing: without `OPENROUTER_API_KEY` it starts only in a no-model mode (placeholder keys, all outbound traffic blocked), and without a Google client it cannot start a Google sign-in. The steps below are the things only you can supply. Please put values in the file yourself. Don't paste them into a chat or a session: nobody else reads, prints or copies them.
+Update, evening of 2026-11-10: the model keys and the Google client are in `.env`, and the real stack runs with real models. Steps 1 and 2.1–2.4 below are done. Still yours: step 2.5 (Testing, with you as a test user), step 3 (the Nori test calendar), and step 4 (your sign-in). The steps below are the things only you can supply. Please put values in the file yourself. Don't paste them into a chat or a session: nobody else reads, prints or copies them.
 
 ## What `.env` lacks, by variable name
 
@@ -13,8 +13,8 @@ Compared on 2026-11-10 against `.env.example` and against what core actually rea
 | Needed for | Variable | State in `/Users/austin/Documents/dev/nori/.env` | Who |
 | --- | --- | --- | --- |
 | Any conversation | `OPENAI_API_KEY` | empty at 07:52; **set** when re-checked after your 07:58 save | done |
-| Any conversation or task (with background tasks on, core and the worker both refuse to start without it; conversation summaries and the task model `openai/gpt-6.1-terra` go through OpenRouter) | `OPENROUTER_API_KEY` | present, **empty** | **you** |
-| Google sign-in | `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET` | absent (also missing from `.env.example`; hosted reads them from Secret Manager) | **you** |
+| Any conversation or task (with background tasks on, core and the worker both refuse to start without it; conversation summaries and the task model `openai/gpt-6.1-terra` go through OpenRouter) | `OPENROUTER_API_KEY` | **set** (restored by Codex from Secret Manager at Austin's request, about 08:55; see `environment-restored.md`) | done |
+| Google sign-in | `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET` | **set** (restored by Codex the same way; Google accepted the client and redirect on an unauthenticated authorize-URL check) | done |
 | Google redirect | `NORI_OAUTH_REDIRECT_URL` | absent; the stack script sets `http://127.0.0.1:3213/api/v1/connections/oauth/callback` | integration (done) |
 | Credential store | `NORI_CREDENTIAL_STORE`, `NORI_CREDENTIAL_DIR` | absent; the stack script sets `local` and a new vault | integration (done) |
 | Background tasks | `NORI_BACKGROUND_TASKS_ENABLED` | `false` (chat-only); the stack script overrides it to `true` for the stacks only | integration (done) |
@@ -52,6 +52,14 @@ At calendar.google.com → Other calendars **+** → Create new calendar, named 
 
 ## Step 4. Sign in (about 2 minutes, after integration confirms step 2)
 
+Done on the evening of 2026-11-10 with a test Gmail account (read-only scopes). Reads of the calendar and Gmail ran; see `docs/assistant-acceptance.md`, "Real provider runs". Still to do: a "Nori test" calendar on that account (it has none), the write grants below, and the same sign-in on your personal Gmail.
+
+What one sign-in grants, as the app and `core/internal/connectors/google/google.go` stand at `1456cc9` (backend to confirm):
+
+- **Connect asks Google only for the read items**: calendar (`calendar.readonly`), Gmail search and read (`gmail.readonly`), contacts and Drive read. One sign-in therefore covers reading both your calendar and your Gmail (slice steps 2 and 5's search).
+- **Writes ask again.** Creating or moving an event (`calendar.events`) and sending email (`gmail.compose` + `gmail.send`) each raise a further Google sign-in, the first time Nori needs them, before the approval you click. Expect up to two more Google consent screens during the run: one for the Nori test calendar event, one for the note to yourself.
+- Gmail scopes are restricted, so step 2.5 (Testing, with you as a test user) matters for both.
+
 1. Open http://127.0.0.1:3213/apps → Google → Connect.
 2. Choose your Google address and approve the access shown.
    - "Google hasn't verified this app": choose Continue. It is your own app in testing.
@@ -61,7 +69,7 @@ You sign in to Nori's web on this Mac as a local test user (`real-a@nori.local`)
 
 ## Also open with you (not steps; listed so nothing waits silently)
 
-- **Which mailbox counts for email.** Your backlog asked about HEY. Backend is checking what can be learned about HEY on this machine without signing in. Nothing about HEY has been checked against your account.
+- **Mailbox: decided.** You chose your personal Gmail account, through the same Google sign-in (recorded on the coordinator branch at `c15cd04`). HEY is out of the first slice.
 - **The first slice.** The real run tests only the slice taken from your backlog once it is recorded in `docs/assistant-coordination.md`. Nothing writes to your account before that run is agreed with you.
 - **D1 to D4 and r2.11** are open with you; see the coordination record. Interim mechanisms are in use and are not your decisions.
 

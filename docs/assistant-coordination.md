@@ -18,7 +18,7 @@ These are Austin's statements from his restart message, quoted or closely paraph
 - Limits: keep production available (`AGENTS.md`). Austin does all sign-ins himself. Writes to his accounts stay reversible and contained, and email goes only to him. No deploys, no external messages, no force-pushes. Disagreements go to Austin instead of being settled quietly.
 - Open with Austin, by his list: D1 to D4, the r2.11 proposal, which mailbox counts for email (his backlog asked about HEY and it was never checked against his account), and what this machine needs from him.
 
-The first slice itself is defined by Austin's original backlog, which is not in the repository yet. Until it is recorded here, no stream expands scope.
+The original backlog was never found (see "Slice and third assignments" below, where Austin's later words and the coordinator's choice of slice are recorded).
 
 ### Working rules (coordinator's, following the statements above)
 
@@ -31,6 +31,10 @@ The first slice itself is defined by Austin's original backlog, which is not in 
 7. **Austin's accounts.** No session signs in, enters a password or app-specific password, or handles a token value. No write reaches his accounts until he has signed in and the slice run is agreed with him; then writes go to a dedicated test calendar, are reversible and cleaned up, and email goes only to his own address after an approval he clicks.
 8. **Personal identifiers** (Austin's addresses) never go into a command line, tool input or committed file. Load them from an env file.
 9. **Production** is not touched: no deploy, no `make pause`, nothing against the hosted project.
+
+### Environment recovery, 2026-11-10
+
+Codex restored the existing OpenRouter key and Google OAuth client configuration into the private root `.env`. The integration stack now completes real OpenAI chats and OpenRouter background tasks, and Google accepts its local authorization link. Account sign-in and the backlog's first workflow remain open. See [environment recovery handoff](assistant-notes/environment-restored.md) for task IDs, checks, running stacks and the earlier incomplete smoke task.
 
 ### This machine
 
@@ -93,6 +97,54 @@ Second assignments (coordinator's allocation, all on the path to a real Google r
 - Integration `aecc338`: coordinator, frontend `f7ed24a` and backend `bd5a7d6` merged, including the hosted stdio WIP `a62a26e` labelled unverified; `make check` and `go test ./...` green; 12 of 12 scenarios on 8083, still without a model. The model-backed restart and the Google authorize-URL check wait on `OPENROUTER_API_KEY` and the Google client, both still missing from `.env`.
 - Backend `ae7ac07`: `.env.example` names the Google client and redirect; calendar approvals name the calendar; draft summaries are never empty. Verified with the model stub and recorded Google responses, not real Google. Integration is asked to merge `11fdcfd` to `ae7ac07`.
 - D-056 (backend found, open, held by the coordinator): a reply draft is saved with no recipients unless the model supplies them. The fix would address replies from the original message, which sends mail to other people; Austin's limit is that email goes only to him. Held until the first slice says whether replies are in it, and then raised with Austin if they are.
+
+### Slice and third assignments (2026-11-10)
+
+**What Austin said**, after the Linear search found nothing: "Just do your best, its probably lost", then "The intent was, review the doc pasted above, then implement. Take what we need from pi durable, add usability to the app." The pasted document did not reach this session. Its surviving form is [the integration plan](assistant-integration-plan.md), which was written from it and links the original audit.
+
+Everything below in this section is the **coordinator's choice**, not Austin's decision, and can be changed without asking him.
+
+**The first slice** is the plan's own headline request ("What does my week look like, find the reservation email, move the conflicting appointment, tell the people involved, and remind me before I leave"), cut to what Austin's limits allow, run in the real app on the real stack (web 3213):
+
+1. Austin connects his Google account in Apps (his sign-in; nobody else's).
+2. "What does my week look like" answers from his real calendar, with sources.
+3. Nori creates an event on the "Nori test" calendar, then moves it, each after an approval he clicks; the run ends with the event removed.
+4. "Remind me before I leave" produces a reminder that is delivered with the app closed.
+5. Email, only once the mailbox question is answered: find one message, and send one note to Austin's own address after an approval he clicks. Steps 1 to 4 do not wait for this. HEY is not replaced by Gmail silently.
+
+A step counts as provider verified only with the task id and time recorded in `docs/assistant-acceptance.md`.
+
+**Pi Durable.** Take only what the slice needs. Backend compares the plan's "What Nori should borrow" table and Pi Durable at its current head with what `core/README.md` says is already adopted, and writes the gaps that sit on the slice's path (tool intent stored before execution, declared replay safety, recovery from committed state, deferred tool visibility). It implements those and nothing else from Pi.
+
+**Usability.** Frontend walks the slice in the real app with the real models, as a person would, on desktop and phone width, and fixes what gets in the way of those five steps: unclear state, dead ends, missing feedback, confusing approvals, slow acknowledgement. No new screens or areas.
+
+**Assignments**
+
+| Stream | Now (no sign-in needed) | After Austin signs in |
+| --- | --- | --- |
+| Integration | Merge everything, keep one model-enabled worker per build (see the environment handoff about duplicates). Rehearse steps 2 to 4 on the real stack as far as the missing grant allows and record exactly where each stops. | Run the slice with Austin, record task ids and times, regrade. |
+| Backend | Re-test D-053 and D-054 against the real models. Pi Durable gap list for the slice, then the gaps. D-056 (reply recipients) stays held until email is in play. | Fix what the real provider shows. |
+| Frontend | Usability walk of steps 1 to 4 on the real stack with real models (no hand-written recordings), fixes, before and after notes in the status file. | Fix what the real run shows. |
+
+Note on keys: the working rule that sessions do not fetch keys still holds for these sessions. The keys now in `.env` were restored by Codex at Austin's request (see the environment handoff).
+
+### Mailbox decided; Pi Durable port already on main (2026-11-10)
+
+**Austin decided** (his words, 2026-11-10): "use my [Gmail address] email. use whatever you need." The address is his personal Gmail account, left out of this file under working rule 8. So the email step of the slice (step 5) runs on Gmail through the same Google sign-in, and no longer waits. HEY is out of the first slice; whether it matters later is not decided. The limits stand: email goes only to his own address after an approval he clicks.
+
+**Pi Durable**, from Codex's reply that Austin pasted: the lessons port is already on `main` (AB-317 to AB-320: recovery across retries, task ownership of children and cleanup, persisted work driving wake and delivery recovery, bounded model context; PRs a-barwick/nori#161, #162, #163; diff `5f2d841...2dd6126`). The follow-on review of tools, MCP, OAuth, plugins and nested calls is the plan's "What Pi implements" section. Backend's gap list therefore starts from that port and covers only what the external-tool path of the slice still lacks.
+
+### First real sign-in (2026-11-10)
+
+Austin signed in to Google on the real stack with a test Gmail account of his (his words: "Done. added my test one"; address left out under working rule 8). Seen in `~/.nori-stacks/real/web.log`: connection `conn_376569c546155488accd` returned `result=connected`. Scopes Google granted, all read-only: `calendar.readonly`, `gmail.readonly`, `drive.readonly`, `contacts.readonly`, `contacts.other.readonly`, plus `openid` and `userinfo.email`.
+
+What this allows now: slice step 2 (week from the real calendar) and the read half of step 5 (find one message). What it does not allow: step 3 (create and move an event) and the send in step 5, which need write scopes and a further grant from Austin. Evidence from this account is graded "real provider, Austin's test account"; it is not his personal account, and the record says which.
+
+### Write access granted on the test account (2026-11-10)
+
+Austin, about the read-only connect and the four separate Allow buttons: "This is annoying. Just fucking set this up." The coordinator started one combined access request on `conn_376569c546155488accd` (calendar.write, mail.draft, mail.send); Austin clicked Google's consent himself ("Done, allowed"). The Apps screen now shows the account Ready with those three granted; mail.organize and files.write were not requested.
+
+Coordinator's allocation following that: integration runs slice steps 3 and 5 on the test account and may click the in-app approvals itself for those two writes only. Frontend makes write access a one-step choice at connect and a single Allow on a connected account.
 
 ## Baseline commits
 

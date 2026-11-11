@@ -60,13 +60,15 @@ export function Rows({ children, label }: { children: ReactNode; label?: string 
   return <ul aria-label={label} className="divide-y divide-hairline overflow-hidden rounded-card border border-hairline bg-surface">{children}</ul>;
 }
 
-export function Row({ href, onClick, leading, title, detail, trailing, chevron = !!href, className }: {
+export function Row({ href, onClick, leading, title, detail, trailing, chevron = !!href, className, wrapTitle }: {
   href?: string; onClick?: () => void; leading?: ReactNode; title: ReactNode; detail?: ReactNode; trailing?: ReactNode; chevron?: boolean; className?: string;
+  /** Let a short, meaningful title (a capability name) wrap instead of being cut off on a phone. */
+  wrapTitle?: boolean;
 }) {
   const body = <>
     {leading && <span className="shrink-0">{leading}</span>}
     <span className="min-w-0 flex-1">
-      <span className="block truncate text-row font-medium text-ink">{title}</span>
+      <span className={cn("block text-row font-medium text-ink", wrapTitle ? "[overflow-wrap:anywhere]" : "truncate")}>{title}</span>
       {detail && <span className="mt-0.5 block text-meta text-ink-2 [overflow-wrap:anywhere]">{detail}</span>}
     </span>
     {trailing && <span className="flex shrink-0 items-center gap-2">{trailing}</span>}
