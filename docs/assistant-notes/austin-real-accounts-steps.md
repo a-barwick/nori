@@ -1,4 +1,4 @@
-# What this Mac needs from Austin before a real Google run
+# What this Mac needs from Austin before a real Google run (calendar and Gmail)
 
 Rewritten 2026-11-10 by integration for the new machine. It covers Google only. Microsoft and iCloud come later (see the end).
 
@@ -52,6 +52,14 @@ At calendar.google.com → Other calendars **+** → Create new calendar, named 
 
 ## Step 4. Sign in (about 2 minutes, after integration confirms step 2)
 
+Done on the evening of 2026-11-10 with a test Gmail account (read-only scopes). Reads of the calendar and Gmail ran; see `docs/assistant-acceptance.md`, "Real provider runs". Still to do: a "Nori test" calendar on that account (it has none), the write grants below, and the same sign-in on your personal Gmail.
+
+What one sign-in grants, as the app and `core/internal/connectors/google/google.go` stand at `1456cc9` (backend to confirm):
+
+- **Connect asks Google only for the read items**: calendar (`calendar.readonly`), Gmail search and read (`gmail.readonly`), contacts and Drive read. One sign-in therefore covers reading both your calendar and your Gmail (slice steps 2 and 5's search).
+- **Writes ask again.** Creating or moving an event (`calendar.events`) and sending email (`gmail.compose` + `gmail.send`) each raise a further Google sign-in, the first time Nori needs them, before the approval you click. Expect up to two more Google consent screens during the run: one for the Nori test calendar event, one for the note to yourself.
+- Gmail scopes are restricted, so step 2.5 (Testing, with you as a test user) matters for both.
+
 1. Open http://127.0.0.1:3213/apps → Google → Connect.
 2. Choose your Google address and approve the access shown.
    - "Google hasn't verified this app": choose Continue. It is your own app in testing.
@@ -61,7 +69,7 @@ You sign in to Nori's web on this Mac as a local test user (`real-a@nori.local`)
 
 ## Also open with you (not steps; listed so nothing waits silently)
 
-- **Which mailbox counts for email.** Your backlog asked about HEY. Backend is checking what can be learned about HEY on this machine without signing in. Nothing about HEY has been checked against your account.
+- **Mailbox: decided.** You chose your personal Gmail account, through the same Google sign-in (recorded on the coordinator branch at `c15cd04`). HEY is out of the first slice.
 - **The first slice.** The real run tests only the slice taken from your backlog once it is recorded in `docs/assistant-coordination.md`. Nothing writes to your account before that run is agreed with you.
 - **D1 to D4 and r2.11** are open with you; see the coordination record. Interim mechanisms are in use and are not your decisions.
 

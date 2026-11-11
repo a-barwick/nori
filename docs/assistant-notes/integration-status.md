@@ -23,7 +23,47 @@ Driven in the real app as a person would, in the existing chat. Nothing was sign
 | 1. Connect Google | not attempted (Austin's sign-in) | n/a | Apps lists Google under **Needs attention** as **Connecting**. That is the probe connection left by Codex's authorize-URL check (and my earlier `conn_376569c546155488accd`). It has no grant. |
 | 2. "What does my week look like" | "What does my week look like?" | `209d093d-dbf6-5f0e-8ccc-a51235023056`, incomplete 19:47:36 | **Stops before any calendar read.** Reply: it could not review November 9–15 "because Google Calendar is still connecting", Outlook and iCloud are not connected, and "new calendar connections aren't available here right now", with an offer to summarise an uploaded .ics. **No sign-in card was raised.** Work lists it as Failed. |
 | 3. Create, then move, an event on Nori test | "Create an event called Nori rehearsal tomorrow at 3pm for 30 minutes on my Nori test calendar." | `51b3dfbc-a2f6-5add-975c-8480b9f4ed29`, incomplete 19:48:18 | **Stops before the approval.** Reply: "The event was not created because Google Calendar is still connecting". It restated the request correctly (Wed 11 Nov, 3:00–3:30 p.m., Nori test) and pointed to Apps. No approval card and no sign-in card. The move and the removal were not reachable. |
-| 4. "Remind me before I leave", delivered with the app closed | "Remind me in 3 minutes to leave for my appointment." | `e891e310-9dcb-5bb6-9e6c-732eac743660`, completed 19:49:21 | STEP4_RESULT |
+| 4. "Remind me before I leave", delivered with the app closed | "Remind me in 3 minutes to leave for my appointment." | `e891e310-9dcb-5bb6-9e6c-732eac743660`, completed 19:49:21 | **Asked for an absolute time** ("the reminder task couldn't determine the current time"); I answered "7:54 PM Pacific today". The automation "Leave for your appointment" (once, 19:54) fired as task `f5690ffd-43a5-5658-8b95-f1f9c3eb8495`, completed at 19:54:03. "⏰ Time to leave for your appointment!" appeared in the chat and the Nori inbox. **Stops at in-app delivery.** No push destination exists ("Notify this device" is off), so "delivered with the app closed" is not exercised. |
+
+### Step 5 rehearsal (before the sign-in; Austin chose Gmail, `c15cd04`)
+
+| Step | What I asked | Task, time | Where it stops |
+| --- | --- | --- | --- |
+| 5, find | "Find the most recent reservation email in my Gmail." | `fed43de1-cd70-5c27-b0b6-ae60391126ab`, incomplete 19:51:07 | "Couldn't search your Gmail because its connection is still in progress". No sign-in offered (R-1). |
+| 5, send to self | "Email me a one-line note from my Gmail saying the Nori rehearsal reached the send step." (no address given) | `5e0c9ff8-bb9c-5592-91b9-4453856fcdb9`, incomplete 19:51:37 | "The note was not sent because Gmail is still connecting". No approval card reached. |
+
+### After Austin's sign-in (test Gmail account, read-only scopes): reads run
+
+Recorded in full in `docs/assistant-acceptance.md` under "Real provider runs".
+- Step 2: `b4a79d12-17f5-5716-ad0b-8b4fad2786e2` **passed**. It read the real calendar list and events with sources; the week is empty and there is one calendar. `drive_search` **failed** because the Drive API is disabled in the Google Cloud project that owns the client.
+- Step 5's read: `f38b0eb2-33b1-5559-ac01-0b4a4d19be8d` **passed** (`mail_search`, `mail_read`).
+- Calendar list: `43c0e7a3-8e28-5f8e-a396-33790d15b08a`. Only the primary calendar exists; **no "Nori test" calendar**.
+
+No write was asked for. Provider verified stays 0: this is a test account, and the slice names his personal Gmail.
+
+### What the write steps need
+
+From `core/internal/connectors/google/google.go` and `core/internal/connections/service.go` at `1456cc9`, and the Apps page:
+
+| Write | Capability | Google scopes | Requested by Connect? |
+| --- | --- | --- | --- |
+| Step 3: create, move, then delete an event on Nori test | `calendar.write` | `calendar.readonly` + `calendar.events` | **No.** Connect requests only the capabilities whose effect is `read` (`scopesFor` with no capabilities given). The Apps page says so: "Connect asks Google only for the Read items." |
+| Step 5: send one note to his own address | `mail.send` | `gmail.compose` + `gmail.send` | **No**, same reason. (`mail.draft` is `gmail.compose` alone, if a draft comes first.) |
+
+**How they get granted.** There are two routes; both are a further Google consent by Austin, which nobody else can do:
+1. **Ahead of time:** in Apps → Google → the account, press **Allow** next to "Create and change events, invitations and replies" and next to "Send email". Each starts a sign-in for that capability. The authorize URL carries `include_granted_scopes=true`, so the read scopes are kept.
+2. **When the task needs it:** a write tool on a connection lacking the capability gets `ErrInsufficientScope`. The task then raises a sign-in interaction for exactly that capability (`LackingCapability` → `signIn` in `core/internal/task/external.go`) and resumes when it completes. This path is exercised only on hand-written recordings (A03); it has not run against Google.
+
+The write itself then still needs the approval Austin clicks (calendar writes are `reversible_write`, send is `sensitive_send`).
+
+**What Austin must do before steps 3 and 5's send:**
+- Create a **"Nori test"** calendar on the account used for the run. The test account has none.
+- Grant `calendar.write` and `mail.send` by one of the routes above. With the app in Testing, the account must be a test user. Gmail send is a restricted scope, so Google shows the unverified-app screen again.
+- For provider verified, do the same on his **personal** Gmail account (his choice for the slice). The test account's runs do not count for that.
+- Optional: enable the **Google Drive API** in the project that owns the client, so "my week" stops reporting a Drive failure. Drive is not in the slice.
+- For step 4 with the app closed: allow notifications ("Notify this device") on the device he wants reminders on.
+
+Integration will not grant any of this itself: each item is a sign-in or a change in his Google account.
 
 ### Findings from the rehearsal (for backend and frontend; not fixed here)
 
@@ -119,6 +159,7 @@ Driven in the real app as a person would, in the existing chat. Nothing was sign
 
 - R-1: a calendar task facing a `connecting` (never completed) Google connection should raise the sign-in interaction rather than give up, and should not say new connections are unavailable.
 - R-2: relative reminders should resolve the current time themselves.
+- Confirm the write-scope table above (Connect asks for read only; writes come from Allow in Apps or the task's sign-in interaction), and whether the in-task route is expected to work against real Google as built.
 - Optional: a way to remove a never-connected connection (disconnect answers "does not apply", `DELETE` is 405).
 
 ## Needs from frontend
@@ -131,9 +172,8 @@ Driven in the real app as a person would, in the existing chat. Nothing was sign
 
 ## Needs from Austin
 
-- Step 1 of the slice: his Google sign-in at http://127.0.0.1:3213/apps → Google (it currently reads "Connecting"; opening it should start a fresh sign-in). Check first that the app is in Testing with his address as a test user, and that a "Nori test" calendar exists (`austin-real-accounts-steps.md`, steps 2.5 and 3).
-- For step 4: allow notifications ("Notify this device") on the device he wants reminders on, during the run.
-- Open with him: D1 to D4, r2.11, and which mailbox counts for email (HEY).
+- See "What the write steps need" above: a "Nori test" calendar; Allow for calendar writes and send; the same sign-in on his personal Gmail for provider verified; notifications on his device for step 4.
+- Open with him: D1 to D4 and r2.11.
 
 ## Restart the stacks
 
