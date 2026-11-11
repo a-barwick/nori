@@ -62,12 +62,58 @@ async function relay(request: Request, { base, userID, mode }: ScopedRuntime, pa
   }
 }
 
+// The hosted runtime allows few queries per minute, and every open tab polls the same small lists. Answers to those
+// reads are shared per user for a few seconds, so a second tab or device costs no extra runtime queries. Any change
+// the user makes through this tier drops their shared answers, so their own actions show at once.
+const SHARED_READS = new Set(["v1/capabilities", "v1/assistant/summary", "v1/interactions?status=pending", "v1/work", "v1/integrations", "v1/connections"]);
+const SHARED_TTL_MS = 8_000;
+const sharedReads = new Map<string, { expires: number; text: Promise<string | null> }>();
+const SHARED_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-cache, no-transform", "X-Content-Type-Options": "nosniff" };
+
+function forgetSharedReads(userID: string) {
+  for (const key of sharedReads.keys()) if (key.startsWith(userID + "\n")) sharedReads.delete(key);
+}
+
+async function sharedRead(request: Request, user: ScopedRuntime, path: string, allowed: RelayPolicy["allowed"]) {
+  const key = user.userID + "\n" + path;
+  const hit = sharedReads.get(key);
+  if (hit && hit.expires > Date.now()) {
+    const text = await hit.text;
+    if (text !== null) return new Response(text, { status: 200, headers: SHARED_HEADERS });
+  }
+  let settle: (value: string | null) => void = () => undefined;
+  const text = new Promise<string | null>((resolve) => { settle = resolve; });
+  if (sharedReads.size >= 2000) sharedReads.clear();
+  const entry = { expires: Date.now() + SHARED_TTL_MS, text };
+  sharedReads.set(key, entry);
+  const drop = () => { if (sharedReads.get(key) === entry) sharedReads.delete(key); };
+  try {
+    const response = await relay(request, user, path, {}, { timeout: READ_TIMEOUT_MS, allowed });
+    if (response.status !== 200 || !json(response.headers.get("content-type") ?? "")) {
+      drop();
+      settle(null);
+      return response;
+    }
+    const value = await response.text();
+    settle(value);
+    return new Response(value, { status: 200, headers: SHARED_HEADERS });
+  } catch (error) {
+    drop();
+    settle(null);
+    throw error;
+  }
+}
+
 async function forward(request: Request, mode: Mode, path: string, init: RequestInit, allowed: RelayPolicy["allowed"]) {
   const target = runtimeTarget(mode);
   if (target instanceof Response) return target;
   const user = await resolveUser(request.headers, target);
   if ("status" in user) return accessFailureResponse(user);
-  return relay(request, user, path, init, { timeout: READ_TIMEOUT_MS, allowed });
+  const read = !init.method || init.method === "GET";
+  if (read && mode === "hosted" && SHARED_READS.has(path)) return sharedRead(request, user, path, allowed);
+  const response = await relay(request, user, path, init, { timeout: READ_TIMEOUT_MS, allowed });
+  if (!read) forgetSharedReads(user.userID);
+  return response;
 }
 
 function allowedCaller(request: Request, mode: Mode, sameSite: (request: Request) => boolean) {
@@ -89,13 +135,15 @@ export async function operationRoute(request: Request, mode: Mode, operation: st
   } catch {
     return Response.json({ error: local ? "Send a JSON object." : "Request body must be JSON." }, { status: 400 });
   }
-  return relay(request, user, `api/${operation}`, {
+  const response = await relay(request, user, `api/${operation}`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body,
   }, {
     timeout: local ? 100_000 : 145_000,
     allowed: (type) => local || json(type) || type.startsWith("image/png"),
     operation,
   });
+  forgetSharedReads(user.userID);
+  return response;
 }
 
 function historyQuery(request: Request, afterAllowed: boolean, beforeAllowed: boolean) {
