@@ -258,6 +258,11 @@ resource "google_cloud_run_v2_service" "worker" {
         for_each = merge(
           var.request_worker_targets[each.key].capabilities ? (var.request_worker_targets[each.key].per_user_settings ? local.capability_secrets : local.retained_capability_secrets) : {},
           var.request_worker_targets[each.key].brave_search ? { BRAVE_SEARCH_API_KEY = local.capability_secrets.BRAVE_SEARCH_API_KEY } : {},
+          # Token refresh for connected accounts needs the OAuth client, independently of the Brave key.
+          var.request_worker_targets[each.key].connected_accounts ? {
+            GOOGLE_CALENDAR_CLIENT_ID     = local.capability_secrets.GOOGLE_CALENDAR_CLIENT_ID
+            GOOGLE_CALENDAR_CLIENT_SECRET = local.capability_secrets.GOOGLE_CALENDAR_CLIENT_SECRET
+          } : {},
         )
         content {
           name = env.key
