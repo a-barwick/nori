@@ -6,6 +6,45 @@ Evidence label (rule 2): **provider verified: 0.** No real provider account was 
 
 ## Production wiring for the slice (PR a-barwick/nori#165, "get it ready"; nothing applied)
 
+### Read-only production plan of the application state (2026-11-11)
+
+Run from a scratch copy of `core/infrastructure/app/terraform`:
+- GCS backend `bot-111549-nori-ci-state`, prefix `nori/poc`, the production state with 56 resources.
+- `terraform plan -lock=false`: no lock taken, no state written, no apply.
+- Variables taken from the production state's own attribute values (images, computer release, runtime URL, worker routes, outer model, observability), so the plan shows only real differences. Nothing was printed or stored outside the session scratchpad.
+
+**First plan, as pushed in `d26bbf5`: 12 to add, 2 to change, 0 to destroy, but not safe to apply.**
+- The runtime update would have reverted environment that releases set on the live runtime outside Terraform (`ops.deploy_runtime`). That means removing `COMPUTER_INSTANCE`, `COMPUTER_ZONE`, `NORI_AGENT_BASE_URL`, `NORI_APP_URL` and `NORI_TIMEZONE`, shrinking `NORI_WORKER_SERVICES` from the live 35 builds to the 5 the state remembers, and dropping the secret environment `GOOGLE_CALENDAR_ACCOUNT`, `GOOGLE_CALENDAR_REFRESH_TOKEN` and `GOOGLE_ROUTES_API_KEY`.
+- None of that comes from this branch; it is drift that any apply of this state would have hit.
+
+**Fixed in the next commit:**
+- The runtime's `deployment_spec` is now release-owned after creation (`ignore_changes`).
+- The connected-account settings are state outputs (`connected_accounts_env`, `connected_accounts_secret_env`), which `ops.deploy_runtime` merges into the live environment at each release, keeping everything already there.
+
+**Plan after the fix: 12 to add, 1 to change, 0 to destroy, 0 to replace.**
+- **Added:**
+  - `google_project_service.kms` (`cloudkms.googleapis.com`)
+  - `google_kms_key_ring.credentials` (`nori-credentials`)
+  - `google_kms_crypto_key.connected_accounts`
+  - `google_kms_crypto_key_iam_member.runtime_credentials` (encrypt/decrypt for `nori-poc-runtime@`)
+  - `google_secret_manager_secret_iam_member.google_client_platform` ×2 (Agent Platform agent reads the client ID and secret)
+  - `google_secret_manager_secret.vapid` ×2 (empty containers)
+  - `google_secret_manager_secret_iam_member.vapid_runtime` ×2 and `vapid_platform` ×2
+- **Changed in place:** `google_compute_instance.computer` metadata only, and not from this branch. In production, the `SENTRY_RELEASE` inside `computer-telemetry` differs from `computer-release-sha256`, and the config derives both from the same variable. Any apply aligns them. A metadata update does not restart the VM.
+- **The runtime is not changed by the apply.** The connected-account settings reach it at the next release (`make deploy`). The live runtime already carries `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` as secret environment.
+- **New outputs:** `credential_kms_key`, `oauth_redirect_url`, `connected_accounts_env`, `connected_accounts_secret_env`.
+
+**Apply order, at Austin's go:**
+1. Apply the application state (the 12 additions and the metadata alignment).
+2. Run `make deploy`, which patches the runtime with the connected-account settings and creates the new worker build with `connected_accounts`.
+
+### Release commands use production's Temporal
+
+- **Before:** `ops.temporal_env()` let a developer's shell or `.env` win over the hosted Temporal address and namespace, so `make deploy-check` only worked with them set by hand, and a release could have been pointed at local Compose.
+- **Now:** release commands always use `quickstart-nori.qtjow.tmprl.cloud:7233` / `quickstart-nori.qtjow` (also used for the runtime environment), and `TEMPORAL_LOCAL` is dropped. Only `NORI_RELEASE_TEMPORAL_ADDRESS` and `NORI_RELEASE_TEMPORAL_NAMESPACE` override them for a release.
+- **Checked** with a local address in both the shell and the env file: the result was the hosted values, and the release override applied when set.
+
+
 **Wiring pushed, with credential-store tests: integration can run `make deploy-check`.** The branch head carries the Terraform wiring (`d26bbf5`, `059b0ca`) and the rowstore tests below.
 
 ### Credential store tests (`go test ./internal/secret/rowstore`)
