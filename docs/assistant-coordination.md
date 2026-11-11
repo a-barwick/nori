@@ -134,6 +134,18 @@ Note on keys: the working rule that sessions do not fetch keys still holds for t
 
 **Pi Durable**, from Codex's reply that Austin pasted: the lessons port is already on `main` (AB-317 to AB-320: recovery across retries, task ownership of children and cleanup, persisted work driving wake and delivery recovery, bounded model context; PRs a-barwick/nori#161, #162, #163; diff `5f2d841...2dd6126`). The follow-on review of tools, MCP, OAuth, plugins and nested calls is the plan's "What Pi implements" section. Backend's gap list therefore starts from that port and covers only what the external-tool path of the slice still lacks.
 
+### First real sign-in (2026-11-10)
+
+Austin signed in to Google on the real stack with a test Gmail account of his (his words: "Done. added my test one"; address left out under working rule 8). Seen in `~/.nori-stacks/real/web.log`: connection `conn_376569c546155488accd` returned `result=connected`. Scopes Google granted, all read-only: `calendar.readonly`, `gmail.readonly`, `drive.readonly`, `contacts.readonly`, `contacts.other.readonly`, plus `openid` and `userinfo.email`.
+
+What this allows now: slice step 2 (week from the real calendar) and the read half of step 5 (find one message). What it does not allow: step 3 (create and move an event) and the send in step 5, which need write scopes and a further grant from Austin. Evidence from this account is graded "real provider, Austin's test account"; it is not his personal account, and the record says which.
+
+### Write access granted on the test account (2026-11-10)
+
+Austin, about the read-only connect and the four separate Allow buttons: "This is annoying. Just fucking set this up." The coordinator started one combined access request on `conn_376569c546155488accd` (calendar.write, mail.draft, mail.send); Austin clicked Google's consent himself ("Done, allowed"). The Apps screen now shows the account Ready with those three granted; mail.organize and files.write were not requested.
+
+Coordinator's allocation following that: integration runs slice steps 3 and 5 on the test account and may click the in-app approvals itself for those two writes only. Frontend makes write access a one-step choice at connect and a single Allow on a connected account.
+
 ## Baseline commits
 
 | What | Commit |
