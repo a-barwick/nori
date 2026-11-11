@@ -1,8 +1,34 @@
 # Integration status
 
-Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, seventh turn of the restart (full slice pass on `cfc0d6f`). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
+Branch `claude/nori-assistant-integration-bd1278`, source of draft PR a-barwick/nori#165. Updated 2026-11-10, eighth turn of the restart (3a and 5 on `cf76ae6`). Assignments are in the coordination record on `claude/nori-assistant-integration-25ae45`. The first run's version of this note is in git history.
 
 **Provider verified: 0 of 44.**
+
+## Re-run of 3a and 5 on `real-cf76ae6`, test account (2026-11-10, 21:41 to 21:56 PST)
+
+Build: merge head `cf76ae6` (backend `c658376`/`257f316`: a repeat sign-in merges into the existing connection, and disconnect never revokes a shared grant; frontend `e3644ba`: no reload loop when the service goes away). Models are on; one worker per build; `NORI_USER_SENDS=ask`. The three existing connections for the test account were **not** collapsed: backend's fix stops new duplicates, and per the coordinator nobody here disconnects them. All writes below used `conn_295df0b9ca785025bbd0`.
+
+| Step | Task (finished) | Result |
+| --- | --- | --- |
+| 3a. Create "Nori test" calendar | `b9006062` (21:46:25) | **PASS**: `calendar_create`, then a calendar-list read-back, with no sign-in card (the newer connection holds `calendar.create`). It first refused to start, pointing to the old waiting task `f793fa0e`. That task was pinned to `real-cfc0d6f`, whose worker had been stopped. "Not now" and then "Stop task" left it in **Stopping** for good, because no worker serves its build. It took an explicit "start a new task" to proceed. |
+| 3. Event on "Nori test": create | `43149b9b` (21:48:22) | **PASS** after two FAILs: the account question, then "I passed along November 12 … which date?" (the date defect persists) |
+| 3. Move | `3f869c44` (21:50:00) | **PASS**, with an `event_get` read-back. Nori's reply said it could not verify the new time from "shortened details", although its own read-back ran. |
+| 3. Delete the event | `e91cce56` (21:51:08) | **PASS** |
+| 3. Delete the "Nori test" calendar | `ee2e66e7` (21:51:56, incomplete) | **FAIL: no tool to delete calendars.** The empty "Nori test" calendar remains on the test account; Google Calendar → Settings → Nori test → Remove calendar. |
+| 5a. Find a message | `06451b1a` (21:53:06) | **PASS** after the account question |
+| 5b. Send to own address | `5d25bbe6` (waiting) | **PASS up to the card**: straight to "Send this?" with From and To (the account only), the full text and "cannot be recalled", with no account question this time. **Left pending, not approved** (see below). |
+| 5c. Send to another address | `16eb5617` (21:55:03, incomplete) | **PASS** for the limit: no send operation and nothing sent. **FAIL**: the account question again, and an unsent draft left behind. |
+
+Still failing on this build:
+- **Account question on most Google tasks**, from the three connections. The chooser shows two identical "Google" entries, and "Use this account next time" did not stick: it was ticked at 21:50 and asked again at 21:51.
+- **The date defect**: "tomorrow" passed on as November 12.
+- **Drafts left behind** after a refused send.
+- **No calendar delete.**
+- **Tasks pinned to a stopped build cannot be stopped.** `f793fa0e` stays in Stopping. Before any restart, finish or stop tasks; or keep the old build's worker until they drain.
+- **Web 3213 reload loop came back** after this restart, even with `e3644ba`: about 900 loads of `/` and of `/apps/google?connection=conn_295df…&result=connected` in three minutes. The second is the sign-in callback page, probably open in the browser Austin signed in with. A web-only restart cleared it again. For frontend: the loop also happens when a tab sits on the callback page while the dev server restarts.
+
+**On approving the own-address send:** the coordinator relayed Austin's standing words ("Just do this shit", "use whatever you need") and said integration may approve own-address sends on the test account. Integration takes send approvals only from Austin directly, in its own session, one send at a time, because a relayed approval is not his. He approved two sends there earlier tonight (both done). This card is left pending (it expires in 24 hours) for Austin to approve or decline himself, or to tell integration directly.
+
 
 ## Full slice pass on `real-cfc0d6f`, test account (2026-11-10, 21:27 to 21:38 PST)
 
