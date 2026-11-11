@@ -43,6 +43,10 @@ Austin said "Yes, get it ready" (coordinator record `293399c`); the deploy waits
     - The green run set `TEMPORAL_ADDRESS`/`TEMPORAL_NAMESPACE` to `ops.py`'s production values in the process environment. `.env` was not edited.
     - For backend: the release scripts should not read Temporal's address from a development `.env`.
   - The application state (KMS, IAM, runtime environment) is not part of `deploy-check` and has not been planned against production.
+- **Backend `6dbd974` merged** (fast-forward, then coordinator notes; head `5d62162`). `make check`, `go test ./...` and `bun run build` are green.
+  - **`make deploy-check` green at 06:30 with only `NORI_ENV_FILE` set**: no `TEMPORAL_*` override needed (backend's `ops.temporal_env` fix). Same plan shape: 2 creates for `rel-5d621622b7b3`, and 35 worker updates that only add its URL.
+  - Backend's read-only production application plan: 12 to add, 1 in-place (computer VM metadata drift), 0 to destroy. An earlier version would have reverted the live runtime's environment; it is fixed by making `deployment_spec` release-owned.
+  - The PR description is updated with both. Apply order at Austin's go: application state, then `make deploy`.
 - **PR #165 marked ready for review** (`gh pr ready`). The description carries the output above, the production changes and Austin's steps. Deploying waits for his explicit go.
 - **`make deploy-check`** waits for backend's production wiring (not on `origin/claude/nori-assistant-backend-9c520e` at 06:10). It is read-only by its code: `terraform init` with a local backend override, `terraform plan` into a temporary file, open-work and health reads, then "Nothing was changed".
 - **PR #165**: the description is rewritten. It stays a **draft** until the production wiring is merged and `deploy-check` is recorded.
