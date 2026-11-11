@@ -89,7 +89,7 @@ var specs = []spec{
 		"Read a message's full text, or every message of a thread, with sender, recipients and attachments.",
 		`{"type": "object", "properties": {` + account + `, "message_id": {"type": "string"}, "thread_id": {"type": "string"}}, "additionalProperties": false}`},
 	{"mail_draft_create", "Draft an email", "mail", "mail.draft", "google.mail/drafts.create", "reversible_write", "reconcile_only",
-		"Create a draft in the connected account. A draft is not sent. For a reply, give reply_to_message_id and mode reply or reply_all.",
+		"Create a draft in the connected account. A draft is not sent. For a reply, give reply_to_message_id and mode reply or reply_all. When the user means themselves (\"email me\", \"my own address\"), the address is the connected Gmail account's own address shown in the capability catalog, never their Nori sign-in.",
 		`{"type": "object", "properties": {` + account + `,
 			"to": {"type": "array", "items": {"type": "string"}, "maxItems": 100}, "cc": {"type": "array", "items": {"type": "string"}, "maxItems": 100},
 			"bcc": {"type": "array", "items": {"type": "string"}, "maxItems": 100}, "subject": {"type": "string", "maxLength": 998},

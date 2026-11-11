@@ -132,6 +132,9 @@ type Service struct {
 	// UnattendedWrites instead, and unknown-effect tools always ask.
 	UserSends string
 	Now       func() time.Time
+	// OnDecline runs before a declined approval is recorded, to undo what Nori set up for the action (an unsent draft
+	// it wrote). What it returns is added to what the task is told.
+	OnDecline func(ctx context.Context, i Interaction) string
 }
 
 func (s *Service) now() time.Time {

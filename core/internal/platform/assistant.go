@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -152,6 +153,32 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		conn.Transport = transport
 	}
 	perms := &permissions.Service{Store: store, UnattendedWrites: s.Connections.UnattendedWrites, UserSends: s.Connections.UserSends}
+	perms.OnDecline = func(ctx context.Context, i permissions.Interaction) string {
+		// A declined send leaves no unsent draft Nori wrote for it; drafts the user wrote are kept.
+		var payload struct {
+			Resources []struct {
+				ConnectionID string `json:"connection_id"`
+				Kind         string `json:"kind"`
+				ProviderID   string `json:"provider_id"`
+			} `json:"resources"`
+		}
+		if json.Unmarshal(i.Payload, &payload) != nil {
+			return ""
+		}
+		for _, r := range payload.Resources {
+			if r.Kind != "mail_draft" || r.ConnectionID == "" {
+				continue
+			}
+			grant, err := conn.Grant(ctx, r.ConnectionID)
+			if err != nil || grant.Connection.IntegrationID != google.IntegrationID {
+				continue
+			}
+			if removed, err := google.DiscardNoriDraft(ctx, grant.Client, r.ProviderID); err == nil && removed {
+				return " Nori deleted the unsent draft it had created for this message."
+			}
+		}
+		return ""
+	}
 	channels := map[string]scheduler.Channel{}
 	c := s.Connections
 	var testRoots *x509.CertPool

@@ -98,8 +98,10 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 	}
 	// The current time goes last, after the saved history, so the cached prompt prefix still changes at most daily
 	// (the catalog line carries only the date). It is not saved in the task history.
+	now := time.Now().In(location)
 	clock := transcript.Message{Role: transcript.RoleUser, Parts: []transcript.Part{{Text: prompts.Runtime("task-clock", map[string]any{
-		"Now": time.Now().In(location).Format("Monday, 2 January 2006 15:04 MST") + " (" + location.String() + ")"})}}}
+		"Now":   now.Format("Monday, 2 January 2006 15:04 MST") + " (" + location.String() + ")",
+		"Today": now.Format("Monday, 2 January 2006"), "Tomorrow": now.AddDate(0, 0, 1).Format("Monday, 2 January 2006")})}}}
 	resp, err = s.Model.Respond(ctx, Request{
 		Instructions:    prompts.TaskWorker + "\nUser details (data): " + facts + "\n" + s.catalogInstruction(catalog, location),
 		Messages:        append(messages[:len(messages):len(messages)], clock),

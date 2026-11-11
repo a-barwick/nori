@@ -805,6 +805,120 @@ func (s *Service) sameAccount(ctx context.Context, integrationID, providerID, ex
 	return Record{}, false
 }
 
+// CollapseDuplicates repairs connections left by sign-ins made before they were merged: several live connections
+// of one integration signed in to the same provider account. Each group becomes the connection with the widest
+// grant (most capabilities, then the most recently written), holding the union of the group's granted scopes:
+// Google's grants are cumulative per account and client, and Nori asks with include_granted_scopes, so the kept
+// token covers them. The others are deleted with their stored credentials and cached data, without a provider
+// revoke, which would also cut off the kept connection. Account defaults that named a removed connection name the
+// kept one. It is idempotent and returns the removed IDs by kept ID.
+func (s *Service) CollapseDuplicates(ctx context.Context) (map[string][]string, error) {
+	records, resources, err := s.Records(ctx)
+	if err != nil {
+		return nil, err
+	}
+	groups := map[string][]int{}
+	var order []string
+	for i, record := range records {
+		if record.Account.ProviderID == "" || record.Status == StatusDisconnected || record.Status == StatusDisconnecting {
+			continue
+		}
+		key := record.IntegrationID + "\x00" + record.Account.ProviderID
+		if _, seen := groups[key]; !seen {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], i)
+	}
+	removed := map[string][]string{}
+	for _, key := range order {
+		members := groups[key]
+		if len(members) < 2 {
+			continue
+		}
+		keep := members[0]
+		for _, i := range members[1:] {
+			a, b := records[i], records[keep]
+			if len(a.Capabilities) > len(b.Capabilities) || len(a.Capabilities) == len(b.Capabilities) && resources[i].UpdatedAt.After(resources[keep].UpdatedAt) {
+				keep = i
+			}
+		}
+		kept := records[keep]
+		integration := s.Integrations[kept.IntegrationID]
+		if integration == nil {
+			continue
+		}
+		var drop []string
+		var deletes []state.ResourceKey
+		for _, i := range members {
+			if i != keep {
+				drop = append(drop, records[i].ID)
+				deletes = append(deletes, state.ResourceKey{Collection: CollectionConnections, ID: records[i].ID})
+			}
+		}
+		prefs, prefsResource, err := s.Preferences(ctx)
+		if err != nil {
+			return removed, err
+		}
+		_, err = s.Store.Mutate(ctx, state.Mutation{
+			RequestID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("collapse:"+kept.ID+":"+strings.Join(drop, ","))).String(),
+			Method:    "REPAIR", Target: kept.ID, Payload: drop, Collection: CollectionConnections, ID: kept.ID, SkipRevisionCheck: true,
+			Apply: func(cur *state.Resource, read func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
+				if cur == nil {
+					return state.MutationResult{}, state.ErrNotFound
+				}
+				var record Record
+				if err := cur.Decode(&record); err != nil {
+					return state.MutationResult{}, err
+				}
+				for _, i := range members {
+					for _, scope := range records[i].GrantedScopes {
+						if !slices.Contains(record.GrantedScopes, scope) {
+							record.GrantedScopes = append(record.GrantedScopes, scope)
+						}
+					}
+					for _, scope := range records[i].DesiredScopes {
+						if !slices.Contains(record.DesiredScopes, scope) {
+							record.DesiredScopes = append(record.DesiredScopes, scope)
+						}
+					}
+				}
+				record.Capabilities = s.grantedCapabilities(integration, record.GrantedScopes)
+				record.AuthorizationEpoch++
+				var extra []state.Resource
+				changed := false
+				for purpose, id := range prefs.AccountDefaults {
+					if slices.Contains(drop, id) {
+						prefs.AccountDefaults[purpose], changed = record.ID, true
+					}
+				}
+				if changed && prefsResource.Revision > 0 {
+					next, err := state.NewResource(CollectionPreferences, PreferencesID, prefsResource.Revision+1, prefs, nil, s.now())
+					if err != nil {
+						return state.MutationResult{}, err
+					}
+					extra = append(extra, next)
+				}
+				result, err := s.write(record, cur.Revision+1, "applied", prefs, extra...)
+				result.Deletes = append(result.Deletes, deletes...)
+				return result, err
+			},
+		})
+		if err != nil {
+			return removed, err
+		}
+		for _, id := range drop {
+			if err := s.Credentials.Delete(ctx, id); err != nil && !errors.Is(err, secret.ErrCredentialUnavailable) {
+				log.Printf("connection %s: duplicate's credential could not be deleted: %v", id, err)
+			}
+			for _, cleanup := range s.Cleanup {
+				_ = cleanup(ctx, id, true, false)
+			}
+		}
+		removed[kept.ID] = drop
+	}
+	return removed, nil
+}
+
 // mergeSignIn completes a sign-in that reached an account the user already has connected. The existing connection
 // gets the newest token (keeping its refresh token if Google sent none) and the union of both grants; the new,
 // never-signed-in connection is deleted. The callback returns to the existing connection as connected.

@@ -4,6 +4,71 @@ Branch `claude/nori-assistant-backend-9c520e`, worked from worktree `.claude/wor
 
 Evidence label (rule 2): **provider verified: 0.** No real provider account was used. The D-053 and D-054 re-tests in the third assignment ran against the real models (OpenAI and OpenRouter, keys from `.env`); everything else is locally verified against a loopback model stub, Google answering from hand-written recordings, the local database and the local Temporal dev server.
 
+## Own address, leftover drafts, "tomorrow" (from integration's pass at `b33b356`)
+
+Commit `3acb70c`. **Integration:** restart the real stack's core **and** worker on this branch's head. The worker carries the Gmail checks and the task clock; the core carries the decline clean-up, the user facts and the duplicate repair below.
+
+**Causes and fixes:**
+1. **"Email me" went to the Nori sign-in address.**
+   - Cause: every prompt's user facts carried the Nori sign-in address under the key `email`.
+   - Fix: the key is now `nori_sign_in`, with a note that it is not the user's mailbox and that "email me" means the connected mail account's own address. The draft tool's description says the same.
+2. **Unsent drafts were left behind.** The draft was created before the recipient check. With `NORI_MAIL_RECIPIENTS=self`, now:
+   - A draft addressed to anyone else is refused before it is created, with the real reason: only the connected account's own address is allowed, and the given address is not it.
+   - A refused send deletes the draft if Nori wrote it.
+   - A declined send approval deletes the Nori draft before the decline is recorded (a new `OnDecline` hook in permissions), and the task is told "Nori deleted the unsent draft it had created for this message."
+   - "Nori wrote it" means the draft's Message-ID is Nori's (`<nori-…@mail.nori.invalid>`). Drafts the user wrote are never touched.
+3. **"Tomorrow" asked "11 or 12 November?"** In the evening Pacific, UTC is already the next day. The task clock note now states today's and tomorrow's dates in the user's zone, "whatever date UTC timestamps elsewhere show", and says not to ask which date is meant.
+
+Verified with the **real models** on my stack, user C (zone America/Los_Angeles, Nori sign-in `backend-c@nori.local`, Gmail from recordings as `recorded.user@example.com`), at 21:43 to 21:50 PST, which is already 11 November in UTC:
+
+| Case | Task | Result |
+| --- | --- | --- |
+| "Create an event called Nori rehearsal tomorrow at 3pm for 30 minutes on my primary Google calendar." | `f3a1bd89-38f2-5ec6-8886-acf4a0016a9c` | No question. `Create "Nori rehearsal" on your main calendar, Wed 11 Nov 2026 15:00–15:30 PST`, confirmed. |
+| "Email me a one-line note from my Gmail saying the Nori test reached step 5." | `977ec4d5-c4c2-5fb5-8329-5433452acf58` | It first asked for drafts access (`gmail.compose`, granted with a recorded code). Then `Draft "Nori test" to recorded.user@example.com`: the Gmail address, not the Nori sign-in. The approval card read `Send "Nori test" from recorded.user@example.com to recorded.user@example.com`. **Declined** through the API: the core read the draft and deleted it (`DELETE …/drafts/recdraft1`, 204) before recording the decline. The reply: "The email wasn't sent because you declined the send approval. The unsent draft was deleted." |
+| "Email someone@example.com a one-line hello from my Gmail." | `97f9d564-a6e3-59d3-b3bb-f97c6efbd064` | No draft created (the recorded draft-create count did not change), no approval card, nothing sent. The reply: "your current Gmail connection only permits sending to your own connected address, not someone@example.com … no draft was created". |
+
+Not exercised: the refused-send path that deletes a Nori draft made before this change. It is the same delete call. Drafts already left in the test account by earlier runs are not removed by this; they can be deleted in Gmail.
+
+## For integration: restart the real core to repair the duplicate Google rows
+
+Restart the real stack's **core** (8085) on a build that includes `a500176` (this branch's head has it). Merged duplicates are only possible from that build on. On the first request for a user after the restart, the core combines that user's duplicate connections into one. Nothing else is needed: no disconnect, no manual step, no provider call. The worker does not need the new build for this, but it is fine to restart it on the same head.
+
+What to expect for the real user, from the three rows `conn_376569c546155488accd`, `conn_c3ec41c528ad5973b454` and `conn_295df0b9ca785025bbd0`:
+- **Kept:** the one with the most capabilities. On the records I read, that is `conn_c3ec41c528ad5973b454` (with `calendar.create`), unless the third has more.
+- **Removed:** the others. Their stored credentials are deleted locally and nothing is revoked at Google.
+- **Shown in Apps:** the account once.
+- **In the core log:** one line, `connections: combined duplicate connections [...] into <kept id>`.
+
+Please check afterwards that Apps shows the account once, that there is no `oauth2.googleapis.com/revoke` request in the core log, and that the kept connection still lists calendars. Do **not** disconnect a duplicate on a build older than `257f316`: that revokes at Google and would cut off the kept connection.
+
+## One-time repair of existing duplicates
+
+Commits `a500176`, `33d247d` (gofmt).
+
+`CollapseDuplicates` runs when the API core opens a user (`app.Open`), once per process; it is idempotent.
+- **What it combines:** live connections of one integration signed in to the same provider subject.
+- **Which one stays:** the one with the most capabilities, then the most recently written.
+- **What the kept one gets:** the union of the group's granted and desired scopes, recomputed capabilities and a new authorization epoch. Google's grants are cumulative per account and client, and Nori asks with `include_granted_scopes`, so the kept token covers the union.
+- **The others:** deleted in the same write, then their stored credentials and cached connector data are removed. There is no provider revoke.
+- **Account defaults:** a default that named a removed connection names the kept one.
+
+Verified on my stack (recorded Google). For user C, three connected connections for `recorded.user@example.com` were made with build `97f00c4` (no merge), as on the real stack:
+- `conn_1ea25dcbc5c55728a606`: calendar read and write, mail read; the `calendar.write` account default.
+- `conn_8b7fd89db7075739994f`: the same access.
+- `conn_c1e935e6e41955239883`: also `calendar.create`.
+
+Then the core was started on `33d247d`:
+
+| Check | Result |
+| --- | --- |
+| Core log | `combined duplicate connections [conn_1ea25dcbc5c55728a606 conn_8b7fd89db7075739994f] into conn_c1e935e6e41955239883` |
+| Apps list | One Google connection, `conn_c1e935e6e41955239883`, connected, with `calendar.read`, `calendar.write`, `calendar.create`, `mail.read`. The two others answer 404. |
+| Account default | `calendar.write` now names `conn_c1e935e6e41955239883`. |
+| Kept connection | Lists its calendars (200). No revoke request in the log. |
+| Second start | No combine line: nothing left to repair. |
+
+Correction to the R-1 section's "state left running" line: the worker build then was `be-97f00c4`, not `be-97c9c1d`. `97c9c1d` is an integration commit from before the merge fix. It was the right "previous build" for the shared-grant disconnect case below, where I used it.
+
 ## Duplicate Google connection for one account (real stack defect)
 
 Commit `257f316`.
@@ -267,7 +332,7 @@ Matches, after `2ed6bdb`:
 
 `scripts/backend-stack.sh` (`setup`, `users`, `core`, `worker`, `current`). With `NORI_MODEL_TEST_URL=http://127.0.0.1:<port>` it runs against a model stub with placeholder keys and no hosted telemetry. `NORI_BUILD_ID` overrides the build id only to drain tasks pinned to an older build. The stub is a small Python server in the session scratchpad (records request bodies, answers from scripted JSON, or never answers); it is not in the repository. The third assignment's interrupted-write cases used a scratchpad script that starts the worker with one recording set, kills it during the provider call, and restarts it with another; also not in the repository.
 
-State left running: core 8081 and a worker on `be-97c9c1d`, with the real models, recorded Google responses (a scratch copy with a calendar create and an extra token exchange) and `NORI_USER_SENDS=ask`. User C's connect task `039c5a95` is left waiting on its card (user A's Google connection is a recorded one, so a real-model worker must not run tasks for user A against real Google). Real-model mode is `scripts/backend-stack.sh core|worker` without `NORI_MODEL_TEST_URL`.
+State left running: core 8081 and a worker on `be-97f00c4`, with the real models, recorded Google responses (a scratch copy with a calendar create and an extra token exchange) and `NORI_USER_SENDS=ask`. User C's connect task `039c5a95` is left waiting on its card (user A's Google connection is a recorded one, so a real-model worker must not run tasks for user A against real Google). Real-model mode is `scripts/backend-stack.sh core|worker` without `NORI_MODEL_TEST_URL`.
 
 ## Unverified
 

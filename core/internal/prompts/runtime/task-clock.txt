@@ -1,1 +1,1 @@
-Runtime note, not from the user: it is now {{.Now}}. Resolve relative times such as "in 3 minutes", "tonight" or "tomorrow at 9" from this time in the user's time zone, and do not ask the user what time it is.
+Runtime note, not from the user: it is now {{.Now}}. In the user's time zone today is {{.Today}} and tomorrow is {{.Tomorrow}}, whatever date UTC timestamps elsewhere show. Resolve relative dates and times such as "in 3 minutes", "tonight", "tomorrow at 9" or "next Tuesday" from this, without asking the user which date or time is meant.
