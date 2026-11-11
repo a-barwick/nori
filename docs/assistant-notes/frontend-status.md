@@ -4,6 +4,56 @@ Updated 2026-11-10, third turn after the restart ("Slice and third assignments")
 
 **Provider verified: 0.** Nothing here touched a real Google account; nobody signed in. This turn ran **real models** (OpenAI `gpt-6.1-sol` for chat, OpenRouter for tasks) and **real providers with no recordings**, on my own stack. Without a Google sign-in, the steps stop where the grant is missing, as recorded below.
 
+## Reload loop on 3213, 21:05 to 21:16 (coordinator report)
+
+**What was seen.** Integration's web on 3213 (`next dev`, started 21:04 on the merged head) kept reloading `/`. Integration's core log (since overwritten by the 21:26 restart) showed 1,000 to 1,500 cancelled requests a minute from 21:05:01 to 21:16, mostly `/v1/snapshot` (the "saved work wake repair failed: context canceled" line). That is a page reloading itself about every half second. Core was up the whole time (one start, 21:04:54).
+
+**What I could and could not establish.**
+- **Our code never reloads the page.** The only navigations in `web/src` are the two `window.location.assign` calls to a Google sign-in URL.
+- **Every reload came from Next's dev client.** It reloads in three cases:
+  - the dev server restarted (new session id): once per restart;
+  - an HMR update can't be applied;
+  - a server change arrives after the page has hit a runtime error, or is showing the root error page (`__next_error__`).
+  - The console pattern ("[HMR] connected", then "[Fast Refresh] rebuilding", then a reload) and the "Compiled in N ms" after every `GET /` match the last two: the dev server kept rebuilding, and each rebuild reloaded the page.
+- **Not reproduced on my stack** (8082/3212, same frontend code), with one or two tabs open on `/`:
+  - core stopped for 40 s, then restarted: 0 page reloads;
+  - web stopped for 30 to 45 s, then restarted (alone, and after core): exactly 1 reload each, then steady.
+- **Cause not proven.** Integration's 21:04 `web.log` and `.next/dev/logs` were overwritten by later restarts, and no file under `web/` outside `.next` changed after 21:03:54. What made that one dev server rebuild on every request is not established.
+  - Two things fit and are not ruled out: something writing into the dev server's project directory (for example a `next build` in the same `web/`), and a stale Turbopack cache from before the 21:03:50 merges.
+  - The next web process on the same head has been stable.
+- **What turned rebuilds into a loop is a gap on our side:**
+  - The app had no route error boundary, so any render error fell through to `global-error`. Once that happens, Next's dev client reloads on every server change.
+  - A page opened while core was unreachable got a bare-text 503 and never recovered.
+  - An open tab kept "Nori is temporarily unavailable … Refresh history to reconnect" until it was refocused.
+
+**Fixes (before → after).**
+1. **Render errors.**
+   - Before: a render error anywhere in the app replaced the whole document with the framework error page (`global-error`), and in dev every later rebuild reloaded the page.
+   - After: `app/error.tsx` and `app/(nori)/error.tsx` (one `ScreenError` component) show "This screen didn't load. Your work is safe." with **Try again** and **Open chat**, and report the error to Sentry. They never retry by themselves.
+   - The error stays in a route boundary, so it doesn't reach Next's root error state, which is what triggers reload-on-rebuild.
+   - Not exercised with a real render error, since none occurred.
+2. **Opening a screen while the service is down.**
+   - Before: `proxy.ts` returned the text "Nori is temporarily unavailable. Try again shortly." with a 503 and nothing else, and the user had to reload by hand.
+   - After: document requests (`Sec-Fetch-Dest: document`, not RSC) get a small self-contained page, "Reconnecting to Nori … This page opens by itself when it is back", with a **Try now** button (`lib/runtime/reconnecting.ts`).
+   - It checks the same URL with `HEAD` after 2, 4, 8 … up to 30 s. It reloads **once**, when that check answers 200.
+   - The wait is kept in `sessionStorage` for 2 minutes, so a flapping service can't cause a storm. A 429 uses `Retry-After`.
+   - 403 and API calls are unchanged.
+   - Verified: `/apps` opened with core down showed the page (dark mode). After core came back: one `HEAD /apps 200`, then one `GET /apps`, and the screen loaded.
+3. **The chat during an outage.**
+   - Before: a red alert "Nori is temporarily unavailable. Try again shortly. Refresh history to reconnect", and the header said "Disconnected". It only cleared when the tab was refocused or went back online.
+   - After: a status line "Can't reach Nori right now. Reconnecting on its own… **Try now**", and the header says "Reconnecting…".
+   - When the event stream reopens after a failed snapshot, the chat reads the snapshot once and the line clears by itself.
+   - Verified both ways with the tab in front and no reload (navigation type stayed `navigate`): stream-only outage, and snapshot failure during the outage (forced with a `visibilitychange`).
+   - The messages are shared constants (`lib/runtime/messages.ts`) used by `auth.ts`, `useRuntime.ts`, `NoriApp.tsx` and `AppShell.tsx`.
+
+**Production build.** `bun run build` passes.
+- The client bundle has no HMR socket (`_next/hmr`) and no Fast Refresh code.
+- Its one `location.reload()` is the router's popstate handler for history entries left by the old pages router. Nothing in production reloads on a server restart, a new build or an unreachable service.
+- `next start` on a spare port with no hosted runtime configured served the reconnecting page for `/` (503); the API answered 403.
+- Local sign-in is development-only (`localDevelopment` requires `NODE_ENV=development`), so the signed-in app was not driven on a production build.
+
+**For integration (suggestion, not done by me).** Restart `web` after merging into its worktree, and run `next build` or checks that write `web/.next` from a separate checkout, never in the `web/` that serves 3213 or 3214. Keep each dev server's log (append, or a timestamped file) so the next incident can be traced.
+
 ## What ran
 
 - **Stack.** `docs/assistant-notes/frontend-stack.sh` now defaults to real models and real providers (replay off, Google client from `.env`). `NORI_FE_RECORDED=1` brings back the recordings. A new `stop` command stops only this stack's processes, found by namespace and by ports 8082/3212, never by program name.

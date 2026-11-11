@@ -107,6 +107,23 @@ The pass/fail table is at the top of `docs/assistant-notes/integration-status.md
 - **Blocked**: creating a "Nori test" calendar waits on Austin's sign-in for `calendar.create` (`f793fa0e`).
 - **Failed**: account questions caused by a duplicate connection; "my own address" resolved to the Nori profile address; drafts left behind after refused or declined sends.
 
+### 3a and 5 on `real-cf76ae6` (2026-11-10, 21:41 to 21:56 PST)
+
+Details are at the top of `docs/assistant-notes/integration-status.md`. Graded real provider, Austin's test account:
+- **Passed**: `calendar_create` "Nori test" (`b9006062`); create, move and delete an event on it (`43149b9b`, `3f869c44`, `e91cce56`); the message search (`06451b1a`); the own-address approval card (`5d25bbe6`, left pending for Austin); another address refused with nothing sent (`16eb5617`).
+- **Failed**: no tool deletes a calendar (`ee2e66e7`), so "Nori test" remains; account questions from three connections for one account; the date defect; drafts left behind.
+
+### Pass on `real-02e0541` (2026-11-10, 21:58 to 22:05 PST)
+
+The table is at the top of `docs/assistant-notes/integration-status.md`. After backend's one-time repair, the test account is one connection (`conn_295df0b9ca785025bbd0`). Graded real provider, Austin's test account, every step **passed**, with no account or date question:
+- the week across both calendars (`52b142bf`);
+- create on "Nori test" for "tomorrow", then move and delete (`05ba80ac`, `6d5736f0`, `100a5827`);
+- the message search (`d09b66a9`);
+- "email me" resolved to the Gmail account and reached its approval card (`3509cc8b`, left pending for Austin);
+- another address refused with no Google call and no draft (`7da489f7`).
+
+Not exercised: deleting a calendar (no tool), and delivery with the app closed.
+
 Earlier the same evening, before the sign-in, steps 2, 3 and 5 stopped at "Google is still connecting" without offering a sign-in (tasks `209d093d…`, `51b3dfbc…`, `fed43de1…`, `5e0c9ff8…`; R-1 in the status note).
 
 ## Matrix

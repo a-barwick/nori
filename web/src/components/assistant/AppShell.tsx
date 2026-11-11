@@ -10,6 +10,7 @@ import { NovaShell } from "@/components/nova/NovaShell";
 import { AssistantProvider, useAssistant } from "@/lib/assistant/context";
 import { useSummary } from "@/lib/assistant/sources";
 import { useHydrated } from "@/lib/hooks";
+import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { cn } from "@/lib/utils";
 import { Badge } from "./ui";
 
@@ -53,7 +54,7 @@ function Frame({ children }: { children: ReactNode }) {
     { href: "/goals", label: "Goals", icon: Target, match: (p) => p.startsWith("/goals") },
     { href: "/settings", label: "Settings", icon: Settings, match: (p) => p.startsWith("/settings") },
   ];
-  const status = loading ? "Connecting…" : error || !session ? "Disconnected" : waiting ? `${waiting} ${waiting === 1 ? "thing needs" : "things need"} you` : busy ? "Working…" : "Ready when you are";
+  const status = loading ? "Connecting…" : error === SERVICE_UNAVAILABLE || error === STREAM_RECONNECTING ? "Reconnecting…" : error || !session ? "Disconnected" : waiting ? `${waiting} ${waiting === 1 ? "thing needs" : "things need"} you` : busy ? "Working…" : "Ready when you are";
   const mobileMain = items.slice(0, 4);
   const mobileMore = [...items.slice(4), { href: "/computer", label: "Computer", icon: Monitor, match: (p: string) => p.startsWith("/computer") }];
 
