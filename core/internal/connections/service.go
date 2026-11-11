@@ -861,7 +861,7 @@ func (s *Service) CollapseDuplicates(ctx context.Context) (map[string][]string, 
 		}
 		_, err = s.Store.Mutate(ctx, state.Mutation{
 			RequestID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("collapse:"+kept.ID+":"+strings.Join(drop, ","))).String(),
-			Method: "REPAIR", Target: kept.ID, Payload: drop, Collection: CollectionConnections, ID: kept.ID, SkipRevisionCheck: true,
+			Method:    "REPAIR", Target: kept.ID, Payload: drop, Collection: CollectionConnections, ID: kept.ID, SkipRevisionCheck: true,
 			Apply: func(cur *state.Resource, read func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
 				if cur == nil {
 					return state.MutationResult{}, state.ErrNotFound
