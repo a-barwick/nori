@@ -4,6 +4,39 @@ Branch `claude/nori-assistant-backend-9c520e`, worked from worktree `.claude/wor
 
 Evidence label (rule 2): **provider verified: 0.** No real provider account was used. The D-053 and D-054 re-tests in the third assignment ran against the real models (OpenAI and OpenRouter, keys from `.env`); everything else is locally verified against a loopback model stub, Google answering from hand-written recordings, the local database and the local Temporal dev server.
 
+## Mailbox decided: Gmail for step 5 (coordination record "Mailbox decided; Pi Durable port already on main")
+
+Commit `7c58cc1`.
+
+**Scopes.** Step 5 uses three Google capabilities: `mail.read` (find one message: `gmail.readonly`), `mail.draft` (write the note as a draft: `gmail.compose`) and `mail.send` (send the draft). Nori only ever sends drafts (`users.drafts.send`), and Google's reference lists `mail.google.com`, `gmail.modify` and `gmail.compose` as the scopes for both `drafts.create` and `drafts.send`; `gmail.send` is not among them. `mail.send` used to ask for `gmail.compose` and `gmail.send`; the second was never used, so it now asks for `gmail.compose` alone. Step 5 therefore needs exactly `gmail.readonly` and `gmail.compose`. A consequence: a grant of drafts now also counts as a grant of sending, because Google's own `gmail.compose` consent already says "Manage drafts and send emails". Every send still needs its approval (see below). The test account's earlier grant (`compose` and `send`) still satisfies both.
+
+**Only to his own address.** New setting `NORI_MAIL_RECIPIENTS`, default `self` (stream's choice, following Austin's limit; `any` lifts it). With `self`, a Gmail send whose To, Cc or Bcc holds any address other than the connected account's own is refused. The own address is the account label, which Nori reads from Google's userinfo when the account connects. It never comes from the model, a setting, code or a committed file. The check runs at prepare, before an approval is shown, and again at the moment of sending. Drafts are not limited, since a draft sends nothing. The comparison ignores case only, so a Gmail alias or a dotted variant of the address counts as someone else.
+
+Verified on my stack (`be-7c58cc1`, `NORI_USER_SENDS=ask`, stub model, Gmail from recordings plus two recorded drafts in a scratch copy, recorded account `recorded.user@example.com`):
+
+| Case | Task | Result |
+| --- | --- | --- |
+| Send a draft addressed to `friend@example.com` | `780327f3-af0d-5715-add5-488506beb1cc` | Refused at prepare, not admitted, no approval shown, no send request made: "this Nori sends email only to the connected account's own address (recorded.user@example.com); the draft is also addressed to friend@example.com". |
+| Send a draft addressed to the account itself | `bb41c07f-509a-59a9-ae3f-be30b340452b` | Approval shown: `Send "Note to self" from recorded.user@example.com to recorded.user@example.com`. After approving it through the API, the send was made (recorded) and the operation is `confirmed`. |
+
+Two earlier runs of the second case (`7fe637c6`, `29d33acc`) failed because of my stub and my recording, not Nori. The stub did not re-issue the call after approval, and the recording's send matched a different draft id.
+
+**Does Google need anything from Austin?**
+- **Gmail API:** already enabled on the existing client's project. Integration's real `mail_search` and `mail_read` on his test account succeeded (task `f38b0eb2`), which they could not do with the API disabled.
+- **Scopes:** Nori asks for them in each sign-in request, so nothing needs adding for them to be requested. If the app is in Testing, Google lets a listed test user grant `gmail.compose` behind its unverified-app screen (it is a restricted scope).
+- **Only Austin can do:** add his **personal** Gmail address as a test user on the OAuth consent screen, if the app is in Testing and it is not listed yet. Then sign in with it and allow mail access. Listing the scopes on the consent screen's data-access page is only needed for verification, which the slice does not need.
+
+**For the run (not changed here):**
+- **Step 5's approval needs `NORI_USER_SENDS=ask`** on the real stack. The interim default `allow` sends a directly requested send with no approval click (D2's interim mechanism; Austin can flip it).
+- **Step 3 cannot show an approval as the code stands.** A direct request's reversible write (create or move an event) is always allowed: `permissions/rules.go`, the `user` plus `reversible_write` case, with no setting. The slice says "each after an approval he clicks". That is a D2 question for the coordinator and Austin; I have not changed it.
+- **Calendar invitations are email to other people.** An event with attendees and `send_updates` other than `none` makes Google email them. `NORI_MAIL_RECIPIENTS` does not cover that; such an event is a `sensitive_send`, so with `ask` it does need approval. Step 3's event has no attendees.
+- **Outlook sending is not limited by the setting.** No Microsoft client is configured on this machine.
+- **D-056 is not needed for step 5:** the note is a new message to himself, not a reply.
+
+## Pi Durable: starting from the port on main
+
+The port (AB-317 to AB-320, `5f2d841...2dd6126`) is already in this branch's history, so the third assignment's comparison below was made against code that includes it. The port did not touch the external-tool path: `task/external.go`, `connectors/**`, `invoke` and `scheduler` are unchanged in `5f2d841...2dd6126`. Gaps A and B below were therefore still open on the slice's path after it. They are fixed in `0c199b7` and `25480a6`. Nothing else from Pi was taken.
+
 ## Third assignment (2026-11-10, coordination record "Slice and third assignments")
 
 Stack: core 8081, worker, database `nori_backend`, namespace `nori-backend`, queue `nori-tasks-backend`, user A. Integration's processes were not touched.
@@ -165,7 +198,7 @@ Matches, after `2ed6bdb`:
 
 `scripts/backend-stack.sh` (`setup`, `users`, `core`, `worker`, `current`). With `NORI_MODEL_TEST_URL=http://127.0.0.1:<port>` it runs against a model stub with placeholder keys and no hosted telemetry. `NORI_BUILD_ID` overrides the build id only to drain tasks pinned to an older build. The stub is a small Python server in the session scratchpad (records request bodies, answers from scripted JSON, or never answers); it is not in the repository. The third assignment's interrupted-write cases used a scratchpad script that starts the worker with one recording set, kills it during the provider call, and restarts it with another; also not in the repository.
 
-State left running: core 8081 and a worker on `be-25480a6`, both in stub mode with recorded Google responses (user A's Google connection is a recorded one, so a real-model worker must not run tasks for user A against real Google). Real-model mode is `scripts/backend-stack.sh core|worker` without `NORI_MODEL_TEST_URL`.
+State left running: core 8081 and a worker on `be-7c58cc1`, both in stub mode with recorded Google responses (a scratch copy with two extra drafts) and `NORI_USER_SENDS=ask` (user A's Google connection is a recorded one, so a real-model worker must not run tasks for user A against real Google). Real-model mode is `scripts/backend-stack.sh core|worker` without `NORI_MODEL_TEST_URL`.
 
 ## Unverified
 
