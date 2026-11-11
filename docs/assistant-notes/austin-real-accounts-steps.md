@@ -4,7 +4,7 @@ Rewritten 2026-11-10 by integration for the new machine. It covers Google only. 
 
 Local Nori for real accounts runs on this Mac at **http://127.0.0.1:3213**. It has its own database (`nori_real`), its own Temporal namespace (`nori-real`) and a new, empty local credential vault under `~/.nori-stacks/real/`. Production is not touched. Integration restarts it with `scripts/local-stacks/stack.sh real …` (see `scripts/local-stacks/README.md`).
 
-Today it answers, but only as plumbing: without `OPENROUTER_API_KEY` it starts only in a no-model mode (placeholder keys, all outbound traffic blocked), and without a Google client it cannot start a Google sign-in. The steps below are the things only you can supply. Please put values in the file yourself. Don't paste them into a chat or a session: nobody else reads, prints or copies them.
+Update, evening of 2026-11-10: the model keys and the Google client are in `.env`, and the real stack runs with real models. Steps 1 and 2.1–2.4 below are done. Still yours: step 2.5 (Testing, with you as a test user), step 3 (the Nori test calendar), and step 4 (your sign-in). The steps below are the things only you can supply. Please put values in the file yourself. Don't paste them into a chat or a session: nobody else reads, prints or copies them.
 
 ## What `.env` lacks, by variable name
 
@@ -13,8 +13,8 @@ Compared on 2026-11-10 against `.env.example` and against what core actually rea
 | Needed for | Variable | State in `/Users/austin/Documents/dev/nori/.env` | Who |
 | --- | --- | --- | --- |
 | Any conversation | `OPENAI_API_KEY` | empty at 07:52; **set** when re-checked after your 07:58 save | done |
-| Any conversation or task (with background tasks on, core and the worker both refuse to start without it; conversation summaries and the task model `openai/gpt-6.1-terra` go through OpenRouter) | `OPENROUTER_API_KEY` | present, **empty** | **you** |
-| Google sign-in | `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET` | absent (also missing from `.env.example`; hosted reads them from Secret Manager) | **you** |
+| Any conversation or task (with background tasks on, core and the worker both refuse to start without it; conversation summaries and the task model `openai/gpt-6.1-terra` go through OpenRouter) | `OPENROUTER_API_KEY` | **set** (restored by Codex from Secret Manager at Austin's request, about 08:55; see `environment-restored.md`) | done |
+| Google sign-in | `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET` | **set** (restored by Codex the same way; Google accepted the client and redirect on an unauthenticated authorize-URL check) | done |
 | Google redirect | `NORI_OAUTH_REDIRECT_URL` | absent; the stack script sets `http://127.0.0.1:3213/api/v1/connections/oauth/callback` | integration (done) |
 | Credential store | `NORI_CREDENTIAL_STORE`, `NORI_CREDENTIAL_DIR` | absent; the stack script sets `local` and a new vault | integration (done) |
 | Background tasks | `NORI_BACKGROUND_TASKS_ENABLED` | `false` (chat-only); the stack script overrides it to `true` for the stacks only | integration (done) |
