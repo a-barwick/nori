@@ -1,6 +1,6 @@
 # Frontend status (nori-frontend)
 
-Updated 2026-11-10, third turn after the restart ("Slice and third assignments"). Branch `claude/nori-assistant-frontend-78149f`, with integration `ed59dc5` and coordinator `1ad4f85` merged in. Earlier versions of this note are in git history (`f7ed24a`, `ea53ff9`).
+Updated 2026-11-10, third turn after the restart ("Slice and third assignments"), with step 5 added after Austin chose his personal Gmail for the slice (coordinator `c15cd04`). Branch `claude/nori-assistant-frontend-78149f`, with integration `ed59dc5` and coordinator `1ad4f85` merged in. Earlier versions of this note are in git history (`f7ed24a`, `ea53ff9`).
 
 **Provider verified: 0.** Nothing here touched a real Google account; nobody signed in. This turn ran **real models** (OpenAI `gpt-6.1-sol` for chat, OpenRouter for tasks) and **real providers with no recordings**, on my own stack. Without a Google sign-in, the steps stop where the grant is missing, as recorded below.
 
@@ -14,7 +14,7 @@ Updated 2026-11-10, third turn after the restart ("Slice and third assignments")
 - **Walk.** Steps 1 to 4 of the first slice, in the built-in browser at 1280×800 and at phone size (375×812). Times are America/Los_Angeles, 2026-11-10.
 - **Checks** on the merged tree: `contracts:check` (current), `tsc --noEmit`, `eslint src`. All pass.
 
-## Slice walk, steps 1 to 4 (real models, no recordings, no sign-in)
+## Slice walk, steps 1 to 5 (real models, no recordings, no sign-in)
 
 | Step | What I did | Where it stopped | Evidence |
 | --- | --- | --- | --- |
@@ -22,10 +22,18 @@ Updated 2026-11-10, third turn after the restart ("Slice and third assignments")
 | 2 "What does my week look like?" | Asked before connecting | Task answered correctly ("connect Google … in Apps"), but **the chat reply said new calendar connections "aren't available here"** and offered an .ics upload. Backend B1. | task `001d3a48-5643-51b4-aa89-f8a3ffd5da93`, 19:47–19:48 |
 | 3 Create, then move, an event on "Nori test" | Asked at phone width | No write was attempted. The reply said **"Google Calendar is still connecting"** (my abandoned Connect, B2), and the chat **passed "Tomorrow is November 12"** when it was Nov 10 (B3). The task caught the date itself. Approval cards not reached. | task `ae4f6258-7678-50f5-a67a-ce165bfa98a0`, 19:50 |
 | 4 Reminder | "Remind me in 4 minutes that it's time to leave for the station" | Reminder `auto_7d3c85d1…` set for 19:55:41, run at 19:55:43, and in the in-app inbox at 19:55:47 and the chat at 19:55:49. **It can only go to the in-app inbox** (B4), so "delivered with the app closed" cannot pass as built. The chat also showed "I've saved your answer." for a question the user never saw (B5). | occurrence `occ_cc7cf5c9…`, task `e2f2fac8-e512-5343-9c66-ea87c4ecaa69` |
+| 5 Find one message, send a note to his own address | "Find my most recent reservation email and send me a short note with its details." | No Gmail read or send. The chat said "Gmail is still connecting" and "New connections aren't available here" (B1, B2). The task then asked in Needs you **"Who should I send the note to?"** (B7). I did not answer. The send approval was not reached live; its layout was checked on a fixture (fix 5). | task `57f65be0-4cdf-5022-8f2d-37ad7a0c3c4b`, 20:01 |
 
 Acknowledgement is not slow: my message shows 17 ms after Return, "Nori is thinking… Details" right after, the "I've accepted your task" line about 7 s after sending, and the answer at about 16 s (step 2).
 
 ## Fixes in `web/` (before and after)
+
+0. **Write access took four Google trips (from Austin's real connect, reported by the coordinator; top priority).**
+   - Before: Connect asked only for read access. After connecting, each change or send capability had its own Allow button, and each one was a full Google consent trip.
+   - After, at first connect: two choices before going to Google, each one consent. "Read only" reads calendar, email, contacts and files, and Nori asks for a new Google sign-in the first time it needs to change or send something. "Read, change and send" is everything in Read only, plus each change and send item listed by name. Under that choice: "Sending still follows your approval settings in Settings → Permissions; nothing about that changes here." The "What Nori can do" checks follow the choice.
+   - Read only is preselected as the smaller grant. **That is frontend's choice, not Austin's decision**, and it can be flipped.
+   - After, on a connected account: where two or more items aren't allowed yet, one "Allow everything Nori can do here" button, above the per-item Allow buttons: "One Google sign-in for all of these. Allow on one item asks for just that one." With a single account, "Allow everything" also appears on "What Nori can do". Both send every supported capability through the existing connect and repair action (`allCapabilities`). (`AppsScreen.tsx`)
+   - Verified on my stack with the real Google client at 20:05. "Read, change and send" → Connect opened one Google page requesting `calendar.readonly calendar.events gmail.readonly gmail.compose gmail.send gmail.modify contacts.readonly contacts.other.readonly drive.readonly drive.file` (plus `openid email`). It was Google's account chooser; I chose nothing and went back. The connected-account button was checked on fixtures at phone and desktop width only; a real repair needs a signed-in account.
 
 1. **Reminder destination said "Nowhere".**
    - Before: a reminder made in chat showed "Sends to: Nowhere; results stay in Library". It did reach the in-app inbox, and nothing said it would not reach Austin with the app closed.
@@ -36,6 +44,14 @@ Acknowledgement is not slow: my message shows 17 ms after Return, "Nori is think
 3. **The step-3 capability was cut off on a phone.**
    - Before: Apps → Google at 375 px showed "Create and change events, i…".
    - After: capability names wrap. Other rows still truncate long titles. (`Row` `wrapTitle`, `AppsScreen.tsx`)
+4. **The connect screen didn't say plainly what is granted.**
+   - Before: the note sat under "What Nori can do", below the Connect button, and read "Connect asks Google only for the Read items…".
+   - After: directly under Accounts, next to Connect: "One Google sign-in lets Nori read your calendar, email, contacts and files. Nori can't change or send anything yet: it asks again, with a new Google sign-in, the first time it needs to." The list comes from the app's categories, and the sentence shows only before the first account. (`AppsScreen.tsx`)
+   - I did not write "you approve every send", because a permission rule can allow sends (`permissions/rules.go`).
+5. **The send approval didn't set out the recipient and the text.**
+   - Before: core uses the whole summary (`Send "subject" from … to …:` plus the message) as the card's heading, so the heading repeated the full message, and the same text appeared again below. "To" came after "Account".
+   - After: the heading is a short question ("Send this?"; "Make this change?" for writes). The message is in its own quoted block, labelled "Message to be sent". "To" comes first in bold, then "From". When core has shortened the message (trailing "…"), the card says "Only the start of the message is shown here. The rest is sent too."
+   - Checked at phone width on a display-only fixture in core's summary shape (`int_send_note`, `?fixtures=1`), not on a real send. (`InteractionCard.tsx`, `fixtures.server.ts`)
 
 Checked and fine, so no change: Connect shows "Opening sign-in…" and reaches Google in about 2–3 s. Backing out of Google's page leaves "No Google account yet" (last turn's fix holds on the real path). The Scheduled tab lists the reminder with "in 3 minutes". The chat at phone width has no overflow.
 
@@ -44,6 +60,7 @@ Checked and fine, so no change: Connect shows "Opening sign-in…" and reaches G
 - What Apps shows on return from Google: the connected banner, the partial-grant warning, the account row.
 - Step 2 with sources from his real calendar.
 - Step 3's more-access card (the first calendar write asks for a second Google sign-in), both approval cards (create, then move), their live summaries naming the "Nori test" calendar, the event's removal at the end, and how the result reads in chat and in Work → Finished.
+- Step 5: Gmail search results, the real send approval card (live text, recipients, account label), and the sent message.
 - Step 4 tied to an event ("before I leave"), and push delivery with the app closed. That needs push enrolled in Settings → Notifications on 3213, and also B4.
 
 ## r2.11: accepted as published
@@ -69,6 +86,8 @@ Frontend accepts r2.11 as published at `7f7387c`. It is open with Austin, so thi
 - **B3, wrong date passed to a task.** At 19:50 PST on Nov 10, the chat gave the task "Tomorrow is November 12, 2026" (task `ae4f6258…`), although the time context it had was "Tuesday, November 10, 2026, 19:51 PST" (quoted by the chat itself in command `4645dff4…`). The prompt says to pass dates in the user's own words; the model added a resolved date anyway. This is related to D-054.
 - **B4, step 4 cannot deliver with the app closed.** Reminders made in chat get `destination_ids: []`, which goes only to the in-app inbox. `Preferences.default_destination_ids` is stored but never applied, and no task tool takes a destination. Smallest change: when an automation is created without destinations, use the user's default destinations, plus the in-app inbox.
 - **B5, "I've saved your answer."** appears in the chat when the task asked a question (here, the current time) and the chat answered it itself (command `4645dff4…`). The user never saw a question. Smallest change: skip the `answer-accepted` message when the answer did not come from the user.
+- **B6, approval text can be cut.** `connectors/google/mail.go` (send prepare) cuts the body at 600 **bytes**, which can split a multi-byte character. It also joins To, Cc and Bcc into one "to" list in the summary. Austin should see the full text before he clicks. Smallest change: cut by runes at a larger limit, or send the full body in the approval payload, and name Cc/Bcc separately. The card already handles a shortened body honestly (fix 5).
+- **B7, "send me" is not resolved to his own address.** For "send me a short note", the task asked "Who should I send the note to?" (task `57f65be0…`). With Gmail as the slice mailbox, "me" should be the connected Google account's address.
 - Still open from the first turn: `reason` in the sign-in payload (r2.11 forbids it).
 
 ### From integration
@@ -82,4 +101,4 @@ Frontend accepts r2.11 as published at `7f7387c`. It is open with Austin, so thi
 ### From the coordinator
 
 - Record frontend's r2.11 acknowledgement (unchanged from the last turn).
-- B1 to B5 are backend's files; I did not edit them. If the coordinator wants frontend to take B1 (a one-line prompt change), say so.
+- B1 to B7 are backend's files; I did not edit them. If the coordinator wants frontend to take B1 (a one-line prompt change), say so.
