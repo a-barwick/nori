@@ -66,6 +66,14 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 		return nil, err
 	}
 	chats.Profile = platform.Profile(user, services.Connections)
+	// One-time repair of duplicate connections to one account, left by sign-ins made before they were merged.
+	if removed, err := services.Connections.CollapseDuplicates(ctx); err != nil {
+		log.Printf("connections: duplicate repair failed: %v", err)
+	} else {
+		for kept, drop := range removed {
+			log.Printf("connections: combined duplicate connections %v into %s", drop, kept)
+		}
+	}
 	toolSource := &agent.Service{Extensions: services.Tools, Computer: platform.Computer(cfg)}
 	result.Scheduler = services.Scheduler
 	result.Assistant = &api.Assistant{
