@@ -4,6 +4,42 @@ Branch `claude/nori-assistant-backend-9c520e`, worked from worktree `.claude/wor
 
 Evidence label (rule 2): **provider verified: 0.** No real provider account was used. The D-053 and D-054 re-tests in the third assignment ran against the real models (OpenAI and OpenRouter, keys from `.env`); everything else is locally verified against a loopback model stub, Google answering from hand-written recordings, the local database and the local Temporal dev server.
 
+## Calendar delete, stuck Stop, remembered account, read-back (from integration's re-run at `27146cf`)
+
+Commit `4a53c1d`. **Integration:** restart the real stack's core and worker on this branch's head.
+- The stuck task `f793fa0e` (pinned to `real-cfc0d6f`, in Stopping) is then ended by the first chat message more than 2 minutes after its Stop.
+- The three duplicate Google rows collapse when the core starts (see below).
+
+**What changed:**
+1. **`calendar_delete`** (Google `calendars.delete`, under `calendar.create`).
+   - It deletes only a calendar Nori created: the `calendar.app.created` scope cannot even read others. The primary calendar is refused.
+   - Its effect is `unknown`, which the contract defines as always asking. Permissions route it to an approval even for a direct request.
+   - The approval reads "Permanently delete the calendar "<name>" and N events on it. This cannot be undone."
+   - An interrupted delete reconciles by reading the calendar.
+   - **Contract proposal (coordinator's call):** an `irreversible_write` effect value would describe this better than `unknown`.
+2. **A Stop no worker can deliver.**
+   - Temporal `Inspect` now reports since when a workflow step has waited without any worker starting it.
+   - The API's closed-task repair terminates a stop-requested execution whose step has waited 2 minutes (no worker serves its build), then publishes the task as stopped through the usual clean-up path.
+   - The repair runs whenever the assistant processes a message. So the user's next message after a stuck Stop settles it, and the outer model no longer routes the new request to a stuck task.
+3. **"Use this account next time".** Cause, from the real stack's preferences: the default *was* saved (`{"calendar.read": "conn_295df0b9…"}`), but defaults are kept per purpose, and the next task asked for another purpose.
+   - Now a remembered default for one purpose serves the app's other purposes when that account is eligible.
+   - Several connections to the same provider account are never put to the user: the one with the most access is used.
+   - Saving a default drops defaults naming connections that no longer exist (they made the whole save invalid) and logs a failed save instead of ignoring it.
+4. **"Could not verify … from shortened details".**
+   - Cause: the outer model checks a task's answer against cited tool results clipped to fit its context, from the front of the JSON. Keys are sorted, so a calendar result's long `event` object comes first, and the time and summary were what got cut.
+   - Each cited result now carries its one-line `summary` (or its error), kept whole when the result is shortened. Calendar read-back summaries state the time Google now has ("Changed "X", now Wed 11 Nov 2026 16:00–16:30 PST (read back from Google, …)"). The conversation prompt says a shortened result whose summary confirms the claim is confirmed.
+
+Verified with the **real models** on my stack (Google from recordings; users B and C), 06:01 to 06:20 UTC:
+
+| Case | Task | Result |
+| --- | --- | --- |
+| Stop, worker gone | `83ebf1a2` (waiting on a send approval, build `be-4a53c1d`) and `039c5a95` (waiting on a connect card, build `be-97f00c4`, gone for 50 minutes) | Both Stopped at 06:01:55 and showed as stopping, as on the real stack, with new tasks served by build `be-4a53c1d-b`. Their next steps waited unstarted from 06:02:00. My next chat message at 06:04:02 ran the repair: both executions terminated, both tasks `cancelled`. The conversation said "Stopped both the calendar check and the "stop test started" email task." |
+| "Please delete the entire Google calendar named Nori test." (user C) | `4451c27e-00ba-51eb-9f47-2aea669c8dd0` | Approval card: "Permanently delete the calendar "Nori test" and 1 event on it. This cannot be undone.", effect `unknown`, with the material effect named. After approving through the API: `DELETE …/calendars/noritest@group.calendar.google.com` 204, operation confirmed. The task then ended "incomplete" because my recorded calendar list has no after-delete variant and still listed "Nori test"; the model rightly would not claim success. |
+| "…move it to 4pm for 30 minutes" (Nori rehearsal, user C) | `6b6df136-9206-57f9-ab84-f60abb9aa60a` | `calendar_event_update` confirmed. The reply: "Moved Nori rehearsal to Wednesday, November 11, 4:00–4:30 p.m. Pacific … Google confirmed the updated time." No complaint about shortened details. |
+| Remembered account across purposes (user B with two *different* Google accounts) | `08aa814c-d7a5-5303-a703-c95fb403475f`, then `17c2ff32-818a-5b5b-a48b-dadcdb3c6ab6` | The first task asked "Which account … for calendar.read?". I chose `recorded.work` with "remember", and the default was saved for `calendar.read`. The **next task**, an event create (`calendar.write`), asked nothing and used that account. Both tasks then ended "incomplete" because account B's recordings answer the event read-back with a different canned event (recordings, not the account choice). |
+
+Not exercised on the stack: the same-account rule in account selection. Duplicates are now collapsed when the core starts, so I could not keep two rows for one account on the new build; it is a direct rule in `Select`.
+
 ## Own address, leftover drafts, "tomorrow" (from integration's pass at `b33b356`)
 
 Commit `3acb70c`. **Integration:** restart the real stack's core **and** worker on this branch's head. The worker carries the Gmail checks and the task clock; the core carries the decline clean-up, the user facts and the duplicate repair below.
