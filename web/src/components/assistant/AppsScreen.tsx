@@ -191,7 +191,7 @@ export function AppDetailScreen({ id }: { id: string }) {
       <Section title="What Nori can do">
         {/* Connect asks the provider for the read capabilities only (core scopesFor); anything else is a second sign-in. */}
         {firstConnect && <p className="mb-2 text-meta text-ink-2">Connect asks {item.title} only for the Read items. Nori asks again, with a new {item.title} sign-in, before it can change or send anything.</p>}
-        <Rows>{item.capabilities.map((capability) => <Row key={capability.id} leading={!capability.supported ? <CircleSlash size={18} className="text-ink-3" aria-hidden /> : canAllow(capability) || firstConnect && capability.effect !== "read" ? <Circle size={18} className="text-ink-3" aria-hidden /> : <Check size={18} className="text-[#1c7a43]" aria-hidden />}
+        <Rows>{item.capabilities.map((capability) => <Row key={capability.id} wrapTitle leading={!capability.supported ? <CircleSlash size={18} className="text-ink-3" aria-hidden /> : canAllow(capability) || firstConnect && capability.effect !== "read" ? <Circle size={18} className="text-ink-3" aria-hidden /> : <Check size={18} className="text-[#1c7a43]" aria-hidden />}
           title={capability.title} detail={capability.supported ? undefined : capability.reason}
           trailing={<>{canAllow(capability) && <Button size="sm" variant="quiet" className="text-accent-text!" disabled={!!action.pending} aria-label={`Allow: ${capability.title}`}
             onClick={() => void action.run("allow", () => startSignIn(single!, "repair", `/apps/${encodeURIComponent(item.id)}`, [...(single!.capabilities ?? []), capability.id]))}>{action.pending === "allow" ? "Opening sign-in…" : "Allow"}</Button>}

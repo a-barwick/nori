@@ -44,7 +44,7 @@ export function CardView({ part }: { part: CardPart }) {
     }
     case "automation": {
       const routine = data as Automation;
-      return <Shell href={href} title={routine.title} detail={`${cadence(routine.trigger)}${routine.status === "enabled" && routine.next_at ? ` · next ${relative(routine.next_at)}` : ""}`} pill={<Pill tone={routine.status === "enabled" ? "ok" : "neutral"}>{routine.status === "enabled" ? "On" : routine.status === "paused" ? "Paused" : "Cancelled"}</Pill>} />;
+      return <Shell href={href} title={routine.title} detail={`${cadence(routine.trigger)}${routine.status === "enabled" && routine.next_at ? ` · next ${relative(routine.next_at)}` : ""}`} pill={<Pill tone={routine.status === "enabled" && (routine.next_at || routine.trigger.kind !== "once") ? "ok" : "neutral"}>{routine.status === "enabled" ? routine.next_at || routine.trigger.kind !== "once" ? "On" : "Done" : routine.status === "paused" ? "Paused" : "Cancelled"}</Pill>} />;
     }
     case "goal": {
       const goal = data as Goal;
