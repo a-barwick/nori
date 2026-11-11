@@ -8,6 +8,7 @@ import { taskControlKinds } from "@/lib/types";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
 import { useDraftFiles, type UploadContext } from "@/lib/useDraftFiles";
 import { runtimePath } from "./paths";
+import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "./messages";
 
 class RequestError extends Error {
   constructor(message: string, readonly status: number, readonly details?: TaskCommandResponse) { super(message); }
@@ -148,6 +149,9 @@ export function useRuntime(agentMode = false) {
     try { if (text) localStorage.setItem(DRAFT_KEY, text); else localStorage.removeItem(DRAFT_KEY); } catch { /* storage off */ }
   };
   const [error, setError] = useState("");
+  // Mirrors an outage error so the stream can clear it when the service answers again.
+  const outage = useRef(false);
+  useEffect(() => { outage.current = error === SERVICE_UNAVAILABLE; }, [error]);
   const [streamError, setStreamError] = useState("");
   const [streamAwake, setStreamAwake] = useState(true);
   const position = useRef(0);
@@ -465,7 +469,12 @@ export function useRuntime(agentMode = false) {
         }
         failures = 0;
       });
-      stream.onopen = () => { if (!stopped && stream === source) setStreamError(""); };
+      stream.onopen = () => {
+        if (stopped || stream !== source) return;
+        setStreamError("");
+        // The service is back after an outage: read the snapshot once so the reconnecting notice clears by itself.
+        if (outage.current) void refresh(controller.signal).then((data) => { if (data) setError(""); }, () => undefined);
+      };
       listen<{ message: Message }>("message", ({ message }) => {
         setSession((current) => current && { ...current, messages: mergeById(current.messages, [message]).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)) });
         updatePending((current) => current.filter((item) => message.id !== `${item.id}-user`));
@@ -510,7 +519,7 @@ export function useRuntime(agentMode = false) {
       stream.onerror = () => {
         if (stream !== source || stopped || stream.readyState !== EventSource.CLOSED) return;
         failures++;
-        if (failures >= 3) setStreamError("Live updates are reconnecting.");
+        if (failures >= 3) setStreamError(STREAM_RECONNECTING);
         timer = setTimeout(open, Math.min(30_000, 1000 * 2 ** failures));
       };
     }
