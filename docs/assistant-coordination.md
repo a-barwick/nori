@@ -189,6 +189,33 @@ Austin: "Go, release". The coordinator merged PR #165 (`d7b6ffb`), applied the a
 
 Not yet done: the OAuth redirect `https://noribot.chat/api/v1/connections/oauth/callback` is not on the Google client, so connecting a Google account on noribot.chat fails until it is added (Austin's console sign-in). Push stays off (VAPID secrets have no versions). No real account has connected in production.
 
+### Production made to work; slice run on Austin's personal account (2026-11-11, afternoon)
+
+Austin: "Yes, release", then "fucking get it running and test it!" Done by the coordinator session, in his Chrome through the Claude extension where a browser was needed.
+
+What was wrong in production after the morning release, and what was done:
+
+- **Google rejected the callback** (`redirect_uri_mismatch`): the existing client is a Desktop client and cannot register an https redirect. Created a Web application client "Nori web" in `bot-111549` with `https://noribot.chat/api/v1/connections/oauth/callback`; its ID and secret are version 2 of `nori-google-calendar-client-id` and `nori-google-calendar-client-secret`. The local stacks keep the Desktop client from `.env`. The new secret appeared once in this session's tool output (the console's copy button carries it in its label).
+- **"Nori is busy" (429) on almost every request**: the Agent Runtime quota is 30 queries per minute per project and region, and each web request resolved the user against the runtime before forwarding. PR a-barwick/nori#166 remembers successful resolutions for five minutes and halves three polls; released as `rel-f4c49506e446`. A quota increase to 600 was requested (Cloud Quotas API enabled for this; preference `nori-runtime-query-rpm-us-central1`), still pending when this was written.
+- **Every reply failed, "unsupported direct OpenAI conversation model"**: the application state's `outer_model` output holds `meta/muse-spark-1.3` since the morning apply, and releases copied it to `NORI_AGENT_MODEL`. PR a-barwick/nori#167 makes production set `gpt-6.1-sol` explicitly. Its release was refused ("unprocessed messages": the test message that could not be answered), so the live runtime's `NORI_AGENT_MODEL` was patched directly. `2ad81cc` on `main` is therefore not released as a build; it only changes release tooling. The state output is still stale.
+- **OpenAI answered 401**: `nori-openai-api-key` version 1 (2026-10-31) is rejected by OpenAI. The working key from the main `.env` was added as version 2 and the live runtime's secret reference points at version 2 (the next release sets it back to `latest`, which is the same version).
+
+Releases today after the morning one: `663320c` (12:35), `f4c4950` (12:48). Each paused production about three minutes.
+
+**Slice on noribot.chat, Austin's personal Gmail account, real provider** (connection `conn_35fdb782976654a89834`, connected with "Read, change and send"; times PST):
+
+| Step | Result |
+| --- | --- |
+| Connect Google in Apps | connected and Ready, but the callback redirected to `/apps?result=failed` (not traced) |
+| "What does my week look like" (13:06) | pass: Primary, Family and Nori test calendars read, Gmail cited, sources listed |
+| Create "Nori production check" on Nori test | pass, after a needless question about the calendar's time zone |
+| Move it to 4:00 PM | pass |
+| Delete it | pass; the calendar ends clean |
+| "Email me" a note | pass: approval card with To and From his own address, approved in Work, sent |
+| "Remind me in 3 minutes" | set for 13:18:00, ran 13:19:06 to 13:19:21 with the app open, delivered in the app ("Time to stretch!") |
+
+Not exercised: a reminder with the app closed (push still off), Drive, a send to another address in production, the task ids of these runs (not copied into `docs/assistant-acceptance.md`).
+
 ## Baseline commits
 
 | What | Commit |
