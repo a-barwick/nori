@@ -216,6 +216,22 @@ Releases today after the morning one: `663320c` (12:35), `f4c4950` (12:48). Each
 
 Not exercised: a reminder with the app closed (push still off), Drive, a send to another address in production, the task ids of these runs (not copied into `docs/assistant-acceptance.md`).
 
+### Slice defects fixed and re-tested in production (2026-11-11, 13:30 to 14:00 PST)
+
+Austin, on the list of open items: "This is such high maintenance jesus christ." Coordinator's reading: fix what needs nothing from him, without asking.
+
+PR a-barwick/nori#168, released as `rel-02aee57c6473` (13:53; this release also carries #167):
+
+- **Connect landed on `result=failed` after succeeding.** The hosted gateway does not pass a redirect's `Location` to the web tier. The web tier now asks core for the destination as JSON. Re-tested: signing in again with the same account returned to Apps showing "Connected." and "This account was already connected; its access was updated." Still one connection, Ready.
+- **Time-zone question on a secondary calendar.** `calendar_list_calendars` returns each calendar's zone and an event with no zone uses the saved zone. Re-tested: create and delete of "Nori recheck" on Nori test ran with no question.
+- **A failed turn blocked its own repair release.** `refuse_user_work` no longer treats a saved, unrouted message with nothing in flight as open work.
+- **Releases check model access.** `make deploy` and `make deploy-check` ask OpenAI whether production's key and both models are accepted, and verify checks the live runtime's model names.
+- **Drive API enabled** in `bot-111549`. Re-tested: a Drive search returned 50 items.
+
+Left as it is: the application state's `outer_model` output still says `meta/muse-spark-1.3`. Production releases no longer read it; correcting it needs an apply with the full variable set, and a plan with defaults would also change the web service, the VM metadata and two Arize IAM members.
+
+Still open: the runtime query quota (30 per minute; increase to 600 requested, not granted when this was written); push delivery (VAPID secrets empty, no device registered) and a reminder with the app closed; old worker builds that hold the Desktop client's refresh token; today's production task ids are not in `docs/assistant-acceptance.md`.
+
 ## Baseline commits
 
 | What | Commit |
