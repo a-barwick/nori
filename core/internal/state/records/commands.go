@@ -196,9 +196,7 @@ func (d *Database) appendHeldEvents(tx *docstore.Transaction, events []state.Tas
 // appendTaskEvent is called after the task transaction's other reads and before its writes. The state transition and
 // outer inbox insertion commit together. It reports false when the same event was already in the inbox.
 func (d *Database) appendTaskEvent(tx *docstore.Transaction, run state.Run, event state.TaskEvent, traceContext map[string]string) (bool, error) {
-	// A task started from a separate chat reports to that chat and to Work, never through the assistant
-	// conversation.
-	if run.Origin != nil && run.Origin.ConversationID != "" && run.Origin.ConversationID != "assistant" {
+	if !reportsToAssistant(run) {
 		return false, nil
 	}
 	ref := d.conversationInputs().Doc(state.TaskEventInputID(event.ID))
@@ -222,6 +220,10 @@ func (d *Database) appendTaskEvent(tx *docstore.Transaction, run state.Run, even
 		return false, err
 	}
 	return true, tx.Create(ref, input)
+}
+
+func reportsToAssistant(run state.Run) bool {
+	return run.Origin == nil || run.Origin.ConversationID == "" || run.Origin.ConversationID == "assistant"
 }
 
 // preferredTaskBudget is the user's saved per-task budget (Preferences.budgets.task_usd), bounded like an explicit

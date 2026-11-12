@@ -193,12 +193,14 @@ func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision i
 		if len(eventTraceContext) == 0 {
 			eventTraceContext = run.TraceContext
 		}
-		inserted, err := d.appendTaskEvent(tx, run, event, eventTraceContext)
-		if err != nil || !inserted {
-			return err
-		}
-		if err = log.add(state.EventConversation, ""); err != nil {
-			return err
+		if reportsToAssistant(run) {
+			inserted, err := d.appendTaskEvent(tx, run, event, eventTraceContext)
+			if err != nil || !inserted {
+				return err
+			}
+			if err = log.add(state.EventConversation, ""); err != nil {
+				return err
+			}
 		}
 		if err = log.add(state.EventTask, runID); err != nil {
 			return err
