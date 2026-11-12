@@ -61,6 +61,7 @@ func (d *Devices) ApproveDevice(ctx context.Context, id, owner string, approval 
 			return state.ErrNotFound
 		}
 		record.OwnerID, record.Scopes = owner, approval.Scopes
+		record.ExpiresAt = record.ExpiresAt.Add(clientauth.DevicePollGrace)
 		return tx.Set(ref, record)
 	})
 }

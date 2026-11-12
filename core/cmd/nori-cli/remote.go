@@ -99,16 +99,23 @@ func (a *cli) login(ctx context.Context, account string, web *url.URL, args []st
 		openBrowser(link.String())
 	}
 	poll := clientauth.DevicePoll{ID: challenge.ID, Proof: proof}
-	ctx, cancel := context.WithDeadline(ctx, challenge.ExpiresAt)
+	ctx, cancel := context.WithDeadline(ctx, challenge.ExpiresAt.Add(clientauth.DevicePollGrace))
 	defer cancel()
+	interval := time.Duration(challenge.IntervalSeconds) * time.Second
+	delay := interval
 	for {
-		if err := pause(ctx, time.Duration(challenge.IntervalSeconds)*time.Second); err != nil {
+		if err := pause(ctx, delay); err != nil {
 			return fmt.Errorf("sign-in expired or was interrupted: %w", err)
 		}
 		var status clientauth.DeviceStatus
 		if err := a.client.call(ctx, "POST", clientauth.DeviceStatusPath, poll, &status); err != nil {
+			if retryable(err) {
+				delay = max(interval, retryDelay(err, interval))
+				continue
+			}
 			return err
 		}
+		delay = interval
 		switch status.Status {
 		case "pending":
 			continue

@@ -116,9 +116,10 @@ only their verifiers in that request. Open
 code printed by the CLI and choose scopes. The CLI sends the proof in a
 JSON body to `POST /v1/client-authorizations/status` at the returned interval.
 After approval it gets the owner and client IDs, then constructs its
-credential locally. Repeating the poll returns the same IDs. CLI credentials
-issued through this flow expire after 90 days. Keep credentials and verifiers
-out of URLs, logs and mutation receipts.
+credential locally. Repeating the poll returns the same IDs. Approved
+requests remain pollable for one minute past the original approval deadline.
+CLI credentials issued through this flow expire after 90 days. Keep
+credentials and verifiers out of URLs, logs and mutation receipts.
 
 ## Conversation API
 

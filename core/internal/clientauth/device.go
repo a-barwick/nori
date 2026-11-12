@@ -9,6 +9,7 @@ const (
 	DeviceStartPath  = "/v1/client-authorizations"
 	DeviceStatusPath = "/v1/client-authorizations/status"
 	DeviceLifetime   = 10 * time.Minute
+	DevicePollGrace  = time.Minute
 	DeviceInterval   = 3
 	CLILifetime      = 90 * 24 * time.Hour
 )
