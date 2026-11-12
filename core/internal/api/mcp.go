@@ -10,14 +10,14 @@ import (
 	"nori/internal/state"
 )
 
-func (a *Assistant) registerMCP(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/mcp", a.mcpServers)
-	mux.HandleFunc("POST /v1/mcp", jsonBody(a.createMCP))
-	mux.HandleFunc("GET /v1/mcp/{id}", a.mcpServer)
-	mux.HandleFunc("PUT /v1/mcp/{id}", jsonBody(a.updateMCP))
-	mux.HandleFunc("POST /v1/mcp/{id}/actions", jsonBody(a.mcpAction))
-	mux.HandleFunc("GET /v1/mcp/{id}/tools", a.mcpTools)
-	mux.HandleFunc("POST /v1/mcp/{id}/credential", jsonBody(a.mcpCredential))
+func (a *Assistant) registerMCP(mux *routeMux) {
+	mux.handle("GET /v1/mcp", browserRead, a.mcpServers)
+	mux.handle("POST /v1/mcp", browserJSON, jsonBody(a.createMCP))
+	mux.handle("GET /v1/mcp/{id}", browserRead, a.mcpServer)
+	mux.handle("PUT /v1/mcp/{id}", browserJSON, jsonBody(a.updateMCP))
+	mux.handle("POST /v1/mcp/{id}/actions", browserJSON, jsonBody(a.mcpAction))
+	mux.handle("GET /v1/mcp/{id}/tools", browserRead, a.mcpTools)
+	mux.handle("POST /v1/mcp/{id}/credential", browserJSON, jsonBody(a.mcpCredential))
 }
 
 func mcpError(w http.ResponseWriter, err error, requestID string, current any) {

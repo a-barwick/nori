@@ -62,7 +62,6 @@ type Assistant struct {
 	// NextScheduled and InboxUnread feed the summary badges once the Scheduler and inbox exist.
 	NextScheduled func(ctx context.Context) *time.Time
 	InboxUnread   func(ctx context.Context) int
-	Extra         []func(mux *http.ServeMux, a *Assistant)
 }
 
 type apiError struct {
@@ -154,68 +153,65 @@ type list[T any] struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 }
 
-func (a *Assistant) register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/integrations", a.integrations)
-	mux.HandleFunc("GET /v1/integrations/{id}", a.integration)
-	mux.HandleFunc("GET /v1/connections", a.connections)
-	mux.HandleFunc("POST /v1/connections", jsonBody(a.createConnection))
-	mux.HandleFunc("GET /v1/connections/oauth/callback", a.oauthCallback)
-	mux.HandleFunc("GET /v1/connections/{id}", a.connection)
-	mux.HandleFunc("PUT /v1/connections/{id}", jsonBody(a.updateConnection))
-	mux.HandleFunc("POST /v1/connections/{id}/actions", jsonBody(a.connectionAction))
-	mux.HandleFunc("GET /v1/connections/{id}/resources", a.connectionResources)
-	mux.HandleFunc("GET /v1/preferences", a.preferences)
-	mux.HandleFunc("PUT /v1/preferences", jsonBody(a.savePreferences))
-	mux.HandleFunc("GET /v1/permissions", a.rules)
-	mux.HandleFunc("POST /v1/permissions", jsonBody(a.createRule))
-	mux.HandleFunc("GET /v1/permissions/{id}", a.rule)
-	mux.HandleFunc("PUT /v1/permissions/{id}", jsonBody(a.updateRule))
-	mux.HandleFunc("POST /v1/permissions/{id}/actions", jsonBody(a.ruleAction))
-	mux.HandleFunc("GET /v1/interactions", a.interactions)
-	mux.HandleFunc("GET /v1/interactions/{id}", a.interaction)
-	mux.HandleFunc("POST /v1/interactions/{id}/responses", jsonBody(a.respond))
-	mux.HandleFunc("GET /v1/mutations/{request_id}", a.mutation)
-	mux.HandleFunc("GET /v1/tools", a.tools)
-	mux.HandleFunc("GET /v1/tools/{id...}", a.tool)
-	mux.HandleFunc("GET /v1/work", a.work)
-	mux.HandleFunc("GET /v1/work/{task_id}", a.workDetail)
-	mux.HandleFunc("GET /v1/work/{task_id}/operations", a.workOperations)
-	mux.HandleFunc("POST /v1/work/{task_id}/actions", jsonBody(a.workAction))
-	mux.HandleFunc("GET /v1/operations", a.operations)
-	mux.HandleFunc("GET /v1/assistant/summary", a.summary)
-	mux.HandleFunc("GET /v1/library", a.library)
-	mux.HandleFunc("GET /v1/library/{id}", a.libraryGet)
-	mux.HandleFunc("PUT /v1/library/{id}", jsonBody(a.libraryRename))
-	mux.HandleFunc("GET /v1/library/{id}/versions", a.libraryVersions)
-	mux.HandleFunc("GET /v1/library/{id}/file", a.libraryFile)
-	mux.HandleFunc("POST /v1/library/{id}/actions", jsonBody(a.libraryAction))
-	mux.HandleFunc("GET /v1/search", a.search)
-	mux.HandleFunc("GET /v1/memory", a.memory)
-	mux.HandleFunc("PUT /v1/memory/{id}", jsonBody(a.editMemory))
-	mux.HandleFunc("POST /v1/memory/{id}/actions", jsonBody(a.memoryAction))
-	if a.Scheduler != nil {
+func (a *Assistant) register(mux *routeMux) {
+	mux.handle("GET /v1/integrations", browserRead, a.integrations)
+	mux.handle("GET /v1/integrations/{id}", browserRead, a.integration)
+	mux.handle("GET /v1/connections", browserRead, a.connections)
+	mux.handle("POST /v1/connections", browserJSON, jsonBody(a.createConnection))
+	mux.handle("GET /v1/connections/oauth/callback", browserRead.responses("text/html"), a.oauthCallback)
+	mux.handle("GET /v1/connections/{id}", browserRead, a.connection)
+	mux.handle("PUT /v1/connections/{id}", browserJSON, jsonBody(a.updateConnection))
+	mux.handle("POST /v1/connections/{id}/actions", browserJSON, jsonBody(a.connectionAction))
+	mux.handle("GET /v1/connections/{id}/resources", browserRead, a.connectionResources)
+	mux.handle("GET /v1/preferences", browserRead, a.preferences)
+	mux.handle("PUT /v1/preferences", browserJSON, jsonBody(a.savePreferences))
+	mux.handle("GET /v1/permissions", browserRead, a.rules)
+	mux.handle("POST /v1/permissions", browserJSON, jsonBody(a.createRule))
+	mux.handle("GET /v1/permissions/{id}", browserRead, a.rule)
+	mux.handle("PUT /v1/permissions/{id}", browserJSON, jsonBody(a.updateRule))
+	mux.handle("POST /v1/permissions/{id}/actions", browserJSON, jsonBody(a.ruleAction))
+	mux.handle("GET /v1/interactions", clientRead, a.interactions)
+	mux.handle("GET /v1/interactions/{id}", clientRead, a.interaction)
+	mux.handle("POST /v1/interactions/{id}/responses", clientJSON, jsonBody(a.respond))
+	mux.handle("GET /v1/mutations/{request_id}", clientRead, a.mutation)
+	mux.handle("GET /v1/tools", browserRead, a.tools)
+	mux.handle("GET /v1/tools/{id...}", browserRead, a.tool)
+	mux.handle("GET /v1/work", clientRead, a.work)
+	mux.handle("GET /v1/work/{task_id}", clientRead, a.workDetail)
+	mux.handle("GET /v1/work/{task_id}/operations", clientRead, a.workOperations)
+	mux.handle("POST /v1/work/{task_id}/actions", clientJSON, jsonBody(a.workAction))
+	mux.handle("GET /v1/operations", clientRead, a.operations)
+	mux.handle("GET /v1/assistant/summary", browserRead, a.summary)
+	mux.handle("GET /v1/library", clientRead, a.library)
+	mux.handle("GET /v1/library/{id}", clientRead, a.libraryGet)
+	mux.handle("PUT /v1/library/{id}", browserJSON, jsonBody(a.libraryRename))
+	mux.handle("GET /v1/library/{id}/versions", clientRead, a.libraryVersions)
+	mux.handle("GET /v1/library/{id}/file", clientRead.responses(fileTypes...), a.libraryFile)
+	mux.handle("POST /v1/library/{id}/actions", browserJSON, jsonBody(a.libraryAction))
+	mux.handle("GET /v1/search", browserRead, a.search)
+	mux.handle("GET /v1/memory", browserRead, a.memory)
+	mux.handle("PUT /v1/memory/{id}", browserJSON, jsonBody(a.editMemory))
+	mux.handle("POST /v1/memory/{id}/actions", browserJSON, jsonBody(a.memoryAction))
+	if a.Scheduler != nil || mux.manifest {
 		a.registerScheduling(mux)
 	}
-	if a.MCP != nil {
+	if a.MCP != nil || mux.manifest {
 		a.registerMCP(mux)
 	}
-	if a.Plugins != nil {
+	if a.Plugins != nil || mux.manifest {
 		a.registerPlugins(mux)
 	}
-	mux.HandleFunc("GET /v1/diagnostics", a.diagnostics)
-	mux.HandleFunc("POST /v1/diagnostics/actions", jsonBody(a.diagnosticsAction))
-	mux.HandleFunc("POST /v1/feedback", jsonBody(a.feedback))
-	mux.HandleFunc("GET /v1/mcp-clients", a.mcpClients)
-	mux.HandleFunc("POST /v1/mcp-clients", jsonBody(a.createMCPClient))
-	mux.HandleFunc("POST /v1/mcp-clients/{id}/actions", jsonBody(a.mcpClientAction))
-	mux.HandleFunc("POST /v1/nori-mcp", a.noriMCP)
-	if a.Computer != nil {
-		mux.HandleFunc("GET /v1/computer/sessions", a.computerSessions)
-		mux.HandleFunc("GET /v1/computer/sessions/{id}", a.computerSession)
-		mux.HandleFunc("POST /v1/computer/sessions/{id}/actions", jsonBody(a.computerAction))
-	}
-	for _, extra := range a.Extra {
-		extra(mux, a)
+	mux.handle("GET /v1/diagnostics", localOnly, a.diagnostics)
+	mux.handle("POST /v1/diagnostics/actions", localOnly.body("json", jsonLimit), jsonBody(a.diagnosticsAction))
+	mux.handle("POST /v1/feedback", localOnly.body("json", jsonLimit), jsonBody(a.feedback))
+	mux.handle("GET /v1/mcp-clients", browserRead, a.mcpClients)
+	mux.handle("POST /v1/mcp-clients", browserJSON, jsonBody(a.createMCPClient))
+	mux.handle("POST /v1/mcp-clients/{id}/actions", browserJSON, jsonBody(a.mcpClientAction))
+	mux.handle("POST /v1/nori-mcp", mcpRule, a.noriMCP)
+	if a.Computer != nil || mux.manifest {
+		mux.handle("GET /v1/computer/sessions", browserRead, a.computerSessions)
+		mux.handle("GET /v1/computer/sessions/{id}", browserRead, a.computerSession)
+		mux.handle("POST /v1/computer/sessions/{id}/actions", browserJSON, jsonBody(a.computerAction))
 	}
 }
 

@@ -74,3 +74,27 @@ cd core && go run ./cmd/contracts-check -live http://127.0.0.1:8083
 Propose the change with the contract ID and the encoding revision, the consumer need, the schema diff, affected consumers and stored histories, compatibility consequences, and the fixtures that prove it. One editor lands the schema and fixture change in one commit; consumers acknowledge that commit in the coordination record. Chat alone does not amend a contract.
 
 `recordings/<provider>/*.json` are hand-written provider exchanges for the local replay transport (`NORI_PROVIDER_REPLAY=<repo>/contracts/assistant/recordings`, local stack only). An exchange matches on method, host, path (exact or prefix `*`), query, `body_contains` (all must appear) and optional `basic_auth` (made-up credentials, never real ones), `query_prefix` and `headers` (each value must start with the given string, for example a `timeMin` date or a recorded bearer token); `after`, `times`, `delay_ms` and `drop` order and shape replies. `capture: NAME` saves the matched request so a later reply can echo it with `{{capture:NAME.path}}`, `.stem`, `.body` or `.body_xml`, for a read-back that returns exactly what was written. `recordings/samples/` holds files to upload in recorded workflows.
+
+## Core route manifest
+
+[`routes.json`](routes.json) is generated from Core's route registrations,
+including optional route families. It declares caller types, client scope,
+request limits in bytes, path parameters, and response media types. Scoped
+routes live under `/users/{id}` inside Core. A registration needs a rule to
+compile, and Core rejects an empty rule when constructing the router.
+Run `go run ./cmd/contracts-check -emit-routes` from `core/` after editing
+a rule. The normal contract check fails if the checked-in manifest is stale.
+
+The first manifest leaves the existing web forwarding behavior in place.
+Its differences from the prior `forward.ts` policy are recorded here for
+the proxy migration.
+
+| Previous browser proxy | Core's declared policy |
+| --- | --- |
+| The management allowlist accepted any listed family and up to four more segments. | The manifest specifies exact methods and patterns. Feature-disabled routes still return 404. Tool IDs retain a trailing multi-segment parameter. |
+| Conversation IDs used a loose 36-character match. Operations were unavailable. | IDs are canonical UUIDs or `assistant`. Only independent conversations support DELETE. Conversation operations can use the same signed-in proxy as the other conversation reads. |
+| Legacy `/api/session`, diagnostics and feedback had no browser routes. | These remain available to local tooling. Health, user resolution, and queue processing are separate from the browser forwarding surface. |
+| JSON writes used 64,000 characters locally and up to 128,000 in hosted or management routes. | Core already decodes at most 64 KiB. Use that byte limit consistently for JSON. Uploads retain their 10 MiB limit. The MCP transport uses a 1 MiB limit when enforcement lands. |
+| General reads allowed JSON and SSE. Operations allowed JSON and PNG in hosted mode and any type locally. | Only event routes accept SSE. The artifact operation accepts PNG. Other runtime operations return JSON. |
+| File responses used family-level filters. Calendar and Markdown uploads could be saved but not downloaded through all browser routes. | File routes accept the supported attachment media types and octet-stream. Metadata routes return JSON. Download and sandbox headers are relayed. |
+| OAuth callback used a dedicated redirect handler. | The manifest declares JSON and HTML for the callback. The web proxy still checks navigation and constrains the redirect target. |

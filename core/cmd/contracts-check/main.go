@@ -13,6 +13,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -69,6 +70,7 @@ func main() {
 	strict := flag.Bool("strict", false, "fail when a $defs entry has no fixture")
 	live := flag.String("live", "", "run scenarios against this core base URL (e.g. http://127.0.0.1:8083)")
 	emit := flag.String("emit-ts", "", "write every valid fixture as a typed TypeScript literal to this file")
+	emitRoutes := flag.Bool("emit-routes", false, "regenerate contracts/assistant/routes.json")
 	recorded := flag.Bool("recorded", false, "with -live, also run scenarios that require core started with NORI_PROVIDER_REPLAY")
 	only := flag.String("only", "", "with -live, run only scenarios whose file name contains this text")
 	flag.Parse()
@@ -94,6 +96,10 @@ func main() {
 	compiler.UseLoader(dirLoader{dir: schemasDir})
 
 	failures := 0
+	if err := checkRoutes(dir, *emitRoutes); err != nil {
+		failures++
+		fmt.Printf("FAIL route manifest: %v\n", err)
+	}
 	defs := map[string]bool{} // "file.schema.json#/$defs/Name" -> covered
 	files, _ := filepath.Glob(filepath.Join(schemasDir, "*.schema.json"))
 	sort.Strings(files)
@@ -197,6 +203,30 @@ func main() {
 	if failures > 0 || (*strict && len(uncovered) > 0) {
 		os.Exit(1)
 	}
+}
+
+func checkRoutes(dir string, emit bool) error {
+	file := filepath.Join(dir, "routes.json")
+	manifest := struct {
+		Version int             `json:"version"`
+		Routes  []api.RouteRule `json:"routes"`
+	}{1, api.RouteManifest()}
+	encoded, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+	if emit {
+		return os.WriteFile(file, encoded, 0o644)
+	}
+	current, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, encoded) {
+		return fmt.Errorf("%s is stale. Run go run ./cmd/contracts-check -emit-routes", file)
+	}
+	return nil
 }
 
 func findRoot() string {

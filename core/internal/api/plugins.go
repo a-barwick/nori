@@ -9,19 +9,19 @@ import (
 	"nori/internal/state"
 )
 
-func (a *Assistant) registerPlugins(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/plugins/catalog", a.pluginCatalog)
-	mux.HandleFunc("POST /v1/plugins/packages", jsonBody(a.uploadPackage))
-	mux.HandleFunc("GET /v1/plugins/installations", a.installations)
-	mux.HandleFunc("POST /v1/plugins/installations", jsonBody(a.install))
-	mux.HandleFunc("GET /v1/plugins/installations/{id}", a.installation)
-	mux.HandleFunc("GET /v1/plugins/installations/{id}/review", a.installationReview)
-	mux.HandleFunc("POST /v1/plugins/installations/{id}/actions", jsonBody(a.installationAction))
-	mux.HandleFunc("GET /v1/skills", a.skills)
-	mux.HandleFunc("POST /v1/skills", jsonBody(a.createSkill))
-	mux.HandleFunc("GET /v1/skills/{id}", a.skill)
-	mux.HandleFunc("PUT /v1/skills/{id}", jsonBody(a.updateSkill))
-	mux.HandleFunc("POST /v1/skills/{id}/actions", jsonBody(a.skillAction))
+func (a *Assistant) registerPlugins(mux *routeMux) {
+	mux.handle("GET /v1/plugins/catalog", browserRead, a.pluginCatalog)
+	mux.handle("POST /v1/plugins/packages", browserJSON, jsonBody(a.uploadPackage))
+	mux.handle("GET /v1/plugins/installations", browserRead, a.installations)
+	mux.handle("POST /v1/plugins/installations", browserJSON, jsonBody(a.install))
+	mux.handle("GET /v1/plugins/installations/{id}", browserRead, a.installation)
+	mux.handle("GET /v1/plugins/installations/{id}/review", browserRead, a.installationReview)
+	mux.handle("POST /v1/plugins/installations/{id}/actions", browserJSON, jsonBody(a.installationAction))
+	mux.handle("GET /v1/skills", browserRead, a.skills)
+	mux.handle("POST /v1/skills", browserJSON, jsonBody(a.createSkill))
+	mux.handle("GET /v1/skills/{id}", browserRead, a.skill)
+	mux.handle("PUT /v1/skills/{id}", browserJSON, jsonBody(a.updateSkill))
+	mux.handle("POST /v1/skills/{id}/actions", browserJSON, jsonBody(a.skillAction))
 }
 
 func pluginError(w http.ResponseWriter, err error, requestID string, current any) {

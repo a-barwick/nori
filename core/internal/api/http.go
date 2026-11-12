@@ -45,49 +45,52 @@ type server struct {
 }
 
 func Handler(deps Deps) http.Handler {
-	s := &server{deps}
-	mux := http.NewServeMux()
+	mux := newRouteMux(true, false)
+	(&server{deps}).register(mux)
+	return mux.mux
+}
+
+func (s *server) register(mux *routeMux) {
 	health := func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok", "model": s.Model})
 	}
-	mux.HandleFunc("GET /healthz", health)
-	mux.HandleFunc("POST /healthz", jsonBody(health))
-	mux.HandleFunc("POST /api/healthz", jsonBody(health))
-	mux.HandleFunc("GET /v1/capabilities", s.capabilities)
-	if s.Chats != nil {
-		mux.HandleFunc("GET /v1/conversations", s.listChats)
-		mux.HandleFunc("POST /v1/conversations", jsonBody(s.createChat))
-		mux.HandleFunc("GET /v1/conversations/{conversation}", s.conversationRoute(s.chatSnapshot))
-		mux.HandleFunc("GET /v1/conversations/{conversation}/messages", s.conversationRoute(s.chatHistory))
-		mux.HandleFunc("GET /v1/conversations/{conversation}/operations", s.conversationRoute(s.conversationOperations))
-		mux.HandleFunc("DELETE /v1/conversations/{conversation}", s.conversationRoute(s.deleteChat))
-		mux.HandleFunc("POST /v1/conversations/{conversation}/messages", s.conversationRoute(jsonBody(s.chatMessage)))
-		mux.HandleFunc("POST /v1/conversations/{conversation}/cancel", s.conversationRoute(jsonBody(s.chatCancel)))
-		mux.HandleFunc("GET /v1/conversations/{conversation}/events", s.conversationRoute(s.chatEvents))
-		mux.HandleFunc("POST /v1/conversations/{conversation}/uploads", s.conversationRoute(s.chatUpload))
-		mux.HandleFunc("GET /v1/conversations/{conversation}/uploads/{id}", s.conversationRoute(s.chatReadUpload))
+	mux.handle("GET /healthz", healthRule, health)
+	mux.handle("POST /healthz", healthRule.body("json", jsonLimit), jsonBody(health))
+	mux.handle("POST /api/healthz", healthRule.body("json", jsonLimit), jsonBody(health))
+	mux.handle("GET /v1/capabilities", clientRead, s.capabilities)
+	if s.Chats != nil || mux.manifest {
+		mux.handle("GET /v1/conversations", clientRead, s.listChats)
+		mux.handle("POST /v1/conversations", clientJSON, jsonBody(s.createChat))
+		mux.handle("GET /v1/conversations/{conversation}", clientRead.param("conversation", "assistant|"+uuidSegment), s.conversationRoute(s.chatSnapshot))
+		mux.handle("GET /v1/conversations/{conversation}/messages", clientRead.param("conversation", "assistant|"+uuidSegment), s.conversationRoute(s.chatHistory))
+		mux.handle("GET /v1/conversations/{conversation}/operations", clientRead.param("conversation", "assistant|"+uuidSegment), s.conversationRoute(s.conversationOperations))
+		mux.handle("DELETE /v1/conversations/{conversation}", browserRead.token("mutate").param("conversation", uuidSegment), s.conversationRoute(s.deleteChat))
+		mux.handle("POST /v1/conversations/{conversation}/messages", clientJSON.param("conversation", "assistant|"+uuidSegment), s.conversationRoute(jsonBody(s.chatMessage)))
+		mux.handle("POST /v1/conversations/{conversation}/cancel", clientJSON.param("conversation", "assistant|"+uuidSegment), s.conversationRoute(jsonBody(s.chatCancel)))
+		mux.handle("GET /v1/conversations/{conversation}/events", clientRead.param("conversation", "assistant|"+uuidSegment).responses("text/event-stream"), s.conversationRoute(s.chatEvents))
+		mux.handle("POST /v1/conversations/{conversation}/uploads", browserRead.token("mutate").param("conversation", "assistant|"+uuidSegment).body("upload", state.MaxUploadBytes), s.conversationRoute(s.chatUpload))
+		mux.handle("GET /v1/conversations/{conversation}/uploads/{id}", clientRead.param("conversation", "assistant|"+uuidSegment).responses(fileTypes...).param("id", uuidSegment), s.conversationRoute(s.chatReadUpload))
 	}
 	if s.Assistant != nil {
 		s.Assistant.register(mux)
 	}
-	mux.HandleFunc("POST /api/process", jsonBody(s.process))
-	mux.HandleFunc("POST /api/resume", jsonBody(s.resume))
-	mux.HandleFunc("POST /api/session", s.assistantRoute(jsonBody(s.session)))
-	mux.HandleFunc("POST /api/turn", s.assistantRoute(jsonBody(s.turn)))
-	mux.HandleFunc("POST /api/input", s.assistantRoute(jsonBody(s.input)))
-	mux.HandleFunc("POST /api/command", s.assistantRoute(jsonBody(s.command)))
-	mux.HandleFunc("POST /api/cancel", s.assistantRoute(jsonBody(s.cancel)))
-	mux.HandleFunc("POST /api/trace", s.assistantRoute(jsonBody(s.trace)))
-	mux.HandleFunc("POST /api/artifact", s.assistantRoute(jsonBody(s.artifact)))
-	mux.HandleFunc("GET /v1/snapshot", s.assistantRoute(s.snapshot))
-	mux.HandleFunc("GET /v1/events", s.assistantRoute(s.events))
-	mux.HandleFunc("POST /v1/uploads", s.assistantRoute(s.upload))
-	mux.HandleFunc("GET /v1/uploads/{id}", s.assistantRoute(s.readUpload))
-	mux.HandleFunc("GET /v1/results/{id}", s.assistantRoute(s.readResult))
-	mux.HandleFunc("GET /v1/results/{id}/file", s.assistantRoute(s.readResultFile))
-	mux.HandleFunc("POST /api/delivered", s.assistantRoute(jsonBody(s.delivered)))
-	mux.HandleFunc("POST /api/seen", s.assistantRoute(jsonBody(s.seen)))
-	return mux
+	mux.handle("POST /api/process", internal.body("json", jsonLimit), jsonBody(s.process))
+	mux.handle("POST /api/resume", internal.body("json", jsonLimit), jsonBody(s.resume))
+	mux.handle("POST /api/session", localOnly.body("json", jsonLimit), s.assistantRoute(jsonBody(s.session)))
+	mux.handle("POST /api/turn", browserJSON, s.assistantRoute(jsonBody(s.turn)))
+	mux.handle("POST /api/input", browserJSON, s.assistantRoute(jsonBody(s.input)))
+	mux.handle("POST /api/command", browserJSON, s.assistantRoute(jsonBody(s.command)))
+	mux.handle("POST /api/cancel", browserJSON, s.assistantRoute(jsonBody(s.cancel)))
+	mux.handle("POST /api/trace", browserJSON, s.assistantRoute(jsonBody(s.trace)))
+	mux.handle("POST /api/artifact", browserJSON.responses("image/png"), s.assistantRoute(jsonBody(s.artifact)))
+	mux.handle("GET /v1/snapshot", browserRead, s.assistantRoute(s.snapshot))
+	mux.handle("GET /v1/events", browserRead.responses("text/event-stream"), s.assistantRoute(s.events))
+	mux.handle("POST /v1/uploads", browserRead.body("upload", state.MaxUploadBytes), s.assistantRoute(s.upload))
+	mux.handle("GET /v1/uploads/{id}", browserRead.responses(fileTypes...).param("id", uuidSegment), s.assistantRoute(s.readUpload))
+	mux.handle("GET /v1/results/{id}", clientRead.param("id", uuidSegment), s.assistantRoute(s.readResult))
+	mux.handle("GET /v1/results/{id}/file", clientRead.responses(fileTypes...).param("id", uuidSegment), s.assistantRoute(s.readResultFile))
+	mux.handle("POST /api/delivered", browserJSON, s.assistantRoute(jsonBody(s.delivered)))
+	mux.handle("POST /api/seen", browserJSON, s.assistantRoute(jsonBody(s.seen)))
 }
 
 func jsonBody(handler http.HandlerFunc) http.HandlerFunc {
@@ -107,7 +110,7 @@ func validID(value string) bool {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
-	if err := httpjson.Decode(w, r, value, 64<<10); err != nil {
+	if err := httpjson.Decode(w, r, value, jsonLimit); err != nil {
 		message := "Send a valid JSON object."
 		if errors.Is(err, httpjson.ErrMultiple) {
 			message = "Send one JSON object."

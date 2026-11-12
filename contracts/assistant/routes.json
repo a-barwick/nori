@@ -1,0 +1,1968 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/artifact",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json",
+        "image/png"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/cancel",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/command",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/delivered",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "*",
+      "path": "/api/healthz",
+      "user_scoped": false,
+      "callers": [
+        "health"
+      ],
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/healthz",
+      "user_scoped": true,
+      "callers": [
+        "health"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/input",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/process",
+      "user_scoped": false,
+      "callers": [
+        "internal"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/process",
+      "user_scoped": true,
+      "callers": [
+        "internal"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/resume",
+      "user_scoped": false,
+      "callers": [
+        "internal"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/resume",
+      "user_scoped": true,
+      "callers": [
+        "internal"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/seen",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/session",
+      "user_scoped": true,
+      "callers": [
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/trace",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/turn",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/resolve",
+      "user_scoped": false,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "*",
+      "path": "/healthz",
+      "user_scoped": false,
+      "callers": [
+        "health"
+      ],
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "user_scoped": true,
+      "callers": [
+        "health"
+      ],
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/healthz",
+      "user_scoped": true,
+      "callers": [
+        "health"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ]
+    },
+    {
+      "method": "*",
+      "path": "/mcp",
+      "user_scoped": false,
+      "callers": [
+        "client"
+      ],
+      "token_scope": "mcp",
+      "body": "mcp",
+      "max_request_bytes": 1048576,
+      "response_media_types": [
+        "application/json",
+        "text/event-stream",
+        "text/plain"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/v1/assistant/summary",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/automations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/automations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/automations/preview",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/automations/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/automations/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/automations/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/automations/{id}/occurrences",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/capabilities",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/computer/sessions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/computer/sessions/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/computer/sessions/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/connections",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/connections",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/connections/oauth/callback",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json",
+        "text/html"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/connections/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/connections/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/connections/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/connections/{id}/resources",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/conversations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/conversations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "mutate",
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/conversations/{conversation}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "mutate",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "conversation": "^(?:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/conversations/{conversation}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "conversation": "^(?:assistant|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/conversations/{conversation}/cancel",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "mutate",
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "conversation": "^(?:assistant|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/conversations/{conversation}/events",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json",
+        "text/event-stream"
+      ],
+      "path_parameters": {
+        "conversation": "^(?:assistant|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/conversations/{conversation}/messages",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "conversation": "^(?:assistant|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/conversations/{conversation}/messages",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "mutate",
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "conversation": "^(?:assistant|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/conversations/{conversation}/operations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "conversation": "^(?:assistant|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/conversations/{conversation}/uploads",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "mutate",
+      "body": "upload",
+      "max_request_bytes": 10485760,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "conversation": "^(?:assistant|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/conversations/{conversation}/uploads/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json",
+        "application/octet-stream",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "application/pdf",
+        "text/csv",
+        "text/calendar",
+        "text/plain",
+        "text/markdown"
+      ],
+      "path_parameters": {
+        "conversation": "^(?:assistant|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$",
+        "id": "^(?:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/delivery-destinations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/delivery-destinations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/delivery-destinations/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/delivery-destinations/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/diagnostics",
+      "user_scoped": true,
+      "callers": [
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/diagnostics/actions",
+      "user_scoped": true,
+      "callers": [
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/events",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json",
+        "text/event-stream"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/feedback",
+      "user_scoped": true,
+      "callers": [
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/goals",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/goals",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/goals/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/goals/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/goals/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/inbox",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/inbox/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/integrations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/integrations/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/interactions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/interactions/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/interactions/{id}/responses",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "mutate",
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/library",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/library/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/library/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/library/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/library/{id}/file",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json",
+        "application/octet-stream",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "application/pdf",
+        "text/csv",
+        "text/calendar",
+        "text/plain",
+        "text/markdown"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/library/{id}/versions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/mcp",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/mcp",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/mcp-clients",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/mcp-clients",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/mcp-clients/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/mcp/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/mcp/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/mcp/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/mcp/{id}/credential",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/mcp/{id}/tools",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/memory",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/memory/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/memory/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/mutations/{request_id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "request_id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/nori-mcp",
+      "user_scoped": true,
+      "callers": [
+        "client"
+      ],
+      "token_scope": "mcp",
+      "body": "mcp",
+      "max_request_bytes": 1048576,
+      "response_media_types": [
+        "application/json",
+        "text/event-stream",
+        "text/plain"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/operations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/permissions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/permissions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/permissions/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/permissions/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/permissions/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/plugins/catalog",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/plugins/installations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/plugins/installations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/plugins/installations/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/plugins/installations/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/plugins/installations/{id}/review",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/plugins/packages",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/preferences",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/preferences",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/results/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/results/{id}/file",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json",
+        "application/octet-stream",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "application/pdf",
+        "text/csv",
+        "text/calendar",
+        "text/plain",
+        "text/markdown"
+      ],
+      "path_parameters": {
+        "id": "^(?:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/search",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/skills",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/skills",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/skills/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/skills/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/skills/{id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/snapshot",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tools",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tools/{id...}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/uploads",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "upload",
+      "max_request_bytes": 10485760,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/uploads/{id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json",
+        "application/octet-stream",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "application/pdf",
+        "text/csv",
+        "text/calendar",
+        "text/plain",
+        "text/markdown"
+      ],
+      "path_parameters": {
+        "id": "^(?:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/work",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/work/{task_id}",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "task_id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/work/{task_id}/actions",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "mutate",
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "task_id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/work/{task_id}/operations",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "read",
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "task_id": "^(?:[A-Za-z0-9._:@-]{1,200})$"
+      },
+      "max_path_segments": 6
+    }
+  ]
+}
