@@ -1,5 +1,32 @@
 # Local assistant stacks
 
+## Headless Nova demo
+
+From the repository root, with Python 3, Go 1.26 or newer, and a running local
+Docker engine with Docker Compose 2.24.4 or newer:
+
+```bash
+scripts/local-stacks/nova-demo/launch.py
+```
+
+The first run may download Go modules and the repository's local Postgres and
+Temporal images. Each run creates its own Compose project, data volumes, loopback
+ports, and Temporal task queue. The launcher builds Nori, provisions a synthetic
+user and Google connection, and starts the API and worker with the worker's
+build set current. It uses the checked-in provider recordings and a loopback
+model stub. The repo's private `.env` and provider credentials are unnecessary.
+
+Use the printed API URL and user ID from the demo client's backend. The fixture
+responds to this exact prompt:
+
+> List my calendars, then send the Nova demo brief to my own mailbox.
+
+Sending to the synthetic connected mailbox requires approval. Keep the command
+running while using the demo. Ctrl-C stops its processes and deletes its volumes
+and temporary files.
+
+## Recorded and real integration stacks
+
 Two local stacks for integration work. Both use the Compose Postgres and Temporal from `make deps`. The host needs neither `psql` nor the `temporal` CLI: the script runs both inside the containers. Keys are read from the main checkout's `.env` through `NORI_ENV_FILE` and are never copied or printed. Process environment wins over the file, so the script's settings override `.env`.
 
 | Stack | Core | Web | Database | Namespace / queue | Providers | Credential vault |

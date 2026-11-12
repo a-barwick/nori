@@ -1,0 +1,47 @@
+{
+  "exchanges": [
+    {
+      "name": "nova-demo-read-draft",
+      "method": "GET",
+      "host": "gmail.googleapis.com",
+      "path": "/gmail/v1/users/me/drafts/recdraft1",
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "recdraft1",
+          "message": {
+            "id": "recdraftmsg1",
+            "threadId": "18f0reservation1",
+            "labelIds": [
+              "DRAFT"
+            ],
+            "payload": {
+              "mimeType": "text/plain",
+              "headers": [
+                {
+                  "name": "To",
+                  "value": "recorded.user@example.com"
+                },
+                {
+                  "name": "From",
+                  "value": "recorded.user@example.com"
+                },
+                {
+                  "name": "Subject",
+                  "value": "Nova demo brief"
+                },
+                {
+                  "name": "Message-ID",
+                  "value": "<nova-demo@nori.invalid>"
+                }
+              ],
+              "body": {
+                "data": "Q2FsZW5kYXIgc3VtbWFyeSBmb3IgdGhlIE5vdmEgcGlsb3Qu"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
