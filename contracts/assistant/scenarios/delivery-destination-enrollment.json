@@ -15,6 +15,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/delivery-destinations",
+   "body_schema": "common.schema.json#/$defs/Change",
    "body": {
     "request_id": "${uuid:create}",
     "expected_revision": 0,
@@ -50,6 +51,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/delivery-destinations",
+   "body_schema": "common.schema.json#/$defs/Change",
    "body": {
     "request_id": "${uuid:create}",
     "expected_revision": 0,
@@ -92,6 +94,7 @@
    "user": "b",
    "method": "POST",
    "path": "/v1/delivery-destinations/${var:dest}/actions",
+   "body_schema": "common.schema.json#/$defs/ActionRequest",
    "body": {
     "request_id": "${uuid:bact}",
     "expected_revision": "${int:rev}",
@@ -113,6 +116,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/delivery-destinations/${var:dest}/actions",
+   "body_schema": "common.schema.json#/$defs/ActionRequest",
    "body": {
     "request_id": "${uuid:send}",
     "expected_revision": "${int:rev}",
@@ -132,6 +136,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/delivery-destinations/${var:dest}/actions",
+   "body_schema": "common.schema.json#/$defs/ActionRequest",
    "body": {
     "request_id": "${uuid:verify}",
     "expected_revision": "${int:rev}",
@@ -155,6 +160,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/delivery-destinations",
+   "body_schema": "common.schema.json#/$defs/Change",
    "body": {
     "request_id": "${uuid:both}",
     "expected_revision": 0,
@@ -185,6 +191,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/delivery-destinations/dest_in_app/actions",
+   "body_schema": "common.schema.json#/$defs/ActionRequest",
    "body": {
     "request_id": "${uuid:inapp}",
     "expected_revision": 1,
@@ -203,6 +210,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/delivery-destinations/${var:dest}/actions",
+   "body_schema": "common.schema.json#/$defs/ActionRequest",
    "body": {
     "request_id": "${uuid:remove}",
     "expected_revision": "${int:rev}",

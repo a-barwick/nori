@@ -19,6 +19,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/plugins/installations",
+   "body_schema": "plugins.schema.json#/$defs/InstallationCreateChange",
    "body": {
     "request_id": "${uuid:inst}",
     "expected_revision": 0,
@@ -80,6 +81,7 @@
    "user": "b",
    "method": "POST",
    "path": "/v1/plugins/installations/${var:inst}/actions",
+   "body_schema": "plugins.schema.json#/$defs/InstallationAction",
    "body": {
     "request_id": "${uuid:buninst}",
     "expected_revision": 1,
@@ -129,6 +131,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/skills",
+   "body_schema": "plugins.schema.json#/$defs/SkillChange",
    "body": {
     "request_id": "${uuid:skill}",
     "expected_revision": 0,
@@ -172,6 +175,7 @@
    "user": "b",
    "method": "PUT",
    "path": "/v1/skills/${var:skill}",
+   "body_schema": "plugins.schema.json#/$defs/SkillChange",
    "body": {
     "request_id": "${uuid:bskill}",
     "expected_revision": 1,
@@ -200,6 +204,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/goals",
+   "body_schema": "automations.schema.json#/$defs/GoalChange",
    "body": {
     "request_id": "${uuid:goal}",
     "expected_revision": 0,
@@ -243,6 +248,7 @@
    "user": "b",
    "method": "POST",
    "path": "/v1/goals/${var:goal}/actions",
+   "body_schema": "automations.schema.json#/$defs/GoalAction",
    "body": {
     "request_id": "${uuid:bgoal}",
     "expected_revision": 1,
@@ -264,6 +270,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/automations",
+   "body_schema": "automations.schema.json#/$defs/AutomationChange",
    "body": {
     "request_id": "${uuid:auto}",
     "expected_revision": 0,
@@ -333,6 +340,7 @@
    "user": "b",
    "method": "POST",
    "path": "/v1/automations/${var:auto}/actions",
+   "body_schema": "automations.schema.json#/$defs/AutomationAction",
    "body": {
     "request_id": "${uuid:bauto}",
     "expected_revision": 1,
@@ -354,6 +362,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/mcp",
+   "body_schema": "plugins.schema.json#/$defs/MCPServerChange",
    "body": {
     "request_id": "${uuid:mcp}",
     "expected_revision": 0,

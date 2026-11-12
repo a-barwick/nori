@@ -16,6 +16,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/connections",
+   "body_schema": "connections.schema.json#/$defs/ConnectionChange",
    "body": {
     "request_id": "${uuid:create}",
     "expected_revision": 0,
@@ -92,6 +93,7 @@
    "user": "b",
    "method": "POST",
    "path": "/v1/connections/${var:conn}/actions",
+   "body_schema": "connections.schema.json#/$defs/ConnectionAction",
    "body": {
     "request_id": "${uuid:bconn}",
     "expected_revision": "${int:rev}",
@@ -115,6 +117,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/connections/${var:conn}/actions",
+   "body_schema": "connections.schema.json#/$defs/ConnectionAction",
    "body": {
     "request_id": "${uuid:good}",
     "expected_revision": "${int:rev}",
@@ -189,6 +192,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/connections/${var:conn}/actions",
+   "body_schema": "connections.schema.json#/$defs/ConnectionAction",
    "body": {
     "request_id": "${uuid:good}",
     "expected_revision": "${int:rev}",
@@ -232,6 +236,7 @@
    "user": "a",
    "method": "POST",
    "path": "/v1/connections/${var:conn}/actions",
+   "body_schema": "connections.schema.json#/$defs/ConnectionAction",
    "body": {
     "request_id": "${uuid:disc}",
     "expected_revision": "${int:rev2}",

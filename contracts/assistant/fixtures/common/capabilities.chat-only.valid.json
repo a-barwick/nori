@@ -1,0 +1,14 @@
+{
+  "contract": "nori-chat-2",
+  "conversationContract": "nori-conversations-1",
+  "service": "nori",
+  "persistence": "durable",
+  "provider": "openai",
+  "model": "gpt-6.1",
+  "conversationModes": ["chat"],
+  "features": {
+    "backgroundTasks": false,
+    "jev": false,
+    "computer": false
+  }
+}

@@ -5,7 +5,7 @@ import { useAssistant } from "@/lib/assistant/context";
 import { cadence, eventTime, relative } from "@/lib/assistant/format";
 import { useResource } from "@/lib/assistant/useResource";
 import type { Automation, CardPart, ComputerSession, Connection, Goal, Installation, Interaction, LibraryItem, WorkDetail } from "@/lib/contracts/assistant";
-import type { AssistantFeature } from "@/lib/contracts/pending";
+import type { AssistantFeature } from "@/lib/contracts/assistant";
 import { connectionState } from "./AppsScreen";
 import { InteractionCard } from "./InteractionCard";
 import { provenanceLabel } from "./LibraryScreen";

@@ -15,20 +15,42 @@ import (
 
 const ChatContract = "nori-chat-2"
 
+// capabilitiesView is the GET /v1/capabilities payload (common.schema.json#/$defs/Capabilities).
+// Assistant fields are omitted when the assistant routes are not registered, matching AssistantCapabilities.
+type capabilitiesView struct {
+	Contract             string            `json:"contract"`
+	ConversationContract string            `json:"conversationContract,omitempty"`
+	Service              string            `json:"service"`
+	Persistence          string            `json:"persistence,omitempty"`
+	Provider             string            `json:"provider,omitempty"`
+	Model                string            `json:"model,omitempty"`
+	ConversationModes    []string          `json:"conversationModes"`
+	Features             map[string]bool   `json:"features"`
+	AssistantContract    string            `json:"assistant_contract,omitempty"`
+	AssistantFeatures    map[string]bool   `json:"assistant_features,omitempty"`
+	UploadAccept         *uploadAcceptView `json:"upload_accept,omitempty"`
+	PushPublicKey        string            `json:"push_public_key,omitempty"`
+}
+
 func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 	modes := []string{"assistant", "chat"}
 	if s.Features.DisableBackgroundTasks {
 		modes = []string{"chat"}
 	}
-	body := map[string]any{"conversationContract": "nori-conversations-1", "contract": ChatContract, "service": "nori", "persistence": "durable", "provider": "openai", "model": s.Model, "conversationModes": modes, "features": map[string]bool{"backgroundTasks": !s.Features.DisableBackgroundTasks, "jev": !s.Features.DisableBackgroundTasks && !s.Features.DisableJev, "computer": !s.Features.DisableComputer}}
+	body := capabilitiesView{
+		Contract: ChatContract, ConversationContract: "nori-conversations-1", Service: "nori",
+		Persistence: "durable", Provider: "openai", Model: s.Model, ConversationModes: modes,
+		Features: map[string]bool{"backgroundTasks": !s.Features.DisableBackgroundTasks, "jev": !s.Features.DisableBackgroundTasks && !s.Features.DisableJev, "computer": !s.Features.DisableComputer},
+	}
 	if s.Assistant != nil {
 		// The assistant contract label is advertised only once every family it names is live; until then each
 		// family reports itself.
-		body["assistant_features"] = s.Assistant.Features
-		body["upload_accept"] = uploadAccept()
+		body.AssistantFeatures = s.Assistant.Features
+		accepted := uploadAccept()
+		body.UploadAccept = &accepted
 		// The browser subscribes to push with this key; it is absent when push has no transport.
 		if s.Assistant.PushPublicKey != "" {
-			body["push_public_key"] = s.Assistant.PushPublicKey
+			body.PushPublicKey = s.Assistant.PushPublicKey
 		}
 	}
 	writeJSON(w, 200, body)

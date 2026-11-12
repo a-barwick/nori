@@ -46,6 +46,7 @@ var ContractTypes = map[string]func() any{
 	"common.schema.json#/$defs/APIError":                       func() any { return &apiError{} },
 	"common.schema.json#/$defs/MutationReceipt":                func() any { return &state.MutationReceipt{} },
 	"common.schema.json#/$defs/AssistantSummary":               func() any { return &summary{} },
+	"common.schema.json#/$defs/Capabilities":                   func() any { return &capabilitiesView{} },
 	"common.schema.json#/$defs/Preferences":                    func() any { return &connections.Preferences{} },
 	"common.schema.json#/$defs/PreferencesChange":              func() any { return &envelope[connections.PreferencesEditable]{} },
 	"connections.schema.json#/$defs/Connection":                func() any { return &connections.Projection{} },
