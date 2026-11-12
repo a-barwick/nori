@@ -124,6 +124,19 @@ type Action struct {
 	Until  *time.Time `json:"until,omitempty"`
 }
 
+// Valid reports whether the action matches AutomationAction: snooze needs a future-or-present until, and the
+// other actions carry no extra fields.
+func (a Action) Valid() bool {
+	switch a.Action {
+	case "pause", "resume", "cancel", "run_now":
+		return a.Until == nil
+	case "snooze":
+		return a.Until != nil
+	default:
+		return false
+	}
+}
+
 type ErrorDetail struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
@@ -281,4 +294,14 @@ type GoalEditable struct {
 type GoalAction struct {
 	Action       string `json:"action"`
 	KeepMonitors bool   `json:"keep_monitors,omitempty"`
+}
+
+// Valid reports whether the action is one GoalAction allows.
+func (a GoalAction) Valid() bool {
+	switch a.Action {
+	case "pause", "resume", "complete", "abandon":
+		return true
+	default:
+		return false
+	}
 }

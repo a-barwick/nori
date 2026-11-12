@@ -177,6 +177,33 @@ type DestinationEditable struct {
 	QuietHours   *QuietHours       `json:"quiet_hours,omitempty"`
 }
 
+// DestinationAction is the contract DeliveryDestinationAction. Verify requires a six-digit code; the other
+// actions carry none.
+type DestinationAction struct {
+	Action string `json:"action"`
+	Code   string `json:"code,omitempty"`
+}
+
+// Valid reports whether the action matches DeliveryDestinationAction.
+func (a DestinationAction) Valid() bool {
+	switch a.Action {
+	case "send_verification", "remove":
+		return a.Code == ""
+	case "verify":
+		if len(a.Code) != 6 {
+			return false
+		}
+		for _, r := range a.Code {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // PushSubscription is the browser's PushSubscription.toJSON() shape.
 type PushSubscription struct {
 	Endpoint       string   `json:"endpoint"`

@@ -48,6 +48,37 @@ type Access struct {
 	Filesystem      []string `json:"filesystem,omitempty"`
 }
 
+// InstallationCreate is the contract InstallationCreate.
+type InstallationCreate struct {
+	Package struct {
+		ID      string `json:"id"`
+		Version string `json:"version"`
+	} `json:"package"`
+	ApprovedAccess Access         `json:"approved_access"`
+	Configuration  map[string]any `json:"configuration,omitempty"`
+}
+
+// InstallationAction is the contract InstallationAction value. Update, rollback and pin name a version; enable,
+// disable and uninstall may only ask to remove state.
+type InstallationAction struct {
+	Action         string  `json:"action"`
+	Version        string  `json:"version,omitempty"`
+	ApprovedAccess *Access `json:"approved_access,omitempty"`
+	RemoveState    bool    `json:"remove_state,omitempty"`
+}
+
+// Valid reports whether the action matches InstallationAction.
+func (a InstallationAction) Valid() bool {
+	switch a.Action {
+	case "enable", "disable", "uninstall":
+		return a.Version == "" && a.ApprovedAccess == nil
+	case "update", "rollback", "pin":
+		return strings.TrimSpace(a.Version) != "" && !a.RemoveState
+	default:
+		return false
+	}
+}
+
 type Skill struct {
 	Ref             Ref            `json:"ref"`
 	Title           string         `json:"title"`

@@ -111,6 +111,10 @@ func (a *Assistant) automationAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !value.Valid() {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
+		return
+	}
 	receipt, err := a.Scheduler.Act(r.Context(), r.PathValue("id"), requestID, expected, value)
 	if err != nil {
 		writeAPIError(w, err, requestID, a.currentAutomation(r.Context(), r.PathValue("id")))
@@ -200,6 +204,10 @@ func (a *Assistant) goalAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !value.Valid() {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
+		return
+	}
 	receipt, err := a.Scheduler.ActGoal(r.Context(), r.PathValue("id"), requestID, expected, value)
 	if err != nil {
 		writeAPIError(w, err, requestID, a.currentGoal(r.Context(), r.PathValue("id")))
@@ -259,12 +267,13 @@ func (a *Assistant) updateDestination(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) destinationAction(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Action string `json:"action"`
-		Code   string `json:"code,omitempty"`
-	}
+	var value scheduler.DestinationAction
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
+		return
+	}
+	if !value.Valid() {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
 	id := r.PathValue("id")
@@ -315,14 +324,12 @@ func (a *Assistant) inbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) inboxAction(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Action string `json:"action"`
-	}
+	var value inboxAction
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
 		return
 	}
-	if value.Action != "acknowledge" {
+	if !value.valid() {
 		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}

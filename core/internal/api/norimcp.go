@@ -39,6 +39,43 @@ type mcpClient struct {
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
+// mcpClientEditable is the contract MCPClientEditable.
+type mcpClientEditable struct {
+	Name   string   `json:"name"`
+	Scopes []string `json:"scopes"`
+}
+
+func (v mcpClientEditable) valid() bool {
+	if strings.TrimSpace(v.Name) == "" || len(v.Name) > 100 || len(v.Scopes) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, scope := range v.Scopes {
+		if scope != "read" && scope != "mutate" || seen[scope] {
+			return false
+		}
+		seen[scope] = true
+	}
+	return true
+}
+
+// mcpClientActionValue is the contract MCPClientAction value.
+type mcpClientActionValue struct {
+	Action string `json:"action"`
+}
+
+func (v mcpClientActionValue) valid() bool { return v.Action == "revoke" }
+
+// mcpClientCreated is the contract MCPClientCreated: the token is shown once and never stored.
+type mcpClientCreated struct {
+	RequestID string    `json:"request_id"`
+	Accepted  bool      `json:"accepted"`
+	Status    string    `json:"status"`
+	Resource  mcpClient `json:"resource"`
+	Token     string    `json:"token"`
+	Note      string    `json:"note,omitempty"`
+}
+
 type mcpClientDoc struct {
 	mcpClient
 	TokenHash string `json:"token_hash"`
@@ -79,21 +116,12 @@ func (a *Assistant) mcpClients(w http.ResponseWriter, r *http.Request) {
 // createMCPClient issues a token once. The response carries it; the saved receipt and records keep only its hash,
 // so a lost token is revoked and replaced, never recovered.
 func (a *Assistant) createMCPClient(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Name   string   `json:"name"`
-		Scopes []string `json:"scopes"`
-	}
+	var value mcpClientEditable
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
 		return
 	}
-	for _, scope := range value.Scopes {
-		if scope != "read" && scope != "mutate" {
-			writeAPIError(w, state.ErrInvalidResource, requestID, nil)
-			return
-		}
-	}
-	if expected != 0 || strings.TrimSpace(value.Name) == "" || len(value.Scopes) == 0 {
+	if expected != 0 || !value.valid() {
 		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
@@ -124,19 +152,17 @@ func (a *Assistant) createMCPClient(w http.ResponseWriter, r *http.Request) {
 		writeReceipt(w, receipt)
 		return
 	}
-	writeJSON(w, 201, map[string]any{"request_id": requestID, "accepted": true, "status": "applied", "resource": client, "token": token,
-		"note": "Copy this token now; Nori stores only its hash."})
+	writeJSON(w, 201, mcpClientCreated{RequestID: requestID, Accepted: true, Status: "applied", Resource: client, Token: token,
+		Note: "Copy this token now; Nori stores only its hash."})
 }
 
 func (a *Assistant) mcpClientAction(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Action string `json:"action"`
-	}
+	var value mcpClientActionValue
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
 		return
 	}
-	if value.Action != "revoke" {
+	if !value.valid() {
 		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}

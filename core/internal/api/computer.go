@@ -42,15 +42,13 @@ func (a *Assistant) computerAction(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, state.ErrNotFound, "", nil)
 		return
 	}
-	var value struct {
-		Action              string `json:"action"`
-		Reason              string `json:"reason,omitempty"`
-		LeaseID             string `json:"lease_id,omitempty"`
-		TaskID              string `json:"task_id,omitempty"`
-		InstructionRevision *int64 `json:"instruction_revision,omitempty"`
-	}
+	var value computersession.Action
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
+		return
+	}
+	if !value.Valid() {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
 	current := func() any { session, _ := a.Computer.Get(r.Context()); return session }
