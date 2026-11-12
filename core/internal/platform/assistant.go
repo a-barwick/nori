@@ -198,7 +198,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		}
 	}
 	if push := delivery.NewWebPush(c.VAPIDPublicKey, c.VAPIDPrivateKey, c.VAPIDSubject); push != nil {
-		push.TrustRoots(testRoots)
+		push.ConfigureLocal(s.Cloud == "local", testRoots)
 		channels["push"] = push
 	}
 	if email := delivery.NewSMTP(c.SMTPHost, c.SMTPPort, c.SMTPUsername, c.SMTPPassword, c.EmailFrom); email != nil {
@@ -206,7 +206,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		channels["email"] = email
 	}
 	sched := &scheduler.Service{Store: store, Tasks: tasks, Permissions: perms, Events: google.EventSource{Connections: conn},
-		Channels: channels, Targets: credentials,
+		Channels: channels, Targets: credentials, LocalPush: s.Cloud == "local",
 		Results: func(ctx context.Context, taskID string) []string {
 			results, err := tasks.RecentResults(ctx, 200)
 			if err != nil {

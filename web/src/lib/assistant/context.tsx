@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { useChat } from "@/lib/chat/useChat";
+import { useHydrated } from "@/lib/hooks";
 import { useRuntime } from "@/lib/runtime/useRuntime";
 import type { Capabilities, AssistantFeature } from "@/lib/contracts/pending";
 import { fixtureMode } from "./api";
@@ -29,10 +30,12 @@ const DEBUG_KEY = "nori-diagnostics-debug";
 export function AssistantProvider({ agentMode, children }: { agentMode: boolean; children: ReactNode }) {
   const runtime = useRuntime(agentMode);
   const chat = useChat();
-  const [fixtures] = useState(fixtureMode);
+  const hydrated = useHydrated();
+  const fixtures = hydrated && fixtureMode();
   const { data: capabilities, error: capabilitiesError } = useResource<Capabilities>("/capabilities", { poll: 120_000 });
   const ready = fixtures || !!capabilities || !!capabilitiesError;
-  const [debug, setDebugState] = useState(() => { try { return localStorage.getItem(DEBUG_KEY) === "1"; } catch { return false; } });
+  const [debugOverride, setDebugState] = useState<boolean | undefined>();
+  const debug = debugOverride ?? (hydrated && (() => { try { return localStorage.getItem(DEBUG_KEY) === "1"; } catch { return false; } })());
   const value = useMemo<Assistant>(() => ({
     agentMode, fixtures, runtime, chat, capabilities, debug, ready,
     has: (feature) => fixtures || !!capabilities?.assistant_features?.[feature],

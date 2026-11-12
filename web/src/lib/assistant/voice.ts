@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useHydrated } from "@/lib/hooks";
 
 type Recognition = {
   lang: string; continuous: boolean; interimResults: boolean;
@@ -22,11 +23,12 @@ function recognitionClass(): RecognitionConstructor | undefined {
  * sending; nothing is sent from speech alone.
  */
 export function useDictation(onText: (text: string) => void, language?: string) {
+  const hydrated = useHydrated();
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState("");
   const [error, setError] = useState("");
   const recognition = useRef<Recognition | null>(null);
-  const supported = !!recognitionClass();
+  const supported = hydrated && !!recognitionClass();
   const stop = useCallback(() => { recognition.current?.stop(); }, []);
   const start = useCallback(() => {
     const Class = recognitionClass();
@@ -58,9 +60,10 @@ export function useDictation(onText: (text: string) => void, language?: string) 
 
 /** Reads new Nori replies aloud while on. Starting dictation or pressing stop interrupts it; neither cancels a task. */
 export function useSpeech() {
+  const hydrated = useHydrated();
   const [on, setOn] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  const supported = typeof window !== "undefined" && "speechSynthesis" in window;
+  const supported = hydrated && typeof window !== "undefined" && "speechSynthesis" in window;
   const say = useCallback((text: string) => {
     if (!supported || !on || !text.trim()) return;
     const utterance = new SpeechSynthesisUtterance(text.replace(/[#*_`>|[\]]/g, "").slice(0, 2000));

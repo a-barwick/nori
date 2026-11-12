@@ -141,7 +141,7 @@ function mergeRuns(older: Run[], newer: Run[]): Run[] {
 export function useRuntime(agentMode = false) {
   const [session, setSession] = useState<Session>();
   // The unsent draft survives reloads and reconnects; it is cleared when the message is accepted for sending.
-  const [draft, setDraftState] = useState(() => { try { return localStorage.getItem(DRAFT_KEY) ?? ""; } catch { return ""; } });
+  const [draft, setDraftState] = useState("");
   const { files: draftFiles, attach, retry, clear: clearFiles, remove: removeFile, invalidateUploads } = useDraftFiles();
   const draftValue = useRef(draft);
   const setDraft = (text: string) => {
@@ -158,10 +158,11 @@ export function useRuntime(agentMode = false) {
   const wasConversationBusy = useRef(false);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [pending, setPending] = useState<Pending[]>(restorePending);
+  const [pending, setPending] = useState<Pending[]>([]);
   const pendingRef = useRef(pending);
-  const [taskCommands, setTaskCommands] = useState<PendingTaskCommand[]>(restoreTaskCommands);
+  const [taskCommands, setTaskCommands] = useState<PendingTaskCommand[]>([]);
   const taskCommandsRef = useRef(taskCommands);
+  const hydratedStorage = useRef(false);
   const [taskDrafts, setTaskDrafts] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string>();
   const [visible, setVisible] = useState(true);
@@ -339,6 +340,26 @@ export function useRuntime(agentMode = false) {
   }, [refresh, submit, submitTaskCommand]);
 
   useEffect(() => {
+    if (!hydratedStorage.current) {
+      hydratedStorage.current = true;
+      try {
+        const savedDraft = localStorage.getItem(DRAFT_KEY) ?? "";
+        if (savedDraft && !draftValue.current) {
+          draftValue.current = savedDraft;
+          setDraftState(savedDraft);
+        }
+      } catch { /* storage off */ }
+      const savedPending = restorePending();
+      if (savedPending.length) {
+        pendingRef.current = savedPending;
+        setPending(savedPending);
+      }
+      const savedCommands = restoreTaskCommands();
+      if (savedCommands.length) {
+        taskCommandsRef.current = savedCommands;
+        setTaskCommands(savedCommands);
+      }
+    }
     const currentControllers = controllers.current;
     const currentTimings = replyTimings.current;
     for (const item of [...restoredTimings(), ...pendingRef.current]) beginTiming(item);

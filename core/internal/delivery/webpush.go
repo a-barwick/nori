@@ -16,7 +16,6 @@ import (
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
@@ -29,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"nori/internal/netguard"
 	"nori/internal/scheduler"
 )
 
@@ -40,6 +40,7 @@ type WebPush struct {
 	PrivateKey string // base64url 32-byte P-256 scalar
 	Subject    string // mailto: or https: contact for the push service
 	Client     *http.Client
+	local      bool
 }
 
 // NewWebPush returns nil when VAPID keys are not configured, so the channel reports no_transport.
@@ -47,22 +48,41 @@ func NewWebPush(public, private, subject string) *WebPush {
 	if public == "" || private == "" || subject == "" {
 		return nil
 	}
-	return &WebPush{PublicKey: public, PrivateKey: private, Subject: subject, Client: &http.Client{Timeout: 20 * time.Second}}
+	return &WebPush{
+		PublicKey:  public,
+		PrivateKey: private,
+		Subject:    subject,
+		Client: &http.Client{
+			Timeout:       20 * time.Second,
+			Transport:     netguard.NewTransport(false, nil),
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+	}
 }
 
 func (p *WebPush) Kind() string { return "push" }
 
 // TrustRoots makes the push client verify the push service against these roots (local test sinks only).
 func (p *WebPush) TrustRoots(roots *x509.CertPool) {
-	if roots == nil {
+	p.ConfigureLocal(roots != nil, roots)
+}
+
+// ConfigureLocal permits loopback HTTPS push endpoints on the local development stack, optionally with custom CAs.
+func (p *WebPush) ConfigureLocal(local bool, roots *x509.CertPool) {
+	if !local && roots == nil {
 		return
 	}
-	p.Client.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots}}
+	p.local = local
+	p.Client.Transport = netguard.NewTransport(local, roots)
+	p.Client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 }
 
 func (p *WebPush) Send(ctx context.Context, target scheduler.Target, msg scheduler.Message) (scheduler.Receipt, error) {
 	if target.Endpoint == "" || target.P256dh == "" || target.Auth == "" {
 		return scheduler.Receipt{}, fmt.Errorf("%w: the push subscription is incomplete", scheduler.ErrTargetInvalid)
+	}
+	if !strings.HasPrefix(target.Endpoint, "https://") || netguard.ValidateRemoteURL(target.Endpoint, p.local) != nil {
+		return scheduler.Receipt{}, fmt.Errorf("%w: the push endpoint must be a public https URL", scheduler.ErrTargetInvalid)
 	}
 	endpoint, err := url.Parse(target.Endpoint)
 	if err != nil || endpoint.Scheme != "https" {

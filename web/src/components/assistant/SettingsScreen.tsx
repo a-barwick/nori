@@ -9,6 +9,7 @@ import { deviceLabel, pushSupported, subscribeThisDevice } from "@/lib/assistant
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative, when, plainText } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
+import { useHydrated } from "@/lib/hooks";
 import type { Connection, DeliveryDestination, MCPClient, MCPClientCreated, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { OperationRows, shownOperations } from "./WorkScreen";
@@ -274,6 +275,7 @@ function Destination({ destination }: { destination: DeliveryDestination }) {
 /** Add an email address, or enroll this browser for push when the core has a push key. */
 function AddDestination() {
   const { capabilities } = useAssistant();
+  const hydrated = useHydrated();
   const action = useAction();
   const [adding, setAdding] = useState<"email" | undefined>();
   const [label, setLabel] = useState("");
@@ -287,7 +289,7 @@ function AddDestination() {
     await mutate("/delivery-destinations", { request_id: newRequestID(), expected_revision: 0, value: { channel: "push", label: deviceLabel(), subscription } });
     invalidate("/delivery-destinations");
   }, "This device is added. Send a code to verify it.");
-  const canPush = !!capabilities?.push_public_key && pushSupported();
+  const canPush = hydrated && !!capabilities?.push_public_key && pushSupported();
   return <div className="mt-3">
     {adding === "email" ? <form className="flex flex-wrap items-end gap-3 rounded-card border border-hairline-strong p-4" onSubmit={(event) => { event.preventDefault(); void create({ channel: "email", label: label.trim() || address.trim(), address: address.trim() }, "Email added. Send a code to verify it."); }}>
       <Field label="Email address"><input type="email" required value={address} onChange={(event) => setAddress(event.target.value)} className={cn(inputBase, "w-64 max-w-full")} placeholder="you@example.com" /></Field>

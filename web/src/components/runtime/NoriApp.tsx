@@ -8,7 +8,7 @@ import { Thread } from "@/components/chat/Thread";
 import { IconButton } from "@/components/ui/primitives";
 import { chatThread, withReceipt } from "@/lib/chat/thread";
 import { useAssistant } from "@/lib/assistant/context";
-import { useWide } from "@/lib/hooks";
+import { useHydrated, useWide } from "@/lib/hooks";
 import { runtimePath } from "@/lib/runtime/paths";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import type { Message, Part, Thread as Conversation, TextItem } from "@/lib/types";
@@ -38,7 +38,9 @@ export function ChatScreen() {
   // The main composer offers exactly what the core's uploader accepts (including calendar .ics files).
   const accepted = capabilities?.upload_accept;
   const uploadAccept = accepted ? [...accepted.media_types, ...(accepted.extensions ?? [])].join(",") : undefined;
-  const [tab, setTab] = useState<PanelTab>(() => new URL(window.location.href).searchParams.has("chat") ? "chats" : "activity");
+  const hydrated = useHydrated();
+  const [chosenTab, setTab] = useState<PanelTab>();
+  const tab: PanelTab = chosenTab ?? (hydrated && new URL(window.location.href).searchParams.has("chat") ? "chats" : "activity");
   const {
     session,
     pending,

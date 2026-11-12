@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"nori/internal/netguard"
 	"nori/internal/secret"
 	"nori/internal/state"
 )
@@ -99,7 +100,7 @@ func (s *Service) enroll(ctx context.Context, destinationID, channel string, val
 		t.Address = address.Address
 	case "push":
 		sub := value.Subscription
-		if sub == nil || !strings.HasPrefix(sub.Endpoint, "https://") || sub.Keys.P256dh == "" || sub.Keys.Auth == "" {
+		if sub == nil || !strings.HasPrefix(sub.Endpoint, "https://") || netguard.ValidateRemoteURL(sub.Endpoint, s.LocalPush) != nil || sub.Keys.P256dh == "" || sub.Keys.Auth == "" {
 			return fmt.Errorf("%w: a push destination needs the browser subscription's https endpoint and keys", state.ErrInvalidResource)
 		}
 		t.Endpoint, t.P256dh, t.Auth = sub.Endpoint, sub.Keys.P256dh, sub.Keys.Auth

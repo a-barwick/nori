@@ -9,7 +9,6 @@ import { FolderOpen, LayoutGrid, ListChecks, MessageCircle, MoreHorizontal, Moni
 import { NovaShell } from "@/components/nova/NovaShell";
 import { AssistantProvider, useAssistant } from "@/lib/assistant/context";
 import { useSummary } from "@/lib/assistant/sources";
-import { useHydrated } from "@/lib/hooks";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { cn } from "@/lib/utils";
 import { Badge } from "./ui";
@@ -17,8 +16,6 @@ import { Badge } from "./ui";
 type NavItem = { href: string; label: string; icon: typeof MessageCircle; badge?: number; badgeLabel?: string; match: (path: string) => boolean };
 
 export function AppShell({ agentMode, children }: { agentMode: boolean; children: ReactNode }) {
-  const hydrated = useHydrated();
-  if (!hydrated) return <div className="fixed inset-0 bg-canvas" />;
   return (
     <Tooltip.Provider delayDuration={500}>
       <MotionConfig reducedMotion="user">

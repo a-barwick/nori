@@ -43,6 +43,8 @@ type Service struct {
 	// private addresses in the credential store.
 	Channels map[string]Channel
 	Targets  secret.CredentialStore
+	// LocalPush allows loopback HTTPS push endpoints on the local development stack.
+	LocalPush bool
 }
 
 func (s *Service) arm(ctx context.Context) func(state.MutationReceipt, error) (state.MutationReceipt, error) {
