@@ -3,6 +3,7 @@ package records
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -16,6 +17,9 @@ func (d *Database) chats() *docstore.CollectionRef { return d.root().Collection(
 func (d *Database) CreateChat(ctx context.Context, c state.Chat) error {
 	c.UpdatedAt = time.Now().UTC()
 	_, err := d.chats().Doc(c.ID).Create(ctx, c)
+	if errors.Is(err, docstore.ErrExists) {
+		return state.ErrDuplicate
+	}
 	return err
 }
 

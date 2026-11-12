@@ -638,6 +638,10 @@
         "title": {
           "type": "string",
           "maxLength": 200
+        },
+        "id": {
+          "$ref": "common.schema.json#/$defs/UUID",
+          "description": "Optional caller-chosen chat ID. Repeating it returns the saved chat."
         }
       },
       "required": [],

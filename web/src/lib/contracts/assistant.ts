@@ -744,6 +744,8 @@ export type ConversationOperationList = {
 };
 export type ConversationCreate = {
   title?: string;
+  /** Optional caller-chosen chat ID. Repeating it returns the saved chat. */
+  id?: UUID;
 };
 export type ConversationSend = {
   id: UUID;
@@ -1018,6 +1020,10 @@ export type RunEvent = {
   kind: string;
   text: string;
   created_at: Instant;
+};
+export type WorkSubmission = {
+  request_id: UUID;
+  request: string;
 };
 
 // library.schema.json

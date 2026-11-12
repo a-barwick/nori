@@ -1603,6 +1603,16 @@
       "file": "fixtures/conversations/deleted.valid.json",
       "schema": "conversations.schema.json#/$defs/ConversationDeleted",
       "valid": true
+    },
+    {
+      "file": "fixtures/execution/work-submission.valid.json",
+      "schema": "execution.schema.json#/$defs/WorkSubmission",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/create.id.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationCreate",
+      "valid": true
     }
   ]
 }

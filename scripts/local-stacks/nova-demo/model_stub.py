@@ -90,7 +90,13 @@ class ModelStub(BaseHTTPRequestHandler):
             item["output"] for item in request["input"] if item.get("type") == "function_call_output"
         )
         tools = {tool.get("name") for tool in request.get("tools", [])}
-        if SENT_ID in history:
+        task_input = json.dumps(request["input"])
+        if "CLI task that asks a question" in task_input and "request_input" in tools:
+            question = "What should I do next?" if "cli-confirmation" in history else "What label should I use?"
+            name, arguments = "request_input", {"question": question}
+        elif "CLI task that saves a result" in task_input and "complete" in tools:
+            name, arguments = "complete", {"answer": "Saved by the replay fixture.", "evidence": [], "unmet": []}
+        elif SENT_ID in history:
             name, arguments = "complete", {
                 "answer": TASK_ANSWER,
                 "evidence": ["Calendar list returned", f"Gmail send receipt {SENT_ID}"],

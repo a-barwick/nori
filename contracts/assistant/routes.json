@@ -1971,6 +1971,23 @@
       "max_path_segments": 6
     },
     {
+      "method": "POST",
+      "path": "/v1/work",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local",
+        "client"
+      ],
+      "token_scope": "mutate",
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
       "method": "GET",
       "path": "/v1/work/{task_id}",
       "user_scoped": true,

@@ -179,6 +179,7 @@ func (a *Assistant) register(mux *routeMux) {
 	mux.handle("GET /v1/tools", browserRead, a.tools)
 	mux.handle("GET /v1/tools/{id...}", browserRead, a.tool)
 	mux.handle("GET /v1/work", clientRead, a.work)
+	mux.handle("POST /v1/work", clientJSON, jsonBody(a.submitWork))
 	mux.handle("GET /v1/work/{task_id}", clientRead, a.workDetail)
 	mux.handle("GET /v1/work/{task_id}/operations", clientRead, a.workOperations)
 	mux.handle("POST /v1/work/{task_id}/actions", clientJSON, jsonBody(a.workAction))

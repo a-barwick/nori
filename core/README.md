@@ -581,3 +581,29 @@ off; the daily shutdown policy never authorizes deleting it.
 
 Go `core` and Next.js `web` share this monorepo and retain independent images
 and releases. Their current POC integration is described above.
+
+## Local CLI
+
+Build from `core/` with `go build -o nori-cli ./cmd/nori-cli`. Start
+`nori-local` and use the loopback URL and a provisioned local user.
+`NORI_LOCAL_AGENT_URL` and `NORI_LOCAL_EMAIL` set the defaults for
+`--url` and `--email`. Use `--user` to select the user by ID.
+
+```sh
+./nori-cli --email you@example.com chat
+./nori-cli --email you@example.com chat --conversation assistant
+./nori-cli --email you@example.com --json ask --attach notes.txt "Summarize this file" | jq -r '.reply.text'
+./nori-cli --email you@example.com task start "Review the saved notes"
+./nori-cli --email you@example.com tasks TASK_ID
+./nori-cli --email you@example.com task answer INTERACTION_ID "Use the latest draft"
+./nori-cli --email you@example.com task stop TASK_ID
+./nori-cli --email you@example.com result RESULT_ID
+```
+
+Use `/exit` or EOF to leave interactive chat. The CLI resumes a dropped
+stream at the last complete event. Rerun an interrupted command with the
+same arguments to reuse its saved request ID. For scripts, pass
+`--request-id UUID` after the command and reuse it for retries, including
+after a confirmed reply. Use a fresh UUID for a new intent. The request
+journal holds request IDs and digests of command arguments. Local commands
+connect directly to Core and never launch a browser.

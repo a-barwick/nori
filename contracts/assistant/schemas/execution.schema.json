@@ -563,6 +563,24 @@
           "$ref": "common.schema.json#/$defs/Instant"
         }
       }
+    },
+    "WorkSubmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "request"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "request": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        }
+      }
     }
   }
 }

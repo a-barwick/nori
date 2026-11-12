@@ -13,6 +13,7 @@ import (
 	"nori/internal/connections"
 	"nori/internal/permissions"
 	"nori/internal/state"
+	"nori/internal/users"
 )
 
 type workOrigin struct {
@@ -373,6 +374,35 @@ func (a *Assistant) operations(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, list[operationProjection]{Items: out})
+}
+
+type workSubmission struct {
+	RequestID string `json:"request_id"`
+	Request   string `json:"request"`
+}
+
+func (a *Assistant) submitWork(w http.ResponseWriter, r *http.Request) {
+	var input workSubmission
+	if !decode(w, r, &input) {
+		return
+	}
+	input.Request = strings.TrimSpace(input.Request)
+	if a.Submit == nil || !validID(input.RequestID) || input.Request == "" || len(input.Request) > state.MaxMessageBytes {
+		writeAPIError(w, state.ErrInvalidResource, "", nil)
+		return
+	}
+	ctx := r.Context()
+	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte("rest-work:"+users.ID(ctx)+":"+input.RequestID)).String()
+	run, err := a.Submit(ctx, id, input.Request)
+	if errors.Is(err, state.ErrDuplicate) {
+		err = state.ErrIdempotencyConflict
+	}
+	if err != nil {
+		writeAPIError(w, err, input.RequestID, nil)
+		return
+	}
+	data, _ := jsonMarshal(a.item(ctx, run, nil, nil, nil))
+	writeJSON(w, 202, state.MutationReceipt{RequestID: input.RequestID, Accepted: true, Status: "queued", Resource: data, Work: &state.WorkRef{TaskID: id}})
 }
 
 // workAction accepts stop through the existing task command acceptance; the receipt names the same task.

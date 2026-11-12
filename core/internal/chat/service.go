@@ -70,11 +70,19 @@ func (s *Service) facts(ctx context.Context) string {
 }
 
 func (s *Service) Create(ctx context.Context, title string) (state.Chat, error) {
-	c := state.Chat{ID: uuid.NewString(), Title: title, Mode: "chat", Messages: []state.ChatMessage{}, UpdatedAt: time.Now().UTC()}
+	return s.CreateWithID(ctx, uuid.NewString(), title)
+}
+
+func (s *Service) CreateWithID(ctx context.Context, id, title string) (state.Chat, error) {
+	c := state.Chat{ID: id, Title: title, Mode: "chat", Messages: []state.ChatMessage{}, UpdatedAt: time.Now().UTC()}
 	if c.Title == "" {
 		c.Title = "New chat"
 	}
-	return c, s.Store.CreateChat(ctx, c)
+	err := s.Store.CreateChat(ctx, c)
+	if errors.Is(err, state.ErrDuplicate) {
+		return s.Store.Chat(ctx, id)
+	}
+	return c, err
 }
 
 func (s *Service) List(ctx context.Context) ([]state.ChatSummary, error) {

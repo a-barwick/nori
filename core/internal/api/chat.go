@@ -61,6 +61,7 @@ type conversationList struct {
 }
 
 type conversationCreate struct {
+	ID    string `json:"id,omitempty"`
 	Title string `json:"title,omitempty"`
 }
 
@@ -127,7 +128,16 @@ func (s *server) createChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "Title is too long."})
 		return
 	}
-	c, err := s.Chats.Create(r.Context(), body.Title)
+	var c state.Chat
+	var err error
+	if body.ID == "" {
+		c, err = s.Chats.Create(r.Context(), body.Title)
+	} else if validID(body.ID) {
+		c, err = s.Chats.CreateWithID(r.Context(), body.ID, body.Title)
+	} else {
+		writeJSON(w, 400, map[string]string{"error": "A canonical UUID is required."})
+		return
+	}
 	if err != nil {
 		writeError(w, err)
 		return
