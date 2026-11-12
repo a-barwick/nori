@@ -172,3 +172,11 @@ breaking change gets a new advertised contract identifier and a new API
 version. Publish its schemas, fixtures and migration instructions before
 cutover. Keep the prior version available during the announced migration
 window.
+
+The web proxy consumes a generated copy of the user-scoped manifest. Run
+`node web/scripts/contract-types.mjs` after regenerating `routes.json`.
+A route declared for the browser under `/v1` is forwarded by the signed-in
+proxy at `/api/v1`. Run live scenarios through local web origins with one
+`-proxy-user USER_ID=http://127.0.0.1:PORT` per scenario user. Each origin
+must sign in as its matching local user. Core-only scenarios run against
+Core separately.

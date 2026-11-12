@@ -26,6 +26,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"nori/internal/api"
+	"nori/internal/users"
 )
 
 // schemaHost is the $id authority every schema in contracts/assistant uses.
@@ -74,6 +75,18 @@ func main() {
 	emitRoutes := flag.Bool("emit-routes", false, "regenerate contracts/assistant/routes.json")
 	recorded := flag.Bool("recorded", false, "with -live, also run scenarios that require core started with NORI_PROVIDER_REPLAY")
 	only := flag.String("only", "", "with -live, run only scenarios whose file name contains this text")
+	proxyUsers := map[string]string{}
+	flag.Func("proxy-user", "with -live, route USER_ID=http://127.0.0.1:PORT through a local web sign-in", func(value string) error {
+		id, origin, ok := strings.Cut(value, "=")
+		address, err := url.Parse(origin)
+		if !ok || !users.ValidID(id) || err != nil || address.Scheme != "http" ||
+			(address.Hostname() != "127.0.0.1" && address.Hostname() != "localhost" && address.Hostname() != "::1") ||
+			address.User != nil || address.Path != "" || address.RawQuery != "" || address.Fragment != "" {
+			return fmt.Errorf("use USER_ID=http://127.0.0.1:PORT")
+		}
+		proxyUsers[id] = origin
+		return nil
+	})
 	flag.Parse()
 	dir := *root
 	if dir == "" {
@@ -180,7 +193,7 @@ func main() {
 	}
 	failures += checkScenariosOffline(scenarioFiles, scenarios, compile)
 	if *live != "" {
-		failures += runScenariosLive(*live, scenarioFiles, scenarios, compile, *only, *recorded)
+		failures += runScenariosLive(*live, scenarioFiles, scenarios, compile, *only, *recorded, proxyUsers)
 	}
 	if *resume {
 		if *live == "" {

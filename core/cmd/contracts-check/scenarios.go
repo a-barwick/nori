@@ -229,16 +229,20 @@ func validateBytes(compile func(string) (*jsonschema.Schema, error), ref string,
 }
 
 // runScenariosLive executes every scenario against base (e.g. http://127.0.0.1:8083).
-func runScenariosLive(base string, files []string, scs []scenario, compile func(string) (*jsonschema.Schema, error), only string, recorded bool) int {
+func runScenariosLive(base string, files []string, scs []scenario, compile func(string) (*jsonschema.Schema, error), only string, recorded bool, proxyUsers map[string]string) int {
 	// Redirects are responses to check (the OAuth callback answers 303), not to follow.
 	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	features := liveFeatures(client, base, scs)
+	features := liveFeatures(client, base, scs, proxyUsers)
 	// recorded_provider marks scenarios that need core started with NORI_PROVIDER_REPLAY; the core cannot advertise it.
 	features["recorded_provider"] = recorded
 	failures := 0
 	for i, sc := range scs {
 		name := strings.TrimSuffix(filepath.Base(files[i]), ".json")
 		if only != "" && !strings.Contains(name, only) {
+			continue
+		}
+		if sc.CoreOnly && len(proxyUsers) > 0 {
+			fmt.Printf("SKIP %s: calls Core directly\n", name)
 			continue
 		}
 		if missing := missingFeatures(sc.Requires, features); len(missing) > 0 {
@@ -248,7 +252,7 @@ func runScenariosLive(base string, files []string, scs []scenario, compile func(
 		r := newRun()
 		ok := true
 		for _, st := range sc.Steps {
-			if err := r.do(client, base, sc, st, compile); err != nil {
+			if err := r.do(client, base, sc, st, compile, proxyUsers); err != nil {
 				failures++
 				ok = false
 				fmt.Printf("FAIL %s/%s: %v\n", name, st.Name, err)
@@ -262,7 +266,7 @@ func runScenariosLive(base string, files []string, scs []scenario, compile func(
 	return failures
 }
 
-func liveFeatures(client *http.Client, base string, scs []scenario) map[string]bool {
+func liveFeatures(client *http.Client, base string, scs []scenario, proxyUsers map[string]string) map[string]bool {
 	out := map[string]bool{}
 	var user string
 	for _, sc := range scs {
@@ -277,7 +281,11 @@ func liveFeatures(client *http.Client, base string, scs []scenario) map[string]b
 	if user == "" {
 		return out
 	}
-	resp, err := client.Get(strings.TrimRight(base, "/") + "/users/" + user + "/v1/capabilities")
+	req, err := scenarioRequest(base, user, "GET", "/v1/capabilities", nil, proxyUsers)
+	if err != nil {
+		return out
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return out
 	}
@@ -300,7 +308,34 @@ func missingFeatures(req []string, have map[string]bool) []string {
 	return out
 }
 
-func (r *run) do(client *http.Client, base string, sc scenario, st step, compile func(string) (*jsonschema.Schema, error)) error {
+func scenarioRequest(base, user, method, path string, body []byte, proxyUsers map[string]string) (*http.Request, error) {
+	if len(proxyUsers) == 0 {
+		return http.NewRequest(method, strings.TrimRight(base, "/")+"/users/"+user+path, bytes.NewReader(body))
+	}
+	origin, ok := proxyUsers[user]
+	if !ok {
+		return nil, fmt.Errorf("no -proxy-user origin for %s", user)
+	}
+	prefix := "/api"
+	if strings.HasPrefix(path, "/api/") {
+		path = strings.TrimPrefix(path, "/api")
+		prefix += "/agent"
+	}
+	req, err := http.NewRequest(method, origin+prefix+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	if method != "GET" && method != "HEAD" {
+		req.Header.Set("Origin", origin)
+	}
+	if strings.HasPrefix(path, "/v1/connections/oauth/callback?") {
+		req.Header.Set("Sec-Fetch-Mode", "navigate")
+	}
+	return req, nil
+}
+
+func (r *run) do(client *http.Client, base string, sc scenario, st step, compile func(string) (*jsonschema.Schema, error), proxyUsers map[string]string) error {
 	path, err := r.expand(st.Path, sc.Users)
 	if err != nil {
 		return err
@@ -313,7 +348,6 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 		}
 		body = []byte(s)
 	}
-	target := strings.TrimRight(base, "/") + "/users/" + sc.Users[st.User] + path
 	token, err := r.expand(st.Token, sc.Users)
 	if err != nil {
 		return err
@@ -326,7 +360,7 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 	var got []byte
 	var header http.Header
 	for {
-		req, err := http.NewRequest(st.Method, target, bytes.NewReader(body))
+		req, err := scenarioRequest(base, sc.Users[st.User], st.Method, path, body, proxyUsers)
 		if err != nil {
 			return err
 		}

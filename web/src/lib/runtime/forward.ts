@@ -1,15 +1,14 @@
 import { accessFailureResponse, resolveUser, sameOrigin, sameOriginRead, type ScopedRuntime } from "./auth";
-import { isRuntimeMethod, isRuntimeRead } from "./methods";
+import { browserRoute } from "./routes";
 import { runtimeHeaders } from "./credentials";
 import { localDevelopment, runtimeMode, runtimeTarget, type Mode } from "./target";
 import { reportUpstreamFailure, reportUpstreamRejection, rejectionHeaders, upstreamTraceHeaders } from "@/lib/observability/upstream";
-import { MAX_FILE_BYTES } from "../submission";
 
 // A stream ends upstream first. This limit only catches one that stopped responding.
 const READ_TIMEOUT_MS = 170_000;
 const RELAYED = ["content-disposition", "content-security-policy", "content-length"];
-const json = (type: string) => type.includes("application/json");
-const eventStream = (type: string) => type.startsWith("text/event-stream");
+const mediaType = (type: string) => type.split(";", 1)[0].trim().toLowerCase();
+const json = (type: string) => mediaType(type) === "application/json";
 const forbidden = () => Response.json({ error: "Forbidden." }, { status: 403 });
 const notFound = () => Response.json({ error: "Not found." }, { status: 404 });
 
@@ -17,10 +16,10 @@ type RelayPolicy = {
   timeout: number;
   allowed: (type: string) => boolean;
   operation?: string;
+  label: string;
 };
 
-async function relay(request: Request, { base, userID, mode }: ScopedRuntime, path: string, init: RequestInit, { timeout, allowed, operation }: RelayPolicy) {
-  const label = operation ?? path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file").replace(/^v1\/conversations\/[^/]+/, "v1/conversations/item");
+async function relay(request: Request, { base, userID, mode }: ScopedRuntime, path: string, init: RequestInit, { timeout, allowed, operation, label }: RelayPolicy) {
   try {
     const trace = upstreamTraceHeaders(request);
     // Construct a fresh header set so neither browser credentials nor IAP headers reach the runtime.
@@ -74,7 +73,7 @@ function forgetSharedReads(userID: string) {
   for (const key of sharedReads.keys()) if (key.startsWith(userID + "\n")) sharedReads.delete(key);
 }
 
-async function sharedRead(request: Request, user: ScopedRuntime, path: string, allowed: RelayPolicy["allowed"]) {
+async function sharedRead(request: Request, user: ScopedRuntime, path: string, policy: RelayPolicy) {
   const key = user.userID + "\n" + path;
   const hit = sharedReads.get(key);
   if (hit && hit.expires > Date.now()) {
@@ -88,7 +87,7 @@ async function sharedRead(request: Request, user: ScopedRuntime, path: string, a
   sharedReads.set(key, entry);
   const drop = () => { if (sharedReads.get(key) === entry) sharedReads.delete(key); };
   try {
-    const response = await relay(request, user, path, {}, { timeout: READ_TIMEOUT_MS, allowed });
+    const response = await relay(request, user, path, {}, policy);
     if (response.status !== 200 || !json(response.headers.get("content-type") ?? "")) {
       drop();
       settle(null);
@@ -104,153 +103,87 @@ async function sharedRead(request: Request, user: ScopedRuntime, path: string, a
   }
 }
 
-async function forward(request: Request, mode: Mode, path: string, init: RequestInit, allowed: RelayPolicy["allowed"]) {
+async function readBody(request: Request, maxBytes: number): Promise<ArrayBuffer> {
+  if (Number(request.headers.get("content-length") ?? 0) > maxBytes) throw new RangeError();
+  const reader = request.body?.getReader();
+  if (!reader) return new ArrayBuffer(0);
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > maxBytes) {
+        void reader.cancel().catch(() => undefined);
+        throw new RangeError();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body.buffer;
+}
+
+export async function forwardRoute(request: Request, segments: string[], mode = runtimeMode(request.headers)) {
+  const rule = browserRoute(request.method, segments);
+  if (!rule || (mode === "local" && !localDevelopment(request.headers))) return notFound();
+  const read = request.method === "GET" || request.method === "HEAD";
+  const operation = rule.path.startsWith("/api/") ? rule.path.slice(5) : undefined;
+  const oauth = rule.path === "/v1/connections/oauth/callback";
+  if (oauth) {
+    if (request.headers.get("sec-fetch-mode") !== "navigate") return forbidden();
+  } else if (!(read ? sameOriginRead(request) : sameOrigin(request))) return forbidden();
+
+  const query = operation ? new URLSearchParams() : new URL(request.url).searchParams;
+  if (rule.response_media_types.includes("text/event-stream")) {
+    const after = request.headers.get("last-event-id");
+    if (after) query.set("after", after);
+  }
+  const path = segments.map(encodeURIComponent).join("/") + (query.size ? `?${query}` : "");
+  if (oauth) return oauthCallback(request, mode, path);
   const target = runtimeTarget(mode);
   if (target instanceof Response) return target;
   const user = await resolveUser(request.headers, target);
   if ("status" in user) return accessFailureResponse(user);
-  const read = !init.method || init.method === "GET";
-  if (read && mode === "hosted" && SHARED_READS.has(path)) return sharedRead(request, user, path, allowed);
-  const response = await relay(request, user, path, init, { timeout: READ_TIMEOUT_MS, allowed });
+
+  const init: RequestInit = { method: request.method };
+  if (rule.body && rule.max_request_bytes) {
+    try {
+      const buffer = await readBody(request, rule.max_request_bytes);
+      if (rule.body === "upload") {
+        init.body = buffer;
+        init.headers = { "Content-Type": request.headers.get("content-type") || "application/octet-stream" };
+      } else {
+        const text = new TextDecoder().decode(buffer);
+        init.body = text || "{}";
+        JSON.parse(init.body);
+        init.headers = { "Content-Type": "application/json" };
+      }
+    } catch (error) {
+      if (error instanceof RangeError) return Response.json({ error: "Request is too large." }, { status: 413 });
+      return rule.body === "upload"
+        ? Response.json({ error: "The upload was interrupted, so nothing was saved. Try again.", retryable: true }, { status: 400 })
+        : Response.json({ error: "Request body must be JSON." }, { status: 400 });
+    }
+  }
+  const policy: RelayPolicy = {
+    label: rule.path.slice(1),
+    operation,
+    timeout: operation ? mode === "local" ? 100_000 : 145_000 : READ_TIMEOUT_MS,
+    allowed: type => rule.response_media_types.includes(mediaType(type)),
+  };
+  if (request.method === "GET" && mode === "hosted" && SHARED_READS.has(path)) return sharedRead(request, user, path, policy);
+  const response = await relay(request, user, path, init, policy);
   if (!read) forgetSharedReads(user.userID);
   return response;
-}
-
-function allowedCaller(request: Request, mode: Mode, sameSite: (request: Request) => boolean) {
-  return sameSite(request) && (mode !== "local" || localDevelopment(request.headers));
-}
-
-export async function operationRoute(request: Request, mode: Mode, operation: string) {
-  const local = mode === "local";
-  if (!isRuntimeMethod(operation) || (local && runtimeMode(request.headers) !== "local")) return notFound();
-  if (!sameOrigin(request)) return forbidden();
-  const target = runtimeTarget(mode);
-  if (target instanceof Response) return local ? target : forbidden();
-  const user = await resolveUser(request.headers, target);
-  if ("status" in user) return accessFailureResponse(user);
-  let body: string;
-  try {
-    body = JSON.stringify(await request.json());
-    if (body.length > (local ? 64_000 : 128_000)) return Response.json({ error: "Request is too large." }, { status: 413 });
-  } catch {
-    return Response.json({ error: local ? "Send a JSON object." : "Request body must be JSON." }, { status: 400 });
-  }
-  const response = await relay(request, user, `api/${operation}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body,
-  }, {
-    timeout: local ? 100_000 : 145_000,
-    allowed: (type) => local || json(type) || type.startsWith("image/png"),
-    operation,
-  });
-  forgetSharedReads(user.userID);
-  return response;
-}
-
-function historyQuery(request: Request, afterAllowed: boolean, beforeAllowed: boolean) {
-  const incoming = new URL(request.url).searchParams;
-  const query = new URLSearchParams();
-  // Agent Runtime does not relay EventSource's Last-Event-ID header.
-  const after = afterAllowed && (request.headers.get("last-event-id") || incoming.get("after"));
-  if (after) query.set("after", after);
-  const before = beforeAllowed && incoming.get("before");
-  if (before) query.set("before", before);
-  return query.size ? `?${query}` : "";
-}
-
-export async function readRoute(request: Request, mode: Mode, name: string) {
-  if (!isRuntimeRead(name)) return notFound();
-  if (!allowedCaller(request, mode, sameOriginRead)) return forbidden();
-  return forward(request, mode, `v1/${name}${historyQuery(request, true, true)}`, {},
-    (type) => json(type) || eventStream(type));
-}
-
-export async function uploadRoute(request: Request, mode: Mode, path = "v1/uploads") {
-  if (!allowedCaller(request, mode, sameOrigin)) return forbidden();
-  if (Number(request.headers.get("content-length") ?? 0) > MAX_FILE_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
-  const incoming = new URL(request.url).searchParams;
-  const query = new URLSearchParams({ id: incoming.get("id") ?? "", filename: incoming.get("filename") ?? "" });
-  // Buffer the file so an interrupted upload does not reach the service.
-  let body: ArrayBuffer;
-  try { body = await request.arrayBuffer(); } catch {
-    return Response.json({ error: "The upload was interrupted, so nothing was saved. Try again.", retryable: true }, { status: 400 });
-  }
-  if (body.byteLength > MAX_FILE_BYTES) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
-  return forward(request, mode, `${path}?${query}`, { method: "POST", body, headers: { "Content-Type": request.headers.get("content-type") || "application/octet-stream" } }, json);
-}
-
-export async function fileRoute(request: Request, mode: Mode, path: string) {
-  if (!allowedCaller(request, mode, sameOriginRead)) return forbidden();
-  return forward(request, mode, path, {}, (type) => /^(application\/json|application\/pdf|application\/octet-stream|image\/(png|jpeg|webp)|text\/csv|text\/plain)/.test(type));
-}
-
-export async function conversationRoute(request: Request, segments: string[]) {
-  const mode = runtimeMode(request.headers);
-  const [id, operation] = segments;
-  const validID = id === "assistant" || /^[a-f0-9-]{36}$/.test(id || "");
-  if (validID && operation === "uploads") {
-    const path = `v1/conversations/${encodeURIComponent(id)}/uploads`;
-    if (segments.length === 2 && request.method === "POST") return uploadRoute(request, mode, path);
-    if (segments.length === 3 && /^[a-f0-9-]{36}$/.test(segments[2]) && request.method === "GET") return fileRoute(request, mode, `${path}/${segments[2]}`);
-  }
-  const read = request.method === "GET" && (segments.length === 0 || (validID && (segments.length === 1 || (segments.length === 2 && ["events", "messages"].includes(operation)))));
-  const write = request.method === "POST" && (segments.length === 0 || (validID && segments.length === 2 && ["messages", "cancel"].includes(operation)));
-  const remove = request.method === "DELETE" && segments.length === 1 && id !== "assistant" && validID;
-  if (!read && !write && !remove) return notFound();
-  if (!allowedCaller(request, mode, read ? sameOriginRead : sameOrigin)) return forbidden();
-  const query = historyQuery(request, operation === "events", read && operation === "messages");
-  let body: string | undefined;
-  if (write) {
-    if (Number(request.headers.get("content-length") ?? 0) > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
-    try {
-      const value = await request.text();
-      if (new TextEncoder().encode(value).length > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
-      body = value ? JSON.stringify(JSON.parse(value)) : "{}";
-    } catch { return Response.json({ error: "Request body must be JSON." }, { status: 400 }); }
-  }
-  const path = ["v1/conversations", ...segments.map(encodeURIComponent)].join("/") + query;
-  const init = write ? { method: "POST", body, headers: { "Content-Type": "application/json" } } : { method: request.method };
-  return forward(request, mode, path, init, type => json(type) || (read && operation === "events" && eventStream(type)));
-}
-
-export async function capabilitiesRoute(request: Request) {
-  if (!sameOriginRead(request)) return forbidden();
-  return forward(request, runtimeMode(request.headers), "v1/capabilities", {}, json);
-}
-
-// Assistant management API (contract r1+). Each family is an explicit allowlist; the
-// browser never chooses an arbitrary upstream path.
-const ASSISTANT_FAMILIES = new Set([
-  "integrations", "connections", "interactions", "work", "automations", "goals", "library", "search", "permissions",
-  "preferences", "delivery-destinations", "plugins", "mcp", "computer", "assistant", "mutations", "operations", "memory",
-  "inbox", "skills", "tools", "mcp-clients",
-]);
-const SEGMENT = /^[A-Za-z0-9._:@-]{1,200}$/;
-
-export async function assistantRoute(request: Request, family: string, segments: string[]) {
-  const mode = runtimeMode(request.headers);
-  if (!ASSISTANT_FAMILIES.has(family) || segments.length > 4 || !segments.every((segment) => SEGMENT.test(segment))) return notFound();
-  const read = request.method === "GET";
-  if (!read && !["POST", "PUT", "DELETE"].includes(request.method)) return notFound();
-  const incoming = new URL(request.url).searchParams;
-  const path = ["v1", family, ...segments].map(encodeURIComponent).join("/") + (incoming.size ? `?${incoming}` : "");
-  // The provider's redirect is a cross-site top-level navigation, so it cannot pass the same-origin check. Core
-  // validates the single-use state within this user and the PKCE verifier; only a navigation is accepted here.
-  if (family === "connections" && segments.join("/") === "oauth/callback") {
-    if (!read || request.headers.get("sec-fetch-mode") !== "navigate") return forbidden();
-    return oauthCallback(request, mode, path);
-  }
-  if (!allowedCaller(request, mode, read ? sameOriginRead : sameOrigin)) return forbidden();
-  let body: string | undefined;
-  if (!read) {
-    if (Number(request.headers.get("content-length") ?? 0) > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
-    try {
-      const value = await request.text();
-      if (new TextEncoder().encode(value).length > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
-      body = value ? JSON.stringify(JSON.parse(value)) : "{}";
-    } catch { return Response.json({ error: "Request body must be JSON." }, { status: 400 }); }
-  }
-  const init: RequestInit = read ? {} : { method: request.method, body, headers: { "Content-Type": "application/json" } };
-  return forward(request, mode, path, init, (type) => json(type) || (read && family === "library" && /^(application\/(pdf|octet-stream)|image\/(png|jpeg|webp)|text\/(plain|markdown|csv))/.test(type)) || (read && family === "computer" && /^image\/(png|jpeg|webp)/.test(type)));
 }
 
 // The provider redirects the browser here. Core validates state within this user only and
@@ -271,7 +204,8 @@ async function oauthCallback(request: Request, mode: Mode, path: string) {
       const value = await upstream.json().catch(() => null) as { location?: unknown } | null;
       if (typeof value?.location === "string") location = value.location;
     } else void upstream.body?.cancel().catch(() => undefined);
-    const safe = location.startsWith("/") && !location.startsWith("//") ? location : "/apps?result=failed";
+    const localPath = location.startsWith("/") && !location.startsWith("//") && !location.includes("\\");
+    const safe = localPath ? location : "/apps?result=failed";
     return new Response(null, { status: 303, headers: { Location: safe, "Cache-Control": "no-store" } });
   } catch {
     return new Response(null, { status: 303, headers: { Location: "/apps?result=failed", "Cache-Control": "no-store" } });

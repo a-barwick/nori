@@ -156,3 +156,16 @@ if (process.argv.includes("--check")) {
   writeFileSync(outFile, out);
   console.log(`wrote ${outFile}`);
 }
+
+const manifest = JSON.parse(readFileSync(join(root, "contracts", "assistant", "routes.json"), "utf8"));
+const routeFile = join(root, "web", "src", "lib", "contracts", "routes.generated.json");
+const routes = manifest.routes.filter((route) => route.user_scoped);
+const routeOutput = `{\n  "version": ${manifest.version},\n  "routes": [\n${routes.map((route) => "    " + JSON.stringify(route)).join(",\n")}\n  ]\n}\n`;
+if (process.argv.includes("--check")) {
+  if (readFileSync(routeFile, "utf8") !== routeOutput) {
+    console.error("The web route manifest is stale. Run bun run contracts.");
+    process.exit(1);
+  }
+} else {
+  writeFileSync(routeFile, routeOutput);
+}

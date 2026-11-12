@@ -1,7 +1,8 @@
-/** Runtime operations the browser may call. The Go API serves each one at `POST /api/<name>`. */
-const RUNTIME_METHODS: readonly string[] = ["turn", "input", "cancel", "command", "artifact", "trace", "delivered", "seen"];
+import manifest from "../contracts/routes.generated.json";
 
-export const isRuntimeMethod = (name: string) => RUNTIME_METHODS.includes(name);
+const operations = new Set(manifest.routes.flatMap(route =>
+  route.method === "POST" && route.path.startsWith("/api/") && route.callers.includes("browser")
+    ? [route.path.slice("/api/".length)] : [],
+));
 
-/** Reads the browser may make. The Go API serves each one at `GET /v1/<name>`. */
-export const isRuntimeRead = (name: string) => name === "snapshot" || name === "events";
+export const isRuntimeMethod = (name: string) => operations.has(name);
