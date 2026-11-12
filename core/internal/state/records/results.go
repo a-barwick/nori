@@ -45,7 +45,7 @@ func (d *Database) SaveResult(ctx context.Context, result state.Result) (state.R
 			return nil
 		}
 		saved = result
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -95,7 +95,7 @@ func (d *Database) MarkDelivered(ctx context.Context, ids []string) error {
 		if len(results) == 0 {
 			return nil
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}

@@ -2,6 +2,7 @@
 
 import itertools
 import json
+import time
 from http.server import BaseHTTPRequestHandler
 
 ACCOUNT = "recorded.user@example.com"
@@ -25,7 +26,7 @@ class ModelStub(BaseHTTPRequestHandler):
         if self.path == "/v1/chat/completions":
             self.chat(request)
         elif self.path == "/v1/responses":
-            self.responses(request)
+            self.task_responses(request)
         else:
             self.send_error(404)
 
@@ -51,16 +52,31 @@ class ModelStub(BaseHTTPRequestHandler):
                 }]
                 content = "I’ll check your calendars and prepare the email."
             content = json.dumps({"actions": actions, "text": content})
+        if schema.get("name") == "chat_response":
+            content = json.dumps({"actions": [], "text": content})
         usage = {"prompt_tokens": 100, "completion_tokens": 25, "total_tokens": 125}
         metadata = {"model": request["model"], "service_tier": "default", "usage": usage}
         if request.get("stream"):
+            middle = max(1, len(content) - 4)
             chunks = [
-                {"choices": [{"delta": {"content": content}, "finish_reason": None}]},
+                {"choices": [{"delta": {"content": content[:middle]}, "finish_reason": None}]},
+                {"choices": [{"delta": {"content": content[middle:]}, "finish_reason": None}]},
                 {"choices": [{"delta": {}, "finish_reason": "stop"}]},
                 {"choices": [], **metadata},
             ]
-            data = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
-            self.reply((data + "data: [DONE]\n\n").encode(), "text/event-stream")
+            frames = [f"data: {json.dumps(chunk)}\n\n".encode() for chunk in chunks]
+            frames.append(b"data: [DONE]\n\n")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(sum(map(len, frames))))
+            self.end_headers()
+            try:
+                self.wfile.write(frames[0])
+                self.wfile.flush()
+                time.sleep(0.6)
+                self.wfile.writelines(frames[1:])
+            except (BrokenPipeError, ConnectionResetError):
+                pass
         else:
             self.reply_json({
                 **metadata,
@@ -69,7 +85,7 @@ class ModelStub(BaseHTTPRequestHandler):
                 }],
             })
 
-    def responses(self, request):
+    def task_responses(self, request):
         history = "\n".join(
             item["output"] for item in request["input"] if item.get("type") == "function_call_output"
         )

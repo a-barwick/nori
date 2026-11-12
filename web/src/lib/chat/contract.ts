@@ -1,17 +1,20 @@
-import type { Attachment } from "../types";
+import type {
+  Capabilities, ConversationEvent, ConversationHeader, ConversationHistory, ConversationMessage,
+  ConversationOperation, ConversationView,
+} from "../contracts/assistant";
 
 export const CONTRACT = 'nori-chat-2';
 export const chatAPI = (path: string) => `/api/v1${path}`;
 export const conversationPath = (id: string) => `/conversations/${encodeURIComponent(id)}`;
-export type Capabilities = { contract: string; service: string; persistence?: string; provider?: string; model?: string; conversationModes: string[] };
-export type Operation = { id: string; call_id: string; name: string; effect_class: string; outcome: string; action?: { digest: string; text: string; spec: Record<string, string> }; result?: Record<string, unknown> };
-export type Message = { id: string; sequence: number; role: 'user' | 'assistant'; text: string; status: 'streaming' | 'completed' | 'cancelled' | 'failed'; attachments?: Attachment[]; operations?: Operation[] };
-export type Conversation = { id: string; title: string; mode: 'chat' | 'assistant'; messages: Message[]; activeTurn: string | null; position: number; nextBefore?: number; updatedAt?: string };
-type Header = Omit<Conversation, 'messages' | 'nextBefore'>;
-export type Summary = { id: string; title: string; mode: 'chat' | 'assistant'; activeTurn: string | null; updatedAt: string };
-type Event = { seq: number; kind: 'reply.updated' | 'turn.completed' | 'turn.cancelled' | 'turn.failed' | 'input.accepted' | 'tool.updated' | 'reset'; conversation: Header; messages: Message[] };
+export type { Capabilities };
+export type Operation = ConversationOperation;
+export type Message = ConversationMessage;
+export type Conversation = ConversationView;
+type Header = ConversationHeader;
+export type Summary = Pick<Header, 'id' | 'title' | 'mode' | 'activeTurn' | 'updatedAt'>;
+export type MessagePage = ConversationHistory;
 
-export type MessagePage = { messages: Message[]; nextBefore?: number };
+const chatEvents = new Set(['input.accepted', 'reply.updated', 'turn.completed', 'turn.cancelled', 'turn.failed', 'tool.updated']);
 
 type Recovery = "snapshot" | "rewind";
 
@@ -29,10 +32,10 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
 export function mergeMessages(older: Message[], newer: Message[]): Message[] {
   const messages = new Map(older.map((message) => [message.id, message]));
   for (const message of newer) messages.set(message.id, message);
-  return [...messages.values()].sort((a, b) => a.sequence - b.sequence);
+  return [...messages.values()].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
 }
 
-async function follow(id: string, after: number, signal: AbortSignal, receive: (event: Event) => void, opened: () => void): Promise<Recovery | undefined> {
+async function follow(id: string, after: number, signal: AbortSignal, receive: (event: ConversationEvent) => void, opened: () => void): Promise<Recovery | undefined> {
   const response = await fetch(chatAPI(`${conversationPath(id)}/events?after=${after}`), { signal, redirect: 'error' });
   if (response.status === 400) return "rewind";
   if (!response.ok || !response.headers.get('content-type')?.startsWith('text/event-stream') || !response.body) throw new Error('Event stream unavailable');
@@ -50,8 +53,10 @@ async function follow(id: string, after: number, signal: AbortSignal, receive: (
         buffer = buffer.slice(end + 2);
         const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
         if (!data) continue;
-        const event: Event = JSON.parse(data);
-        if (event.conversation.id !== id) throw new Error('Cross-conversation event');
+        let event: ConversationEvent;
+        try { event = JSON.parse(data) as ConversationEvent; }
+        catch { return "snapshot"; }
+        if (event.conversation?.id !== id) return "snapshot";
         if (event.kind === 'reset') return "snapshot";
         if (!Number.isSafeInteger(event.seq) || event.seq <= after) continue;
         if (event.seq !== after + 1) return "snapshot";
@@ -98,14 +103,14 @@ export async function stay(start: Conversation, signal: AbortSignal, { update, r
       try {
         recovery = await follow(id, after, signal, (event) => {
           after = event.seq;
-          update(event.conversation, event.messages);
+          if (chatEvents.has(event.kind)) update(event.conversation, event.messages);
         }, () => { failures = 0; connected(true); });
         // A clean end before the hosting deadline resumes from the last event.
-        if (!recovery) continue;
+        if (!recovery) { await backoff(); continue; }
       } catch {
         if (signal.aborted) return;
-        recovery = "snapshot";
         await backoff();
+        continue;
       }
     }
     if (signal.aborted) return;

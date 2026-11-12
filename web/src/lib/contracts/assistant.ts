@@ -589,6 +589,191 @@ export type Integration = {
   connection_ids: ID[];
 };
 
+// conversations.schema.json
+export type ConversationAttachment = {
+  id: UUID;
+  name: string;
+  media_type: string;
+  size: number;
+};
+/** New part types can be added. Use fallback when a part type is unknown. */
+export type ConversationPart = {
+  type: string;
+  text?: string;
+  display?: string;
+  fallback?: string;
+  id?: string;
+  name?: string;
+  media_type?: string;
+  size?: number;
+  url?: string;
+};
+export type ConversationOperation = {
+  id: string;
+  call_id: string;
+  name: string;
+  effect_class: string;
+  outcome: string;
+  result_ref: string;
+  revision: number;
+  attempt: number;
+  artifact_ids: string[] | null;
+  action?: {
+    digest: string;
+    text: string;
+    spec: Record<string, string> | null;
+  };
+  cleared?: string;
+  tool?: Record<string, unknown>;
+  connection_id?: string;
+  parent_operation_id?: string;
+  provider_refs?: Record<string, unknown>[];
+  owner: {
+    type: string;
+    id: string;
+  };
+  result?: Record<string, unknown>;
+};
+export type ConversationMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  status: string;
+  parts: ConversationPart[];
+  sequence?: number;
+  turnId?: string;
+  createdAt?: Instant;
+  attachments?: ConversationAttachment[];
+  operations?: ConversationOperation[];
+  resultIds?: string[];
+};
+export type ConversationStatus = {
+  introducing: boolean;
+  pending: boolean;
+  processing: boolean;
+  revision: number;
+  consumed: number;
+  turn_id?: string;
+  input_ids: string[] | null;
+  restart_count: number;
+  frozen: boolean;
+  routing_blocked: boolean;
+};
+export type ConversationHeader = {
+  id: string;
+  title: string;
+  mode: "chat" | "assistant";
+  activeTurn: string | null;
+  position: number;
+  updatedAt: Instant;
+  turnPolicy: "reject_while_running" | "fold_into_turn";
+  status?: ConversationStatus;
+  paused?: boolean;
+};
+export type ConversationReadPosition = {
+  message_id: string;
+  through: Instant;
+  position: number;
+};
+/** An assistant stream task summary. Use /v1/work for the task resource and allowed actions. */
+export type ConversationTaskHint = {
+  id: string;
+  status: string;
+  request?: string;
+  started_at: Instant;
+  finished_at?: Instant;
+  progress?: string;
+  result?: string;
+  error?: string;
+  question?: Record<string, unknown>;
+};
+export type ConversationResult = {
+  id: UUID;
+  root_id: UUID;
+  version: number;
+  revises?: UUID;
+  superseded_by?: UUID;
+  run_id: string;
+  revision: number;
+  kind: string;
+  title: string;
+  text?: string;
+  name?: string;
+  media_type?: string;
+  size?: number;
+  artifact_id?: string;
+  url?: string;
+  evidence?: string[];
+  unmet?: string[];
+  created_at: Instant;
+  checked_at?: Instant;
+  reported_at?: Instant;
+  message_id?: string;
+  delivered_at?: Instant;
+};
+export type ConversationAssistant = {
+  tasks?: ConversationTaskHint[];
+  results?: ConversationResult[];
+  readPosition: ConversationReadPosition;
+};
+export type ConversationView = {
+  id: string;
+  title: string;
+  mode: "chat" | "assistant";
+  activeTurn: string | null;
+  position: number;
+  updatedAt: Instant;
+  turnPolicy: "reject_while_running" | "fold_into_turn";
+  status?: ConversationStatus;
+  paused?: boolean;
+  messages: ConversationMessage[];
+  nextBefore?: number;
+  nextCursor?: string;
+  assistant?: ConversationAssistant;
+};
+export type ConversationList = {
+  conversations: ConversationHeader[];
+};
+export type ConversationHistory = {
+  messages: ConversationMessage[];
+  nextBefore?: number;
+  nextCursor: string;
+};
+export type ConversationOperationList = {
+  operations: ConversationOperation[];
+};
+export type ConversationCreate = {
+  title?: string;
+};
+export type ConversationSend = {
+  id: UUID;
+  text?: string;
+  attachments?: UUID[];
+  parts?: ConversationPart[];
+} & (Record<string, unknown> | unknown);
+export type ConversationCancel = {
+  turnId: UUID;
+};
+export type ConversationAccepted = {
+  turnId: UUID;
+  conversation: ConversationView;
+};
+/** One unnamed SSE event. Advance the cursor for unknown kinds and ignore their payload. */
+export type ConversationEvent = {
+  seq: number;
+  kind: string;
+  conversation: ConversationHeader;
+  messages: ConversationMessage[];
+  tasks?: ConversationTaskHint[];
+  results?: ConversationResult[];
+  operations?: ConversationOperation[];
+  readPosition?: ConversationReadPosition;
+  missing?: boolean;
+};
+export type ConversationDeleted = {
+  deleted: true;
+};
+
 // domain.schema.json
 export type CalendarTime = ({
   kind: "all_day";

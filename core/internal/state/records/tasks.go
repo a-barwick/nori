@@ -70,7 +70,7 @@ func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest
 			// revision and position fence still applies, and the read transaction ends without writing.
 			return err
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ func (d *Database) Admit(ctx context.Context, runID string, revision int64, oper
 
 func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -162,7 +162,7 @@ func (d *Database) SetProgress(ctx context.Context, runID string, revision int64
 		if run.Progress == text {
 			return nil
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -185,7 +185,7 @@ func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision i
 		if err != nil || replay {
 			return err
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -236,7 +236,7 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 				})
 			}
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -434,7 +434,7 @@ func (d *Database) CleanupTasks(ctx context.Context) ([]state.Run, error) {
 }
 
 func (d *Database) FinishCleanup(ctx context.Context, runID, detail string) error {
-	err := d.logged(ctx, func(_ context.Context, tx *docstore.Transaction) error {
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		ref := d.runs().Doc(runID)
 		run, err := decodeRun(tx.Get(ref))
 		if err != nil {
@@ -447,7 +447,7 @@ func (d *Database) FinishCleanup(ctx context.Context, runID, detail string) erro
 		if detail != "" && run.Status != state.RunRunning && !run.CleanupPending {
 			return nil // A late failed attempt cannot undo confirmed cleanup.
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}

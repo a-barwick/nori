@@ -55,7 +55,7 @@ func (d *Database) MarkSeen(ctx context.Context, messageID string) error {
 		if !m.CreatedAt.After(mark.Through) {
 			return nil
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}

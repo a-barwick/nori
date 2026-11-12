@@ -91,7 +91,7 @@ func (d *Database) putOperation(ctx context.Context, runID string, op state.Oper
 				return err
 			}
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}

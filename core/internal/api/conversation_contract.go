@@ -172,5 +172,5 @@ func (s *server) conversationOperations(w http.ResponseWriter, r *http.Request) 
 		}
 		ops = chatOperations(message)
 	}
-	writeJSON(w, 200, map[string]any{"operations": ops})
+	writeJSON(w, 200, conversationOperationList{Operations: ops})
 }

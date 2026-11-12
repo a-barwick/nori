@@ -119,3 +119,56 @@ After approval it gets the owner and client IDs, then constructs its
 credential locally. Repeating the poll returns the same IDs. CLI credentials
 issued through this flow expire after 90 days. Keep credentials and verifiers
 out of URLs, logs and mutation receipts.
+
+## Conversation API
+
+[`conversations.schema.json`](schemas/conversations.schema.json) describes
+`/v1/conversations` for both modes. Capabilities advertises `nori-chat-2` in
+`contract` and `nori-conversations-1` in `conversationContract`. The assistant's
+conversation ID is `assistant`. Create and delete apply to independent chats.
+Read the snapshot first. Pass the opaque `nextCursor` from a snapshot or
+history page as `before` to get older messages. Use `/v1/work` for complete
+task state and `/v1/results/{id}` for an individual result.
+
+To send, generate one UUID per intended message. Keep the same UUID and
+payload after an interrupted request, including when the server says it
+saved the message but could not confirm delivery. Send either text with
+optional upload IDs or text and attachment parts. Upload files first.
+In the assistant conversation several inputs can share a turn. Match the
+saved user message's `turnId` to the reply after routing.
+
+### Event stream
+
+Open `GET /v1/conversations/{id}/events?after=<snapshot position>`. Each
+unnamed SSE frame has a numeric `id` equal to the JSON envelope's `seq`.
+Apply frames in order, upserting messages and other changed records by ID.
+Some assistant events carry the current state of a record, so its payload
+can be identical at distinct sequence numbers. Ignore SSE comments. If a
+frame has an unknown `kind`, record its sequence and ignore its payload.
+A `missing` event says a referenced record is unavailable. Keep its sequence.
+
+After a disconnect, reconnect with `Last-Event-ID` or `?after` set to the
+last fully applied sequence. The header takes precedence. A partially
+received frame does not advance the cursor. Discard frames already applied.
+If there is a gap or the server sends `reset`, replace the view with a fresh
+snapshot and reconnect from that snapshot's position. `reset` is a control
+message, and its cursor alone cannot reconstruct state. Core returns 400
+for a cursor ahead of the server, such as after a restored database.
+Reload the snapshot in that case as well. The current replay windows are
+500 chat events and 1,000 assistant events.
+
+`/api/input`, `/v1/snapshot` and `/v1/events` are legacy web runtime
+endpoints. External clients use the conversations API.
+
+### Versioning policy (proposed)
+
+Within a version, clients can rely on existing field names and types,
+the meaning of current status and event kinds, response statuses, cursor
+semantics, and the idempotency key for each request. Core may add optional
+response fields, endpoints and event or part kinds. Readers ignore unknown
+fields and use the supplied fallback for an unknown part. Servers can add
+optional request fields with defaults preserving existing behavior. A
+breaking change gets a new advertised contract identifier and a new API
+version. Publish its schemas, fixtures and migration instructions before
+cutover. Keep the prior version available during the announced migration
+window.

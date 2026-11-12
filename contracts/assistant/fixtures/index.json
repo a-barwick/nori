@@ -1488,6 +1488,121 @@
       "file": "fixtures/plugins/device-status.approved.valid.json",
       "schema": "plugins.schema.json#/$defs/DeviceStatus",
       "valid": true
+    },
+    {
+      "file": "fixtures/conversations/attachment.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationAttachment",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/part.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationPart",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/operation.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationOperation",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/message.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationMessage",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/status.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationStatus",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/header.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationHeader",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/readposition.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationReadPosition",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/taskhint.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationTaskHint",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/result.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationResult",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/assistant.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationAssistant",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/view.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationView",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/list.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationList",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/history.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationHistory",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/operationlist.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationOperationList",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/create.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationCreate",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/send.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationSend",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/cancel.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationCancel",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/accepted.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationAccepted",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/event.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationEvent",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/view.assistant.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationView",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/event.reset.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationEvent",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/event.future.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationEvent",
+      "valid": true
+    },
+    {
+      "file": "fixtures/conversations/deleted.valid.json",
+      "schema": "conversations.schema.json#/$defs/ConversationDeleted",
+      "valid": true
     }
   ]
 }

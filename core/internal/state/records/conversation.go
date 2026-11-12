@@ -53,7 +53,7 @@ func (d *Database) AcceptConversationInput(ctx context.Context, id, text string,
 		if !notFound(err) {
 			return err
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -182,7 +182,7 @@ func (d *Database) AcquireConversation(ctx context.Context, owner, turnID string
 			t = state.NewTurn(turnID, inputs, unresolved, c, now)
 			c.Active = t.ID
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -235,7 +235,7 @@ func (d *Database) RenewConversation(ctx context.Context, f state.ConversationFe
 
 func (d *Database) ReleaseConversation(ctx context.Context, f state.ConversationFence) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -256,7 +256,7 @@ func (d *Database) ReleaseConversation(ctx context.Context, f state.Conversation
 // SaveConversation fences every checkpoint, including model replies and failed attempts.
 func (d *Database) SaveConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -301,7 +301,7 @@ func (d *Database) RestartConversation(
 		if !restart {
 			return nil
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -341,7 +341,7 @@ func (d *Database) RestartConversation(
 
 func (d *Database) PublishConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn, text string) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -479,7 +479,7 @@ func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt st
 		} else if !isDone(err) {
 			return err
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -531,7 +531,7 @@ func (d *Database) CancelConversation(ctx context.Context, turnID string) error 
 		} else {
 			return err
 		}
-		log, err := d.openLog(tx)
+		log, err := d.openLog(ctx, tx)
 		if err != nil {
 			return err
 		}

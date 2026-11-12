@@ -1,0 +1,11 @@
+{
+  "introducing": false,
+  "pending": false,
+  "processing": false,
+  "revision": 2,
+  "consumed": 1,
+  "input_ids": null,
+  "restart_count": 0,
+  "frozen": false,
+  "routing_blocked": false
+}

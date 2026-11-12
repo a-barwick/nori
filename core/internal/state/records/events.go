@@ -54,7 +54,11 @@ func (d *Database) logged(ctx context.Context, f func(context.Context, *docstore
 
 type logCtxKey struct{}
 
-func (d *Database) openLog(tx *docstore.Transaction) (*eventLog, error) {
+func (d *Database) openLog(ctx context.Context, tx *docstore.Transaction) (*eventLog, error) {
+	slot := ctx.Value(logCtxKey{}).(**eventLog)
+	if *slot != nil {
+		return *slot, nil
+	}
 	log := &eventLog{d: d, tx: tx, added: map[[2]string]bool{}}
 	if !tx.HasSequencer() {
 		seq, err := readHead(tx.Get(d.eventHead()))
@@ -63,9 +67,7 @@ func (d *Database) openLog(tx *docstore.Transaction) (*eventLog, error) {
 		}
 		log.seq, log.start = seq, seq
 	}
-	if slot, ok := tx.Context().Value(logCtxKey{}).(**eventLog); ok {
-		*slot = log
-	}
+	*slot = log
 	return log, nil
 }
 

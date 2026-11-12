@@ -1,0 +1,805 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.nori.local/assistant/conversations.schema.json",
+  "$defs": {
+    "ConversationAttachment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "name": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "media_type",
+        "size"
+      ]
+    },
+    "ConversationPart": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "display": {
+          "type": "string"
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "description": "New part types can be added. Use fallback when a part type is unknown."
+    },
+    "ConversationOperation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "effect_class": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "result_ref": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifact_ids": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "action": {
+          "type": "object",
+          "required": [
+            "digest",
+            "text",
+            "spec"
+          ],
+          "properties": {
+            "digest": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "spec": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "cleared": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "object"
+        },
+        "connection_id": {
+          "type": "string"
+        },
+        "parent_operation_id": {
+          "type": "string"
+        },
+        "provider_refs": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "owner": {
+          "type": "object",
+          "required": [
+            "type",
+            "id"
+          ],
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          }
+        },
+        "result": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "call_id",
+        "name",
+        "effect_class",
+        "outcome",
+        "result_ref",
+        "revision",
+        "attempt",
+        "artifact_ids",
+        "owner"
+      ]
+    },
+    "ConversationMessage": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationPart"
+          }
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationAttachment"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationOperation"
+          }
+        },
+        "resultIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "text",
+        "status",
+        "parts"
+      ]
+    },
+    "ConversationStatus": {
+      "type": "object",
+      "properties": {
+        "introducing": {
+          "type": "boolean"
+        },
+        "pending": {
+          "type": "boolean"
+        },
+        "processing": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "consumed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "input_ids": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "restart_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frozen": {
+          "type": "boolean"
+        },
+        "routing_blocked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "introducing",
+        "pending",
+        "processing",
+        "revision",
+        "consumed",
+        "input_ids",
+        "restart_count",
+        "frozen",
+        "routing_blocked"
+      ]
+    },
+    "ConversationHeader": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "chat",
+            "assistant"
+          ]
+        },
+        "activeTurn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedAt": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "turnPolicy": {
+          "enum": [
+            "reject_while_running",
+            "fold_into_turn"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationStatus"
+        },
+        "paused": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "mode",
+        "activeTurn",
+        "position",
+        "updatedAt",
+        "turnPolicy"
+      ]
+    },
+    "ConversationReadPosition": {
+      "type": "object",
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "through": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "message_id",
+        "through",
+        "position"
+      ]
+    },
+    "ConversationTaskHint": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "request": {
+          "type": "string"
+        },
+        "started_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "finished_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "progress": {
+          "type": "string"
+        },
+        "result": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "question": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "started_at"
+      ],
+      "description": "An assistant stream task summary. Use /v1/work for the task resource and allowed actions."
+    },
+    "ConversationResult": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "root_id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "revises": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "superseded_by": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifact_id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unmet": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "checked_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "reported_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "delivered_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      },
+      "required": [
+        "id",
+        "root_id",
+        "version",
+        "run_id",
+        "revision",
+        "kind",
+        "title",
+        "created_at"
+      ]
+    },
+    "ConversationAssistant": {
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationTaskHint"
+          }
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationResult"
+          }
+        },
+        "readPosition": {
+          "$ref": "#/$defs/ConversationReadPosition"
+        }
+      },
+      "required": [
+        "readPosition"
+      ]
+    },
+    "ConversationView": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "chat",
+            "assistant"
+          ]
+        },
+        "activeTurn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedAt": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "turnPolicy": {
+          "enum": [
+            "reject_while_running",
+            "fold_into_turn"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationStatus"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationMessage"
+          }
+        },
+        "nextBefore": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nextCursor": {
+          "type": "string"
+        },
+        "assistant": {
+          "$ref": "#/$defs/ConversationAssistant"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "mode",
+        "activeTurn",
+        "position",
+        "updatedAt",
+        "turnPolicy",
+        "messages"
+      ]
+    },
+    "ConversationList": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationHeader"
+          }
+        }
+      },
+      "required": [
+        "conversations"
+      ]
+    },
+    "ConversationHistory": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationMessage"
+          }
+        },
+        "nextBefore": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nextCursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "messages",
+        "nextCursor"
+      ]
+    },
+    "ConversationOperationList": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationOperation"
+          }
+        }
+      },
+      "required": [
+        "operations"
+      ]
+    },
+    "ConversationCreate": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "ConversationSend": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "text": {
+          "type": "string"
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/UUID"
+          },
+          "maxItems": 10
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationPart"
+          }
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "text"
+              ]
+            },
+            {
+              "required": [
+                "attachments"
+              ]
+            }
+          ],
+          "not": {
+            "required": [
+              "parts"
+            ]
+          }
+        },
+        {
+          "required": [
+            "parts"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "text"
+                ]
+              },
+              {
+                "required": [
+                  "attachments"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "ConversationCancel": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        }
+      },
+      "required": [
+        "turnId"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationAccepted": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "conversation": {
+          "$ref": "#/$defs/ConversationView"
+        }
+      },
+      "required": [
+        "turnId",
+        "conversation"
+      ]
+    },
+    "ConversationEvent": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string"
+        },
+        "conversation": {
+          "$ref": "#/$defs/ConversationHeader"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationMessage"
+          }
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationTaskHint"
+          }
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationResult"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationOperation"
+          }
+        },
+        "readPosition": {
+          "$ref": "#/$defs/ConversationReadPosition"
+        },
+        "missing": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "seq",
+        "kind",
+        "conversation",
+        "messages"
+      ],
+      "description": "One unnamed SSE event. Advance the cursor for unknown kinds and ignore their payload."
+    },
+    "ConversationDeleted": {
+      "type": "object",
+      "properties": {
+        "deleted": {
+          "const": true
+        }
+      },
+      "required": [
+        "deleted"
+      ]
+    }
+  }
+}

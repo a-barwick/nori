@@ -1,0 +1,19 @@
+{
+  "messages": [
+    {
+      "id": "message-1",
+      "role": "assistant",
+      "text": "Hello",
+      "status": "completed",
+      "parts": [
+        {
+          "type": "text",
+          "text": "Hello"
+        }
+      ],
+      "sequence": 2
+    }
+  ],
+  "nextBefore": 0,
+  "nextCursor": ""
+}

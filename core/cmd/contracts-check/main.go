@@ -70,6 +70,7 @@ func main() {
 	strict := flag.Bool("strict", false, "fail when a $defs entry has no fixture")
 	live := flag.String("live", "", "run scenarios against this core base URL (e.g. http://127.0.0.1:8083)")
 	emit := flag.String("emit-ts", "", "write every valid fixture as a typed TypeScript literal to this file")
+	resume := flag.Bool("resume-conversation", false, "with -live, drop and resume a model reply on the recorded local stack")
 	emitRoutes := flag.Bool("emit-routes", false, "regenerate contracts/assistant/routes.json")
 	recorded := flag.Bool("recorded", false, "with -live, also run scenarios that require core started with NORI_PROVIDER_REPLAY")
 	only := flag.String("only", "", "with -live, run only scenarios whose file name contains this text")
@@ -180,6 +181,17 @@ func main() {
 	failures += checkScenariosOffline(scenarioFiles, scenarios, compile)
 	if *live != "" {
 		failures += runScenariosLive(*live, scenarioFiles, scenarios, compile, *only, *recorded)
+	}
+	if *resume {
+		if *live == "" {
+			fatal("-resume-conversation requires -live")
+		}
+		if err := checkConversationResume(*live, compile); err != nil {
+			failures++
+			fmt.Printf("FAIL conversation stream: %v\n", err)
+		} else {
+			fmt.Println("PASS conversation schemas and contiguous stream resume")
+		}
 	}
 	if *emit != "" {
 		if err := emitTS(dir, *emit, idx.Fixtures); err != nil {

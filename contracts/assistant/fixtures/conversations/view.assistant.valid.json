@@ -1,0 +1,29 @@
+{
+  "id": "assistant",
+  "title": "Nori",
+  "mode": "assistant",
+  "activeTurn": null,
+  "position": 2,
+  "updatedAt": "2026-11-12T12:00:00Z",
+  "turnPolicy": "fold_into_turn",
+  "status": {
+    "introducing": false,
+    "pending": false,
+    "processing": false,
+    "revision": 2,
+    "consumed": 1,
+    "input_ids": null,
+    "restart_count": 0,
+    "frozen": false,
+    "routing_blocked": false
+  },
+  "paused": false,
+  "messages": [],
+  "assistant": {
+    "readPosition": {
+      "message_id": "message-1",
+      "through": "2026-11-12T12:00:00Z",
+      "position": 4
+    }
+  }
+}

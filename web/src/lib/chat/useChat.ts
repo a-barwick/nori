@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
+import type { ConversationAccepted, ConversationList } from "@/lib/contracts/assistant";
 import type { Attachment, DraftFile } from "@/lib/types";
 import { useDraftFiles, type UploadContext } from "@/lib/useDraftFiles";
 import {
@@ -31,7 +32,7 @@ function chatInAddress(id?: string) {
 }
 
 async function chatList(signal?: AbortSignal) {
-  const result = await request<{ conversations: Summary[] }>("/conversations", { signal });
+  const result = await request<ConversationList>("/conversations", { signal });
   return newest(result.conversations.filter((row) => row.mode === "chat"));
 }
 
@@ -198,7 +199,7 @@ export function useChat() {
         ? previous : { id: crypto.randomUUID(), text, attachments };
       timeline.submission = submission;
       const body = JSON.stringify({ id: submission.id, text, ...(attachments.length ? { attachments } : {}) });
-      const saved = await request<{ conversation: Conversation }>(`${conversationPath(id)}/messages`, { method: "POST", body });
+      const saved = await request<ConversationAccepted>(`${conversationPath(id)}/messages`, { method: "POST", body });
       delivered = true;
       if (timelines.current.get(id) !== timeline) return;
       if (timeline.submission === submission) timeline.submission = undefined;

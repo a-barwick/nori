@@ -55,6 +55,41 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, body)
 }
+
+type conversationList struct {
+	Conversations []conversationHeader `json:"conversations"`
+}
+
+type conversationCreate struct {
+	Title string `json:"title,omitempty"`
+}
+
+type conversationSend struct {
+	ID          string       `json:"id"`
+	Text        string       `json:"text,omitempty"`
+	Attachments []string     `json:"attachments,omitempty"`
+	Parts       []state.Part `json:"parts,omitempty"`
+}
+
+type conversationCancel struct {
+	TurnID string `json:"turnId"`
+}
+
+type conversationAccepted struct {
+	TurnID       string           `json:"turnId"`
+	Conversation conversationView `json:"conversation"`
+}
+
+type conversationHistory struct {
+	Messages   []messageView `json:"messages"`
+	NextBefore *int64        `json:"nextBefore,omitempty"`
+	NextCursor string        `json:"nextCursor"`
+}
+
+type conversationOperationList struct {
+	Operations []operationView `json:"operations"`
+}
+
 func (s *server) listChats(w http.ResponseWriter, r *http.Request) {
 	chats, err := s.Chats.List(r.Context())
 	if err != nil {
@@ -80,12 +115,10 @@ func (s *server) listChats(w http.ResponseWriter, r *http.Request) {
 	for _, c := range chats {
 		rows = append(rows, chatHeader(state.ChatHeader{ID: c.ID, Title: c.Title, Mode: c.Mode, ActiveTurn: c.ActiveTurn, UpdatedAt: c.UpdatedAt}))
 	}
-	writeJSON(w, 200, map[string]any{"conversations": rows})
+	writeJSON(w, 200, conversationList{Conversations: rows})
 }
 func (s *server) createChat(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Title string `json:"title"`
-	}
+	var body conversationCreate
 	if !decode(w, r, &body) {
 		return
 	}
@@ -135,12 +168,7 @@ func (s *server) chatSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) chatMessage(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		ID          string       `json:"id"`
-		Text        string       `json:"text"`
-		Attachments []string     `json:"attachments,omitempty"`
-		Parts       []state.Part `json:"parts,omitempty"`
-	}
+	var body conversationSend
 	if !decode(w, r, &body) {
 		return
 	}
@@ -202,12 +230,10 @@ func (s *server) chatMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 503, map[string]any{"accepted": true, "conversation": view, "error": "Message saved; retry with the same ID to confirm delivery."})
 		return
 	}
-	writeJSON(w, 202, map[string]any{"turnId": body.ID, "conversation": view})
+	writeJSON(w, 202, conversationAccepted{TurnID: body.ID, Conversation: view})
 }
 func (s *server) chatCancel(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		TurnID string `json:"turnId"`
-	}
+	var body conversationCancel
 	if !decode(w, r, &body) {
 		return
 	}
@@ -320,7 +346,7 @@ func (s *server) chatHistory(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"messages": view.Messages, "nextCursor": view.NextCursor})
+		writeJSON(w, 200, conversationHistory{Messages: view.Messages, NextCursor: view.NextCursor})
 		return
 	}
 	before := int64(0)
@@ -337,5 +363,5 @@ func (s *server) chatHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"messages": chatMessages(page.Messages), "nextBefore": page.NextBefore, "nextCursor": chatCursor(page.NextBefore)})
+	writeJSON(w, 200, conversationHistory{Messages: chatMessages(page.Messages), NextBefore: &page.NextBefore, NextCursor: chatCursor(page.NextBefore)})
 }

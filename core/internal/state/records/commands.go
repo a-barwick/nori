@@ -43,7 +43,7 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 		if err != nil {
 			return err
 		}
-		if err = d.writeCommandBatch(tx, batch, prepared, traceContext); err != nil {
+		if err = d.writeCommandBatch(ctx, tx, batch, prepared, traceContext); err != nil {
 			return err
 		}
 		return d.supersedeInteractions(tx, pending, before, batch, commands)
@@ -129,12 +129,12 @@ func (d *Database) admitCommandBatch(
 }
 
 func (d *Database) writeCommandBatch(
-	tx *docstore.Transaction, batch state.CommandBatch, prepared state.PreparedCommands, traceContext map[string]string,
+	ctx context.Context, tx *docstore.Transaction, batch state.CommandBatch, prepared state.PreparedCommands, traceContext map[string]string,
 ) error {
 	if len(prepared.Changed) == 0 && len(prepared.Accepted) == 0 && len(prepared.ReadyEvents) == 0 {
 		return nil
 	}
-	log, err := d.openLog(tx)
+	log, err := d.openLog(ctx, tx)
 	if err != nil {
 		return err
 	}
