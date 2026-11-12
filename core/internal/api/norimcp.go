@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"nori/internal/clientauth"
 	"nori/internal/permissions"
 	"nori/internal/scheduler"
 	"nori/internal/state"
@@ -24,14 +23,8 @@ import (
 
 // noriMCP serves the endpoint for an authenticated client token.
 func (a *Assistant) noriMCP(w http.ResponseWriter, r *http.Request) {
-	token := clientToken(r)
-	credential, ok := clientauth.Parse(token)
-	if !ok || credential.Owner != users.ID(r.Context()) {
-		clientUnauthorized(w)
-		return
-	}
-	client, err := a.authenticate(r.Context(), credential)
-	if err != nil {
+	client, ok := r.Context().Value(verifiedClientKey{}).(mcpClient)
+	if !ok {
 		clientUnauthorized(w)
 		return
 	}

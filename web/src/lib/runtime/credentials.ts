@@ -4,8 +4,17 @@ import type { Mode } from "./target";
 
 const google = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
 
-export async function runtimeHeaders(mode: Mode): Promise<Record<string, string>> {
-  return mode === "hosted" ? { Authorization: await runtimeAuthorization() } : {};
+export async function runtimeHeaders(mode: Mode, userID = ""): Promise<Record<string, string>> {
+  const headers: Record<string, string> = mode === "hosted" ? { Authorization: await runtimeAuthorization() } : {};
+  const key = process.env.NORI_WEB_CALLER_KEY;
+  if (key) {
+    const signingKey = new TextEncoder().encode(key);
+    if (signingKey.length < 32) throw new Error("The web caller signing key is too short");
+    headers["X-Nori-Service-Assertion"] = await new SignJWT({}).setProtectedHeader({ alg: "HS256" })
+      .setIssuer("nori-browser").setSubject(userID).setAudience("nori-core")
+      .setIssuedAt().setExpirationTime("60s").sign(signingKey);
+  }
+  return headers;
 }
 
 async function runtimeAuthorization(): Promise<string> {

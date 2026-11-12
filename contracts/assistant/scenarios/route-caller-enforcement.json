@@ -1,0 +1,170 @@
+{
+  "name": "Core caller enforcement",
+  "obligation": "AB-325 Core enforces ownership, scopes and caller roles",
+  "core_only": true,
+  "requires": [
+    "mcp"
+  ],
+  "users": {
+    "a": "44444444-4444-4444-8444-444444444444",
+    "b": "55555555-5555-4555-8555-555555555555"
+  },
+  "steps": [
+    {
+      "name": "issue-reader",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/mcp-clients",
+      "body": {
+        "request_id": "${uuid:issue}",
+        "expected_revision": 0,
+        "value": {
+          "name": "Contract reader",
+          "kind": "api",
+          "scopes": [
+            "read"
+          ],
+          "credential_hash": "${hash:reader}"
+        }
+      },
+      "body_schema": "plugins.schema.json#/$defs/MCPClientChange",
+      "expect": {
+        "status": [
+          201
+        ]
+      },
+      "capture": {
+        "reader": "/resource/id"
+      }
+    },
+    {
+      "name": "read-work",
+      "user": "a",
+      "method": "GET",
+      "path": "/v1/work",
+      "expect": {
+        "status": [
+          200
+        ]
+      },
+      "client_token": "nori2_${user:a}_${var:reader}.${secret:reader}"
+    },
+    {
+      "name": "read-token-cannot-write",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/conversations",
+      "expect": {
+        "status": [
+          403
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "insufficient_scope"
+        }
+      },
+      "client_token": "nori2_${user:a}_${var:reader}.${secret:reader}",
+      "body": {}
+    },
+    {
+      "name": "browser-only",
+      "user": "a",
+      "method": "GET",
+      "path": "/v1/preferences",
+      "expect": {
+        "status": [
+          403
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "client_route_forbidden"
+        }
+      },
+      "client_token": "nori2_${user:a}_${var:reader}.${secret:reader}"
+    },
+    {
+      "name": "different-owner",
+      "user": "b",
+      "method": "GET",
+      "path": "/v1/work",
+      "expect": {
+        "status": [
+          403
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "wrong_owner"
+        }
+      },
+      "client_token": "nori2_${user:a}_${var:reader}.${secret:reader}"
+    },
+    {
+      "name": "internal-only",
+      "user": "a",
+      "method": "POST",
+      "path": "/api/process",
+      "expect": {
+        "status": [
+          403
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "internal_only"
+        }
+      },
+      "body": {}
+    },
+    {
+      "name": "token-internal",
+      "user": "a",
+      "method": "POST",
+      "path": "/api/resume",
+      "expect": {
+        "status": [
+          403
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "client_route_forbidden"
+        }
+      },
+      "client_token": "nori2_${user:a}_${var:reader}.${secret:reader}",
+      "body": {}
+    },
+    {
+      "name": "revoke",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/mcp-clients/${var:reader}/actions",
+      "body": {
+        "request_id": "${uuid:revoke}",
+        "expected_revision": 1,
+        "value": {
+          "action": "revoke"
+        }
+      },
+      "body_schema": "plugins.schema.json#/$defs/MCPClientAction",
+      "expect": {
+        "status": [
+          200
+        ]
+      }
+    },
+    {
+      "name": "revoked",
+      "user": "a",
+      "method": "GET",
+      "path": "/v1/work",
+      "expect": {
+        "status": [
+          401
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "invalid_client_token"
+        }
+      },
+      "client_token": "nori2_${user:a}_${var:reader}.${secret:reader}"
+    }
+  ]
+}

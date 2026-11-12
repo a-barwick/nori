@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Thin operator commands for the native GCP resources; no resident controller."""
 import argparse
+from base64 import urlsafe_b64encode
+import hmac
 import hashlib
 import json
 import os
@@ -56,12 +58,12 @@ def gcloud(*args):
     return command(["gcloud", "--project", PROJECT, "--quiet", *args])
 
 
-def api(method, url, body=None, allow404=False, refresh=True):
+def api(method, url, body=None, allow404=False, refresh=True, headers=None):
     global TOKEN
     if TOKEN is None:
         TOKEN = gcloud("auth", "print-access-token")
     data = None if body is None else json.dumps(body).encode()
-    req = Request(url, data=data, method=method, headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json", "x-goog-user-project": PROJECT})
+    req = Request(url, data=data, method=method, headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json", "x-goog-user-project": PROJECT, **(headers or {})})
     try:
         with urlopen(req, timeout=135, context=SSL_CONTEXT) as res:
             data = res.read()
@@ -69,7 +71,7 @@ def api(method, url, body=None, allow404=False, refresh=True):
     except HTTPError as error:
         if error.code == 401 and refresh:
             TOKEN = None
-            return api(method, url, body, allow404, refresh=False)
+            return api(method, url, body, allow404, refresh=False, headers=headers)
         if allow404 and error.code == 404:
             return None
         raise APIError(method, url, error.code) from None
@@ -494,6 +496,27 @@ def clear_deadline():
     print("Legacy VM deadline cleared in place; retained VM and disks preserved.")
 
 
+def operator_caller_headers(c):
+    secret = c.get("caller_key_secrets", {}).get("NORI_INTERNAL_CALLER_KEY")
+    if not secret:
+        return {}
+    key = gcloud("secrets", "versions", "access", "latest", f"--secret={secret}").encode()
+    if len(key) < 32:
+        raise RuntimeError("The internal caller key must contain at least 32 bytes")
+
+    def encode(value):
+        return urlsafe_b64encode(value).rstrip(b"=")
+
+    now = int(time.time())
+    header = encode(b'{"alg":"HS256","typ":"JWT"}')
+    claims = encode(json.dumps({
+        "iss": "nori-internal", "aud": "nori-core", "iat": now, "exp": now + 60,
+    }, separators=(",", ":")).encode())
+    signed = header + b"." + claims
+    signature = encode(hmac.digest(key, signed, "sha256"))
+    return {"X-Nori-Service-Assertion": (signed + b"." + signature).decode()}
+
+
 def unpause(c):
     verify_no_deadline()
     workers = temporal_config()
@@ -505,7 +528,7 @@ def unpause(c):
         verify_worker_compatibility(workers)
         metadata({"computer-paused": "false"})
         control(c, False)
-        api("POST", c["runtime_url"].rstrip("/") + "/api/resume", {})
+        api("POST", c["runtime_url"].rstrip("/") + "/api/resume", {}, headers=operator_caller_headers(c))
         queue_state([workers["worker_wake_queue"]], False)
         queue_state([c["conversation_queue"]], False)
     except Exception:
@@ -554,9 +577,11 @@ def deploy_runtime(c, workers, image):
     # Connected accounts (credential store, OAuth callback, send defaults, push) come from the application state's
     # outputs; a state applied before they existed leaves the runtime as it is.
     env.update({key: {"name": key, "value": value} for key, value in c.get("connected_accounts_env", {}).items()})
+    if "route_auth_mode" in c:
+        env["NORI_ROUTE_AUTH_MODE"] = {"name": "NORI_ROUTE_AUTH_MODE", "value": c["route_auth_mode"]}
     secret_env = {entry["name"]: entry for entry in spec.get("secretEnv", [])}
     secret_env.update({key: {"name": key, "secretRef": {"secret": secret, "version": "latest"}}
-                       for key, secret in c.get("connected_accounts_secret_env", {}).items()})
+                       for key, secret in (c.get("connected_accounts_secret_env", {}) | c.get("caller_key_secrets", {})).items()})
     secret_env["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "secretRef": {
         "secret": "nori-sandbox-openai-api-key" if ENVIRONMENT == "sandbox" else "nori-openai-api-key", "version": "latest"}}
     if ENVIRONMENT == "sandbox":

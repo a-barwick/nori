@@ -213,14 +213,6 @@ func changeClient(ctx context.Context, store state.ResourceStore, id, requestID 
 
 var errClientCredential = errors.New("invalid client credential")
 
-func (a *Assistant) authenticate(ctx context.Context, credential clientauth.Credential) (mcpClient, error) {
-	client, err := lookupClient(ctx, a.Store, credential)
-	if err == nil {
-		recordClientUse(ctx, a.Store, client.ID)
-	}
-	return client, err
-}
-
 func lookupClient(ctx context.Context, store state.ResourceStore, credential clientauth.Credential) (mcpClient, error) {
 	if credential.ID != "" {
 		res, err := store.Resource(ctx, collectionClients, credential.ID)

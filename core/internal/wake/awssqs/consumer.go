@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"nori/internal/observability"
+	"nori/internal/serviceauth"
 	"sync"
 	"time"
 )
@@ -42,6 +43,13 @@ func (w *Waker) Deliver(ctx context.Context, body string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	if w.cfg.InternalKey != "" {
+		assertion, err := serviceauth.SignCaller(w.cfg.InternalKey, "internal", "")
+		if err != nil {
+			return err
+		}
+		req.Header.Set(serviceauth.CallerHeader, assertion)
+	}
 	for name, value := range observability.InjectTrace(observability.ExtractTrace(ctx, m.Trace)) {
 		req.Header.Set(name, value)
 	}

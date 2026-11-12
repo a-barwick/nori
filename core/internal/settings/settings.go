@@ -26,6 +26,7 @@ type Settings struct {
 	Cloud       string
 	AWS         AWS
 	ServiceAuth serviceauth.Config
+	Callers     serviceauth.Callers
 	// BindHost and Port are where the API listens. Port is empty for a polling worker.
 	BindHost, Port string
 	Models         Models
@@ -235,6 +236,9 @@ func Load() (Settings, error) {
 		}
 	}
 	s := FromEnvironment()
+	if err := s.Callers.Validate(); err != nil {
+		return Settings{}, err
+	}
 	switch s.Cloud {
 	case "gcp", "aws", "local":
 	default:
@@ -314,10 +318,15 @@ func FromEnvironment() Settings {
 		CloudRunID: os.Getenv("TEMPORAL_CLOUD_RUN_ID") == "true",
 	}
 	var credentials []string
-	for _, name := range []string{"NORI_MODEL_GATEWAY_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL", "NORI_SERVICE_TOKEN_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "NORI_SMTP_PASSWORD", "NORI_VAPID_PRIVATE_KEY", "MICROSOFT_CLIENT_SECRET"} {
+	for _, name := range []string{"NORI_MODEL_GATEWAY_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL", "NORI_SERVICE_TOKEN_KEY", "NORI_WEB_CALLER_KEY", "NORI_GATEWAY_CALLER_KEY", "NORI_INTERNAL_CALLER_KEY", "NORI_QUEUE_CALLER_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "NORI_SMTP_PASSWORD", "NORI_VAPID_PRIVATE_KEY", "MICROSOFT_CLIENT_SECRET"} {
 		if value := os.Getenv(name); value != "" {
 			credentials = append(credentials, value)
 		}
+	}
+	callers := serviceauth.Callers{
+		Mode: os.Getenv("NORI_ROUTE_AUTH_MODE"), Web: os.Getenv("NORI_WEB_CALLER_KEY"),
+		Internal: os.Getenv("NORI_INTERNAL_CALLER_KEY"), Gateway: os.Getenv("NORI_GATEWAY_CALLER_KEY"),
+		Queue: os.Getenv("NORI_QUEUE_CALLER_KEY"),
 	}
 	return Settings{
 		Connections: connectionsFromEnvironment(store.LocalArtifactDir),
@@ -325,6 +334,7 @@ func FromEnvironment() Settings {
 		Cloud:       cloud,
 		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION")), WakeQueueURL: os.Getenv("NORI_AWS_WAKE_QUEUE_URL")},
 		ServiceAuth: serviceauth.Config{Key: os.Getenv("NORI_SERVICE_TOKEN_KEY"), Audience: get("NORI_SERVICE_AUDIENCE", "nori")},
+		Callers:     callers,
 		BindHost:    get("BIND_HOST", "127.0.0.1"), Port: os.Getenv("PORT"),
 		Models:        modelsFromEnvironment(),
 		Store:         store,

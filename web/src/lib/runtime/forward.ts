@@ -25,7 +25,7 @@ async function relay(request: Request, { base, userID, mode }: ScopedRuntime, pa
     const trace = upstreamTraceHeaders(request);
     // Construct a fresh header set so neither browser credentials nor IAP headers reach the runtime.
     const upstream = await fetch(new URL(`users/${encodeURIComponent(userID)}/${path}`, base), {
-      ...init, headers: { ...(init.headers as Record<string, string>), ...await runtimeHeaders(mode), ...trace },
+      ...init, headers: { ...(init.headers as Record<string, string>), ...await runtimeHeaders(mode, userID), ...trace },
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]), redirect: "error", cache: "no-store",
     });
     if (upstream.status >= 500) reportUpstreamFailure(label, mode, upstream.status);
@@ -263,7 +263,7 @@ async function oauthCallback(request: Request, mode: Mode, path: string) {
   try {
     const upstream = await fetch(new URL(`users/${encodeURIComponent(user.userID)}/${path}${path.includes("?") ? "&" : "?"}nori_redirect=json`, user.base), {
       // The hosted gateway drops a redirect's Location, so core returns the destination as JSON when asked.
-      headers: { ...await runtimeHeaders(mode), ...upstreamTraceHeaders(request), "X-Nori-Redirect": "json" }, redirect: "manual", cache: "no-store",
+      headers: { ...await runtimeHeaders(mode, user.userID), ...upstreamTraceHeaders(request), "X-Nori-Redirect": "json" }, redirect: "manual", cache: "no-store",
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
     });
     let location = upstream.headers.get("location") ?? "";

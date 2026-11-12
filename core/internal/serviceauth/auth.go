@@ -4,6 +4,8 @@ import (
 	"errors"
 	"github.com/golang-jwt/jwt/v5"
 	"net/http"
+
+	"nori/internal/httpjson"
 	"strings"
 	"time"
 )
@@ -41,7 +43,10 @@ func (c Config) Protect(next http.Handler) http.Handler {
 		}
 		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
 		if !ok || scheme != "Bearer" || !c.Valid(token) {
-			http.Error(w, "Service authentication required", http.StatusUnauthorized)
+			w.Header().Set("Cache-Control", "no-store")
+			httpjson.Write(w, http.StatusUnauthorized, map[string]any{
+				"error": "Service authentication required.", "code": "service_auth_required", "retryable": false, "accepted": false,
+			})
 			return
 		}
 		next.ServeHTTP(w, r)

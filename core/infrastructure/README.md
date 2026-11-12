@@ -118,3 +118,36 @@ Production uses `gpt-6.1-sol` for replies and `gpt-6.1-terra` for tasks,
 image inspection, and summary refinement. The runtime and new workers reference
 `nori-openai-api-key` as `OPENAI_API_KEY`. Sol handles routing without Jev in
 production. Local development and sandbox keep their own provider configuration.
+
+## Core caller authorization
+
+`nori-local` enforces route rules by default and identifies loopback
+connections without browser-origin headers as local callers. Hosted Core
+uses `NORI_ROUTE_AUTH_MODE`. Its default is `off` for existing hosted
+callers. Set `observe` to log `nori.access.would_refuse` and `enforce` to
+return a coded APIError. Core always verifies client credentials, ownership
+and scopes. A client credential travels in `X-Nori-Client-Token` alongside
+the platform's service authorization in `Authorization`.
+
+Configure distinct keys of at least 32 bytes:
+
+- `NORI_WEB_CALLER_KEY` in Core and the authenticated web proxy. The
+  proxy signs the resolved user ID into its short-lived caller assertion.
+- `NORI_INTERNAL_CALLER_KEY` in Core and the trusted operator or AWS
+  wake consumer. On AWS, the existing service token continues to protect
+  the transport. The additional assertion identifies the internal caller.
+- `NORI_GATEWAY_CALLER_KEY` in Core and the public client gateway. The
+  gateway signs its own caller assertion. Core verifies the client's token.
+- `NORI_QUEUE_CALLER_KEY` in GCP Core and the workers that enqueue
+  conversation wakes. Cloud Tasks still uses its OAuth service account.
+  The additional assertion is scoped to the exact user's process route and
+  survives delayed delivery. It cannot authorize resume or user routes.
+
+On GCP, set `caller_key_secrets` in the application state and
+`queue_caller_secret` in the Temporal state to the Secret Manager IDs.
+The release reads `route_auth_mode` and these secret references from the
+application state. The operator running resume needs access to the internal
+key. Use a sandbox to verify header forwarding through the deployed
+Agent Runtime. Check wakes from every retained worker build and any queue
+entries already scheduled before switching to enforcement. Production
+observation and enforcement each require Austin's approval.

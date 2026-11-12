@@ -542,6 +542,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
           NORI_WAKE_QUEUE                 = google_cloud_tasks_queue.conversation.id
           NORI_WAKE_SERVICE_ACCOUNT       = google_service_account.conversation_wake.email
           NORI_RUNTIME_URL                = var.runtime_invoke_root
+          NORI_ROUTE_AUTH_MODE            = var.route_auth_mode
           TEMPORAL_ADDRESS                = "quickstart-nori.qtjow.tmprl.cloud:7233"
           TEMPORAL_NAMESPACE              = "quickstart-nori.qtjow"
           TEMPORAL_TASK_QUEUE             = local.task_queue
@@ -555,7 +556,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
       }
 
       dynamic "secret_env" {
-        for_each = merge({ for name, secret in local.conversation_secrets : name => secret if !local.production || name == "OPENAI_API_KEY" }, local.arize_secret_env, local.connected_accounts_secret_env)
+        for_each = merge({ for name, secret in local.conversation_secrets : name => secret if !local.production || name == "OPENAI_API_KEY" }, local.arize_secret_env, local.connected_accounts_secret_env, var.caller_key_secrets)
         content {
           name = secret_env.key
           secret_ref {
@@ -576,7 +577,7 @@ resource "google_vertex_ai_reasoning_engine" "runtime" {
     ignore_changes = [spec[0].container_spec[0].image_uri, spec[0].deployment_spec]
   }
 
-  depends_on = [google_project_service.api, google_project_iam_member.runtime_firestore, google_project_iam_member.runtime_model, google_artifact_registry_repository_iam_member.runtime_image_reader, google_artifact_registry_repository_iam_member.platform_image_reader, google_secret_manager_secret_iam_member.conversation_runtime_secrets, google_secret_manager_secret_iam_member.conversation_deploy_secrets, google_secret_manager_secret_iam_member.arize_runtime, google_secret_manager_secret_iam_member.arize_platform, google_kms_crypto_key_iam_member.runtime_credentials, google_secret_manager_secret_iam_member.google_client_platform, google_secret_manager_secret_iam_member.vapid_runtime, google_secret_manager_secret_iam_member.vapid_platform]
+  depends_on = [google_project_service.api, google_project_iam_member.runtime_firestore, google_project_iam_member.runtime_model, google_artifact_registry_repository_iam_member.runtime_image_reader, google_artifact_registry_repository_iam_member.platform_image_reader, google_secret_manager_secret_iam_member.conversation_runtime_secrets, google_secret_manager_secret_iam_member.conversation_deploy_secrets, google_secret_manager_secret_iam_member.arize_runtime, google_secret_manager_secret_iam_member.arize_platform, google_kms_crypto_key_iam_member.runtime_credentials, google_secret_manager_secret_iam_member.google_client_platform, google_secret_manager_secret_iam_member.vapid_runtime, google_secret_manager_secret_iam_member.vapid_platform, google_secret_manager_secret_iam_member.caller_key_runtime, google_secret_manager_secret_iam_member.caller_key_platform]
 
 }
 
@@ -632,6 +633,19 @@ resource "google_cloud_run_v2_service" "web" {
       }
 
       dynamic "env" {
+        for_each = local.web_caller_secrets
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.value
+              version = "latest"
+            }
+          }
+        }
+      }
+
+      dynamic "env" {
         for_each = local.web_telemetry_env
         content {
           name  = env.key
@@ -647,7 +661,7 @@ resource "google_cloud_run_v2_service" "web" {
     ignore_changes = [template[0].containers[0].image, client, client_version]
   }
 
-  depends_on = [google_project_service.api]
+  depends_on = [google_project_service.api, google_secret_manager_secret_iam_member.caller_key_web]
 
 }
 

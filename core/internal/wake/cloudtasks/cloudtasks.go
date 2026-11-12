@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"nori/internal/observability"
+	"nori/internal/serviceauth"
 	"nori/internal/users"
 	"nori/internal/wake"
 
@@ -51,7 +52,8 @@ type Conversation struct {
 	// InvokeRoot is the API's base URL. Wakes POST to InvokeRoot + "/api/process".
 	InvokeRoot string
 	// Caller is the service account whose OAuth token authenticates the wake.
-	Caller string
+	Caller    string
+	CallerKey string
 }
 
 // Workers are the targets of worker wakes.
@@ -69,7 +71,7 @@ type Waker struct {
 	workers      *workerTargets
 }
 
-type conversationTarget struct{ queue, url, caller string }
+type conversationTarget struct{ queue, url, caller, key string }
 type workerTargets struct {
 	queue, caller string
 	services      map[string]string
@@ -88,7 +90,7 @@ func New(ctx context.Context, cfg Config) (*Waker, error) {
 		if err = checkQueue(c.Queue, c.Caller); err != nil {
 			return nil, fmt.Errorf("conversation wake: %w", err)
 		}
-		w.conversation = &conversationTarget{queue: c.Queue, url: target, caller: c.Caller}
+		w.conversation = &conversationTarget{queue: c.Queue, url: target, caller: c.Caller, key: c.CallerKey}
 	}
 	if s := cfg.Workers; s != nil {
 		services, err := workerRoutes(s.Services, cfg.Local)
@@ -135,7 +137,7 @@ func (w *Waker) WakeConversation(ctx context.Context) error {
 	err := w.create(ctx, c.queue, &cloudtasks.Task{
 		DispatchDeadline: "600s",
 		HttpRequest: &cloudtasks.HttpRequest{
-			Url: userURL(c.url, users.ID(ctx)), HttpMethod: "POST", Headers: requestHeaders(ctx), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
+			Url: userURL(c.url, users.ID(ctx)), HttpMethod: "POST", Headers: c.headers(ctx, users.ID(ctx)), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
 			OauthToken: &cloudtasks.OAuthToken{ServiceAccountEmail: c.caller, Scope: "https://www.googleapis.com/auth/cloud-platform"},
 		},
 	})
@@ -161,7 +163,7 @@ func (w *Waker) WakeConversationAt(ctx context.Context, at time.Time) error {
 	err := w.create(ctx, c.queue, &cloudtasks.Task{
 		Name: name, ScheduleTime: at.Format(time.RFC3339), DispatchDeadline: "600s",
 		HttpRequest: &cloudtasks.HttpRequest{
-			Url: userURL(c.url, id), HttpMethod: "POST", Headers: requestHeaders(ctx), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
+			Url: userURL(c.url, id), HttpMethod: "POST", Headers: c.headers(ctx, id), Body: base64.StdEncoding.EncodeToString([]byte("{}")),
 			OauthToken: &cloudtasks.OAuthToken{ServiceAccountEmail: c.caller, Scope: "https://www.googleapis.com/auth/cloud-platform"},
 		},
 	})
@@ -204,6 +206,14 @@ func (w *Waker) WakeWorker(ctx context.Context, build string, workflowIDs ...str
 func (w *Waker) create(ctx context.Context, queue string, task *cloudtasks.Task) error {
 	_, err := w.api.Projects.Locations.Queues.Tasks.Create(queue, &cloudtasks.CreateTaskRequest{Task: task}).Context(ctx).Do()
 	return err
+}
+
+func (c *conversationTarget) headers(ctx context.Context, id string) map[string]string {
+	headers := requestHeaders(ctx)
+	if c.key != "" {
+		headers[serviceauth.QueueHeader] = serviceauth.QueueAssertion(c.key, "/users/"+id+"/api/process")
+	}
+	return headers
 }
 
 func requestHeaders(ctx context.Context) map[string]string {

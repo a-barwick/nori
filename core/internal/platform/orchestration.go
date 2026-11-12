@@ -50,7 +50,7 @@ func Waker(ctx context.Context, s settings.Settings, withConversation bool) (wak
 	caller := s.Wake.Caller
 	if withConversation {
 		cfg.Conversation = &cloudtasks.Conversation{
-			Queue: s.Wake.ConversationQueue, InvokeRoot: s.Wake.RuntimeURL, Caller: caller,
+			Queue: s.Wake.ConversationQueue, InvokeRoot: s.Wake.RuntimeURL, Caller: caller, CallerKey: s.Callers.Queue,
 		}
 	}
 	if len(services) != 0 {
@@ -81,7 +81,7 @@ func AWSWakes(s settings.Settings, withConversation bool) (awssqs.Config, error)
 	if err != nil {
 		return awssqs.Config{}, err
 	}
-	cfg := awssqs.Config{Region: s.AWS.Region, QueueURL: s.AWS.WakeQueueURL, Auth: s.ServiceAuth, Local: s.Temporal.Local, Workers: services}
+	cfg := awssqs.Config{Region: s.AWS.Region, QueueURL: s.AWS.WakeQueueURL, Auth: s.ServiceAuth, InternalKey: s.Callers.Internal, Local: s.Temporal.Local, Workers: services}
 	if withConversation {
 		if s.Wake.RuntimeURL == "" {
 			return cfg, fmt.Errorf("NORI_RUNTIME_URL must be configured")

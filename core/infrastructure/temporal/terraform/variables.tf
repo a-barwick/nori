@@ -41,3 +41,9 @@ variable "runtime_invoke_root" {
     error_message = "Use the existing bot-111549 native Agent Runtime invoke root ending in /api."
   }
 }
+
+variable "queue_caller_secret" {
+  type        = string
+  default     = ""
+  description = "Secret Manager secret ID shared with Core for signed conversation wake notifications."
+}

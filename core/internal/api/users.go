@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 
 	"nori/internal/clientauth"
@@ -21,29 +22,36 @@ type userServer struct {
 	open      func(context.Context, users.User) (UserRoutes, func(), error)
 	model     string
 	devices   clientauth.DeviceStore
+	access    AccessConfig
 }
 
 // The authenticated web server supplies the resolved user ID. Only internal resume can fan out.
-func UserHandler(directory users.Directory, open func(context.Context, users.User) (UserRoutes, func(), error), local bool, model string, devices clientauth.DeviceStore) http.Handler {
-	s := &userServer{directory: directory, open: open, model: model, devices: devices}
+func UserHandler(directory users.Directory, open func(context.Context, users.User) (UserRoutes, func(), error), access AccessConfig, model string, devices clientauth.DeviceStore) http.Handler {
+	s := &userServer{directory: directory, open: open, model: model, devices: devices, access: access}
 	root := newRouteMux(false, false)
 	s.register(root)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if local && (r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "") {
-			writeJSON(w, 403, map[string]string{"error": "Use the web server to access the runtime."})
+		if access.Local && (r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "") {
+			routeError(w, 403, "browser_proxy_required", "Use the web server to access the runtime.")
 			return
 		}
-		if handler, pattern := root.mux.Handler(r); pattern != "" && pattern == r.Method+" "+r.URL.Path || pattern == r.URL.Path {
-			handler.ServeHTTP(w, r)
+		identity := access.identify(r)
+		r = r.WithContext(context.WithValue(r.Context(), callerKey{}, identity))
+		if handler, pattern := root.mux.Handler(r); pattern != "" && (pattern == r.Method+" "+r.URL.Path || pattern == r.URL.Path) {
+			rule, _ := MatchRoute(r.Method, r.URL.Path, false)
+			if access.authorize(w, r, rule, "") {
+				access.serve(w, r, rule, handler)
+			}
 			return
 		}
-		id := ""
-		if strings.HasPrefix(r.URL.Path, "/users/") {
-			var path string
-			id, path, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/users/"), "/")
-			r = withPath(r, "/"+path)
+		if raw, ok := strings.CutPrefix(r.URL.Path, "/users/"); ok {
+			id, path, found := strings.Cut(raw, "/")
+			if found && users.ValidID(id) {
+				s.serveUser(w, withPath(r, "/"+path), id)
+				return
+			}
 		}
-		s.serveUser(w, r, id)
+		routeError(w, 404, "not_found", "Route not found.")
 	})
 }
 
@@ -85,6 +93,11 @@ func (s *userServer) resolve(w http.ResponseWriter, r *http.Request) {
 
 // The token names its user and is verified against that user's records.
 func (s *userServer) mcp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		routeError(w, 405, "method_not_allowed", "Use POST for this MCP endpoint.")
+		return
+	}
 	credential, ok := clientauth.Parse(clientToken(r))
 	if !ok {
 		clientUnauthorized(w)
@@ -120,9 +133,22 @@ func (s *userServer) resume(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *userServer) serveUser(w http.ResponseWriter, r *http.Request, id string) {
+	rule, ok := MatchRoute(r.Method, r.URL.Path, true)
+	if !ok {
+		routeError(w, 404, "not_found", "Route not found.")
+		return
+	}
+	if !s.access.authorize(w, r, rule, id) {
+		return
+	}
+	identity := requestCaller(r)
 	row, err := s.directory.Get(r.Context(), id)
 	if err != nil {
-		writeJSON(w, 403, map[string]string{"error": "A known user is required."})
+		if identity.kind == CallerClient {
+			clientUnauthorized(w)
+		} else {
+			routeError(w, 403, "unknown_user", "A known user is required.")
+		}
 		return
 	}
 	routes, release, err := s.open(r.Context(), row)
@@ -131,7 +157,22 @@ func (s *userServer) serveUser(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	defer release()
-	routes.Handler.ServeHTTP(w, r.WithContext(users.WithID(r.Context(), row.ID)))
+	ctx := users.WithID(r.Context(), row.ID)
+	if identity.kind == CallerClient {
+		credential, _ := clientauth.Parse(identity.token)
+		client, err := lookupClient(ctx, routes.ClientStore, credential)
+		if err != nil {
+			s.access.refuse(w, r, rule, identity, 401, "invalid_client_token", "A valid Nori client token is required.", true)
+			return
+		}
+		if rule.TokenScope != "mcp" && !slices.Contains(client.Scopes, rule.TokenScope) {
+			s.access.refuse(w, r, rule, identity, 403, "insufficient_scope", "This command requires the "+rule.TokenScope+" scope.", true)
+			return
+		}
+		recordClientUse(ctx, routes.ClientStore, client.ID)
+		ctx = context.WithValue(ctx, verifiedClientKey{}, client)
+	}
+	s.access.serve(w, r.WithContext(ctx), rule, routes.Handler)
 }
 
 func withPath(r *http.Request, path string) *http.Request {

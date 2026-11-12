@@ -24,6 +24,7 @@ type Config struct {
 	RuntimeURL       string
 	Workers          map[string]string
 	Auth             serviceauth.Config
+	InternalKey      string
 	Local            bool
 }
 type Waker struct {

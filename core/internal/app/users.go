@@ -92,7 +92,7 @@ func (s *Service) Handler(local bool) http.Handler {
 			return api.UserRoutes{}, nil, err
 		}
 		return api.UserRoutes{Handler: app.handler, Resume: app.Resume, ClientStore: app.Store}, release, nil
-	}, local, s.cfg.Models.Outer, s.devices)
+	}, api.AccessConfig{Local: local, Callers: s.cfg.Callers}, s.cfg.Models.Outer, s.devices)
 }
 func (s *Service) Close() {
 	s.mu.Lock()
