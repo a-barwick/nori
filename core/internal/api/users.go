@@ -36,6 +36,14 @@ func UserHandler(directory users.Directory, open func(context.Context, users.Use
 			return
 		}
 		identity := access.identify(r)
+		// Older Core versions reject this namespace without reaching user routes.
+		if path, gateway := strings.CutPrefix(r.URL.Path, clientauth.GatewayPrefix+"/"); gateway {
+			if identity.service != "gateway" {
+				routeError(w, 401, "unidentified_caller", "A verified gateway is required.")
+				return
+			}
+			r = withPath(r, "/"+path)
+		}
 		r = r.WithContext(context.WithValue(r.Context(), callerKey{}, identity))
 		if handler, pattern := root.mux.Handler(r); pattern != "" && (pattern == r.Method+" "+r.URL.Path || pattern == r.URL.Path) {
 			rule, _ := MatchRoute(r.Method, r.URL.Path, false)

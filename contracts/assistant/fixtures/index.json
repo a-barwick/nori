@@ -1613,6 +1613,11 @@
       "file": "fixtures/conversations/create.id.valid.json",
       "schema": "conversations.schema.json#/$defs/ConversationCreate",
       "valid": true
+    },
+    {
+      "file": "fixtures/common/api-error.rate-limited.valid.json",
+      "schema": "common.schema.json#/$defs/APIError",
+      "valid": true
     }
   ]
 }

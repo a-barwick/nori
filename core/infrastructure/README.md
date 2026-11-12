@@ -151,3 +151,35 @@ key. Use a sandbox to verify header forwarding through the deployed
 Agent Runtime. Check wakes from every retained worker build and any queue
 entries already scheduled before switching to enforcement. Production
 observation and enforcement each require Austin's approval.
+
+## GCP client gateway
+
+Build the gateway from `core/` with
+`docker build -f infrastructure/Gateway.Dockerfile .`. Set the application
+Terraform variable `gateway_image` to the reviewed image digest to enable it.
+The Cloud Run service has its own identity and invocation rights on the
+configured Agent Runtime. Supply the gateway key's Secret Manager ID in
+`caller_key_secrets` and release the corresponding Core code. The private
+`/gateway/` upstream namespace requires the gateway assertion. A Core version
+that predates this namespace cannot serve a gateway request.
+
+Clients send `Authorization: Bearer <token>` to the gateway. The gateway
+derives the scoped path from the token's owner and forwards the credential in
+`X-Nori-Client-Token`. Core validates the credential and scopes on each call.
+Public client paths are unscoped and include `/mcp` and the token routes in
+the manifest. The two device authorization endpoints accept unsigned device
+requests. They have a separate request bucket and their records expire.
+
+The default limit is 120 requests per minute per token with a burst of 30.
+A rate-limited request receives HTTP 429, `APIError.code = "rate_limited"`
+and a `Retry-After` header in seconds. Rate buckets live in the gateway
+process, and Cloud Run is configured for one instance. A new revision or
+instance starts with empty buckets. A canonical UUID in `X-Request-ID`
+passes through to Core. Otherwise the gateway creates and returns one.
+
+For an isolated loopback test, set `NORI_GATEWAY_TRANSPORT=local`,
+`NORI_GATEWAY_UPSTREAM_URL` to the `nori-local` loopback address, and
+`NORI_GATEWAY_CALLER_KEY` to the same test key in both processes.
+Use `NORI_GATEWAY_REQUESTS_PER_MINUTE` and `NORI_GATEWAY_BURST` to
+exercise the limiter. The AWS public gateway infrastructure is follow-up
+work. Hosted rollout requires Austin's approval.

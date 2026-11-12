@@ -11,7 +11,10 @@ import (
 	"nori/internal/users"
 )
 
-const Header = "X-Nori-Client-Token"
+const (
+	Header        = "X-Nori-Client-Token"
+	GatewayPrefix = "/gateway"
+)
 
 func NewSecret() string {
 	var data [32]byte

@@ -796,7 +796,22 @@
         "not_found",
         "credential_store_unavailable",
         "provider_unavailable",
-        "subscription_expired"
+        "subscription_expired",
+        "invalid_client_token",
+        "unidentified_caller",
+        "wrong_owner",
+        "client_route_forbidden",
+        "insufficient_scope",
+        "internal_only",
+        "device_gateway_required",
+        "browser_proxy_required",
+        "unknown_user",
+        "service_auth_required",
+        "request_too_large",
+        "unsupported_response",
+        "method_not_allowed",
+        "rate_limited",
+        "upstream_unavailable"
       ]
     }
   }

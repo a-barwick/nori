@@ -3756,3 +3756,11 @@ export const fx_conversations_create_id_valid: ConversationCreate = {
   "id": "11111111-1111-4111-8111-111111111111"
 };
 
+// fixtures/common/api-error.rate-limited.valid.json
+export const fx_common_api_error_rate_limited_valid: APIError = {
+  "error": "Client request limit reached. Try again shortly.",
+  "code": "rate_limited",
+  "accepted": false,
+  "retryable": true
+};
+

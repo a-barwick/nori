@@ -464,7 +464,7 @@ export type PreferencesChange = {
   value: PreferencesEditable;
 };
 /** Codes agreed for new endpoints in r2. Clients treat an unknown code by its HTTP status. */
-export type ErrorCode = "revision_conflict" | "idempotency_conflict" | "interaction_stale" | "validation_failed" | "not_found" | "credential_store_unavailable" | "provider_unavailable" | "subscription_expired";
+export type ErrorCode = "revision_conflict" | "idempotency_conflict" | "interaction_stale" | "validation_failed" | "not_found" | "credential_store_unavailable" | "provider_unavailable" | "subscription_expired" | "invalid_client_token" | "unidentified_caller" | "wrong_owner" | "client_route_forbidden" | "insufficient_scope" | "internal_only" | "device_gateway_required" | "browser_proxy_required" | "unknown_user" | "service_auth_required" | "request_too_large" | "unsupported_response" | "method_not_allowed" | "rate_limited" | "upstream_unavailable";
 
 // connections.schema.json
 export type ConnectionStatus = "not_connected" | "connecting" | "connected" | "needs_attention" | "disabled" | "disconnecting" | "disconnected";

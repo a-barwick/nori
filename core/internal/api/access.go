@@ -10,6 +10,7 @@ import (
 
 	"github.com/felixge/httpsnoop"
 	"nori/internal/clientauth"
+	"nori/internal/httpjson"
 	"nori/internal/serviceauth"
 )
 
@@ -117,6 +118,9 @@ func (c AccessConfig) authorize(w http.ResponseWriter, r *http.Request, rule Rou
 		}
 		return !c.refuse(w, r, rule, identity, 403, "device_gateway_required", "Client authorization requires the gateway.", true)
 	}
+	if identity.kind == "gateway" {
+		return !c.refuse(w, r, rule, identity, 401, "invalid_client_token", "A valid Nori client token is required.", true)
+	}
 	if identity.kind == CallerBrowser && identity.subject != owner {
 		return !c.refuse(w, r, rule, identity, 403, "wrong_owner", "The browser session belongs to a different user.", false)
 	}
@@ -150,6 +154,12 @@ func (c AccessConfig) limit(w http.ResponseWriter, r *http.Request, rule RouteRu
 // ServeMediaType validates the selected response before the handler's first
 // write. httpsnoop preserves Flush and the response controller used by SSE.
 func (c AccessConfig) serve(w http.ResponseWriter, r *http.Request, rule RouteRule, handler http.Handler) {
+	if requestCaller(r).service == "gateway" && rule.Path != "/mcp" {
+		if id := httpjson.RequestID(r.Header.Get("X-Request-ID")); id != "" {
+			w.Header().Set("X-Request-ID", id)
+			slog.InfoContext(r.Context(), "nori.core.gateway_request", "request_id", id, "route", rule.Path, "method", r.Method)
+		}
+	}
 	if !c.limit(w, r, rule) {
 		return
 	}
@@ -167,7 +177,7 @@ func (c AccessConfig) serve(w http.ResponseWriter, r *http.Request, rule RouteRu
 			return
 		}
 		media, _, _ := mime.ParseMediaType(w.Header().Get("Content-Type"))
-		if slices.Contains(rule.Responses, media) {
+		if slices.Contains(rule.Responses, media) || rule.TokenScope == "mcp" && status == http.StatusAccepted && media == "" {
 			return
 		}
 		if c.mode() != "observe" || requestCaller(r).kind == CallerClient {
