@@ -53,6 +53,8 @@ func (p *Storage) Users() users.Directory {
 	return records.NewSharedUsers(p.docs)
 }
 
+func (p *Storage) Devices() *records.Devices { return records.NewDevices(p.docs) }
+
 func (p *Storage) OpenStore(ctx context.Context, s settings.Settings, user users.User) (state.ConversationStore, error) {
 	if err := user.Validate(); err != nil {
 		return nil, err

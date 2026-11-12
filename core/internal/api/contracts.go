@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"nori/internal/clientauth"
 	"nori/internal/computersession"
 	"nori/internal/connections"
 	"nori/internal/connectors/mcp"
@@ -76,9 +77,16 @@ var ContractTypes = map[string]func() any{
 	"plugins.schema.json#/$defs/MCPCredentialInput":            func() any { return &mcp.CredentialInput{} },
 	"plugins.schema.json#/$defs/MCPServerTool":                 func() any { return &mcp.Tool{} },
 	"plugins.schema.json#/$defs/MCPClient":                     func() any { return &mcpClient{} },
+	"plugins.schema.json#/$defs/MCPClientEditable":             func() any { return &mcpClientEditable{} },
 	"plugins.schema.json#/$defs/MCPClientChange":               func() any { return &envelope[mcpClientEditable]{} },
 	"plugins.schema.json#/$defs/MCPClientCreated":              func() any { return &mcpClientCreated{} },
 	"plugins.schema.json#/$defs/MCPClientAction":               func() any { return &envelope[mcpClientActionValue]{} },
+	"plugins.schema.json#/$defs/DeviceStart":                   func() any { return &clientauth.DeviceStart{} },
+	"plugins.schema.json#/$defs/DeviceChallenge":               func() any { return &clientauth.DeviceChallenge{} },
+	"plugins.schema.json#/$defs/DeviceView":                    func() any { return &clientauth.DeviceView{} },
+	"plugins.schema.json#/$defs/DeviceApproval":                func() any { return &clientauth.DeviceApproval{} },
+	"plugins.schema.json#/$defs/DevicePoll":                    func() any { return &clientauth.DevicePoll{} },
+	"plugins.schema.json#/$defs/DeviceStatus":                  func() any { return &clientauth.DeviceStatus{} },
 	"plugins.schema.json#/$defs/ComputerSession":               func() any { return &computersession.Session{} },
 	"plugins.schema.json#/$defs/ComputerSessionAction":         func() any { return &envelope[computersession.Action]{} },
 	"tools.schema.json#/$defs/ToolDefinition":                  func() any { return &extensions.Definition{} },

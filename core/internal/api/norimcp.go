@@ -2,21 +2,16 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"nori/internal/clientauth"
 	"nori/internal/permissions"
 	"nori/internal/scheduler"
 	"nori/internal/state"
@@ -27,206 +22,20 @@ import (
 // services as the app. Clients authenticate with a scoped token the user created; a token names its user, and its
 // hash is checked in that user's records. A protocol session is never a Nori identity.
 
-const collectionClients = "mcp_clients"
-
-type mcpClient struct {
-	ID         string     `json:"id"`
-	Revision   int64      `json:"revision"`
-	Name       string     `json:"name"`
-	Scopes     []string   `json:"scopes"`
-	CreatedAt  time.Time  `json:"created_at"`
-	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-}
-
-// mcpClientEditable is the contract MCPClientEditable.
-type mcpClientEditable struct {
-	Name   string   `json:"name"`
-	Scopes []string `json:"scopes"`
-}
-
-func (v mcpClientEditable) valid() bool {
-	if strings.TrimSpace(v.Name) == "" || len(v.Name) > 100 || len(v.Scopes) == 0 {
-		return false
-	}
-	seen := map[string]bool{}
-	for _, scope := range v.Scopes {
-		if scope != "read" && scope != "mutate" || seen[scope] {
-			return false
-		}
-		seen[scope] = true
-	}
-	return true
-}
-
-// mcpClientActionValue is the contract MCPClientAction value.
-type mcpClientActionValue struct {
-	Action string `json:"action"`
-}
-
-func (v mcpClientActionValue) valid() bool { return v.Action == "revoke" }
-
-// mcpClientCreated is the contract MCPClientCreated: the token is shown once and never stored.
-type mcpClientCreated struct {
-	RequestID string    `json:"request_id"`
-	Accepted  bool      `json:"accepted"`
-	Status    string    `json:"status"`
-	Resource  mcpClient `json:"resource"`
-	Token     string    `json:"token"`
-	Note      string    `json:"note,omitempty"`
-}
-
-type mcpClientDoc struct {
-	mcpClient
-	TokenHash string `json:"token_hash"`
-}
-
-func tokenHash(token string) string {
-	sum := sha256.Sum256([]byte("nori-mcp-client:" + token))
-	return hex.EncodeToString(sum[:])
-}
-
-// ClientTokenUser returns the user a client token names, for routing only; the token is verified after routing.
-func ClientTokenUser(token string) (string, bool) {
-	rest, ok := strings.CutPrefix(token, "nori_")
-	if !ok {
-		return "", false
-	}
-	id, _, ok := strings.Cut(rest, "_")
-	return id, ok && users.ValidID(id)
-}
-
-func (a *Assistant) mcpClients(w http.ResponseWriter, r *http.Request) {
-	page, _, err := a.Store.Resources(r.Context(), collectionClients, nil, "", 100)
-	if err != nil {
-		writeAPIError(w, err, "", nil)
-		return
-	}
-	items := []mcpClient{}
-	for _, res := range page {
-		var doc mcpClientDoc
-		if res.Decode(&doc) == nil {
-			doc.Revision = res.Revision
-			items = append(items, doc.mcpClient)
-		}
-	}
-	writeJSON(w, 200, list[mcpClient]{Items: items})
-}
-
-// createMCPClient issues a token once. The response carries it; the saved receipt and records keep only its hash,
-// so a lost token is revoked and replaced, never recovered.
-func (a *Assistant) createMCPClient(w http.ResponseWriter, r *http.Request) {
-	var value mcpClientEditable
-	requestID, expected, ok := decodeChange(w, r, &value)
-	if !ok {
-		return
-	}
-	if expected != 0 || !value.valid() {
-		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
-		return
-	}
-	secret := make([]byte, 32)
-	_, _ = rand.Read(secret)
-	token := "nori_" + users.ID(r.Context()) + "_" + base64.RawURLEncoding.EncodeToString(secret)
-	id := "mcpc_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte("mcp-client:"+requestID)).String(), "-", "")[:16]
-	receipt, err := a.Store.Mutate(r.Context(), state.Mutation{
-		RequestID: requestID, Method: "POST", Target: "/v1/mcp-clients", Payload: value, Collection: collectionClients, ID: id,
-		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
-			doc := mcpClientDoc{mcpClient: mcpClient{ID: id, Revision: 1, Name: value.Name, Scopes: value.Scopes, CreatedAt: time.Now().UTC()}, TokenHash: tokenHash(token)}
-			res, err := state.NewResource(collectionClients, id, 1, doc, nil, time.Now())
-			if err != nil {
-				return state.MutationResult{}, err
-			}
-			data, _ := json.Marshal(doc.mcpClient)
-			return state.MutationResult{Writes: []state.Resource{res}, Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: 201}}, nil
-		},
-	})
-	if err != nil {
-		writeAPIError(w, err, requestID, nil)
-		return
-	}
-	var client mcpClient
-	_ = json.Unmarshal(receipt.Resource, &client)
-	if time.Since(receipt.CreatedAt) > 10*time.Second {
-		// A replayed request: the token was shown only to the first response.
-		writeReceipt(w, receipt)
-		return
-	}
-	writeJSON(w, 201, mcpClientCreated{RequestID: requestID, Accepted: true, Status: "applied", Resource: client, Token: token,
-		Note: "Copy this token now; Nori stores only its hash."})
-}
-
-func (a *Assistant) mcpClientAction(w http.ResponseWriter, r *http.Request) {
-	var value mcpClientActionValue
-	requestID, expected, ok := decodeChange(w, r, &value)
-	if !ok {
-		return
-	}
-	if !value.valid() {
-		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
-		return
-	}
-	id := r.PathValue("id")
-	receipt, err := a.Store.Mutate(r.Context(), state.Mutation{
-		RequestID: requestID, Method: "POST", Target: "/v1/mcp-clients/" + id + "/actions", ExpectedRevision: expected, Payload: value,
-		Collection: collectionClients, ID: id,
-		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
-			if current == nil {
-				return state.MutationResult{}, state.ErrNotFound
-			}
-			var doc mcpClientDoc
-			if err := current.Decode(&doc); err != nil {
-				return state.MutationResult{}, err
-			}
-			now := time.Now().UTC()
-			doc.RevokedAt, doc.Revision = &now, current.Revision+1
-			res, err := state.NewResource(collectionClients, id, doc.Revision, doc, nil, now)
-			if err != nil {
-				return state.MutationResult{}, err
-			}
-			data, _ := json.Marshal(doc.mcpClient)
-			return state.MutationResult{Writes: []state.Resource{res}, Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: 200}}, nil
-		},
-	})
-	if err != nil {
-		writeAPIError(w, err, requestID, nil)
-		return
-	}
-	writeReceipt(w, receipt)
-}
-
-// authenticate finds a live client whose token hash matches and returns its scopes.
-func (a *Assistant) authenticate(ctx context.Context, token string) ([]string, error) {
-	page, _, err := a.Store.Resources(ctx, collectionClients, nil, "", 100)
-	if err != nil {
-		return nil, err
-	}
-	want := tokenHash(token)
-	for _, res := range page {
-		var doc mcpClientDoc
-		if res.Decode(&doc) != nil || doc.RevokedAt != nil {
-			continue
-		}
-		if subtle.ConstantTimeCompare([]byte(doc.TokenHash), []byte(want)) == 1 {
-			return doc.Scopes, nil
-		}
-	}
-	return nil, errors.New("unknown or revoked client token")
-}
-
 // noriMCP serves the endpoint for an authenticated client token.
 func (a *Assistant) noriMCP(w http.ResponseWriter, r *http.Request) {
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok {
-		writeJSON(w, 401, apiError{Error: "A Nori client token is required.", Code: "unauthorized"})
+	token := clientToken(r)
+	credential, ok := clientauth.Parse(token)
+	if !ok || credential.Owner != users.ID(r.Context()) {
+		clientUnauthorized(w)
 		return
 	}
-	scopes, err := a.authenticate(r.Context(), token)
+	client, err := a.authenticate(r.Context(), credential)
 	if err != nil {
-		writeJSON(w, 401, apiError{Error: err.Error(), Code: "unauthorized"})
+		clientUnauthorized(w)
 		return
 	}
-	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return a.noriServer(scopes) },
+	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return a.noriServer(client.Scopes) },
 		&sdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	handler.ServeHTTP(w, r)
 }

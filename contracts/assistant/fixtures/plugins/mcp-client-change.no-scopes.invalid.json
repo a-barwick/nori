@@ -3,6 +3,8 @@
   "expected_revision": 0,
   "value": {
     "name": "x",
-    "scopes": []
+    "scopes": [],
+    "kind": "mcp",
+    "credential_hash": "0000000000000000000000000000000000000000000000000000000000000000"
   }
 }

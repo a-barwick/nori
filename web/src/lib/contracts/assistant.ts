@@ -1576,7 +1576,7 @@ export type SkillView = {
   enabled: boolean;
   installation_id?: ID;
 };
-/** An external MCP client allowed to call Nori's MCP endpoint (A13, r2.5). Never carries the token or its hash. */
+/** A credential record for a CLI, MCP or API client. It never contains the credential or its verifier. */
 export type MCPClient = {
   id: ID;
   revision: Revision;
@@ -1585,10 +1585,15 @@ export type MCPClient = {
   created_at: Instant;
   revoked_at?: Instant;
   last_used_at?: Instant;
+  kind?: "mcp" | "cli" | "api";
+  expires_at?: Instant;
 };
 export type MCPClientEditable = {
   name: string;
+  kind: "mcp" | "cli" | "api";
   scopes: ("read" | "mutate")[];
+  expires_at?: Instant;
+  credential_hash: string;
 };
 /** Create only (expected_revision 0). */
 export type MCPClientChange = {
@@ -1596,21 +1601,53 @@ export type MCPClientChange = {
   expected_revision: 0;
   value: MCPClientEditable;
 };
-/** The first response to a create carries the token once; an idempotent retry returns the plain MutationReceipt without it. */
+/** Issuance receipt for create or rotate. The client assembles the token from the public IDs and its own secret. */
 export type MCPClientCreated = {
   request_id: UUID;
   accepted: true;
   status: "applied";
   resource: MCPClient;
-  token: string;
-  note?: string;
+  owner_id: string;
 };
 export type MCPClientAction = {
   request_id: UUID;
   expected_revision: Revision;
   value: {
+    credential_hash?: string;
+    expires_at?: Instant;
+  } & ({
+    action: "rotate";
+  } | {
     action: "revoke";
-  };
+  });
+};
+export type DeviceStart = {
+  name: string;
+  credential_hash: string;
+  proof_hash: string;
+};
+export type DeviceChallenge = {
+  id: UUID;
+  code: string;
+  expires_at: Instant;
+  interval_seconds: number;
+};
+export type DeviceView = {
+  name: string;
+  expires_at: Instant;
+};
+export type DeviceApproval = {
+  code: string;
+  scopes: ("read" | "mutate")[];
+};
+export type DevicePoll = {
+  id: UUID;
+  proof: string;
+};
+export type DeviceStatus = {
+  status: "pending" | "approved";
+  owner_id?: string;
+  token_id?: ID;
 };
 
 // tools.schema.json

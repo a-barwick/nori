@@ -98,3 +98,24 @@ the proxy migration.
 | General reads allowed JSON and SSE. Operations allowed JSON and PNG in hosted mode and any type locally. | Only event routes accept SSE. The artifact operation accepts PNG. Other runtime operations return JSON. |
 | File responses used family-level filters. Calendar and Markdown uploads could be saved but not downloaded through all browser routes. | File routes accept the supported attachment media types and octet-stream. Metadata routes return JSON. Download and sandbox headers are relayed. |
 | OAuth callback used a dedicated redirect handler. | The manifest declares JSON and HTML for the callback. The web proxy still checks navigation and constrains the redirect target. |
+
+## Client credentials
+
+Connected Clients in Settings issues credentials for MCP and API clients and
+can revoke or rotate them. The browser generates the secret and sends its
+SHA-256 verifier over the API. The issuance response contains only the owner
+and client IDs and public metadata. Credentials created with the original
+`nori_` format continue to work. New credentials use `nori2_`; treat the
+entire token as opaque. Scopes are `read` and `mutate`. Last use is recorded
+at most once a minute per client.
+
+The CLI starts a ten-minute approval request at `POST /v1/client-authorizations`.
+It generates the credential secret and a separate polling proof and sends
+only their verifiers in that request. Open
+`/settings/clients?authorize=<challenge id>` in the web app, confirm the
+code printed by the CLI and choose scopes. The CLI sends the proof in a
+JSON body to `POST /v1/client-authorizations/status` at the returned interval.
+After approval it gets the owner and client IDs, then constructs its
+credential locally. Repeating the poll returns the same IDs. CLI credentials
+issued through this flow expire after 90 days. Keep credentials and verifiers
+out of URLs, logs and mutation receipts.

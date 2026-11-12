@@ -5,23 +5,27 @@ import (
 	"net/http"
 	"strings"
 
+	"nori/internal/clientauth"
+	"nori/internal/state"
 	"nori/internal/users"
 )
 
 type UserRoutes struct {
-	Handler http.Handler
-	Resume  func(context.Context) error
+	Handler     http.Handler
+	Resume      func(context.Context) error
+	ClientStore state.ResourceStore
 }
 
 type userServer struct {
 	directory users.Directory
 	open      func(context.Context, users.User) (UserRoutes, func(), error)
 	model     string
+	devices   clientauth.DeviceStore
 }
 
 // The authenticated web server supplies the resolved user ID. Only internal resume can fan out.
-func UserHandler(directory users.Directory, open func(context.Context, users.User) (UserRoutes, func(), error), local bool, model string) http.Handler {
-	s := &userServer{directory: directory, open: open, model: model}
+func UserHandler(directory users.Directory, open func(context.Context, users.User) (UserRoutes, func(), error), local bool, model string, devices clientauth.DeviceStore) http.Handler {
+	s := &userServer{directory: directory, open: open, model: model, devices: devices}
 	root := newRouteMux(false, false)
 	s.register(root)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +52,11 @@ func (s *userServer) register(mux *routeMux) {
 	mux.handle("/api/healthz", healthRule, s.health)
 	mux.handle("POST /api/users/resolve", browserJSON, s.resolve)
 	mux.handle("/mcp", mcpRule, s.mcp)
+	if s.devices != nil || mux.manifest {
+		device := route(CallerDevice).body("json", jsonLimit)
+		mux.handle("POST "+clientauth.DeviceStartPath, device, jsonBody(s.startDevice))
+		mux.handle("POST "+clientauth.DeviceStatusPath, device, jsonBody(s.pollDevice))
+	}
 	// Retained Cloud Tasks wakes predate user IDs and belong only to the original row.
 	mux.handle("POST /api/process", internal.body("json", jsonLimit), func(w http.ResponseWriter, r *http.Request) {
 		s.serveUser(w, r, users.LegacyID)
@@ -76,13 +85,12 @@ func (s *userServer) resolve(w http.ResponseWriter, r *http.Request) {
 
 // The token names its user and is verified against that user's records.
 func (s *userServer) mcp(w http.ResponseWriter, r *http.Request) {
-	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	id, ok := ClientTokenUser(token)
+	credential, ok := clientauth.Parse(clientToken(r))
 	if !ok {
-		writeJSON(w, 401, map[string]string{"error": "A Nori client token is required."})
+		clientUnauthorized(w)
 		return
 	}
-	s.serveUser(w, withPath(r, "/v1/nori-mcp"), id)
+	s.serveUser(w, withPath(r, "/v1/nori-mcp"), credential.Owner)
 }
 
 func (s *userServer) resume(w http.ResponseWriter, r *http.Request) {

@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"nori/internal/clientauth"
 )
 
 type scenario struct {
@@ -34,6 +36,7 @@ type scenario struct {
 	Obligation string            `json:"obligation"`
 	Note       string            `json:"note,omitempty"`
 	Requires   []string          `json:"requires,omitempty"` // capability features that must be advertised before -live runs it
+	CoreOnly   bool              `json:"core_only,omitempty"`
 	Users      map[string]string `json:"users"`
 	Steps      []step            `json:"steps"`
 }
@@ -47,6 +50,7 @@ type step struct {
 	BodySchema string            `json:"body_schema,omitempty"`
 	Expect     expectation       `json:"expect"`
 	Capture    map[string]string `json:"capture,omitempty"` // variable -> JSON pointer into the response; "<pointer>#query:<name>" takes a query parameter of the URL found there
+	Token      string            `json:"client_token,omitempty"`
 	Wait       *wait             `json:"wait,omitempty"`
 }
 
@@ -78,9 +82,12 @@ var (
 type run struct {
 	vars      map[string]string
 	responses map[string][]byte
+	secrets   map[string]string
 }
 
-func newRun() *run { return &run{vars: map[string]string{}, responses: map[string][]byte{}} }
+func newRun() *run {
+	return &run{vars: map[string]string{}, responses: map[string][]byte{}, secrets: map[string]string{}}
+}
 
 // expand substitutes ${uuid:name} (one fresh UUID per name per run, so a retry reuses it),
 // ${var:name} (a captured value) and ${user:name} (a scenario user id).
@@ -97,6 +104,16 @@ func (r *run) expand(s string, users map[string]string) (string, error) {
 	out := varPattern.ReplaceAllStringFunc(s, func(m string) string {
 		g := varPattern.FindStringSubmatch(m)
 		switch g[1] {
+		case "secret", "hash":
+			secret, ok := r.secrets[g[2]]
+			if !ok {
+				secret = clientauth.NewSecret()
+				r.secrets[g[2]] = secret
+			}
+			if g[1] == "hash" {
+				return clientauth.Hash(secret)
+			}
+			return secret
 		case "uuid":
 			key := "uuid:" + g[2]
 			if _, ok := r.vars[key]; !ok {
@@ -297,6 +314,10 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 		body = []byte(s)
 	}
 	target := strings.TrimRight(base, "/") + "/users/" + sc.Users[st.User] + path
+	token, err := r.expand(st.Token, sc.Users)
+	if err != nil {
+		return err
+	}
 	deadline := time.Now()
 	if st.Wait != nil {
 		deadline = deadline.Add(time.Duration(st.Wait.Seconds) * time.Second)
@@ -308,6 +329,10 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 		req, err := http.NewRequest(st.Method, target, bytes.NewReader(body))
 		if err != nil {
 			return err
+		}
+		if token != "" {
+			req.Header.Set(clientauth.Header, token)
+			req.Header.Set("Accept", "application/json, text/event-stream")
 		}
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
@@ -327,6 +352,11 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 			break
 		}
 		time.Sleep(2 * time.Second)
+	}
+	for _, secret := range r.secrets {
+		if bytes.Contains(got, []byte(secret)) || bytes.Contains(got, []byte(clientauth.Hash(secret))) {
+			return fmt.Errorf("response contains credential material")
+		}
 	}
 	if !slices.Contains(st.Expect.Status, status) {
 		return fmt.Errorf("status %d, want %v: %s", status, st.Expect.Status, truncate(got))

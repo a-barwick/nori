@@ -1,0 +1,7 @@
+{
+  "code": "1234ABCD",
+  "scopes": [
+    "read",
+    "mutate"
+  ]
+}

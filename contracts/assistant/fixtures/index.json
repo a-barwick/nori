@@ -1453,6 +1453,41 @@
       "file": "fixtures/tools/policy.valid.json",
       "schema": "tools.schema.json#/$defs/Policy",
       "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-client-action.rotate.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPClientAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/device-start.valid.json",
+      "schema": "plugins.schema.json#/$defs/DeviceStart",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/device-challenge.valid.json",
+      "schema": "plugins.schema.json#/$defs/DeviceChallenge",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/device-view.valid.json",
+      "schema": "plugins.schema.json#/$defs/DeviceView",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/device-approval.valid.json",
+      "schema": "plugins.schema.json#/$defs/DeviceApproval",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/device-poll.valid.json",
+      "schema": "plugins.schema.json#/$defs/DevicePoll",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/device-status.approved.valid.json",
+      "schema": "plugins.schema.json#/$defs/DeviceStatus",
+      "valid": true
     }
   ]
 }

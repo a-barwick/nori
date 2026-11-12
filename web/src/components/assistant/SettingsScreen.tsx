@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Bell, Bug, Check, Copy, History, Brain, KeyRound, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
-import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
+import { APIError, assistantURL, mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
 import { deviceLabel, pushSupported, subscribeThisDevice } from "@/lib/assistant/push";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative, when, plainText } from "@/lib/assistant/format";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import { useHydrated } from "@/lib/hooks";
-import type { Connection, DeliveryDestination, MCPClient, MCPClientCreated, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
+import type { Connection, DeliveryDestination, DeviceView, MCPClient, MCPClientCreated, InboxItem, MemoryFact, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { OperationRows, shownOperations } from "./WorkScreen";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section } from "./ui";
@@ -317,25 +318,84 @@ function ActionHistory() {
   </>;
 }
 
-/** Other apps (MCP clients) that reach this Nori with a token. The token is shown once and never stored here. */
+async function clientCredential() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const secret = btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`nori-client-v2:${secret}`));
+  const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+  return { secret, hash };
+}
+
+function ApproveClient({ id }: { id: string }) {
+  const path = `/mcp-clients/authorize/${encodeURIComponent(id)}/approval`;
+  const device = useResource<DeviceView>(path, { poll: 0 });
+  const action = useAction();
+  const [code, setCode] = useState("");
+  const [canWrite, setCanWrite] = useState(false);
+  const [approved, setApproved] = useState(false);
+  const approve = () => action.run("approve", async () => {
+    const response = await fetch(assistantURL(path), {
+      method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+      body: JSON.stringify({ code: code.trim(), scopes: canWrite ? ["read", "mutate"] : ["read"] }),
+    });
+    if (!response.ok) throw new Error("The code is incorrect or this request has expired.");
+    setApproved(true);
+    invalidate("/mcp-clients");
+  });
+  return <Section title="Authorize Nori CLI">
+    {approved ? <p role="status">CLI access approved. Return to your terminal.</p>
+      : device.loading ? <Loading />
+      : !device.data ? <Empty>This request has expired or was already approved.</Empty>
+      : <form className="space-y-3" onSubmit={event => { event.preventDefault(); void approve(); }}>
+        <p>Enter the code printed by <strong>{device.data.name}</strong> in your terminal.</p>
+        <Field label="Confirmation code"><input value={code} onChange={event => setCode(event.target.value)} maxLength={8} autoComplete="off" className={cn(inputBase, "w-40")} /></Field>
+        <label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={canWrite} onChange={event => setCanWrite(event.target.checked)} />Can start work and answer questions</label>
+        <Button type="submit" variant="primary" disabled={code.trim().length !== 8 || !!action.pending}>Approve CLI</Button>
+        {action.error && <p role="alert" className="text-danger">{action.error}</p>}
+      </form>}
+  </Section>;
+}
+
+/** The browser assembles manual credentials in memory. Core returns only issuance metadata. */
 function Clients() {
+  const pendingDevice = useSearchParams().get("authorize");
   const clients = useResource<List<MCPClient>>("/mcp-clients", { poll: 30_000 });
   const action = useAction();
   const [name, setName] = useState("");
+  const [kind, setKind] = useState<"mcp" | "api">("mcp");
+  const [expires, setExpires] = useState("");
   const [mutateScope, setMutateScope] = useState(false);
   const [created, setCreated] = useState<{ name: string; token: string }>();
   const [copied, setCopied] = useState(false);
+  const issue = async (path: string, expected_revision: number, value: Record<string, unknown>) => {
+    const { secret, hash } = await clientCredential();
+    const receipt = await sendSecret<MCPClient>(path, {
+      request_id: newRequestID(), expected_revision, value: { ...value, credential_hash: hash },
+    }) as unknown as MCPClientCreated;
+    setCreated({ name: receipt.resource.name, token: `nori2_${receipt.owner_id}_${receipt.resource.id}.${secret}` });
+    setCopied(false);
+    invalidate("/mcp-clients");
+  };
   const create = () => action.run("create", async () => {
-    const receipt = await mutate<MCPClient>("/mcp-clients", { request_id: newRequestID(), expected_revision: 0, value: { name: name.trim(), scopes: mutateScope ? ["read", "mutate"] : ["read"] } }) as unknown as Partial<MCPClientCreated> & { resource: MCPClient };
-    if (receipt.token) setCreated({ name: receipt.resource.name, token: receipt.token });
-    setName(""); setMutateScope(false); invalidate("/mcp-clients");
+    await issue("/mcp-clients", 0, {
+      name: name.trim(), kind, scopes: mutateScope ? ["read", "mutate"] : ["read"],
+      ...(expires ? { expires_at: new Date(`${expires}T23:59:59`).toISOString() } : {}),
+    });
+    setName(""); setExpires(""); setMutateScope(false);
   }, "Client added.");
+  const rotate = (client: MCPClient) => action.run(client.id, async () => {
+    await issue(`/mcp-clients/${encodeURIComponent(client.id)}/actions`, client.revision, {
+      action: "rotate",
+      ...(client.expires_at ? { expires_at: new Date(Date.now() + 90 * 86_400_000).toISOString() } : {}),
+    });
+  }, "Token rotated.");
   const revoke = (client: MCPClient) => action.run(client.id, async () => {
     await mutate(`/mcp-clients/${encodeURIComponent(client.id)}/actions`, { request_id: newRequestID(), expected_revision: client.revision, value: { action: "revoke" } });
     invalidate("/mcp-clients");
   }, "Access removed.");
   const active = (clients.data?.items ?? []).filter((client) => !client.revoked_at);
   return <>
+    {pendingDevice && <ApproveClient key={pendingDevice} id={pendingDevice} />}
     {created && <div className="mt-6 rounded-card border border-hairline-strong bg-fill-1 p-4" role="status">
       <p className="text-row font-semibold">Token for {created.name}</p>
       <p className="mt-1 text-meta text-ink-2">Copy it into the app now. Nori won’t show it again.</p>
@@ -347,13 +407,17 @@ function Clients() {
     </div>}
     <Section title="Add a client"><form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); if (name.trim()) void create(); }}>
       <Field label="Name"><input value={name} onChange={(event) => setName(event.target.value)} maxLength={100} className={cn(inputBase, "w-64 max-w-full")} placeholder="Laptop editor" /></Field>
+      <Field label="Client type"><select value={kind} onChange={event => setKind(event.target.value as typeof kind)} className={inputBase}><option value="mcp">MCP</option><option value="api">API</option></select></Field>
+      <Field label="Expires on"><input type="date" value={expires} onChange={event => setExpires(event.target.value)} className={inputBase} /></Field>
       <label className="flex min-h-11 items-center gap-2 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={mutateScope} onChange={(event) => setMutateScope(event.target.checked)} />Can start work and answer questions</label>
       <Button type="submit" variant="primary" disabled={!name.trim() || !!action.pending}>{action.pending === "create" ? "Adding…" : "Add"}</Button>
     </form></Section>
     {action.error && <div className="mt-4"><Notice tone="danger">{action.error}</Notice></div>}
     <Section title="Clients">{clients.loading ? <Loading /> : active.length ? <Rows>{active.map((client) => <li key={client.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
       <span className="min-w-0 flex-1"><span className="block text-row font-medium">{client.name}</span>
-        <span className="block text-meta text-ink-2">{client.scopes.includes("mutate") ? "Reads and starts work" : "Reads only"} · {client.last_used_at ? `last used ${relative(client.last_used_at)}` : "not used yet"}</span></span>
+        <span className="block text-meta text-ink-2">{(client.kind ?? "mcp").toUpperCase()} · {client.scopes.includes("mutate") ? "Can start work" : "Reads only"} · {client.last_used_at ? `last used ${relative(client.last_used_at)}` : "unused"}{client.expires_at ? ` · expires ${when(client.expires_at)}` : ""}</span></span>
+      <Confirm title={`Rotate token for ${client.name}?`} body="The old token stops working as soon as the replacement is created." confirm="Rotate token" onConfirm={() => void rotate(client)}
+        trigger={<Button size="sm" variant="quiet" disabled={!!action.pending}>Rotate</Button>} />
       <Confirm danger title={`Remove access for ${client.name}?`} body="Its token stops working right away." confirm="Remove access" onConfirm={() => void revoke(client)}
         trigger={<Button size="sm" variant="quiet" className="text-danger!" disabled={action.pending === client.id}>Remove access</Button>} />
     </li>)}</Rows> : <Empty>No clients yet.</Empty>}</Section>

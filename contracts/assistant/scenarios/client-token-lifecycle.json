@@ -1,0 +1,238 @@
+{
+  "name": "Client token lifecycle",
+  "obligation": "AB-322 expired, rotated-out and revoked client credentials are refused",
+  "core_only": true,
+  "requires": [
+    "mcp"
+  ],
+  "users": {
+    "a": "44444444-4444-4444-8444-444444444444"
+  },
+  "steps": [
+    {
+      "name": "issue-expired",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/mcp-clients",
+      "body": {
+        "request_id": "${uuid:issue_expired}",
+        "expected_revision": 0,
+        "value": {
+          "name": "Contract check expired",
+          "kind": "api",
+          "scopes": [
+            "read"
+          ],
+          "credential_hash": "${hash:expired}",
+          "expires_at": "2020-01-01T00:00:00Z"
+        }
+      },
+      "body_schema": "plugins.schema.json#/$defs/MCPClientChange",
+      "expect": {
+        "status": [
+          201
+        ],
+        "schema": "plugins.schema.json#/$defs/MCPClientCreated",
+        "absent": [
+          "/token",
+          "/token_hash",
+          "/resource/token",
+          "/resource/token_hash"
+        ]
+      },
+      "capture": {
+        "expired": "/resource/id"
+      }
+    },
+    {
+      "name": "issue-active",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/mcp-clients",
+      "body": {
+        "request_id": "${uuid:issue_active}",
+        "expected_revision": 0,
+        "value": {
+          "name": "Contract check active",
+          "kind": "api",
+          "scopes": [
+            "read"
+          ],
+          "credential_hash": "${hash:active}"
+        }
+      },
+      "body_schema": "plugins.schema.json#/$defs/MCPClientChange",
+      "expect": {
+        "status": [
+          201
+        ],
+        "schema": "plugins.schema.json#/$defs/MCPClientCreated",
+        "absent": [
+          "/token",
+          "/token_hash",
+          "/resource/token",
+          "/resource/token_hash"
+        ]
+      },
+      "capture": {
+        "active": "/resource/id"
+      }
+    },
+    {
+      "name": "reject-expired",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/nori-mcp",
+      "client_token": "nori2_${user:a}_${var:expired}.${secret:expired}",
+      "body": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+      },
+      "expect": {
+        "status": [
+          401
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "invalid_client_token"
+        }
+      }
+    },
+    {
+      "name": "accept-current",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/nori-mcp",
+      "client_token": "nori2_${user:a}_${var:active}.${secret:active}",
+      "body": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+      },
+      "expect": {
+        "status": [
+          200
+        ]
+      }
+    },
+    {
+      "name": "last-used",
+      "user": "a",
+      "method": "GET",
+      "path": "/v1/mcp-clients",
+      "expect": {
+        "status": [
+          200
+        ],
+        "items_schema": "plugins.schema.json#/$defs/MCPClient"
+      }
+    },
+    {
+      "name": "rotate",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/mcp-clients/${var:active}/actions",
+      "body": {
+        "request_id": "${uuid:rotate}",
+        "expected_revision": 1,
+        "value": {
+          "action": "rotate",
+          "credential_hash": "${hash:replacement}"
+        }
+      },
+      "body_schema": "plugins.schema.json#/$defs/MCPClientAction",
+      "expect": {
+        "status": [
+          200
+        ],
+        "schema": "plugins.schema.json#/$defs/MCPClientCreated",
+        "match": {
+          "/resource/revision": 2
+        }
+      }
+    },
+    {
+      "name": "reject-replaced",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/nori-mcp",
+      "client_token": "nori2_${user:a}_${var:active}.${secret:active}",
+      "body": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+      },
+      "expect": {
+        "status": [
+          401
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "invalid_client_token"
+        }
+      }
+    },
+    {
+      "name": "accept-replacement",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/nori-mcp",
+      "client_token": "nori2_${user:a}_${var:active}.${secret:replacement}",
+      "body": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+      },
+      "expect": {
+        "status": [
+          200
+        ]
+      }
+    },
+    {
+      "name": "revoke",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/mcp-clients/${var:active}/actions",
+      "body": {
+        "request_id": "${uuid:revoke}",
+        "expected_revision": 2,
+        "value": {
+          "action": "revoke"
+        }
+      },
+      "body_schema": "plugins.schema.json#/$defs/MCPClientAction",
+      "expect": {
+        "status": [
+          200
+        ],
+        "schema": "plugins.schema.json#/$defs/MCPClientCreated",
+        "match": {
+          "/resource/revision": 3
+        }
+      }
+    },
+    {
+      "name": "reject-revoked",
+      "user": "a",
+      "method": "POST",
+      "path": "/v1/nori-mcp",
+      "client_token": "nori2_${user:a}_${var:active}.${secret:replacement}",
+      "body": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+      },
+      "expect": {
+        "status": [
+          401
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "invalid_client_token"
+        }
+      }
+    }
+  ]
+}

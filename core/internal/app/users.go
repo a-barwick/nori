@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"nori/internal/api"
+	"nori/internal/clientauth"
 	"nori/internal/platform"
 	"nori/internal/settings"
 	"nori/internal/users"
@@ -20,6 +21,7 @@ import (
 // pass keeps its own scope until it finishes.
 type Service struct {
 	Users   users.Directory
+	devices clientauth.DeviceStore
 	storage *platform.Storage
 	engines *platform.Engines
 	cfg     settings.Settings
@@ -44,6 +46,7 @@ func OpenService(ctx context.Context, waker wake.Waker, cfg settings.Settings) (
 	}
 	return &Service{
 		Users:   storage.Users(),
+		devices: storage.Devices(),
 		storage: storage,
 		engines: platform.NewEngines(cfg),
 		cfg:     cfg,
@@ -66,6 +69,7 @@ func (s *Service) acquire(ctx context.Context, row users.User) (*App, func(), er
 				entry.app.Close()
 			}
 		}
+		app.Assistant.Devices = s.devices
 		app.handler = api.Handler(app.apiDeps())
 		entry = &userApp{row: row, app: app}
 		s.apps[row.ID] = entry
@@ -87,8 +91,8 @@ func (s *Service) Handler(local bool) http.Handler {
 		if err != nil {
 			return api.UserRoutes{}, nil, err
 		}
-		return api.UserRoutes{Handler: app.handler, Resume: app.Resume}, release, nil
-	}, local, s.cfg.Models.Outer)
+		return api.UserRoutes{Handler: app.handler, Resume: app.Resume, ClientStore: app.Store}, release, nil
+	}, local, s.cfg.Models.Outer, s.devices)
 }
 func (s *Service) Close() {
 	s.mu.Lock()

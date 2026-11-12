@@ -1,0 +1,9 @@
+{
+  "request_id": "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+  "expected_revision": 1,
+  "value": {
+    "action": "rotate",
+    "credential_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "expires_at": "2026-11-09T09:00:00Z"
+  }
+}

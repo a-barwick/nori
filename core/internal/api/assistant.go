@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"nori/internal/clientauth"
 	"nori/internal/computersession"
 	"nori/internal/connections"
 	"nori/internal/connectors/mcp"
@@ -29,6 +30,7 @@ const AssistantContract = "nori-assistant-1"
 // Nori MCP endpoint call these same services; no route bypasses the Tool executor or Permission checks.
 type Assistant struct {
 	Store       state.ConversationStore
+	Devices     clientauth.DeviceStore
 	Connections *connections.Service
 	Permissions *permissions.Service
 	// Tools resolves the Available tools inventory from metadata only.
@@ -207,6 +209,10 @@ func (a *Assistant) register(mux *routeMux) {
 	mux.handle("GET /v1/mcp-clients", browserRead, a.mcpClients)
 	mux.handle("POST /v1/mcp-clients", browserJSON, jsonBody(a.createMCPClient))
 	mux.handle("POST /v1/mcp-clients/{id}/actions", browserJSON, jsonBody(a.mcpClientAction))
+	if a.Devices != nil || mux.manifest {
+		mux.handle("GET /v1/mcp-clients/authorize/{id}/approval", browserRead.param("id", uuidSegment), a.deviceView)
+		mux.handle("POST /v1/mcp-clients/authorize/{id}/approval", browserJSON.param("id", uuidSegment), jsonBody(a.approveDevice))
+	}
 	mux.handle("POST /v1/nori-mcp", mcpRule, a.noriMCP)
 	if a.Computer != nil || mux.manifest {
 		mux.handle("GET /v1/computer/sessions", browserRead, a.computerSessions)

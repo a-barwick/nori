@@ -408,6 +408,34 @@
       "max_path_segments": 6
     },
     {
+      "method": "POST",
+      "path": "/v1/client-authorizations",
+      "user_scoped": false,
+      "callers": [
+        "device"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/client-authorizations/status",
+      "user_scoped": false,
+      "callers": [
+        "device"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
       "method": "GET",
       "path": "/v1/computer/sessions",
       "user_scoped": true,
@@ -1254,6 +1282,40 @@
       "response_media_types": [
         "application/json"
       ],
+      "max_path_segments": 6
+    },
+    {
+      "method": "GET",
+      "path": "/v1/mcp-clients/authorize/{id}/approval",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
+      "max_path_segments": 6
+    },
+    {
+      "method": "POST",
+      "path": "/v1/mcp-clients/authorize/{id}/approval",
+      "user_scoped": true,
+      "callers": [
+        "browser",
+        "local"
+      ],
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "path_parameters": {
+        "id": "^(?:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+      },
       "max_path_segments": 6
     },
     {

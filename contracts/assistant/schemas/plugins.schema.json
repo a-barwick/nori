@@ -1668,7 +1668,7 @@
       ]
     },
     "MCPClient": {
-      "description": "An external MCP client allowed to call Nori's MCP endpoint (A13, r2.5). Never carries the token or its hash.",
+      "description": "A credential record for a CLI, MCP or API client. It never contains the credential or its verifier.",
       "type": "object",
       "required": [
         "id",
@@ -1708,6 +1708,16 @@
         },
         "last_used_at": {
           "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "kind": {
+          "enum": [
+            "mcp",
+            "cli",
+            "api"
+          ]
+        },
+        "expires_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
         }
       },
       "not": {
@@ -1721,6 +1731,11 @@
             "required": [
               "token_hash"
             ]
+          },
+          {
+            "required": [
+              "credential_hash"
+            ]
           }
         ]
       }
@@ -1729,13 +1744,22 @@
       "type": "object",
       "required": [
         "name",
-        "scopes"
+        "kind",
+        "scopes",
+        "credential_hash"
       ],
       "properties": {
         "name": {
           "type": "string",
           "minLength": 1,
           "maxLength": 100
+        },
+        "kind": {
+          "enum": [
+            "mcp",
+            "cli",
+            "api"
+          ]
         },
         "scopes": {
           "type": "array",
@@ -1747,6 +1771,13 @@
               "mutate"
             ]
           }
+        },
+        "expires_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "credential_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
         }
       },
       "additionalProperties": false
@@ -1770,14 +1801,14 @@
       ]
     },
     "MCPClientCreated": {
-      "description": "The first response to a create carries the token once; an idempotent retry returns the plain MutationReceipt without it.",
+      "description": "Issuance receipt for create or rotate. The client assembles the token from the public IDs and its own secret.",
       "type": "object",
       "required": [
         "request_id",
         "accepted",
         "status",
         "resource",
-        "token"
+        "owner_id"
       ],
       "properties": {
         "request_id": {
@@ -1792,14 +1823,12 @@
         "resource": {
           "$ref": "#/$defs/MCPClient"
         },
-        "token": {
+        "owner_id": {
           "type": "string",
-          "pattern": "^nori_[0-9a-f-]{36}_[A-Za-z0-9_-]{43}$"
-        },
-        "note": {
-          "type": "string"
+          "pattern": "^(owner|[a-f0-9-]{36})$"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "MCPClientAction": {
       "allOf": [
@@ -1815,14 +1844,197 @@
               ],
               "properties": {
                 "action": {
-                  "const": "revoke"
+                  "enum": [
+                    "rotate",
+                    "revoke"
+                  ]
+                },
+                "credential_hash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "expires_at": {
+                  "$ref": "common.schema.json#/$defs/Instant"
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "action": {
+                        "const": "rotate"
+                      }
+                    }
+                  },
+                  "then": {
+                    "required": [
+                      "credential_hash"
+                    ]
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "action": {
+                        "const": "revoke"
+                      }
+                    }
+                  },
+                  "then": {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "credential_hash"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "expires_at"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
             }
           }
         }
       ]
+    },
+    "DeviceStart": {
+      "type": "object",
+      "required": [
+        "name",
+        "credential_hash",
+        "proof_hash"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "credential_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "proof_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeviceChallenge": {
+      "type": "object",
+      "required": [
+        "id",
+        "code",
+        "expires_at",
+        "interval_seconds"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Fa-f0-9]{8}$"
+        },
+        "expires_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
+        "interval_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeviceView": {
+      "type": "object",
+      "required": [
+        "name",
+        "expires_at"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "expires_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeviceApproval": {
+      "type": "object",
+      "required": [
+        "code",
+        "scopes"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Fa-f0-9]{8}$"
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "read",
+              "mutate"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "DevicePoll": {
+      "type": "object",
+      "required": [
+        "id",
+        "proof"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        },
+        "proof": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeviceStatus": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "pending",
+            "approved"
+          ]
+        },
+        "owner_id": {
+          "type": "string",
+          "pattern": "^(owner|[a-f0-9-]{36})$"
+        },
+        "token_id": {
+          "$ref": "common.schema.json#/$defs/ID"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

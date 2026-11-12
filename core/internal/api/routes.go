@@ -16,6 +16,7 @@ const (
 	CallerInternal = "internal"
 	CallerLocal    = "local"
 	CallerHealth   = "health"
+	CallerDevice   = "device"
 
 	jsonLimit = 64 << 10
 	mcpLimit  = 1 << 20
