@@ -1182,6 +1182,266 @@
       "schema": "permissions.schema.json#/$defs/InteractionResponse",
       "valid": false,
       "note": "signed_in is set by the server, never sent by a client"
+    },
+    {
+      "file": "fixtures/automations/automation-editable.valid.json",
+      "schema": "automations.schema.json#/$defs/AutomationEditable",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/goal-editable.valid.json",
+      "schema": "automations.schema.json#/$defs/GoalEditable",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/missed-run.valid.json",
+      "schema": "automations.schema.json#/$defs/MissedRun",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/occurrence-status.valid.json",
+      "schema": "automations.schema.json#/$defs/OccurrenceStatus",
+      "valid": true
+    },
+    {
+      "file": "fixtures/automations/push-subscription.valid.json",
+      "schema": "automations.schema.json#/$defs/PushSubscription",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/action-request.valid.json",
+      "schema": "common.schema.json#/$defs/ActionRequest",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/auth-attempt.valid.json",
+      "schema": "common.schema.json#/$defs/AuthAttempt",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/cost.valid.json",
+      "schema": "common.schema.json#/$defs/Cost",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/definition-ref.valid.json",
+      "schema": "common.schema.json#/$defs/DefinitionRef",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/effect.valid.json",
+      "schema": "common.schema.json#/$defs/Effect",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/error-code.valid.json",
+      "schema": "common.schema.json#/$defs/ErrorCode",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/error-detail.valid.json",
+      "schema": "common.schema.json#/$defs/ErrorDetail",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/id.valid.json",
+      "schema": "common.schema.json#/$defs/ID",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/instant.valid.json",
+      "schema": "common.schema.json#/$defs/Instant",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/json.valid.json",
+      "schema": "common.schema.json#/$defs/JSON",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/local-date.valid.json",
+      "schema": "common.schema.json#/$defs/LocalDate",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/outcome.valid.json",
+      "schema": "common.schema.json#/$defs/Outcome",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/preferences-editable.valid.json",
+      "schema": "common.schema.json#/$defs/PreferencesEditable",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/resource-ref.valid.json",
+      "schema": "common.schema.json#/$defs/ResourceRef",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/revision.valid.json",
+      "schema": "common.schema.json#/$defs/Revision",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/timezone.valid.json",
+      "schema": "common.schema.json#/$defs/Timezone",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/uuid.valid.json",
+      "schema": "common.schema.json#/$defs/UUID",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/work-ref.valid.json",
+      "schema": "common.schema.json#/$defs/WorkRef",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/working-hours.valid.json",
+      "schema": "common.schema.json#/$defs/WorkingHours",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection-editable.valid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionEditable",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/connection-status.valid.json",
+      "schema": "connections.schema.json#/$defs/ConnectionStatus",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/health.valid.json",
+      "schema": "connections.schema.json#/$defs/Health",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/health-code.valid.json",
+      "schema": "connections.schema.json#/$defs/HealthCode",
+      "valid": true
+    },
+    {
+      "file": "fixtures/connections/recovery.valid.json",
+      "schema": "connections.schema.json#/$defs/Recovery",
+      "valid": true
+    },
+    {
+      "file": "fixtures/domain/attendee.valid.json",
+      "schema": "domain.schema.json#/$defs/Attendee",
+      "valid": true
+    },
+    {
+      "file": "fixtures/domain/mail-address.valid.json",
+      "schema": "domain.schema.json#/$defs/MailAddress",
+      "valid": true
+    },
+    {
+      "file": "fixtures/domain/recurrence-scope.valid.json",
+      "schema": "domain.schema.json#/$defs/RecurrenceScope",
+      "valid": true
+    },
+    {
+      "file": "fixtures/execution/run-event.valid.json",
+      "schema": "execution.schema.json#/$defs/RunEvent",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/availability-proposal.valid.json",
+      "schema": "library.schema.json#/$defs/AvailabilityProposal",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/inbox-action.valid.json",
+      "schema": "library.schema.json#/$defs/InboxAction",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/library-item-editable.valid.json",
+      "schema": "library.schema.json#/$defs/LibraryItemEditable",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/memory-fact-editable.valid.json",
+      "schema": "library.schema.json#/$defs/MemoryFactEditable",
+      "valid": true
+    },
+    {
+      "file": "fixtures/library/provenance.valid.json",
+      "schema": "library.schema.json#/$defs/Provenance",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/account-selection-payload.valid.json",
+      "schema": "permissions.schema.json#/$defs/AccountSelectionPayload",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/approval-payload.valid.json",
+      "schema": "permissions.schema.json#/$defs/ApprovalPayload",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/computer-takeover-payload.valid.json",
+      "schema": "permissions.schema.json#/$defs/ComputerTakeoverPayload",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/permission-rule-editable.valid.json",
+      "schema": "permissions.schema.json#/$defs/PermissionRuleEditable",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/question-payload.valid.json",
+      "schema": "permissions.schema.json#/$defs/QuestionPayload",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/sign-in-payload.valid.json",
+      "schema": "permissions.schema.json#/$defs/SignInPayload",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/contribution.valid.json",
+      "schema": "plugins.schema.json#/$defs/Contribution",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/installation-create-value.valid.json",
+      "schema": "plugins.schema.json#/$defs/InstallationCreate",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-client-editable.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPClientEditable",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/mcp-server-editable.valid.json",
+      "schema": "plugins.schema.json#/$defs/MCPServerEditable",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/reserved-tool-name.valid.json",
+      "schema": "plugins.schema.json#/$defs/ReservedToolName",
+      "valid": true
+    },
+    {
+      "file": "fixtures/plugins/skill-editable.valid.json",
+      "schema": "plugins.schema.json#/$defs/SkillEditable",
+      "valid": true
+    },
+    {
+      "file": "fixtures/tools/binding.valid.json",
+      "schema": "tools.schema.json#/$defs/Binding",
+      "valid": true
+    },
+    {
+      "file": "fixtures/tools/policy.valid.json",
+      "schema": "tools.schema.json#/$defs/Policy",
+      "valid": true
     }
   ]
 }

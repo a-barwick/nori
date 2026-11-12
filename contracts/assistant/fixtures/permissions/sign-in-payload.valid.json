@@ -1,0 +1,11 @@
+{
+  "auth": "oauth",
+  "auth_attempt_id": "auth_1",
+  "integration_id": "google",
+  "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=opaque",
+  "requested_scopes": [
+    "calendar.events"
+  ],
+  "return_to": "/apps/google",
+  "expires_at": "2026-11-09T10:00:00Z"
+}

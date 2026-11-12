@@ -1,0 +1,8 @@
+{
+  "purpose": "calendar.create",
+  "eligible_connection_ids": [
+    "conn_google_personal",
+    "conn_google_work"
+  ],
+  "remember_as_default": true
+}

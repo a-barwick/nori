@@ -1,0 +1,7 @@
+{
+  "name": "Laptop agent",
+  "scopes": [
+    "read",
+    "mutate"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "package": {
+    "id": "linear/linear-mcp",
+    "version": "2.1.0"
+  },
+  "approved_access": {
+    "connection_types": [
+      "linear"
+    ],
+    "action_classes": [
+      "read",
+      "reversible_write"
+    ]
+  }
+}

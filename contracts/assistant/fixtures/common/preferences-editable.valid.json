@@ -1,0 +1,25 @@
+{
+  "timezone": "America/Los_Angeles",
+  "locale": "en-US",
+  "working_hours": [
+    {
+      "day": 1,
+      "start": "09:00",
+      "end": "17:30"
+    }
+  ],
+  "quiet_hours": {
+    "start": "22:00",
+    "end": "07:00"
+  },
+  "default_destination_ids": [
+    "dest_inapp"
+  ],
+  "account_defaults": {
+    "calendar.create": "conn_google_personal"
+  },
+  "budgets": {
+    "task_usd": 1.0,
+    "monthly_usd": 50
+  }
+}

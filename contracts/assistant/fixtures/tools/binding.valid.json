@@ -1,0 +1,5 @@
+{
+  "adapter": "native",
+  "target": "google.calendar",
+  "version": "1.0.0"
+}

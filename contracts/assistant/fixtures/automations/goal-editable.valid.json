@@ -1,0 +1,10 @@
+{
+  "title": "Book the dentist",
+  "outcome": "Booked before December",
+  "completion_criteria": [
+    {
+      "text": "Appointment on calendar"
+    }
+  ],
+  "follow_up": "remind"
+}

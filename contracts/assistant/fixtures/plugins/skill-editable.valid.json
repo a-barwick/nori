@@ -1,0 +1,12 @@
+{
+  "title": "Weekly report",
+  "description": "Summarise the week's issues.",
+  "instructions": "List closed issues by project.",
+  "inputs": {
+    "type": "object"
+  },
+  "required_tool_ids": [
+    "linear/linear-mcp/issues.search"
+  ],
+  "scope": "user"
+}
