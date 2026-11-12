@@ -29,6 +29,7 @@ type Config struct {
 	CallerKey    string
 	Transport    http.RoundTripper
 	ServiceToken oauth2.TokenSource
+	Vertex       bool
 	PerMinute    int
 	Burst        int
 }
@@ -140,6 +141,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	upstream.Header.Set(serviceauth.CallerHeader, assertion)
 	upstream.Header.Set("X-Request-ID", id)
+	if g.cfg.Vertex {
+		upstream.Header.Set(httpjson.VertexResponseHeader, "1")
+	}
 	if token != "" {
 		upstream.Header.Set(clientauth.Header, token)
 	}
@@ -157,6 +161,22 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer response.Body.Close()
+	if g.cfg.Vertex {
+		if response.StatusCode == http.StatusTooManyRequests {
+			seconds, err := strconv.Atoi(response.Header.Get("Retry-After"))
+			if err != nil || seconds <= 0 {
+				seconds = 10
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			fail(w, 429, "rate_limited", "Core is busy. Try again shortly.")
+			return
+		}
+		if !httpjson.ReadVertexResponse(response) {
+			slog.WarnContext(ctx, "nori.gateway.upstream_response", "request_id", id, "status", response.StatusCode)
+			fail(w, 502, "upstream_unavailable", "Core returned an unsupported response.")
+			return
+		}
+	}
 	relay(w, response, rule)
 }
 
@@ -174,11 +194,7 @@ func relay(w http.ResponseWriter, response *http.Response, rule api.RouteRule) {
 		fail(w, 502, "unsupported_response", "Core returned an unsupported response.")
 		return
 	}
-	for _, header := range []string{"Content-Type", "Content-Disposition", "Content-Security-Policy", "Content-Length", "Allow", "Retry-After", "Mcp-Protocol-Version", "Mcp-Session-Id"} {
-		if value := response.Header.Get(header); value != "" {
-			w.Header().Set(header, value)
-		}
-	}
+	httpjson.CopyGatewayHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if media == "text/event-stream" {
 		w.Header().Set("X-Accel-Buffering", "no")

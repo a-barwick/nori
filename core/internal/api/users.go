@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"nori/internal/clientauth"
+	"nori/internal/httpjson"
 	"nori/internal/state"
 	"nori/internal/users"
 )
@@ -30,20 +31,7 @@ func UserHandler(directory users.Directory, open func(context.Context, users.Use
 	s := &userServer{directory: directory, open: open, model: model, devices: devices, access: access}
 	root := newRouteMux(false, false)
 	s.register(root)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if access.Local && (r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "") {
-			routeError(w, 403, "browser_proxy_required", "Use the web server to access the runtime.")
-			return
-		}
-		identity := access.identify(r)
-		// Older Core versions reject this namespace without reaching user routes.
-		if path, gateway := strings.CutPrefix(r.URL.Path, clientauth.GatewayPrefix+"/"); gateway {
-			if identity.service != "gateway" {
-				routeError(w, 401, "unidentified_caller", "A verified gateway is required.")
-				return
-			}
-			r = withPath(r, "/"+path)
-		}
+	serve := func(w http.ResponseWriter, r *http.Request, identity caller) {
 		r = r.WithContext(context.WithValue(r.Context(), callerKey{}, identity))
 		if handler, pattern := root.mux.Handler(r); pattern != "" && (pattern == r.Method+" "+r.URL.Path || pattern == r.URL.Path) {
 			rule, _ := MatchRoute(r.Method, r.URL.Path, false)
@@ -60,6 +48,26 @@ func UserHandler(directory users.Directory, open func(context.Context, users.Use
 			}
 		}
 		routeError(w, 404, "not_found", "Route not found.")
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if access.Local && (r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "") {
+			routeError(w, 403, "browser_proxy_required", "Use the web server to access the runtime.")
+			return
+		}
+		identity := access.identify(r)
+		// Older Core versions reject this namespace without reaching user routes.
+		if path, gateway := strings.CutPrefix(r.URL.Path, clientauth.GatewayPrefix+"/"); gateway {
+			if identity.service != "gateway" {
+				routeError(w, 401, "unidentified_caller", "A verified gateway is required.")
+				return
+			}
+			r = withPath(r, "/"+path)
+			if r.Header.Get(httpjson.VertexResponseHeader) == "1" {
+				httpjson.ServeVertexResponse(w, func(out http.ResponseWriter) { serve(out, r, identity) })
+				return
+			}
+		}
+		serve(w, r, identity)
 	})
 }
 

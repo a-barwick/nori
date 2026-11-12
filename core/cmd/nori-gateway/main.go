@@ -62,6 +62,7 @@ func configuration(ctx context.Context) (gateway.Config, string, error) {
 		if upstream.Scheme != "https" {
 			return cfg, "", fmt.Errorf("Google transport requires an HTTPS upstream")
 		}
+		cfg.Vertex = true
 		cfg.ServiceToken, err = google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
 		if err != nil {
 			return cfg, "", fmt.Errorf("Google gateway identity is unavailable")

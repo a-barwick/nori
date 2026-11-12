@@ -144,7 +144,10 @@ Configure distinct keys of at least 32 bytes:
   survives delayed delivery. It cannot authorize resume or user routes.
 
 On GCP, set `caller_key_secrets` in the application state and
-`queue_caller_secret` in the Temporal state to the Secret Manager IDs.
+apply the app state's IAM bindings before deploying any workers that use them.
+Set `queue_caller_secret` in the Temporal state to the same Secret Manager ID
+as `caller_key_secrets["NORI_QUEUE_CALLER_KEY"]`. Both states use the runtime
+service account for Secret Manager access.
 The release reads `route_auth_mode` and these secret references from the
 application state. The operator running resume needs access to the internal
 key. Use a sandbox to verify header forwarding through the deployed
@@ -162,6 +165,10 @@ configured Agent Runtime. Supply the gateway key's Secret Manager ID in
 `caller_key_secrets` and release the corresponding Core code. The private
 `/gateway/` upstream namespace requires the gateway assertion. A Core version
 that predates this namespace cannot serve a gateway request.
+Agent Runtime rewrites HTTP statuses and drops application response headers.
+Core sends them in a metadata line on signed gateway responses. The gateway
+restores them before sending the original body to the client. Successful event
+streams keep their native media type and stream directly.
 
 Clients send `Authorization: Bearer <token>` to the gateway. The gateway
 derives the scoped path from the token's owner and forwards the credential in

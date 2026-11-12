@@ -582,15 +582,22 @@ def deploy_runtime(c, workers, image):
     secret_env = {entry["name"]: entry for entry in spec.get("secretEnv", [])}
     secret_env.update({key: {"name": key, "secretRef": {"secret": secret, "version": "latest"}}
                        for key, secret in (c.get("connected_accounts_secret_env", {}) | c.get("caller_key_secrets", {})).items()})
-    secret_env["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "secretRef": {
-        "secret": "nori-sandbox-openai-api-key" if ENVIRONMENT == "sandbox" else "nori-openai-api-key", "version": "latest"}}
     if ENVIRONMENT == "sandbox":
-        env["NORI_ENVIRONMENT"] = {"name": "NORI_ENVIRONMENT", "value": "sandbox"}
+        model = env.get("MODEL_NAME", {}).get("value") or "google/gemini-3.8-flash"
+        env.update({name: {"name": name, "value": value} for name, value in {
+            "NORI_ENVIRONMENT": "sandbox",
+            "NORI_MODEL_PROVIDER": "gateway",
+            "NORI_MODEL_GATEWAY_URL": "https://openrouter.ai/api/v1",
+            "MODEL_NAME": "google/gemini-3.8-flash" if model == "gemini-3.8-flash" else model,
+        }.items()})
         env.pop("OPENROUTER_API_KEY", None)
         env.pop("OPENROUTER_MANAGEMENT_KEY", None)
+        secret_env.pop("OPENAI_API_KEY", None)
         secret_env.pop("OPENROUTER_MANAGEMENT_KEY", None)
         secret_env["OPENROUTER_API_KEY"] = {"name": "OPENROUTER_API_KEY", "secretRef": {"secret": "nori-sandbox-openrouter-api-key", "version": "latest"}}
+        secret_env["NORI_MODEL_GATEWAY_API_KEY"] = {"name": "NORI_MODEL_GATEWAY_API_KEY", "secretRef": secret_env["OPENROUTER_API_KEY"]["secretRef"]}
     else:
+        secret_env["OPENAI_API_KEY"] = {"name": "OPENAI_API_KEY", "secretRef": {"secret": "nori-openai-api-key", "version": "latest"}}
         env["MODEL_NAME"] = {"name": "MODEL_NAME", "value": PRODUCTION_MODELS[1]}
         # Production calls OpenAI directly, which accepts only this conversation model. The state's outer_model output
         # can hold an older OpenRouter name, and that made every reply fail.

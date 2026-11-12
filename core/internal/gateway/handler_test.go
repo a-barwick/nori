@@ -66,3 +66,26 @@ func TestGatewayRoutesCredentialsAndRateLimit(t *testing.T) {
 		t.Fatalf("sent %d upstream requests, want 1", forwarded.Load())
 	}
 }
+
+func TestVertexRateLimit(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "17")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer upstream.Close()
+	base, _ := url.Parse(upstream.URL)
+	handler, err := New(Config{Upstream: base, CallerKey: strings.Repeat("g", 32), Vertex: true, PerMinute: 1, Burst: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("POST", clientauth.DeviceStartPath, strings.NewReader("{}")))
+	var body struct {
+		Code      string `json:"code"`
+		Retryable bool   `json:"retryable"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != 429 ||
+		body.Code != "rate_limited" || !body.Retryable || response.Header().Get("Retry-After") != "17" {
+		t.Fatalf("unexpected response: HTTP %d, code %q, retryable %t", response.Code, body.Code, body.Retryable)
+	}
+}
