@@ -146,6 +146,7 @@ for (const file of files) {
     out += `${doc(definition.description, "")}export type ${name} = ${typeOf(definition, file, "")};\n`;
   }
 }
+out += `\nexport type AssistantFeature = keyof AssistantCapabilities["assistant_features"];\n`;
 
 if (process.argv.includes("--check")) {
   const current = readFileSync(outFile, "utf8");

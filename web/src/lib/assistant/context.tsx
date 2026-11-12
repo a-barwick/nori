@@ -4,7 +4,7 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
 import { useChat } from "@/lib/chat/useChat";
 import { useHydrated } from "@/lib/hooks";
 import { useRuntime } from "@/lib/runtime/useRuntime";
-import type { Capabilities, AssistantFeature } from "@/lib/contracts/pending";
+import type { Capabilities, AssistantFeature } from "@/lib/contracts/assistant";
 import { fixtureMode } from "./api";
 import { useResource } from "./useResource";
 

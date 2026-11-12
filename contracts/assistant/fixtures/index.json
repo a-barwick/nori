@@ -1,5 +1,5 @@
 {
-  "revision": "r2.11",
+  "revision": "r2.12",
   "baseline": "docs/assistant-contract-baseline.md",
   "schemas_dir": "schemas",
   "fixtures": [
@@ -1117,6 +1117,17 @@
       "file": "fixtures/common/capabilities.push-key.valid.json",
       "schema": "common.schema.json#/$defs/AssistantCapabilities",
       "valid": true
+    },
+    {
+      "file": "fixtures/common/capabilities.wire.valid.json",
+      "schema": "common.schema.json#/$defs/Capabilities",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/capabilities.chat-only.valid.json",
+      "schema": "common.schema.json#/$defs/Capabilities",
+      "valid": true,
+      "note": "assistant routes unregistered: no AssistantCapabilities fields"
     },
     {
       "file": "fixtures/common/api-error.subscription-expired.valid.json",

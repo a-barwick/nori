@@ -10,14 +10,14 @@
      "expect": {"status": [201], "schema": "common.schema.json#/$defs/MutationReceipt", "resource_schema": "permissions.schema.json#/$defs/PermissionRule", "match": {"/resource/revision": 1}},
      "capture": {"rule": "/resource/id"}},
     {"name": "b-read", "user": "b", "method": "GET", "path": "/v1/permissions/${var:rule}", "expect": {"status": [404]}},
-    {"name": "b-update", "user": "b", "method": "PUT", "path": "/v1/permissions/${var:rule}",
+    {"name": "b-update", "user": "b", "method": "PUT", "path": "/v1/permissions/${var:rule}", "body_schema": "permissions.schema.json#/$defs/PermissionRuleChange",
      "body": {"request_id": "${uuid:b1}", "expected_revision": 1, "value": {"effect": "allow", "tool_ids": ["*"], "connection_ids": ["*"], "resource_ids": ["*"], "action_classes": ["sensitive_send"]}}, "expect": {"status": [404]}},
-    {"name": "b-revoke", "user": "b", "method": "POST", "path": "/v1/permissions/${var:rule}/actions", "body": {"request_id": "${uuid:b2}", "expected_revision": 1, "value": {"action": "revoke"}}, "expect": {"status": [404]}},
+    {"name": "b-revoke", "user": "b", "method": "POST", "path": "/v1/permissions/${var:rule}/actions", "body_schema": "common.schema.json#/$defs/ActionRequest", "body": {"request_id": "${uuid:b2}", "expected_revision": 1, "value": {"action": "revoke"}}, "expect": {"status": [404]}},
     {"name": "b-list", "user": "b", "method": "GET", "path": "/v1/permissions", "expect": {"status": [200], "count": {"/items|id=${var:rule}": 0}}},
     {"name": "a-unchanged", "user": "a", "method": "GET", "path": "/v1/permissions/${var:rule}", "expect": {"status": [200], "schema": "permissions.schema.json#/$defs/PermissionRule", "match": {"/revision": 1, "/action_classes": ["read"]}}},
-    {"name": "a-revoke-stale", "user": "a", "method": "POST", "path": "/v1/permissions/${var:rule}/actions", "body": {"request_id": "${uuid:a1}", "expected_revision": 7, "value": {"action": "revoke"}},
+    {"name": "a-revoke-stale", "user": "a", "method": "POST", "path": "/v1/permissions/${var:rule}/actions", "body_schema": "common.schema.json#/$defs/ActionRequest", "body": {"request_id": "${uuid:a1}", "expected_revision": 7, "value": {"action": "revoke"}},
      "expect": {"status": [409], "match": {"/code": "revision_conflict", "/current/revision": 1}}},
-    {"name": "a-revoke", "user": "a", "method": "POST", "path": "/v1/permissions/${var:rule}/actions", "body": {"request_id": "${uuid:a2}", "expected_revision": 1, "value": {"action": "revoke"}},
+    {"name": "a-revoke", "user": "a", "method": "POST", "path": "/v1/permissions/${var:rule}/actions", "body_schema": "common.schema.json#/$defs/ActionRequest", "body": {"request_id": "${uuid:a2}", "expected_revision": 1, "value": {"action": "revoke"}},
      "expect": {"status": [200, 202], "schema": "common.schema.json#/$defs/MutationReceipt"}}
   ]
 }
