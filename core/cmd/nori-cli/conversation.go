@@ -85,6 +85,9 @@ func (a *cli) converse(ctx context.Context, command string, args []string) error
 		if err == nil && conversation != "" {
 			*id = conversation
 		}
+		if invalidCredential(err) {
+			return err
+		}
 		if err != nil {
 			fmt.Fprintln(a.err, err)
 		}
@@ -229,7 +232,7 @@ func (a *cli) waitReply(ctx context.Context, initial conversationView, out *repl
 			} else if !retryable(err) {
 				return message{}, err
 			}
-			if err := pause(ctx, 400*time.Millisecond); err != nil {
+			if err := pause(ctx, retryDelay(err, 400*time.Millisecond)); err != nil {
 				return message{}, err
 			}
 			continue

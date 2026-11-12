@@ -3,6 +3,7 @@ package records
 import (
 	"context"
 	"crypto/subtle"
+	"slices"
 	"time"
 
 	"nori/internal/clientauth"
@@ -50,7 +51,13 @@ func (d *Devices) ApproveDevice(ctx context.Context, id, owner string, approval 
 		if err != nil {
 			return err
 		}
-		if record.OwnerID != "" || subtle.ConstantTimeCompare([]byte(approval.Code), []byte(record.Code)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(approval.Code), []byte(record.Code)) != 1 {
+			return state.ErrNotFound
+		}
+		if record.OwnerID == owner && slices.Equal(record.Scopes, approval.Scopes) {
+			return nil
+		}
+		if record.OwnerID != "" {
 			return state.ErrNotFound
 		}
 		record.OwnerID, record.Scopes = owner, approval.Scopes

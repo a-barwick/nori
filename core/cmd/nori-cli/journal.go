@@ -21,11 +21,11 @@ func journalID(explicit string, scope string, intent any) (string, func(), error
 		}
 		return explicit, func() {}, nil
 	}
-	stateDir, err := os.UserConfigDir()
+	stateDir, err := configDir()
 	if err != nil {
 		return "", nil, err
 	}
-	stateDir = filepath.Join(stateDir, "nori-cli", "pending")
+	stateDir = filepath.Join(stateDir, "pending")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return "", nil, err
 	}

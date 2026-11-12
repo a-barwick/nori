@@ -177,6 +177,15 @@ func (c AccessConfig) serve(w http.ResponseWriter, r *http.Request, rule RouteRu
 			return
 		}
 		media, _, _ := mime.ParseMediaType(w.Header().Get("Content-Type"))
+		// Optional families can be present in the manifest without a live
+		// handler. Preserve ServeMux's 404 with a JSON response.
+		if status == http.StatusNotFound && media == "text/plain" {
+			if c.mode() == "enforce" || requestCaller(r).kind == CallerClient {
+				blocked = true
+				routeError(w, http.StatusNotFound, "not_found", "Route not found.")
+			}
+			return
+		}
 		if slices.Contains(rule.Responses, media) || rule.TokenScope == "mcp" && status == http.StatusAccepted && media == "" {
 			return
 		}

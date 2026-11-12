@@ -1618,6 +1618,11 @@
       "file": "fixtures/common/api-error.rate-limited.valid.json",
       "schema": "common.schema.json#/$defs/APIError",
       "valid": true
+    },
+    {
+      "file": "fixtures/plugins/client-revoke.valid.json",
+      "schema": "plugins.schema.json#/$defs/ClientRevoke",
+      "valid": true
     }
   ]
 }

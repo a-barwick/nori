@@ -1840,6 +1840,9 @@ export type DeviceStatus = {
   owner_id?: string;
   token_id?: ID;
 };
+export type ClientRevoke = {
+  request_id: UUID;
+};
 
 // tools.schema.json
 export type Binding = {

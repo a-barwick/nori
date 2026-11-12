@@ -22,6 +22,7 @@ import (
 // validates the result again, so a field the schema allows but the server drops, or a field the server writes but the
 // schema forbids, fails the check. References missing here are served through ad hoc request structs inside handlers.
 var ContractTypes = map[string]func() any{
+	"plugins.schema.json#/$defs/ClientRevoke":                    func() any { return &clientRevoke{} },
 	"execution.schema.json#/$defs/WorkSubmission":                func() any { return &workSubmission{} },
 	"conversations.schema.json#/$defs/ConversationAttachment":    func() any { return &state.Attachment{} },
 	"conversations.schema.json#/$defs/ConversationPart":          func() any { return &state.Part{} },

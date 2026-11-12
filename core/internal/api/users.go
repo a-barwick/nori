@@ -173,7 +173,7 @@ func (s *userServer) serveUser(w http.ResponseWriter, r *http.Request, id string
 			s.access.refuse(w, r, rule, identity, 401, "invalid_client_token", "A valid Nori client token is required.", true)
 			return
 		}
-		if rule.TokenScope != "mcp" && !slices.Contains(client.Scopes, rule.TokenScope) {
+		if rule.TokenScope != "mcp" && rule.TokenScope != "authenticated" && !slices.Contains(client.Scopes, rule.TokenScope) {
 			s.access.refuse(w, r, rule, identity, 403, "insufficient_scope", "This command requires the "+rule.TokenScope+" scope.", true)
 			return
 		}

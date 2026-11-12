@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,9 +22,10 @@ type client struct {
 }
 
 type requestError struct {
-	Status int    `json:"-"`
-	Code   string `json:"code"`
-	Text   string `json:"error"`
+	RetryAfter time.Duration `json:"-"`
+	Status     int           `json:"-"`
+	Code       string        `json:"code"`
+	Text       string        `json:"error"`
 }
 
 func (e *requestError) Error() string {
@@ -64,6 +66,9 @@ func (c *client) do(ctx context.Context, method, path, contentType string, body 
 	}
 	defer response.Body.Close()
 	rejection := &requestError{Status: response.StatusCode}
+	if seconds, err := strconv.Atoi(response.Header.Get("Retry-After")); err == nil && seconds > 0 {
+		rejection.RetryAfter = time.Duration(min(seconds, 300)) * time.Second
+	}
 	_ = json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(rejection)
 	return nil, rejection
 }
@@ -89,7 +94,7 @@ func (c *client) callBytes(ctx context.Context, method, path, contentType string
 		if err == nil || !retryable(err) || attempt == 2 {
 			return err
 		}
-		if err := pause(ctx, time.Duration(attempt+1)*300*time.Millisecond); err != nil {
+		if err := pause(ctx, retryDelay(err, time.Duration(attempt+1)*300*time.Millisecond)); err != nil {
 			return err
 		}
 	}
@@ -112,7 +117,15 @@ func (c *client) read(ctx context.Context, method, path, contentType string, bod
 
 func retryable(err error) bool {
 	var rejection *requestError
-	return !errors.As(err, &rejection) || rejection.Status >= 500
+	return !errors.As(err, &rejection) || rejection.Status >= 500 || rejection.Status == http.StatusTooManyRequests
+}
+
+func retryDelay(err error, fallback time.Duration) time.Duration {
+	var rejection *requestError
+	if errors.As(err, &rejection) && rejection.RetryAfter > 0 {
+		return rejection.RetryAfter
+	}
+	return fallback
 }
 
 func isStatus(err error, status int) bool {

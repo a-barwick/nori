@@ -181,6 +181,33 @@ func (a *Assistant) mcpClientAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, mcpClientCreated{MutationReceipt: receipt, OwnerID: users.ID(ctx)})
 }
 
+func (a *Assistant) revokeCurrentClient(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	client, ok := ctx.Value(verifiedClientKey{}).(mcpClient)
+	if !ok {
+		clientUnauthorized(w)
+		return
+	}
+	var input clientRevoke
+	if !decode(w, r, &input) {
+		return
+	}
+	if !validID(input.RequestID) {
+		writeAPIError(w, state.ErrInvalidResource, "", nil)
+		return
+	}
+	receipt, err := changeClient(ctx, a.Store, client.ID, input.RequestID, client.Revision, mcpClientActionValue{Action: "revoke"})
+	if err != nil {
+		writeAPIError(w, err, input.RequestID, nil)
+		return
+	}
+	writeReceipt(w, receipt)
+}
+
+type clientRevoke struct {
+	RequestID string `json:"request_id"`
+}
+
 func changeClient(ctx context.Context, store state.ResourceStore, id, requestID string, expected int64, value mcpClientActionValue) (state.MutationReceipt, error) {
 	return store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "POST", Target: "/v1/mcp-clients/" + id + "/actions", ExpectedRevision: expected, Payload: value,

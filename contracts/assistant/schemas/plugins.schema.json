@@ -2035,6 +2035,18 @@
         }
       },
       "additionalProperties": false
+    },
+    "ClientRevoke": {
+      "type": "object",
+      "required": [
+        "request_id"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/UUID"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

@@ -436,6 +436,21 @@
       "max_path_segments": 6
     },
     {
+      "method": "POST",
+      "path": "/v1/client-token/revoke",
+      "user_scoped": true,
+      "callers": [
+        "client"
+      ],
+      "token_scope": "authenticated",
+      "body": "json",
+      "max_request_bytes": 65536,
+      "response_media_types": [
+        "application/json"
+      ],
+      "max_path_segments": 6
+    },
+    {
       "method": "GET",
       "path": "/v1/computer/sessions",
       "user_scoped": true,

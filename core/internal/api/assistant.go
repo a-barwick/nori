@@ -215,6 +215,7 @@ func (a *Assistant) register(mux *routeMux) {
 		mux.handle("POST /v1/mcp-clients/authorize/{id}/approval", browserJSON.param("id", uuidSegment), jsonBody(a.approveDevice))
 	}
 	mux.handle("POST /v1/nori-mcp", mcpRule, a.noriMCP)
+	mux.handle("POST /v1/client-token/revoke", route().token("authenticated").body("json", jsonLimit), jsonBody(a.revokeCurrentClient))
 	if a.Computer != nil || mux.manifest {
 		mux.handle("GET /v1/computer/sessions", browserRead, a.computerSessions)
 		mux.handle("GET /v1/computer/sessions/{id}", browserRead, a.computerSession)

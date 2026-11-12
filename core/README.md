@@ -607,3 +607,35 @@ same arguments to reuse its saved request ID. For scripts, pass
 after a confirmed reply. Use a fresh UUID for a new intent. The request
 journal holds request IDs and digests of command arguments. Local commands
 connect directly to Core and never launch a browser.
+
+## Remote CLI
+
+Add a profile with the gateway origin and the signed-in web app origin.
+Use HTTPS for hosted origins. The CLI also accepts loopback HTTP for an
+isolated sandbox.
+
+```sh
+./nori-cli profile add --gateway https://gateway.example.com --web https://nori.example.com hosted
+./nori-cli --profile hosted login
+./nori-cli profile use hosted
+./nori-cli --json ask "What work needs my attention?"
+./nori-cli tasks
+./nori-cli logout
+./nori-cli profile use local
+```
+
+Login opens Connected Clients in the web app. Enter the confirmation
+code from the terminal and select the scopes to grant. Use
+`login --no-open` to open the URL yourself. The CLI stores the resulting
+credential in macOS Keychain under service `nori-cli`, or in Linux Secret
+Service via `secret-tool`. The account key is derived from the profile
+name and origins. Profile files contain origins, and the request journal
+contains request IDs. `NORI_CLI_CONFIG_DIR` can select a separate profile
+directory for sandbox checks.
+
+Use `--profile NAME` to select a profile for a single command. Logout
+revokes the current token in Core before removing it from the OS store.
+Settings can revoke it from the web app. The next command will ask for
+sign-in after revocation or expiry. A scope refusal names the required
+scope. The same conversation, task, upload, result and retry commands work
+with the selected remote profile.

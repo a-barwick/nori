@@ -180,3 +180,7 @@ proxy at `/api/v1`. Run live scenarios through local web origins with one
 `-proxy-user USER_ID=http://127.0.0.1:PORT` per scenario user. Each origin
 must sign in as its matching local user. Core-only scenarios run against
 Core separately.
+
+An authenticated client can revoke its own credential at
+`POST /v1/client-token/revoke` with a UUID `request_id`. It can do this
+with either scope. The receipt contains public client metadata.

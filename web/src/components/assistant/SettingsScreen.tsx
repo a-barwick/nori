@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Bell, Bug, Check, Copy, History, Brain, KeyRound, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
@@ -367,12 +367,21 @@ function Clients() {
   const [mutateScope, setMutateScope] = useState(false);
   const [created, setCreated] = useState<{ name: string; token: string }>();
   const [copied, setCopied] = useState(false);
+  const issuance = useRef<{ key: string; id: string; secret: string; hash: string }>(undefined);
   const issue = async (path: string, expected_revision: number, value: Record<string, unknown>) => {
-    const { secret, hash } = await clientCredential();
-    const receipt = await sendSecret<MCPClient>(path, {
-      request_id: newRequestID(), expected_revision, value: { ...value, credential_hash: hash },
-    }) as unknown as MCPClientCreated;
-    setCreated({ name: receipt.resource.name, token: `nori2_${receipt.owner_id}_${receipt.resource.id}.${secret}` });
+    const key = JSON.stringify([path, expected_revision, value]);
+    const attempt = issuance.current?.key === key ? issuance.current : { key, id: newRequestID(), ...await clientCredential() };
+    issuance.current = attempt;
+    try {
+      const receipt = await sendSecret<MCPClient>(path, {
+        request_id: attempt.id, expected_revision, value: { ...value, credential_hash: attempt.hash },
+      }) as unknown as MCPClientCreated;
+      setCreated({ name: receipt.resource.name, token: `nori2_${receipt.owner_id}_${receipt.resource.id}.${attempt.secret}` });
+      issuance.current = undefined;
+    } catch (error) {
+      if (error instanceof APIError && error.status >= 400 && error.status < 500 && error.status !== 429) issuance.current = undefined;
+      throw error;
+    }
     setCopied(false);
     invalidate("/mcp-clients");
   };
@@ -384,9 +393,11 @@ function Clients() {
     setName(""); setExpires(""); setMutateScope(false);
   }, "Client added.");
   const rotate = (client: MCPClient) => action.run(client.id, async () => {
+    const expired = !!client.expires_at && Date.parse(client.expires_at) <= Date.now();
+    const expiryDay = new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10);
     await issue(`/mcp-clients/${encodeURIComponent(client.id)}/actions`, client.revision, {
       action: "rotate",
-      ...(client.expires_at ? { expires_at: new Date(Date.now() + 90 * 86_400_000).toISOString() } : {}),
+      ...(expired ? { expires_at: `${expiryDay}T23:59:59Z` } : {}),
     });
   }, "Token rotated.");
   const revoke = (client: MCPClient) => action.run(client.id, async () => {
@@ -416,7 +427,7 @@ function Clients() {
     <Section title="Clients">{clients.loading ? <Loading /> : active.length ? <Rows>{active.map((client) => <li key={client.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
       <span className="min-w-0 flex-1"><span className="block text-row font-medium">{client.name}</span>
         <span className="block text-meta text-ink-2">{(client.kind ?? "mcp").toUpperCase()} · {client.scopes.includes("mutate") ? "Can start work" : "Reads only"} · {client.last_used_at ? `last used ${relative(client.last_used_at)}` : "unused"}{client.expires_at ? ` · expires ${when(client.expires_at)}` : ""}</span></span>
-      <Confirm title={`Rotate token for ${client.name}?`} body="The old token stops working as soon as the replacement is created." confirm="Rotate token" onConfirm={() => void rotate(client)}
+      <Confirm title={`Rotate token for ${client.name}?`} body="The old token stops working immediately. If it has already expired, the replacement lasts 90 days." confirm="Rotate token" onConfirm={() => void rotate(client)}
         trigger={<Button size="sm" variant="quiet" disabled={!!action.pending}>Rotate</Button>} />
       <Confirm danger title={`Remove access for ${client.name}?`} body="Its token stops working right away." confirm="Remove access" onConfirm={() => void revoke(client)}
         trigger={<Button size="sm" variant="quiet" className="text-danger!" disabled={action.pending === client.id}>Remove access</Button>} />

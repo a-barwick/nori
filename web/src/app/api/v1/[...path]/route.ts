@@ -5,4 +5,4 @@ async function handle(request: Request, context: { params: Promise<{ path: strin
   return forwardRoute(request, ["v1", ...path]);
 }
 
-export { handle as GET, handle as HEAD, handle as POST, handle as PUT, handle as PATCH, handle as DELETE };
+export { handle as GET, handle as HEAD, handle as OPTIONS, handle as POST, handle as PUT, handle as PATCH, handle as DELETE };

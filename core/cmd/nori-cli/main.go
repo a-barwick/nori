@@ -16,10 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	"nori/internal/clientauth"
 	"nori/internal/users"
 )
 
-const usage = `Usage: nori-cli [--url URL] [--user ID | --email EMAIL] [--json] COMMAND
+const usage = `Usage: nori-cli [--url URL] [--user ID | --email EMAIL] [--profile NAME] [--json] COMMAND
 
   chat [--conversation ID|assistant]
   ask [--conversation ID|assistant] [--request-id UUID] [--attach FILE] TEXT
@@ -31,6 +32,10 @@ const usage = `Usage: nori-cli [--url URL] [--user ID | --email EMAIL] [--json] 
   task stop [--request-id UUID] TASK
   upload [--request-id UUID] CONVERSATION FILE
   result [--out FILE] ID
+  profile add --gateway URL --web URL NAME
+  profile use NAME | profile list
+  login [--name LABEL] [--no-open]
+  logout
 `
 
 type cli struct {
@@ -58,6 +63,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 	localURL := flags.String("url", envDefault("NORI_LOCAL_AGENT_URL", "http://127.0.0.1:8080"), "loopback Core URL")
 	owner := flags.String("user", os.Getenv("NORI_USER_ID"), "local user ID")
 	email := flags.String("email", os.Getenv("NORI_LOCAL_EMAIL"), "local sign-in email")
+	profileFlag := flags.String("profile", "", "local or a configured remote profile")
 	machine := flags.Bool("json", false, "write JSON output")
 	timeout := flags.Duration("timeout", 5*time.Minute, "time to wait for each command or message")
 	if err := flags.Parse(args); err != nil {
@@ -70,17 +76,44 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 		flags.Usage()
 		return nil
 	}
-	base, err := endpoint(*localURL, false)
+	dir, err := configDir()
+	if err != nil {
+		return err
+	}
+	if flags.Arg(0) == "profile" {
+		return profileCommand(dir, flags.Args()[1:], out, stderr)
+	}
+	name, err := profileSelection(dir, *profileFlag)
 	if err != nil {
 		return err
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.ResponseHeaderTimeout = 35 * time.Second
-	c := &client{base: base, http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
+	c := &client{http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}}
 	defer c.http.CloseIdleConnections()
+	app := &cli{client: c, in: in, out: out, err: stderr, machine: *machine, timeout: *timeout}
+	if name != localProfile {
+		config, err := readProfile(dir, name)
+		if err != nil {
+			return err
+		}
+		gateway, web, err := config.urls()
+		if err != nil {
+			return err
+		}
+		c.base = gateway
+		return app.remote(ctx, name, gateway, web, flags.Args())
+	}
+	if flags.Arg(0) == "login" || flags.Arg(0) == "logout" {
+		return errors.New("select a remote profile for login or logout")
+	}
+	c.base, err = endpoint(*localURL, false)
+	if err != nil {
+		return err
+	}
 	if *email != "" && *owner == "" {
 		var identity struct{ ID string }
 		if err := c.call(ctx, "POST", "/api/users/resolve", map[string]string{"email": *email}, &identity); err != nil {
@@ -92,13 +125,16 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 		return errors.New("set --user or --email for the local Nori user")
 	}
 	c.owner = *owner
-	app := &cli{client: c, in: in, out: out, err: stderr, machine: *machine, timeout: *timeout}
-	if flags.Arg(0) == "chat" || flags.Arg(0) == "ask" {
-		return app.command(ctx, flags.Args())
+	return app.runCommand(ctx, flags.Args())
+}
+
+func (a *cli) runCommand(ctx context.Context, args []string) error {
+	if args[0] == "chat" || args[0] == "ask" {
+		return a.command(ctx, args)
 	}
-	ctx, cancel := context.WithTimeout(ctx, *timeout)
+	ctx, cancel := context.WithTimeout(ctx, a.timeout)
 	defer cancel()
-	return app.command(ctx, flags.Args())
+	return a.command(ctx, args)
 }
 
 func endpoint(raw string, hosted bool) (*url.URL, error) {
@@ -110,8 +146,11 @@ func endpoint(raw string, hosted bool) (*url.URL, error) {
 		return base, nil
 	}
 	ip := net.ParseIP(base.Hostname())
-	if !hosted && base.Scheme == "http" && (base.Hostname() == "localhost" || ip != nil && ip.IsLoopback()) {
+	if base.Scheme == "http" && (base.Hostname() == "localhost" || ip != nil && ip.IsLoopback()) {
 		return base, nil
+	}
+	if hosted {
+		return nil, errors.New("remote Nori requires HTTPS or a loopback HTTP sandbox")
 	}
 	return nil, errors.New("local Nori requires a loopback HTTP origin")
 }
@@ -133,7 +172,12 @@ func (a *cli) emit(value any) error {
 	return json.NewEncoder(a.out).Encode(value)
 }
 
-func (a *cli) scope() string { return a.client.base.String() + a.client.owner }
+func (a *cli) scope() string {
+	if credential, ok := clientauth.Parse(a.client.token); ok {
+		return a.client.base.String() + credential.Owner
+	}
+	return a.client.base.String() + a.client.owner
+}
 
 func (a *cli) command(ctx context.Context, args []string) error {
 	switch args[0] {
