@@ -22,6 +22,15 @@ func New(backend docstore.Backend, user users.User, taskBudgetUSD float64) *Data
 	return &Database{db: docstore.New(backend), user: user, taskBudgetUSD: taskBudgetUSD}
 }
 
+// NewShared creates a user-scoped Database over a shared backend whose lifetime is owned by the caller.
+func NewShared(backend docstore.Backend, user users.User, taskBudgetUSD float64) *Database {
+	return &Database{db: docstore.New(unclosedBackend{backend}), user: user, taskBudgetUSD: taskBudgetUSD}
+}
+
+type unclosedBackend struct{ docstore.Backend }
+
+func (unclosedBackend) Close() error { return nil }
+
 func (d *Database) Close() error { return d.db.Close() }
 
 func (d *Database) root() *docstore.DocumentRef {

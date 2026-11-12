@@ -59,9 +59,8 @@ func (d *Database) MarkSeen(ctx context.Context, messageID string) error {
 		if err != nil {
 			return err
 		}
-		if err = log.add(state.EventReadPosition, ""); err != nil {
-			return err
-		}
-		return tx.Set(d.readMark(), state.ReadMark{MessageID: m.ID, Through: m.CreatedAt, Position: log.seq})
+		return log.addWithSeq(state.EventReadPosition, "", func(seq int64) error {
+			return tx.Set(d.readMark(), state.ReadMark{MessageID: m.ID, Through: m.CreatedAt, Position: seq})
+		})
 	})
 }

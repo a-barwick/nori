@@ -75,15 +75,15 @@ func stateKey(value string) string {
 }
 
 func (s *Service) httpClient() *http.Client {
-	if s.Client != nil {
-		return s.Client
-	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return s.newHTTPClient(30 * time.Second)
 }
 
 // discoverAuth finds the authorization server for an MCP endpoint: first from the WWW-Authenticate challenge of an
 // unauthenticated request, then from the well-known protected-resource locations.
 func (s *Service) discoverAuth(ctx context.Context, endpoint string) (*oauthex.ProtectedResourceMetadata, *oauthex.AuthServerMeta, error) {
+	if err := s.validEndpoint(endpoint); err != nil {
+		return nil, nil, err
+	}
 	client := s.httpClient()
 	var candidates []string
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
@@ -111,6 +111,10 @@ func (s *Service) discoverAuth(ctx context.Context, endpoint string) (*oauthex.P
 	var prm *oauthex.ProtectedResourceMetadata
 	var lastErr error
 	for _, candidate := range candidates {
+		if err := s.validEndpoint(candidate); err != nil {
+			lastErr = err
+			continue
+		}
 		if prm, lastErr = oauthex.GetProtectedResourceMetadata(ctx, candidate, endpoint, client); lastErr == nil && prm != nil {
 			break
 		}
@@ -119,6 +123,9 @@ func (s *Service) discoverAuth(ctx context.Context, endpoint string) (*oauthex.P
 		return nil, nil, fmt.Errorf("%w: the server publishes no protected-resource metadata naming an authorization server (%v)", ErrUnsupported, lastErr)
 	}
 	issuer := strings.TrimSuffix(prm.AuthorizationServers[0], "/")
+	if err := s.validEndpoint(issuer); err != nil {
+		return nil, nil, fmt.Errorf("%w: the authorization server URL is not allowed (%v)", ErrUnsupported, err)
+	}
 	iu, err := url.Parse(issuer)
 	if err != nil {
 		return nil, nil, err
@@ -127,6 +134,25 @@ func (s *Service) discoverAuth(ctx context.Context, endpoint string) (*oauthex.P
 	for _, metadata := range []string{asOrigin + "/.well-known/oauth-authorization-server" + asPath, asOrigin + "/.well-known/openid-configuration" + asPath, issuer + "/.well-known/openid-configuration"} {
 		meta, err := oauthex.GetAuthServerMeta(ctx, metadata, issuer, client)
 		if err == nil && meta != nil && meta.AuthorizationEndpoint != "" && meta.TokenEndpoint != "" {
+			if err := s.validEndpoint(meta.AuthorizationEndpoint); err != nil {
+				lastErr = err
+				continue
+			}
+			if err := s.validEndpoint(meta.TokenEndpoint); err != nil {
+				lastErr = err
+				continue
+			}
+			if meta.RegistrationEndpoint != "" {
+				if err := s.validEndpoint(meta.RegistrationEndpoint); err != nil {
+					lastErr = err
+					continue
+				}
+			}
+			if meta.RevocationEndpoint != "" {
+				if err := s.validEndpoint(meta.RevocationEndpoint); err != nil {
+					meta.RevocationEndpoint = ""
+				}
+			}
 			return prm, meta, nil
 		}
 		lastErr = err
@@ -299,7 +325,12 @@ func (s *Service) oauthTransport(ctx context.Context, id string, base http.Round
 	if err != nil {
 		return nil, fmt.Errorf("the server needs sign-in: %w", err)
 	}
-	refreshCtx := context.WithValue(context.WithoutCancel(ctx), oauth2.HTTPClient, &http.Client{Transport: base, Timeout: 30 * time.Second})
+	refreshClient := &http.Client{
+		Transport:     base,
+		Timeout:       30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	refreshCtx := context.WithValue(context.WithoutCancel(ctx), oauth2.HTTPClient, refreshClient)
 	source := &savingSource{inner: c.config(s.RedirectURL).TokenSource(refreshCtx, c.Token), last: c.Token.AccessToken, save: func(t *oauth2.Token) {
 		c.Token = t
 		_ = s.storeOAuth(context.WithoutCancel(ctx), id, c)

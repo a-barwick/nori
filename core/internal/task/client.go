@@ -51,6 +51,7 @@ type Engine struct {
 	userID     string
 	queue      string
 	deployment string
+	shared     bool
 }
 
 var _ dispatch.Orchestrator = (*Engine)(nil)
@@ -59,7 +60,15 @@ func NewEngine(c client.Client, config settings.Temporal, userID string) *Engine
 	return &Engine{c: c, userID: userID, queue: config.TaskQueue, deployment: config.EffectiveDeploymentName()}
 }
 
-func (e *Engine) Close() { e.c.Close() }
+func NewSharedEngine(c client.Client, config settings.Temporal, userID string) *Engine {
+	return &Engine{c: c, userID: userID, queue: config.TaskQueue, deployment: config.EffectiveDeploymentName(), shared: true}
+}
+
+func (e *Engine) Close() {
+	if !e.shared {
+		e.c.Close()
+	}
+}
 
 func (e *Engine) Signal(ctx context.Context, runID string, cmd state.Command) error {
 	return noExecution(e.c.SignalWorkflow(ctx, e.workflowID(runID), "", Signal, cmd))

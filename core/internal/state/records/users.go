@@ -14,6 +14,9 @@ import (
 type Users struct{ db *docstore.Client }
 
 func NewUsers(backend docstore.Backend) *Users { return &Users{db: docstore.New(backend)} }
+func NewSharedUsers(backend docstore.Backend) *Users {
+	return &Users{db: docstore.New(unclosedBackend{backend})}
+}
 func (u *Users) Close() error                  { return u.db.Close() }
 func (u *Users) rows() *docstore.CollectionRef { return u.db.Collection("users") }
 func (u *Users) Get(ctx context.Context, id string) (users.User, error) {

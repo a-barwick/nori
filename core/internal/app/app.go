@@ -38,12 +38,22 @@ type App struct {
 }
 
 func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user users.User) (*App, error) {
+	return openWithResources(ctx, waker, cfg, user, nil, nil)
+}
+
+func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Settings, user users.User, storage *platform.Storage, engines *platform.Engines) (*App, error) {
 	cfg = platform.ForUser(cfg, user)
 	waker = wake.ForUser(waker, user.ID)
 	if err := validateStartup(cfg); err != nil {
 		return nil, err
 	}
-	store, err := platform.OpenStore(ctx, cfg, user)
+	var store state.ConversationStore
+	var err error
+	if storage != nil {
+		store, err = storage.OpenStore(ctx, cfg, user)
+	} else {
+		store, err = platform.OpenStore(ctx, cfg, user)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +96,12 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	if cfg.Features.DisableBackgroundTasks {
 		return result, nil
 	}
-	engine, err := platform.Engine(ctx, cfg, user.ID)
+	var engine dispatch.Orchestrator
+	if engines != nil {
+		engine, err = engines.ForUser(ctx, user.ID)
+	} else {
+		engine, err = platform.Engine(ctx, cfg, user.ID)
+	}
 	if err != nil {
 		store.Close()
 		return nil, err

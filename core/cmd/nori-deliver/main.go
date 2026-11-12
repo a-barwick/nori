@@ -27,25 +27,27 @@ func main() {
 	if e != nil {
 		observability.Fatal(e)
 	}
-	directory, e := platform.OpenUsers(ctx, s)
+	storage, e := platform.OpenStorage(ctx, s)
 	if e != nil {
 		observability.Fatal(e)
 	}
-	defer directory.Close()
-	rows, e := directory.List(ctx)
+	defer storage.Close()
+	engines := platform.NewEngines(s)
+	defer engines.Close()
+	rows, e := storage.Users().List(ctx)
 	if e != nil {
 		observability.Fatal(e)
 	}
 	for _, row := range rows {
-		if e = deliver(ctx, s, waker, row); e != nil {
+		if e = deliver(ctx, s, storage, engines, waker, row); e != nil {
 			observability.Fatal(e)
 		}
 	}
 	log.Print("pending command delivery acknowledged")
 }
-func deliver(ctx context.Context, s settings.Settings, waker wake.Waker, row users.User) error {
+func deliver(ctx context.Context, s settings.Settings, storage *platform.Storage, engines *platform.Engines, waker wake.Waker, row users.User) error {
 	s = platform.ForUser(s, row)
-	store, e := platform.OpenStore(ctx, s, row)
+	store, e := storage.OpenStore(ctx, s, row)
 	if e != nil {
 		return e
 	}
@@ -57,7 +59,7 @@ func deliver(ctx context.Context, s settings.Settings, waker wake.Waker, row use
 	if e = control.Check(); e != nil {
 		return e
 	}
-	engine, e := platform.Engine(ctx, s, row.ID)
+	engine, e := engines.ForUser(ctx, row.ID)
 	if e != nil {
 		return e
 	}

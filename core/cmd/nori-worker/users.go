@@ -21,6 +21,7 @@ import (
 
 type userWorkers struct {
 	directory users.Directory
+	storage   *platform.Storage
 	cfg       settings.Settings
 	client    client.Client
 	waker     wake.Waker
@@ -49,7 +50,7 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 	if err != nil {
 		return nil, err
 	}
-	store, err := platform.OpenStore(ctx, cfg, row)
+	store, err := g.storage.OpenStore(ctx, cfg, row)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +72,7 @@ func (g *userWorkers) get(ctx context.Context, row users.User) (*userWorker, err
 	activities := &task.Activities{Agent: service, Store: store, Executor: &task.Executor{
 		Adapters: services.Adapters, Connections: services.Connections, Permissions: services.Permissions, Sessions: services.Sessions,
 	}}
-	entry := &userWorker{activities: activities, store: store, dispatcher: platform.Dispatcher(cfg, store, task.NewEngine(g.client, cfg.Temporal, row.ID), waker, row.ID)}
+	entry := &userWorker{activities: activities, store: store, dispatcher: platform.Dispatcher(cfg, store, task.NewSharedEngine(g.client, cfg.Temporal, row.ID), waker, row.ID)}
 	g.entries[row] = entry
 	return entry, nil
 }

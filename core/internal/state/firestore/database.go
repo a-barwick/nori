@@ -25,6 +25,11 @@ type Config struct {
 	EmulatorAddress   string
 }
 
+// OpenBackend opens one shared Firestore client.
+func OpenBackend(ctx context.Context, cfg Config) (docstore.Backend, error) {
+	return openBackend(ctx, cfg)
+}
+
 func Open(ctx context.Context, cfg Config, user users.User, taskBudgetUSD float64) (*records.Database, error) {
 	b, err := openBackend(ctx, cfg)
 	if err != nil {

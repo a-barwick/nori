@@ -21,6 +21,21 @@ type Store struct {
 
 var _ state.ArtifactStore = (*Store)(nil)
 
+// Client holds one S3 SDK client shared across user-scoped stores.
+type Client struct{ raw *sdk.Client }
+
+func OpenClient(ctx context.Context, region string) (*Client, error) {
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+	if err != nil {
+		return nil, err
+	}
+	return &Client{raw: sdk.NewFromConfig(cfg)}, nil
+}
+
+func (c *Client) ForUser(bucket string, user users.User) (*Store, error) {
+	return New(c.raw, bucket, user)
+}
+
 func Open(ctx context.Context, region, bucket string, user users.User) (*Store, error) {
 	if err := user.Validate(); err != nil {
 		return nil, err

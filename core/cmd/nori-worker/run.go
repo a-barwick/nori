@@ -28,11 +28,12 @@ func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker,
 	}
 	ctx, cancel := slice.Poll(ctx)
 	defer cancel()
-	directory, err := platform.OpenUsers(ctx, s)
+	storage, err := platform.OpenStorage(ctx, s)
 	if err != nil {
 		return err
 	}
-	defer directory.Close()
+	defer storage.Close()
+	directory := storage.Users()
 	paused, err := directory.Paused(ctx)
 	if err != nil {
 		return err
@@ -45,7 +46,7 @@ func run(ctx context.Context, s settings.Settings, cfg config, waker wake.Waker,
 		return err
 	}
 	defer c.Close()
-	group := &userWorkers{directory: directory, cfg: s, client: c, waker: waker, entries: map[users.User]*userWorker{}}
+	group := &userWorkers{directory: directory, storage: storage, cfg: s, client: c, waker: waker, entries: map[users.User]*userWorker{}}
 	defer group.Close()
 	stopTimeout := 25 * time.Second
 	if bounded {

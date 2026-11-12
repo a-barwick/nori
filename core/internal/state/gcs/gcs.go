@@ -19,9 +19,30 @@ type Store struct {
 	client *storage.Client
 	bucket string
 	prefix string
+	shared bool
 }
 
 var _ state.ArtifactStore = (*Store)(nil)
+
+// Client holds one Cloud Storage client shared across user-scoped stores.
+type Client struct{ raw *storage.Client }
+
+func OpenClient(ctx context.Context) (*Client, error) {
+	c, err := storage.NewClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{raw: c}, nil
+}
+
+func (c *Client) ForUser(bucket string, user users.User) (*Store, error) {
+	if err := user.Validate(); err != nil {
+		return nil, err
+	}
+	return &Store{client: c.raw, bucket: bucket, prefix: user.FilePrefix(), shared: true}, nil
+}
+
+func (c *Client) Close() error { return c.raw.Close() }
 
 // Open connects to Cloud Storage with Application Default Credentials. The bucket name is not checked here, so a
 // process that never stores artifacts needs none.
@@ -98,4 +119,9 @@ func (s *Store) DeleteFile(ctx context.Context, key string) error {
 	return err
 }
 
-func (s *Store) Close() error { return s.client.Close() }
+func (s *Store) Close() error {
+	if s.shared {
+		return nil
+	}
+	return s.client.Close()
+}

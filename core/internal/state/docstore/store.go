@@ -77,6 +77,17 @@ type TransactionBackend interface {
 	Reader
 	Writer
 }
+
+// Sequencer allocates monotonically increasing per-head sequence numbers inside
+// a transaction without serializing all transactions on a single document read.
+type Sequencer interface {
+	NextSequence(ctx context.Context, path string, count int) (start int64, err error)
+}
+
+// SequenceReader reads the current sequence head without requiring a document row.
+type SequenceReader interface {
+	CurrentSequence(ctx context.Context, path string) (int64, error)
+}
 type Backend interface {
 	Reader
 	Writer
@@ -271,6 +282,11 @@ type Transaction struct {
 	backend TransactionBackend
 }
 
+func (t *Transaction) Context() context.Context { return t.ctx }
+func (t *Transaction) HasSequencer() bool {
+	_, ok := t.backend.(Sequencer)
+	return ok
+}
 func (t *Transaction) Get(d *DocumentRef) (*DocumentSnapshot, error) {
 	r, e := t.backend.Get(t.ctx, d.Path)
 	if e != nil {
@@ -300,4 +316,26 @@ func (t *Transaction) Update(d *DocumentRef, u []Update) error {
 }
 func (t *Transaction) Delete(d *DocumentRef) error {
 	return t.backend.Apply(t.ctx, Mutation{Kind: "delete", Path: d.Path})
+}
+
+// NextSequence returns the first of count consecutive 1-based sequence numbers
+// when the transaction backend implements Sequencer.
+func (t *Transaction) NextSequence(d *DocumentRef, count int) (int64, bool, error) {
+	seq, ok := t.backend.(Sequencer)
+	if !ok {
+		return 0, false, nil
+	}
+	start, err := seq.NextSequence(t.ctx, d.Path, count)
+	return start, true, err
+}
+
+// CurrentSequence returns the latest allocated sequence number when the backend
+// implements SequenceReader.
+func (c *Client) CurrentSequence(ctx context.Context, d *DocumentRef) (int64, bool, error) {
+	seq, ok := c.Backend.(SequenceReader)
+	if !ok {
+		return 0, false, nil
+	}
+	head, err := seq.CurrentSequence(ctx, d.Path)
+	return head, true, err
 }

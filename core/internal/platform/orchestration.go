@@ -3,7 +3,9 @@ package platform
 import (
 	"context"
 	"fmt"
+	"sync"
 
+	"go.temporal.io/sdk/client"
 	"nori/internal/dispatch"
 	"nori/internal/secret"
 	"nori/internal/secret/awssecrets"
@@ -95,6 +97,40 @@ func Engine(ctx context.Context, s settings.Settings, userID string) (*task.Engi
 		return nil, err
 	}
 	return task.NewEngine(c, s.Temporal, userID), nil
+}
+
+// Engines shares one lazy Temporal gRPC client across per-user engines in a process.
+type Engines struct {
+	cfg settings.Settings
+	mu  sync.Mutex
+	c   client.Client
+}
+
+func NewEngines(s settings.Settings) *Engines {
+	return &Engines{cfg: s}
+}
+
+func (e *Engines) ForUser(ctx context.Context, userID string) (*task.Engine, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.c == nil {
+		c, err := task.Dial(ctx, e.cfg.Temporal, Secrets(e.cfg))
+		if err != nil {
+			return nil, err
+		}
+		e.c = c
+	}
+	return task.NewSharedEngine(e.c, e.cfg.Temporal, userID), nil
+}
+
+func (e *Engines) Close() {
+	e.mu.Lock()
+	c := e.c
+	e.c = nil
+	e.mu.Unlock()
+	if c != nil {
+		c.Close()
+	}
 }
 
 // Dispatcher assembles the reconciliation pass every delivering process shares.

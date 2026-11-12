@@ -25,6 +25,11 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
+// OpenBackend opens one shared Postgres connection pool and runs migrations once.
+func OpenBackend(ctx context.Context, url string) (docstore.Backend, error) {
+	return openBackend(ctx, url)
+}
+
 func Open(ctx context.Context, url string, user users.User, taskBudgetUSD float64) (*records.Database, error) {
 	b, err := openBackend(ctx, url)
 	if err != nil {
@@ -129,6 +134,28 @@ func (b *backend) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.R
 }
 func (t *transaction) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.Record, error) {
 	return query(ctx, t.q, s)
+}
+func (b *backend) CurrentSequence(ctx context.Context, path string) (int64, error) {
+	var seq int64
+	err := b.pool.QueryRow(ctx, "SELECT seq FROM nori_sequences WHERE path=$1", path).Scan(&seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	return seq, err
+}
+func (t *transaction) NextSequence(ctx context.Context, path string, count int) (int64, error) {
+	if count <= 0 {
+		return 0, nil
+	}
+	var end int64
+	err := t.q.QueryRow(ctx,
+		"INSERT INTO nori_sequences(path,seq) VALUES($1,$2) ON CONFLICT(path) DO UPDATE SET seq=nori_sequences.seq+$2 RETURNING seq",
+		path, int64(count),
+	).Scan(&end)
+	if err != nil {
+		return 0, err
+	}
+	return end - int64(count) + 1, nil
 }
 func (b *backend) Apply(ctx context.Context, m docstore.Mutation) error {
 	return b.RunTransaction(ctx, false, 5, func(tx docstore.TransactionBackend) error { return tx.Apply(ctx, m) })

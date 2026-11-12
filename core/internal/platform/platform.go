@@ -8,10 +8,12 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"path/filepath"
+	"sync"
 
 	"nori/internal/computer"
 	"nori/internal/computer/ec2"
@@ -19,6 +21,7 @@ import (
 	"nori/internal/computer/local"
 	"nori/internal/settings"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 	statefirestore "nori/internal/state/firestore"
 	"nori/internal/state/gcs"
 	"nori/internal/state/localfs"
@@ -28,6 +31,102 @@ import (
 	"nori/internal/usage"
 	"nori/internal/users"
 )
+
+// Storage holds one process-wide document backend and cloud object client so
+// per-user scopes share connection pools instead of opening one per user.
+type Storage struct {
+	docs docstore.Backend
+	mu   sync.Mutex
+	gcs  *gcs.Client
+	s3   *s3.Client
+}
+
+func OpenStorage(ctx context.Context, s settings.Settings) (*Storage, error) {
+	docs, err := openDocBackend(ctx, s.Store)
+	if err != nil {
+		return nil, err
+	}
+	return &Storage{docs: docs}, nil
+}
+
+func (p *Storage) Users() users.Directory {
+	return records.NewSharedUsers(p.docs)
+}
+
+func (p *Storage) OpenStore(ctx context.Context, s settings.Settings, user users.User) (state.ConversationStore, error) {
+	if err := user.Validate(); err != nil {
+		return nil, err
+	}
+	local, err := openLocalArtifacts(s, user)
+	if err != nil {
+		return nil, err
+	}
+	documents := records.NewShared(p.docs, user, s.TaskBudgetUSD)
+	if local != nil {
+		return meteredStore(s, user, state.Compose(documents, local))
+	}
+	objects, err := p.openObjects(ctx, s, user)
+	if err != nil {
+		return nil, err
+	}
+	return meteredStore(s, user, state.Compose(documents, objects))
+}
+
+func (p *Storage) openObjects(ctx context.Context, s settings.Settings, user users.User) (state.ArtifactStore, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if s.Cloud == "aws" {
+		if p.s3 == nil {
+			c, err := s3.OpenClient(ctx, s.AWS.Region)
+			if err != nil {
+				return nil, err
+			}
+			p.s3 = c
+		}
+		return p.s3.ForUser(s.Store.ArtifactBucket, user)
+	}
+	if p.gcs == nil {
+		c, err := gcs.OpenClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		p.gcs = c
+	}
+	return p.gcs.ForUser(s.Store.ArtifactBucket, user)
+}
+
+func (p *Storage) Close() error {
+	p.mu.Lock()
+	gcsClient := p.gcs
+	p.gcs = nil
+	p.mu.Unlock()
+	var gcsErr error
+	if gcsClient != nil {
+		gcsErr = gcsClient.Close()
+	}
+	return errors.Join(gcsErr, p.docs.Close())
+}
+
+func openDocBackend(ctx context.Context, cfg settings.Store) (docstore.Backend, error) {
+	switch cfg.Backend {
+	case "", "firestore":
+		if _, err := settings.Required("NORI_PROJECT_ID", cfg.Project); err != nil {
+			return nil, err
+		}
+		if _, err := settings.Required("FIRESTORE_DATABASE_ID", cfg.Database); err != nil {
+			return nil, err
+		}
+		emulator := cfg.StateEmulator
+		if emulator != "" && (!statefirestore.IsLoopback(emulator) || cfg.FirestoreEmulator != "") {
+			return nil, fmt.Errorf("NORI_STATE_EMULATOR_HOST requires loopback and no FIRESTORE_EMULATOR_HOST")
+		}
+		return statefirestore.OpenBackend(ctx, statefirestore.Config{Project: cfg.Project, Database: cfg.Database, EmulatorAddress: emulator})
+	case "postgres":
+		return postgres.OpenBackend(ctx, cfg.PostgresURL)
+	default:
+		return nil, fmt.Errorf("NORI_STORE_BACKEND must be firestore or postgres")
+	}
+}
 
 func OpenStore(ctx context.Context, s settings.Settings, user users.User) (state.ConversationStore, error) {
 	if err := user.Validate(); err != nil {
@@ -42,41 +141,20 @@ func OpenStore(ctx context.Context, s settings.Settings, user users.User) (state
 			_ = local.Close()
 		}
 	}
-	var documents *records.Database
-	cfg := s.Store
-	switch cfg.Backend {
-	case "", "firestore":
-		if _, err = settings.Required("NORI_PROJECT_ID", cfg.Project); err != nil {
-			closeLocal()
-			return nil, err
-		}
-		if _, err = settings.Required("FIRESTORE_DATABASE_ID", cfg.Database); err != nil {
-			closeLocal()
-			return nil, err
-		}
-		emulator := cfg.StateEmulator
-		if emulator != "" && (!statefirestore.IsLoopback(emulator) || cfg.FirestoreEmulator != "") {
-			closeLocal()
-			return nil, fmt.Errorf("NORI_STATE_EMULATOR_HOST requires loopback and no FIRESTORE_EMULATOR_HOST")
-		}
-		documents, err = statefirestore.Open(ctx, statefirestore.Config{Project: cfg.Project, Database: cfg.Database, EmulatorAddress: emulator}, user, s.TaskBudgetUSD)
-	case "postgres":
-		documents, err = postgres.Open(ctx, cfg.PostgresURL, user, s.TaskBudgetUSD)
-	default:
-		err = fmt.Errorf("NORI_STORE_BACKEND must be firestore or postgres")
-	}
+	docs, err := openDocBackend(ctx, s.Store)
 	if err != nil {
 		closeLocal()
 		return nil, err
 	}
+	documents := records.New(docs, user, s.TaskBudgetUSD)
 	if local != nil {
 		return meteredStore(s, user, state.Compose(documents, local))
 	}
 	var objects state.ArtifactStore
 	if s.Cloud == "aws" {
-		objects, err = s3.Open(ctx, s.AWS.Region, cfg.ArtifactBucket, user)
+		objects, err = s3.Open(ctx, s.AWS.Region, s.Store.ArtifactBucket, user)
 	} else {
-		objects, err = gcs.Open(ctx, cfg.ArtifactBucket, user)
+		objects, err = gcs.Open(ctx, s.Store.ArtifactBucket, user)
 	}
 	if err != nil {
 		_ = documents.Close()

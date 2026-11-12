@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -142,6 +141,9 @@ type Service struct {
 	Sandboxed func(ctx context.Context, installationID string) (io.ReadWriteCloser, error)
 	// OnSignedIn runs after a server's OAuth sign-in completes, so tasks waiting for it resume.
 	OnSignedIn func(ctx context.Context, serverID string)
+
+	transportOnce sync.Once
+	transport     http.RoundTripper
 }
 
 func (s *Service) now() time.Time {
@@ -153,7 +155,6 @@ func (s *Service) now() time.Time {
 
 var (
 	ErrUnsupported = errors.New("this MCP server setting is not supported in this deployment")
-	privateHost    = regexp.MustCompile(`^(localhost|.*\.internal|metadata\.google\.internal|169\.254\.\d+\.\d+)$`)
 )
 
 func decode(r state.Resource) (stored, error) {
@@ -213,19 +214,7 @@ func (s *Service) project(ctx context.Context, server stored) Server {
 // validEndpoint refuses non-HTTPS endpoints (except loopback on the local stack) and infrastructure metadata hosts,
 // so a custom URL cannot become access to internal services.
 func (s *Service) validEndpoint(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return fmt.Errorf("%w: the endpoint must be an absolute URL", state.ErrInvalidResource)
-	}
-	host := u.Hostname()
-	loopback := host == "127.0.0.1" || host == "localhost" || host == "::1"
-	if loopback && s.LocalProcesses {
-		return nil
-	}
-	if u.Scheme != "https" || privateHost.MatchString(host) || strings.HasPrefix(host, "10.") || strings.HasPrefix(host, "192.168.") {
-		return fmt.Errorf("%w: the endpoint must be a public HTTPS URL", state.ErrInvalidResource)
-	}
-	return nil
+	return validateRemoteURL(raw, s.LocalProcesses)
 }
 
 func (s *Service) validate(value Editable) error {
@@ -358,12 +347,8 @@ func (s *Service) connectWith(ctx context.Context, server stored, elicit func(co
 	client := sdk.NewClient(&sdk.Implementation{Name: "nori", Version: Version}, options)
 	switch server.Transport {
 	case "http":
-		base := http.DefaultTransport
-		if s.Client != nil && s.Client.Transport != nil {
-			base = s.Client.Transport
-		}
-		httpClient := &http.Client{Timeout: 60 * time.Second, Transport: base,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		base := s.outboundTransport()
+		httpClient := s.newHTTPClient(60 * time.Second)
 		if server.Auth == "configured" {
 			credential, err := s.Credentials.Get(ctx, "mcp-"+server.ID)
 			if err != nil {

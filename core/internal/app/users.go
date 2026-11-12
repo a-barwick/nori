@@ -19,11 +19,13 @@ import (
 // A changed row takes effect on the next request or processing pass; an in-flight
 // pass keeps its own scope until it finishes.
 type Service struct {
-	Users users.Directory
-	cfg   settings.Settings
-	waker wake.Waker
-	mu    sync.Mutex
-	apps  map[string]*userApp
+	Users   users.Directory
+	storage *platform.Storage
+	engines *platform.Engines
+	cfg     settings.Settings
+	waker   wake.Waker
+	mu      sync.Mutex
+	apps    map[string]*userApp
 }
 type userApp struct {
 	row     users.User
@@ -36,17 +38,24 @@ func OpenService(ctx context.Context, waker wake.Waker, cfg settings.Settings) (
 	if err := validateStartup(cfg); err != nil {
 		return nil, err
 	}
-	directory, err := platform.OpenUsers(ctx, cfg)
+	storage, err := platform.OpenStorage(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{Users: directory, cfg: cfg, waker: waker, apps: map[string]*userApp{}}, nil
+	return &Service{
+		Users:   storage.Users(),
+		storage: storage,
+		engines: platform.NewEngines(cfg),
+		cfg:     cfg,
+		waker:   waker,
+		apps:    map[string]*userApp{},
+	}, nil
 }
 func (s *Service) acquire(ctx context.Context, row users.User) (*App, func(), error) {
 	s.mu.Lock()
 	entry := s.apps[row.ID]
 	if entry == nil || entry.row != row {
-		app, err := Open(ctx, s.waker, s.cfg, row)
+		app, err := openWithResources(ctx, s.waker, s.cfg, row, s.storage, s.engines)
 		if err != nil {
 			s.mu.Unlock()
 			return nil, nil, err
@@ -91,6 +100,12 @@ func (s *Service) Close() {
 		}
 	}
 	_ = s.Users.Close()
+	if s.engines != nil {
+		s.engines.Close()
+	}
+	if s.storage != nil {
+		_ = s.storage.Close()
+	}
 }
 
 // LocalLoop discovers inserted rows and recovers each user's work independently.
