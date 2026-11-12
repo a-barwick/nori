@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"nori/internal/plugins"
 	"nori/internal/state"
@@ -73,16 +74,13 @@ func (a *Assistant) installation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) install(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Package struct {
-			ID      string `json:"id"`
-			Version string `json:"version"`
-		} `json:"package"`
-		ApprovedAccess plugins.Access `json:"approved_access"`
-		Configuration  map[string]any `json:"configuration,omitempty"`
-	}
+	var value plugins.InstallationCreate
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
+		return
+	}
+	if strings.TrimSpace(value.Package.ID) == "" || strings.TrimSpace(value.Package.Version) == "" {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
 	if expected != 0 {
@@ -107,14 +105,13 @@ func (a *Assistant) installationReview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) installationAction(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Action         string          `json:"action"`
-		Version        string          `json:"version,omitempty"`
-		ApprovedAccess *plugins.Access `json:"approved_access,omitempty"`
-		RemoveState    bool            `json:"remove_state,omitempty"`
-	}
+	var value plugins.InstallationAction
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
+		return
+	}
+	if !value.Valid() {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
 	current, err := a.Plugins.Installation(r.Context(), r.PathValue("id"))
@@ -186,14 +183,12 @@ func (a *Assistant) updateSkill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) skillAction(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Action string `json:"action"`
-	}
+	var value plugins.SkillAction
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
 		return
 	}
-	if value.Action != "delete" {
+	if !value.Valid() {
 		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}

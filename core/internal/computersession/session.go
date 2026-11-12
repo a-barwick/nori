@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,6 +54,30 @@ type Session struct {
 	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
 	WaitingTaskIDs []string   `json:"waiting_task_ids,omitempty"`
 	TaskTitle      string     `json:"task_title,omitempty"`
+}
+
+// Action is the contract ComputerSessionAction value. Renew and release name a lease; resume also names the task
+// and the instruction revision the user is resuming.
+type Action struct {
+	Action              string `json:"action"`
+	Reason              string `json:"reason,omitempty"`
+	LeaseID             string `json:"lease_id,omitempty"`
+	TaskID              string `json:"task_id,omitempty"`
+	InstructionRevision *int64 `json:"instruction_revision,omitempty"`
+}
+
+// Valid reports whether the action matches ComputerSessionAction.
+func (a Action) Valid() bool {
+	switch a.Action {
+	case "take_over":
+		return a.LeaseID == "" && a.TaskID == "" && a.InstructionRevision == nil
+	case "renew", "release":
+		return strings.TrimSpace(a.LeaseID) != "" && a.Reason == "" && a.TaskID == "" && a.InstructionRevision == nil
+	case "resume":
+		return strings.TrimSpace(a.LeaseID) != "" && strings.TrimSpace(a.TaskID) != "" && a.InstructionRevision != nil && *a.InstructionRevision >= 0 && a.Reason == ""
+	default:
+		return false
+	}
 }
 
 type stored struct {

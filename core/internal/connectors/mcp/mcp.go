@@ -53,6 +53,34 @@ type Editable struct {
 	Exposure        Exposure `json:"exposure"`
 }
 
+// Action is the contract MCPServerAction value. set_exposure names a tool and an exposure; the other actions
+// carry neither.
+type Action struct {
+	Action   string `json:"action"`
+	Tool     string `json:"tool,omitempty"`
+	Exposure string `json:"exposure,omitempty"`
+}
+
+// Valid reports whether the action matches MCPServerAction.
+func (a Action) Valid() bool {
+	switch a.Action {
+	case "connect", "reconnect", "sign_in", "sign_out", "start", "stop", "restart":
+		return a.Tool == "" && a.Exposure == ""
+	case "set_exposure":
+		switch a.Exposure {
+		case "direct", "discoverable", "programmatic", "disabled":
+			return strings.TrimSpace(a.Tool) != ""
+		}
+	}
+	return false
+}
+
+// CredentialInput is the contract MCPCredentialInput. Write-only: the receipt never echoes the token.
+type CredentialInput struct {
+	RequestID string `json:"request_id"`
+	Token     string `json:"token"`
+}
+
 type Diagnostic struct {
 	At      time.Time `json:"at"`
 	Level   string    `json:"level"`

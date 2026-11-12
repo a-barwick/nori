@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"nori/internal/connectors/mcp"
 	"nori/internal/state"
@@ -104,13 +105,13 @@ func (a *Assistant) updateMCP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) mcpAction(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Action   string `json:"action"`
-		Tool     string `json:"tool,omitempty"`
-		Exposure string `json:"exposure,omitempty"`
-	}
+	var value mcp.Action
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
+		return
+	}
+	if !value.Valid() {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
 	current, err := a.MCP.Get(r.Context(), r.PathValue("id"))
@@ -137,14 +138,11 @@ func (a *Assistant) mcpTools(w http.ResponseWriter, r *http.Request) {
 
 // mcpCredential stores a configured server credential. It is write-only: no route ever returns it.
 func (a *Assistant) mcpCredential(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		RequestID string `json:"request_id"`
-		Token     string `json:"token"`
-	}
+	var value mcp.CredentialInput
 	if !decode(w, r, &value) {
 		return
 	}
-	if !validID(value.RequestID) {
+	if !validID(value.RequestID) || strings.TrimSpace(value.Token) == "" || len(value.Token) > 8192 {
 		writeAPIError(w, state.ErrInvalidResource, value.RequestID, nil)
 		return
 	}

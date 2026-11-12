@@ -104,6 +104,14 @@ type SkillEditable struct {
 	Scope           string         `json:"scope"`
 }
 
+// SkillAction is the contract action on a user skill. The schema allows only delete.
+type SkillAction struct {
+	Action string `json:"action"`
+}
+
+// Valid reports whether the action is delete.
+func (a SkillAction) Valid() bool { return a.Action == "delete" }
+
 // SaveSkill creates or edits a user skill. Every edit is a new version, so a run records exactly what it used.
 // Packaged skills are read-only; edit a copy instead.
 func (s *Service) SaveSkill(ctx context.Context, id, requestID string, expected int64, value SkillEditable) (state.MutationReceipt, error) {

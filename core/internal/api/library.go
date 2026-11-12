@@ -24,6 +24,55 @@ type libraryOverlay struct {
 	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
 }
 
+// libraryItemEditable is the contract LibraryItemEditable.
+type libraryItemEditable struct {
+	Title      string `json:"title"`
+	Collection string `json:"collection,omitempty"`
+}
+
+// libraryActionValue is the contract LibraryAction value. Delete names a scope; revise names an instruction;
+// export names a format.
+type libraryActionValue struct {
+	Action      string `json:"action"`
+	Instruction string `json:"instruction,omitempty"`
+	Format      string `json:"format,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+}
+
+func (v libraryActionValue) valid() bool {
+	switch v.Action {
+	case "revise":
+		return strings.TrimSpace(v.Instruction) != "" && len(v.Instruction) <= 8192 && v.Format == "" && v.Scope == ""
+	case "export":
+		switch v.Format {
+		case "md", "pdf", "docx", "csv", "ics", "original":
+			return v.Instruction == "" && v.Scope == ""
+		}
+	case "delete":
+		return (v.Scope == "version" || v.Scope == "all_versions") && v.Instruction == "" && v.Format == ""
+	}
+	return false
+}
+
+// memoryFactEditable is the contract MemoryFactEditable.
+type memoryFactEditable struct {
+	Text string `json:"text"`
+}
+
+// memoryActionValue is the contract MemoryAction value.
+type memoryActionValue struct {
+	Action string `json:"action"`
+}
+
+func (v memoryActionValue) valid() bool { return v.Action == "forget" }
+
+// inboxAction is the contract InboxAction value.
+type inboxAction struct {
+	Action string `json:"action"`
+}
+
+func (v inboxAction) valid() bool { return v.Action == "acknowledge" }
+
 type provenance struct {
 	Content          string          `json:"content"`
 	Source           json.RawMessage `json:"source,omitempty"`
@@ -235,10 +284,7 @@ func (a *Assistant) libraryVersions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) libraryRename(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Title      string `json:"title"`
-		Collection string `json:"collection,omitempty"`
-	}
+	var value libraryItemEditable
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
 		return
@@ -297,14 +343,13 @@ func (a *Assistant) overlayMutation(ctx context.Context, id, requestID, method s
 
 // libraryAction revises (a new task revising the result, preserving prior versions), exports or deletes.
 func (a *Assistant) libraryAction(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Action      string `json:"action"`
-		Instruction string `json:"instruction,omitempty"`
-		Format      string `json:"format,omitempty"`
-		Scope       string `json:"scope,omitempty"`
-	}
+	var value libraryActionValue
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
+		return
+	}
+	if !value.valid() {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
 	id := r.PathValue("id")
@@ -346,6 +391,7 @@ func (a *Assistant) libraryAction(w http.ResponseWriter, r *http.Request) {
 		data, _ := json.Marshal(map[string]any{"item": item, "download_url": "/v1/library/" + id + "/file?format=" + value.Format})
 		writeJSON(w, 200, state.MutationReceipt{RequestID: requestID, Accepted: true, Status: "applied", Resource: data})
 	case "delete":
+		// LibraryAction requires scope "version" or "all_versions". A missing scope is invalid, not a silent delete.
 		receipt, err := a.overlayMutation(r.Context(), id, requestID, "DELETE", expected, value, func(o *libraryOverlay) error {
 			now := time.Now().UTC()
 			o.DeletedAt = &now
@@ -404,11 +450,29 @@ type searchHit struct {
 	ID         string          `json:"id"`
 	Title      string          `json:"title"`
 	Snippet    string          `json:"snippet"`
-	Jump       map[string]any  `json:"jump,omitempty"`
+	Jump       *searchJump     `json:"jump,omitempty"`
 	Provenance *provenance     `json:"provenance,omitempty"`
 	Freshness  *time.Time      `json:"freshness,omitempty"`
 	Score      float64         `json:"score"`
 	extra      json.RawMessage `json:"-"`
+}
+
+// searchJump is the contract SearchHit jump. Exactly one target is set, matching the kind.
+type searchJump struct {
+	Kind           string `json:"kind"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	MessageID      string `json:"message_id,omitempty"`
+	TaskID         string `json:"task_id,omitempty"`
+	ItemID         string `json:"item_id,omitempty"`
+	GoalID         string `json:"goal_id,omitempty"`
+	AutomationID   string `json:"automation_id,omitempty"`
+}
+
+// searchResponse is the contract SearchResponse.
+type searchResponse struct {
+	Items      []searchHit `json:"items"`
+	NextCursor string      `json:"next_cursor,omitempty"`
+	Query      string      `json:"query,omitempty"`
 }
 
 // score requires most query words to appear (all of them for short queries), so unrelated items do not match on
@@ -448,7 +512,7 @@ func (a *Assistant) search(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, err, "", nil)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": hits, "query": q})
+	writeJSON(w, 200, searchResponse{Items: hits, Query: q})
 }
 
 func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, error) {
@@ -466,7 +530,7 @@ func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, erro
 			created := item.CreatedAt
 			p := item.Provenance
 			hits = append(hits, searchHit{Kind: "result", ID: item.ID, Title: item.Title, Snippet: snippet, Score: s + 0.2,
-				Jump: map[string]any{"kind": "library", "item_id": item.ID}, Provenance: &p, Freshness: &created})
+				Jump: &searchJump{Kind: "library", ItemID: item.ID}, Provenance: &p, Freshness: &created})
 		}
 	}
 	if runs, err := a.Store.RecentRuns(ctx, 200); err == nil {
@@ -474,7 +538,7 @@ func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, erro
 			if s, snippet := score(words, clip(run.Request, 200), run.Request, run.Result); s > 0 {
 				started := run.StartedAt
 				hits = append(hits, searchHit{Kind: "task", ID: run.ID, Title: clip(run.Request, 120), Snippet: snippet, Score: s,
-					Jump: map[string]any{"kind": "task", "task_id": run.ID}, Freshness: &started})
+					Jump: &searchJump{Kind: "task", TaskID: run.ID}, Freshness: &started})
 			}
 		}
 	}
@@ -488,7 +552,7 @@ func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, erro
 			if s, snippet := score(words, "", m.Text); s > 0 {
 				created := m.CreatedAt
 				hits = append(hits, searchHit{Kind: "message", ID: m.ID, Title: clip(m.Text, 80), Snippet: snippet, Score: s - 0.1,
-					Jump: map[string]any{"kind": "conversation", "conversation_id": "assistant", "message_id": m.ID}, Freshness: &created})
+					Jump: &searchJump{Kind: "conversation", ConversationID: "assistant", MessageID: m.ID}, Freshness: &created})
 			}
 		}
 		if next == "" {
@@ -506,7 +570,7 @@ func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, erro
 				for _, m := range page.Messages {
 					if s, snippet := score(words, "", m.Text); s > 0 {
 						hits = append(hits, searchHit{Kind: "message", ID: m.ID, Title: chat.Title + ": " + clip(m.Text, 60), Snippet: snippet, Score: s - 0.1,
-							Jump: map[string]any{"kind": "conversation", "conversation_id": chat.ID, "message_id": m.ID}})
+							Jump: &searchJump{Kind: "conversation", ConversationID: chat.ID, MessageID: m.ID}})
 					}
 				}
 			}
@@ -517,7 +581,7 @@ func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, erro
 			for _, g := range goals {
 				if s, snippet := score(words, g.Title, g.Outcome, g.Progress); s > 0 {
 					hits = append(hits, searchHit{Kind: "goal", ID: g.ID, Title: g.Title, Snippet: snippet, Score: s,
-						Jump: map[string]any{"kind": "goal", "goal_id": g.ID}})
+						Jump: &searchJump{Kind: "goal", GoalID: g.ID}})
 				}
 			}
 		}
@@ -525,7 +589,7 @@ func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, erro
 			for _, auto := range automations {
 				if s, snippet := score(words, auto.Title, auto.Instruction); s > 0 {
 					hits = append(hits, searchHit{Kind: "automation", ID: auto.ID, Title: auto.Title, Snippet: snippet, Score: s,
-						Jump: map[string]any{"kind": "automation", "automation_id": auto.ID}})
+						Jump: &searchJump{Kind: "automation", AutomationID: auto.ID}})
 				}
 			}
 		}
@@ -583,11 +647,13 @@ func (a *Assistant) currentMemory(ctx context.Context, id string) any {
 }
 
 func (a *Assistant) editMemory(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Text string `json:"text"`
-	}
+	var value memoryFactEditable
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
+		return
+	}
+	if strings.TrimSpace(value.Text) == "" || len(value.Text) > 2000 {
+		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
 	m, err := a.Store.EditMemory(r.Context(), r.PathValue("id"), expected, value.Text)
@@ -600,14 +666,12 @@ func (a *Assistant) editMemory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) memoryAction(w http.ResponseWriter, r *http.Request) {
-	var value struct {
-		Action string `json:"action"`
-	}
+	var value memoryActionValue
 	requestID, expected, ok := decodeChange(w, r, &value)
 	if !ok {
 		return
 	}
-	if value.Action != "forget" {
+	if !value.valid() {
 		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
