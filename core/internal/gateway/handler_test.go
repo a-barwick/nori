@@ -48,6 +48,9 @@ func TestGatewayRoutesCredentialsAndRateLimit(t *testing.T) {
 		handler.ServeHTTP(res, req)
 		return res
 	}
+	if res := request("/health"); res.Code != 200 || res.Header().Get("X-Request-ID") != id {
+		t.Fatalf("health status %d, want 200 with correlation ID", res.Code)
+	}
 	if res := request("/v1/work"); res.Code != 200 || res.Header().Get("X-Request-ID") != id {
 		t.Fatalf("work status %d, want 200 with correlation ID", res.Code)
 	}

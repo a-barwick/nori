@@ -57,7 +57,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Request-ID", id)
 	w.Header().Set("Cache-Control", "no-store")
-	if r.Method == "GET" && r.URL.Path == "/healthz" {
+	if r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == "/healthz") {
 		httpjson.Write(w, 200, map[string]string{"status": "ok"})
 		return
 	}

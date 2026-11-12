@@ -160,6 +160,8 @@ observation and enforcement each require Austin's approval.
 Build the gateway from `core/` with
 `docker build -f infrastructure/Gateway.Dockerfile .`. Set the application
 Terraform variable `gateway_image` to the reviewed image digest to enable it.
+Use `GET /health` to check the public gateway. Cloud Run reserves paths such
+as `/healthz` at its frontend.
 The Cloud Run service has its own identity and invocation rights on the
 configured Agent Runtime. Supply the gateway key's Secret Manager ID in
 `caller_key_secrets` and release the corresponding Core code. The private
