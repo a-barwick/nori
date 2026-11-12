@@ -160,7 +160,9 @@ Reload the snapshot in that case as well. The current replay windows are
 `/api/input`, `/v1/snapshot` and `/v1/events` are legacy web runtime
 endpoints. External clients use the conversations API.
 
-### Versioning policy (proposed)
+### Versioning policy
+
+Austin approved this policy on November 12, 2026.
 
 Within a version, clients can rely on existing field names and types,
 the meaning of current status and event kinds, response statuses, cursor
