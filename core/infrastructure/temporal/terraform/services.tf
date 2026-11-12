@@ -20,6 +20,8 @@ variable "request_worker_targets" {
     firestore_database  = optional(string, "nori-poc")
     # Retained targets without a model field predate the move to OpenRouter.
     model_name = optional(string, "gemini-3.8-flash")
+    # New sandbox builds can keep the sandbox model on the Responses gateway.
+    sandbox_model_gateway = optional(bool, false)
     # Older pinned binaries still need their original calendar bindings.
     capabilities      = optional(bool, false)
     brave_search      = optional(bool, false)
@@ -34,6 +36,10 @@ variable "request_worker_targets" {
   validation {
     condition     = toset(keys(var.request_worker_targets)) == toset(keys(var.request_worker_images))
     error_message = "Every request-worker image must have exactly one retained routing target."
+  }
+  validation {
+    condition     = var.environment == "sandbox" || alltrue([for target in values(var.request_worker_targets) : !target.sandbox_model_gateway])
+    error_message = "The sandbox model gateway is available only to sandbox workers."
   }
   validation {
     condition = alltrue([for target in values(var.request_worker_targets) :
@@ -203,14 +209,30 @@ resource "google_cloud_run_v2_service" "worker" {
           NORI_WORKER_WAKE_QUEUE   = google_cloud_tasks_queue.worker[var.request_worker_targets[each.key].wake_queue_name].id
           NORI_WORKER_POLL_WINDOW  = "${var.request_worker_targets[each.key].poll_window_seconds}s"
           NORI_WORKER_IDLE_WINDOW  = "15s"
-        }, var.request_worker_targets[each.key].connected_accounts ? local.connected_accounts_env : {})
+          }, var.request_worker_targets[each.key].connected_accounts ? local.connected_accounts_env : {}, var.request_worker_targets[each.key].sandbox_model_gateway ? {
+          NORI_AGENT_MODEL       = "anthropic/claude-opus-5.5"
+          NORI_MODEL_PROVIDER    = "gateway"
+          NORI_MODEL_GATEWAY_URL = "https://openrouter.ai/api/v1"
+        } : {})
         content {
           name  = env.key
           value = env.value
         }
       }
       dynamic "env" {
-        for_each = var.request_worker_targets[each.key].model_name == "openai/gpt-6.1-terra" ? [1] : []
+        for_each = var.request_worker_targets[each.key].sandbox_model_gateway ? [1] : []
+        content {
+          name = "NORI_MODEL_GATEWAY_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = "nori-sandbox-openrouter-api-key"
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = !var.request_worker_targets[each.key].sandbox_model_gateway && var.request_worker_targets[each.key].model_name == "openai/gpt-6.1-terra" ? [1] : []
         content {
           name = "OPENROUTER_API_KEY"
           value_source {
