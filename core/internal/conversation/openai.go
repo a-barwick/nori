@@ -17,14 +17,14 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/contextview"
+	"nori/internal/modelgateway"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/usage"
 )
 
-// The outer model is GPT-6.1 Sol through OpenAI's platform API. That endpoint is the only one the runtime allows, so
-// it is a constant, not a setting. A different provider is a different ReplyModel.
+// The default outer model is GPT-6.1 Sol through OpenAI's platform API.
 const (
 	openAIChatURL   = "https://api.openai.com/v1/chat/completions"
 	openAIProvider  = "openai"
@@ -32,9 +32,10 @@ const (
 )
 
 type OpenAIModel struct {
-	name   string
-	key    string
-	Client *http.Client
+	name       string
+	key        string
+	gatewayURL string
+	Client     *http.Client
 	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
 	TestURL string
 }
@@ -43,13 +44,26 @@ func NewOpenAIModel(key, name string) *OpenAIModel {
 	return &OpenAIModel{name: name, key: key, Client: &http.Client{Timeout: 75 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
+func NewGatewayModel(baseURL, key, name string) *OpenAIModel {
+	model := NewOpenAIModel(key, name)
+	model.gatewayURL = strings.TrimRight(baseURL, "/") + "/chat/completions"
+	return model
+}
+
 func (m *OpenAIModel) Name() string { return m.name }
+
+func (m *OpenAIModel) provider() string {
+	if m.gatewayURL != "" {
+		return modelgateway.Provider
+	}
+	return openAIProvider
+}
 
 func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply Reply, err error) {
 	var requestStarted time.Time
 	ctx, span := conversationTracer.Start(ctx, "chat "+m.name, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
 		attribute.String("openinference.span.kind", "LLM"), attribute.String("session.id", observability.SessionID()),
-		attribute.String("gen_ai.operation.name", "chat"), attribute.String("gen_ai.provider.name", openAIProvider),
+		attribute.String("gen_ai.operation.name", "chat"), attribute.String("gen_ai.provider.name", m.provider()),
 		attribute.String("gen_ai.request.model", m.name), attribute.String("llm.model_name", m.name),
 	))
 	promptBytes := 0
@@ -79,7 +93,9 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	}
 	span.SetAttributes(attribute.Int("nori.prompt.bytes", len(body)))
 	endpoint := openAIChatURL
-	if m.TestURL != "" {
+	if m.gatewayURL != "" {
+		endpoint = m.gatewayURL
+	} else if m.TestURL != "" {
 		endpoint = strings.TrimRight(m.TestURL, "/") + "/v1/chat/completions"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -107,15 +123,21 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	reply.Usage.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		if m.gatewayURL != "" {
+			if (res.StatusCode == 400 || res.StatusCode == 413) && contextview.Refusal(res.Body) {
+				return reply, contextview.ErrOverflow
+			}
+			return reply, modelgateway.HTTPError(res.StatusCode)
+		}
 		if logRefusal(res) && (res.StatusCode == 400 || res.StatusCode == 413) {
 			return reply, contextview.ErrOverflow
 		}
 		return reply, providerHTTPError{res.StatusCode, fmt.Sprintf("model provider returned HTTP %d", res.StatusCode)}
 	}
 	if request.Stream != nil {
-		return decodeOpenAIStream(res, reply, request, span)
+		return m.decodeOpenAIStream(res, reply, request, span)
 	}
-	return decodeOpenAIReply(res, reply, request.NoDispatch, span)
+	return m.decodeOpenAIReply(res, reply, request.NoDispatch, span)
 }
 
 // logRefusal records why the provider refused a request: its error type and code and its rate-limit headers. The
@@ -137,7 +159,7 @@ func logRefusal(res *http.Response) bool {
 }
 
 func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span trace.Span) ([]byte, error) {
-	if m.name != openAIModelName {
+	if m.gatewayURL == "" && m.name != openAIModelName {
 		return nil, errors.New("unsupported direct OpenAI conversation model")
 	}
 	input, err := openAIConversation(request.Messages)
@@ -145,8 +167,12 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 		return nil, err
 	}
 	body := map[string]any{
-		"model": m.name, "messages": input, "max_completion_tokens": outputLimit, "reasoning_effort": "low",
-		"service_tier": "default", "store": false, "prompt_cache_options": map[string]string{"mode": "explicit"},
+		"model": m.name, "messages": input, "max_completion_tokens": outputLimit, "store": false,
+	}
+	if m.gatewayURL == "" {
+		body["reasoning_effort"], body["service_tier"] = "low", "default"
+		body["prompt_cache_options"] = map[string]string{"mode": "explicit"}
+		span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", "low"), attribute.String("gen_ai.request.service_tier", "default"))
 	}
 	if request.Stream != nil {
 		body["stream"] = true
@@ -158,21 +184,21 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 	if !request.NoDispatch {
 		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.CommandPlan)
 	}
-	span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", "low"), attribute.String("gen_ai.request.service_tier", "default"))
 	return json.Marshal(body)
 }
 
 // decodeOpenAIReply preserves observed usage even when the provider response is unusable.
-func decodeOpenAIReply(res *http.Response, reply Reply, noDispatch bool, span trace.Span) (Reply, error) {
+func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispatch bool, span trace.Span) (Reply, error) {
 	var err error
 	var response struct {
 		ID    string `json:"id"`
 		Model string `json:"model"`
 		Tier  string `json:"service_tier"`
 		Usage *struct {
-			Input        *int64 `json:"prompt_tokens"`
-			Output       *int64 `json:"completion_tokens"`
-			Total        *int64 `json:"total_tokens"`
+			Input        *int64          `json:"prompt_tokens"`
+			Output       *int64          `json:"completion_tokens"`
+			Total        *int64          `json:"total_tokens"`
+			Cost         json.RawMessage `json:"cost"`
 			InputDetails struct {
 				Cached int64 `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
@@ -192,11 +218,18 @@ func decodeOpenAIReply(res *http.Response, reply Reply, noDispatch bool, span tr
 		reply.Usage.InputTokens = response.Usage.Input
 		reply.Usage.OutputTokens = response.Usage.Output
 		reply.Usage.TotalTokens = response.Usage.Total
-		cost, costErr := usage.SolCost(
-			response.Model, response.Tier, response.Usage.Input, response.Usage.Output, response.Usage.Total, response.Usage.InputDetails.Cached,
-		)
-		if costErr == nil {
-			reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
+		if m.gatewayURL != "" {
+			var cost *float64
+			if json.Unmarshal(response.Usage.Cost, &cost) == nil {
+				usage.RecordReportedCost(&reply.Usage, cost)
+			}
+		} else {
+			cost, costErr := usage.SolCost(
+				response.Model, response.Tier, response.Usage.Input, response.Usage.Output, response.Usage.Total, response.Usage.InputDetails.Cached,
+			)
+			if costErr == nil {
+				reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
+			}
 		}
 		span.SetAttributes(
 			attribute.Int64("gen_ai.usage.reasoning.output_tokens", response.Usage.OutputDetails.Reasoning),
@@ -215,6 +248,9 @@ func decodeOpenAIReply(res *http.Response, reply Reply, noDispatch bool, span tr
 		case "error", "length", "content_filter", "function_call", "cancelled":
 			reason = choice.Finish
 		}
+		if m.gatewayURL != "" {
+			return reply, fmt.Errorf("model gateway did not finish the Chat Completions response normally (finish_reason=%s)", reason)
+		}
 		id := "unavailable"
 		if response.ID != "" && len(response.ID) <= 128 &&
 			strings.Trim(response.ID, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") == "" {
@@ -229,6 +265,9 @@ func decodeOpenAIReply(res *http.Response, reply Reply, noDispatch bool, span tr
 	}
 	if err := json.Unmarshal(choice.Message, &message); err != nil || message.Role != "assistant" {
 		return reply, fmt.Errorf("model returned an invalid assistant message")
+	}
+	if m.gatewayURL != "" && (choice.Finish != "stop" || len(message.Calls) != 0) {
+		return reply, errors.New("model gateway must return Chat Completions text or a JSON schema response without native tool calls")
 	}
 	reply.Message, reply.Calls = choice.Message, message.Calls
 	if message.Content != nil {
@@ -257,7 +296,7 @@ func (e providerHTTPError) Error() string       { return e.detail }
 func (e providerHTTPError) HTTPStatusCode() int { return e.status }
 
 func (m *OpenAIModel) observeCall(ctx context.Context, span trace.Span, requestStarted time.Time, reply Reply, err error) {
-	provider := attribute.String("gen_ai.provider.name", openAIProvider)
+	provider := attribute.String("gen_ai.provider.name", m.provider())
 	model := attribute.String("gen_ai.request.model", m.name)
 	span.SetAttributes(
 		attribute.Bool("nori.output.present", reply.Text != ""), attribute.Int("nori.tool.call_count", len(reply.Calls)),
@@ -333,7 +372,7 @@ func openAIConversation(messages []json.RawMessage) ([]map[string]string, error)
 
 // decodeOpenAIStream uses the same response validator and token pricing as the
 // ordinary adapter. A truncated stream retains partial text and unknown cost.
-func decodeOpenAIStream(res *http.Response, reply Reply, request ReplyRequest, span trace.Span) (Reply, error) {
+func (m *OpenAIModel) decodeOpenAIStream(res *http.Response, reply Reply, request ReplyRequest, span trace.Span) (Reply, error) {
 	scanner := bufio.NewScanner(io.LimitReader(res.Body, 2<<20))
 	scanner.Buffer(make([]byte, 4096), 256<<10)
 	text := ""
@@ -444,7 +483,7 @@ func decodeOpenAIStream(res *http.Response, reply Reply, request ReplyRequest, s
 	body, _ := json.Marshal(map[string]any{"id": id, "model": model, "service_tier": tier, "usage": usage, "choices": []any{map[string]any{"finish_reason": finish, "message": map[string]any{"role": "assistant", "content": text, "tool_calls": ordered}}}})
 	copyResponse := *res
 	copyResponse.Body = io.NopCloser(bytes.NewReader(body))
-	decoded, err := decodeOpenAIReply(&copyResponse, reply, true, span)
+	decoded, err := m.decodeOpenAIReply(&copyResponse, reply, true, span)
 	if err == nil && request.Foreground {
 		decoded.Text, decoded.Calls, err = decodeForeground(decoded.Text)
 	}

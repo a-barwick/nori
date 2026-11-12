@@ -245,7 +245,7 @@ computer or a model; `/healthz` does not verify those services are reachable.
 | Configuration | Purpose |
 | --- | --- |
 | `OPENAI_API_KEY`, `JEV_API_KEY` | OpenAI credential for replies and direct Terra. Jev requires its own key when enabled |
-| `NORI_AGENT_MODEL` | Conversation model; default `gpt-6.1-sol`. It runs through OpenAI's platform API at a fixed endpoint, with low reasoning and the standard tier |
+| `NORI_AGENT_MODEL` | Conversation model. The default route uses `gpt-6.1-sol` through OpenAI's platform API with low reasoning and the standard tier |
 | `BIND_HOST`, `PORT` | Hosted entrypoint defaults `127.0.0.1:8080`; managed container binds `0.0.0.0` behind IAM. Local entrypoint always binds loopback |
 | `NORI_STORE_BACKEND`, `NORI_POSTGRES_URL` | Firestore by default; `postgres` selects a Postgres connection and applies numbered migrations at startup |
 | `NORI_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Required for Firestore, with no defaults; a process without them fails at startup. Google APIs use Application Default Credentials |
@@ -287,6 +287,39 @@ is `infrastructure/temporal/Dockerfile.worker`; the web image is `../web/Dockerf
 built from `web/`. Deployment, worker registration, pause/resume, and retained-data operations are covered by
 [app operations](infrastructure/app/README.md) and
 [Temporal operations](infrastructure/temporal/README.md).
+
+### Deployment-owned model gateway
+
+Apply the same profile to the API and task worker:
+
+```dotenv
+NORI_MODEL_PROVIDER=gateway
+NORI_MODEL_GATEWAY_URL=https://models.example.invalid/v1
+NORI_AGENT_MODEL=approved-conversation-alias
+MODEL_NAME=approved-task-alias
+NORI_JEV_ENABLED=false
+```
+
+Inject `NORI_MODEL_GATEWAY_API_KEY` as a runtime secret in both processes.
+Supply the raw bearer token. The API base includes the gateway's path prefix,
+such as `/v1`. Both processes validate the profile on startup. Keep
+`NORI_MODEL_TEST_URL` unset for this profile. It remains available for the
+local loopback stub.
+
+- The conversation alias must support `POST /chat/completions`, strict
+  `response_format: json_schema` for assistant routing and independent command
+  planning, and SSE with `stream_options.include_usage` for independent chat.
+  The adapter sends `max_completion_tokens` and `store: false`.
+- The task alias must support `POST /responses`, `instructions`,
+  `max_output_tokens`, function tools with JSON object arguments, and stateless
+  continuation with `store: false` and matching `function_call_output` items.
+  The adapter requests `include: ["reasoning.encrypted_content"]` and sends
+  any returned reasoning items back on continuation. The worker uses the `complete` function to publish a result.
+  Conversation compaction uses the same alias with the `save_summary` function.
+  Screenshot inspection requires image input when that capability is enabled.
+- Return the standard token usage fields for each API. Optional `usage.cost`
+  is the charge in USD. Missing cost stays unknown. Use a gateway-side quota
+  when the deployment needs a spending ceiling on calls with unknown cost.
 
 ## Code layout
 

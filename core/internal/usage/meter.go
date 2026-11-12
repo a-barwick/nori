@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,6 +38,15 @@ func Attempt(ctx context.Context, provider, model string) state.Usage {
 		provider = s.provider
 	}
 	return state.Usage{ID: uuid.NewString(), InputID: s.input, Provider: provider, Model: model, CostStatus: "unknown", RequestStatus: "pending", CreatedAt: time.Now().UTC()}
+}
+
+// RecordReportedCost retains a valid provider-reported USD charge, including zero.
+func RecordReportedCost(record *state.Usage, cost *float64) bool {
+	if cost == nil || *cost < 0 || math.IsNaN(*cost) || math.IsInf(*cost, 0) {
+		return false
+	}
+	record.CostUSD, record.CostStatus = cost, "provider"
+	return true
 }
 
 // Finish persists the final observation independently of caller cancellation.

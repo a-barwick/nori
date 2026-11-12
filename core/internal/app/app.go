@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"nori/internal/agent"
-	"nori/internal/agent/responses"
 	"nori/internal/api"
 	"nori/internal/chat"
 	"nori/internal/conversation"
@@ -44,14 +43,12 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	if err := validateStartup(cfg); err != nil {
 		return nil, err
 	}
-	key := cfg.Models.OpenAIKey
 	store, err := platform.OpenStore(ctx, cfg, user)
 	if err != nil {
 		return nil, err
 	}
 	model := cfg.Models.Outer
-	outer := conversation.NewOpenAIModel(key, model)
-	outer.TestURL = cfg.Models.TestURL
+	outer := platform.ReplyModel(cfg.Models)
 	location, err := time.LoadLocation(cfg.TimeZone)
 	if err != nil {
 		store.Close()
@@ -102,13 +99,11 @@ func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user use
 	dispatcher := platform.Dispatcher(cfg, store, engine, waker, user.ID)
 	dispatcher.WakeRepair = result.WakeRepair
 	tasks := &conversation.Tasks{Store: store, Dispatcher: dispatcher}
-	_, taskKey := cfg.Models.TaskCredential()
-	summaryModel := "openai/gpt-6.1-terra"
-	if cfg.Models.UsesOpenAIForTasks() {
-		summaryModel = cfg.Models.Inner
+	summaryModels := cfg.Models
+	if !summaryModels.UsesGateway() && !summaryModels.UsesOpenAIForTasks() {
+		summaryModels.Inner = "openai/gpt-6.1-terra"
 	}
-	summarizer := responses.New(taskKey, summaryModel, store)
-	summarizer.TestURL = cfg.Models.TestURL
+	summarizer := platform.TaskModel(summaryModels, store)
 	var classifier conversation.IntentClassifier
 	if !cfg.Features.DisableJev {
 		classifier = conversation.NewJevClassifier(cfg.Models.JevKey)

@@ -92,14 +92,21 @@ type Models struct {
 	OpenAIKey, JevKey, OpenRouterKey string
 	// Outer is the outer conversation model and Inner the task worker model.
 	Outer, Inner string
+	// Provider selects the deployment-owned gateway when set to "gateway".
+	Provider, GatewayURL, GatewayKey string
 	// TestURL sends every model request to a loopback HTTP stub instead of the provider. Local development only
 	// (NORI_MODEL_TEST_URL, refused unless NORI_CLOUD=local), for checking timeouts and prompts without provider keys.
 	TestURL string
 }
 
-func (m Models) UsesOpenAIForTasks() bool { return m.Inner == "gpt-6.1-terra" }
+func (m Models) UsesGateway() bool { return m.Provider == "gateway" }
+
+func (m Models) UsesOpenAIForTasks() bool { return !m.UsesGateway() && m.Inner == "gpt-6.1-terra" }
 
 func (m Models) TaskCredential() (name, key string) {
+	if m.UsesGateway() {
+		return "NORI_MODEL_GATEWAY_API_KEY", m.GatewayKey
+	}
 	if m.UsesOpenAIForTasks() {
 		return "OPENAI_API_KEY", m.OpenAIKey
 	}
@@ -248,6 +255,9 @@ func Load() (Settings, error) {
 	if err := s.Metering.Validate(); err != nil {
 		return Settings{}, err
 	}
+	if err := s.Models.validateGateway(); err != nil {
+		return Settings{}, err
+	}
 	if s.Models.TestURL != "" {
 		u, err := url.Parse(s.Models.TestURL)
 		if err != nil || s.Cloud != "local" || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost") {
@@ -304,7 +314,7 @@ func FromEnvironment() Settings {
 		CloudRunID: os.Getenv("TEMPORAL_CLOUD_RUN_ID") == "true",
 	}
 	var credentials []string
-	for _, name := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL", "NORI_SERVICE_TOKEN_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "NORI_SMTP_PASSWORD", "NORI_VAPID_PRIVATE_KEY", "MICROSOFT_CLIENT_SECRET"} {
+	for _, name := range []string{"NORI_MODEL_GATEWAY_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "JEV_API_KEY", "TEMPORAL_API_KEY", "TEMPORAL_BILLING_API_KEY", "SENTRY_AUTH_TOKEN", "ARIZE_API_KEY", "NORI_USAGE_TOKEN", "NORI_POSTGRES_URL", "NORI_SERVICE_TOKEN_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "NORI_SMTP_PASSWORD", "NORI_VAPID_PRIVATE_KEY", "MICROSOFT_CLIENT_SECRET"} {
 		if value := os.Getenv(name); value != "" {
 			credentials = append(credentials, value)
 		}
@@ -316,11 +326,7 @@ func FromEnvironment() Settings {
 		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION")), WakeQueueURL: os.Getenv("NORI_AWS_WAKE_QUEUE_URL")},
 		ServiceAuth: serviceauth.Config{Key: os.Getenv("NORI_SERVICE_TOKEN_KEY"), Audience: get("NORI_SERVICE_AUDIENCE", "nori")},
 		BindHost:    get("BIND_HOST", "127.0.0.1"), Port: os.Getenv("PORT"),
-		Models: Models{
-			OpenAIKey: os.Getenv("OPENAI_API_KEY"), JevKey: os.Getenv("JEV_API_KEY"), OpenRouterKey: os.Getenv("OPENROUTER_API_KEY"),
-			Outer: get("NORI_AGENT_MODEL", "gpt-6.1-sol"), Inner: get("MODEL_NAME", "openai/gpt-6.1-terra"),
-			TestURL: os.Getenv("NORI_MODEL_TEST_URL"),
-		},
+		Models:        modelsFromEnvironment(),
 		Store:         store,
 		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN")},
 		Computer:      Computer{},

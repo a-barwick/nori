@@ -1,8 +1,6 @@
 package responses
 
 import (
-	"math"
-
 	"nori/internal/state"
 	"nori/internal/usage"
 )
@@ -33,9 +31,8 @@ func (c *Client) recordCost(record *state.Usage, model, tier string, u *response
 		record.CostUSD, record.CostStatus = &cost, "calculated"
 		return cost, true
 	}
-	if u.Cost == nil || *u.Cost < 0 || math.IsNaN(*u.Cost) || math.IsInf(*u.Cost, 0) {
+	if !usage.RecordReportedCost(record, u.Cost) {
 		return 0, false
 	}
-	record.CostUSD, record.CostStatus = u.Cost, "provider"
 	return *u.Cost, true
 }

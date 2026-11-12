@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"nori/internal/agent"
+	"nori/internal/modelgateway"
 	"nori/internal/usage"
 )
 
@@ -52,6 +53,9 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	record.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		if c.gatewayURL != "" {
+			return out, modelgateway.HTTPError(res.StatusCode)
+		}
 		return out, fmt.Errorf("inspection model returned HTTP %d", res.StatusCode)
 	}
 	var response struct {

@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"nori/internal/agent"
 	"nori/internal/contextview"
+	"nori/internal/modelgateway"
 	"nori/internal/transcript"
 	"nori/internal/usage"
 )
@@ -28,10 +30,11 @@ const (
 )
 
 type Client struct {
-	Key       string
-	ModelName string
-	HTTP      *http.Client
-	Meter     usage.Meter
+	Key        string
+	ModelName  string
+	HTTP       *http.Client
+	Meter      usage.Meter
+	gatewayURL string
 	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
 	TestURL string
 }
@@ -48,9 +51,18 @@ func New(key, model string, meter usage.Meter) *Client {
 	}
 }
 
-func (c *Client) direct() bool { return c.ModelName == directModel }
+func NewGateway(baseURL, key, model string, meter usage.Meter) *Client {
+	client := New(key, model, meter)
+	client.gatewayURL = strings.TrimRight(baseURL, "/") + "/responses"
+	return client
+}
+
+func (c *Client) direct() bool { return c.gatewayURL == "" && c.ModelName == directModel }
 
 func (c *Client) Provider() string {
+	if c.gatewayURL != "" {
+		return modelgateway.Provider
+	}
 	if c.direct() {
 		return "openai"
 	}
@@ -60,6 +72,9 @@ func (c *Client) Provider() string {
 func (c *Client) Name() string { return c.ModelName }
 
 func (c *Client) endpoint() string {
+	if c.gatewayURL != "" {
+		return c.gatewayURL
+	}
 	if c.TestURL != "" {
 		return strings.TrimRight(c.TestURL, "/") + "/v1/responses"
 	}
@@ -70,6 +85,9 @@ func (c *Client) endpoint() string {
 }
 
 func (c *Client) format() string {
+	if c.gatewayURL != "" {
+		return "nori.gateway.responses"
+	}
 	if c.direct() {
 		return "nori.openai.responses"
 	}
@@ -77,6 +95,9 @@ func (c *Client) format() string {
 }
 
 func (c *Client) requestOptions(fields map[string]any) {
+	if c.gatewayURL != "" {
+		return
+	}
 	if c.direct() {
 		fields["service_tier"] = "default"
 		fields["prompt_cache_options"] = map[string]string{"mode": "explicit"}
@@ -85,7 +106,9 @@ func (c *Client) requestOptions(fields map[string]any) {
 	fields["provider"] = map[string]any{"max_price": map[string]float64{"prompt": 1, "completion": 5}, "require_parameters": true}
 }
 
-func (c *Client) validModel() bool { return c.direct() || c.ModelName == routerModel }
+func (c *Client) validModel() bool {
+	return c.gatewayURL != "" || c.direct() || c.ModelName == routerModel
+}
 
 func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Response, err error) {
 	out.NotSent = true
@@ -117,7 +140,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		"tools": tools, "max_output_tokens": req.MaxOutputTokens, "store": false,
 		"include": []string{"reasoning.encrypted_content"},
 	}
-	if req.Reasoning != "" {
+	if c.gatewayURL == "" && req.Reasoning != "" {
 		fields["reasoning"] = map[string]string{"effort": req.Reasoning}
 	}
 	c.requestOptions(fields)
@@ -152,6 +175,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		if (res.StatusCode == 400 || res.StatusCode == 413) && contextview.Refusal(res.Body) {
 			return out, contextview.ErrOverflow
 		}
+		if c.gatewayURL != "" {
+			return out, modelgateway.HTTPError(res.StatusCode)
+		}
 		return out, fmt.Errorf("task model returned HTTP %d", res.StatusCode)
 	}
 	var response struct {
@@ -172,6 +198,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		}
 	}
 	if response.Status != "completed" {
+		if c.gatewayURL != "" {
+			return out, errors.New("model gateway must return a completed Responses API response before tools can run")
+		}
 		return out, errors.New("task model response incomplete; no tools executed")
 	}
 	saved, err := json.Marshal(response.Output)
@@ -187,6 +216,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	text := []string{}
 	for _, raw := range response.Output {
 		var item struct {
+			Role      string `json:"role"`
 			Type      string `json:"type"`
 			CallID    string `json:"call_id"`
 			Name      string `json:"name"`
@@ -205,13 +235,27 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			if call.ID == "" || json.Unmarshal([]byte(item.Arguments), &call.Args) != nil || call.Args == nil {
 				return out, errors.New("invalid task tool call")
 			}
+			if c.gatewayURL != "" && !slices.ContainsFunc(req.Tools, func(tool transcript.Tool) bool { return tool.Name == call.Name }) {
+				return out, errors.New("model gateway returned a function call for a tool absent from the request")
+			}
 			calls = append(calls, call)
 			message.Parts = append(message.Parts, transcript.Part{ToolCall: &call})
 		case "message":
+			if c.gatewayURL != "" && item.Role != "assistant" {
+				return out, errors.New("model gateway returned a Responses message without the assistant role")
+			}
 			for _, content := range item.Content {
 				if content.Type == "output_text" {
 					text = append(text, content.Text)
+				} else if c.gatewayURL != "" {
+					return out, errors.New("model gateway returned unsupported Responses message content. Check model output or access policy")
 				}
+			}
+		case "reasoning":
+			// Kept in provider state for stateless continuation.
+		default:
+			if c.gatewayURL != "" {
+				return out, errors.New("model gateway returned an unsupported Responses output item. Check function calling compatibility")
 			}
 		}
 	}
