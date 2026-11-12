@@ -10,7 +10,7 @@ import (
 
 // Reuse the runtime's command schemas in one strict action-list response.
 // Validated actions enter the same durable admission and replay path.
-func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string, commandPlan bool) any {
+func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string, commandPlan, gateway bool) any {
 	var tools []struct {
 		Function struct {
 			Name, Description string
@@ -39,30 +39,22 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string
 			if tool.Function.Name == "forget" {
 				properties["memory_id"].(map[string]any)["enum"] = memoryIDs
 			} else {
-				replaces := []any{nil}
-				for _, id := range memoryIDs {
-					replaces = append(replaces, id)
-				}
-				properties["replaces"].(map[string]any)["enum"] = replaces
+				setNullableStringEnum(properties["replaces"].(map[string]any), memoryIDs, gateway)
 			}
 			variants = append(variants, actionVariant(tool.Function.Name, tool.Function.Description, tool.Function.Parameters))
 			continue
 		}
 		if tool.Function.Name == "dispatch" {
-			parents := []any{nil}
-			for _, id := range taskIDs {
-				parents = append(parents, id)
-			}
 			field := tool.Function.Parameters["properties"].(map[string]any)["for"].(map[string]any)
-			field["enum"] = parents
-			if commandPlan {
-				field["enum"] = []any{nil}
-				tool.Function.Parameters["properties"].(map[string]any)["question_id"].(map[string]any)["enum"] = []any{nil}
-			}
 			if restricted {
 				field["type"], field["enum"] = "string", asking
 				question := tool.Function.Parameters["properties"].(map[string]any)["question_id"].(map[string]any)
 				question["type"], question["enum"] = "string", questions
+			} else if commandPlan {
+				setNullableStringEnum(field, nil, gateway)
+				setNullableStringEnum(tool.Function.Parameters["properties"].(map[string]any)["question_id"].(map[string]any), nil, gateway)
+			} else {
+				setNullableStringEnum(field, taskIDs, gateway)
 			}
 		} else if restricted {
 			properties := tool.Function.Parameters["properties"].(map[string]any)
@@ -90,6 +82,24 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string
 			}, "required": []string{"actions", "text"}, "additionalProperties": false,
 		},
 	}}
+}
+
+// Some model providers reject a null enum member on a field with a union type.
+func setNullableStringEnum(field map[string]any, values []string, gateway bool) {
+	if !gateway {
+		items := make([]any, 1, len(values)+1)
+		for _, value := range values {
+			items = append(items, value)
+		}
+		field["enum"] = items
+		return
+	}
+	if len(values) == 0 {
+		field["type"] = "null"
+		return
+	}
+	delete(field, "type")
+	field["anyOf"] = []any{map[string]any{"type": "string", "enum": values}, map[string]any{"type": "null"}}
 }
 
 func actionVariant(name, description string, parameters map[string]any) map[string]any {

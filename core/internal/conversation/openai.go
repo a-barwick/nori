@@ -182,7 +182,7 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 		body["response_format"] = foregroundFormat(request.Tools)
 	}
 	if !request.NoDispatch {
-		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.CommandPlan)
+		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.CommandPlan, m.gatewayURL != "")
 	}
 	return json.Marshal(body)
 }
