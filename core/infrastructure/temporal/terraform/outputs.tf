@@ -25,6 +25,10 @@ output "scalable_build_ids" {
   value = var.scalable_build_ids
 }
 
+output "queue_caller_secret" {
+  value = var.queue_caller_secret
+}
+
 output "environment" {
   value = var.environment
 }

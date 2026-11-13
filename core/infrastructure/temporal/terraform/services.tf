@@ -20,6 +20,8 @@ variable "request_worker_targets" {
     firestore_database  = optional(string, "nori-poc")
     # Retained targets without a model field predate the move to OpenRouter.
     model_name = optional(string, "gemini-3.8-flash")
+    # New releases inherit the queue signing key from their app state.
+    queue_caller_secret = optional(string)
     # New sandbox builds can keep the sandbox model on the Responses gateway.
     sandbox_model_gateway = optional(bool, false)
     # Older pinned binaries still need their original calendar bindings.
@@ -268,7 +270,7 @@ resource "google_cloud_run_v2_service" "worker" {
         }
       }
       dynamic "env" {
-        for_each = var.queue_caller_secret == "" ? [] : [var.queue_caller_secret]
+        for_each = compact([var.request_worker_targets[each.key].queue_caller_secret == null ? var.queue_caller_secret : var.request_worker_targets[each.key].queue_caller_secret])
         content {
           name = "NORI_QUEUE_CALLER_KEY"
           value_source {

@@ -274,7 +274,8 @@ def worker_inventory():
     targets = {key: {k: v for k, v in value.items() if v is not None} for key, value in outputs["request_worker_targets"].items()}
     require(set(targets) == set(services), "Terraform worker outputs are incomplete; refresh the state first")
     return {"worker_images": images("google_cloud_run_v2_worker_pool"), "request_worker_images": services, "request_worker_targets": targets,
-            "scalable_build_ids": outputs["scalable_build_ids"], "observability": outputs["observability_config"]}
+            "scalable_build_ids": outputs["scalable_build_ids"], "observability": outputs["observability_config"],
+            "queue_caller_secret": outputs.get("queue_caller_secret", "")}
 
 
 def plan_changes(plan):
@@ -300,7 +301,8 @@ def plan_worker(c, build, image=None):
         # New builds serve connected accounts (database credential store, OAuth client, safe send defaults).
         targets[build] = {**targets[current], "capabilities": False, "brave_search": brave_search_ready(),
                           "per_user_settings": True, "jev_completion": False, "model_name": "gpt-6.1-terra",
-                          "connected_accounts": True}
+                          "connected_accounts": True,
+                          "queue_caller_secret": c.get("caller_key_secrets", {}).get("NORI_QUEUE_CALLER_KEY", "")}
         services[build] = image or services[current]
     target = targets[build]
     require(target["deployment_name"] == ops.DEPLOYMENT and target["firestore_database"] == "nori-poc", "Worker target is not production")

@@ -145,15 +145,17 @@ Configure distinct keys of at least 32 bytes:
 
 On GCP, set `caller_key_secrets` in the application state and
 apply the app state's IAM bindings before deploying any workers that use them.
-Set `queue_caller_secret` in the Temporal state to the same Secret Manager ID
-as `caller_key_secrets["NORI_QUEUE_CALLER_KEY"]`. Both states use the runtime
-service account for Secret Manager access.
-The release reads `route_auth_mode` and these secret references from the
-application state. The operator running resume needs access to the internal
-key. Use a sandbox to verify header forwarding through the deployed
-Agent Runtime. Check wakes from every retained worker build and any queue
-entries already scheduled before switching to enforcement. Production
-observation and enforcement each require Austin's approval.
+The production release reads `route_auth_mode` and these secret references
+from the application state. It passes `NORI_QUEUE_CALLER_KEY` to new request
+worker builds and preserves the configuration of retained builds. For a manual
+Temporal apply, set the request worker target's `queue_caller_secret` to the
+same Secret Manager ID as `caller_key_secrets["NORI_QUEUE_CALLER_KEY"]`. Both
+states use the runtime service account for Secret Manager access. The operator
+running resume needs access to the internal key. Use a sandbox to verify header
+forwarding through the deployed Agent Runtime. Check wakes from every retained
+worker build and any queue entries already scheduled before switching to
+enforcement. Production observation and enforcement each require Austin's
+approval.
 
 ## GCP client gateway
 
