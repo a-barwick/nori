@@ -331,20 +331,20 @@ func runShortSessionIdleExtractAndRecall(t *testing.T, ctx context.Context, seed
 		t.Fatalf("ReleaseUserWake: %v", err)
 	}
 
-	// 2. Advance +10m: must NOT claim or extract early.
-	w.Clock.Advance(10 * time.Minute)
+	// 2. Advance half of IdleExtractDelay: must NOT claim or extract early.
+	w.Clock.Advance(state.IdleExtractDelay / 2)
 	if _, claimedEarly, err := w.Backend.ClaimUserWake(ctx, docstore.LaneConversation, "sim-short-early", state.ConversationLease); err != nil || claimedEarly {
-		t.Fatalf("expected +20m wake not claimable at +10m, claimedEarly=%v err=%v", claimedEarly, err)
+		t.Fatalf("expected +%s wake not claimable early, claimedEarly=%v err=%v", state.IdleExtractDelay, claimedEarly, err)
 	}
 	if err := uw.Outer.ProcessWorker(ctx, 0); err != nil {
-		t.Fatalf("ProcessWorker at +10m: %v", err)
+		t.Fatalf("ProcessWorker before IdleExtractDelay: %v", err)
 	}
 	sumEarly, err := uw.Store.ConversationSummary(ctx)
 	if err != nil {
-		t.Fatalf("ConversationSummary at +10m: %v", err)
+		t.Fatalf("ConversationSummary before IdleExtractDelay: %v", err)
 	}
 	if !sumEarly.EffectiveExtractedThrough().IsZero() || !sumEarly.Through.IsZero() || !sumEarly.FlushedThrough.IsZero() {
-		t.Fatalf("expected zero watermarks at +10m before IdleExtractDelay, got extracted=%v through=%v flushed=%v",
+		t.Fatalf("expected zero watermarks before IdleExtractDelay, got extracted=%v through=%v flushed=%v",
 			sumEarly.EffectiveExtractedThrough(), sumEarly.Through, sumEarly.FlushedThrough)
 	}
 

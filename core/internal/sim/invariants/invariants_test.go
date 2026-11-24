@@ -2372,13 +2372,13 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			Items:            []state.SummaryItem{},
 			UpdatedAt:        e1,
 		})
-		// Before IdleExtractDelay (+10m after e2): passes cleanly without needing a wake.
-		w3.clock.Advance(12 * time.Minute)
+		// Before IdleExtractDelay (halfway past e2): passes cleanly without needing a wake.
+		w3.clock.Advance(2*time.Minute + state.IdleExtractDelay/2)
 		if err := w3.checker.CheckQuiescence(ctx, w3.targets, w3.clock.Now()); err != nil {
 			t.Fatalf("expected unextracted turn before IdleExtractDelay to pass quiescence, got: %v", err)
 		}
-		// Past IdleExtractDelay (+20m after e2) with no future wake and no active backoff: violation!
-		w3.clock.Advance(10 * time.Minute)
+		// Past IdleExtractDelay after e2 with no future wake and no active backoff: violation!
+		w3.clock.Advance(state.IdleExtractDelay)
 		requireViolation(t, w3.checker.CheckQuiescence(ctx, w3.targets, w3.clock.Now()), "INV-MEM-08.unextracted_after_idle")
 		// Store-only mode (Backend == nil) also catches INV-MEM-08.unextracted_after_idle.
 		storeOnlyChecker := invariants.New(invariants.Config{Now: w3.clock.Now})

@@ -1716,8 +1716,8 @@ func (w *FullWorld) stepFullTimeAndPause(ctx context.Context) {
 	}
 
 	// Curated time-jump ladder spanning quiet windows, TaskLease/ConversationLease (30s),
-	// IdleFlushDelay (+2m), compaction pauses (10m), IdleDreamDelay (+15m),
-	// IdleExtractDelay (+20m), DreamMinInterval (+12h), interaction/rule expiries,
+	// IdleFlushDelay (+2m), IdleExtractDelay (+5m), compaction pauses (10m),
+	// IdleDreamDelay (+15m), DreamMinInterval (+12h), interaction/rule expiries,
 	// and multi-day automation schedules.
 	durations := []time.Duration{
 		200 * time.Millisecond,
@@ -1725,9 +1725,9 @@ func (w *FullWorld) stepFullTimeAndPause(ctx context.Context) {
 		15 * time.Second,
 		45 * time.Second,
 		state.IdleFlushDelay + 5*time.Second,   // +2m5s flush idle wake
+		state.IdleExtractDelay + 5*time.Second, // +5m5s session-idle extraction wake
 		11 * time.Minute,                       // compaction backoff clear
 		state.IdleDreamDelay + 5*time.Second,   // +15m5s AutoDream quiet wake
-		state.IdleExtractDelay + 5*time.Second, // +20m5s session-idle extraction wake
 		2 * time.Hour,
 		state.DreamMinInterval + 5*time.Minute, // +12h5m AutoDream min interval
 		25 * time.Hour,

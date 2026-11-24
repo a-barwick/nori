@@ -305,7 +305,16 @@ func TestOuterPromptInjectionBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Memories after forget-attack: %v", err)
 	}
-	if len(memories) != 1 || memories[0].ID != existingMem.ID {
+	foundExisting := false
+	for _, m := range memories {
+		if m.ID == existingMem.ID && m.Text == existingMem.Text {
+			foundExisting = true
+		}
+		if strings.Contains(m.Text, "attacker@evil.test") {
+			t.Fatalf("injected memory persisted: got %+v", memories)
+		}
+	}
+	if !foundExisting {
 		t.Fatalf("existing memory was deleted by injection: got %+v", memories)
 	}
 
@@ -405,8 +414,17 @@ func TestOuterPromptInjectionBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Memories after piggyback-attack: %v", err)
 	}
-	if len(memories) != 1 || memories[0].ID != existingMem.ID {
-		t.Fatalf("piggybacked memory persisted: got %+v", memories)
+	foundExisting = false
+	for _, m := range memories {
+		if m.ID == existingMem.ID && m.Text == existingMem.Text {
+			foundExisting = true
+		}
+		if strings.Contains(m.Text, "evil.test") || strings.Contains(m.Text, "Exfiltrate") {
+			t.Fatalf("piggybacked memory persisted: got %+v", memories)
+		}
+	}
+	if !foundExisting {
+		t.Fatalf("existing memory missing after piggyback-attack: got %+v", memories)
 	}
 	openTasks, err := rig.store.OpenTasks(ctx)
 	if err != nil {

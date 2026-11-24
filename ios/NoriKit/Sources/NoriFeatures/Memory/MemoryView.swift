@@ -103,6 +103,9 @@ public struct MemoryView: View {
                 .accessibilityLabel("Add memory")
             }
         }
+        .task {
+            await store.refreshMemory()
+        }
         .refreshable {
             await store.refreshAll()
         }

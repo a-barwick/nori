@@ -797,7 +797,7 @@ func runRandomizedOuterSim(ctx context.Context, seed int64, steps int) (simSumma
 				return out, fmt.Errorf("step %d ProcessWorker(%d): %w", step, workerIdx, err)
 			}
 		case roll < 84:
-			// Advance virtual time (exercises lease expiry, 2m fast flush, 10m compaction pause, and 20m idle extract).
+			// Advance virtual time (exercises lease expiry, 2m fast flush, 5m idle extract, and 10m compaction pause).
 			switch rig.rng.IntN(4) {
 			case 0:
 				rig.clock.Advance(21 * time.Minute)

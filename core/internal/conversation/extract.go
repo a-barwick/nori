@@ -57,11 +57,15 @@ func (r *Runner) planExtract(
 	}
 	pageFull := len(newestRaw) == state.HistoryTurnsExamined
 	completed := make([]state.ConversationTurn, 0, len(newestRaw))
+	userTurns := 0
 	for _, t := range newestRaw {
 		if t.Status != "completed" {
 			continue
 		}
 		completed = append(completed, t)
+		if slices.ContainsFunc(t.Inputs, state.ConversationInput.IsUser) {
+			userTurns++
+		}
 	}
 	if len(completed) == 0 && !pageFull {
 		return plan, nil
@@ -71,12 +75,16 @@ func (r *Runner) planExtract(
 	}
 
 	plan.hasWork = true
-	dueAt := plan.latestTurnAt.Add(state.IdleExtractDelay)
-	if !plan.latestTurnAt.IsZero() && now.Before(dueAt) {
-		plan.wakeAt = dueAt
-		return plan, nil
+	if userTurns >= state.ExtractTurnThreshold || pageFull {
+		plan.ready = true
+	} else {
+		dueAt := plan.latestTurnAt.Add(state.IdleExtractDelay)
+		if !plan.latestTurnAt.IsZero() && now.Before(dueAt) {
+			plan.wakeAt = dueAt
+			return plan, nil
+		}
+		plan.ready = true
 	}
-	plan.ready = true
 
 	if !collectBatch {
 		return plan, nil
@@ -118,8 +126,9 @@ func (r *Runner) planExtract(
 }
 
 // extractIdleMemory extracts durable Core memories and Daily Log entries from
-// completed turns after EffectiveExtractedThrough() once the session has been
-// idle for IdleExtractDelay (20m), leaving Through, FlushedThrough, Items,
+// completed turns after EffectiveExtractedThrough() once either
+// ExtractTurnThreshold (5) unextracted turns accumulate or the session has been
+// idle for IdleExtractDelay (5m), leaving Through, FlushedThrough, Items,
 // Gist, Excerpts, and Turns completely untouched so verbatim turns remain in
 // the active window.
 func (r *Runner) extractIdleMemory(ctx context.Context) error {
@@ -136,9 +145,9 @@ func (r *Runner) extractIdleMemory(ctx context.Context) error {
 	}
 	now := r.now()
 
-	// Coupled flush+compact takes priority whenever turns are eligible to compact.
+	// Coupled flush+compact takes priority whenever it is ready to run now.
 	flushState, err := r.planFlush(ctx, control, summary, now, false)
-	if err != nil || flushState.hasWork {
+	if err != nil || flushState.ready {
 		return err
 	}
 
@@ -195,7 +204,18 @@ func (r *Runner) extractIdleMemory(ctx context.Context) error {
 	coreUpserts := verifyFlushCoreUpserts(output.CoreUpserts, batchUsers, batchUserTimes, coreMemories, nowUTC)
 	logEntries := verifyFlushLogEntries(output.DailyLogEntries, batchUsers, batchRuns, nowUTC)
 
-	return r.commitExtractWithRebase(ctx, plan, coreUpserts, logEntries, nowUTC)
+	if err := r.commitExtractWithRebase(ctx, plan, coreUpserts, logEntries, nowUTC); err != nil {
+		return err
+	}
+	slog.InfoContext(ctx, "conversation idle memory extraction completed",
+		"turns", len(plan.batch),
+		"core_candidates", len(output.CoreUpserts),
+		"core_upserts", len(coreUpserts),
+		"log_candidates", len(output.DailyLogEntries),
+		"log_entries", len(logEntries),
+		"extracted_through", plan.batchThrough,
+	)
+	return nil
 }
 
 func (r *Runner) handleExtractFailure(ctx context.Context, plan extractPlan, callErr error) error {
@@ -215,7 +235,7 @@ func (r *Runner) handleExtractFailure(ctx context.Context, plan extractPlan, cal
 		if err := r.tasks.Store.SaveConversationSummary(ctx, next, plan.expected); err != nil && !errors.Is(err, state.ErrConversationStale) {
 			slog.WarnContext(ctx, "failed to record idle extract retry counter", "err", err)
 		}
-		r.compactAfter = now.Add(flushBackoff(failures))
+		r.extractAfter = now.Add(flushBackoff(failures))
 		return callErr
 	}
 
@@ -225,7 +245,7 @@ func (r *Runner) handleExtractFailure(ctx context.Context, plan extractPlan, cal
 		"failures", failures, "batch_through", plan.batchThrough, "err", callErr)
 	fallbackEntries := extractiveFallbackEntries(plan.batch, nowUTC)
 	err := r.commitExtractWithRebase(ctx, plan, nil, fallbackEntries, nowUTC)
-	r.compactAfter = now.Add(flushBackoff(failures))
+	r.extractAfter = now.Add(flushBackoff(failures))
 	return err
 }
 
@@ -257,7 +277,7 @@ func (r *Runner) commitExtractWithRebase(
 			return ctx.Err()
 		}
 		if !errors.Is(err, state.ErrConversationStale) {
-			r.compactAfter = r.now().Add(flushBackoff(1))
+			r.extractAfter = r.now().Add(flushBackoff(1))
 			return err
 		}
 		if attempt >= maxRebaseAttempts {

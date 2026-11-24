@@ -374,6 +374,12 @@ func (r *Runner) dreamConsolidate(ctx context.Context, manual bool) (state.Conve
 			CheckPending:    !manual,
 		})
 		if err == nil {
+			slog.InfoContext(runCtx, "memory dream consolidation completed",
+				"manual", manual,
+				"core_upserts", len(coreUpserts),
+				"core_deletes", len(coreDeletes),
+				"log_entries", len(dailyLogEntries),
+			)
 			return committed, nil
 		}
 		if !manual || !errors.Is(err, state.ErrConversationStale) || attempt >= maxManualRetries {

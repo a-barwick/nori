@@ -85,10 +85,11 @@ type Runner struct {
 	Profile    users.Profile
 	model      ReplyModel
 	classifier IntentClassifier
-	// summarizer writes coupled flush/compaction and AutoDream passes.
-	// compactAfter and dreamAfter pause background maintenance after failures.
+	// summarizer writes coupled flush/compaction, decoupled extraction, and AutoDream passes.
+	// compactAfter, extractAfter, and dreamAfter pause background maintenance after failures.
 	summarizer   SummaryModel
 	compactAfter time.Time
+	extractAfter time.Time
 	dreamAfter   time.Time
 	tasks        *Tasks
 	process      sync.Mutex
@@ -616,7 +617,7 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 		if extractState.ready || target.IsZero() {
 			target = now
 		}
-		consider(maxTime(target, r.compactAfter))
+		consider(maxTime(target, r.extractAfter))
 	}
 
 	latestTurnAt := maxTime(flushState.latestTurnAt, extractState.latestTurnAt)

@@ -1142,7 +1142,7 @@ func (c *Checker) checkMemoryQuiescenceLocked(ctx context.Context, sorted []User
 
 		// Session-idle extraction liveness: when the summary/memory pipeline is active
 		// for this user and completed turns in the current ContextFrom epoch remain
-		// unextracted at or after IdleExtractDelay (+20m) with no scheduled future
+		// unextracted at or after IdleExtractDelay (+5m) with no scheduled future
 		// LaneConversation wake or active retry backoff, flag INV-MEM-08.unextracted_after_idle.
 		if summaryInEpoch || (summaryExists && !conv.ContextFrom.IsZero() && summary.From.Before(conv.ContextFrom)) {
 			effectiveExtracted := conv.ContextFrom

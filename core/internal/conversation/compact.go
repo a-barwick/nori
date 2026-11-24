@@ -135,7 +135,13 @@ func (r *Runner) contextStart(ctx context.Context) (time.Time, error) {
 // user input cancels the in-flight model call immediately without advancing
 // FlushedThrough or ExtractedThrough.
 func (r *Runner) compact(ctx context.Context) {
-	if r.summarizer == nil || r.now().Before(r.compactAfter) {
+	if r.summarizer == nil {
+		return
+	}
+	now := r.now()
+	canCompact := !now.Before(r.compactAfter)
+	canExtract := !now.Before(r.extractAfter)
+	if !canCompact && !canExtract {
 		return
 	}
 	watchCtx, cancel := context.WithCancel(ctx)
@@ -149,13 +155,15 @@ func (r *Runner) compact(ctx context.Context) {
 		}
 		return true
 	})
-	if err := r.flushAndCompact(watchCtx); err != nil {
-		if watchCtx.Err() == nil && !errors.Is(err, state.ErrConversationStale) {
-			slog.WarnContext(ctx, "conversation flush and compaction failed", "err", err)
+	if canCompact {
+		if err := r.flushAndCompact(watchCtx); err != nil {
+			if watchCtx.Err() == nil && !errors.Is(err, state.ErrConversationStale) {
+				slog.WarnContext(ctx, "conversation flush and compaction failed", "err", err)
+			}
+			return
 		}
-		return
 	}
-	if watchCtx.Err() != nil || r.now().Before(r.compactAfter) {
+	if watchCtx.Err() != nil || r.now().Before(r.extractAfter) {
 		return
 	}
 	if err := r.extractIdleMemory(watchCtx); err != nil && watchCtx.Err() == nil && !errors.Is(err, state.ErrConversationStale) {
@@ -484,7 +492,19 @@ func (r *Runner) flushAndCompact(ctx context.Context) error {
 	trimmedGist := strings.TrimSpace(output.Gist)
 	modelName := r.summarizer.Name()
 
-	return r.commitFlushWithRebase(ctx, plan, coreUpserts, baseLogEntries, keptItems, trimmedGist, modelName, nowUTC)
+	if err := r.commitFlushWithRebase(ctx, plan, coreUpserts, baseLogEntries, keptItems, trimmedGist, modelName, nowUTC); err != nil {
+		return err
+	}
+	slog.InfoContext(ctx, "conversation flush and compaction completed",
+		"turns", len(plan.batch),
+		"core_candidates", len(output.CoreUpserts),
+		"core_upserts", len(coreUpserts),
+		"log_candidates", len(output.DailyLogEntries),
+		"log_entries", len(baseLogEntries),
+		"summary_items", len(keptItems),
+		"flushed_through", plan.batchThrough,
+	)
+	return nil
 }
 
 func (r *Runner) handleFlushFailure(ctx context.Context, plan flushPlan, callErr error) error {

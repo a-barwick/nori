@@ -1717,7 +1717,7 @@ func (w *World) stepTimeAndPause(ctx context.Context) {
 	}
 
 	// Curated time-jump ladder crossing RestartQuiet (1s), TaskLease/ConversationLease (30s),
-	// IdleFlushDelay (+2m), IdleDreamDelay (+15m), IdleExtractDelay (+20m),
+	// IdleFlushDelay (+2m), IdleExtractDelay (+5m), IdleDreamDelay (+15m),
 	// DreamMinInterval (+12h), repair intervals (60s), interaction expiries,
 	// and automation due slots.
 	durations := []time.Duration{
@@ -1727,9 +1727,9 @@ func (w *World) stepTimeAndPause(ctx context.Context) {
 		15 * time.Second,
 		45 * time.Second,
 		state.IdleFlushDelay + 5*time.Second,
+		state.IdleExtractDelay + 5*time.Second,
 		6 * time.Minute,
 		state.IdleDreamDelay + 5*time.Second,
-		state.IdleExtractDelay + 5*time.Second,
 		65 * time.Minute,
 		state.DreamMinInterval + 5*time.Minute,
 	}

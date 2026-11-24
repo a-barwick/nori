@@ -781,8 +781,8 @@ func TestIdleExtract_AutoDreamPreservesExtractedThrough(t *testing.T) {
 		t.Fatalf("seed Daily Logs: %v", err)
 	}
 
-	// Advance clock slightly and run idle AutoDream via Process -> maybeDream.
-	h.clk.Advance(time.Minute)
+	// Advance past IdleDreamDelay (15m) and run idle AutoDream via Process -> maybeDream.
+	h.clk.Advance(state.IdleDreamDelay)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process idle dream: %v", err)
 	}
@@ -900,5 +900,71 @@ func TestIdleExtract_PinnedProtectionAndAdvanceHotWindowPreservesExtractedThroug
 	}
 	if !sumAfterBurst.ExtractedThrough.Equal(t1) {
 		t.Fatalf("advanceHotWindow wiped ExtractedThrough: got %v, want %v", sumAfterBurst.ExtractedThrough, t1)
+	}
+}
+
+func TestIdleExtract_FiveTurnsTriggersImmediatelyWithoutWaiting5m(t *testing.T) {
+	ctx := context.Background()
+	start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	h := newIdleTestHarness(t, start)
+
+	h.sum.handler = func(_ context.Context, _ int, payload map[string]any, _ agent.Request) (agent.Response, error) {
+		turns := decodePromptTurns(t, payload)
+		var coreUpserts []any
+		for _, tr := range turns {
+			for _, m := range tr.Messages {
+				if m["from"] == "user" {
+					coreUpserts = append(coreUpserts, map[string]any{
+						"text":     "Fact from " + m["text"],
+						"about":    "the user",
+						"section":  "Context",
+						"replaces": "",
+						"input_id": m["input_id"],
+						"quote":    m["text"],
+					})
+				}
+			}
+		}
+		return toolResponse(flushAndCompactToolName, map[string]any{
+			"core_upserts":      coreUpserts,
+			"daily_log_entries": []any{},
+			"summary_items":     []any{},
+			"gist":              "",
+		}), nil
+	}
+
+	// Turns 1..4 (< ExtractTurnThreshold=5): must NOT extract immediately; wake is scheduled at +5m.
+	for i := 1; i < state.ExtractTurnThreshold; i++ {
+		h.clk.Advance(10 * time.Second)
+		_, _ = h.sendTurn(ctx, fmt.Sprintf("Turn %d fact", i))
+	}
+	if h.sum.CallCount() != 0 {
+		t.Fatalf("expected 0 extraction calls after %d turns without waiting 5m, got %d", state.ExtractTurnThreshold-1, h.sum.CallCount())
+	}
+
+	// Turn 5 (== ExtractTurnThreshold=5): must extract immediately without waiting 5m,
+	// while keeping Through and FlushedThrough zero (verbatim window untouched).
+	h.clk.Advance(10 * time.Second)
+	_, t5 := h.sendTurn(ctx, "Turn 5 fact")
+	if h.sum.CallCount() != 1 {
+		t.Fatalf("expected immediate extraction at %d turns, got %d calls", state.ExtractTurnThreshold, h.sum.CallCount())
+	}
+	sum, err := h.store.ConversationSummary(ctx)
+	if err != nil {
+		t.Fatalf("ConversationSummary: %v", err)
+	}
+	if !sum.ExtractedThrough.Equal(t5) {
+		t.Fatalf("ExtractedThrough = %v, want %v", sum.ExtractedThrough, t5)
+	}
+	if !sum.Through.IsZero() || !sum.FlushedThrough.IsZero() {
+		t.Fatalf("expected Through and FlushedThrough zero after 5-turn extract, got through=%v flushed=%v", sum.Through, sum.FlushedThrough)
+	}
+	mems, err := h.store.Memories(ctx)
+	if err != nil || len(mems) != state.ExtractTurnThreshold {
+		t.Fatalf("expected %d core memories after 5-turn extract, got %d err=%v", state.ExtractTurnThreshold, len(mems), err)
+	}
+	wakeAt, err := h.runner.NextConversationWake(ctx)
+	if err != nil || !wakeAt.IsZero() {
+		t.Fatalf("expected zero NextConversationWake after 5-turn extract, got %v err=%v", wakeAt, err)
 	}
 }

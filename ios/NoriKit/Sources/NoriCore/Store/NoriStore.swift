@@ -314,6 +314,23 @@ public final class NoriStore {
         isThinking = false
     }
 
+    public func refreshMemory() async {
+        let activeTransport = transport
+        async let factsTask = try? activeTransport.fetchCoreMemories()
+        async let logsTask = try? activeTransport.fetchMemoryLogs()
+        async let workingTask = try? activeTransport.fetchWorkingMemory()
+
+        if let facts = await factsTask {
+            self.coreMemories = facts
+        }
+        if let logs = await logsTask {
+            self.memoryLogs = logs
+        }
+        if let working = await workingTask {
+            self.workingMemory = working
+        }
+    }
+
     public func refreshAll() async {
         isLoading = true
         defer { isLoading = false }
@@ -420,12 +437,7 @@ public final class NoriStore {
                 isThinking = conv.processing || conv.pending
             }
         case .memory:
-            if let facts = try? await transport.fetchCoreMemories() {
-                self.coreMemories = facts
-            }
-            if let working = try? await transport.fetchWorkingMemory() {
-                self.workingMemory = working
-            }
+            await refreshMemory()
         case .unknown:
             break
         }

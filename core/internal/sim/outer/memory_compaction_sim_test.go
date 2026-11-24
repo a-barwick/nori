@@ -56,15 +56,17 @@ func TestDST_FlushBeforeCompactAtomicityAndFailureRecovery(t *testing.T) {
 	checker, targets := newMemoryInvariantChecker(rig)
 	scriptPlainReplies(h)
 
-	// Queue strike 1 (provider error), strike 2 (missingTool), strike 3 (provider error -> lossless raw-log fallback).
-	h.SummaryModels[0].QueueFaultModes(
-		outer.CompactionFaultProviderError,
-		outer.CompactionFaultMissingTool,
-		outer.CompactionFaultProviderError,
-	)
-
 	// Drive SoftCompactTurns (12) turns so flush_and_compact triggers on turn 12.
+	// Queue the 3 flush faults right before turn 12 so they target flush_and_compact
+	// rather than earlier 5-turn decoupled extractions.
 	for i := range state.SoftCompactTurns {
+		if i == state.SoftCompactTurns-1 {
+			h.SummaryModels[0].QueueFaultModes(
+				outer.CompactionFaultProviderError,
+				outer.CompactionFaultMissingTool,
+				outer.CompactionFaultProviderError,
+			)
+		}
 		rig.clock.Advance(time.Second)
 		msg := fmt.Sprintf("alpha-turn-%02d preference: remember unique-token-%02d for later recall", i+1, i+1)
 		if _, err := h.AcceptInput(ctx, msg); err != nil {
@@ -136,9 +138,11 @@ func TestDST_FlushBeforeCompactAtomicityAndFailureRecovery(t *testing.T) {
 		rig.storeFaults.SetConfig(memstore.FaultConfig{CommitThenErrProb: 1.0})
 		rig.storeFaults.SetEnabled(true)
 	})
-	h.SummaryModels[0].QueueFaultModes(outer.CompactionFaultCommitThenError)
 
 	for i := range state.SoftCompactTurns {
+		if i == state.SoftCompactTurns-state.CompactKeep-1 {
+			h.SummaryModels[0].QueueFaultModes(outer.CompactionFaultCommitThenError)
+		}
 		rig.clock.Advance(time.Second)
 		msg := fmt.Sprintf("beta-turn-%02d preference: remember commit-then-err-token-%02d", i+1, i+1)
 		if _, err := h.AcceptInput(ctx, msg); err != nil {
@@ -770,7 +774,21 @@ func runAutoDreamAndReplicaMergeScenario(t *testing.T, seed int64) string {
 		t.Fatalf("CheckSafetyAt before dream: %v", err)
 	}
 
-	// 3. Verify AutoDream triple-gate schedules deferred wake at latestTurnAt + IdleDreamDelay (15m).
+	// 3. With IdleExtractDelay (5m) < IdleDreamDelay (15m), the remaining 5 verbatim turns
+	// schedule session-idle extraction at +5m first; drain it so AutoDream's +15m wake is next.
+	extractWake, err := h.Workers[0].NextConversationWake(ctx)
+	if err != nil {
+		t.Fatalf("NextConversationWake before 5m extract: %v", err)
+	}
+	if extractWake.IsZero() || !extractWake.After(rig.clock.Now()) {
+		t.Fatalf("expected +5m idle extraction deferred wake, got wakeAt=%s now=%s", extractWake, rig.clock.Now())
+	}
+	rig.clock.Set(extractWake.Add(time.Second))
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker idle extract before dream: %v", err)
+	}
+
+	// Verify AutoDream triple-gate schedules deferred wake at latestTurnAt + IdleDreamDelay (15m).
 	wakeAt, err := h.Workers[0].NextConversationWake(ctx)
 	if err != nil {
 		t.Fatalf("NextConversationWake before 15m: %v", err)
@@ -850,33 +868,14 @@ func runAutoDreamAndReplicaMergeScenario(t *testing.T, seed int64) string {
 		t.Fatalf("expected AutoDream to deduplicate metric preference from 2 to 1, got %d", metricCount)
 	}
 
-	// At +15m after AutoDream, the 12h AutoDream cooldown prevents another dream wake,
-	// while the 5 remaining verbatim turns still schedule a decoupled +20m session-idle
-	// memory extraction wake. Once that +20m extraction finishes, NextConversationWake
-	// must become zero (parked).
-	convAfterDream, _, err := rig.store.ConversationStatus(ctx)
-	if err != nil {
-		t.Fatalf("ConversationStatus after dream: %v", err)
-	}
-	wantExtractWake := convAfterDream.LatestAt.Add(state.IdleExtractDelay)
-	wakeAfter, err := h.Workers[0].NextConversationWake(ctx)
-	if err != nil {
-		t.Fatalf("NextConversationWake after dream: %v", err)
-	}
-	if !wakeAfter.Equal(wantExtractWake) {
-		t.Fatalf("expected NextConversationWake to schedule +20m idle extraction at %s during 12h AutoDream cooldown, got %s",
-			wantExtractWake, wakeAfter)
-	}
-	rig.clock.Set(wakeAfter.Add(time.Second))
-	if err := h.ProcessWorker(ctx, 0); err != nil {
-		t.Fatalf("ProcessWorker(0) post-dream idle extraction: %v", err)
-	}
+	// At +15m after AutoDream, idle extraction already ran at +5m and the 12h AutoDream
+	// cooldown prevents another dream wake, so NextConversationWake must be zero (parked).
 	wakeParked, err := h.Workers[0].NextConversationWake(ctx)
 	if err != nil {
-		t.Fatalf("NextConversationWake after post-dream idle extraction: %v", err)
+		t.Fatalf("NextConversationWake after AutoDream: %v", err)
 	}
 	if !wakeParked.IsZero() {
-		t.Fatalf("expected zero NextConversationWake after idle extraction during 12h AutoDream cooldown, got %s", wakeParked)
+		t.Fatalf("expected zero NextConversationWake after AutoDream during 12h cooldown, got %s", wakeParked)
 	}
 
 	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
@@ -1011,23 +1010,23 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 		t.Fatalf("CheckSafetyAt before 20m: %v", err)
 	}
 
-	// 3. Advance +10m and run ProcessWorker -> extraction MUST NOT fire early.
-	rig.clock.Advance(10 * time.Minute)
+	// 3. Advance half of IdleExtractDelay and run ProcessWorker -> extraction MUST NOT fire early.
+	rig.clock.Advance(state.IdleExtractDelay / 2)
 	if err := h.ProcessWorker(ctx, 0); err != nil {
-		t.Fatalf("ProcessWorker at +10m: %v", err)
+		t.Fatalf("ProcessWorker before IdleExtractDelay: %v", err)
 	}
-	sumAt10m, err := rig.store.ConversationSummary(ctx)
+	sumEarly, err := rig.store.ConversationSummary(ctx)
 	if err != nil {
-		t.Fatalf("ConversationSummary at +10m: %v", err)
+		t.Fatalf("ConversationSummary before IdleExtractDelay: %v", err)
 	}
-	if !sumAt10m.ExtractedThrough.IsZero() || !sumAt10m.Through.IsZero() || !sumAt10m.FlushedThrough.IsZero() {
-		t.Fatalf("expected zero watermarks at +10m (no early extraction), got %+v", sumAt10m)
+	if !sumEarly.ExtractedThrough.IsZero() || !sumEarly.Through.IsZero() || !sumEarly.FlushedThrough.IsZero() {
+		t.Fatalf("expected zero watermarks before IdleExtractDelay (no early extraction), got %+v", sumEarly)
 	}
 	if got := h.SummaryModels[0].Stats().Calls; got != 0 {
-		t.Fatalf("expected 0 compaction/extract calls at +10m, got %d", got)
+		t.Fatalf("expected 0 compaction/extract calls before IdleExtractDelay, got %d", got)
 	}
 	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
-		t.Fatalf("CheckSafetyAt at +10m: %v", err)
+		t.Fatalf("CheckSafetyAt before IdleExtractDelay: %v", err)
 	}
 
 	// 4. Advance past +20m and run ProcessWorker -> extractIdleMemory commits Core + Daily Log,
@@ -1412,9 +1411,9 @@ func TestDST_MixedFlushDeduplicationAndExtractFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConversationSummary mixed: %v", err)
 	}
-	if !sumMixed.FlushedThrough.Equal(turn7.StartedAt) || !sumMixed.Through.Equal(turn7.StartedAt) || !sumMixed.ExtractedThrough.Equal(turn7.StartedAt) {
-		t.Fatalf("expected FlushedThrough==Through==ExtractedThrough==%s after mixed flush, got flushed=%s through=%s extracted=%s",
-			turn7.StartedAt, sumMixed.FlushedThrough, sumMixed.Through, sumMixed.ExtractedThrough)
+	if !sumMixed.FlushedThrough.Equal(turn7.StartedAt) || !sumMixed.Through.Equal(turn7.StartedAt) || sumMixed.ExtractedThrough.Before(turn7.StartedAt) {
+		t.Fatalf("expected FlushedThrough==Through==%s and ExtractedThrough>=%s after mixed flush, got flushed=%s through=%s extracted=%s",
+			turn7.StartedAt, turn7.StartedAt, sumMixed.FlushedThrough, sumMixed.Through, sumMixed.ExtractedThrough)
 	}
 
 	// Turn 1 (already_extracted=true) must have ZERO duplicates despite reemit_already_extracted.
