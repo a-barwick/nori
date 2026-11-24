@@ -1,0 +1,6 @@
+site_id,reef_name,island,date,depth_m,water_temp_c,live_coral_pct,bleaching_pct,dominant_species,dive_lead,notes
+KB-14,Kāneʻohe Patch Reef #14,Oʻahu,2027-01-02,4.5,26.4,54.2,9.8,Porites compressa,Kaiulani Nākānelua,Healthy outer slope; good herbivore grazing
+KB-22,Kāneʻohe Patch Reef #22,Oʻahu,2027-01-02,3.8,26.9,46.5,16.3,Montipora capitata,Kaiulani Nākānelua,Mild paling on shallow crest; thermistor #04 nominal
+KB-29,Kāneʻohe Patch Reef #29,Oʻahu,2027-01-03,3.2,27.6,39.1,28.4,Montipora capitata,Kaiulani Nākānelua,Alert >20% bleaching threshold; 珊瑚白化注意 - priority thermal refuge check
+KB-44,Kāneʻohe Patch Reef #44,Oʻahu,2027-01-03,5.1,26.1,61.0,11.2,Porites lobata,Kaiulani Nākānelua,Strong tidal flush from north channel; 2 honu observed
+KB-07,Heʻeia Outer Fringing Shelf,Oʻahu,2027-01-03,6.0,25.9,58.4,7.4,Porites compressa,Kaiulani Nākānelua,Baseline control transect near Heʻeia Kea mooring

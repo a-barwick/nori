@@ -1,0 +1,15 @@
+{
+  "tool": {
+    "id": "nori.google/calendar/events.create",
+    "version": "1.0.0",
+    "digest": "sha256:1111"
+  },
+  "title": "Create calendar event",
+  "description": "",
+  "connection_ids": [],
+  "availability": "needs_connection",
+  "reason_code": "no_google_account",
+  "recovery": "connect",
+  "capability": "calendar",
+  "integration_id": "google_calendar"
+}

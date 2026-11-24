@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workbench architecture · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Workbench architecture</h1>
+<p class="lede">The slim Next.js test workbench talks to its own server proxy, which checks authentication and origin before calling the Go agent service.</p>
+<section><h2>Request path</h2>
+<div class="card"><div class="flow">
+<div class="node"><b>React client</b><small><code>NoriApp</code> and screen components use <code>useRuntime</code> and assistant API helpers for requests and saved state.</small></div>
+<div class="arrow">↓ <span class="lbl">same-origin /api/ requests and an SSE stream</span></div>
+<div class="node"><b>Next.js server</b><small>Verifies OIDC (on AWS) or local loopback dev identity, checks origin and attaches an HS256 service token.</small></div>
+<div class="arrow">↓ <span class="lbl">/users/{id}/... with service credentials</span></div>
+<div class="node"><b>Agent service (<code>nori</code>)</b><small>Saves records in Postgres and streams committed events. See <a href="api.html">Service API</a>.</small></div>
+</div></div>
+<div class="card"><table class="tall"><tr><th>Operation</th><th>Client use</th></tr>
+<tr><td><code>v1/snapshot</code></td><td>Loads the assistant snapshot, or an older page with <code>before</code>.</td></tr>
+<tr><td><code>v1/events</code></td><td>Follows the resumable SSE event stream.</td></tr>
+<tr><td><code>v1/uploads</code></td><td>Uploads an attached file with a client UUID when picked.</td></tr>
+<tr><td><code>v1/*</code> management routes</td><td>Reads and mutates Work, interactions/approvals, MCP servers, connections, automations, goals, library and memory.</td></tr>
+<tr><td><code>turn</code></td><td>Sends a message with a client-generated UUID.</td></tr>
+<tr><td><code>command</code></td><td>Sends <code>steer</code>, <code>answer</code> or <code>stop</code> for one task.</td></tr>
+<tr><td><code>artifact</code></td><td>Fetches a saved artifact's bytes.</td></tr>
+<tr><td><code>seen</code></td><td>Reports a reply shown in the visible conversation viewport.</td></tr>
+<tr><td><code>delivered</code></td><td>Reports saved results from replies shown in the visible conversation viewport.</td></tr>
+<tr><td><code>trace</code></td><td>Fetches task step traces when a debug row is open, and when the task changes.</td></tr>
+</table></div>
+<p>The browser never calls a model provider directly and never holds service tokens.</p>
+</section>
+<section><h2>Sending a message</h2>
+<div class="card"><div class="flow">
+<div class="node"><b>React client</b><small>Generates a UUID for the message and stores a pending copy locally.</small></div>
+<div class="arrow">↓ <span class="lbl">POST /api/turn</span></div>
+<div class="node"><b>Agent service</b><small>Saves the message in Postgres and enqueues a wake.</small></div>
+<div class="arrow">↓ <span class="lbl">snapshot listing the UUID</span></div>
+<div class="node"><b>React client</b><small>Clears its pending copy.</small></div>
+<div class="arrow">↓ <span class="lbl">later, an SSE event with the whole reply</span></div>
+<div class="node"><b>React client</b><small>Displays the reply.</small></div>
+</div></div>
+<ul class="pts">
+<li>If a response is lost, Retry sends the exact same UUID. Pending messages also resend after a reload, reconnect or manual refresh.</li>
+<li>A message can be up to 8,192 UTF-8 bytes, and up to 20 messages can be pending.</li>
+<li>Task commands work the same way, with their own stored queue. A command clears once accepted or once a snapshot shows the task applied it.</li>
+<li>A 4xx response marks a command as rejected and offers Edit; transient failures offer Retry.</li>
+</ul>
+</section>
+<section><h2>Live updates</h2>
+<div class="card"><table class="tall"><tr><th>Situation</th><th>Client behavior</th></tr>
+<tr><td>The tab is visible</td><td>Follows the SSE event stream and merges each record by ID.</td></tr>
+<tr><td>A reply enters the viewport</td><td>Reports it as read (<code>seen</code>) and acknowledges its saved results (<code>delivered</code>). Failed reports retry while visible and online.</td></tr>
+<tr><td>A reply stays below the viewport</td><td>Loading it alone neither delivers its results nor advances the shared read position.</td></tr>
+<tr><td>Another session reads a reply</td><td>The shared read position clears new-message counts through that reply.</td></tr>
+<tr><td>A turn ends</td><td>Reads one snapshot for its debug traces.</td></tr>
+<tr><td>Nothing has run for 5 minutes</td><td>Closes the stream so idle tabs do not hold connections open; reopens on focus or a new message.</td></tr>
+<tr><td>The tab is hidden</td><td>Closes the stream, then fetches a fresh snapshot when visible again.</td></tr>
+<tr><td>The stream sends <code>reset</code></td><td>Fetches a fresh snapshot until one succeeds, then resumes streaming from its <code>position</code>.</td></tr>
+<tr><td>A response isn't a stream</td><td>Reopens from the last event sequence with backoff up to 30 seconds. After 3 failures it displays reconnecting status.</td></tr>
+</table></div>
+<p>Its <a href="results.html">results</a> count as delivered once a visible session displays the reply.</p>
+</section>
+<details class="more"><summary>Merging, sign-in, telemetry and builds</summary>
+<h3>How snapshots merge</h3>
+<ul class="pts">
+<li>A snapshot with an older conversation revision, or the same revision from an older request, is ignored.</li>
+<li>Messages and traces merge by ID, so older pages stay loaded.</li>
+<li>A saved task only replaces the one in memory if its position, event sequence, applied commands, status and Stop flag have not moved backward.</li>
+</ul>
+<h3>Sign-in and limits</h3>
+<ul class="pts">
+<li>Hosted AWS deployments verify OIDC ID tokens via <code>jose</code> JWKS discovery (<code>NORI_OIDC_ISSUER</code>, <code>NORI_OIDC_AUDIENCE</code>, <code>NORI_OIDC_COOKIE</code>) and resolve the verified email to a provisioned Nori user. Unsigned identity headers are never accepted.</li>
+<li>POST routes require a matching <code>Origin</code>, and reads require same-origin fetches. Browser credentials are never forwarded to the agent service; the server mints 1-minute HS256 service tokens.</li>
+<li>The hosted proxy allows JSON bodies up to 128,000 characters and waits up to 145 seconds; streams and uploads wait up to 170 seconds.</li>
+<li>On local loopback development, the local identity flow passes and proxies to <code>NORI_LOCAL_AGENT_URL</code>.</li>
+<li><code>/api/health</code> is the only API route without user authentication.</li>
+</ul>
+<h3>Telemetry</h3>
+<ul class="pts">
+<li>The layout injects public Sentry settings into <code>data-nori-observability</code> at request time so one image moves between environments.</li>
+<li><code>useRuntime</code> measures submit-to-reply latency as <code>nori.submit_to_reply</code> (15-minute cap) and attaches W3C <code>traceparent</code> headers on <code>turn</code>.</li>
+<li>Privacy filters in <code>web/src/lib/observability/privacy.ts</code> strip sensitive payloads before export. Browser Sentry envelopes go through <code>/sentry-tunnel</code> (<code>web/src/app/sentry-tunnel/route.ts</code>), which verifies authentication and strips request headers before forwarding. See <a href="observability.html">Observability</a>.</li>
+</ul>
+<h3>Builds</h3>
+<p>The test workbench uses Next.js, React and Tailwind. Run <code>make dev</code> to start local Go + Next.js, and <code>make check</code> to run TypeScript typecheck and ESLint alongside Go and contract checks. See <a href="deploy.html">Deployment</a> for hosted topology.</p>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/tasks.go</code> · <code>core/internal/api/events.go</code> · <code>web/src/app/(nori)/page.tsx</code> · <code>web/src/app/layout.tsx</code> · <code>web/src/app/sentry-tunnel/route.ts</code> · <code>web/src/app/api/[operation]/route.ts</code> · <code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/components/runtime/TaskPanel.tsx</code> · <code>web/src/components/chat/Thread.tsx</code> · <code>web/src/components/dev/DebugBlock.tsx</code> · <code>web/src/lib/types.ts</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/oidc.ts</code> · <code>web/src/lib/runtime/credentials.ts</code> · <code>web/src/lib/runtime/methods.ts</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>web/src/lib/observability/privacy.ts</code> · <code>web/src/proxy.ts</code> · <code>Makefile</code></p></details>
+</body>
+</html>

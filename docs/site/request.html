@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Following a request · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="request-data.js" defer></script>
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Following a request</h1>
+<p class="lede">One message, “Pull the latest Q3 revenue summary. Also draft a launch brief.”, followed from send to result.</p>
+  <div class="trace">
+  <div class="card">
+    <div class="seq">
+      <div class="step outer"><div class="n">1</div><div><b class="t">The user sends a message with a stable UUID</b><span class="boundary">accepted</span>
+        <ul class="pts"><li>The agent service saves the input to the Postgres inbox and enqueues a wake, then returns 202.</li><li>Retrying with the same UUID is idempotent.</li></ul></div></div>
+      <div class="step outer"><div class="n">2</div><div><b class="t">An outer turn claims the batch</b>
+        <ul class="pts"><li>A Postgres wake in <code>nori_user_wakes</code> (prompted by <code>NOTIFY nori_wake</code> or the 2-second poll) starts the turn in <code>worker.Pool</code>.</li><li>The turn claims the conversation lease and fence, so only it can write, and takes the next pending inputs in order.</li><li>A follow-up during the turn restarts it with all the inputs, up to 3 times.</li></ul></div></div>
+      <div class="step outer"><div class="n">3</div><div><b class="t">Jev adds a hint and the outer model replies</b>
+        <ul class="pts"><li>Jev marks which intents are present. The hint grants no permission. See <a href="classification.html">Classifying a message</a>.</li><li>The outer model receives history, task records and the hint, returning a reply and two dispatches. An independent second call checks dispatches against user messages only.</li><li>The usage row is written before the provider call, so a crash can't lose a billed request.</li></ul></div></div>
+      <div class="step"><div class="n">4</div><div><b class="t">Commands are validated together, then accepted</b><span class="boundary">applied (later)</span>
+        <ul class="pts"><li>Every command in the batch is validated before any of them is accepted.</li><li>Each dispatch becomes a start command whose ID is also the task ID, and inserts a runnable row in <code>nori_task_leases</code> in the same transaction.</li><li>The reply is published in the same Postgres transaction that consumes the inbox batch.</li></ul></div></div>
+      <div class="step inner"><div class="n">5</div><div><b class="t">The worker pool claims each task lease</b>
+        <ul class="pts"><li><code>NOTIFY nori_wake</code> wakes worker pods, which claim due rows from <code>nori_task_leases</code> and acquire the document-fenced <code>TaskControl</code> lease.</li><li>New commands update <code>nori_task_leases</code> transactionally, and the runner reads saved commands by position from Postgres.</li><li>The revenue and brief tasks now run independently.</li></ul></div></div>
+      <div class="step inner"><div class="n">6</div><div><b class="t">Inner loops work, wait and finish</b><span class="boundary">completed</span>
+        <ul class="pts"><li>Each task calls its model, runs built-in or MCP tools through the permission-checked executor and saves the results.</li><li>A follow-up like “keep the brief under one page” steers only the brief task.</li><li>A task that needs an answer or approval waits and emits an interaction, while the other task carries on.</li><li>Record checks decide whether a task can finish. See <a href="completion.html">Finishing a task</a>.</li></ul></div></div>
+      <div class="step outer"><div class="n">7</div><div><b class="t">The result comes back as a conversation event</b>
+        <ul class="pts"><li>The saved result enters the same inbox as a task notification.</li><li>An outer turn without task tools compares the answer against cited evidence and explains it to the user.</li><li>If new user input is waiting, publication holds until that input has been routed.</li></ul></div></div>
+    </div>
+  </div>
+    <aside class="trace-map" aria-label="Which systems the current step uses">
+      <p class="trace-cap" id="traceCap"></p>
+      <svg viewBox="0 0 300 432" role="img" aria-label="System map highlighting the current step">
+        <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3d4557"/></marker></defs>
+        <path class="te" data-edge="user-service" d="M150 52 V70"/>
+        <path class="te" data-edge="wake-service" d="M92 102 H100"/>
+        <path class="te" data-edge="service-postgres" d="M100 150 L52 207"/>
+        <path class="te" data-edge="service-pool" d="M150 170 V207"/>
+        <path class="te" data-edge="service-models" d="M200 112 L252 207"/>
+        <path class="te" data-edge="pool-inner" d="M150 251 V297"/>
+        <path class="te" data-edge="inner-tools" d="M150 341 V387"/>
+        <path class="te" data-edge="inner-postgres" d="M104 319 L52 251"/>
+        <path class="te" data-edge="inner-models" d="M196 319 L252 251"/>
+        <g class="tn c-outer" data-node="user"><rect x="96" y="8" width="108" height="44" rx="8"/><text x="150" y="27">User</text><text class="sub" x="150" y="41">The host app / workbench</text></g>
+        <g class="tn c-store" data-node="wake"><rect x="6" y="80" width="86" height="44" rx="8"/><text x="49" y="99">PG wake</text><text class="sub" x="49" y="113">LISTEN / poll</text></g>
+        <g class="tn frame" data-node="service"><rect x="100" y="70" width="100" height="100" rx="9"/></g>
+        <g class="tn c-outer" data-node="outer"><rect x="106" y="76" width="88" height="42" rx="7"/><text x="150" y="102">Outer loop</text></g>
+        <g class="tn c-store" data-node="runtime"><rect x="106" y="122" width="88" height="42" rx="7"/><text x="150" y="148">Runtime</text></g>
+        <g class="tn c-store" data-node="postgres"><rect x="6" y="207" width="86" height="44" rx="8"/><text x="49" y="226">Postgres</text><text class="sub" x="49" y="240">records &amp; leases</text></g>
+        <g class="tn c-inner" data-node="pool"><rect x="104" y="207" width="92" height="44" rx="8"/><text x="150" y="226">Worker pool</text><text class="sub" x="150" y="240">nori_task_leases</text></g>
+        <g class="tn c-store" data-node="models"><rect x="208" y="207" width="86" height="44" rx="8"/><text x="251" y="226">Models</text></g>
+        <g class="tn c-inner" data-node="inner"><rect x="104" y="297" width="92" height="44" rx="8"/><text x="150" y="316">Inner loop</text><text class="sub" x="150" y="330">one per task</text></g>
+        <g class="tn c-computer" data-node="tools"><rect x="104" y="387" width="92" height="44" rx="8"/><text x="150" y="406">Tools &amp; MCP</text><text class="sub" x="150" y="420">executor &amp; servers</text></g>
+      </svg>
+    </aside>
+  </div>
+<p>At each handoff, Nori saves a record first and sends the notification afterwards. Click <b>Data</b> on any step to inspect the payloads.</p>
+<section><h2>Follow-ups and controls</h2>
+<div class="card"><table class="tall"><tr><th>Input</th><th>What should happen</th></tr>
+<tr><td>“Did you send it?”</td><td>Answer from the saved operation receipt, or dispatch a read check. Never repeat the write.</td></tr>
+<tr><td>“Check those numbers again”</td><td>Steer the open task, or start a new task if it has finished.</td></tr>
+<tr><td>“Stop that”</td><td>Resolve which task is meant, and ask if it's unclear. The Stop button already names its target.</td></tr>
+<tr><td>The browser closes</td><td>Tasks keep running on Nori worker pods.</td></tr>
+<tr><td>The backend restarts</td><td>Resume from saved Postgres state, and check uncertain outcomes before any retry.</td></tr>
+</table></div></section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/conversation.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/command_plan.go</code> · <code>core/internal/conversation/classifier.go</code> · <code>core/internal/conversation/jev.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/conversation/openai.go</code> · <code>core/internal/state/conversation.go</code> · <code>core/internal/state/records/tasks.go</code> · <code>core/internal/task/runner.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/wake/wake.go</code> · <code>docs/site/site.js</code></p></details>
+</body>
+</html>

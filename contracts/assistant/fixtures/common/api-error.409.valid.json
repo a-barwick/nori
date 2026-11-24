@@ -1,0 +1,12 @@
+{
+  "error": "revision 4 is stale; current is 5",
+  "code": "revision_conflict",
+  "retryable": false,
+  "accepted": false,
+  "request_id": "0a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d",
+  "current": {
+    "id": "conn_google_work",
+    "revision": 5,
+    "status": "connected"
+  }
+}

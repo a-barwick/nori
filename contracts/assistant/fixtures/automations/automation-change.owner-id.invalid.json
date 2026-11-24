@@ -1,0 +1,19 @@
+{
+  "request_id": "6f1c2a8e-4b7d-4c1e-9a2f-0d3e5b7c9a11",
+  "expected_revision": 0,
+  "value": {
+    "title": "t",
+    "instruction": "i",
+    "trigger": {
+      "kind": "once",
+      "at": "2026-11-11T09:30:00Z"
+    },
+    "connection_ids": [],
+    "budget_usd": 0.1,
+    "max_active_runs": 1,
+    "missed_run": "skip",
+    "execution_window_seconds": 60,
+    "destination_ids": [],
+    "user_id": "u"
+  }
+}

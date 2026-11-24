@@ -1,0 +1,1 @@
+upload_inspect reads images. Use upload_read_text for a text or CSV file

@@ -1,0 +1,179 @@
+{
+  "slug": "07-elena-rostova",
+  "name": "Elena Rostova",
+  "email": "elena.rostova@sim.nori.local",
+  "timezone": "America/Chicago",
+  "locale": "en-US",
+  "sim_start_date": "2027-01-04",
+  "presets": ["full"],
+  "summary": "63-year-old retired Chicago commercial architect caring for her 88-year-old bilingual mother Irina, navigating a 42-unit Lakeview condo HOA roof bid dispute, planning a May 2027 Adriatic cruise with sister Nadia, and preparing 8 botanical watercolors for a Feb 12 neighborhood gallery show. Stresses AutoDream deduplication, anti-hallucination recall boundaries, honest forget explanations, .ics/.pdf/.png uploads, and preferences/working-hours updates.",
+  "feature_focus": [
+    "autodream_deduplication",
+    "anti_hallucination_recall",
+    "honest_forget_explanation",
+    "ics_pdf_png_uploads",
+    "preferences_working_hours",
+    "memory_ui_pin_edit_consolidate",
+    "goals_and_library"
+  ],
+  "preferences": {
+    "timezone": "America/Chicago",
+    "locale": "en-US",
+    "budget_per_task_usd": 1.5,
+    "monthly_limit_usd": 35,
+    "working_hours": {
+      "monday": { "enabled": true, "start": "09:00", "end": "19:00" },
+      "tuesday": { "enabled": true, "start": "09:00", "end": "19:00" },
+      "wednesday": { "enabled": true, "start": "09:00", "end": "19:00" },
+      "thursday": { "enabled": true, "start": "09:00", "end": "19:00" },
+      "friday": { "enabled": true, "start": "09:00", "end": "19:00" },
+      "saturday": { "enabled": true, "start": "10:00", "end": "17:00" },
+      "sunday": { "enabled": false }
+    }
+  },
+  "initial_permissions": [
+    {
+      "title": "Allow reading emails, calendar, docs, and HOA maintenance items",
+      "effect": "allow",
+      "tool_names": [
+        "email_search",
+        "email_read",
+        "calendar_list",
+        "doc_list",
+        "doc_read",
+        "issue_list"
+      ]
+    },
+    {
+      "title": "Require confirmation before sending emails or creating calendar events",
+      "effect": "deny",
+      "tool_names": ["email_send", "calendar_create_event"]
+    }
+  ],
+  "persona_responder_brief": "You are Elena Rostova, 63, a warm, polite, thorough retired commercial architect in Lakeview, Chicago. You care for your 88-year-old mother Irina (bilingual Russian/English, strictly refuses appointments before 10:30 AM, takes Eliquis 5mg twice daily and lisinopril 10mg once daily, sees Dr. Bernard Shaw at Northwestern Geriatrics). You serve as Treasurer of the 42-unit Briarwood Court HOA board, debating two roof bids: Midwest Roofing ($186k, galvanized flashing, 15-yr warranty) vs. Lakefront Slate & Copper ($214k, copper flashing, 25-yr warranty). You are planning a May 14-22, 2027 Adriatic cruise (Split, Dubrovnik, Kotor) with your sister Nadia (who moved from Evanston to Skokie) and finishing 8 botanical watercolors for a Feb 12 gallery show at Southport Framing & Gallery. Speak politely in complete sentences, occasionally apologize for repeating yourself, ask gentle clarifying questions if Nori uses jargon, and NEVER invent or provide names for Irina's cardiologist or Irina's dentist—if asked, say you don't have their cards in front of you right now.",
+  "mcp_world": {
+    "server_name": "elena-personal-workspace",
+    "emails": [
+      {
+        "id": "em_elena_01",
+        "from": "arthur.kowalski@briarwoodhoa.example",
+        "to": ["elena.rostova@sim.nori.local", "priya.ramanathan@briarwoodhoa.example"],
+        "subject": "Roof bids — why are we even considering $214k?",
+        "date": "2027-01-04T09:15:00-06:00",
+        "folder": "inbox",
+        "body": "Elena and Priya,\n\nI looked over the two bids Derek sent. Midwest Roofing is $186,000 and can start in April. Lakefront Slate is $214,000 — that is $28,000 more out of owners' pockets right after property taxes jumped. If we use most of our $142,500 reserve fund, Midwest keeps the special assessment right around $1,035 a unit. Let's not gold-plate a roof when half the building is on fixed income.\n\nBest,\nArthur Kowalski, Board President"
+      },
+      {
+        "id": "em_elena_02",
+        "from": "priya.ramanathan@briarwoodhoa.example",
+        "to": ["elena.rostova@sim.nori.local"],
+        "subject": "Re: Roof bids — reserve floor & lifecycle numbers",
+        "date": "2027-01-05T14:40:00-06:00",
+        "folder": "inbox",
+        "body": "Hi Elena,\n\nI agree with your architectural instinct, and legally Arthur's math is risky — draining reserves near zero hurts Fannie Mae warrantability for anyone refinancing or selling. Could you put together a crisp 1-page comparison before our Jan 19 board workshop showing the 20-year flashing cost and a two-installment assessment option if we keep our $65,000 reserve floor?\n\nThanks so much,\nPriya"
+      },
+      {
+        "id": "em_elena_03",
+        "from": "nadia.volkov@family.example",
+        "to": ["elena.rostova@sim.nori.local"],
+        "subject": "Adriatic cruise excursions — Split, Dubrovnik, Kotor!",
+        "date": "2027-01-06T11:20:00-06:00",
+        "folder": "inbox",
+        "body": "Lenochka!\n\nI finally read the MV Dalmacija brochure cover to cover. May 14 to 22 looks heavenly — Split, Korcula, Dubrovnik, and Kotor! One quick plea: my right knee is still grumbling after stairs, so let's skip climbing the entire Dubrovnik city wall and pick low-step walking tours or harbor boat rides. Also, did you check with Oksana and Misha about covering Mama for those 9 days?\n\nLove,\nNadia"
+      },
+      {
+        "id": "em_elena_04",
+        "from": "miriam@southportframing.example",
+        "to": ["elena.rostova@sim.nori.local"],
+        "subject": "Winter Light on the Lakefront — Feb 12 show wall specs",
+        "date": "2027-01-07T10:05:00-06:00",
+        "folder": "inbox",
+        "body": "Dear Elena,\n\nWe are thrilled to feature your 8 botanical watercolors in 'Winter Light on the Lakefront' opening Friday, February 12, 2027 from 6:00 to 8:30 PM at Southport Framing & Gallery (3518 N. Southport Ave). You have the 14-foot east wall, which fits eight 16x20 framed pieces comfortably in a single horizontal row. Please drop off all framed works with wire hangers by Wednesday, February 3 at 2:00 PM.\n\nWarmly,\nMiriam Delgado, Gallery Curator"
+      }
+    ],
+    "calendar_events": [
+      {
+        "id": "cal_elena_01",
+        "title": "Briarwood Court HOA Board Pre-Vote Workshop",
+        "start": "2027-01-19T18:30:00-06:00",
+        "end": "2027-01-19T20:00:00-06:00",
+        "location": "Briarwood Court Courtyard Meeting Room, 540 W. Briar Pl.",
+        "attendees": [
+          "elena.rostova@sim.nori.local",
+          "arthur.kowalski@briarwoodhoa.example",
+          "priya.ramanathan@briarwoodhoa.example",
+          "derek.vance@harborlinepm.example"
+        ],
+        "notes": "Review roof bid memo and finalize special assessment ballot language."
+      },
+      {
+        "id": "cal_elena_02",
+        "title": "Briarwood Court Annual HOA Meeting & Roof Vote",
+        "start": "2027-01-28T18:30:00-06:00",
+        "end": "2027-01-28T20:30:00-06:00",
+        "location": "Lakeview Lutheran Parish Hall (across from Briarwood Court)",
+        "attendees": ["elena.rostova@sim.nori.local", "arthur.kowalski@briarwoodhoa.example"],
+        "notes": "42-unit association vote on Midwest Roofing ($186k) vs. Lakefront Slate & Copper ($214k)."
+      },
+      {
+        "id": "cal_elena_03",
+        "title": "Watercolor Drop-off — Southport Framing & Gallery",
+        "start": "2027-02-03T13:00:00-06:00",
+        "end": "2027-02-03T14:00:00-06:00",
+        "location": "3518 N. Southport Ave., Chicago, IL",
+        "attendees": ["elena.rostova@sim.nori.local", "miriam@southportframing.example"],
+        "notes": "Deliver 8 framed 16x20 botanical watercolors + wall labels."
+      },
+      {
+        "id": "cal_elena_04",
+        "title": "Gallery Opening Reception: Winter Light on the Lakefront",
+        "start": "2027-02-12T18:00:00-06:00",
+        "end": "2027-02-12T20:30:00-06:00",
+        "location": "Southport Framing & Gallery, 3518 N. Southport Ave., Chicago, IL",
+        "attendees": ["elena.rostova@sim.nori.local", "miriam@southportframing.example", "nadia.volkov@family.example"],
+        "notes": "Opening night! Bring Irina if she feels up to a 45-minute visit."
+      }
+    ],
+    "docs": [
+      {
+        "id": "doc_hoa_reserves_2027",
+        "title": "Briarwood Court HOA — Jan 2027 Reserve Ledger",
+        "updated_at": "2027-01-03T16:00:00-06:00",
+        "tags": ["hoa", "finances", "roof"],
+        "content": "Briarwood Court Condominium Association (42 units)\nCapital Reserve Balance (Jan 1, 2027): $142,500\n2025 Reserve Study Minimum Prudent Floor: $65,000\nAvailable Capital Without Breaching Floor: $77,500\nOperating Checking Balance: $28,400\nNote: Roof replacement is highest priority item for 2027 due to north parapet freeze-thaw leaks."
+      },
+      {
+        "id": "doc_adriatic_itinerary",
+        "title": "MV Dalmacija — May 14-22, 2027 Adriatic Cruise Notes",
+        "updated_at": "2027-01-02T11:30:00-06:00",
+        "tags": ["travel", "adriatic", "nadia"],
+        "content": "Ship: MV Dalmacija (38 cabins, small-ship coastal voyage)\nDates: May 14-22, 2027 (fly Chicago O'Hare -> Split May 13 overnight)\nPorts: Split (embark), Korcula, Dubrovnik (2 days), Kotor (Montenegro), return Split.\nAccessibility notes: Nadia has a mild right knee issue — prefer low-step architectural tours, waterfront cafes, and boat excursions."
+      },
+      {
+        "id": "doc_watercolors_list",
+        "title": "Feb 12 Gallery Show — 8 Botanical Watercolors Inventory",
+        "updated_at": "2027-01-04T08:30:00-06:00",
+        "tags": ["art", "watercolor", "gallery"],
+        "content": "Exhibit: Winter Light on the Lakefront (Southport Framing & Gallery, Feb 12, 2027)\n1. Pressed Ginkgo on Lincoln Park Bench (completed)\n2. Frozen Milkweed Pod (completed)\n3. Hellebore in February (completed)\n4. Lakeview Linden Leaf (completed)\n5. Dried Hydrangea Panicle (completed)\n6. Red Osier Dogwood (in progress — glazing stems)\n7. Bur Oak Acorn Study (in progress — wash stage)\n8. Winter Bittersweet Vine (pencil sketch on Arches 300lb cold press)\nFraming spec: 16x20 warm-white 8-ply cotton rag mats from Blick Art Materials; slim natural maple frames."
+      }
+    ],
+    "issues": [
+      {
+        "id": "HOA-101",
+        "title": "Unit 4C ceiling damp spot near skylight curb",
+        "status": "open",
+        "assignee": "derek.vance@harborlinepm.example",
+        "priority": "high",
+        "notes": "Temporary elastomeric patch applied Nov 18, 2026. Owner notified full fix happens with spring 2027 roof replacement."
+      },
+      {
+        "id": "HOA-102",
+        "title": "North elevation terracotta parapet coping mortar spalling",
+        "status": "open",
+        "assignee": "elena.rostova@sim.nori.local",
+        "priority": "high",
+        "notes": "Freeze-thaw water infiltration behind old galvanized flashing; addressed fully in Lakefront Slate & Copper bid."
+      }
+    ]
+  }
+}

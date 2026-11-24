@@ -1,0 +1,14 @@
+{
+  "request_id": "6f1c2a8e-4b7d-4c1e-9a2f-0d3e5b7c9a11",
+  "expected_revision": 0,
+  "value": {
+    "effect": "allow",
+    "tool_ids": [],
+    "connection_ids": [],
+    "resource_ids": [],
+    "action_classes": [
+      "read"
+    ],
+    "owner_id": "u"
+  }
+}

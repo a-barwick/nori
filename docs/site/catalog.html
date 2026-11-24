@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tool catalog · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Tool catalog</h1>
+<p class="lede">Every task's instructions list available capabilities, and a task loads optional or connected capabilities on demand before calling their tools.</p>
+<div class="card"><p><span class="say me">Inspect the architecture diagram I attached and list the three services shown.</span></p>
+<div class="flow">
+<div class="node inner"><b>Inner loop</b><small>Calls <code>capability_load</code> for Attached files.</small></div>
+<div class="arrow">↓ <span class="lbl">capability names</span></div>
+<div class="node"><b>Runtime on the worker</b><small>Checks the names and records the load in the transcript.</small></div>
+<div class="arrow">↓ <span class="lbl">availability and tool names</span></div>
+<div class="node inner"><b>Inner loop</b><small>Receives <code>upload_inspect</code> on its next call and inspects the image.</small></div>
+<div class="arrow">↓ <span class="lbl">no-tools image inspection call</span></div>
+<div class="node"><b>Runtime</b><small>Returns the text answer and saves the operation evidence.</small></div>
+</div></div>
+<section><h2>The capabilities</h2>
+<div class="card"><table><tr><th>Capability</th><th>Tools</th><th>Sent</th></tr>
+<tr><td>Web search</td><td><code>web_search</code></td><td>Always</td></tr>
+<tr><td>Saved results</td><td><code>result_link</code>, <code>results_find</code>, <code>result_read</code></td><td>Always</td></tr>
+<tr><td>Memory and conversation</td><td><code>memory_read</code>, <code>conversation_read</code>, <code>conversation_find</code>, <code>task_history_read</code>, <code>operation_read</code></td><td>Always</td></tr>
+<tr><td>Attached files</td><td><code>upload_inspect</code></td><td>After loading</td></tr>
+<tr><td>MCP servers &amp; connected integrations</td><td><code>mcp/&lt;server&gt;/&lt;tool&gt;</code> and any registered provider tools</td><td>After loading (per capability)</td></tr>
+</table>
+<p class="note">Core controls outside the capability catalog—<code>complete</code>, <code>capability_load</code>, <code>compose</code>, <code>request_input</code> and <code>request_work</code>—are supplied according to the task's role (subtasks omit <code>request_work</code>).</p></div></section>
+<section><h2>What loading changes</h2>
+<ul class="pts"><li>Loading only adds tool definitions to later model calls. The runtime still checks every call against the task's scope and permission rules.</li>
+<li>The loaded set lasts until the task ends. The worker reads it back from the saved transcript, so it survives a worker restart.</li>
+<li>A capability with an unavailable key or disconnected server still appears in the catalog with its unavailable state so the model can explain why it cannot run rather than guessing.</li></ul></section>
+<details class="more"><summary>What each catalog entry holds</summary>
+<p>The worker adds the catalog to the inner loop's instructions with today's date in the user's configured time zone. Each entry gives the capability's tools, account or server label, availability, failure guidance and verification rule. All catalog text comes from metadata only, never from reading external content.</p>
+<p>The text changes at most once a day unless a connection or MCP server changes, so the provider's prompt cache still applies to the instructions.</p>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/catalog.go</code> · <code>core/internal/agent/registry.go</code> · <code>core/internal/agent/tools.go</code> · <code>core/internal/agent/memory.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/extensions/registry.go</code> · <code>core/internal/task/tool_durable.go</code> · <a href="tools.html">Tools</a> · <a href="authority.html">Tool authority</a></p></details>
+</body>
+</html>

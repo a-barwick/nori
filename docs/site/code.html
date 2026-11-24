@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code map · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Code map</h1>
+<p class="lede">Where to look when you want to read or change something across the Go engine, the host app adapter, contract suite and test workbench.</p>
+<p>Go code lives under <span class="mono">core/</span>, the headless the host app Fetch adapter under <span class="mono">integrations/embed/</span>, shared JSON Schemas under <span class="mono">contracts/assistant/</span>, and the local test workbench under <span class="mono">web/src/</span>.
+  Dependencies run in one direction: entrypoints build an <span class="mono">app</span> via <span class="mono">platform</span>, whose <span class="mono">api</span> routes and <span class="mono">worker</span> pool call <span class="mono">conversation</span>, <span class="mono">task</span>, <span class="mono">permissions</span>, <span class="mono">scheduler</span>, <span class="mono">connections</span> and <span class="mono">connectors/mcp</span> over <span class="mono">state</span>.</p>
+<p>Infrastructure sits behind narrow contracts: <span class="mono">state/postgres</span> provides transactional JSONB records plus <span class="mono">nori_task_leases</span>, <span class="mono">nori_user_wakes</span> and <span class="mono">LISTEN/NOTIFY</span>, <span class="mono">wake</span> wraps durable wake/repair helpers, and <span class="mono">secret</span> handles AWS Secrets Manager and envelope-encrypted Postgres rows.</p>
+  <div class="card">
+    <table class="map">
+      <tr><th>If you're looking for</th><th>Look in</th></tr>
+          <tr><th colspan="2">Agent service <span class="mono">core/internal/</span></th></tr>
+          <tr><td>Process wiring, feature validation and per-user app setup</td><td><span class="mono">core/internal/app/, platform/, settings/, users/</span></td></tr>
+          <tr><td>HTTP server, JSON helpers and HS256 service auth</td><td><span class="mono">core/internal/httpserver/, httpjson/, serviceauth/</span></td></tr>
+          <tr><td>HTTP endpoints, assistant management routes and contract round-trip registry</td><td><span class="mono">core/internal/api/</span></td></tr>
+          <tr><td>Outer loop: leases, restarts, two-call provenance guard, memory and compaction</td><td><span class="mono">core/internal/conversation/</span></td></tr>
+          <tr><td><a href="classification.html">Jev classification</a> contract and adapter</td><td><span class="mono">core/internal/conversation/classifier.go, jev.go</span></td></tr>
+          <tr><td>Model gateway HTTP client and shared context budget helper</td><td><span class="mono">core/internal/modelgateway/, contextview/</span></td></tr>
+          <tr><td>Task and conversation records, store contracts and write rules</td><td><span class="mono">core/internal/state/</span></td></tr>
+          <tr><td>Shared transactional persistence and Postgres JSONB/migrations backend</td><td><span class="mono">core/internal/state/records/, state/docstore/, state/postgres/</span></td></tr>
+          <tr><td>Private file storage in S3 (AWS) or local disk (dev)</td><td><span class="mono">core/internal/state/s3/, state/localfs/</span></td></tr>
+          <tr><td><a href="budgets.html">Usage metering</a> and direct OpenAI tariffs (1/20th cached input)</td><td><span class="mono">core/internal/usage/</span></td></tr>
+          <tr><td>Postgres-native inner task runner, activities, compose scripts, completion checks and subtasks</td><td><span class="mono">core/internal/task/</span></td></tr>
+          <tr><td>Unified Postgres-native worker pool (outer conversation, scheduler and inner task lanes + repair sweep)</td><td><span class="mono">core/internal/worker/</span></td></tr>
+          <tr><td>Inner loop step execution, built-in tools, catalog and Responses API adapter</td><td><span class="mono">core/internal/agent/, agent/responses/, transcript/</span></td></tr>
+          <tr><td>Model instructions, outer tool schemas and authored runtime prompts</td><td><span class="mono">core/internal/prompts/</span></td></tr>
+          <tr><td><a href="apps.html">Ports &amp; MCP</a>: extension registry, executor, remote/stdio MCP client, SSRF netguard, provider-agnostic connections port and self-connector</td><td><span class="mono">core/internal/extensions/, invoke/, connectors/mcp/, connectors/nori/, connections/, netguard/</span></td></tr>
+          <tr><td><a href="permissions.html">Permissions</a>: deny-wins rules and action-digest-bound interactions</td><td><span class="mono">core/internal/permissions/</span></td></tr>
+          <tr><td><a href="schedules.html">Automations &amp; goals</a>: recurrence, deterministic occurrences and in-app inbox delivery</td><td><span class="mono">core/internal/scheduler/</span></td></tr>
+          <tr><td>Durable Postgres wake dispatch and repair helpers</td><td><span class="mono">core/internal/wake/</span></td></tr>
+          <tr><td>AWS Secrets Manager and envelope-encrypted Postgres credentials</td><td><span class="mono">core/internal/secret/, secret/awssecrets/, secret/rowstore/</span></td></tr>
+          <tr><td>OpenTelemetry, Sentry and Arize export with privacy allowlists</td><td><span class="mono">core/internal/observability/</span></td></tr>
+          <tr><td>Distroless Dockerfile, AWS adapter guide and local Postgres Compose</td><td><span class="mono">core/infrastructure/</span></td></tr>
+          <tr><th colspan="2">The host app integration &amp; contracts</th></tr>
+          <tr><td>Headless the host app Fetch handler (<code>/api/nori/*</code>) and integration guide</td><td><span class="mono">integrations/embed/adapter.mjs, integrations/embed/README.md</span></td></tr>
+          <tr><td>JSON Schema 2020-12 definitions, fixtures and live HTTP scenarios</td><td><span class="mono">contracts/assistant/</span></td></tr>
+          <tr><th colspan="2">Test workbench <span class="mono">web/src/</span></th></tr>
+          <tr><td>Assistant thread, Work, Library, Routines, Goals, Apps/MCP and Settings screens</td><td><span class="mono">web/src/app/(nori)/, web/src/components/assistant/, components/runtime/, components/chat/</span></td></tr>
+          <tr><td>Runtime state hook, SSE stream, OIDC auth and server forwarding</td><td><span class="mono">web/src/lib/runtime/</span></td></tr>
+          <tr><td>Generated assistant contract TypeScript types</td><td><span class="mono">web/src/lib/contracts/assistant.ts</span></td></tr>
+          <tr><td>Browser/server privacy filters and <code>/sentry-tunnel</code> route</td><td><span class="mono">web/src/lib/observability/, web/src/app/sentry-tunnel/route.ts</span></td></tr>
+          <tr><td>Theme tokens and Nori mark (<a href="theme.html">Theme</a>)</td><td><span class="mono">web/src/app/globals.css, web/src/components/mark/NoriMark.tsx</span></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">The four binaries <span class="mono" style="font-size:11px;color:#8a8268">core/cmd/</span></h3>
+    <ul class="pts" style="margin-bottom:0">
+      <li><code>nori</code> — Hosted service binary (<code>--role=all|api|worker</code>; HS256 service-authenticated HTTP API and/or unified Postgres-native worker pool, AWS adapters by default).</li>
+      <li><code>nori-local</code> — Loopback development binary running both the HTTP API and the unified Postgres-native worker pool in one process.</li>
+      <li><code>nori-user</code> — CLI for provisioning and inspecting user records in Postgres.</li>
+      <li><code>contracts-check</code> — Strict validator for <code>contracts/assistant/</code> JSON Schemas, Go round-trip decoding, generated TypeScript types and live HTTP scenarios.</li>
+    </ul>
+  </div>
+
+<details class="sources"><summary>Sources</summary><p><code>core/cmd/</code> · <code>core/internal/</code> · <code>core/infrastructure/</code> · <code>integrations/embed/</code> · <code>contracts/assistant/</code> · <code>web/src/</code> · <code>Makefile</code> · <code>.env.example</code></p><p><a href="system.html">Service overview</a> · <a href="clients.html">The host app and clients</a></p></details>
+</body>
+</html>

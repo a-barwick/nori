@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Words we use · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Words we use</h1>
+<p class="lede">The same words mean the same things on every page.</p>
+<div class="card"><table class="tall"><tr><th>Word</th><th>What it means</th></tr>
+<tr><td>host app</td><td>The internal enterprise agent front-door that embeds Nori headlessly via <code>integrations/embed/adapter.mjs</code>.</td></tr>
+<tr><td>Outer loop</td><td>The part of Nori (<code>core/internal/conversation</code>) that holds one persistent thread per user and runs one short turn at a time.</td></tr>
+<tr><td>Inner loop</td><td>The Postgres-native task runner (<code>task.Runner</code>) that executes one task: call the model, run tools, save results and repeat.</td></tr>
+<tr><td>Runtime</td><td>Go code around the loops that validates calls, enforces permissions, saves records in Postgres and delivers commands. It is not a model.</td></tr>
+<tr><td>Agent service</td><td>The Go service in <code>core/</code> (<code>nori</code> / <code>nori-local</code>) that the host app and the test workbench call.</td></tr>
+<tr><td>Task</td><td>One piece of independent background work, keeping one stable UUID from dispatch until completion, failure or cancellation.</td></tr>
+<tr><td>Turn</td><td>One run of the outer loop, from claiming pending inputs to publishing a reply.</td></tr>
+<tr><td>Attempt</td><td>One saved try at an outer turn. A follow-up message restarting the turn creates a new attempt.</td></tr>
+<tr><td>Dispatch</td><td>The outer loop starting a new task (verified by a second model call that sees only user messages and task IDs).</td></tr>
+<tr><td>Steer</td><td>New instructions for an unfinished task. Earlier constraints stay unless replaced; open approvals are superseded.</td></tr>
+<tr><td>Command</td><td>A saved instruction going to a task: <code>start</code>, <code>steer</code>, <code>answer</code>, <code>stop</code> or <code>subtask_result</code>.</td></tr>
+<tr><td>Event</td><td>A saved report coming back from a task (<code>needs_input</code>, <code>result</code>, <code>failure</code>, <code>stopped</code>). A log event is a separate ordered entry on the SSE stream.</td></tr>
+<tr><td>Log event</td><td>A numbered entry in Postgres's event log naming a message, task, result or read position that changed. See <a href="api.html#the-event-stream">Service API</a>.</td></tr>
+<tr><td>Inbox</td><td>Either the ordered Postgres queue of pending inputs for the outer loop (<code>conversation_inputs</code>), or the user-facing in-app inbox (<code>/v1/inbox</code>) for automation deliveries.</td></tr>
+<tr><td>Accepted</td><td>Committed to Postgres. It does not mean the downstream worker has applied it yet.</td></tr>
+<tr><td>Applied</td><td>A task workflow has read the command by position and incorporated it into its transcript.</td></tr>
+<tr><td>Revision</td><td>An integer that increments on edits or task instruction changes so stale updates and approvals are caught with HTTP 409.</td></tr>
+<tr><td>Position</td><td>Where a command sits in a task's ordered list, or where an SSE client sits in the event log.</td></tr>
+<tr><td>Lease and fence</td><td>How one outer turn claims a user's conversation in Postgres, and how a stale turn is prevented from publishing.</td></tr>
+<tr><td>Operation</td><td>One tool call with a stable ID and pinned tool definition digest, recorded before dispatch.</td></tr>
+<tr><td>Action digest</td><td>A SHA-256 hash over a tool call's exact target, arguments and recipients that binds an approval card to one exact action.</td></tr>
+<tr><td>Interaction</td><td>A typed pending request (question or approval card) under <code>/v1/interactions</code> with optimistic revision checks.</td></tr>
+<tr><td>Lease table / wake table</td><td><code>nori_task_leases</code> and <code>nori_user_wakes</code> in Postgres, updated transactionally with records so workers discover due work immediately via <code>LISTEN nori_wake</code> or fallback polling.</td></tr>
+<tr><td>Projection</td><td>A display copy of task or connection state stored in Postgres alongside authoritative <code>TaskControl</code> checkpoints.</td></tr>
+<tr><td>Work request &amp; subtask</td><td>A task's request for bounded side work (<code>request_work</code>) settled by the outer loop dispatching up to 4 subtasks that share the parent's budget and stop with it.</td></tr>
+<tr><td>Capability</td><td>One entry in the inner loop's tool catalog (e.g. Web search, Attached files, or an MCP server). Optional capabilities load tool schemas on demand via <code>capability_load</code>.</td></tr>
+<tr><td>MCP</td><td>Model Context Protocol. Nori connects to enterprise remote Streamable HTTP (or local dev stdio) MCP servers via <code>core/internal/connectors/mcp</code>.</td></tr>
+<tr><td>Saved result</td><td>A versioned record of a task's answer, file or link with a stable ID, cited evidence and delivery timestamps. See <a href="results.html">Results and files</a>.</td></tr>
+<tr><td>Jev</td><td>The optional fast classifier (<code>jev-latest</code>) that marks nine intent labels as an advisory hint for the outer loop. It grants no authority.</td></tr>
+<tr><td>Worker</td><td><code>cmd/nori --role=worker</code> (or <code>--role=all</code> / <code>nori-local</code>), running <code>worker.Pool</code> for outer turns, due automations and inner task runners.</td></tr>
+<tr><td>Transcript</td><td>The ordered messages, tool calls, tool results and provider state of one task, stored as private history blocks in Postgres.</td></tr>
+<tr><td>Trace and span</td><td>A span is one timed operation (such as a model or tool call); a trace links spans sharing a W3C trace ID. See <a href="observability.html">Observability</a>.</td></tr>
+<tr><td>Pause &amp; Stop</td><td>Pause blocks new task admission system-wide while chat stays available; Stop cancels one task and its subtasks.</td></tr>
+</table></div>
+</body>
+</html>

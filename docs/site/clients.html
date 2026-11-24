@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The host app and clients · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>The host app and clients</h1>
+<p class="lede">Nori embeds headlessly inside a host app via a zero-dependency Fetch adapter, with a slim Next.js workbench for local development and testing.</p>
+<div class="card"><div class="flow">
+<div class="branch">
+<div class="node"><b>The host app (production front-door)</b><small>Mounts <code>integrations/embed/adapter.mjs</code> under <code>/api/nori/*</code> behind the host app's session auth.</small></div>
+<div class="node"><b>Test workbench (<code>web/</code>)</b><small>Local Next.js UI exercising chat, Work, approvals, MCP, automations and library.</small></div>
+</div>
+<div class="arrow">↓ <span class="lbl">server-verified user ID + HS256 service token</span></div>
+<div class="node outer"><b>Go agent service (<code>nori</code>)</b><small>Owns conversation turns, task dispatch, permissions, SSE streams and state.</small></div>
+<div class="arrow">↓ <span class="lbl">per-user records and events</span></div>
+<div class="node"><b>Postgres &amp; S3</b><small>Strict per-user isolation across threads, tasks, leases, approvals and artifacts.</small></div>
+</div></div>
+<section><h2>Clients</h2>
+<div class="card"><table class="tall"><tr><th>Client</th><th>Role</th><th>Where</th></tr>
+<tr><td>The host app adapter</td><td>Zero-dependency Fetch handler (<code>createNoriHandler</code>) that verifies the host app sessions, maps <code>{issuer, subject}</code> to a provisioned <code>noriUserId</code>, attaches service auth and proxies <code>/api/nori/*</code> to Nori's <code>/users/{id}/v1/*</code> routes.</td><td><code>integrations/embed/adapter.mjs</code>, <a href="api.html#embed-adapter-routes">Service API</a></td></tr>
+<tr><td>Test workbench</td><td>Slim Next.js application for locally exercising the persistent thread, Work/Activity panel, approval cards, MCP servers, automations, goals and library.</td><td><a href="web-client.html">Test workbench</a>, <a href="frontend.html">Workbench architecture</a></td></tr>
+</table></div>
+</section>
+<section><h2>Headless the host app integration</h2>
+<p><code>integrations/embed/adapter.mjs</code> lets the host app embed Nori without duplicating agent orchestration or state:</p>
+<ul class="pts">
+<li><b>Identity mapping:</b> the host app supplies <code>verifyIdentity(request)</code> returning <code>{ issuer, subject }</code> and a server-side binding table mapping each identity to a distinct provisioned Nori user ID. Missing sessions return 401; unmapped identities return 403.</li>
+<li><b>Service auth:</b> the host app supplies <code>serviceAuthorization(signal)</code> returning the <code>Authorization</code> header (HS256 service token in hosted AWS deployments).</li>
+<li><b>Strict isolation:</b> The adapter prepends <code>/users/{mappedUser}</code> to every upstream call. Nori scopes Work, interactions, receipts and results to that user and returns 404 for any other user's resource ID.</li>
+<li><b>Typed contracts:</b> Clients consume the generated TypeScript types from <code>contracts/assistant/</code> (<code>web/src/lib/contracts/assistant.ts</code>) for Work items, approval interactions and mutation receipts.</li>
+</ul>
+</section>
+<section><h2>What the service owns</h2>
+<div class="card"><table class="tall"><tr><th>Concern</th><th>Nori service</th><th>Host / client</th></tr>
+<tr><td>Identity &amp; session</td><td>Verifies service tokens and scopes every route to <code>/users/{id}</code>.</td><td>Verifies user login (the host app session or OIDC ID token) and enforces CSRF/origin policy.</td></tr>
+<tr><td>Messages &amp; context</td><td>Saves IDs, text, order, memory and bounded prompt context.</td><td>Generates stable client UUIDs, displays saved state and handles reconnects.</td></tr>
+<tr><td>Operations &amp; approvals</td><td>Enforces deny-wins rules, computes <code>action_digest</code> and records receipts.</td><td>Renders typed approval cards and submits <code>{request_id, expected_revision, value}</code>.</td></tr>
+<tr><td>Live updates</td><td>Serves snapshots and resumable SSE streams (<code>?after=N</code> / <code>Last-Event-ID</code>).</td><td>Merges events by ID, refreshes Work/interactions on reconnect and handles <code>reset</code>.</td></tr>
+</table></div>
+<p>For hosted standalone web deployments on AWS, <code>NORI_CLOUD=aws</code> verifies OIDC ID tokens via <code>jose</code> JWKS discovery (<code>NORI_OIDC_ISSUER</code>, <code>NORI_OIDC_AUDIENCE</code>, <code>NORI_OIDC_COOKIE</code>) and resolves the verified email to a provisioned Nori user. See <code>core/infrastructure/aws/README.md</code>.</p>
+</section>
+<details class="sources"><summary>Sources</summary><p><code>integrations/embed/README.md</code> · <code>integrations/embed/adapter.mjs</code> · <code>core/internal/app/app.go</code> · <code>core/internal/serviceauth/auth.go</code> · <code>core/infrastructure/aws/README.md</code> · <code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/oidc.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>web/src/lib/contracts/assistant.ts</code></p></details>
+</body>
+</html>

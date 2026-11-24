@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Records and delivery · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Records and delivery</h1>
+<p class="lede">What gets saved in Postgres and S3, and how Postgres-native leases and wakes coordinate work.</p>
+  <div class="grid2">
+    <div class="card">
+      <h3 style="margin-top:0">Saved record layout</h3>
+      <pre class="mono" style="font-size:12.5px;line-height:1.65;margin:0;white-space:pre-wrap">system/control            ← execution pause switch
+nori_task_leases          ← runnable/parked task discovery table
+nori_user_wakes           ← due conversation &amp; scheduler wakes
+owners/{owner}/
+├─ conversation/control   ← active lease, fence, consumed position
+├─ conversation_inputs/   ← durable inbox (ordered)
+├─ conversation_turns/    ← captured batches
+├─ conversation_attempts/ ← traces: model, hint, usage
+├─ conversation/summary   ← compacted older turns, with source quotes
+├─ memories/              ← explicit facts and preferences
+├─ messages/              ← visible messages, as typed parts
+├─ events/                ← ordered event log
+├─ event_head/            ← log's newest sequence number
+├─ uploads/               ← attached file metadata
+├─ results/               ← saved versioned results
+├─ resources/             ← connections, MCP servers, rules,
+│                           interactions, automations, goals, inbox
+├─ credentials/           ← envelope-encrypted secrets (rowstore)
+├─ runs/{taskId}          ← task status &amp; budget projection
+│   ├─ control            ← TaskControl lease, fence &amp; checkpoint
+│   ├─ history/           ← task transcript, in blocks
+│   ├─ steps/             ← per-step traces &amp; model checkpoints
+│   └─ operations/        ← tool call records &amp; evidence
+├─ task_commands/         ← ordered commands for each task
+└─ model_usage/           ← provider calls, saved before dispatch</pre>
+      <p class="note" style="margin-top:10px">S3 (or a local directory in dev) holds private file bytes under <code>artifacts/</code> with user prefixes and conditional writes that refuse overwrites. Large transcripts and outputs stay in private history blocks and S3 rather than inline discovery rows.</p>
+    </div>
+    <div>
+      <div class="card">
+        <h3 style="margin-top:0">Transactional wakes &amp; leases</h3>
+        <div class="flow">
+          <div class="node"><b>Runtime commits command &amp; wake</b><small>A dispatch, steer, answer or stop writes the command and updates <code>nori_task_leases</code> in one Postgres transaction.</small></div>
+          <div class="arrow">↓</div>
+          <div class="node"><b><code>NOTIFY nori_wake</code> hints workers</b><small>Workers listening on Postgres wake immediately; a 2-second fallback poll and 60-second repair sweep guarantee delivery.</small></div>
+          <div class="arrow">↓</div>
+          <div class="node"><b>Worker claims fenced lease</b><small><code>worker.Pool</code> claims the row and acquires the document-fenced <code>TaskControl</code> lease before stepping <code>task.Runner</code>.</small></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Who owns what</h3>
+        <table>
+          <tr><th>Question</th><th>Answer lives in</th></tr>
+          <tr><td>Was it accepted?</td><td>Postgres command record</td></tr>
+          <tr><td>What has the task spent?</td><td><code>TaskControl</code> and <code>runs/{id}</code> in Postgres</td></tr>
+          <tr><td>Which instructions are current?</td><td>Commands the task has already read by position</td></tr>
+          <tr><td>Did that tool call happen?</td><td>Operation record &amp; provider evidence</td></tr>
+          <tr><td>What did the models cost?</td><td><code>model_usage</code>, written before each call</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+<p>Commands, checkpoints, leases and wakes share the same Postgres transactions, so there is no cross-service split-brain. Consumers ignore repeats by ID and position.</p>
+<section><h2>What happens when something dies</h2>
+<div class="card"><table class="tall"><tr><th>Interruption</th><th>Recovery</th></tr>
+<tr><td>The outer process dies after accepting input</td><td>Reclaim the saved turn and pending wake, with the original input ID.</td></tr>
+<tr><td>The outer process dies around a dispatch</td><td>Recover the saved model response and command receipts before accepting anything again.</td></tr>
+<tr><td>A task command is delivered twice</td><td>Recognize its ID and position, and don't apply it again.</td></tr>
+<tr><td>A worker restarts while a task waits</td><td>Resume the same task and open question or approval on a compatible worker build.</td></tr>
+<tr><td>A provider's response is lost after a write</td><td>Read the provider's record before considering another action. An attempted operation cannot send again.</td></tr>
+<tr><td>The result is saved, then the client disconnects</td><td>Reopen the saved result and resume the SSE stream from the last sequence number.</td></tr>
+<tr><td>A task crashes before it can report</td><td>The runtime emits a failure event with completed and unresolved operations.</td></tr>
+</table></div></section>
+<section><h2>Storage layers</h2>
+<p>Each layer is a Go package under <code>core/internal/</code>.</p>
+<div class="card"><table class="tall"><tr><th>Layer</th><th>Code</th><th>Job</th></tr>
+<tr><td>Records and rules</td><td><code>state/</code></td><td>Record types, errors, store contracts and write rules: accepting commands, checking revisions and leases, and publishing results.</td></tr>
+<tr><td>Persistence</td><td><code>state/records/</code></td><td>Applies the rules inside transactions, including leases, write claims, recovery, optimistic revisions and event numbering.</td></tr>
+<tr><td>Document store</td><td><code>state/docstore/</code> &amp; <code>state/postgres/</code></td><td>Implements the narrow transaction and query contract in Postgres using indexed JSONB tables and numbered SQL migrations.</td></tr>
+<tr><td>File bytes</td><td><code>state/s3/</code> &amp; <code>state/localfs/</code></td><td>Stores uploaded files and saved result bytes in private S3 buckets on AWS (with conditional writes) or a local folder in development.</td></tr>
+<tr><td>Encrypted credentials</td><td><code>secret/rowstore/</code></td><td>Stores per-user MCP and connection secrets in Postgres using envelope encryption wrapped by <code>NORI_CREDENTIAL_KEY</code> or AWS Secrets Manager.</td></tr>
+<tr><td>Model usage</td><td><code>usage/</code></td><td>Records model calls in Postgres, optionally mirroring to an HTTP host meter. The workflow enforces the task spending ceiling.</td></tr>
+<tr><td>Wiring</td><td><code>platform/</code></td><td>Opens Postgres via <code>NORI_POSTGRES_URL</code> and selects AWS or local adapters via <code>NORI_CLOUD</code>.</td></tr>
+</table></div>
+<p>Postgres applies numbered SQL migrations at startup under a transaction lock. Serializable transactions update each event head with its records, so aborted writes never consume event numbers. SSE event streams poll committed records every 250 ms in batches of 200, resuming after the last delivered sequence so reconnects stay stateless and database connections are released between polls.</p>
+<p><code>make deps</code> starts local Postgres via Docker Compose. See <code>core/infrastructure/local/README.md</code>.</p></section>
+<details class="more"><summary>What each record has to hold</summary>
+<table class="tall"><tr><th>Record</th><th>Holds</th></tr>
+<tr><td>Conversation input</td><td>Stable ID, original content or event, accepted order, origin and processing state.</td></tr>
+<tr><td>Outer turn attempt</td><td>Input boundary, attempt ID, lease, model response, tool pairs, dispatch receipts, usage and publication state.</td></tr>
+<tr><td>Task</td><td>Stable ID, request, ordered instructions, incorporated position, revision, lifecycle, wait reason, budget, result references, and its parent or subtasks.</td></tr>
+<tr><td>Command or event</td><td>Stable ID, target, kind, order, revision, payload and delivery state.</td></tr>
+<tr><td>Operation</td><td>Stable ID, parameters, pinned tool digest, attempt state, confirmation or uncertainty, and provider evidence.</td></tr>
+<tr><td>Saved result</td><td>Stable ID, task link, file details, version and delivery times.</td></tr>
+<tr><td>Write claim</td><td>The operation holds the exact saved action and its digest. One transaction changes ready to attempted before sending; uncertain outcomes remain available for recovery.</td></tr>
+</table></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state/</code> · <code>core/internal/state/docstore/</code> · <code>core/internal/state/records/</code> · <code>core/internal/state/postgres/</code> · <code>core/internal/state/s3/</code> · <code>core/internal/state/localfs/</code> · <code>core/internal/secret/rowstore/</code> · <code>core/internal/usage/</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/task/runner.go</code> · <code>core/internal/conversation/runner.go</code></p></details>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outer loop · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Outer loop</h1>
+<p class="lede">The part of Nori that handles the conversation. It runs one short turn at a time and dispatches tasks.</p>
+<div class="card"><div class="flow">
+<div class="node"><b>Runtime claims the conversation</b><small>“Check Saturday's weather in Tucson” is the next input batch.</small></div>
+<div class="arrow">↓</div>
+<div class="branch">
+<div class="node"><b>Runtime reads records</b><small>History, messages and task records load in parallel.</small></div>
+<div class="node"><b>Jev classifier</b><small>Returns an intent hint. A Jev failure doesn't stop the turn.</small></div>
+</div>
+<div class="arrow">↓</div>
+<div class="branch">
+<div class="flow">
+<div class="arrow">↓ <span class="lbl">messages, task records and hint</span></div>
+<div class="node outer"><b>Outer model, first call</b><small>User turns return actions and reply text.</small></div>
+<div class="arrow">↓ <span class="lbl">first proposal</span></div>
+</div>
+<div class="flow">
+<div class="arrow">↓ <span class="lbl">user messages and task identities</span></div>
+<div class="node outer"><b>Outer model, for independent dispatch or steer</b><small>Runs after the first call.</small></div>
+<div class="arrow">↓ <span class="lbl">independent command plan</span></div>
+</div>
+</div>
+<div class="node"><b>Runtime checks both plans</b><small>Rejects the whole batch if kinds, targets or counts differ.</small></div>
+<div class="arrow">↓ <span class="lbl">replacement command arguments and reply</span></div>
+<div class="node"><b>Runtime saves the response</b><small>Saves the final commands and reply text for recovery.</small></div>
+<div class="arrow">↓</div>
+<div class="node"><b>Runtime validates commands</b><small>Stable IDs prevent duplicates. Rejections are saved as results.</small></div>
+<div class="arrow">↓</div>
+<div class="node"><b>Runtime publishes the reply</b><small>Newer user input can replace a reply that hasn't been published.</small></div>
+</div></div>
+<p>See <a href="classification.html">Classifying a message</a>, <a href="contract.html">How the loops talk</a> and <a href="outer-model-failure.html">When the outer model call fails</a>.</p>
+<section><h2>Where task instructions come from</h2>
+<div class="card"><table class="tall"><tr><th>Input</th><th>Role in the extra call</th></tr>
+<tr><td>Current user messages</td><td>Can request new work or change an active task.</td></tr>
+<tr><td>Earlier user messages and saved identities</td><td>Resolve references. They don't repeat an old instruction.</td></tr>
+<tr><td>Task output and assistant replies</td><td>Stay outside the extra model call.</td></tr>
+</table></div>
+<p>The extra call may ask for clarification when a reference depends only on omitted task output or an assistant reply.</p></section>
+<section><h2>When a task ends</h2>
+<p>The turn that reports a task's end includes the answer, the unmet items and up to 8 KiB of the results the task cited. The outer model compares them and tells the user what is and isn't done. See <a href="completion.html">Finishing a task</a>.</p></section>
+<section><h2>Batching rules</h2>
+<div class="card"><table class="tall"><tr><th>Arrival</th><th>Behavior</th></tr>
+<tr><td>First message, idle</td><td>The turn starts immediately.</td></tr>
+<tr><td>Follow-up during a turn</td><td>Drops unpublished output, waits 1 second after the latest follow-up, and restarts with all the inputs.</td></tr>
+<tr><td>After 3 restarts</td><td>Finishes the captured batch. Newer inputs wait for the next turn.</td></tr>
+<tr><td>Task event during a turn</td><td>Saved for the next turn. The current turn carries on.</td></tr>
+<tr><td>Task panel answer or Stop button</td><td>Skips Jev and the model, and goes straight into the same command path.</td></tr>
+</table></div></section>
+<section><h2>One message, several jobs</h2>
+<p>A single message can answer something, steer a task and start another. The reply text and one action per job come back in one response.</p>
+<div class="card"><p><span class="say me">Make that Sunday. Should I wear shorts?</span></p>
+<ul class="pts"><li>“Sunday” steers the weather task.</li><li>The shorts question waits for the forecast.</li><li>The reply answers it once the result arrives.</li></ul></div></section>
+<details class="more"><summary>Provider behavior, recovery and response goals</summary>
+<p>The outer model is GPT-6.1 Sol at low reasoning, through the OpenAI platform API. Sol low replaced Muse after Muse omitted commands and rejected structured responses in local checks. The schema uses the existing command definitions.</p>
+<p>Independent dispatch and steering attempts add one call to the same model. It receives user messages, runtime task metadata and saved-result IDs. It excludes task prose, earlier command arguments, assistant replies, summaries, classifier advice and filenames.</p>
+<p>The runtime replaces the proposed dispatch and steering arguments with this call's arguments. Missing user source records, context over 40 KiB or a failed call prevent commands. Subtasks still use their parent's question and budget.</p>
+<p>Intro and task-notification turns return plain text and can't issue commands. The exception is a turn with a task's work request and no user message, which can only dispatch a subtask for that request or answer it. If a response has actions without text, the runtime writes an acknowledgment from the accepted receipts.</p>
+<p>Rejected responses stay in private attempt records and are excluded from later model history. Recovery reuses accepted command receipts and doesn't repeat the model call.</p>
+<p><code>hold(task_id, question)</code> saves a question without changing the task's instructions. A terminal event supplies the outcome for its answer.</p>
+<p>Warm localhost targets agreed for milestone 4 are 100 ms for typing feedback, 1 second for durable command acceptance, and 2 seconds for visible saved status or read cancellation. Model latency and cold starts are measured separately.</p>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/runner.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/command_plan.go</code> · <code>core/internal/conversation/task_context.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/conversation/openai.go</code> · <code>core/internal/conversation/response.go</code> · <code>core/internal/state/summary.go</code> · <code>core/internal/state/records/evidence.go</code> · <a href="https://developers.openai.com/api/docs/models/gpt-6.1-sol">Sol model reference</a></p></details>
+</body>
+</html>

@@ -1,0 +1,1 @@
+This task revises saved result {{.Result}}. Read it with result_read. Your answer becomes the new version, and the old one stays as history.

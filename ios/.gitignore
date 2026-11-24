@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+DerivedData/
+project.xcworkspace/
+xcuserdata/
+*.xcuserstate
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM

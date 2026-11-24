@@ -1,0 +1,316 @@
+import { accessFailureResponse, resolveUser, sameOrigin, sameOriginRead, type ScopedRuntime } from "./auth";
+import { isRuntimeMethod, isRuntimeRead } from "./methods";
+import { runtimeHeaders } from "./credentials";
+import { localDevelopment, runtimeMode, runtimeTarget, type Mode } from "./target";
+import { reportUpstreamFailure, reportUpstreamRejection, rejectionHeaders, upstreamTraceHeaders } from "@/lib/observability/upstream";
+import { MAX_FILE_BYTES } from "../submission";
+
+// A stream ends upstream first. This limit only catches one that stopped responding.
+const READ_TIMEOUT_MS = 170_000;
+const RELAYED = ["content-disposition", "content-security-policy", "content-length"];
+const json = (type: string) => type.includes("application/json");
+const eventStream = (type: string) => type.startsWith("text/event-stream");
+const forbidden = () => Response.json({ error: "Forbidden." }, { status: 403 });
+const notFound = () => Response.json({ error: "Not found." }, { status: 404 });
+
+type RelayPolicy = {
+  timeout: number;
+  allowed: (type: string) => boolean;
+  operation?: string;
+};
+
+async function relay(request: Request, { base, userID, mode }: ScopedRuntime, path: string, init: RequestInit, { timeout, allowed, operation }: RelayPolicy) {
+  const label = operation ?? path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file");
+  try {
+    const trace = upstreamTraceHeaders(request);
+    // Construct a fresh header set so browser credentials never reach the runtime.
+    const upstream = await fetch(new URL(`users/${encodeURIComponent(userID)}/${path}`, base), {
+      ...init, headers: { ...(init.headers as Record<string, string>), ...await runtimeHeaders(mode), ...trace },
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]), redirect: "error", cache: "no-store",
+    });
+    if (upstream.status >= 500) reportUpstreamFailure(label, mode, upstream.status);
+    if (mode === "hosted" && upstream.status === 429) {
+      reportUpstreamRejection(operation ?? label, request, trace, upstream.headers);
+      void upstream.body?.cancel().catch(() => undefined);
+      // Platforms can return private HTML error bodies. Relay only the throttling signal and sanitized headers.
+      return Response.json({ error: "Nori is busy. Try again shortly." }, {
+        status: 429,
+        headers: { "Cache-Control": "no-store", ...rejectionHeaders(upstream.headers) },
+      });
+    }
+    const type = upstream.headers.get("content-type") || "application/json";
+    if (!allowed(type)) {
+      void upstream.body?.cancel().catch(() => undefined);
+      return Response.json({ error: "The runtime returned an unsupported response." }, { status: 502 });
+    }
+    const headers: Record<string, string> = { "Content-Type": type, "Cache-Control": operation ? "no-store" : "no-cache, no-transform" };
+    if (!operation || mode === "hosted") headers["X-Content-Type-Options"] = "nosniff";
+    if (!operation) {
+      headers["X-Accel-Buffering"] = "no";
+      for (const name of RELAYED) {
+        const value = upstream.headers.get(name);
+        if (value) headers[name] = value;
+      }
+    }
+    return new Response(upstream.body, { status: upstream.status, headers });
+  } catch {
+    if (!request.signal.aborted) reportUpstreamFailure(label, mode);
+    const error = !operation ? "Connection to Nori's runtime was interrupted."
+      : mode === "local" ? "Could not reach the local agent. Check that the Go runner is running, then retry."
+      : "Connection to Nori's runtime was interrupted. Refresh history to confirm the task's status.";
+    return Response.json({ error }, { status: 502 });
+  }
+}
+
+// The hosted runtime allows few queries per minute, and every open tab polls the same small lists. Answers to those
+// reads are shared per user for a few seconds, so a second tab or device costs no extra runtime queries. Any change
+// the user makes through this tier drops their shared answers, so their own actions show at once.
+const SHARED_READS = new Set(["v1/capabilities", "v1/assistant/summary", "v1/interactions?status=pending", "v1/work", "v1/integrations", "v1/connections"]);
+const SHARED_TTL_MS = 8_000;
+const sharedReads = new Map<string, { expires: number; text: Promise<string | null> }>();
+const SHARED_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-cache, no-transform", "X-Content-Type-Options": "nosniff" };
+
+function forgetSharedReads(userID: string) {
+  for (const key of sharedReads.keys()) if (key.startsWith(userID + "\n")) sharedReads.delete(key);
+}
+
+async function sharedRead(request: Request, user: ScopedRuntime, path: string, allowed: RelayPolicy["allowed"]) {
+  const key = user.userID + "\n" + path;
+  const hit = sharedReads.get(key);
+  if (hit && hit.expires > Date.now()) {
+    const text = await hit.text;
+    if (text !== null) return new Response(text, { status: 200, headers: SHARED_HEADERS });
+  }
+  let settle: (value: string | null) => void = () => undefined;
+  const text = new Promise<string | null>((resolve) => { settle = resolve; });
+  if (sharedReads.size >= 2000) sharedReads.clear();
+  const entry = { expires: Date.now() + SHARED_TTL_MS, text };
+  sharedReads.set(key, entry);
+  const drop = () => { if (sharedReads.get(key) === entry) sharedReads.delete(key); };
+  try {
+    const response = await relay(request, user, path, {}, { timeout: READ_TIMEOUT_MS, allowed });
+    if (response.status !== 200 || !json(response.headers.get("content-type") ?? "")) {
+      drop();
+      settle(null);
+      return response;
+    }
+    const value = await response.text();
+    settle(value);
+    return new Response(value, { status: 200, headers: SHARED_HEADERS });
+  } catch {
+    drop();
+    settle(null);
+    return Response.json({ error: "Connection to Nori's runtime was interrupted." }, { status: 502 });
+  }
+}
+
+async function forward(request: Request, mode: Mode, path: string, init: RequestInit, allowed: RelayPolicy["allowed"]) {
+  const target = runtimeTarget(mode);
+  if (target instanceof Response) return target;
+  const user = await resolveUser(request.headers, target);
+  if ("status" in user) return accessFailureResponse(user);
+  const read = !init.method || init.method === "GET";
+  if (read && mode === "hosted" && SHARED_READS.has(path)) return sharedRead(request, user, path, allowed);
+  const response = await relay(request, user, path, init, { timeout: READ_TIMEOUT_MS, allowed });
+  if (!read) forgetSharedReads(user.userID);
+  return response;
+}
+
+function allowedCaller(request: Request, mode: Mode, sameSite: (request: Request) => boolean) {
+  return sameSite(request) && (mode !== "local" || localDevelopment(request.headers));
+}
+
+type ReadResult<T> = { ok: true; value: T } | { ok: false; status: 400 | 413 };
+
+async function readBytesLimited(request: Request, limit: number): Promise<ReadResult<ArrayBuffer>> {
+  const length = Number(request.headers.get("content-length") ?? 0);
+  if (Number.isFinite(length) && length > limit) {
+    await request.body?.cancel().catch(() => undefined);
+    return { ok: false, status: 413 };
+  }
+  if (!request.body) return { ok: true, value: new ArrayBuffer(0) };
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel().catch(() => undefined);
+        return { ok: false, status: 413 };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    await reader.cancel().catch(() => undefined);
+    return { ok: false, status: 400 };
+  } finally {
+    reader.releaseLock();
+  }
+  const buffer = new ArrayBuffer(total);
+  const out = new Uint8Array(buffer);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { ok: true, value: buffer };
+}
+
+async function readTextLimited(request: Request, limit: number): Promise<ReadResult<string>> {
+  const bytes = await readBytesLimited(request, limit);
+  if (!bytes.ok) return bytes;
+  try {
+    return { ok: true, value: new TextDecoder("utf-8", { fatal: true }).decode(bytes.value) };
+  } catch {
+    return { ok: false, status: 400 };
+  }
+}
+
+const SEGMENT = /^[A-Za-z0-9._:@-]{1,200}$/;
+
+export function validSegment(segment: string) {
+  return segment !== "" && segment !== "." && segment !== ".." && SEGMENT.test(segment);
+}
+
+export async function operationRoute(request: Request, operation: string) {
+  const mode = runtimeMode(request.headers);
+  const local = mode === "local";
+  if (!isRuntimeMethod(operation)) return notFound();
+  if (!sameOrigin(request)) return forbidden();
+  const target = runtimeTarget(mode);
+  if (target instanceof Response) return local ? target : forbidden();
+  const user = await resolveUser(request.headers, target);
+  if ("status" in user) return accessFailureResponse(user);
+  const limit = local ? 64_000 : 128_000;
+  const raw = await readTextLimited(request, limit);
+  if (!raw.ok) {
+    if (raw.status === 413) return Response.json({ error: "Request is too large." }, { status: 413 });
+    return Response.json({ error: local ? "Send a JSON object." : "Request body must be JSON." }, { status: 400 });
+  }
+  let body: string;
+  try {
+    body = JSON.stringify(JSON.parse(raw.value));
+  } catch {
+    return Response.json({ error: local ? "Send a JSON object." : "Request body must be JSON." }, { status: 400 });
+  }
+  if (new TextEncoder().encode(body).length > limit) return Response.json({ error: "Request is too large." }, { status: 413 });
+  const response = await relay(request, user, `api/${operation}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body,
+  }, {
+    timeout: local ? 100_000 : 145_000,
+    allowed: (type) => local || json(type) || type.startsWith("image/png"),
+    operation,
+  });
+  forgetSharedReads(user.userID);
+  return response;
+}
+
+function historyQuery(request: Request, afterAllowed: boolean, beforeAllowed: boolean) {
+  const incoming = new URL(request.url).searchParams;
+  const query = new URLSearchParams();
+  // Agent Runtime does not relay EventSource's Last-Event-ID header.
+  const after = afterAllowed && (request.headers.get("last-event-id") || incoming.get("after"));
+  if (after) query.set("after", after);
+  const before = beforeAllowed && incoming.get("before");
+  if (before) query.set("before", before);
+  return query.size ? `?${query}` : "";
+}
+
+export async function readRoute(request: Request, name: string) {
+  const mode = runtimeMode(request.headers);
+  if (!isRuntimeRead(name)) return notFound();
+  if (!allowedCaller(request, mode, sameOriginRead)) return forbidden();
+  return forward(request, mode, `v1/${name}${historyQuery(request, true, true)}`, {},
+    (type) => json(type) || eventStream(type));
+}
+
+export async function uploadRoute(request: Request, path = "v1/uploads") {
+  const mode = runtimeMode(request.headers);
+  if (!allowedCaller(request, mode, sameOrigin)) return forbidden();
+  const incoming = new URL(request.url).searchParams;
+  const query = new URLSearchParams({ id: incoming.get("id") ?? "", filename: incoming.get("filename") ?? "" });
+  const read = await readBytesLimited(request, MAX_FILE_BYTES);
+  if (!read.ok) {
+    if (read.status === 413) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
+    return Response.json({ error: "The upload was interrupted, so nothing was saved. Try again.", retryable: true }, { status: 400 });
+  }
+  return forward(request, mode, `${path}?${query}`, { method: "POST", body: read.value, headers: { "Content-Type": request.headers.get("content-type") || "application/octet-stream" } }, json);
+}
+
+export async function fileRoute(request: Request, path: string) {
+  const mode = runtimeMode(request.headers);
+  if (!allowedCaller(request, mode, sameOriginRead)) return forbidden();
+  const segments = path.split("/");
+  if (segments.length < 3 || segments[0] !== "v1" || !segments.every(validSegment)) return notFound();
+  return forward(request, mode, path, {}, (type) => /^(application\/json|application\/pdf|application\/octet-stream|image\/(png|jpeg|webp)|text\/csv|text\/plain)/.test(type));
+}
+
+export async function capabilitiesRoute(request: Request) {
+  if (!sameOriginRead(request)) return forbidden();
+  return forward(request, runtimeMode(request.headers), "v1/capabilities", {}, json);
+}
+
+// Assistant management API (contract r1+). Each family is an explicit allowlist; the
+// browser never chooses an arbitrary upstream path.
+const ASSISTANT_FAMILIES = new Set([
+  "integrations", "connections", "interactions", "work", "automations", "goals", "library", "search", "permissions",
+  "preferences", "mcp", "assistant", "mutations", "operations", "memory", "inbox", "tools",
+]);
+
+export async function assistantRoute(request: Request, family: string, segments: string[]) {
+  const mode = runtimeMode(request.headers);
+  if (!ASSISTANT_FAMILIES.has(family) || segments.length > 4 || !segments.every(validSegment)) return notFound();
+  const read = request.method === "GET";
+  if (!read && !["POST", "PUT", "DELETE"].includes(request.method)) return notFound();
+  const incoming = new URL(request.url).searchParams;
+  const path = ["v1", family, ...segments].map(encodeURIComponent).join("/") + (incoming.size ? `?${incoming}` : "");
+  if (family === "connections" && segments.join("/") === "oauth/callback") {
+    if (!read || request.headers.get("sec-fetch-mode") !== "navigate") return forbidden();
+    return oauthCallback(request, mode, path);
+  }
+  if (!allowedCaller(request, mode, read ? sameOriginRead : sameOrigin)) return forbidden();
+  let body: string | undefined;
+  if (!read) {
+    const raw = await readTextLimited(request, 128_000);
+    if (!raw.ok) {
+      return Response.json({ error: raw.status === 413 ? "Request is too large." : "Request body must be JSON." }, { status: raw.status });
+    }
+    try {
+      body = raw.value ? JSON.stringify(JSON.parse(raw.value)) : "{}";
+    } catch {
+      return Response.json({ error: "Request body must be JSON." }, { status: 400 });
+    }
+    if (new TextEncoder().encode(body).length > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
+  }
+  const init: RequestInit = read ? {} : { method: request.method, body, headers: { "Content-Type": "application/json" } };
+  return forward(request, mode, path, init, (type) => json(type) || (read && family === "library" && /^(application\/(pdf|octet-stream)|image\/(png|jpeg|webp)|text\/(plain|markdown|csv))/.test(type)));
+}
+
+// The provider redirects the browser here. Core validates state within this user only and
+// answers 303 to the attempt's relative return_to; only a relative Location is passed on.
+async function oauthCallback(request: Request, mode: Mode, path: string) {
+  const target = runtimeTarget(mode);
+  if (target instanceof Response) return target;
+  const user = await resolveUser(request.headers, target);
+  if ("status" in user) return accessFailureResponse(user);
+  try {
+    const upstream = await fetch(new URL(`users/${encodeURIComponent(user.userID)}/${path}${path.includes("?") ? "&" : "?"}nori_redirect=json`, user.base), {
+      // The hosted gateway drops a redirect's Location, so core returns the destination as JSON when asked.
+      headers: { ...await runtimeHeaders(mode), ...upstreamTraceHeaders(request), "X-Nori-Redirect": "json" }, redirect: "manual", cache: "no-store",
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
+    });
+    let location = upstream.headers.get("location") ?? "";
+    if (!location && upstream.ok && json(upstream.headers.get("content-type") ?? "")) {
+      const value = await upstream.json().catch(() => null) as { location?: unknown } | null;
+      if (typeof value?.location === "string") location = value.location;
+    } else void upstream.body?.cancel().catch(() => undefined);
+    const safe = location.startsWith("/") && !location.startsWith("//") && !location.startsWith("/\\") && !location.includes("\\") ? location : "/apps?result=failed";
+    return new Response(null, { status: 303, headers: { Location: safe, "Cache-Control": "no-store" } });
+  } catch {
+    return new Response(null, { status: 303, headers: { Location: "/apps?result=failed", "Cache-Control": "no-store" } });
+  }
+}

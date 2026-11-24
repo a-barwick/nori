@@ -1,0 +1,1 @@
+This chat reads text attachments (CSV, calendar, plain text, Markdown); PDFs and images are read by a task in Nori's assistant

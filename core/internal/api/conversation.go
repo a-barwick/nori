@@ -1,0 +1,107 @@
+package api
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"nori/internal/conversation"
+	"nori/internal/state"
+)
+
+func (s *server) wakeConversation(ctx context.Context) error {
+	if s.Waker == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return s.Waker.WakeConversation(ctx)
+}
+
+func (s *server) snapshot(w http.ResponseWriter, r *http.Request) {
+	s.writeSession(w, r, r.URL.Query().Get("before"))
+}
+
+func (s *server) writeSession(w http.ResponseWriter, r *http.Request, before string) {
+	if len(before) > 256 || strings.Contains(before, "/") {
+		writeJSON(w, 400, map[string]string{"error": "Invalid history cursor."})
+		return
+	}
+	session, err := s.Runner.SnapshotPage(r.Context(), before)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if before == "" && session.Conversation.Revision == 0 && len(session.Messages) == 0 {
+		if err := s.Runner.EnsureIntroduction(r.Context()); err != nil {
+			writeError(w, err)
+			return
+		}
+		session, err = s.Runner.Snapshot(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	if session.Conversation.Pending && !session.Conversation.Processing {
+		s.repairWake(r.Context())
+	}
+	writeJSON(w, 200, session)
+}
+
+func (s *server) repairWake(ctx context.Context) {
+	if s.Ops == nil {
+		return
+	}
+	if err := s.Ops.RepairWake(ctx); err != nil {
+		slog.WarnContext(ctx, "saved work wake repair failed", "err", err)
+	}
+}
+
+func (s *server) turn(w http.ResponseWriter, r *http.Request) {
+	var input conversation.Input
+	if !decode(w, r, &input) {
+		return
+	}
+	input.Message = strings.TrimSpace(input.Message)
+	if !validID(input.ID) || (input.Message == "" && len(input.Attachments) == 0) || len(input.Message) > state.MaxMessageBytes {
+		writeJSON(w, 400, map[string]string{"error": "A UUID id and a message of 1–8192 bytes are required."})
+		return
+	}
+	if len(input.Attachments) > state.MaxAttachments {
+		writeJSON(w, 400, map[string]string{"error": "A message can have at most 10 attached files."})
+		return
+	}
+	for _, id := range input.Attachments {
+		if !state.ValidUploadID(id) {
+			writeJSON(w, 400, map[string]string{"error": "Send each attachment's upload ID."})
+			return
+		}
+	}
+	session, err := s.Runner.HandleInput(r.Context(), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	// AcceptConversationInput already writes LaneConversation in-tx via WakeWriter.
+	writeJSON(w, http.StatusAccepted, session)
+}
+
+func (s *server) process(w http.ResponseWriter, r *http.Request) {
+	var body struct{}
+	if !decode(w, r, &body) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 9*time.Minute)
+	defer cancel()
+	if err := s.Ops.Process(ctx); err != nil {
+		// Return 503 while another request owns the lease or a bounded slice still
+		// has work so the caller retries.
+		slog.WarnContext(ctx, "conversation process requires retry", "err", err)
+		writeJSON(w, 503, map[string]any{"error": "Conversation processing will retry.", "retryable": true})
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"processed": true})
+}

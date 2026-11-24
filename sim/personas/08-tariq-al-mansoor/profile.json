@@ -1,0 +1,199 @@
+{
+  "slug": "08-tariq-al-mansoor",
+  "name": "Tariq Al-Mansoor",
+  "email": "tariq.almansoor@sim.nori.local",
+  "timezone": "America/Toronto",
+  "locale": "en-CA",
+  "sim_start_date": "2027-01-04",
+  "presets": ["full"],
+  "summary": "31-year-old Toronto B2B SaaS CEO (RelayGrid) raising a $12M Series A, closing 3 enterprise pilots (Aegis Bank, Boreal Logistics, Veridian Health), resolving a tense $39 vs $49/seat pricing debate with CTO Ben Sato, hiring a founding infra engineer (Maya Kapoor vs Leo Chen), and planning a June 19, 2027 halal + vegan Montreal wedding with fiancée Yasmin. Stresses mid-flush user-arrival preemption, concurrent task dispatch with selective stop/steer, stale approval rejection, task_outcome Core Memory isolation, and CSV uploads.",
+  "feature_focus": [
+    "mid_flush_preemption",
+    "concurrent_task_stop_and_steer",
+    "stale_approval_handling",
+    "task_outcome_core_isolation",
+    "csv_uploads",
+    "automations_permissions_goals_memory_ui"
+  ],
+  "preferences": {
+    "timezone": "America/Toronto",
+    "locale": "en-CA",
+    "budget_per_task_usd": 3.0,
+    "monthly_limit_usd": 120,
+    "working_hours": {
+      "monday": { "enabled": true, "start": "07:30", "end": "22:00" },
+      "tuesday": { "enabled": true, "start": "07:30", "end": "22:00" },
+      "wednesday": { "enabled": true, "start": "07:30", "end": "22:00" },
+      "thursday": { "enabled": true, "start": "07:30", "end": "22:00" },
+      "friday": { "enabled": true, "start": "07:30", "end": "21:00" },
+      "saturday": { "enabled": true, "start": "09:00", "end": "18:00" },
+      "sunday": { "enabled": true, "start": "10:00", "end": "20:00" }
+    }
+  },
+  "initial_permissions": [
+    {
+      "title": "Allow reading workspace email, calendar, docs, and engineering issues",
+      "effect": "allow",
+      "tool_names": [
+        "email_search",
+        "email_read",
+        "calendar_list",
+        "doc_list",
+        "doc_read",
+        "issue_list"
+      ]
+    },
+    {
+      "title": "Require explicit CEO approval before sending any external email or calendar invite",
+      "effect": "deny",
+      "tool_names": ["email_send", "calendar_create_event"]
+    }
+  ],
+  "persona_responder_brief": "You are Tariq Al-Mansoor, 31, the high-urgency, terse CEO of RelayGrid (11-person Toronto B2B SaaS startup doing developer workflow analytics, $1.42M ARR, 134% NDR, $148k/mo burn). You are raising a $12M Series A (Northstar Ventures partner Claire Dupont & MapleLeaf Capital GP Graham Whitaker), closing 3 enterprise pilots (Aegis Bank, Boreal Logistics, Veridian Health), debating enterprise pricing ($39/seat vs $49/seat) with CTO Ben Sato until Ben agrees to $49/seat on Jan 12, hiring a founding infra engineer (Maya Kapoor vs Leo Chen — you choose Maya Kapoor on Jan 21), and planning your June 19, 2027 Montreal wedding at Old Port Pavilion (140 guests, 100% zabiha halal + dedicated nut-free vegan menu, Maison Zaatar & Olive $6,200 deposit due Jan 29) with fiancée Yasmin Haddad. Reply concisely, impatiently when busy, cut straight to decisions, never approve sending an outdated $39/seat investor email once pricing moves to $49/seat, and stay warmly protective of Yasmin and wedding details.",
+  "mcp_world": {
+    "server_name": "relaygrid-ceo-workspace",
+    "emails": [
+      {
+        "id": "em_tariq_01",
+        "from": "claire@northstarvc.example",
+        "to": ["tariq.almansoor@sim.nori.local"],
+        "subject": "RelayGrid Series A — IC target Jan 26 & enterprise ACV question",
+        "date": "2027-01-04T08:40:00-05:00",
+        "folder": "inbox",
+        "body": "Tariq,\n\nLoved the product demo last month. I've penciled RelayGrid in for Northstar Investment Committee on Tuesday, Jan 26. To get my partners aligned on a $12M lead check ($48M-$52M pre), we need two things in the data room by Jan 18: (1) clean 12-month ARR/NDR/burn sheet, and (2) clear enterprise tier ACV above $60k with at least one pilot converting cleanly.\n\nBest,\nClaire Dupont, Partner — Northstar Ventures"
+      },
+      {
+        "id": "em_tariq_02",
+        "from": "graham@mapleleafcap.example",
+        "to": ["tariq.almansoor@sim.nori.local"],
+        "subject": "Following up on RelayGrid Series A & enterprise pricing",
+        "date": "2027-01-05T10:15:00-05:00",
+        "folder": "inbox",
+        "body": "Tariq,\n\nGreat catching up on King West. Before our partnership call next week, can you send over your finalized Enterprise per-seat pricing tier and your SOC 2 Type II completion date? We move fast when pricing and enterprise pull are crisp.\n\nCheers,\nGraham Whitaker, GP — MapleLeaf Capital"
+      },
+      {
+        "id": "em_tariq_03",
+        "from": "ben@relaygrid.example",
+        "to": ["tariq.almansoor@sim.nori.local"],
+        "subject": "Enterprise pricing — still think $39/seat closes pilots faster",
+        "date": "2027-01-05T16:50:00-05:00",
+        "folder": "inbox",
+        "body": "Tariq — I hear Claire on the $60k ACV benchmark, but Victor at Aegis and Sonia at Boreal both saw $39/seat in our autumn deck. Jumping to $49/seat right before conversion risks stalling two pilots we need for IC. Let's look at the conversion math again before locking it.\n\n- Ben"
+      },
+      {
+        "id": "em_tariq_04",
+        "from": "victor.osei@aegisbank.example",
+        "to": ["tariq.almansoor@sim.nori.local", "ben@relaygrid.example"],
+        "subject": "Aegis Bank 180-seat pilot — InfoSec blockers (Okta SAML + SEC-Q-089)",
+        "date": "2027-01-06T14:10:00-05:00",
+        "folder": "inbox",
+        "body": "Hi Tariq & Ben,\n\nEngineering loves RelayGrid (our CI queue times dropped 31% in week 3). InfoSec is holding final sign-off on two items: Okta SAML group-sync provisioning and row SEC-Q-089-TLS13-CIPHER in our 142-item security questionnaire, plus your SOC 2 Type II bridge letter. Clear those and we are ready for 180 annual enterprise seats.\n\nBest,\nVictor Osei, VP Engineering — Aegis Bank"
+      },
+      {
+        "id": "em_tariq_05",
+        "from": "rajesh.patel@veridianhealth.example",
+        "to": ["tariq.almansoor@sim.nori.local"],
+        "subject": "Veridian Health 150-seat pilot — ca-central-1 residency & DPA",
+        "date": "2027-01-07T11:05:00-05:00",
+        "folder": "inbox",
+        "body": "Tariq,\n\nOur privacy officer verified your AWS ca-central-1 sandbox trace (audit tag phipa_sandbox_audit_9941) has zero US egress. Next hurdle is our legal team's PHIPA/HIPAA DPA redline, which they'll send early next week.\n\nRegards,\nDr. Rajesh Patel, Chief Architect — Veridian Health"
+      },
+      {
+        "id": "em_tariq_06",
+        "from": "events@maisonzaatar.example",
+        "to": ["tariq.almansoor@sim.nori.local", "yasmin.haddad@family.example"],
+        "subject": "Al-Mansoor / Haddad Wedding (June 19, 2027) — Menu Confirmation & Deposit",
+        "date": "2027-01-08T13:20:00-05:00",
+        "folder": "inbox",
+        "body": "Bonjour Tariq & Yasmin,\n\nConfirming Old Port Pavilion (Quai de l'Horloge) for 140 guests on Saturday, June 19, 2027. Our kitchen is 100% zabiha halal certified (strictly zero pork or alcohol in prep) and we have set up a dedicated nut-free vegan station for your 18 vegan guests and nut-allergy tables. Friendly reminder: the second catering deposit of $6,200 CAD is due Friday, January 29, 2027 (final balance $11,800 due May 15).\n\nMerci,\nLeila Benali, Maison Zaatar & Olive"
+      }
+    ],
+    "calendar_events": [
+      {
+        "id": "cal_tariq_01",
+        "title": "RelayGrid Pricing Lock Sync (Tariq + Ben)",
+        "start": "2027-01-12T08:30:00-05:00",
+        "end": "2027-01-12T09:15:00-05:00",
+        "location": "King West HQ — Glass Room",
+        "attendees": ["tariq.almansoor@sim.nori.local", "ben@relaygrid.example"],
+        "notes": "Final call on $39/seat vs $49/seat enterprise tier."
+      },
+      {
+        "id": "cal_tariq_02",
+        "title": "Founding Infra Final Panel Debrief (Maya Kapoor vs Leo Chen)",
+        "start": "2027-01-20T16:00:00-05:00",
+        "end": "2027-01-20T17:00:00-05:00",
+        "location": "King West HQ",
+        "attendees": ["tariq.almansoor@sim.nori.local", "ben@relaygrid.example"],
+        "notes": "Compare technical depth, ownership, and comp asks."
+      },
+      {
+        "id": "cal_tariq_03",
+        "title": "Northstar Ventures Series A Investment Committee (IC)",
+        "start": "2027-01-26T10:00:00-05:00",
+        "end": "2027-01-26T11:30:00-05:00",
+        "location": "Zoom / Northstar Toronto Partner Room",
+        "attendees": ["tariq.almansoor@sim.nori.local", "ben@relaygrid.example", "claire@northstarvc.example"],
+        "notes": "Pitch $12M Series A lead round."
+      },
+      {
+        "id": "cal_tariq_04",
+        "title": "Wedding Deposit Deadline — Maison Zaatar & Olive ($6,200)",
+        "start": "2027-01-29T12:00:00-05:00",
+        "end": "2027-01-29T12:30:00-05:00",
+        "location": "Online wire / e-Transfer",
+        "attendees": ["tariq.almansoor@sim.nori.local", "yasmin.haddad@family.example"],
+        "notes": "Second catering deposit for June 19 Old Port Pavilion reception."
+      }
+    ],
+    "docs": [
+      {
+        "id": "doc_hiring_finalists",
+        "title": "Founding Infra Engineer — Finalist Scorecard (Jan 2027)",
+        "updated_at": "2027-01-08T17:00:00-05:00",
+        "tags": ["hiring", "infra", "engineering"],
+        "content": "Candidate 1: Maya Kapoor\n- Background: Senior Staff Infra Eng at Datadog (distributed tracing, Rust/Go, ClickHouse ingestion)\n- Comp Ask: $215,000 CAD + 0.65% equity\n- Signal: Crushed architecture round; loved early-stage product ownership and customer debugging; zero hesitation on startup pace.\n\nCandidate 2: Leo Chen\n- Background: Staff Infra Eng at Stripe (Kubernetes federation, ClickHouse)\n- Comp Ask: $230,000 CAD + 0.80% equity\n- Signal: Deep K8s mastery, slightly hesitant about early-stage on-call rotation and ambiguous specs."
+      },
+      {
+        "id": "doc_pilot_tracker",
+        "title": "Q1 2027 Enterprise Pilot Conversion Tracker",
+        "updated_at": "2027-01-06T18:00:00-05:00",
+        "tags": ["sales", "pilots", "enterprise"],
+        "content": "1. Aegis Bank (Victor Osei, VP Eng): 180 seats. Blockers: Okta SAML group sync + security row SEC-Q-089-TLS13-CIPHER + SOC 2 Type II bridge letter (expected Jan 20).\n2. Boreal Logistics (Sonia Tremblay, Director of Platform): 120 seats. Blocker: ticket RG-412 self-hosted GitHub Enterprise Server runner OOM/latency (Ben ETA Jan 19).\n3. Veridian Health (Dr. Rajesh Patel, Chief Architect): 150 seats. Blockers: AWS ca-central-1 verified (phipa_sandbox_audit_9941), waiting on legal PHIPA/HIPAA DPA redlines."
+      },
+      {
+        "id": "doc_wedding_budget",
+        "title": "Montreal Wedding — June 19, 2027 Logistics & Deposits",
+        "updated_at": "2027-01-03T19:00:00-05:00",
+        "tags": ["wedding", "personal", "yasmin"],
+        "content": "Couple: Tariq Al-Mansoor & Yasmin Haddad (SickKids pediatric resident)\nDate: Saturday, June 19, 2027\nVenue: Old Port Pavilion (Quai de l'Horloge, Old Montreal) — $8,500 deposit PAID Nov 2026\nGuest Count: 140 (114 halal adult, 18 nut-free vegan incl. Salma & Chloe, 8 halal child)\nCaterer: Maison Zaatar & Olive (100% zabiha halal kitchen + dedicated nut-free vegan station)\nUpcoming Payments: $6,200 CAD catering 2nd deposit due Fri Jan 29, 2027; $11,800 final balance due May 15, 2027."
+      }
+    ],
+    "issues": [
+      {
+        "id": "RG-412",
+        "title": "Boreal Logistics GHES runner latency & OOM spike under parallel matrix jobs",
+        "status": "in_progress",
+        "assignee": "ben@relaygrid.example",
+        "priority": "urgent",
+        "notes": "Telemetry crash signature: oom_killer_worker_pool_v3 on 64-core runner nodes. Ben testing streaming batch flush fix; ETA Jan 19."
+      },
+      {
+        "id": "RG-418",
+        "title": "Aegis Bank Okta SAML group-sync provisioning & TLS 1.3 cipher doc",
+        "status": "in_progress",
+        "assignee": "ben@relaygrid.example",
+        "priority": "urgent",
+        "notes": "Resolves questionnaire item SEC-Q-089-TLS13-CIPHER and Okta SCIM/SAML group mapping for 180-seat rollout."
+      },
+      {
+        "id": "RG-421",
+        "title": "Veridian Health ca-central-1 audit export & PHIPA DPA clauses",
+        "status": "blocked",
+        "assignee": "tariq.almansoor@sim.nori.local",
+        "priority": "high",
+        "notes": "Verified zero US egress under phipa_sandbox_audit_9941; waiting for outside counsel DPA markup."
+      }
+    ]
+  }
+}

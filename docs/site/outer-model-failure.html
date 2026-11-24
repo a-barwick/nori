@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>When the outer model call fails · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>When the outer model call fails</h1>
+<p class="lede">A failed outer model call accepts no task commands, and publishes an error reply unless newer input restarted the turn.</p>
+<div class="card"><div class="flow">
+<div class="node outer"><b>Outer loop</b><small>Sends one request to the outer model for this attempt.</small></div>
+<div class="arrow">↓ <span class="lbl">error or unusable response</span></div>
+<div class="node decide">Did newer input replace the attempt during the call?</div>
+<div class="branch">
+<div class="node"><b>Yes</b><small>The runtime publishes no error reply. The turn restarts with the newer batch.</small></div>
+<div class="node"><b>No</b><small>The runtime publishes an error reply. The turn completes with that reply.</small></div>
+</div>
+</div></div>
+<section><h2>What the user sees</h2>
+<div class="card"><table class="tall">
+<tr><th>Failure</th><th>Published reply</th></tr>
+<tr><td>Request error or unusable response</td><td>Text starts “I couldn't write a conversation reply” and includes the error. For a user message such as “Check Saturday's weather in Tucson”, it also says no new task commands were accepted and the message is saved.</td></tr>
+<tr><td>Invalid task commands</td><td>Text says the model returned invalid tool calls and no task commands were accepted.</td></tr>
+</table></div>
+</section>
+<section><h2>What stays saved</h2>
+<ul class="pts">
+<li>The runtime saves the attempt as <code>error</code> and publishes the error text as the assistant message for the turn.</li>
+<li>The runtime makes no second outer model call in that attempt. The runtime accepts no dispatch, steer, answer or stop commands from the attempt.</li>
+<li>A user message in the batch stays unresolved. The next user turn includes that message again as an input.</li>
+<li>After a request error or unusable response, for each task event in the batch, the runtime re-reads the task after the failed call and appends its current saved status. The text quotes saved output for a finished task and copies the open question for a waiting task.</li>
+<li>The runtime writes the usage record before it sends the provider request. A failed request can leave the cost in that record as unknown.</li>
+</ul>
+<p>A failure in the Jev classifier follows a different path. The turn continues without its hint, as the <a href="outer-loop.html">outer loop</a> page shows.</p>
+</section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/conversation/openai.go</code> · <code>core/internal/conversation/runner.go</code> · <code>core/internal/state/conversation.go</code></p></details>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "revision": 1732400200000,
+  "from": "2026-11-01T00:00:00Z",
+  "extracted_through": "2026-11-23T12:15:00Z",
+  "flushed_through": "2026-11-23T12:00:00Z",
+  "through": "2026-11-23T12:00:00Z",
+  "dream_through": "2026-11-22T23:00:00Z",
+  "last_dream_at": "2026-11-22T23:15:00Z",
+  "items": [
+    {
+      "id": "si_0123456789abcdef",
+      "kind": "constraint",
+      "quote": "Never book flights before 9am.",
+      "input_id": "in_7",
+      "note": "Flight time window"
+    }
+  ],
+  "gist": "User is planning a December trip to Tokyo with morning flight constraints.",
+  "turns": 18,
+  "model": "gpt-5",
+  "core_bytes": 1420,
+  "core_budget_bytes": 24576,
+  "updated_at": "2026-11-23T12:00:00Z"
+}

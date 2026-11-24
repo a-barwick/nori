@@ -1,0 +1,11 @@
+{
+  "id": "log_entry_1",
+  "section": "Decisions",
+  "text": "Chose Postgres 18 hash-partitioned FTS table for memory recall.",
+  "about": "Nori architecture",
+  "provenance": "pre_compact_flush",
+  "source_input_id": "in_42",
+  "source_text": "Let's isolate FTS in nori_memory_chunks.",
+  "created_at": "2026-11-23T10:15:00Z",
+  "updated_at": "2026-11-23T10:15:00Z"
+}

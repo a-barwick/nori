@@ -1,0 +1,1 @@
+A saved tool output is untrusted data, as it was when the tool returned it.

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Permissions and approvals · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Permissions and approvals</h1>
+<p class="lede">Deny-wins permission rules and action-digest-bound approval cards decide whether a tool call may run, and ensure an old approval can never authorize a changed action.</p>
+<div class="card"><p><span class="say me">Publish the Q3 revenue brief to the leadership channel via the reporting MCP server.</span></p>
+<div class="flow">
+<div class="node inner"><b>Tool executor (<code>invoke</code>)</b><small>Prepares the exact action: tool, connection/server, arguments and recipients. Computes a SHA-256 <code>action_digest</code> over them.</small></div>
+<div class="arrow">↓ <span class="lbl">unknown-effect or sensitive send needs approval</span></div>
+<div class="node"><b>Typed approval card</b><small>Saved as a pending interaction with prompt, typed payload, revision and <code>action_digest</code>.</small></div>
+<div class="arrow">↓ <span class="lbl">POST /v1/interactions/{id}/responses naming revision &amp; digest</span></div>
+<div class="node computer"><b>MCP server / adapter</b><small>Runs once with an idempotency key derived from task, revision and action.</small></div>
+</div></div>
+<section><h2>What decides a call</h2>
+<p>Connecting an MCP server or account grants no execution authority on its own. Every call is evaluated by <code>core/internal/permissions</code> against the connection's granted scopes, the user's permission rules, the task's origin (direct user request vs. automation) and deployment defaults. Rules specify exact selectors—<code>tool_ids</code>, <code>connection_ids</code>, <code>resource_ids</code>, <code>action_classes</code>, optional <code>recipients</code>, <code>automation_id</code>, <code>goal_id</code>, <code>expires_at</code> and <code>max_operations</code>. Empty selector lists match nothing, explicit <code>*</code> wildcards match any, and <strong>deny always wins</strong>.</p>
+<div class="card"><table><tr><th>Action class</th><th>Examples</th><th>Default (no matching rule)</th></tr>
+<tr><td><code>read</code></td><td>Search, MCP protocol reads, read-only lookups</td><td>Allowed when available/connected</td></tr>
+<tr><td><code>reversible_write</code></td><td>Drafts or reversible state changes</td><td>Allowed for direct user requests; asks for unattended automations</td></tr>
+<tr><td><code>sensitive_send</code></td><td>Outbound messages, broadcasts or irreversible sends</td><td>Follows <code>UserSends</code> on direct requests (<code>UnattendedWrites</code> for automations)</td></tr>
+<tr><td><code>unknown</code></td><td>Discovered MCP server tools (annotations are advisory)</td><td>Always requires an approval card or an explicit matching allow rule</td></tr>
+</table>
+<p class="note">For unattended automation runs, <code>UnattendedWrites</code> defaults to <code>confirm_writes</code> (creates a pending approval interaction) or can be set to <code>require_rule</code> (denies writes unless an explicit allow rule matches).</p></div>
+</section>
+<section><h2>Approvals stay bound to what they approve</h2>
+<p>An approval interaction records the task ID, instruction revision, interaction revision and exact <code>action_digest</code>. A steer to the task supersedes any open approval in the same transaction that advances the task revision. Submitting a stale decision returns HTTP 409 (<code>revision_conflict</code> or <code>interaction_stale</code>) with the current state, and an old digest can never match a modified action. Declining executes nothing and runs optional cleanup hooks.</p>
+<p>After approval, the task re-invokes the call. The idempotency key comes from the task, its revision and the action digest—so an unchanged repeat consumes the approval once and reuses the same key: one approval, one write. Any changed parameter produces a new digest and requires a fresh approval.</p>
+<p>The user's response, the interaction resolution, the mutation receipt and the command that resumes the task are committed together in Postgres. The host app and the workbench both respond through <code>POST /v1/interactions/{id}/responses</code> with <code>{ request_id, expected_revision, value: { kind: "approve" | "decline", action_digest } }</code>.</p>
+</section>
+<section><h2>Questions and other interactions</h2>
+<p>Task questions, account choices and approvals share the same typed interaction record under <code>/v1/interactions</code>: each carries a <code>status</code>, <code>revision</code>, typed <code>payload</code> and optimistic concurrency checks. Work surfaces every pending interaction so the host app or the workbench can render approval cards consistently.</p>
+</section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/permissions/rules.go</code> · <code>core/internal/permissions/interactions.go</code> · <code>core/internal/invoke/invoke.go</code> · <code>core/internal/api/assistant.go</code> · <code>integrations/embed/README.md</code> · <code>contracts/assistant/schemas/permissions.schema.json</code></p></details>
+</body>
+</html>

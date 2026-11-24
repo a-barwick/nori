@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service overview · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Service overview</h1>
+<p class="lede">One multi-user Go binary (<code>cmd/nori --role=all|api|worker</code>) runs the assistant outer loop, management APIs and Postgres-native durable task pool over Postgres and S3.</p>
+<div class="card"><div class="flow">
+<div class="node"><b>The host app (or local test workbench)</b><small>Verifies user identity and maps it to a provisioned Nori user ID.</small></div>
+<div class="arrow">↓ <span class="lbl">HS256 service-authenticated HTTP under /users/{id}/v1/*</span></div>
+<div class="node outer"><b>Go API (<code>nori --role=all|api</code>)</b><small>Saves inputs, writes durable wakes/leases, serves SSE streams and management APIs.</small></div>
+<div class="arrow">↓ <span class="lbl">durable Postgres wakes, leases &amp; NOTIFY nori_wake</span></div>
+<div class="branch">
+<div class="node inner"><b>Inner task pool (<code>worker.Pool</code>)</b><small>Claims <code>nori_task_leases</code> and runs each task's <code>task.Runner</code>, durable waits, approvals and MCP tool calls.</small></div>
+<div class="node"><b>Outer &amp; scheduler lanes (<code>worker.Pool</code>)</b><small>Claims <code>nori_user_wakes</code> to run conversation turns and due automations.</small></div>
+</div>
+<div class="arrow">↓ <span class="lbl">messages, events, task records, leases, encrypted credentials and usage</span></div>
+<div class="node"><b>Postgres &amp; S3</b><small>Stores user-scoped records, leases and wakes in Postgres and private file bytes in S3 (or local disk).</small></div>
+</div></div>
+<section><h2>How work runs</h2>
+<div class="card"><table class="tall"><tr><th>Part</th><th>Responsibility</th></tr>
+<tr><td>Outer loop (<code>conversation</code>)</td><td>Holds one persistent thread per user, guards dispatches against prompt injection, manages explicit memory and accepts background tasks without blocking.</td></tr>
+<tr><td>Inner loop (<code>task</code>, <code>agent</code>, <code>worker</code>)</td><td>Runs each task in <code>task.Runner</code> with document-fenced leases (<code>TaskControl</code>), budgeted turns, steering, durable waits and record-checked completion.</td></tr>
+<tr><td>Ports &amp; MCP (<code>connections</code>, <code>connectors/mcp</code>, <code>extensions</code>, <code>invoke</code>)</td><td>Exposes built-in capabilities, remote/local MCP servers and provider-agnostic connections through one permission-checked executor.</td></tr>
+<tr><td>Permissions (<code>permissions</code>)</td><td>Evaluates deny-wins rules and manages action-digest-bound approval interactions.</td></tr>
+<tr><td>Scheduler (<code>scheduler</code>)</td><td>Runs recurring automations and goals, delivering results to the in-app inbox.</td></tr>
+<tr><td>Unified worker pool (<code>worker.Pool</code>)</td><td>Listens on <code>LISTEN nori_wake</code> with a 2-second fallback poll and 60-second repair sweep to drive outer conversation turns, due schedules and inner task runners.</td></tr>
+</table></div>
+</section>
+<section><h2>User isolation</h2>
+<ul class="pts">
+<li>Every user-scoped route sits under <code>/users/{id}/...</code>, resolved on the server from a verified the host app session or OIDC ID token.</li>
+<li>Conversations, tasks, interactions, approvals, MCP servers, credentials, results and uploads are isolated per user; requesting another user's resource ID returns 404.</li>
+<li>Hosted API entrypoints require short-lived HS256 service tokens (<code>core/internal/serviceauth</code>); only <code>/healthz</code> is unauthenticated.</li>
+</ul>
+</section>
+<section><h2>Where state lives</h2>
+<div class="card"><table class="tall"><tr><th>Store</th><th>Records</th></tr>
+<tr><td>Postgres</td><td>Accepted inputs, messages, event logs, task commands, <code>TaskControl</code> checkpoints, <code>nori_task_leases</code>, <code>nori_user_wakes</code>, permissions, schedules, usage rows and envelope-encrypted credentials.</td></tr>
+<tr><td>S3 (or local disk)</td><td>Uploaded files and saved result bytes under user-scoped prefixes.</td></tr>
+</table></div>
+<p><a href="records.html">Records and delivery</a> covers the record layout and Postgres-native wake/lease model. <a href="deploy.html">Deployment</a> covers AWS and local topology.</p>
+</section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/app/app.go</code> · <code>core/internal/api/http.go</code> · <code>core/internal/api/assistant.go</code> · <code>core/internal/conversation/runner.go</code> · <code>core/internal/conversation/tasks.go</code> · <code>core/internal/task/runner.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/state/records/database.go</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/serviceauth/auth.go</code> · <code>integrations/embed/adapter.mjs</code> · <code>web/src/lib/runtime/forward.ts</code></p></details>
+</body>
+</html>

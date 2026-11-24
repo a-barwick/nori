@@ -1,0 +1,15 @@
+group_id,household_or_group,side,table_zone,headcount,halal_adult_meals,nut_free_vegan_meals,halal_child_meals,allergies_or_notes,rsvp_status,hotel_block
+G01,Al-Mansoor Parents & Immediate Family,Groom,Table 1 (Head),8,7,1,0,Sister Salma is strict nut-free vegan; zero alcohol/pork in kitchen,Confirmed,Hotel William Gray
+G02,Haddad Parents & Immediate Family,Bride,Table 2 (Head),10,10,0,0,Zabiha halal certified required; wheelchair ramp seating for Teta Layla,Confirmed,Hotel William Gray
+G03,Al-Mansoor Extended Family (Ottawa/Toronto),Groom,Tables 3-4,16,13,1,2,Tree-nut allergy (cousin Rami),Confirmed,Hotel Nelligan
+G04,Haddad Extended Family (Montreal),Bride,Tables 5-6,18,16,0,2,Local Montreal guests; zabiha halal only,Confirmed,None
+G05,Haddad Aunts & Uncles (Laval/Brossard),Bride,Table 7,10,8,0,2,Local; lactose-free dessert option for Uncle Karim,Confirmed,None
+G06,Yasmin Bridesmaids & Partners (Incl. Chloe),Bride,Table 8,10,7,3,0,Bridesmaid Chloe & partner strict nut-free vegan; sesame ok,Confirmed,Hotel William Gray
+G07,SickKids Pediatrics Residency Cohort,Bride,Table 9,10,7,3,0,3 nut-free vegan physicians; on-call late arrival buffer,Confirmed,Hotel Nelligan
+G08,Tariq Groomsmen & Waterloo Friends,Groom,Table 10,10,8,2,0,2 nut-free vegan; peanut allergy (Omar),Confirmed,Hotel Nelligan
+G09,RelayGrid Team & Partners (Incl. Ben Sato),Groom,Table 11,12,9,3,0,CTO Ben Sato & partner gluten-light; 3 nut-free vegan engineers,Confirmed,Hotel William Gray
+G10,Shopify Former Colleagues,Groom,Table 12,8,6,2,0,2 nut-free vegan; arriving Friday night train from Toronto,Pending (2),Hotel Nelligan
+G11,McGill Med School Friends (Yasmin),Bride,Table 13,10,8,2,0,2 nut-free vegan; local Montreal,Confirmed,None
+G12,Family Friends - Mosque Community (Toronto),Groom,Table 14,8,7,0,1,Strict zabiha halal; elderly seating near exit,Confirmed,Hotel William Gray
+G13,Family Friends - Montreal Neighbors,Bride,Table 15,6,5,0,1,Local Montreal; zabiha halal,Confirmed,None
+G14,Seed Investors & Advisors,Groom,Table 16,4,3,1,0,1 nut-free vegan; VIP seating near main floor,Pending (1),Hotel William Gray

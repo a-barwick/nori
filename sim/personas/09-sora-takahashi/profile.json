@@ -1,0 +1,138 @@
+{
+  "slug": "09-sora-takahashi",
+  "name": "Sora Takahashi",
+  "email": "sora.takahashi@sim.nori.local",
+  "timezone": "Pacific/Honolulu",
+  "locale": "en-US",
+  "sim_start_date": "2027-01-04",
+  "presets": ["full"],
+  "summary": "Marine Conservation Program Manager in Honolulu coordinating inter-island coral bleaching surveys across Oʻahu, Maui, and Kauaʻi, balancing offshore 4-6 day boat blackouts, non-DST Pacific/Honolulu scheduling, Unicode/diacritic/CJK notes, recurring missed-run automations, and two teenagers.",
+  "feature_focus": [
+    "unicode_diacritic_cjk_emoji_fts_safety",
+    "multi_day_idle_gaps_autodream",
+    "automation_missed_run_skip_vs_latest",
+    "non_dst_pacific_honolulu_timezone",
+    "show_result_cross_week_retrieval",
+    "file_uploads_csv_markdown",
+    "goals_and_approval_gated_email"
+  ],
+  "preferences": {
+    "timezone": "Pacific/Honolulu",
+    "locale": "en-US",
+    "budget_per_task_usd": 1.5,
+    "monthly_limit_usd": 45.0,
+    "working_hours": {
+      "mon": { "enabled": true, "start": "08:00", "end": "17:00" },
+      "tue": { "enabled": true, "start": "08:00", "end": "17:00" },
+      "wed": { "enabled": true, "start": "08:00", "end": "17:00" },
+      "thu": { "enabled": true, "start": "08:00", "end": "17:00" },
+      "fri": { "enabled": true, "start": "08:00", "end": "16:30" },
+      "sat": { "enabled": false },
+      "sun": { "enabled": false }
+    }
+  },
+  "initial_permissions": [
+    {
+      "title": "Read work emails, calendar, and field docs",
+      "effect": "allow",
+      "tool_names": ["email_search", "email_read", "calendar_list", "doc_list", "doc_read", "issue_list"],
+      "action_classes": ["read"]
+    }
+  ],
+  "persona_responder_brief": "You are Sora Takahashi, a 45-year-old Marine Conservation Program Manager at Pacific Reef Initiative in Honolulu (Pacific/Honolulu, no DST). Write warmly, calmly, and concisely with accurate Hawaiian diacritics (Kāneʻohe, Oʻahu, Kauaʻi, Hōkūleʻa, Mālama, Nākānelua), occasional Japanese terms (kaizen, obento, 珊瑚), and light ocean emojis. Never auto-approve outbound NOAA emails without checking numbers first; always protect Tue/Thu 5:30 AM Hōkūleʻa outrigger canoe practice (no meetings before 8:00 AM Tue/Thu).",
+  "mcp_world": {
+    "server_name": "pacific-reef-workspace",
+    "emails": [
+      {
+        "id": "em_sora_01",
+        "from": "elena.vega@noaa.sim.local",
+        "to": ["sora.takahashi@sim.nori.local"],
+        "subject": "FY2027 Coral Resilience Grant & Permit #HI-CR-2027-0418 Timeline",
+        "date": "2027-01-03T18:10:00-10:00",
+        "folder": "inbox",
+        "body": "Aloha Sora,\n\nHappy New Year! Quick reminder that our FY2027 Coral Resilience Grant package ($184,500 request) is due February 5, 2027. For Permit #HI-CR-2027-0418 renewal, please share your winter bleaching baselines for Kāneʻohe Bay, Honolua Bay, and Hanalei Bay once you wrap your January dives.\n\nLet's also lock in a check-in call next Thursday (Jan 14) at 11:00 AM Seattle time.\n\nMahalo,\nDr. Elena Reyes-Vega\nNOAA PIRO"
+      },
+      {
+        "id": "em_sora_02",
+        "from": "keoni@pacificreef.org",
+        "to": ["sora.takahashi@sim.nori.local", "kaiulani@pacificreef.org"],
+        "subject": "R/V Makani Kai — Maui (Honolua Bay) departure Jan 9",
+        "date": "2027-01-04T06:45:00-10:00",
+        "folder": "inbox",
+        "body": "Aloha Sora & Kaiulani,\n\nTanks are filled and R/V Makani Kai is fueled at Heʻeia Kea Boat Harbor. Trade winds look clean for our Saturday Jan 9 departure to Honolua Bay, Maui, returning Wednesday Jan 13 late afternoon. Remember we'll be off-grid with zero cell reception once we clear Molokaʻi channel.\n\nCapt. Keoni Kaleikini"
+      },
+      {
+        "id": "em_sora_03",
+        "from": "coach.ching@alohabots.sim.local",
+        "to": ["sora.takahashi@sim.nori.local", "david.takahashi@sim.nori.local"],
+        "subject": "Aloha Bots — Electrical Inspection & Mainland Crate Schedule",
+        "date": "2027-01-04T07:20:00-10:00",
+        "folder": "inbox",
+        "body": "Hi Aloha Bots parents,\n\nMei has been crushing the wiring harness! Saturday Jan 16 is our electrical inspection build day (thank you Sora for volunteering obento snacks). Right now our Matson freight crate shipping cutoff for mainland nationals is February 12, though I'll email if the carrier shifts the window.\n\nMahalo,\nCoach Marcus Ching"
+      }
+    ],
+    "calendar_events": [
+      {
+        "id": "cal_sora_01",
+        "title": "Hōkūleʻa Training Club — Outrigger Canoe Practice (OC-6)",
+        "start": "2027-01-05T05:30:00-10:00",
+        "end": "2027-01-05T07:15:00-10:00",
+        "location": "Kailua Beach Park",
+        "attendees": ["sora.takahashi@sim.nori.local"],
+        "notes": "Recurring every Tuesday & Thursday at 05:30 HST. Keep calendar blocked until 08:00 HST."
+      },
+      {
+        "id": "cal_sora_02",
+        "title": "Maui Offshore Coral Survey — Honolua Bay (R/V Makani Kai)",
+        "start": "2027-01-09T06:00:00-10:00",
+        "end": "2027-01-13T17:30:00-10:00",
+        "location": "Honolua Bay, Maui",
+        "attendees": ["sora.takahashi@sim.nori.local", "kaiulani@pacificreef.org", "keoni@pacificreef.org"],
+        "notes": "5-day offshore survey. Completely offline."
+      },
+      {
+        "id": "cal_sora_03",
+        "title": "Aloha Bots Electrical Inspection Build Session",
+        "start": "2027-01-16T09:00:00-10:00",
+        "end": "2027-01-16T15:00:00-10:00",
+        "location": "Kailua High Robotics Lab",
+        "attendees": ["sora.takahashi@sim.nori.local", "david.takahashi@sim.nori.local"],
+        "notes": "Bring obento (spam musubi + tamagoyaki) for Mei's crew."
+      }
+    ],
+    "docs": [
+      {
+        "id": "doc_sora_01",
+        "title": "Pacific Reef Initiative — 2027 Inter-Island Dive Safety Protocol",
+        "updated_at": "2027-01-02T14:00:00-10:00",
+        "tags": ["dive-safety", "Kāneʻohe", "Nākānelua"],
+        "content": "Lead Diver: Kaiulani Nākānelua. Vessel Captain: Keoni Kaleikini (R/V Makani Kai). All benthic transects require buddy check, backup HOBO thermistor readout, zero anchoring on live coral (Mālama i ke kai), and Dr. Kenji Sato's kaizen color-card calibration for 珊瑚 bleaching scores."
+      },
+      {
+        "id": "doc_sora_02",
+        "title": "Kai Takahashi — Hawaiʻi Learner's Permit Supervised Driving Log",
+        "updated_at": "2027-01-03T19:00:00-10:00",
+        "tags": ["family", "driving-log", "Kai"],
+        "content": "Required for June 2027 road test: 50 total supervised hours (40 daytime + 10 nighttime). As of Jan 3, 2027: 14.5 daytime hours, 2.0 nighttime hours (16.5 total)."
+      }
+    ],
+    "issues": [
+      {
+        "id": "PRI-101",
+        "title": "Submit NOAA Permit #HI-CR-2027-0418 winter transect addendum",
+        "status": "in_progress",
+        "assignee": "Sora Takahashi",
+        "priority": "high",
+        "notes": "Needs Oʻahu (Kāneʻohe), Maui (Honolua), and Kauaʻi (Hanalei) bleaching summaries."
+      },
+      {
+        "id": "PRI-102",
+        "title": "Audit HOBO TidbiT thermistor inventory before Kauaʻi trip",
+        "status": "open",
+        "assignee": "Kaiulani Nākānelua",
+        "priority": "medium",
+        "notes": "Check battery seals and spare sensors under the $31,800 equipment grant line."
+      }
+    ]
+  }
+}

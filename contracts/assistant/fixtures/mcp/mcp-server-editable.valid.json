@@ -1,0 +1,10 @@
+{
+  "name": "Team wiki",
+  "transport": "http",
+  "endpoint": "https://mcp.example.com/mcp",
+  "auth": "oauth",
+  "enabled": true,
+  "exposure": {
+    "default": "discoverable"
+  }
+}

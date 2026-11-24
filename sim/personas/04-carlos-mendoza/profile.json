@@ -1,0 +1,155 @@
+{
+  "slug": "04-carlos-mendoza",
+  "name": "Carlos Mendoza",
+  "email": "carlos.mendoza@sim.nori.local",
+  "timezone": "America/Denver",
+  "locale": "en-US",
+  "sim_start_date": "2027-01-04",
+  "presets": ["full"],
+  "summary": "Mechanical Engineering Director at FrontRange Robotics in Denver transitioning actuator production from Shenzhen to Guadalajara while managing daughter Sofia's college applications and a spring Utah White Rim overland trip; stresses relative-date normalization across compaction/AutoDream, multi-week Goals, parallel subtasks with steering, shared family budgets, and approve/decline interaction cards.",
+  "feature_focus": [
+    "relative_date_normalization",
+    "goals_multi_week_tracking",
+    "interaction_approve_and_decline",
+    "parallel_subtasks_and_steering",
+    "shared_family_budgets",
+    "uploads_csv_txt_recall",
+    "memory_compaction_autodream"
+  ],
+  "preferences": {
+    "timezone": "America/Denver",
+    "locale": "en-US",
+    "budget_per_task_usd": 1.25,
+    "monthly_limit_usd": 35.0,
+    "working_hours": {
+      "mon": { "enabled": true, "start": "07:30", "end": "17:30" },
+      "tue": { "enabled": true, "start": "07:30", "end": "17:30" },
+      "wed": { "enabled": true, "start": "07:30", "end": "17:30" },
+      "thu": { "enabled": true, "start": "07:30", "end": "17:30" },
+      "fri": { "enabled": true, "start": "07:30", "end": "16:30" },
+      "sat": { "enabled": false },
+      "sun": { "enabled": false }
+    }
+  },
+  "initial_permissions": [
+    {
+      "title": "Read-only FrontRange workspace access",
+      "effect": "allow",
+      "tool_names": ["email_search", "email_read", "calendar_list", "doc_list", "doc_read", "issue_list"],
+      "action_classes": ["read"]
+    }
+  ],
+  "persona_responder_brief": "You are Carlos Mendoza, 51, a warm, steady, slightly formal Mechanical Engineering Director at FrontRange Robotics in the Denver/Golden area (America/Denver). You speak in long, conversational voice-note-style paragraphs packed with relative dates and practical engineering and family details. You are transitioning actuator housing Part #FR-ACT-402 from Apex Precision (Shenzhen, Wei Lin) to Taller Azteca (Guadalajara, Mateo Ruiz, $118k tooling quote), guiding daughter Sofia (17, peanut allergy) through college applications (MIT, Georgia Tech, CU Boulder, Cal Poly SLO) with wife Elena ($2,800 campus-visit budget cap), and planning an April 9-18 Utah White Rim overland trip ($1,450 shared budget) with brother-in-law Hector Alvarez. Always keep external emails gated on approval — you approve polite negotiations with Mateo and trip logistics to Hector, but decline canceling Apex Precision after rethinking Q2 bridge inventory risk.",
+  "mcp_world": {
+    "server_name": "frontrange-workspace",
+    "emails": [
+      {
+        "id": "em_carlos_01",
+        "from": "rcho@frontrangerobotics.example",
+        "to": ["carlos.mendoza@sim.nori.local"],
+        "subject": "FR-ACT-402 Nearshoring Payback Model for Q1 CapEx Review",
+        "date": "2027-01-04T09:10:00-07:00",
+        "folder": "inbox",
+        "body": "Carlos — Thanks for flagging Apex Precision's slip from 6 to 9 weeks. Before I take Taller Azteca's $118,000 tooling quote to the Board CapEx Committee, can you get me a clean landed-cost and payback crossover comparison (including the 25% Section 301 tariff vs. USMCA duty-free)? Also see if Mateo Ruiz will split tooling payments into milestones rather than 50% upfront. — Rachel"
+      },
+      {
+        "id": "em_carlos_02",
+        "from": "mruiz@tallerazteca.example",
+        "to": ["carlos.mendoza@sim.nori.local"],
+        "subject": "Quote #TA-2027-019 — Series-4 Harmonic Actuator Housing (FR-ACT-402)",
+        "date": "2027-01-05T11:25:00-07:00",
+        "folder": "inbox",
+        "body": "Dear Carlos, Attached is our formal quote for FR-ACT-402: $51.20/unit at 1,000 MOQ, $118,000 tooling NRE (12 weeks to T1/PPAP), 3.5-week trucked delivery to Golden ($1.65/unit), USMCA Certificate of Origin included. Standard tooling terms are 50% upfront, though we are happy to discuss milestone options if we kick off in Q1. Looking forward to visiting your Golden facility later this month! Best, Mateo Ruiz"
+      },
+      {
+        "id": "em_carlos_03",
+        "from": "wlin@apexprecision.example",
+        "to": ["carlos.mendoza@sim.nori.local"],
+        "subject": "Updated Q1 Production Lead Time — FR-ACT-402",
+        "date": "2027-01-06T06:40:00-07:00",
+        "folder": "inbox",
+        "body": "Hi Carlos, Due to anodizing line maintenance and pre-Lunar New Year port congestion in Shenzhen, our current lead time on FR-ACT-402 has extended from 6 weeks to 9 weeks. Unit pricing remains $44.80 EXW (1,500 MOQ). Air expedite is available at $21.50/unit if needed. — Wei Lin, Apex Precision"
+      },
+      {
+        "id": "em_carlos_04",
+        "from": "hector.alvarez@sim.nori.local",
+        "to": ["carlos.mendoza@sim.nori.local"],
+        "subject": "White Rim permit battle plan — Jan 18 drop!",
+        "date": "2027-01-07T19:05:00-07:00",
+        "folder": "inbox",
+        "body": "Compadre! Checked Recreation.gov — April White Rim permits drop Monday Jan 18 at 8:00 AM Mountain sharp. Let's jump on a quick call at 7:45 AM so I grab Gooseberry + Murphy Hogback while you grab White Crack + Taylor Canyon. My Tacoma's Maxtrax and Camp Chef stove are good to go. — Hector"
+      }
+    ],
+    "calendar_events": [
+      {
+        "id": "cal_carlos_01",
+        "title": "Actuator Supply-Chain Weekly Sync w/ Rachel Cho",
+        "start": "2027-01-07T14:00:00-07:00",
+        "end": "2027-01-07T14:45:00-07:00",
+        "location": "FrontRange Golden HQ Conf 2",
+        "attendees": ["rcho@frontrangerobotics.example", "carlos.mendoza@sim.nori.local"],
+        "notes": "Review Guadalajara vs. Shenzhen landed cost and tooling cash flow."
+      },
+      {
+        "id": "cal_carlos_02",
+        "title": "Recreation.gov White Rim Permit Drop (w/ Hector)",
+        "start": "2027-01-18T07:45:00-07:00",
+        "end": "2027-01-18T08:30:00-07:00",
+        "location": "Phone / Recreation.gov",
+        "attendees": ["hector.alvarez@sim.nori.local", "carlos.mendoza@sim.nori.local"],
+        "notes": "Target Apr 11-14 clockwise loop: Gooseberry A, White Crack, Murphy Hogback B, Taylor Canyon."
+      },
+      {
+        "id": "cal_carlos_03",
+        "title": "Sofia MIT Alumni Interview (Dr. Greg Hollis)",
+        "start": "2027-01-20T16:30:00-07:00",
+        "end": "2027-01-20T17:30:00-07:00",
+        "location": "Belmar Coffee Roasters, Lakewood CO",
+        "attendees": ["carlos.mendoza@sim.nori.local"],
+        "notes": "Drop Sofia off 15 min early; grab coffee nearby."
+      }
+    ],
+    "docs": [
+      {
+        "id": "doc_carlos_01",
+        "title": "FR-ACT-402 Engineering Spec & PPAP Qualification Checklist",
+        "updated_at": "2026-12-18T15:00:00-07:00",
+        "tags": ["hardware", "actuator", "ppap"],
+        "content": "Part: FR-ACT-402 Series-4 Harmonic Actuator Housing (7075-T6 aluminum, Type III hard anodize).\nAnnual Forecast: 12,000 units/year (3,000/quarter).\nPPAP Requirements: Full CMM dimensional report on 30 T1 samples, anodize thickness 50 +/- 5 microns, helium leak/seal verification, AS9100D or ISO 9001 lot traceability."
+      },
+      {
+        "id": "doc_carlos_02",
+        "title": "Mendoza Family College & Spring Travel Budget 2027",
+        "updated_at": "2027-01-03T18:00:00-07:00",
+        "tags": ["family", "budget", "sofia"],
+        "content": "Agreed by Carlos & Elena:\n- Sofia spring admitted-student campus visits cap: $2,800 total (covers 2 out-of-state round-trip flights + hotels + rental cars).\n- Carlos spring Utah overland trip share cap: $725 (half of $1,450 shared budget with Hector).\n- Critical Family Safety Note: Sofia has a peanut allergy — keep peanut products out of shared road-trip snacks."
+      }
+    ],
+    "issues": [
+      {
+        "id": "FR-310",
+        "title": "Build Guadalajara vs. Shenzhen landed cost & payback crossover model",
+        "status": "in_progress",
+        "assignee": "carlos.mendoza@sim.nori.local",
+        "priority": "high",
+        "notes": "Due to CFO Rachel Cho by Jan 14, 2027."
+      },
+      {
+        "id": "FR-311",
+        "title": "Negotiate 40/40/20 tooling payment terms with Taller Azteca",
+        "status": "open",
+        "assignee": "carlos.mendoza@sim.nori.local",
+        "priority": "high",
+        "notes": "$118k tooling NRE currently quoted at 50% upfront."
+      },
+      {
+        "id": "FR-312",
+        "title": "Define Q2 bridge inventory buffer for FR-ACT-402 during tooling build",
+        "status": "open",
+        "assignee": "carlos.mendoza@sim.nori.local",
+        "priority": "medium",
+        "notes": "Taller Azteca needs 12 weeks for tooling + PPAP."
+      }
+    ]
+  }
+}

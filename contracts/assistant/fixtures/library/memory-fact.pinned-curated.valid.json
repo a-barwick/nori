@@ -1,0 +1,17 @@
+{
+  "id": "mem_2",
+  "revision": 1732400000000,
+  "text": "Always use UTC ISO-8601 timestamps in reports.",
+  "about": "the user",
+  "section": "Preferences",
+  "pinned": true,
+  "provenance": "pre_compact_flush",
+  "source_text": "Please always use UTC ISO-8601 timestamps in reports.",
+  "scope": "user",
+  "origin": {
+    "conversation_id": "assistant",
+    "message_id": "msg_12"
+  },
+  "created_at": "2026-11-23T09:00:00Z",
+  "updated_at": "2026-11-23T09:05:00Z"
+}

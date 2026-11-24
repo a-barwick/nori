@@ -1,0 +1,17 @@
+record_id,date,type,category,client_or_vendor,amount_usd,tax_deductible,notes
+INC-01,2026-02-14,income,1099_editing,UrbanAtlas (Theo Morales),12600.00,false,9 documentary episodes @ $1400/vid (Q1-Q2 batch)
+INC-02,2026-06-28,income,1099_editing,UrbanAtlas (Theo Morales),14000.00,false,10 documentary episodes @ $1400/vid (Q3-Q4 batch)
+INC-03,2026-05-19,income,1099_editing,ByteSizedHistory (Nina Park),11250.00,false,9 history explainers @ $1250/vid (H1)
+INC-04,2026-11-30,income,1099_editing,ByteSizedHistory (Nina Park),12500.00,false,10 history explainers @ $1250/vid (H2)
+INC-05,2026-09-12,income,1099_editing,Beacon Indie Docs LLC,8350.00,false,Short-form festival trailer + color grade contract
+INC-06,2026-12-31,income,digital_shop,GrainHaus (Gumroad Payouts),6100.00,false,2026 total Lightroom preset sales (~$680/mo by Dec)
+EXP-01,2026-01-22,expense,software,DaVinci Resolve Studio + Plugins,640.00,true,Lifetime studio license + film halation plugins
+EXP-02,2026-03-08,expense,gear,Sony FX30 35mm Lens & Audio Rig,1890.00,true,B-roll & preset promo filming kit
+EXP-03,2026-04-17,expense,storage,Samsung T7 Shield 4TB SSDs (x4),1120.00,true,Client proxy & archival scratch drives
+EXP-04,2026-07-03,expense,software,Adobe Creative Cloud + Frame.io + Artlist,1470.00,true,Annual editing & Lightroom preset creation stack
+EXP-05,2026-12-15,expense,home_office,Bushwick Studio Room Allocation (22%),5280.00,true,Dedicated edit suite rent + fiber internet portion
+EXP-06,2026-12-20,expense,marketing,GrainHaus Domain & Gumroad/IG Promo,1020.00,true,Domain hosting + launch test reels spend
+TAX-01,2026-04-14,tax_paid,estimated_tax,IRS + NY State Q1 2026,2850.00,false,Paid on time
+TAX-02,2026-06-13,tax_paid,estimated_tax,IRS + NY State Q2 2026,3100.00,false,Paid on time
+TAX-03,2026-09-14,tax_paid,estimated_tax,IRS + NY State Q3 2026,3050.00,false,Paid on time
+TAX-04,2027-01-15,tax_due,estimated_tax,IRS ($2410) + NY State ($770) Q4 2026,3180.00,false,DUE JAN 15 2027 - Total Gross $64800 / Deductible Expenses $11420 / Net $53380

@@ -1,0 +1,17 @@
+run_id,pdb_id,model_config,seed,slurm_job_id,gpu_node,wall_hours,rmse_angstrom,tm_score,lddt_pocket,status,notes
+run_id_4790,PDB:6VXX,AF3-v2.1-seed11,11,SLURM_JOB_98810,myriad-a100-04,14.2,0.512,0.918,86.4,completed,Baseline trimer control run; clean convergence
+run_id_4798,PDB:6VXX,Boltz1-v0.4-seed11,11,SLURM_JOB_98845,myriad-a100-07,11.6,0.604,0.896,82.1,completed,Slightly looser loop packing around residues 614-630
+run_id_4805,PDB:8Q2M,AF3-v2.1-seed42,42,SLURM_JOB_99012,myriad-a100-09,22.8,0.449,0.927,88.2,completed,Heterodimeric chaperone interface matches EMD-39104 well
+run_id_4812,PDB:8Q2M,Boltz1-v0.4-seed19,19,SLURM_JOB_99104,myriad-a100-02,19.4,0.573,0.902,83.5,completed,Chain B C-terminal helix shifted 1.4A
+run_id_4818,PDB:7K4N,AF3-v2.1-seed77,77,SLURM_JOB_99412,myriad-a100-14,38.0,0.412,0.934,89.1,oom_resumed,OOM killed at epoch 14 on 128G mem; resumed with --mem=192G batch_size=4
+run_id_4821,PDB:7K4N,AF3-v2.1-seed77,77,SLURM_JOB_99804,myriad-a100-11,36.5,0.412,0.934,89.1,completed,Primary Chapter 4 ablation run on cryptic allosteric pocket; pre-His214 fix
+run_id_4834,PDB:7K4N,AF3-v2.1-seed103,103,SLURM_JOB_99861,myriad-a100-11,35.9,0.427,0.929,88.6,completed,Replicate seed 103 confirms pocket opening geometry
+run_id_4849,PDB:7K4N,AF3-v2.1-msa64,77,SLURM_JOB_99918,kathleen-a100-03,24.1,0.538,0.906,84.0,completed,MSA depth ablation (64 seqs); noticeable drop in DFG-out accuracy
+run_id_4862,PDB:7K4N,AF3-v2.1-msa256,77,SLURM_JOB_99950,kathleen-a100-03,31.0,0.421,0.931,88.8,completed,MSA depth 256 saturates near full-MSA baseline
+run_id_4877,PDB:8Q2M,ESM3-1.4B-seed42,42,SLURM_JOB_100112,myriad-a100-05,9.4,0.684,0.861,77.3,completed,Single-sequence ESM3 struggles on inter-chain docking
+run_id_4895,PDB:7K4N,Boltz1-v0.4-seed19,19,SLURM_JOB_100248,myriad-a100-08,27.3,0.588,0.891,81.7,completed,Comparative Boltz-1 run for Table 4.2; under-predicts allosteric lid opening
+run_id_4902,PDB:6VXX,ESM3-1.4B-seed42,42,SLURM_JOB_100295,myriad-a100-05,8.9,0.702,0.854,75.9,completed,Trimer control under masked-MSA condition
+run_id_4910,PDB:7K4N,ESM3-1.4B-seed42,42,SLURM_JOB_100340,myriad-a100-06,10.2,0.731,0.847,74.2,completed,Masked-MSA ablation requested by Reviewer 2 of NMET-2026-08419R1
+run_id_4933,PDB:8Q2M,AF3-v2.1-amber-ff19SB,42,SLURM_JOB_100511,kathleen-a100-01,26.7,0.431,0.932,89.4,completed,Post-relaxation with Amber ff19SB improves steric clash score from 4.8 to 1.2
+run_id_4960,PDB:7K4N,Boltz1-v0.4-seed77,77,SLURM_JOB_100688,myriad-a100-08,28.1,0.579,0.895,82.3,completed,Seed-matched Boltz-1 control
+run_id_5003,PDB:7K4N,AF3-v2.1-seed77-fix,77,SLURM_JOB_101105,myriad-a100-11,34.8,0.369,0.951,92.6,planned_rerun,Placeholder for post-His214 protonation fix (run mid-Jan)

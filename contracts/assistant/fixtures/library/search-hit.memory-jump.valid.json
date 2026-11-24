@@ -1,0 +1,13 @@
+{
+  "kind": "memory",
+  "id": "core:mem_2",
+  "title": "Preferences",
+  "snippet": "Always use UTC ISO-8601 timestamps in reports.",
+  "jump": {
+    "kind": "memory",
+    "layer": "core",
+    "memory_id": "mem_2"
+  },
+  "freshness": "2026-11-23T09:05:00Z",
+  "score": 1.15
+}

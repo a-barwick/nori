@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tool authority · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Tool authority</h1>
+<p class="lede">A task acts within the user's request and permission rules. The runtime checks the task revision, pins the tool definition digest and records the operation before dispatch.</p>
+<section><h2>Before a tool runs</h2>
+<ul class="pts">
+<li>Each call belongs to a task, instruction revision, pinned extension digest and operation ID. A correction or Stop fences stale work.</li>
+<li>Connecting an MCP server or account grants no execution authority on its own; every call passes through <code>core/internal/permissions</code> and <code>core/internal/invoke</code>.</li>
+<li>A subtask can inherit a read-only limit from its parent. Loading a capability adds tool definitions to the model request without granting permission.</li>
+<li>Attachments, search results and MCP tool outputs are untrusted data. They carry no authority to dispatch or steer tasks or approve actions.</li>
+</ul></section>
+<section><h2>Recovering an interrupted call</h2>
+<p>Before dispatching an external write or unknown-effect tool, one Postgres transaction checks the task revision, verifies the matching approval or allow rule, and records the operation as attempted with its action digest and idempotency key.</p>
+<p>If a provider response is lost or a call ends uncertain, the runtime records the uncertain state and never repeats the write automatically. The task can inspect saved evidence and ask the user before continuing. Stop ends the task and preserves all operation evidence about what may already have happened.</p>
+</section>
+<section><h2>Permissions and approvals</h2>
+<p>See <a href="permissions.html">Permissions and approvals</a> for deny-wins rules, action-digest-bound approval cards and optimistic revision checks, and <a href="apps.html">Connections and MCP</a> for how tool definitions are pinned.</p>
+</section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/invoke/invoke.go</code> · <code>core/internal/permissions/rules.go</code> · <code>core/internal/permissions/interactions.go</code> · <code>core/internal/task/tool_durable.go</code> · <code>core/internal/task/unresolved.go</code> · <code>core/internal/state/evidence.go</code></p></details>
+</body>
+</html>

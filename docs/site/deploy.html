@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Deployment</h1>
+<p class="lede">Production targets AWS + Postgres + S3 using one distroless static Go binary (<code>cmd/nori --role=all|api|worker</code>); local development runs Postgres via Docker Compose.</p>
+<div class="card"><table class="tall"><tr><th>Piece</th><th>Production (<code>NORI_CLOUD=aws</code>)</th><th>Local (<code>NORI_CLOUD=local</code>)</th></tr>
+<tr><td>Go binary (<code>nori</code> / <code>nori-local</code>)</td><td>Single distroless static Go image (<code>core/infrastructure/Dockerfile</code>) run with <code>--role=all</code>, <code>--role=api</code> or <code>--role=worker</code></td><td>Loopback <code>nori-local</code> on <code>127.0.0.1:8080</code> running both HTTP API and unified Postgres-native worker pool</td></tr>
+<tr><td>Task &amp; wake orchestration</td><td>Postgres-native <code>nori_task_leases</code>, <code>nori_user_wakes</code> and <code>LISTEN nori_wake</code> (2s poll + 60s repair sweep)</td><td>Identical Postgres-native worker pool in <code>nori-local</code></td></tr>
+<tr><td>Records &amp; encrypted secrets</td><td>Private Postgres with TLS (<code>NORI_POSTGRES_URL</code>) + <code>secret/rowstore</code></td><td>Local Postgres via <code>make deps</code></td></tr>
+<tr><td>File bytes</td><td>Private S3 bucket (<code>ARTIFACT_BUCKET</code>) with conditional writes</td><td>Local folder (<code>NORI_LOCAL_ARTIFACT_DIR</code>)</td></tr>
+<tr><td>Host integration</td><td>The host app mounts <code>integrations/embed/adapter.mjs</code> and mints HS256 service tokens</td><td>Slim Next.js workbench on <code>:3210</code> or the host app demo stack</td></tr>
+</table></div>
+<div class="grid2">
+<div class="card tight"><p class="keyline">Authentication boundary</p><p class="note">Hosted deployments verify OIDC ID tokens (<code>NORI_OIDC_ISSUER</code>, <code>NORI_OIDC_AUDIENCE</code>) or the host app's verified session at the host layer, resolve the user, and call the Go API with 1-minute HS256 service tokens (<code>nori-service</code>). Only <code>/healthz</code> is unauthenticated.</p></div>
+<div class="card tight"><p class="keyline">Graceful drain &amp; split roles</p><p class="note">Run <code>--role=api</code> and <code>--role=worker</code> separately to scale horizontally. On <code>SIGTERM</code>, workers stop claiming new leases, drain in-flight runners up to 25 seconds to a checkpoint boundary, and release leases immediately for another replica.</p></div>
+</div>
+<section><h2>Secrets and credentials</h2>
+<ul class="pts">
+<li>AWS SDK clients use workload IAM roles or the standard AWS credential chain.</li>
+<li>Per-user MCP and connection credentials live in Postgres using envelope encryption (<code>core/internal/secret/rowstore</code>) wrapped by a 32-byte key from <code>NORI_CREDENTIAL_KEY</code> or <code>NORI_CREDENTIAL_KEY_SECRET</code> (AWS Secrets Manager).</li>
+<li>S3 objects stay private under user-scoped <code>artifacts/</code> prefixes with conditional writes that refuse overwrites.</li>
+</ul></section>
+<section><h2>Container images and rolling deploys</h2>
+<ul class="pts">
+<li><code>core/infrastructure/Dockerfile</code> builds the static <code>CGO_ENABLED=0</code> <code>nori</code> binary onto <code>gcr.io/distroless/static-debian12:nonroot</code>.</li>
+<li>Because inner tasks checkpoint explicit state and receipts in Postgres rather than replaying workflow code, rolling deploys do not require pinned workflow build IDs; parked tasks resume cleanly on the new binary.</li>
+<li><code>docs/Dockerfile</code> and <code>docs/deploy.sh</code> package the static Dokyu output into an unprivileged nginx container serving <code>X-Robots-Tag: noindex</code> and <code>Disallow: /</code>.</li>
+</ul></section>
+<section><h2>Pausing and operations</h2>
+<ul class="pts">
+<li>Execution pause blocks new task admission while the conversation thread, saved history and waiting tasks stay readable. Nothing is cancelled.</li>
+<li>Each worker pod runs a 60-second repair sweep reconciling <code>nori_task_leases</code> and <code>nori_user_wakes</code> against <code>nori_records</code>, replacing any separate reconciliation CLI.</li>
+<li><code>nori-user</code> provisions and manages user rows in Postgres.</li>
+<li>Nori's repository provides application adapters, not provisioned AWS Terraform.</li>
+</ul></section>
+<details class="sources"><summary>Sources</summary><p><code>core/infrastructure/README.md</code> · <code>core/infrastructure/aws/README.md</code> · <code>core/infrastructure/local/README.md</code> · <code>core/infrastructure/local/compose.yaml</code> · <code>core/infrastructure/Dockerfile</code> · <code>core/cmd/nori/main.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/secret/awssecrets/awssecrets.go</code> · <code>core/internal/secret/rowstore/rowstore.go</code> · <code>core/internal/serviceauth/auth.go</code> · <code>docs/Dockerfile</code> · <code>docs/deploy.sh</code></p></details>
+</body>
+</html>

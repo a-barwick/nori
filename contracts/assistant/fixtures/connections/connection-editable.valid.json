@@ -1,0 +1,7 @@
+{
+  "integration_id": "google",
+  "title": "Personal Google",
+  "selected_resource_ids": [
+    "primary"
+  ]
+}

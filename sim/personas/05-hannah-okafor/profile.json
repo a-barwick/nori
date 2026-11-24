@@ -1,0 +1,150 @@
+{
+  "slug": "05-hannah-okafor",
+  "name": "Hannah Okafor",
+  "email": "hannah.okafor@sim.nori.local",
+  "timezone": "Europe/London",
+  "locale": "en-GB",
+  "sim_start_date": "2027-01-04",
+  "presets": ["memory-pack", "full"],
+  "summary": "26-year-old UCL Computational Biology PhD candidate writing Chapter 4 on protein-folding benchmarks, revising a Nature Methods paper, hunting for an East London flat after binning a dodgy Clapham landlord, obsessed with sourdough starter 'Bready Mercury', and hiking the Lake District.",
+  "feature_focus": [
+    "dual-dictionary-postgres-fts-simple-vs-english",
+    "core-memory-overflow-budget-and-pin-protection",
+    "explicit-forget-zero-ghosting",
+    "30-day-recency-decay-and-mmr-diversity",
+    "file-uploads-and-library-templates",
+    "coupled-3-tier-memory-autodream"
+  ],
+  "preferences": {
+    "timezone": "Europe/London",
+    "locale": "en-GB",
+    "budget_per_task_usd": 1.25,
+    "monthly_limit_usd": 35.0,
+    "working_hours": {
+      "monday": { "enabled": true, "start": "09:00", "end": "19:30" },
+      "tuesday": { "enabled": true, "start": "09:00", "end": "19:30" },
+      "wednesday": { "enabled": true, "start": "09:00", "end": "19:30" },
+      "thursday": { "enabled": true, "start": "09:00", "end": "19:30" },
+      "friday": { "enabled": true, "start": "09:00", "end": "18:30" },
+      "saturday": { "enabled": false },
+      "sunday": { "enabled": false }
+    }
+  },
+  "initial_permissions": [
+    {
+      "title": "Read UCL lab email, calendar, docs, and HPC tickets",
+      "effect": "allow",
+      "tool_names": [
+        "email_search",
+        "email_read",
+        "calendar_list",
+        "doc_list",
+        "doc_read",
+        "issue_list"
+      ]
+    },
+    {
+      "title": "Require confirmation before sending emails to PI or external landlords",
+      "effect": "deny",
+      "tool_names": ["email_send"],
+      "recipients": ["a.vance@ucl.sim.local", "derek.halloway@rentals.sim.local"]
+    }
+  ],
+  "persona_responder_brief": "You are Hannah Okafor, 26, a 3rd-year Computational Biology PhD student at UCL in London. Speak in warm, expressive British English ('knackered', 'fortnight', 'flat', 'brilliant', 'bin it', 'proper', 'cheers') with British spelling ('optimisation', 'modelling', 'centre'). You mix ultra-precise computational biology identifiers (PDB:7K4N, run_id_4821, AF3-v2.1-seed77, SLURM_JOB_99412, okafor2027folding, NMET-2026-08419R1, EMD-39104) with candid chatter about your sourdough starter Bready Mercury, East London flat hunting after Zoe moves to Edinburgh, and Lake District hiking with Samir. After Day 9 you despise the Clapham landlord Derek Halloway and refuse to bring him back. Keep follow-up replies concise, natural, and authentic to a tired-but-sharp PhD candidate.",
+  "mcp_world": {
+    "server_name": "ucl-biosciences-workspace",
+    "emails": [
+      {
+        "id": "em_hannah_001",
+        "from": "a.vance@ucl.sim.local",
+        "to": ["hannah.okafor@sim.nori.local"],
+        "subject": "Chapter 4 Draft Expectations — 29 January Hard Cutoff",
+        "date": "2027-01-04T08:15:00Z",
+        "folder": "inbox",
+        "body": "Hannah,\n\nWelcome back. As agreed before Christmas, I expect the complete Chapter 4 draft in my inbox no later than Friday 29 January 2027 at 17:00 GMT so I can mark it before the February thesis committee check-in.\n\nPlease adhere strictly to our group style rules: British English throughout (except IUPAC nomenclature), mandatory Oxford comma, SI units with Angstroms clearly marked, BibTeX keys formatted strictly as lastnameYYYYword (e.g. okafor2027folding), and absolutely no stacked bar charts in main or supplementary figures.\n\nRegards,\nAlistair"
+      },
+      {
+        "id": "em_hannah_002",
+        "from": "p.nair@ucl.sim.local",
+        "to": ["hannah.okafor@sim.nori.local"],
+        "subject": "Re: NMET-2026-08419R1 Reviewer 2 benchmarks & EMD-39104",
+        "date": "2027-01-05T11:40:00Z",
+        "folder": "inbox",
+        "body": "Hey Hannah!\n\nHope the Hackney flat hunt isn't driving you mad yet. Quick nudge on Nature Methods revision NMET-2026-08419R1 — editorial portal closes Wednesday 27 January. I have finalised the 2.8 A cryo-EM validation fit for EMD-39104 against PDB:8Q2M, so once your Boltz-1 (run_id_4895) and masked-MSA ESM3 (run_id_4910) numbers are in, we can lock Table 2 and Figure S3.\n\nCoffee at Bloomsbury Coffee House Thursday afternoon?\nPriya"
+      },
+      {
+        "id": "em_hannah_003",
+        "from": "hpc-support@ucl.sim.local",
+        "to": ["hannah.okafor@sim.nori.local"],
+        "subject": "Myriad Job Failure Notice: SLURM_JOB_99412 (OOM)",
+        "date": "2027-01-05T04:12:00Z",
+        "folder": "inbox",
+        "body": "Automated notice from UCL Research Computing (Myriad):\nJob ID: SLURM_JOB_99412\nNode: myriad-a100-14\nExit status: OUT_OF_MEMORY (137) at walltime 38:00:11 (epoch 14)\nPeak RSS: 129.4 GiB exceeded requested 128 GiB.\nRecommendation: Increase --mem=192G or reduce batch_size to 4."
+      }
+    ],
+    "calendar_events": [
+      {
+        "id": "cal_hannah_001",
+        "title": "Vance Structural Bio Weekly Lab Meeting",
+        "start": "2027-01-07T14:00:00Z",
+        "end": "2027-01-07T15:30:00Z",
+        "location": "Darwin Building Room B15, UCL",
+        "attendees": ["a.vance@ucl.sim.local", "p.nair@ucl.sim.local", "hannah.okafor@sim.nori.local"],
+        "notes": "Present PDB:7K4N diffusion ablation progress."
+      },
+      {
+        "id": "cal_hannah_002",
+        "title": "Lake District Trip with Samir (Glenridding YHA)",
+        "start": "2027-01-23T07:30:00Z",
+        "end": "2027-01-24T20:00:00Z",
+        "location": "Glenridding YHA, Lake District",
+        "attendees": ["hannah.okafor@sim.nori.local", "samir.patel@friends.sim.local"],
+        "notes": "Train Euston -> Penrith 07:30, bus to Glenridding. Planned Helvellyn via Striding Edge weather permitting."
+      },
+      {
+        "id": "cal_hannah_003",
+        "title": "Nature Methods NMET-2026-08419R1 Revision Due",
+        "start": "2027-01-27T16:00:00Z",
+        "end": "2027-01-27T17:00:00Z",
+        "location": "Nature Portfolio Portal",
+        "attendees": ["hannah.okafor@sim.nori.local", "p.nair@ucl.sim.local"],
+        "notes": "Upload final response letter, Table 2, and supplementary figures."
+      },
+      {
+        "id": "cal_hannah_004",
+        "title": "HARD DEADLINE: Thesis Chapter 4 Full Draft to Dr. Vance",
+        "start": "2027-01-29T16:30:00Z",
+        "end": "2027-01-29T17:00:00Z",
+        "location": "UCL Email / Overleaf",
+        "attendees": ["hannah.okafor@sim.nori.local", "a.vance@ucl.sim.local"],
+        "notes": "Must pass all Vance formatting checks before sending."
+      }
+    ],
+    "docs": [
+      {
+        "id": "doc_hannah_001",
+        "title": "UCL Myriad & Kathleen A100 Allocation Notes",
+        "updated_at": "2027-01-03T18:00:00Z",
+        "tags": ["hpc", "slurm", "myriad"],
+        "content": "Allocation code: ucl_bio_vance_2027. Remaining budget: 4,200 A100-hours.\nStandard diffusion folding module: af3/2.1-cuda12.4.\nSafe multi-chain config: --gres=gpu:a100:1 --mem=192G --cpus-per-task=12 batch_size=4."
+      },
+      {
+        "id": "doc_hannah_002",
+        "title": "NMET-2026-08419R1 Reviewer 2 Action Tracker",
+        "updated_at": "2027-01-04T15:00:00Z",
+        "tags": ["nature-methods", "priya", "benchmarks"],
+        "content": "R2-1: Add Boltz-1 (v0.4) baseline on PDB:7K4N and PDB:8Q2M.\nR2-2: Add masked-MSA ESM3-1.4B single-sequence control.\nR2-3: Cross-check cryo-EM map EMD-39104 real-space correlation.\nR2-4: Report 10,000-replicate bootstrap 95% CIs on pocket lDDT."
+      }
+    ],
+    "issues": [
+      {
+        "id": "HPC-412",
+        "title": "Myriad node myriad-a100-14 NVLink ECC transient warning",
+        "status": "open",
+        "assignee": "ucl-rc-ops",
+        "priority": "P2",
+        "notes": "Reported after SLURM_JOB_99412 OOM'd at epoch 14; node drained for diagnostics."
+      }
+    ]
+  }
+}

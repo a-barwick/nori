@@ -1,0 +1,1 @@
+Atomically flush durable facts to Core Memory and Daily Logs, and (unless extract_only is true) save the updated Working Memory summary.

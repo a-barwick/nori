@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What Nori should do · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>What Nori should do</h1>
+<p class="lede">Nine core capabilities Nori delivers inside a host app, and the contract suite we use to verify them.</p>
+<div class="card"><table class="tall"><tr><th>Capability</th><th>What it means</th><th>Today</th><th>Focus</th></tr>
+<tr><td>One persistent thread per user</td><td>Chat, delegate and revisit past work in one continuous assistant thread inside a host app.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Outer loop</td></tr>
+<tr><td>Concurrent durable tasks</td><td>Run independent background tasks on Postgres-native workers while conversation stays responsive.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Inner loop</td></tr>
+<tr><td>Prompt-injection provenance guard</td><td>Verify independent dispatches and steers with a second model call that sees only user messages and runtime IDs.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Safety</td></tr>
+<tr><td>Memory you can inspect and correct</td><td><a href="memory.html">Save, update and forget</a> explicit memories, with quote-verified compaction of older turns.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Memory</td></tr>
+<tr><td>Ports and MCP tool bus</td><td>Connect enterprise MCP servers and provider-agnostic connections without coupling the core to vendor OAuth apps.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Extensions</td></tr>
+<tr><td>Typed permissions and approvals</td><td>Enforce deny-wins rules and action-digest-bound approval cards before sensitive or unknown-effect calls run.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Authority</td></tr>
+<tr><td>Automations, goals and inbox</td><td>Schedule recurring work with deterministic occurrences and deliver outcomes to the in-app inbox.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Scheduler</td></tr>
+<tr><td>Deliverables with evidence</td><td>Save versioned results and verify cited tool evidence before marking a task complete.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Completion</td></tr>
+<tr><td>Headless the host app embedding</td><td>Mount Nori under <code>/api/nori/*</code> behind the host app's session auth with strict per-user isolation.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Integration</td></tr>
+</table></div>
+<section><h2>How we measure progress</h2>
+<p>Progress is verified by automated contract checks, deterministic simulations and live multi-user integration gates rather than ad-hoc manual runs.</p>
+<div class="card"><table class="tall"><tr><th>Check</th><th>What it proves</th></tr>
+<tr><td><code>go run ./cmd/contracts-check -strict</code></td><td>Validates every JSON Schema 2020-12 contract under <code>contracts/assistant/</code>, round-trips every fixture through strict Go decoders, checks generated TypeScript types and runs live HTTP scenarios.</td></tr>
+<tr><td><code>make check</code></td><td>Runs <code>go vet</code>, <code>gofmt</code>, Go unit tests, strict contract validation, TypeScript typecheck and ESLint across <code>core/</code> and <code>web/</code>.</td></tr>
+<tr><td>The host app environment gate</td><td>Exercises the full message, MCP read/write approval and result flow across two distinct authorized identities, including SSE reconnects and strict cross-user isolation (404 on another user's resources).</td></tr>
+</table></div>
+</section>
+<details class="more"><summary>Ten technical capabilities</summary>
+<table class="tall"><tr><th>Capability</th><th>What it requires</th></tr>
+<tr><td>Responsive chat, durable tasks</td><td>Conversation stays available while Postgres-native workers run with fenced leases and explicit checkpoints.</td></tr>
+<tr><td>Explicit task state</td><td>Tasks, commands, revisions, results and blockers are persisted in Postgres.</td></tr>
+<tr><td>Separate memory stores</td><td>Explicit user memory, compacted summaries, active work and permission rules stay separate with clear provenance.</td></tr>
+<tr><td>Bounded context assembly</td><td>Outer turns stay under 40 KiB; long task transcripts replace older tool outputs with retrievable operation IDs.</td></tr>
+<tr><td>Ports and MCP tool bus</td><td>Versioned extension definitions pinned by digest, remote/local MCP clients and a provider-agnostic connections port.</td></tr>
+<tr><td>Permission enforcement</td><td>Uniform deny-wins rule evaluation and action-digest-bound approvals across all tools and compose scripts.</td></tr>
+<tr><td>Capability discovery</td><td>Task instructions list capabilities and availability; optional capabilities load tool schemas on demand.</td></tr>
+<tr><td>Scheduling and inbox delivery</td><td>IANA time zones, deterministic occurrence IDs, generation fencing, goals and deduplicated in-app inbox delivery.</td></tr>
+<tr><td>Artifact and result storage</td><td>Stable IDs, revisions, conflict preservation and private S3 or local object storage.</td></tr>
+<tr><td>Cost, latency and evidence controls</td><td>Metered model spending, task budget ceilings, record-checked completion and correlated OpenTelemetry traces.</td></tr></table></details>
+<details class="sources"><summary>Sources</summary><p><a href="roadmap.html">Roadmap</a></p><p><code>core/cmd/contracts-check/main.go</code> · <code>contracts/assistant/</code> · <code>integrations/embed/README.md</code> · <code>core/internal/conversation/memory.go</code> · <code>core/internal/conversation/command_plan.go</code> · <code>core/internal/permissions/rules.go</code> · <code>Makefile</code></p></details>
+</body>
+</html>

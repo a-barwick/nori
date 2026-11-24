@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service API · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Service API</h1>
+<p class="lede">The host app and the test workbench send user-scoped HTTP requests to Nori and follow saved state through snapshots and resumable SSE streams.</p>
+<div class="card"><div class="flow">
+<div class="node"><b>Client / the host app UI</b><small>Sends a message or approval decision with a client-generated UUID.</small></div>
+<div class="arrow">↓ <span class="lbl">same-origin request</span></div>
+<div class="node"><b>The host app adapter or workbench server</b><small>Verifies user identity, prefixes <code>/users/{id}</code> and attaches an HS256 service token.</small></div>
+<div class="arrow">↓ <span class="lbl">authenticated HTTP request</span></div>
+<div class="node outer"><b>Agent service (<code>nori</code>)</b><small>Validates strict JSON contracts, commits to Postgres and enqueues wakes.</small></div>
+<div class="arrow">↓ <span class="lbl">snapshot, mutation receipt or numbered SSE frame</span></div>
+<div class="node"><b>Client / the host app UI</b><small>Merges saved state by ID and tracks the event cursor <code>position</code>.</small></div>
+</div></div>
+<section><h2>The host app adapter routes</h2>
+<p><code>integrations/embed/adapter.mjs</code> mounts under <code>/api/nori/*</code> and maps directly onto Nori's per-user <code>/v1/*</code> endpoints (each prefixed with <code>/users/{mappedUser}</code>):</p>
+<div class="card"><table class="tall"><tr><th>The host app route</th><th>Nori route</th><th>Purpose</th></tr>
+<tr><td><code>GET /api/nori/conversation</code></td><td><code>GET /v1/conversations/assistant</code></td><td>Persistent thread snapshot and current SSE event <code>position</code>.</td></tr>
+<tr><td><code>POST /api/nori/messages</code></td><td><code>POST /v1/conversations/assistant/messages</code></td><td>Send <code>{ id, text }</code>. Returns HTTP 202 with acceptance state (<code>accepted</code> or <code>queued</code>).</td></tr>
+<tr><td><code>GET /api/nori/events?after=N</code></td><td><code>GET /v1/conversations/assistant/events?after=N</code></td><td>Stream SSE frames (<code>Last-Event-ID</code> takes precedence).</td></tr>
+<tr><td><code>GET /api/nori/work</code>, <code>/work/{taskId}</code></td><td><code>GET /v1/work</code>, <code>GET /v1/work/{task_id}</code></td><td>List Work items (<code>task_id</code>, <code>bucket</code>, <code>status</code>, <code>result_ids</code>) or inspect operation outcomes and provider refs.</td></tr>
+<tr><td><code>GET /api/nori/interactions</code>, <code>/{id}</code></td><td><code>GET /v1/interactions?status=pending</code>, <code>/{id}</code></td><td>Read pending questions and typed approval cards (paginated with <code>?cursor=…</code>).</td></tr>
+<tr><td><code>POST /api/nori/interactions/{id}/responses</code></td><td><code>POST /v1/interactions/{id}/responses</code></td><td>Submit an approval or decline bound to <code>expected_revision</code> and <code>action_digest</code>.</td></tr>
+<tr><td><code>GET /api/nori/mutations/{requestId}</code>, <code>/results/{id}</code></td><td><code>GET /v1/mutations/{request_id}</code>, <code>GET /v1/results/{id}</code></td><td>Read idempotent mutation receipts or saved result metadata.</td></tr>
+</table></div>
+</section>
+<section><h2>Complete <code>/v1/*</code> route families</h2>
+<p>All user-scoped routes sit under <code>/users/{id}/...</code> (resolved by the host via <code>POST /api/users/resolve</code> or the host app's binding table). Only <code>GET /healthz</code> is unauthenticated. Every mutating <code>/v1/*</code> management endpoint uses the idempotent envelope <code>{ request_id, expected_revision, value }</code> and returns a saved <code>MutationReceipt</code>.</p>
+<details class="more"><summary>Full route reference</summary>
+<div class="card"><table class="tall"><tr><th>Family</th><th>Routes</th></tr>
+<tr><td>Capabilities &amp; summary</td><td><code>GET /v1/capabilities</code> (advertises <code>contract: "nori-chat-2"</code>, <code>conversationContract: "nori-conversations-1"</code>, <code>features</code>, <code>assistant_features</code>, and <code>upload_accept</code>), <code>GET /v1/assistant/summary</code></td></tr>
+<tr><td>Assistant conversation</td><td><code>GET /v1/conversations/assistant</code>, <code>GET /v1/conversations/assistant/messages?before=…</code>, <code>POST /v1/conversations/assistant/messages</code>, <code>POST /v1/conversations/assistant/cancel</code>, <code>GET /v1/conversations/assistant/events?after=N</code>, <code>GET /v1/conversations/assistant/operations</code>, <code>POST /v1/conversations/assistant/uploads</code>, <code>GET /v1/conversations/assistant/uploads/{id}</code></td></tr>
+<tr><td>Work &amp; operations</td><td><code>GET /v1/work</code>, <code>GET /v1/work/{task_id}</code>, <code>GET /v1/work/{task_id}/operations</code>, <code>POST /v1/work/{task_id}/actions</code> (stop, continue after budget limit), <code>GET /v1/operations</code></td></tr>
+<tr><td>Permissions &amp; interactions</td><td><code>GET/POST /v1/permissions</code>, <code>GET/PUT /v1/permissions/{id}</code>, <code>POST /v1/permissions/{id}/actions</code>, <code>GET /v1/interactions</code>, <code>GET /v1/interactions/{id}</code>, <code>POST /v1/interactions/{id}/responses</code>, <code>GET /v1/mutations/{request_id}</code></td></tr>
+<tr><td>MCP servers &amp; tools</td><td><code>GET/POST /v1/mcp</code>, <code>GET/PUT /v1/mcp/{id}</code>, <code>POST /v1/mcp/{id}/actions</code>, <code>GET /v1/mcp/{id}/tools</code>, <code>POST /v1/mcp/{id}/credential</code>, <code>GET /v1/tools</code>, <code>GET /v1/tools/{id...}</code></td></tr>
+<tr><td>Connections port &amp; prefs</td><td><code>GET /v1/integrations</code>, <code>GET /v1/integrations/{id}</code>, <code>GET/POST /v1/connections</code>, <code>GET /v1/connections/oauth/callback</code>, <code>GET/PUT /v1/connections/{id}</code>, <code>POST /v1/connections/{id}/actions</code>, <code>GET /v1/connections/{id}/resources</code>, <code>GET/PUT /v1/preferences</code></td></tr>
+<tr><td>Automations, goals &amp; inbox</td><td><code>GET/POST /v1/automations</code>, <code>POST /v1/automations/preview</code>, <code>GET/PUT /v1/automations/{id}</code>, <code>POST /v1/automations/{id}/actions</code>, <code>GET /v1/automations/{id}/occurrences</code>, <code>GET/POST /v1/goals</code>, <code>GET/PUT /v1/goals/{id}</code>, <code>POST /v1/goals/{id}/actions</code>, <code>GET /v1/inbox</code>, <code>POST /v1/inbox/{id}/actions</code></td></tr>
+<tr><td>Library, memory &amp; search</td><td><code>GET /v1/library</code>, <code>GET/PUT /v1/library/{id}</code>, <code>GET /v1/library/{id}/versions</code>, <code>GET /v1/library/{id}/file</code>, <code>POST /v1/library/{id}/actions</code>, <code>GET /v1/search</code>, <code>GET /v1/memory</code>, <code>PUT /v1/memory/{id}</code>, <code>POST /v1/memory/{id}/actions</code></td></tr>
+<tr><td>Diagnostics &amp; feedback</td><td><code>GET /v1/diagnostics</code>, <code>POST /v1/diagnostics/actions</code>, <code>POST /v1/feedback</code></td></tr>
+<tr><td>Workbench &amp; internal ops</td><td><code>GET /v1/snapshot</code>, <code>GET /v1/events</code>, <code>POST/GET /v1/uploads*</code>, <code>GET /v1/results/{id}</code>, <code>GET /v1/results/{id}/file</code>, <code>POST /api/{turn,command,trace,artifact,delivered,seen}</code>, plus internal-only <code>POST /api/process</code> and <code>POST /api/resume</code></td></tr>
+</table></div>
+<p>Reusing a message or mutation <code>request_id</code> with identical content replays the saved outcome; reusing an ID with different content returns HTTP 409 (<code>idempotency_conflict</code>). Optimistic revision mismatches return HTTP 409 (<code>revision_conflict</code>) with the current resource payload.</p>
+</details>
+</section>
+<section><h2>The event stream</h2>
+<p>The assistant SSE stream (<code>GET /v1/conversations/assistant/events</code>) emits unnamed server-sent events with <code>{ seq, kind, conversation, messages, ... }</code> where the SSE <code>id</code> equals <code>seq</code>. Start from the snapshot's <code>position</code> and reconnect with <code>?after=N</code> or <code>Last-Event-ID</code>. Streams end cleanly after 150 seconds so proxies stay under request timeouts; clients reconnect from the last applied <code>seq</code>.</p>
+<p>Event kinds include <code>message</code>, <code>conversation</code>, <code>task</code>, <code>result</code>, <code>operation</code> and <code>read_position</code>. Payloads carry current upserts resolved by the server so hosts do not need N+1 follow-up fetches. On <code>kind: "reset"</code> (or any sequence gap), close the stream, fetch a fresh snapshot and resume from its <code>position</code>. Heartbeats are SSE comments and do not advance the cursor.</p>
+<p>Cancelling the assistant turn via <code>POST /v1/conversations/assistant/cancel</code> fences the active reply so a late model response cannot publish or dispatch commands, while already-accepted background tasks continue independently until stopped through Work.</p>
+</section>
+<section><h2>Optional runtime feature flags</h2>
+<p>Both feature flags default to <code>true</code>. Set a flag to <code>false</code> to disable it; any other non-empty value is rejected at startup.</p>
+<div class="card"><table><tr><th>Setting</th><th>Effect when <code>false</code></th></tr>
+<tr><td><code>NORI_BACKGROUND_TASKS_ENABLED</code></td><td>Disables assistant background task routes (returning HTTP 501 with <code>code: "not_enabled"</code>) and drops Jev and inner-task key requirements at startup.</td></tr>
+<tr><td><code>NORI_JEV_ENABLED</code></td><td>Skips Jev intent classification and removes the <code>JEV_API_KEY</code> requirement. The outer model, two-call prompt-injection provenance guard and command validation remain active.</td></tr>
+</table></div>
+</section>
+<section><h2>Shared read positions</h2>
+<ul class="pts">
+<li>The client reports a reply via <code>POST /api/seen</code> only when it enters the visible viewport.</li>
+<li>Postgres commits the read position and its log event together; older reports cannot move the mark backward.</li>
+<li>Other open sessions for the same user receive the updated read mark over the SSE stream.</li>
+</ul>
+</section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/assistant.go</code> · <code>core/internal/api/features.go</code> · <code>core/internal/api/conversation.go</code> · <code>core/internal/api/conversation_contract.go</code> · <code>core/internal/api/conversation_events.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/mcp.go</code> · <code>core/internal/api/scheduling.go</code> · <code>core/internal/api/work.go</code> · <code>core/internal/api/library.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/app/features.go</code> · <code>core/internal/settings/settings.go</code> · <code>integrations/embed/README.md</code> · <code>integrations/embed/adapter.mjs</code></p></details>
+</body>
+</html>

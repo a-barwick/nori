@@ -1,0 +1,637 @@
+package records
+
+import (
+	"cmp"
+	"context"
+	"slices"
+	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"nori/internal/observability"
+	"nori/internal/prompts"
+	"nori/internal/state"
+	"nori/internal/state/docstore"
+)
+
+// OpenTasks is operational state, independent of the bounded UI projection.
+func (d *Database) OpenTasks(ctx context.Context) ([]state.Run, error) {
+	runs, err := documents[state.Run](d.runs().Where("status", "==", "running").Documents(ctx))
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(runs, func(a, b state.Run) int { return cmp.Compare(a.ID, b.ID) })
+	return runs, nil
+}
+
+func (d *Database) Pending(ctx context.Context, after string) (state.CommandPage, error) {
+	query := d.commands().Where("delivered", "==", false).OrderBy(docstore.DocumentID, docstore.Asc).Limit(state.PendingCommandLimit)
+	if after != "" {
+		// ID is the entire ordering key; a cursor needs no reread of the
+		// record that may already have left the pending set.
+		query = query.StartAfter(&docstore.DocumentSnapshot{Ref: d.commands().Doc(after)})
+	}
+	commands, err := documents[state.Command](query.Documents(ctx))
+	if err != nil {
+		return state.CommandPage{}, err
+	}
+	page := state.CommandPage{Commands: commands}
+	if len(commands) == state.PendingCommandLimit {
+		page.Next = commands[len(commands)-1].ID
+	}
+	return page, nil
+}
+
+func (d *Database) Delivered(ctx context.Context, commandID string) error {
+	_, err := d.commands().Doc(commandID).Update(ctx, []docstore.Update{{Path: "delivered", Value: true}})
+	return err
+}
+
+func (d *Database) Reconcile(ctx context.Context, runID string) (state.TaskSnapshot, error) {
+	run, err := d.GetRun(ctx, runID)
+	if err != nil {
+		return state.TaskSnapshot{}, err
+	}
+	snapshot := state.TaskSnapshot{Run: run, Commands: []state.Command{}}
+	commands, err := documents[state.Command](d.commands().Where("run_id", "==", runID).Documents(ctx))
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.Commands = state.ReconcileCommands(run, commands)
+	return snapshot, nil
+}
+
+func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		ref := d.runs().Doc(req.RunID)
+		run, err := decodeRun(tx.Get(ref))
+		if err != nil {
+			return err
+		}
+		plan, err := state.PlanIncorporation(run, req.Revision, req.Position)
+		if err != nil || plan.Noop {
+			// A wake without new commands must not rewrite the task while a user answers its question. The
+			// revision and position fence still applies, and the read transaction ends without writing.
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		updates := []docstore.Update{{Path: "incorporated", Value: req.Position}}
+		if plan.ClearQuestion {
+			updates = append(updates, docstore.Update{Path: "waiting", Value: ""}, docstore.Update{Path: "question", Value: docstore.Delete})
+		}
+		if err = log.add(state.EventTask, req.RunID); err != nil {
+			return err
+		}
+		return tx.Update(ref, updates)
+	})
+}
+
+// guard additionally fences new paid work while execution is paused.
+func (d *Database) guard(tx *docstore.Transaction, runID string, revision int64) (state.Run, error) {
+	run, err := decodeRun(tx.Get(d.runs().Doc(runID)))
+	if err != nil {
+		return run, err
+	}
+	if err = state.GuardRun(run, revision); err != nil {
+		return run, err
+	}
+	doc, err := tx.Get(controlDoc(d.db))
+	if err != nil {
+		return run, err
+	}
+	var control state.Control
+	if err = doc.DataTo(&control); err != nil {
+		return run, err
+	}
+	return run, control.Check()
+}
+
+func (d *Database) Guard(ctx context.Context, runID string, revision int64) (state.Run, error) {
+	var run state.Run
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		var err error
+		run, err = d.guard(tx, runID, revision)
+		return err
+	}, docstore.ReadOnly)
+	return run, err
+}
+
+func (d *Database) Admit(ctx context.Context, runID string, revision int64, operation string, recoveryUntil time.Time) error {
+	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		if _, err := d.guard(tx, runID, revision); err != nil {
+			return err
+		}
+		// A second activity attempt cannot silently execute an admitted operation.
+		admitted := map[string]any{"id": operation, "revision": revision, "admitted_at": d.now(), "recovery_until": recoveryUntil}
+		if err := tx.Create(d.runs().Doc(runID).Collection("operations").Doc(operation), admitted); err != nil {
+			return err
+		}
+		return tx.Update(d.runs().Doc(runID), []docstore.Update{
+			{Path: "operation_refs", Value: docstore.ArrayUnion(operation)}, {Path: "cleanup_pending", Value: true},
+		})
+	})
+}
+
+func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		if _, err := d.guard(tx, req.RunID, req.Revision); err != nil {
+			return err
+		}
+		waiting, event := state.ProjectionEvent(req.Kind, req.Text, d.now())
+		if err = log.add(state.EventTask, req.RunID); err != nil {
+			return err
+		}
+		return tx.Update(d.runs().Doc(req.RunID), []docstore.Update{
+			{Path: "waiting", Value: waiting}, {Path: "progress", Value: ""}, {Path: "events", Value: docstore.ArrayUnion(event)},
+		})
+	})
+}
+
+// SetProgress replaces the task's latest progress line. Unlike Project it adds no event, so polling a long job can't
+// grow the task's saved record.
+func (d *Database) SetProgress(ctx context.Context, runID string, revision int64, text string) error {
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		run, err := d.guard(tx, runID, revision)
+		if err != nil {
+			return err
+		}
+		// A long job is polled often, and an unchanged line is nothing to save or send.
+		if run.Progress == text {
+			return nil
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		if err = log.add(state.EventTask, runID); err != nil {
+			return err
+		}
+		return tx.Update(d.runs().Doc(runID), []docstore.Update{{Path: "progress", Value: text}})
+	})
+}
+
+// ProjectQuestion commits the durable wait and its outer inbox event together.
+func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision int64, question state.Question) error {
+	traceContext := observability.InjectTrace(ctx)
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		run, err := d.guard(tx, runID, revision)
+		if err != nil {
+			return err
+		}
+		event, replay, err := state.QuestionEvent(run, revision, question, d.now())
+		if err != nil || replay {
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		eventTraceContext := traceContext
+		if len(eventTraceContext) == 0 {
+			eventTraceContext = run.TraceContext
+		}
+		if reportsToAssistant(run) {
+			inserted, err := d.appendTaskEvent(tx, run, event, eventTraceContext)
+			if err != nil || !inserted {
+				return err
+			}
+			if err = log.add(state.EventConversation, ""); err != nil {
+				return err
+			}
+		}
+		if err = log.add(state.EventTask, runID); err != nil {
+			return err
+		}
+		return tx.Set(d.runs().Doc(runID), state.WithQuestion(run, question, event))
+	})
+}
+
+func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state.Run, error) {
+	var run state.Run
+	routingPending, finishedNow, incomplete := false, false, false
+	traceContext := observability.InjectTrace(ctx)
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		routingPending, finishedNow = false, false
+		ref := d.runs().Doc(req.RunID)
+		var err error
+		run, err = decodeRun(tx.Get(ref))
+		if err != nil {
+			return err
+		}
+		admitted, proceed, err := state.AdmitPublication(run, req)
+		if err != nil || !proceed {
+			return err
+		}
+		if run.Finishing == nil && admitted.GatesOnRouting() {
+			conversation, err := d.readConversation(tx)
+			if err != nil {
+				return err
+			}
+			if conversation.RoutingPending() {
+				routingPending = true
+				run = state.DeferPublication(run)
+				return tx.Update(ref, []docstore.Update{
+					{Path: "publication_pending", Value: true}, {Path: "publication_generation", Value: run.PublicationGeneration},
+				})
+			}
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		now := d.now()
+		in, err := d.publishReads(tx, req.RunID, run)
+		if err != nil {
+			return err
+		}
+		unfinished := false
+		for _, child := range in.children {
+			unfinished = unfinished || (child.Status == state.RunRunning && child.Finishing == nil)
+		}
+		if run.Finishing == nil && admitted.Status == state.RunCompleted && unfinished {
+			// Ending owned work is cleanup, not proof that the requested work succeeded.
+			detail := prompts.Runtime("completion-owned-work-unfinished", nil)
+			admitted.Status, admitted.Detail, admitted.ExpectedIncomplete = state.RunFailed, detail, true
+			admitted.Text += "\n\n" + detail
+			if admitted.Answer != nil {
+				answer := *admitted.Answer
+				answer.Checked = false
+				answer.Unmet = append(append([]string{}, answer.Unmet...), detail)
+				admitted.Answer = &answer
+			}
+		}
+		pending := run.CleanupPending
+		for _, child := range in.children {
+			pending = pending || child.Status == state.RunRunning || child.CleanupPending
+		}
+		if pending {
+			if err = d.stopSubtasks(tx, log, in.children, req.RunID, now); err != nil {
+				return err
+			}
+			if run.ParentID != "" {
+				parent := state.RollUpSpend(in.parent, run, state.SpendUpdate{Spent: admitted.Spent, CostUnknown: admitted.CostUnknown})
+				if err = tx.Set(d.runs().Doc(run.ParentID), parent); err != nil {
+					return err
+				}
+				if err = log.add(state.EventTask, run.ParentID); err != nil {
+					return err
+				}
+			}
+			run.Finishing = &admitted
+			run.Question, run.Progress, run.PublicationPending = nil, "", false
+			run.Waiting = prompts.Runtime("task-finishing", nil)
+			run.Spent, run.CostUnknown = max(run.Spent, admitted.Spent), run.CostUnknown || admitted.CostUnknown
+			if err = log.add(state.EventTask, run.ID); err != nil {
+				return err
+			}
+			return tx.Set(ref, run)
+		}
+		parent := in.parent
+		finished, event := state.FinishRun(run, admitted, now)
+		published, conflict := state.PublishResults(finished, admitted, in.existing, in.prior, now)
+		if conflict != "" {
+			finished.Result = conflict + "\n\n" + finished.Result
+			event.Text = finished.Result
+		}
+		announce := run.ParentID == ""
+		var result *state.Command
+		if run.ParentID != "" {
+			var waiting bool
+			parent, result, waiting = state.SettleSubtask(parent, run, finished, now)
+			// A waiting parent receives this outcome with no model call. Holds still need their answer, and a subtask
+			// that outlived its parent's wait may have done something the user has to hear about.
+			announce = len(event.Holds) > 0 || (!waiting && len(finished.OperationRefs) > 0)
+		}
+		// Read today's Daily Log shards BEFORE any writes (Firestore read-before-write rule).
+		var (
+			taskOutcomeDate   string
+			taskOutcomeShards []state.MemoryLog
+			taskOutcomeEntry  *state.MemoryLogEntry
+		)
+		if entry, ok := buildTaskOutcomeEntry(finished, now); ok {
+			taskOutcomeDate = now.UTC().Format("2006-01-02")
+			taskOutcomeShards, err = d.readDailyLogShards(tx, taskOutcomeDate)
+			if err != nil {
+				return err
+			}
+			taskOutcomeEntry = &entry
+		}
+		if announce {
+			eventTraceContext := traceContext
+			if len(eventTraceContext) == 0 {
+				eventTraceContext = run.TraceContext
+			}
+			inserted, err := d.appendTaskEvent(tx, run, event, eventTraceContext)
+			if err != nil {
+				return err
+			}
+			if inserted {
+				finished.EventSequence = event.Sequence
+				if err = log.add(state.EventConversation, ""); err != nil {
+					return err
+				}
+			}
+		}
+		run = finished
+		finishedNow, incomplete = true, admitted.ExpectedIncomplete
+		if err = log.add(state.EventTask, req.RunID); err != nil {
+			return err
+		}
+		if taskOutcomeEntry != nil {
+			if err = d.writeDailyLogAppend(tx, taskOutcomeDate, taskOutcomeShards, []state.MemoryLogEntry{*taskOutcomeEntry}, now); err != nil {
+				return err
+			}
+			if err = log.add(state.EventMemory, ""); err != nil {
+				return err
+			}
+		}
+		for _, result := range published {
+			if err = tx.Set(d.results().Doc(result.ID), result); err != nil {
+				return err
+			}
+			if err = log.add(state.EventResult, result.ID); err != nil {
+				return err
+			}
+		}
+		if run.ParentID != "" {
+			if err = tx.Set(d.runs().Doc(run.ParentID), parent); err != nil {
+				return err
+			}
+			if err = log.add(state.EventTask, run.ParentID); err != nil {
+				return err
+			}
+			if run.Status != state.RunRunning && shouldWakeParentForSubtask(parent, result) {
+				if err = tx.WakeTask(d.user.ID, run.ParentID, now); err != nil {
+					return err
+				}
+			}
+		}
+		if result != nil {
+			if err = tx.Create(d.commands().Doc(result.ID), *result); err != nil {
+				return err
+			}
+		}
+		if run.Status != state.RunRunning && run.Origin != nil && run.Origin.OccurrenceID != "" {
+			if err = tx.WakeUser(d.user.ID, docstore.LaneScheduler, now); err != nil {
+				return err
+			}
+		}
+		return tx.Set(ref, run)
+	})
+	if err == nil && finishedNow {
+		observeTaskEnd(ctx, run, incomplete)
+	}
+	if err == nil && routingPending {
+		err = state.ErrRoutingPending
+	}
+	if err == nil && run.Status != state.RunRunning && run.ParentID != "" {
+		// Child settlement is durable before this wake-up. A crash here is repaired by the open-parent scan.
+		err = d.finishPending(ctx, run.ParentID)
+	}
+	return run, err
+}
+
+func (d *Database) finishPending(ctx context.Context, id string) error {
+	run, err := d.GetRun(ctx, id)
+	if err != nil {
+		return err
+	}
+	if run.Finishing != nil {
+		_, err = d.Publish(ctx, *run.Finishing)
+	} else if run.Status != state.RunRunning && run.ParentID != "" {
+		// Older workers can publish a child before cleaning it up.
+		err = d.finishPending(ctx, run.ParentID)
+	}
+	return err
+}
+
+// publishInputs is what publishing a task reads. A Firestore transaction must finish its reads before it writes.
+type publishInputs struct {
+	existing []state.Result
+	prior    *state.Result
+	parent   state.Run
+	children map[string]state.Run
+}
+
+func (d *Database) publishReads(tx *docstore.Transaction, runID string, run state.Run) (publishInputs, error) {
+	var in publishInputs
+	var err error
+	if in.existing, err = d.runResults(tx, runID); err != nil {
+		return in, err
+	}
+	if run.Revises != "" {
+		if in.prior, err = d.readResult(tx, run.Revises); err != nil {
+			return in, err
+		}
+	}
+	if run.ParentID != "" {
+		if in.parent, err = decodeRun(tx.Get(d.runs().Doc(run.ParentID))); err != nil {
+			return in, err
+		}
+	}
+	// Terminal children can still have cleanup pending from an older worker. Read all owned children, not just
+	// the cached running links, before deciding that the parent's lifetime is over.
+	in.children = map[string]state.Run{}
+	for _, link := range run.Subtasks {
+		id := link.ID
+		if in.children[id], err = decodeRun(tx.Get(d.runs().Doc(id))); err != nil {
+			return in, err
+		}
+	}
+	return in, nil
+}
+
+func (d *Database) stopSubtasks(tx *docstore.Transaction, log *eventLog, children map[string]state.Run, runID string, now time.Time) error {
+	ids := make([]string, 0, len(children))
+	for id := range children {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		child := children[id]
+		stopped, stop, changed := state.StopSubtask(child, runID+":ended", now)
+		if !changed {
+			continue
+		}
+		if err := tx.Set(d.runs().Doc(id), stopped); err != nil {
+			return err
+		}
+		if err := log.add(state.EventTask, id); err != nil {
+			return err
+		}
+		if err := tx.Create(d.commands().Doc(stop.ID), stop); err != nil {
+			return err
+		}
+		if err := tx.WakeTask(d.user.ID, id, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *Database) CleanupTasks(ctx context.Context) ([]state.Run, error) {
+	runs, err := documents[state.Run](d.runs().Where("cleanup_pending", "==", true).Documents(ctx))
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(runs, func(a, b state.Run) int { return cmp.Compare(a.ID, b.ID) })
+	return runs, nil
+}
+
+// shouldWakeParentForSubtask reports whether a subtask reaching terminal state (or
+// completing terminal cleanup) should wake its parent's task lease. When no
+// subtask_result command is ready and the parent is still waiting on other running
+// siblings (QuestionWork or Finishing), waking the parent is redundant because the
+// final sibling will wake it.
+func shouldWakeParentForSubtask(parent state.Run, result *state.Command) bool {
+	if result != nil {
+		return true
+	}
+	if parent.Finishing != nil {
+		return len(state.RunningSubtasks(parent)) == 0
+	}
+	if parent.Status == state.RunRunning {
+		waitingOnSiblings := !parent.CancelRequested &&
+			parent.Question != nil &&
+			parent.Question.Kind == state.QuestionWork &&
+			len(state.RunningSubtasks(parent)) > 0
+		return !waitingOnSiblings
+	}
+	return parent.CleanupPending
+}
+
+func (d *Database) FinishCleanup(ctx context.Context, runID, detail string) error {
+	err := d.logged(ctx, func(_ context.Context, tx *docstore.Transaction) error {
+		ref := d.runs().Doc(runID)
+		run, err := decodeRun(tx.Get(ref))
+		if err != nil {
+			return err
+		}
+		// An old cleanup attempt cannot erase a later admission on a still-executing task.
+		if run.Status == state.RunRunning && run.Finishing == nil {
+			return state.ErrBusy
+		}
+		if detail != "" && run.Status != state.RunRunning && !run.CleanupPending {
+			return nil // A late failed attempt cannot undo confirmed cleanup.
+		}
+		var parent state.Run
+		hasParent := false
+		if detail == "" && run.ParentID != "" && run.Status != state.RunRunning {
+			p, pErr := decodeRun(tx.Get(d.runs().Doc(run.ParentID)))
+			if pErr == nil {
+				parent = p
+				hasParent = true
+			} else if !notFound(pErr) {
+				return pErr
+			}
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		if err = log.add(state.EventTask, runID); err != nil {
+			return err
+		}
+		if err = tx.Update(ref, []docstore.Update{
+			{Path: "cleanup_pending", Value: detail != ""}, {Path: "cleanup_error", Value: detail},
+		}); err != nil {
+			return err
+		}
+		if detail == "" {
+			now := d.now()
+			if run.Finishing != nil {
+				if err = tx.WakeTask(d.user.ID, runID, now); err != nil {
+					return err
+				}
+			}
+			// While run is still RunRunning (Finishing != nil), finishPending immediately
+			// invokes Publish(run) which settles the child on parent and wakes parent if needed.
+			// When run is already terminal (e.g. cleanup after publication), wake parent directly
+			// only if it is actually eligible to proceed.
+			if hasParent && shouldWakeParentForSubtask(parent, nil) {
+				if err = tx.WakeTask(d.user.ID, run.ParentID, now); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil || detail != "" {
+		return err
+	}
+	return d.finishPending(ctx, runID)
+}
+
+func (d *Database) PublicationTasks(ctx context.Context) ([]state.Run, error) {
+	runs, err := documents[state.Run](d.runs().Where("publication_pending", "==", true).Documents(ctx))
+	if err != nil {
+		return nil, err
+	}
+	open := state.OpenOnly(runs)
+	slices.SortFunc(open, func(a, b state.Run) int { return cmp.Compare(a.ID, b.ID) })
+	return open, nil
+}
+
+func (d *Database) PublicationWoken(ctx context.Context, runID string, generation int64) error {
+	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		run, err := decodeRun(tx.Get(d.runs().Doc(runID)))
+		if err != nil {
+			return err
+		}
+		if !state.ShouldClearPublication(run, generation) {
+			return nil
+		}
+		return tx.Update(d.runs().Doc(runID), []docstore.Update{{Path: "publication_pending", Value: false}})
+	})
+}
+
+func (d *Database) RecordTaskStep(ctx context.Context, runID string, step state.TaskStep) error {
+	_, err := d.runs().Doc(runID).Collection("steps").Doc(step.ID).Set(ctx, step)
+	return err
+}
+
+// TaskSteps is fetched only when a trace is opened, not with every session poll.
+func (d *Database) TaskSteps(ctx context.Context, runID string) ([]state.TaskStep, error) {
+	if _, err := d.GetRun(ctx, runID); err != nil {
+		return nil, err
+	}
+	steps, err := documents[state.TaskStep](
+		d.runs().Doc(runID).Collection("steps").OrderBy("started_at", docstore.Desc).Limit(state.TaskStepLimit).Documents(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return state.Chronological(steps), nil
+}
+
+// Terminal telemetry follows the committed outcome, including cleanup and recovery finalization.
+func observeTaskEnd(ctx context.Context, run state.Run, incomplete bool) {
+	if run.FinishedAt == nil || run.StartedAt.IsZero() || run.FinishedAt.Before(run.StartedAt) {
+		return
+	}
+	durationCtx := observability.ExtractTrace(ctx, run.OriginTraceContext)
+	_, span := otel.Tracer("nori/task").Start(durationCtx, "task.acceptance_to_terminal",
+		trace.WithTimestamp(run.StartedAt), trace.WithLinks(trace.Link{SpanContext: trace.SpanContextFromContext(ctx)}),
+		trace.WithAttributes(attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),
+			attribute.String("nori.task.id", run.ID), attribute.String("nori.task.status", string(run.Status)), attribute.Bool("nori.output.present", run.Result != "")))
+	event := "task." + string(run.Status)
+	if run.Status == state.RunFailed {
+		if incomplete {
+			event = "task.incomplete"
+		} else {
+			span.SetStatus(codes.Error, "task failed")
+		}
+	}
+	observability.Event(ctx, event, attribute.String("nori.task.id", run.ID))
+	observability.Metric(ctx, "nori.task.duration_ms", float64(run.FinishedAt.Sub(run.StartedAt).Milliseconds()))
+	span.End(trace.WithTimestamp(*run.FinishedAt))
+}

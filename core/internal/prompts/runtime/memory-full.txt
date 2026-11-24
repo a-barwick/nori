@@ -1,0 +1,1 @@
+pinned core memories exceed the 24 KiB budget; ask the user which pinned memory to unpin or forget

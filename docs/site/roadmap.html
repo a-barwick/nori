@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roadmap · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Roadmap</h1>
+<p class="lede">Implemented core capabilities of Nori-for-the host app and what remains for production rollout inside a host app.</p>
+<div class="card"><table>
+<tr><th>Area</th><th>Capability</th><th>Status</th></tr>
+<tr><td>Outer loop</td><td>One persistent thread per user, message batching, explicit memory, quote-verified compaction and two-call prompt-injection provenance guard.</td><td>Built.</td></tr>
+<tr><td>Inner loop</td><td>Concurrent Postgres-native tasks (<code>task.Runner</code> + <code>worker.Pool</code>), steering, Stop, spending ceilings, subtasks, durable questions and record-checked <a href="completion.html">completion</a>.</td><td>Built.</td></tr>
+<tr><td>Ports &amp; MCP</td><td>Digest-pinned <a href="apps.html">extension registry</a>, remote Streamable HTTP &amp; local stdio MCP clients, <code>compose</code> scripts, SSRF netguard, provider-agnostic <code>connections</code> port and envelope-encrypted <code>secret/rowstore</code>.</td><td>Built.</td></tr>
+<tr><td>Permissions &amp; approvals</td><td>Deny-wins <a href="permissions.html">rules engine</a> and action-digest-bound typed approval cards with optimistic revision checks.</td><td>Built.</td></tr>
+<tr><td>Automations &amp; goals</td><td>Deterministic recurring/once/watch <a href="schedules.html">schedules</a>, goals and deduplicated in-app inbox delivery.</td><td>Built.</td></tr>
+<tr><td>Results &amp; library</td><td>Versioned <a href="results.html">saved results</a>, conflict preservation, attachments and private S3/local storage.</td><td>Built.</td></tr>
+<tr><td>The host app adapter &amp; contracts</td><td>Headless Fetch handler (<code>integrations/embed/adapter.mjs</code>), generated TypeScript types and strict <code>contracts-check</code> suite with live HTTP scenarios.</td><td>Built.</td></tr>
+<tr><td>AWS runtime adapters</td><td>Single binary (<code>cmd/nori --role=all|api|worker</code>), Postgres JSONB + leases/wakes, S3 artifacts, AWS Secrets Manager, OIDC verification and HS256 service auth.</td><td>Built.</td></tr>
+<tr><td>The host app production rollout</td><td><span class="designed">Provisioned AWS infrastructure, the host app production identity binding, enterprise MCP gateway wiring and multi-identity soak testing.</span></td><td><span class="designed">Planned</span></td></tr>
+</table></div>
+<p>See <a href="open-questions.html">Open questions</a> for operational tuning areas that need production evidence.</p>
+</body>
+</html>

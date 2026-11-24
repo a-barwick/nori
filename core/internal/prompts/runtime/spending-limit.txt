@@ -1,0 +1,1 @@
+Stopped at the configured ${{printf "%g" .Budget}} task spending limit. Work and results are saved; this task is incomplete.

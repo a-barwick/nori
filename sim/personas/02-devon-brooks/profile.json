@@ -1,0 +1,205 @@
+{
+  "slug": "02-devon-brooks",
+  "name": "Devon Brooks",
+  "email": "devon.brooks@sim.nori.local",
+  "timezone": "America/Chicago",
+  "locale": "en-US",
+  "sim_start_date": "2027-01-04",
+  "presets": ["full"],
+  "summary": "Independent Fractional CFO in Austin managing 4 strictly isolated SMB clients (RedRiver Coffee, Solis Solar, OakHill Vet, LoneStar Freight), coaching U10 girls' soccer, refinancing his mortgage, and training for the Austin Half Marathon — power-user of /memory UI, scoped deny permissions, and recurring automations.",
+  "feature_focus": [
+    "memory_ui_full_lifecycle",
+    "forgotten_memory_non_hallucination",
+    "strict_multi_entity_separation",
+    "permission_scoped_deny_rule",
+    "recurring_automations",
+    "strict_per_task_budget",
+    "structured_csv_uploads",
+    "fts_daily_log_recall"
+  ],
+  "preferences": {
+    "timezone": "America/Chicago",
+    "locale": "en-US",
+    "budget_per_task_usd": 1.5,
+    "monthly_limit_usd": 60.0,
+    "working_hours": {
+      "monday": { "enabled": true, "start": "07:30", "end": "17:30" },
+      "tuesday": { "enabled": true, "start": "07:30", "end": "17:30" },
+      "wednesday": { "enabled": true, "start": "07:30", "end": "17:30" },
+      "thursday": { "enabled": true, "start": "07:30", "end": "17:30" },
+      "friday": { "enabled": true, "start": "07:30", "end": "16:30" },
+      "saturday": { "enabled": false },
+      "sunday": { "enabled": false }
+    }
+  },
+  "initial_permissions": [
+    {
+      "title": "Allow read-only workspace access across client emails, calendar, docs, and financial issues",
+      "effect": "allow",
+      "tool_names": [
+        "email_search",
+        "email_read",
+        "calendar_list",
+        "doc_list",
+        "doc_read",
+        "issue_list"
+      ],
+      "action_classes": ["read"]
+    }
+  ],
+  "persona_responder_brief": "You are Devon Brooks, a 42-year-old independent Fractional CFO in Austin, TX (Brooks Advisory LLC) advising 4 confidential SMB clients: RedRiver Coffee Roasters (Carla Mendez), Solis Solar Supply (Rick Halvorsen), OakHill Vet Clinic (Dr. Meera Patel), and LoneStar Freight (Greg Kowalski). You also coach U10 girls' soccer (Austin FC Juniors / Lightning), are refinancing your mortgage with Marcus Vance at Barton Creek Credit Union (target <= 5.85% zero points), and train for the Austin Half Marathon (Feb 14, 1:42:00 goal). Communicate in terse, bullet-heavy, numbers-first prose with zero fluff. Enforce strict confidentiality between clients and never send unreviewed emails to Greg Kowalski.",
+  "mcp_world": {
+    "server_name": "devon-cfo-workspace",
+    "emails": [
+      {
+        "id": "email_d01",
+        "from": "carla@redrivercoffee.example",
+        "to": ["devon.brooks@sim.nori.local"],
+        "subject": "RedRiver Jan Cash Position & Frost Bank LOC",
+        "date": "2027-01-04T08:05:00-06:00",
+        "folder": "inbox",
+        "body": "Devon — starting January tight as expected. Checking balance is $41,200, payroll hits Jan 15 and Jan 31 ($68,500/mo total), and we've drawn $112,000 of our $150,000 Frost Bank line. Need your 13-week cashflow view and wholesale price increase plan (currently modeling 6% effective Feb 1) before our Jan 14 review. -Carla"
+      },
+      {
+        "id": "email_d02",
+        "from": "rick@solissolarsupply.example",
+        "to": ["devon.brooks@sim.nori.local"],
+        "subject": "Solis Solar AR Aging Crisis — Mesa Commercial Builders",
+        "date": "2027-01-04T09:30:00-06:00",
+        "folder": "inbox",
+        "body": "Devon, Net-60 customers are choking our working capital. Overdue >60d AR just hit $428,000, with Mesa Commercial Builders alone at $164,000 past due. We're sitting on $310,000 of panel inventory and only $85,000 cash. Should we look at selective invoice factoring on Mesa or push an attorney demand letter? -Rick"
+      },
+      {
+        "id": "email_d03",
+        "from": "mpatel@oakhillvet.example",
+        "to": ["devon.brooks@sim.nori.local"],
+        "subject": "OakHill Vet — Exam Wing Buildout & SBA 7(a) Term Sheet",
+        "date": "2027-01-05T10:15:00-06:00",
+        "folder": "inbox",
+        "body": "Hi Devon, great news on Q4 — full-year EBITDA came in at $412,000 and operating cash is $218,000. Live Oak Bank sent the SBA 7(a) equipment loan term sheet at 7.15% fixed. For the second exam wing leasehold buildout, we rejected Brazos Commercial Interiors ($340k bid) and selected Hill Country Medical Builders at $285,000. Can you stress-test debt service coverage? -Dr. Patel"
+      },
+      {
+        "id": "email_d04",
+        "from": "greg@lonestarfreight.example",
+        "to": ["devon.brooks@sim.nori.local"],
+        "subject": "Fuel surcharge mess — DO NOT tell shippers yet until we check contracts",
+        "date": "2027-01-06T14:40:00-06:00",
+        "folder": "inbox",
+        "body": "Devon, dispatch never updated the DOE diesel index table in our TMS in October. Looks like we underbilled $47,300 in Q4 fuel surcharges across three regional shipper contracts (Brazos Beverage, Centex Paper, and Alamo Steel). Also sorry I accidentally forwarded your draft rate note to my ops manager yesterday — I'll be more careful. -Greg"
+      },
+      {
+        "id": "email_d05",
+        "from": "marcus.vance@bartoncreekcu.example",
+        "to": ["devon.brooks@sim.nori.local"],
+        "subject": "Rate Watch: 30-Yr Fixed Refinance ($492k balance)",
+        "date": "2027-01-06T16:10:00-06:00",
+        "folder": "inbox",
+        "body": "Devon, current 30-year fixed par rate today is 5.95% zero points (estimated closing costs $3,900). I have your alert set for <= 5.85% zero points so we can beat your current 6.75% note cleanly. I'll ping you the minute the 10-year Treasury dips enough to trigger your target. -Marcus Vance, Barton Creek Credit Union"
+      },
+      {
+        "id": "email_d06",
+        "from": "tournaments@austinfcjuniors.example",
+        "to": ["devon.brooks@sim.nori.local"],
+        "subject": "Winter Cup Schedule (Jan 23-24) — U10 Girls Lightning",
+        "date": "2027-01-07T12:00:00-06:00",
+        "folder": "inbox",
+        "body": "Coach Brooks — U10 Girls Lightning (14 players) is seeded in Bracket B at Onion Creek Soccer Complex, Fields 4 & 6. Pool matches: Sat Jan 23 at 9:00 AM and 1:30 PM; Sun Jan 24 at 10:00 AM, with Bracket B semifinals at 2:00 PM Sun. Check city field-status alerts Friday afternoon if rain moves through."
+      }
+    ],
+    "calendar_events": [
+      {
+        "id": "cal_d01",
+        "title": "RedRiver Coffee — 13-Week Cashflow Review w/ Carla",
+        "start": "2027-01-14T09:00:00-06:00",
+        "end": "2027-01-14T10:00:00-06:00",
+        "location": "RedRiver Roastery, East Cesar Chavez",
+        "attendees": ["devon.brooks@sim.nori.local", "carla@redrivercoffee.example"],
+        "notes": "Review Frost Bank LOC headroom and wholesale pricing."
+      },
+      {
+        "id": "cal_d02",
+        "title": "Solis Solar — AR Collections & Factoring Call w/ Rick",
+        "start": "2027-01-15T11:00:00-06:00",
+        "end": "2027-01-15T11:45:00-06:00",
+        "location": "Zoom",
+        "attendees": ["devon.brooks@sim.nori.local", "rick@solissolarsupply.example"],
+        "notes": "Mesa Commercial Builders $164k overdue escalation."
+      },
+      {
+        "id": "cal_d03",
+        "title": "U10 Lightning Winter Cup Tournament (Day 1)",
+        "start": "2027-01-23T08:15:00-06:00",
+        "end": "2027-01-23T15:00:00-06:00",
+        "location": "Onion Creek Soccer Complex, Fields 4 & 6",
+        "attendees": ["devon.brooks@sim.nori.local"],
+        "notes": "Games at 9:00 AM and 1:30 PM. Bring canopy, pinnies, and nut-free snacks."
+      },
+      {
+        "id": "cal_d04",
+        "title": "U10 Lightning Winter Cup Tournament (Day 2)",
+        "start": "2027-01-24T09:15:00-06:00",
+        "end": "2027-01-24T16:00:00-06:00",
+        "location": "Onion Creek Soccer Complex, Fields 4 & 6",
+        "attendees": ["devon.brooks@sim.nori.local"],
+        "notes": "Pool game 10:00 AM; Bracket B semifinals 2:00 PM."
+      }
+    ],
+    "docs": [
+      {
+        "id": "doc_d01",
+        "title": "Brooks Advisory — Client Confidentiality Protocol",
+        "updated_at": "2027-01-03T18:00:00-06:00",
+        "tags": ["brooks-advisory", "compliance"],
+        "content": "All four retained clients (RedRiver Coffee Roasters, Solis Solar Supply, OakHill Vet Clinic, LoneStar Freight) are strictly siloed under mutual NDA. Never cite metrics, bank facilities, vendor names, or owner names from one client in communications or memos prepared for another client."
+      },
+      {
+        "id": "doc_d02",
+        "title": "LoneStar Freight — Q4 Fuel Surcharge Audit Workpaper",
+        "updated_at": "2027-01-06T17:00:00-06:00",
+        "tags": ["lonestar-freight", "audit"],
+        "content": "TMS diesel index frozen at $3.42/gal instead of actual Q4 Gulf Coast DOE avg $3.79/gal across 18 trucks. Underbilled Q4 surcharges: Brazos Beverage $19,400, Centex Paper $16,100, Alamo Steel $11,800. Total recoverable: $47,300. Contract lookback clause allows 90-day true-up invoices."
+      },
+      {
+        "id": "doc_d03",
+        "title": "Austin Half Marathon Training Block (Feb 14, 2027)",
+        "updated_at": "2027-01-04T06:30:00-06:00",
+        "tags": ["personal", "running"],
+        "content": "Goal finish: 1:42:00 (~7:47/mi avg pace). Schedule: Tue 5-6 mi tempo, Thu 5 mi hills (Shoal Creek / Congress Ave), Sat long run on Lady Bird Lake trail (build 8 -> 9 -> 10 -> peak 11 mi on Jan 30, taper Feb 6). Easy recovery 4 mi Mon/Wed as schedule permits."
+      }
+    ],
+    "issues": [
+      {
+        "id": "FIN-101",
+        "title": "[RedRiver] Build 13-week cashflow forecast & wholesale price sheet",
+        "status": "in_progress",
+        "assignee": "devon.brooks@sim.nori.local",
+        "priority": "P0",
+        "notes": "Cash $41.2k vs $68.5k monthly payroll; LOC $112k/$150k drawn at Frost Bank."
+      },
+      {
+        "id": "FIN-104",
+        "title": "[Solis] Collect $164k Mesa Commercial Builders overdue AR",
+        "status": "in_progress",
+        "assignee": "devon.brooks@sim.nori.local",
+        "priority": "P0",
+        "notes": "Total >60d AR at $428k; compare 2.2% invoice factoring fee vs payment plan."
+      },
+      {
+        "id": "FIN-108",
+        "title": "[LoneStar] Reconcile $47,300 Q4 diesel surcharge true-up invoices",
+        "status": "todo",
+        "assignee": "devon.brooks@sim.nori.local",
+        "priority": "P1",
+        "notes": "Manual review required before sharing anything with Greg Kowalski."
+      },
+      {
+        "id": "FIN-112",
+        "title": "[OakHill] Stress-test DSCR for $285k buildout + 7.15% SBA 7(a) loan",
+        "status": "todo",
+        "assignee": "devon.brooks@sim.nori.local",
+        "priority": "P1",
+        "notes": "EBITDA $412k, cash $218k; confirm coverage >= 1.5x post-expansion."
+      }
+    ]
+  }
+}

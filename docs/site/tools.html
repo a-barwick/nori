@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tools · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Tools</h1>
+<p class="lede">What the inner loop can call, where each call runs, and how a result proves what happened.</p>
+<div class="card"><p><span class="say me">Pull the latest Q3 revenue summary from the reporting server and link the source dashboard.</span></p>
+<div class="flow">
+<div class="node outer"><b>Outer loop</b><small>Dispatches a task for the Q3 summary.</small></div>
+<div class="arrow">↓ <span class="lbl">start command</span></div>
+<div class="node inner"><b>Inner loop on the worker</b><small>Loads capabilities and calls the MCP reporting tool through the permission-checked executor.</small></div>
+<div class="arrow">↓ <span class="lbl">MCP JSON-RPC call</span></div>
+<div class="node computer"><b>MCP server</b><small>Returns the Q3 revenue figures.</small></div>
+<div class="arrow">↓ <span class="lbl">tool output, saved as operation evidence</span></div>
+<div class="node inner"><b>Inner loop on the worker</b><small>Saves a link with <code>result_link</code> and proposes <code>complete</code> citing the operations.</small></div>
+<div class="arrow">↓ <span class="lbl">answer and evidence</span></div>
+<div class="node"><b>Runtime</b><small>Confirms all cited operations and results exist in Postgres.</small></div>
+</div></div>
+<section><h2>Built-in runtime tools</h2>
+<div class="card"><table><tr><th>Tool</th><th>Runs on</th><th>Effect</th><th>Returns</th></tr>
+<tr><td><code>web_search</code></td><td>Worker (Brave API)</td><td>Read</td><td>Up to 8 results with URLs and publication dates ($0.005/search).</td></tr>
+<tr><td><code>upload_inspect</code></td><td>Worker (no-tools model)</td><td>Read</td><td>Text answer to one question about an attached image.</td></tr>
+<tr><td><code>result_link</code></td><td>Worker</td><td>Control</td><td>The ID of a <a href="results.html">saved result</a> linking to a URL.</td></tr>
+<tr><td><code>results_find</code>, <code>result_read</code></td><td>Worker</td><td>Read</td><td>Earlier saved results and tasks matching a query or ID.</td></tr>
+<tr><td><code>memory_read</code></td><td>Worker</td><td>Read</td><td>Saved <a href="memory.html">memories</a> and the older-turn summary.</td></tr>
+<tr><td><code>conversation_read</code>, <code>conversation_find</code></td><td>Worker</td><td>Read</td><td>An earlier message by ID or matching earlier chat messages.</td></tr>
+<tr><td><code>task_history_read</code>, <code>operation_read</code></td><td>Worker</td><td>Read</td><td>Earlier transcript blocks or a specific tool call's saved output.</td></tr>
+<tr><td><code>capability_load</code></td><td>Worker</td><td>Read</td><td>Adds optional <a href="catalog.html">capability</a> tool definitions to subsequent turns.</td></tr>
+<tr><td><code>compose</code></td><td>Worker</td><td>Control</td><td>Runs a versioned JSON script of up to 64 tool calls (max 8 concurrent), each permission-checked and recorded.</td></tr>
+</table>
+<p class="note">Control tools are safe to repeat. Dynamic tools from connected <a href="apps.html">MCP servers</a> or provider adapters run through the same <code>invoke</code> executor, with MCP tools defaulting to <code>unknown</code> effect so they require an approval or explicit allow rule.</p></div></section>
+<section><h2>Confirming a change</h2>
+<p>Every tool call is recorded as an operation before dispatch and verified through provider evidence or a follow-up read.</p>
+<div class="card"><table class="tall"><tr><th>Action class</th><th>How the change is handled</th></tr>
+<tr><td>Read (<code>read</code>)</td><td>Allowed when connected; output is saved and citable as evidence.</td></tr>
+<tr><td>Reversible write (<code>reversible_write</code>)</td><td>Checked against permission rules; operation records the action digest and provider confirmation.</td></tr>
+<tr><td>Sensitive send / unknown (<code>sensitive_send</code>, <code>unknown</code>)</td><td>Requires an action-digest-bound approval or explicit matching allow rule before dispatch. Uncertain outcomes are never retried automatically.</td></tr>
+</table></div></section>
+<details class="more"><summary>Image inspection, batch limits and search pricing</summary>
+<ul class="pts">
+<li>A single model turn may propose at most 64 tool calls; the entire batch is validated before any call runs.</li>
+<li><code>upload_inspect</code> sends one attached image and one question to the task model in a separate call with no tools. Only the text answer joins the task's history, so text inside an image cannot invoke a tool. Its cost counts against the task's budget.</li>
+<li>Each <code>web_search</code> call adds $0.005 to the task's spent total; without <code>BRAVE_SEARCH_API_KEY</code>, web search reports itself unavailable.</li>
+<li><code>compose</code> scripts run every step through <code>core/internal/permissions</code> and pin every call to its extension digest; on worker restart, completed steps are reused and finished writes are never repeated.</li>
+</ul>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/agent/steps.go</code> · <code>core/internal/agent/tools.go</code> · <code>core/internal/agent/catalog.go</code> · <code>core/internal/agent/uploads.go</code> · <code>core/internal/agent/results.go</code> · <code>core/internal/agent/search.go</code> · <code>core/internal/agent/inspect.go</code> · <code>core/internal/agent/memory.go</code> · <code>core/internal/agent/registry.go</code> · <code>core/internal/invoke/invoke.go</code> · <code>core/internal/task/compose.go</code> · <code>core/internal/task/tool_durable.go</code> · <code>core/internal/task/unresolved.go</code> · <code>core/internal/task/context.go</code></p></details>
+</body>
+</html>

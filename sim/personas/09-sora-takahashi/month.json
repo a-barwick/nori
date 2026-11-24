@@ -1,0 +1,633 @@
+{
+  "persona": "09-sora-takahashi",
+  "sim_start_date": "2027-01-04",
+  "end_of_month_audit": {
+    "expected_core_concepts": [
+      "Sora Takahashi — Marine Conservation Program Manager at Pacific Reef Initiative in Honolulu (Pacific/Honolulu, UTC-10, no DST)",
+      "Three-island coral monitoring sites: Oʻahu (Kāneʻohe Bay, Reef #29 28.4% bleaching), Maui (Honolua Bay, 14.8% bleaching), Kauaʻi (Hanalei Bay, 9.1% bleaching)",
+      "Core team: Dive Lead Kaiulani Nākānelua and R/V Makani Kai Captain Keoni Kaleikini",
+      "Standing schedule rule: Hōkūleʻa training club outrigger canoe paddling every Tuesday and Thursday at 5:30 AM HST (no meetings before 8:00 AM Tue/Thu)",
+      "NOAA Permit #HI-CR-2027-0418 renewal and FY2027 Coral Resilience Grant ($184,500) with Dr. Elena Reyes-Vega, final submission Feb 5, 2027",
+      "Family: husband David, son Kai (16, 24.5 daytime / 4.5 nighttime driving hours logged toward 50-hour permit requirement), daughter Mei (14, Aloha Bots FIRST Robotics, crate shipping cutoff moved to Feb 8, 12 Anderson Powerpole connectors ordered)",
+      "Offshore fieldwork pattern: goes completely offline for 4-6 days at a time on boat trips; daily tide briefing uses missed_run skip, weekly inbox digest uses missed_run latest",
+      "Dr. Kenji Sato's kaizen camera calibration and 珊瑚 thermal-refuge methodology"
+    ],
+    "forbidden_core_substrings": [
+      "daylight saving time in Hawaii",
+      "14.5 daytime",
+      "February 12 crate deadline"
+    ],
+    "expected_daily_log_topics": [
+      "Kāneʻohe Patch Reef #29 bleaching alert (28.4% at 27.6°C)",
+      "Maui Honolua Bay 5-day survey and 2 broken HOBO thermistors",
+      "Kauaʻi Hanalei Bay 6-day survey (9.1% bleaching, 4 honu, $1,450 starboard bilge pump service)",
+      "NOAA FY2027 grant budget summary table ($184,500)",
+      "Kai supervised driving progress updates and Mei Aloha Bots electrical inspection + obento"
+    ],
+    "rubric": "Verify Core Memory cleanly retains Sora's Honolulu non-DST identity, properly spelled Hawaiian diacritics (Kāneʻohe, Oʻahu, Hōkūleʻa, Nākānelua, Mālama) and 珊瑚/kaizen field notes, latest Kai driving hours (24.5 day / 4.5 night, NOT stale 14.5), updated Feb 8 Aloha Bots shipping deadline (NOT stale Feb 12), three-island bleaching findings, NOAA permit/grant status, and protected Tue/Thu 5:30-8:00 AM paddling boundary, with zero UTF-8 corruption or stale bloat."
+  },
+  "events": [
+    {
+      "id": "e01_day01_intro",
+      "day": 1,
+      "local_time": "08:15",
+      "kind": "chat",
+      "text": "Aloha Nori! Getting organized for a busy January here in Honolulu (`Pacific/Honolulu` — remember Hawaiʻi has no daylight saving time, UTC-10 all year). I'm a Marine Conservation Program Manager at Pacific Reef Initiative, coordinating coral bleaching surveys and NOAA permit renewals across Oʻahu (Kāneʻohe Bay), Maui (Honolua Bay), and Kauaʻi (Hanalei). My field team is dive lead Kaiulani Nākānelua and Captain Keoni Kaleikini on the R/V Makani Kai. At home, my husband David and I are juggling two teens: Kai (16, logging his 50 supervised Hawaiʻi learner's permit hours — currently 14.5 daytime and 2.0 nighttime) and Mei (14, electrical lead on her FIRST Robotics team, Aloha Bots). One sacred rule to remember: I paddle outrigger canoe with my Hōkūleʻa training club every Tuesday and Thursday at 5:30 AM 🛶, so please never book or suggest meetings before 8:00 AM on Tuesdays or Thursdays.",
+      "tags": ["onboarding", "unicode", "timezone", "family"]
+    },
+    {
+      "id": "e02_day01_pin_canoe",
+      "day": 1,
+      "local_time": "08:40",
+      "kind": "memory_ui",
+      "action": "create_core",
+      "params": {
+        "text": "Standing schedule boundary: Sora paddles outrigger canoe with her Hōkūleʻa training club every Tuesday and Thursday at 5:30 AM Pacific/Honolulu (UTC-10, no DST). Never schedule meetings before 8:00 AM HST on Tuesdays or Thursdays.",
+        "pinned": true
+      },
+      "tags": ["memory_ui", "pinned", "unicode"]
+    },
+    {
+      "id": "e03_day01_upload_kaneohe_csv",
+      "day": 1,
+      "local_time": "11:10",
+      "kind": "chat",
+      "text": "Uploading our winter transect dataset from Kāneʻohe Bay (`kaneohe_transect_2027.csv`). Could you review all five sites, flag any patch reef exceeding our 20% coral bleaching alert threshold, and note the exact water temperature, bleaching percentage, and dive lead so I have it ready for NOAA?",
+      "attachments": ["assets/kaneohe_transect_2027.csv"],
+      "tags": ["upload", "csv", "unicode", "cjk"]
+    },
+    {
+      "id": "e04_day01_create_noaa_goal",
+      "day": 1,
+      "local_time": "15:30",
+      "kind": "goal_ui",
+      "action": "create",
+      "params": {
+        "title": "Renew NOAA Permit #HI-CR-2027-0418 & Submit FY2027 Coral Resilience Grant ($184,500)",
+        "outcome": "Deliver complete 3-island winter bleaching baselines (Kāneʻohe, Honolua, Hanalei) and finalize the $184,500 NOAA grant submission with Dr. Elena Reyes-Vega by Feb 5, 2027.",
+        "completion_criteria": [
+          "Compile Kāneʻohe Bay winter transect summary and Reef #29 alert",
+          "Complete Maui (Honolua Bay) and Kauaʻi (Hanalei Bay) offshore surveys",
+          "Submit Permit #HI-CR-2027-0418 addendum and lock final $184,500 budget with Elena"
+        ],
+        "deadline": "2027-02-05",
+        "follow_up": "remind"
+      },
+      "tags": ["goal_ui"]
+    },
+    {
+      "id": "e05_day02_post_paddle_inbox",
+      "day": 2,
+      "local_time": "07:45",
+      "kind": "chat",
+      "text": "Good morning! Just got back from 5:30 AM Hōkūleʻa paddle 🌊 and finished packing Mei's obento for robotics practice. Before my workday starts at 8, can you check my inbox and calendar for the latest from Dr. Elena Reyes-Vega at NOAA, Capt. Keoni, and Aloha Bots Coach Marcus Ching?",
+      "tags": ["mcp_read", "unicode", "family"]
+    },
+    {
+      "id": "e06_day02_auto_tide_skip",
+      "day": 2,
+      "local_time": "14:20",
+      "kind": "automation_ui",
+      "action": "create",
+      "params": {
+        "title": "Morning Tide & NOAA Buoy Briefing",
+        "instruction": "Summarize Oʻahu/Maui/Kauaʻi morning tide window, trade wind swell outlook, and any urgent field safety notes for Pacific Reef Initiative.",
+        "trigger": {
+          "kind": "recurring",
+          "local_start": "2027-01-06T06:15",
+          "timezone": "Pacific/Honolulu",
+          "rrule": "FREQ=DAILY"
+        },
+        "missed_run": "skip",
+        "execution_window_seconds": 0
+      },
+      "tags": ["automation_ui", "missed_run_skip", "timezone"]
+    },
+    {
+      "id": "e07_day02_auto_digest_latest",
+      "day": 2,
+      "local_time": "14:30",
+      "kind": "automation_ui",
+      "action": "create",
+      "params": {
+        "title": "Weekly NOAA & Team Inbox Digest",
+        "instruction": "Check emails from NOAA (Dr. Elena Reyes-Vega), Kaiulani Nākānelua, Capt. Keoni, and Aloha Bots, and prepare one clean catch-up summary.",
+        "trigger": {
+          "kind": "recurring",
+          "local_start": "2027-01-11T08:30",
+          "timezone": "Pacific/Honolulu",
+          "rrule": "FREQ=WEEKLY;BYDAY=MO"
+        },
+        "missed_run": "latest",
+        "execution_window_seconds": 0
+      },
+      "tags": ["automation_ui", "missed_run_latest", "timezone"]
+    },
+    {
+      "id": "e08_day03_upload_noaa_grant",
+      "day": 3,
+      "local_time": "09:30",
+      "kind": "chat",
+      "text": "Here are my FY2027 NOAA grant and permit notes (`noaa_grant_notes.md`). Please compile a clean, formatted **NOAA FY2027 Coral Resilience Grant Budget Summary Table** listing all 6 budget categories, amounts totaling $184,500, and the three Permit #HI-CR-2027-0418 renewal conditions, and save it cleanly as a finished result in my library so I can pull it up quickly during later calls with Elena.",
+      "attachments": ["assets/noaa_grant_notes.md"],
+      "tags": ["upload", "markdown", "library_seed", "show_result_target"]
+    },
+    {
+      "id": "e09_day03_family_and_sato_notes",
+      "day": 3,
+      "local_time": "16:40",
+      "kind": "chat",
+      "text": "Quick afternoon log: Kai drove 2.5 daytime hours plus 1.0 nighttime hour around Kailua and over the Pali Highway today, bringing his permit log to 17.0 daytime and 3.0 nighttime hours. Also jotting down a field note for our kaizen underwater photography workflow: Dr. Kenji Sato in Okinawa shared his 珊瑚 (coral) thermal-refuge protocol — calibrate the color card every 1 meter before photo-quadrats so bleaching scores stay consistent across Oʻahu, Maui, and Kauaʻi. Mei's Aloha Bots crate shipping cutoff is currently Feb 12.",
+      "tags": ["family", "cjk", "unicode", "fact_evolution"]
+    },
+    {
+      "id": "e10_day04_maui_prep",
+      "day": 4,
+      "local_time": "08:30",
+      "kind": "chat",
+      "text": "Back from Thursday Hōkūleʻa practice 🛶 and packing dive gear for Maui! Capt. Keoni, Kaiulani Nākānelua, and I depart Heʻeia Kea aboard R/V Makani Kai Saturday morning (Jan 9) for a 5-day Honolua Bay survey, returning Wednesday Jan 13 afternoon. We'll have zero cell service offshore — that's exactly why I set the daily tide briefing to skip missed runs and the Monday inbox digest to catch up with the latest run only.",
+      "tags": ["offshore_prep", "unicode", "missed_run"]
+    },
+    {
+      "id": "e11_day04_pin_dive_team",
+      "day": 4,
+      "local_time": "13:15",
+      "kind": "memory_ui",
+      "action": "pin_matching",
+      "params": {
+        "query": "Nākānelua"
+      },
+      "tags": ["memory_ui", "pinned", "unicode"]
+    },
+    {
+      "id": "e12_day05_pre_departure_tz_check",
+      "day": 5,
+      "local_time": "11:00",
+      "kind": "chat",
+      "text": "One last check before we load the boat tomorrow: Dr. Elena Reyes-Vega wants our post-Maui sync on Thursday Jan 14 at 11:00 AM Seattle time (`America/Los_Angeles`). Can you confirm what time that is in `Pacific/Honolulu` and make sure it doesn't clash with my Thursday 5:30–8:00 AM Hōkūleʻa canoe window?",
+      "tags": ["timezone", "non_dst"]
+    },
+    {
+      "id": "e13_day05_settle_pre_maui",
+      "day": 5,
+      "local_time": "17:30",
+      "kind": "settle",
+      "snapshot_label": "week1_pre_maui_departure",
+      "assert_invariants": ["INV-MEM-01", "INV-MEM-02", "INV-MEM-03", "INV-MEM-04", "INV-MEM-06", "INV-MEM-07", "INV-MEM-08"],
+      "tags": ["settle", "week1"]
+    },
+    {
+      "id": "e14_day07_mcp_elena_addendum",
+      "day": 7,
+      "local_time": "10:00",
+      "kind": "mcp_world_event",
+      "action": "add_email",
+      "params": {
+        "id": "em_sora_04",
+        "from": "elena.vega@noaa.sim.local",
+        "to": ["sora.takahashi@sim.nori.local"],
+        "subject": "Permit #HI-CR-2027-0418 Addendum Date Moved Up to Jan 29",
+        "date": "2027-01-10T10:00:00-10:00",
+        "folder": "inbox",
+        "body": "Aloha Sora,\n\nHope Maui conditions are treating your crew well! Quick heads-up from NOAA PIRO: our regional review panel moved the Permit #HI-CR-2027-0418 winter transect addendum deadline up to Friday, January 29, 2027 (final grant package still Feb 5). Please send over Kāneʻohe Patch Reef #29's thermal numbers and your Maui findings as soon as you're back on shore.\n\nMahalo,\nElena"
+      },
+      "tags": ["mcp_world_event", "offshore_gap_1"]
+    },
+    {
+      "id": "e15_day09_mcp_alohabots_feb8",
+      "day": 9,
+      "local_time": "14:15",
+      "kind": "mcp_world_event",
+      "action": "add_email",
+      "params": {
+        "id": "em_sora_05",
+        "from": "coach.ching@alohabots.sim.local",
+        "to": ["sora.takahashi@sim.nori.local", "david.takahashi@sim.nori.local"],
+        "subject": "URGENT: Aloha Bots Robot Crate Shipping Moved Earlier to Feb 8",
+        "date": "2027-01-12T14:15:00-10:00",
+        "folder": "inbox",
+        "body": "Hi Aloha Bots families,\n\nMatson just adjusted their Honolulu container consolidation schedule, so our robot crate shipping cutoff for mainland nationals has moved UP from February 12 to Monday, February 8, 2027. Everything needs to be packed and inspected by Sunday evening Feb 7.\n\nMahalo,\nCoach Marcus Ching"
+      },
+      "tags": ["mcp_world_event", "offshore_gap_1", "fact_evolution"]
+    },
+    {
+      "id": "e16_day10_settle_maui_gap",
+      "day": 10,
+      "local_time": "19:00",
+      "kind": "settle",
+      "snapshot_label": "maui_offshore_gap_autodream",
+      "assert_invariants": ["INV-MEM-01", "INV-MEM-02", "INV-MEM-03", "INV-MEM-04", "INV-MEM-06", "INV-MEM-07", "INV-MEM-08"],
+      "tags": ["settle", "autodream", "multi_day_gap"]
+    },
+    {
+      "id": "e17_day11_return_maui_catchup",
+      "day": 11,
+      "local_time": "08:20",
+      "kind": "chat",
+      "text": "Aloha Nori — just docked back at Heʻeia Kea after 5 days off-grid at Honolua Bay, Maui! 🪸🌊 Quick field debrief while it's fresh: Honolua Bay bleaching came in better than expected at 14.8% average (the cool north swell helped), though Kaiulani Nākānelua flagged two broken HOBO thermistors that we'll need to replace under the $31,800 equipment grant line. Now that I have signal again, what came into my inbox from NOAA and Aloha Bots while I was away, and can you confirm my automations behaved properly over the 5-day gap?",
+      "probe": {
+        "id": "p09_01_post_gap_catchup_and_missed_run",
+        "category": "multi_day_gap_catchup",
+        "rubric": "Must accurately summarize BOTH emails that arrived during the 5-day offshore gap: (1) Dr. Elena Reyes-Vega moved the Permit #HI-CR-2027-0418 addendum deadline up to Jan 29 and asked for Kāneʻohe Reef #29 + Maui data, and (2) Coach Marcus Ching moved the Aloha Bots robot crate shipping cutoff from Feb 12 up to Feb 8. Must also acknowledge Sora's Honolua Bay 14.8% bleaching / 2 broken HOBO thermistors and correctly describe the missed-run behavior (daily tide briefing skips missed runs; weekly inbox digest uses latest)."
+      },
+      "tags": ["probe", "multi_day_gap", "missed_run", "mcp_read"]
+    },
+    {
+      "id": "e18_day11_probe_kaneohe_fts",
+      "day": 11,
+      "local_time": "09:45",
+      "kind": "chat",
+      "text": "Before I email Elena, quick sanity check from our Week 1 Kāneʻohe Bay CSV — what were the exact bleaching percentage and water temperature on Kāneʻohe Patch Reef #29, and who was listed as dive lead?",
+      "probe": {
+        "id": "p09_02_unicode_fts_kaneohe",
+        "category": "unicode_fts_recall",
+        "rubric": "Must recall exact figures from assets/kaneohe_transect_2027.csv: Kāneʻohe Patch Reef #29 (KB-29) had 28.4% bleaching at 27.6°C, with Kaiulani Nākānelua as dive lead (preserving Hawaiian diacritics cleanly without garbled UTF-8).",
+        "expect_fts_query": {
+          "query": "Kāneʻohe",
+          "layer": "",
+          "min_hits": 1
+        }
+      },
+      "tags": ["probe", "unicode", "fts"]
+    },
+    {
+      "id": "e19_day11_draft_elena_email",
+      "day": 11,
+      "local_time": "16:00",
+      "kind": "chat",
+      "text": "Please send Dr. Elena Reyes-Vega (`elena.vega@noaa.sim.local`) a concise update email with our Kāneʻohe Reef #29 alert (28.4% bleaching, 27.6°C), our Maui Honolua Bay average (14.8% bleaching), and a note that we'll replace 2 broken HOBO thermistors under the $31,800 equipment line and deliver the Permit #HI-CR-2027-0418 addendum by Jan 29. Please ask for my approval before sending.",
+      "tags": ["approval_flow", "mcp_write"]
+    },
+    {
+      "id": "e20_day11_approve_elena_email",
+      "day": 11,
+      "local_time": "16:15",
+      "kind": "interaction_reply",
+      "action": "approve",
+      "params": {
+        "comment": "Numbers look accurate and diacritics are clean — go ahead and send to Elena."
+      },
+      "tags": ["interaction_reply", "approval"]
+    },
+    {
+      "id": "e21_day12_probe_nodst_and_canoe",
+      "day": 12,
+      "local_time": "10:30",
+      "kind": "chat",
+      "text": "Two scheduling checks please: (1) Elena asked if we could do a quick check-in next Tuesday (Jan 19) at 7:30 AM Honolulu time; and (2) Mei's mainland Aloha Bots mentor in Denver (`America/Denver`) proposed a nationals shipping prep call on Tuesday, April 6, 2027 at 11:00 AM Mountain time. Can I make either of those?",
+      "probe": {
+        "id": "p09_03_hawaii_timezone_nodst",
+        "category": "timezone_non_dst_and_boundary",
+        "rubric": "Must catch BOTH conflicts accurately: (1) Tuesday Jan 19 at 7:30 AM HST conflicts with Sora's standing Tue/Thu 5:30–8:00 AM Hōkūleʻa outrigger canoe window. (2) On April 6, 2027, Denver is on Daylight Saving Time (MDT, UTC-6) while Pacific/Honolulu stays UTC-10 year-round (no DST) — a 4-hour difference — so 11:00 AM MDT is 7:00 AM HST on a Tuesday, which ALSO conflicts with her Tuesday Hōkūleʻa canoe practice! Suggest times at or after 8:00 AM HST."
+      },
+      "tags": ["probe", "timezone", "non_dst", "pinned_boundary"]
+    },
+    {
+      "id": "e22_day13_family_saturday",
+      "day": 13,
+      "local_time": "18:10",
+      "kind": "chat",
+      "text": "Otsukaresama! Big Saturday for the kids — Mei's Aloha Bots passed their electrical inspection with flying colors, and the spam musubi + tamagoyaki obento disappeared in ten minutes. On the way home Kai logged another 3.0 daytime hours and 0.5 nighttime hours on H-3 and through Kāneʻohe town, so he's now up to 20.0 daytime and 3.5 nighttime hours.",
+      "tags": ["family", "fact_evolution", "unicode"]
+    },
+    {
+      "id": "e23_day14_settle_week2",
+      "day": 14,
+      "local_time": "19:00",
+      "kind": "settle",
+      "snapshot_label": "week2_end_checkpoint",
+      "assert_invariants": ["INV-MEM-01", "INV-MEM-02", "INV-MEM-03", "INV-MEM-04", "INV-MEM-06", "INV-MEM-07", "INV-MEM-08"],
+      "tags": ["settle", "week2"]
+    },
+    {
+      "id": "e24_day15_probe_cjk_coral",
+      "day": 15,
+      "local_time": "09:15",
+      "kind": "chat",
+      "text": "Writing up a short kaizen debrief note for Dr. Kenji Sato before we head to Kauaʻi. Can you remind me what we noted under his 珊瑚 thermal-refuge calibration protocol and what equipment issue Kaiulani Nākānelua flagged on Maui?",
+      "probe": {
+        "id": "p09_04_unicode_fts_cjk_coral",
+        "category": "unicode_cjk_fts_recall",
+        "rubric": "Must recall Dr. Kenji Sato's kaizen color-card calibration at 1-meter intervals before photo-quadrats so 珊瑚 (coral) bleaching/paling scores remain comparable across islands, AND mention the 2 broken HOBO thermistors Kaiulani Nākānelua flagged on Maui (to be replaced under the $31,800 equipment grant line).",
+        "expect_fts_query": {
+          "query": "珊瑚",
+          "layer": "",
+          "min_hits": 1
+        }
+      },
+      "tags": ["probe", "cjk", "unicode", "fts"]
+    },
+    {
+      "id": "e25_day15_ui_search_nakanelua",
+      "day": 15,
+      "local_time": "11:40",
+      "kind": "memory_ui",
+      "action": "search",
+      "params": {
+        "query": "Nākānelua"
+      },
+      "tags": ["memory_ui", "unicode", "fts"]
+    },
+    {
+      "id": "e26_day15_kauai_schedule_lock",
+      "day": 15,
+      "local_time": "14:20",
+      "kind": "chat",
+      "text": "Capt. Keoni just called the winter swell window for Kauaʻi — we're departing for Hanalei Bay aboard R/V Makani Kai Wednesday morning (Jan 20) and returning Monday afternoon (Jan 25). That's 6 full days completely offline! Also please make sure my records reflect that Mei's Aloha Bots robot crate shipping cutoff is now Feb 8 (not Feb 12).",
+      "tags": ["offshore_prep", "fact_evolution", "unicode"]
+    },
+    {
+      "id": "e27_day16_pre_kauai_note",
+      "day": 16,
+      "local_time": "08:30",
+      "kind": "chat",
+      "text": "Just finished Tuesday Hōkūleʻa paddling 🛶. David is taking over Kai's driving practice while I'm on Kauaʻi. Leave both my automations as-is — the daily Morning Tide briefing with `missed_run: skip` won't pile up stale forecasts while I'm off-grid, and the Monday inbox digest with `missed_run: latest` will give me a single clean catch-up when I dock back on Monday Jan 25.",
+      "tags": ["offshore_prep", "missed_run", "family"]
+    },
+    {
+      "id": "e28_day16_goal_update",
+      "day": 16,
+      "local_time": "14:00",
+      "kind": "goal_ui",
+      "action": "update",
+      "params": {
+        "title_match": "Renew NOAA Permit",
+        "progress": "Oʻahu (Kāneʻohe Reef #29 at 28.4%) and Maui (Honolua Bay at 14.8%) baselines completed and emailed to Elena. Departing for Kauaʻi (Hanalei Bay) Jan 20-25 ahead of the Jan 29 permit addendum deadline.",
+        "next_actions": [
+          "Complete Hanalei Bay winter coral transects on Kauaʻi",
+          "Send 3-island addendum to Dr. Elena Reyes-Vega by Jan 29"
+        ]
+      },
+      "tags": ["goal_ui"]
+    },
+    {
+      "id": "e29_day16_settle_pre_kauai",
+      "day": 16,
+      "local_time": "16:00",
+      "kind": "settle",
+      "snapshot_label": "pre_kauai_6day_gap",
+      "assert_invariants": ["INV-MEM-01", "INV-MEM-02", "INV-MEM-03", "INV-MEM-04", "INV-MEM-06", "INV-MEM-07", "INV-MEM-08"],
+      "tags": ["settle", "multi_day_gap"]
+    },
+    {
+      "id": "e30_day18_mcp_elena_kauai_call",
+      "day": 18,
+      "local_time": "11:00",
+      "kind": "mcp_world_event",
+      "action": "add_email",
+      "params": {
+        "id": "em_sora_06",
+        "from": "elena.vega@noaa.sim.local",
+        "to": ["sora.takahashi@sim.nori.local"],
+        "subject": "Re: Permit #HI-CR-2027-0418 — Draft Approved Pending Hanalei Numbers",
+        "date": "2027-01-21T11:00:00-10:00",
+        "folder": "inbox",
+        "body": "Aloha Sora,\n\nThanks for the Kāneʻohe and Honolua Bay numbers — the draft addendum looks very solid and replacing the 2 HOBO thermistors under the $31,800 equipment line is pre-approved. Once you're back from Kauaʻi with Hanalei Bay's baseline, let's lock our final budget sign-off call for Friday, January 29 at 2:00 PM HST.\n\nMahalo,\nElena"
+      },
+      "tags": ["mcp_world_event", "offshore_gap_2"]
+    },
+    {
+      "id": "e31_day19_mcp_david_family_update",
+      "day": 19,
+      "local_time": "16:30",
+      "kind": "mcp_world_event",
+      "action": "add_email",
+      "params": {
+        "id": "em_sora_07",
+        "from": "david.takahashi@sim.nori.local",
+        "to": ["sora.takahashi@sim.nori.local"],
+        "subject": "Home front update while you're on Kauaʻi",
+        "date": "2027-01-22T16:30:00-10:00",
+        "folder": "inbox",
+        "body": "Hey love, hope Hanalei seas are calm! Quick update for when you hit signal: Kai crushed a rainy Pali Highway session with me — added 2.5 daytime hours and 1.0 nighttime hour (so he's at 22.5 daytime / 4.5 nighttime now). Also Mei says Aloha Bots needs 12 extra Anderson Powerpole connectors ordered before February 1 so they can finish the backup battery harness before the Feb 8 crate cutoff. Miss you!\n\n— David"
+      },
+      "tags": ["mcp_world_event", "offshore_gap_2", "family", "fact_evolution"]
+    },
+    {
+      "id": "e32_day21_settle_kauai_gap",
+      "day": 21,
+      "local_time": "20:00",
+      "kind": "settle",
+      "snapshot_label": "week3_kauai_gap_autodream",
+      "assert_invariants": ["INV-MEM-01", "INV-MEM-02", "INV-MEM-03", "INV-MEM-04", "INV-MEM-06", "INV-MEM-07", "INV-MEM-08"],
+      "tags": ["settle", "week3", "autodream", "multi_day_gap"]
+    },
+    {
+      "id": "e33_day22_return_kauai_catchup",
+      "day": 22,
+      "local_time": "15:10",
+      "kind": "chat",
+      "text": "Aloha! Back on Oʻahu after 6 full days offline at Hanalei Bay, Kauaʻi! 🌊🐢 Incredible trip — Hanalei outer reef came back strong at just 9.1% bleaching with healthy Porites lobata and 4 honu swimming right past our transects. One boat note: Capt. Keoni noticed R/V Makani Kai's starboard bilge pump needs dry-dock servicing ($1,450 estimate). Can you catch me up on everything that landed in my inbox while I was on Kauaʻi?",
+      "probe": {
+        "id": "p09_05_post_6day_gap_recovery",
+        "category": "multi_day_gap_catchup",
+        "rubric": "Must summarize BOTH emails from the 6-day Kauaʻi blackout accurately: (1) Elena confirmed the draft Permit #HI-CR-2027-0418 addendum looks solid, pre-approved replacing the 2 HOBO thermistors under the $31,800 equipment line, and proposed a final budget sign-off call on Friday Jan 29 at 2:00 PM HST; (2) David reported Kai logged +2.5 day / +1.0 night hours on a rainy Pali Highway drive (bringing him to 22.5 day / 4.5 night) and Mei's Aloha Bots need 12 Anderson Powerpole connectors ordered before Feb 1."
+      },
+      "tags": ["probe", "multi_day_gap", "mcp_read", "unicode"]
+    },
+    {
+      "id": "e34_day23_probe_hokulea_fts",
+      "day": 23,
+      "local_time": "08:20",
+      "kind": "chat",
+      "text": "Quick note after Tuesday paddle: our Hōkūleʻa training club is launching from the north end of Kailua Beach for winter sprint drills. Can you double-check my standing canoe schedule boundary in memory and remind me of the Maui thermistor issue Kaiulani Nākānelua logged?",
+      "probe": {
+        "id": "p09_06_unicode_fts_hokulea",
+        "category": "unicode_fts_recall",
+        "rubric": "Must confirm Sora's pinned Tue/Thu 5:30 AM Hōkūleʻa outrigger canoe boundary (no meetings before 8:00 AM HST on Tue/Thu, Pacific/Honolulu non-DST) AND recall the 2 broken HOBO thermistors Kaiulani Nākānelua flagged on Maui.",
+        "expect_fts_query": {
+          "query": "Hōkūleʻa",
+          "layer": "",
+          "min_hits": 1
+        }
+      },
+      "tags": ["probe", "unicode", "fts", "pinned_boundary"]
+    },
+    {
+      "id": "e35_day23_ui_edit_hokulea",
+      "day": 23,
+      "local_time": "13:45",
+      "kind": "memory_ui",
+      "action": "edit_matching",
+      "params": {
+        "query": "Hōkūleʻa",
+        "text": "Standing schedule boundary: Sora paddles outrigger canoe with her Hōkūleʻa training club (winter launch: north end of Kailua Beach) every Tuesday and Thursday at 5:30 AM Pacific/Honolulu (UTC-10, no DST). Never schedule meetings before 8:00 AM HST on Tuesdays or Thursdays."
+      },
+      "tags": ["memory_ui", "unicode"]
+    },
+    {
+      "id": "e36_day24_probe_family_evolution",
+      "day": 24,
+      "local_time": "10:15",
+      "kind": "chat",
+      "text": "David and I are syncing the kids' calendar over coffee. Quick check: how many daytime and nighttime driving hours does Kai currently have logged toward his 50-hour permit requirement, what's the updated shipping cutoff for Mei's Aloha Bots crate, and what part did David mention we need to order?",
+      "probe": {
+        "id": "p09_07_family_fact_evolution",
+        "category": "fact_evolution",
+        "rubric": "Must give the latest updated facts (NOT stale Week 1 values): Kai is at 22.5 daytime and 4.5 nighttime hours (27.0 of 50 total — NOT 14.5 or 17.0 or 20.0); Mei's Aloha Bots robot crate shipping cutoff is Feb 8 (moved from Feb 12); and they need 12 Anderson Powerpole connectors ordered before Feb 1."
+      },
+      "tags": ["probe", "fact_evolution", "family"]
+    },
+    {
+      "id": "e37_day24_update_kai_and_order",
+      "day": 24,
+      "local_time": "16:00",
+      "kind": "chat",
+      "text": "Ordered the 12 Anderson Powerpole connectors for Mei's Aloha Bots (arriving Thursday)! Also Kai drove another 2.0 daytime hours with me up to Windward Mall and back, bringing him to 24.5 daytime and 4.5 nighttime hours (29.0 total toward his 50-hour permit goal).",
+      "tags": ["family", "fact_evolution"]
+    },
+    {
+      "id": "e38_day25_probe_three_island_nakanelua",
+      "day": 25,
+      "local_time": "09:30",
+      "kind": "chat",
+      "text": "Drafting our three-island coral bleaching briefing for the Pacific Reef Initiative board. Can you give me a clean side-by-side comparison of our winter bleaching results across Oʻahu (Kāneʻohe Patch Reef #29), Maui (Honolua Bay), and Kauaʻi (Hanalei Bay), and make sure Kaiulani Nākānelua's name and all Hawaiian place names are spelled properly with diacritics?",
+      "probe": {
+        "id": "p09_08_unicode_fts_nakanelua",
+        "category": "unicode_fts_synthesis",
+        "rubric": "Must accurately compare all three islands with exact figures and proper Hawaiian diacritics: Oʻahu Kāneʻohe Patch Reef #29 at 28.4% bleaching (27.6°C, above 20% alert), Maui Honolua Bay at 14.8% average bleaching, and Kauaʻi Hanalei Bay at 9.1% bleaching (healthy Porites lobata, 4 honu), crediting Dive Lead Kaiulani Nākānelua cleanly.",
+        "expect_fts_query": {
+          "query": "Nākānelua",
+          "layer": "",
+          "min_hits": 1
+        }
+      },
+      "tags": ["probe", "unicode", "fts", "synthesis"]
+    },
+    {
+      "id": "e39_day25_pause_tide_auto",
+      "day": 25,
+      "local_time": "14:15",
+      "kind": "automation_ui",
+      "action": "pause",
+      "params": {
+        "title_match": "Morning Tide"
+      },
+      "tags": ["automation_ui", "pause"]
+    },
+    {
+      "id": "e40_day26_probe_show_result",
+      "day": 26,
+      "local_time": "11:30",
+      "kind": "chat",
+      "text": "Before my 2:00 PM HST sign-off call with Elena today, can you pull up that NOAA FY2027 Coral Resilience Grant Budget Summary Table we saved back in Week 1? No need to redo the analysis or rebuild it from scratch — just show me the saved result.",
+      "probe": {
+        "id": "p09_09_show_result_library_reuse",
+        "category": "show_result_reuse",
+        "rubric": "Must retrieve and display/reference the previously saved Week 1 NOAA FY2027 Coral Resilience Grant Budget Summary Table (ideally via show_result / saved library artifact rather than claiming it was lost or needlessly restarting the full analysis), accurately reflecting the $184,500 total and key lines ($46,200 boat, $31,800 equipment/thermistors, $58,000 dive team, $22,500 Mālama workshops, $16,000 lab/eDNA, $10,000 indirect)."
+      },
+      "tags": ["probe", "show_result", "library"]
+    },
+    {
+      "id": "e41_day26_post_call_email",
+      "day": 26,
+      "local_time": "15:30",
+      "kind": "chat",
+      "text": "Great call with Elena! She signed off on the full $184,500 budget (including the 2 replacement HOBO thermistors in the $31,800 line) and accepted our 3-island Permit #HI-CR-2027-0418 addendum. Please send a short mahalo confirmation email to `elena.vega@noaa.sim.local` CC'ing `kaiulani@pacificreef.org` noting we'll submit the final packet by February 5 — ask for my approval before sending.",
+      "tags": ["approval_flow", "mcp_write"]
+    },
+    {
+      "id": "e42_day26_approve_confirm_email",
+      "day": 26,
+      "local_time": "15:40",
+      "kind": "interaction_reply",
+      "action": "approve",
+      "params": {
+        "comment": "Looks warm and concise — please send."
+      },
+      "tags": ["interaction_reply", "approval"]
+    },
+    {
+      "id": "e43_day27_memory_consolidate",
+      "day": 27,
+      "local_time": "09:00",
+      "kind": "memory_ui",
+      "action": "consolidate",
+      "params": {},
+      "tags": ["memory_ui", "autodream"]
+    },
+    {
+      "id": "e44_day27_probe_automation_state",
+      "day": 27,
+      "local_time": "17:20",
+      "kind": "chat",
+      "text": "Capt. Keoni says R/V Makani Kai comes out of dry dock tomorrow after the $1,450 starboard bilge pump service. Can you check the current status and missed-run settings of my two recurring automations so I know which one I need to unpause for February?",
+      "probe": {
+        "id": "p09_10_automation_missed_run_state",
+        "category": "automation_lifecycle",
+        "rubric": "Must accurately inspect/report both automations: (1) 'Morning Tide & NOAA Buoy Briefing' (daily 06:15 Pacific/Honolulu, missed_run: skip) is currently PAUSED and should be resumed for February; (2) 'Weekly NOAA & Team Inbox Digest' (Mondays 08:30 Pacific/Honolulu, missed_run: latest) is currently ENABLED/ACTIVE."
+      },
+      "tags": ["probe", "automation_state", "missed_run"]
+    },
+    {
+      "id": "e45_day28_resume_tide_auto",
+      "day": 28,
+      "local_time": "11:00",
+      "kind": "automation_ui",
+      "action": "resume",
+      "params": {
+        "title_match": "Morning Tide"
+      },
+      "tags": ["automation_ui", "resume"]
+    },
+    {
+      "id": "e46_day28_settle_week4",
+      "day": 28,
+      "local_time": "18:45",
+      "kind": "settle",
+      "snapshot_label": "week4_end_checkpoint",
+      "assert_invariants": ["INV-MEM-01", "INV-MEM-02", "INV-MEM-03", "INV-MEM-04", "INV-MEM-06", "INV-MEM-07", "INV-MEM-08"],
+      "tags": ["settle", "week4"]
+    },
+    {
+      "id": "e47_day29_probe_goal_readiness",
+      "day": 29,
+      "local_time": "09:15",
+      "kind": "chat",
+      "text": "Happy February! Give me a quick readiness check on my NOAA Permit #HI-CR-2027-0418 & FY2027 Grant goal ahead of Friday's Feb 5 deadline, plus any open boat or family deadlines coming up next week.",
+      "probe": {
+        "id": "p09_11_goal_and_permit_status",
+        "category": "goal_tracking",
+        "rubric": "Must accurately summarize the NOAA Permit #HI-CR-2027-0418 & $184,500 FY2027 Grant goal status (all 3 island surveys done, addendum accepted by Elena, 2 HOBO thermistors pre-approved, final grant packet due Feb 5), plus upcoming items: R/V Makani Kai $1,450 bilge pump dry-dock wrap-up and Mei's Aloha Bots Feb 8 robot crate shipping cutoff (12 Powerpole connectors already ordered)."
+      },
+      "tags": ["probe", "goal_tracking"]
+    },
+    {
+      "id": "e48_day29_goal_update_final",
+      "day": 29,
+      "local_time": "15:00",
+      "kind": "goal_ui",
+      "action": "update",
+      "params": {
+        "title_match": "Renew NOAA Permit",
+        "progress": "Three-island transects (Kāneʻohe 28.4%, Honolua 14.8%, Hanalei 9.1%) and Permit #HI-CR-2027-0418 addendum accepted by Elena; final $184,500 FY2027 grant packet ready for Feb 5 submission.",
+        "next_actions": [
+          "Submit final FY2027 Coral Resilience Grant packet to NOAA PIRO by Feb 5, 2027"
+        ]
+      },
+      "tags": ["goal_ui"]
+    },
+    {
+      "id": "e49_day30_probe_month_end_synthesis",
+      "day": 30,
+      "local_time": "08:30",
+      "kind": "chat",
+      "text": "Mālama i ke kai 🌊🛶 — back from my first February Hōkūleʻa paddle! Could you give me a warm month-end kaizen wrap-up covering: (1) our three-island 珊瑚 coral bleaching survey results with proper Hawaiian diacritics, (2) our NOAA permit & grant status, (3) Kai's latest supervised driving hours and Mei's Aloha Bots shipping deadline, and (4) confirmation that my Tuesday/Thursday morning paddling boundary is locked in for February?",
+      "probe": {
+        "id": "p09_12_month_end_synthesis_unicode",
+        "category": "month_end_synthesis",
+        "rubric": "Comprehensive, accurate, warm wrap-up covering all 4 elements with clean Unicode/diacritics: (1) Oʻahu Kāneʻohe Reef #29 28.4% (27.6°C), Maui Honolua Bay 14.8%, Kauaʻi Hanalei Bay 9.1% (with Kaiulani Nākānelua / Dr. Sato 珊瑚 kaizen notes); (2) Permit #HI-CR-2027-0418 addendum accepted & $184,500 FY2027 grant due Feb 5; (3) Kai at 24.5 daytime / 4.5 nighttime hours (29.0 of 50 total) and Mei's Aloha Bots crate cutoff Feb 8; (4) Tue/Thu 5:30–8:00 AM HST Hōkūleʻa canoe boundary protected (Pacific/Honolulu, no DST)."
+      },
+      "tags": ["probe", "synthesis", "unicode", "cjk"]
+    },
+    {
+      "id": "e50_day30_settle_final",
+      "day": 30,
+      "local_time": "12:00",
+      "kind": "settle",
+      "snapshot_label": "final_month_end_audit",
+      "assert_invariants": ["INV-MEM-01", "INV-MEM-02", "INV-MEM-03", "INV-MEM-04", "INV-MEM-06", "INV-MEM-07", "INV-MEM-08"],
+      "tags": ["settle", "final"]
+    }
+  ]
+}

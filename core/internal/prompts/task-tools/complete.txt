@@ -1,0 +1,1 @@
+Finish with the answer, supporting results, and any unmet requirements. In evidence, list the evidence_ref value of each tool result that supports the answer (or a saved result_id), not prose; the user's assistant reads those results to confirm what you report. Must be the only call in its batch.

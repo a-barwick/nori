@@ -1,0 +1,14 @@
+month,mrr_usd,arr_usd,net_new_arr_usd,paying_logos,enterprise_logos,ndr_pct,gross_margin_pct,monthly_net_burn_usd,cash_balance_usd,runway_months,avg_enterprise_acv_usd,notes
+2026-01,42500,510000,48000,19,2,118,76.0,112000,3480000,31.1,36000,Seed round closed Oct 2025 ($4.2M)
+2026-02,46500,558000,48000,21,2,119,76.4,115000,3365000,29.3,37200,Shipped GitHub Actions bottleneck profiler
+2026-03,52000,624000,66000,24,3,121,77.1,118000,3247000,27.5,39000,First 100-seat team at $39/seat pilot pricing
+2026-04,57500,690000,66000,27,3,123,77.5,121000,3126000,25.8,40500,Added Buildkite and GitLab CI connectors
+2026-05,63000,756000,66000,30,4,124,78.2,126000,3000000,23.8,42000,Hired founding AE in Toronto
+2026-06,69500,834000,78000,33,4,126,78.8,129000,2871000,22.3,43500,Q2 expansion wave across mid-market accounts
+2026-07,74000,888000,54000,35,5,127,79.0,132000,2739000,20.8,44800,Started SOC 2 Type II observation window
+2026-08,77500,930000,42000,37,5,128,79.4,135000,2604000,19.3,45600,Summer slowdown; launched self-hosted runner agent
+2026-09,80000,960000,30000,38,6,129,79.8,138000,2466000,17.9,46800,Q3 close; $960k ARR milestone
+2026-10,91000,1092000,132000,42,7,131,80.3,142000,2324000,16.4,49200,Crossed $1M ARR; started Aegis Bank pilot
+2026-11,101500,1218000,126000,46,8,132,80.9,145000,2179000,15.0,51600,Started Boreal Logistics & Veridian Health pilots
+2026-12,111000,1332000,114000,50,9,133,81.2,146000,2033000,13.9,53400,Strong Q4 expansion; 11 FTEs on payroll
+2027-01,118333,1420000,88000,53,10,134,81.5,148000,2010000,13.6,55200,Entering Series A ($12M target); debating $39 vs $49/seat enterprise tier with Ben

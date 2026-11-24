@@ -1,0 +1,12 @@
+**
+!web/
+!web/**
+**/node_modules
+**/.next
+**/.env*
+**/.git
+**/.artifacts
+**/dist
+**/coverage
+**/*.log
+**/*.tsbuildinfo

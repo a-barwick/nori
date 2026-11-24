@@ -1,0 +1,166 @@
+import Foundation
+
+public struct NoriFullSnapshot: Sendable, Hashable {
+    public var capabilities: Capabilities?
+    public var session: Session
+    public var workItems: [WorkItem]
+    public var interactions: [Interaction]
+    public var mcpServers: [MCPServer]
+    public var mcpTools: [String: [MCPServerTool]]
+    public var connections: [Connection]
+    public var libraryItems: [LibraryItem]
+    public var coreMemories: [MemoryFact]
+    public var memoryLogs: [MemoryLog]
+    public var workingMemory: WorkingMemory
+    public var automations: [Automation]
+    public var goals: [Goal]
+    public var permissions: [PermissionRule]
+    public var preferences: Preferences
+
+    public init(
+        capabilities: Capabilities? = nil,
+        session: Session = Session(),
+        workItems: [WorkItem] = [],
+        interactions: [Interaction] = [],
+        mcpServers: [MCPServer] = [],
+        mcpTools: [String: [MCPServerTool]] = [:],
+        connections: [Connection] = [],
+        libraryItems: [LibraryItem] = [],
+        coreMemories: [MemoryFact] = [],
+        memoryLogs: [MemoryLog] = [],
+        workingMemory: WorkingMemory = WorkingMemory(),
+        automations: [Automation] = [],
+        goals: [Goal] = [],
+        permissions: [PermissionRule] = [],
+        preferences: Preferences = Preferences()
+    ) {
+        self.capabilities = capabilities
+        self.session = session
+        self.workItems = workItems
+        self.interactions = interactions
+        self.mcpServers = mcpServers
+        self.mcpTools = mcpTools
+        self.connections = connections
+        self.libraryItems = libraryItems
+        self.coreMemories = coreMemories
+        self.memoryLogs = memoryLogs
+        self.workingMemory = workingMemory
+        self.automations = automations
+        self.goals = goals
+        self.permissions = permissions
+        self.preferences = preferences
+    }
+}
+
+public protocol NoriTransport: Sendable {
+    func ping() async -> HealthCheckResult
+    func fetchCapabilities() async throws -> Capabilities
+    func fetchSession(before cursor: String?) async throws -> Session
+    func fetchFullSnapshot() async throws -> NoriFullSnapshot
+
+    /// Resumable SSE event stream starting after `after` log position.
+    func eventStream(after position: Int) -> AsyncThrowingStream<NoriStreamEvent, Error>
+
+    // Conversation & Uploads
+    func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session
+    func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse
+    func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> Attachment
+
+    // Work & Interactions
+    func fetchWorkItems(bucket: WorkBucket?) async throws -> [WorkItem]
+    func fetchWorkDetail(taskID: String) async throws -> WorkDetail
+    func stopWork(taskID: String, requestID: String) async throws -> MutationReceipt<WorkItem>
+    func continueWork(taskID: String, budgetUSD: Double, requestID: String) async throws -> MutationReceipt<WorkItem>
+
+    func fetchInteractions() async throws -> [Interaction]
+    func respondToInteraction(
+        id: String,
+        expectedRevision: Int,
+        answer: InteractionAnswer,
+        requestID: String
+    ) async throws -> MutationReceipt<Interaction>
+
+    // Apps: MCP Servers & Connections
+    func fetchMCPServers() async throws -> [MCPServer]
+    func fetchMCPTools(serverID: String) async throws -> [MCPServerTool]
+    func createMCPServer(input: MCPServerInput, requestID: String) async throws -> MutationReceipt<MCPServer>
+    func performMCPAction(
+        serverID: String,
+        expectedRevision: Int,
+        action: String,
+        requestID: String
+    ) async throws -> MutationReceipt<MCPServer>
+    func setMCPToolExposure(
+        serverID: String,
+        expectedRevision: Int,
+        toolName: String,
+        exposure: MCPToolExposure,
+        requestID: String
+    ) async throws -> MutationReceipt<MCPServer>
+    func fetchConnections() async throws -> [Connection]
+    func performConnectionAction(
+        connectionID: String,
+        expectedRevision: Int,
+        action: String,
+        requestID: String
+    ) async throws -> MutationReceipt<Connection>
+
+    // Library & Search
+    func fetchLibrary() async throws -> [LibraryItem]
+    func fetchLibraryItem(id: String) async throws -> LibraryItem
+    func search(query: String) async throws -> SearchResponse
+    func reviseLibraryItem(
+        id: String,
+        expectedRevision: Int,
+        instruction: String,
+        requestID: String
+    ) async throws -> MutationReceipt<LibraryItem>
+
+    // Memory (3-layer)
+    func fetchCoreMemories() async throws -> [MemoryFact]
+    func fetchMemoryLogs() async throws -> [MemoryLog]
+    func fetchWorkingMemory() async throws -> WorkingMemory
+    func createMemory(
+        text: String,
+        section: String?,
+        about: String?,
+        pinned: Bool,
+        requestID: String
+    ) async throws -> MutationReceipt<MemoryFact>
+    func performMemoryAction(
+        id: String,
+        expectedRevision: Int,
+        action: String,
+        requestID: String
+    ) async throws -> MutationReceipt<MemoryFact>
+    func performMemoryLogEntryAction(
+        date: String,
+        entryID: String,
+        expectedRevision: Int,
+        action: String,
+        pinned: Bool,
+        requestID: String
+    ) async throws -> MutationReceipt<MemoryLog>
+    func performWorkingMemoryAction(
+        itemID: String,
+        expectedRevision: Int,
+        action: String,
+        requestID: String
+    ) async throws -> MutationReceipt<WorkingMemory>
+
+    // Automations, Goals, Permissions, Preferences
+    func fetchAutomations() async throws -> [Automation]
+    func performAutomationAction(
+        id: String,
+        expectedRevision: Int,
+        action: String,
+        requestID: String
+    ) async throws -> MutationReceipt<Automation>
+    func fetchGoals() async throws -> [Goal]
+    func fetchPermissions() async throws -> [PermissionRule]
+    func fetchPreferences() async throws -> Preferences
+    func savePreferences(
+        _ preferences: Preferences,
+        requestID: String
+    ) async throws -> MutationReceipt<Preferences>
+}

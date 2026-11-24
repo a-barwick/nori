@@ -1,0 +1,32 @@
+THE SUNKEN SPIRE — DM REFERENCE LEDGER (END OF SESSION 41)
+Campaign: 2-year homebrew D&D 5e (Port Veridian & The Drowned Reach)
+Players: Kyle (Paladin), Nadia (Wizard), Greg (Rogue), Becca (Cleric), Trevor (Ranger)
+
+=== KEY NPCS & CURRENT STANDING (AS OF SESSION 41) ===
+1. Archivist Vael (Tiefling, blind lorekeeper of the Brass Athenaeum)
+   - Current status: Believed to be a helpful scholarly ally translating the Second Seal tablets.
+2. Captain Orin Kell (Human, captain of salvager brig 'Saltwraith')
+   - Current status: Grudging ally; owes the party 450 gp from the Barnacle Shoal salvage split.
+3. Magistrate Seraphina Thorne (Half-Elf, Harbor Council)
+   - Current status: Suspicious; blocking salvage permits near the Sunken Spire perimeter.
+4. Brother Caelum (Human, Lantern Order cleric in the Undercroft)
+   - Current status: Trusted healer and safehouse contact.
+5. Vexira "Vex" Quill (Goblin artificer, Quay 9 workshop)
+   - Current status: Chaotic neutral vendor selling unstable alchemical depth-charges.
+6. Lord Cassian Mire (Missing noble patron)
+   - Current status: Disappeared 3 months ago; his signet ring unlocked the 3rd Seal.
+7. Kestrel (Kenku courier for the Glass Guild)
+   - Current status: Paid informant who trades dockside rumors for silver.
+8. The Coral Regent (Aboleth lieutenant beneath the Spire)
+   - Current status: Primary submerged antagonist; telepathic whispers reaching harbor divers.
+
+=== FACTIONS ===
+- The Lantern Order (wardens of the drowned tombs — friendly)
+- The Tidebound Syndicate (smugglers hunting drowned-king relics — hostile)
+- The Harbor Council (corrupt Port Veridian bureaucrats — wary)
+- The Glass Guild (mercantile couriers and information brokers — neutral)
+
+=== PARTY LOOT LEDGER (END OF SESSION 41) ===
+- Coin purse: 1,840 gp
+- Notable magic items: Ring of Water Breathing, Lantern of Revealing, broken haft of the Trident of Ebb (needs reforging)
+- Unresolved hooks: Who tipped off the Tidebound divers at the Third Seal?

@@ -1,0 +1,44 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Elena Rostova//Irina Care Calendar 2027//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:Irina Rostova - Jan 2027 Care Schedule
+X-WR-TIMEZONE:America/Chicago
+BEGIN:VEVENT
+UID:irina-20270113-geriatrics@rostova.local
+DTSTAMP:20270104T160000Z
+DTSTART;TZID=America/Chicago:20270113T110000
+DTEND;TZID=America/Chicago:20270113T120000
+SUMMARY:Irina - Dr. Bernard Shaw (Northwestern Geriatrics)
+LOCATION:Galter Pavilion, 675 N. St. Clair St., Suite 18-200, Chicago, IL
+DESCRIPTION:Quarterly geriatric checkup. Bring updated medication list (Eliquis 5mg BID, lisinopril 10mg daily, Vitamin D3 1000 IU) and home blood pressure log. Oksana helps Irina dress before 10:15 AM.
+END:VEVENT
+BEGIN:VEVENT
+UID:irina-20270120-labcorp@rostova.local
+DTSTAMP:20270104T160000Z
+DTSTART;TZID=America/Chicago:20270120T104500
+DTEND;TZID=America/Chicago:20270120T111500
+SUMMARY:Irina - Routine Blood Draw (CMP & Renal Panel)
+LOCATION:LabCorp Lakeview, 3000 N. Halsted St., Suite 205, Chicago, IL
+DESCRIPTION:Ordered by Dr. Bernard Shaw for lisinopril & Eliquis monitoring. Drink plenty of water beforehand.
+END:VEVENT
+BEGIN:VEVENT
+UID:irina-20270122-audiology@rostova.local
+DTSTAMP:20270104T160000Z
+DTSTART;TZID=America/Chicago:20270122T083000
+DTEND;TZID=America/Chicago:20270122T091500
+SUMMARY:Irina - Hearing Aid Cleaning & Check (Lakefront Audiology)
+LOCATION:2835 N. Sheffield Ave., Suite 302, Chicago, IL
+DESCRIPTION:Clinic auto-booked 8:30 AM slot. Needs rescheduling if too early for Mother!
+END:VEVENT
+BEGIN:VEVENT
+UID:irina-20270126-pt@rostova.local
+DTSTAMP:20270104T160000Z
+DTSTART;TZID=America/Chicago:20270126T133000
+DTEND;TZID=America/Chicago:20270126T143000
+SUMMARY:Irina - Balance & Gait Physical Therapy
+LOCATION:Shirley Ryan AbilityLab - Lakeview Outpatient, 3232 N. Halsted St., Chicago, IL
+DESCRIPTION:Wear low-heel walking shoes with rubber soles. Bring walking cane.
+END:VEVENT
+END:VCALENDAR

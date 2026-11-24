@@ -1,0 +1,10 @@
+{
+  "type": "card",
+  "schema_version": 1,
+  "kind": "calendar_event",
+  "resource": {
+    "kind": "calendar_event",
+    "id": "x"
+  },
+  "fallback": "f"
+}

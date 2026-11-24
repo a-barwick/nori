@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task lifecycle · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="task-data.js" defer></script>
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Task lifecycle</h1>
+<p class="lede">A task keeps one ID for its whole life, from dispatch until it finishes, fails or is stopped.</p>
+<div class="card">
+    <div role="img" aria-label="Task state machine">
+<div class="states"><span class="state run">Running</span><span class="state-arrow">⇄<small>question or approval · answer or decision</small></span><span class="state waitst">Waiting</span></div>
+<div class="states"><span class="state run">Running</span><span class="state-arrow">→<small>checks pass</small></span><span class="state term">Completed</span></div>
+<div class="states"><span class="state run">Running</span><span class="state-arrow">→<small>error or budget limit</small></span><span class="state term">Failed</span></div>
+<div class="states"><span class="state">Running or waiting</span><span class="state-arrow">→<small>Stop</small></span><span class="state term">Cancelled</span></div>
+</div>
+    <p class="note" style="margin:12px 0 0;font-weight:600">While a task is waiting</p><ul class="pts note"><li>It has exactly one open question or typed interaction (such as an approval card) with a stable ID and revision.</li><li>It doesn't expire on its own, and it survives reloads, pauses, restarts and worker deploys.</li><li>A steer arriving while an approval is pending supersedes the old approval so stale decisions are rejected.</li></ul><p class="note" style="margin:8px 0 0;font-weight:600">When a task ends</p><ul class="pts note"><li>Finished tasks stay closed, so follow-up work—including continuing a task that reached its budget—starts a new linked task.</li><li>Stop is shown as <b>requested, stopping, then confirmed</b>.</li></ul>
+    </div>
+<section><h2>Moving between states</h2>
+<div class="card"><table>
+<tr><th>What happens</th><th>Change</th></tr>
+<tr data-flow="move-ask"><td>The task asks a question or requests approval</td><td>Running → waiting</td></tr>
+<tr data-flow="move-budget"><td>The task reaches its spending budget</td><td>Running → failed (expected incomplete), with no extra model call</td></tr>
+<tr data-flow="move-done"><td>The task finishes</td><td>Running → completed</td></tr>
+<tr data-flow="move-failed"><td>The task can't continue</td><td>Running → failed</td></tr>
+<tr data-flow="move-stopped"><td>A Stop takes effect</td><td>Running or waiting → cancelled</td></tr>
+</table>
+<p class="note">In Postgres, a waiting task still has status <code>running</code>; its open question or interaction is what puts it in the waiting bucket.</p></div></section>
+<section><h2>Commands</h2>
+<div class="card"><table>
+          <tr><th>Kind</th><th>What it does</th></tr>
+          <tr data-flow="start"><td><code>start</code></td><td>Creates the task with its stable ID.</td></tr>
+          <tr data-flow="steer"><td><code>steer</code></td><td>Adds new instructions, increments the revision, supersedes pending approvals and stops running subtasks.</td></tr>
+          <tr data-flow="answer"><td><code>answer</code></td><td>Resolves the open question or interaction in <code>question_id</code>.</td></tr>
+          <tr data-flow="stop"><td><code>stop</code></td><td>Cancels this task and its subtasks.</td></tr>
+          <tr><td><code>subtask_result</code></td><td>The runtime delivers finished subtasks to their parent as the result of its work request.</td></tr>
+        </table>
+<p class="note">Only steer and stop are corrections. Answers and approval responses resume work without rewriting its instructions. Continuing a budget-stopped task creates a new task via Work's <code>continue</code> action.</p></div></section>
+<section><h2>Steering keeps what still applies</h2>
+<div class="card"><table class="tall">
+          <tr><th>Sequence</th><th>Means</th></tr>
+          <tr><td>Q2 metrics → “no, Q3” → “include EMEA”</td><td>Q3 metrics, including EMEA.</td></tr>
+          <tr><td>One-page brief → include risks → plain language</td><td>All three constraints.</td></tr>
+          <tr><td>Under one page → “length doesn't matter”</td><td>Drop length limit, keep the rest.</td></tr>
+        </table></div></section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/task/runner.go</code> · <code>core/internal/state/run.go</code> · <code>core/internal/state/commands.go</code> · <code>core/internal/state/subtasks.go</code> · <code>core/internal/task/history.go</code> · <code>core/internal/api/work.go</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>docs/site/task-data.js</code> · <code>core/internal/conversation/commands.go</code></p></details>
+</body>
+</html>

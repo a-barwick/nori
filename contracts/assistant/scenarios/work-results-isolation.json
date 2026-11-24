@@ -1,0 +1,130 @@
+{
+  "name": "Work and results listing and cross-owner isolation",
+  "obligation": "A38: work list, bucket filtering, task details, and saved results never cross ownership; unknown or foreign task and result IDs return 404",
+  "requires": [
+    "work"
+  ],
+  "users": {
+    "a": "44444444-4444-4444-8444-444444444444",
+    "b": "55555555-5555-4555-8555-555555555555"
+  },
+  "steps": [
+    {
+      "name": "a-list-work",
+      "user": "a",
+      "method": "GET",
+      "path": "/v1/work",
+      "expect": {
+        "status": [
+          200
+        ],
+        "schema": "common.schema.json#/$defs/ListResponse",
+        "items_schema": "execution.schema.json#/$defs/WorkItem"
+      }
+    },
+    {
+      "name": "a-list-work-active",
+      "user": "a",
+      "method": "GET",
+      "path": "/v1/work?bucket=active",
+      "expect": {
+        "status": [
+          200
+        ],
+        "schema": "common.schema.json#/$defs/ListResponse",
+        "items_schema": "execution.schema.json#/$defs/WorkItem"
+      }
+    },
+    {
+      "name": "b-list-work",
+      "user": "b",
+      "method": "GET",
+      "path": "/v1/work",
+      "expect": {
+        "status": [
+          200
+        ],
+        "schema": "common.schema.json#/$defs/ListResponse",
+        "items_schema": "execution.schema.json#/$defs/WorkItem"
+      }
+    },
+    {
+      "name": "b-read-foreign-work",
+      "user": "b",
+      "method": "GET",
+      "path": "/v1/work/${uuid:task}",
+      "expect": {
+        "status": [
+          404
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "not_found",
+          "/accepted": false
+        }
+      }
+    },
+    {
+      "name": "b-read-foreign-work-operations",
+      "user": "b",
+      "method": "GET",
+      "path": "/v1/work/${uuid:task}/operations",
+      "expect": {
+        "status": [
+          404
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "not_found",
+          "/accepted": false
+        }
+      }
+    },
+    {
+      "name": "b-stop-foreign-work",
+      "user": "b",
+      "method": "POST",
+      "path": "/v1/work/${uuid:task}/actions",
+      "body_schema": "common.schema.json#/$defs/ActionRequest",
+      "body": {
+        "request_id": "${uuid:bstop}",
+        "expected_revision": 1,
+        "value": {
+          "action": "stop"
+        }
+      },
+      "expect": {
+        "status": [
+          404
+        ],
+        "schema": "common.schema.json#/$defs/APIError",
+        "match": {
+          "/code": "not_found",
+          "/accepted": false
+        }
+      }
+    },
+    {
+      "name": "b-read-foreign-result",
+      "user": "b",
+      "method": "GET",
+      "path": "/v1/results/${uuid:result}",
+      "expect": {
+        "status": [
+          404
+        ]
+      }
+    },
+    {
+      "name": "b-read-foreign-result-file",
+      "user": "b",
+      "method": "GET",
+      "path": "/v1/results/${uuid:result}/file",
+      "expect": {
+        "status": [
+          404
+        ]
+      }
+    }
+  ]
+}

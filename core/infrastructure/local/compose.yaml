@@ -1,0 +1,20 @@
+name: nori-local
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: nori
+      POSTGRES_DB: nori
+      # Loopback-only development instance; no production credentials.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nori -d nori"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+volumes:
+  postgres:

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test workbench · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Test workbench</h1>
+<p class="lede">A slim Next.js UI for locally exercising Nori's persistent thread, background tasks, approval cards, MCP servers, automations and saved library.</p>
+<div class="card">
+<img class="shot" src="img/web-desktop.png" width="1440" height="900" alt="The test workbench at desktop width showing the Nori header, persistent conversation thread, composer, and the Activity side panel with a task waiting for input.">
+<p class="note">Production users reach Nori embedded inside <a href="clients.html">host app</a>; this workbench exercises the same Go service locally during development.</p>
+</div>
+<p>Shared contracts and the host app integration are on <a href="clients.html">The host app and clients</a> and <a href="api.html">Service API</a>.</p>
+<div class="grid2"><a class="card tight go" href="theme.html"><b>Theme</b><span>Colors, type, tokens and the mark.</span></a><a class="card tight go" href="frontend.html"><b>Workbench architecture</b><span>Components, requests, live updates and telemetry.</span></a></div>
+<section><h2>The screens</h2>
+<div class="card"><table class="tall"><tr><th>Part</th><th>What it shows</th><th>Component</th></tr>
+<tr><td>Header &amp; shell</td><td>Nori's mark and status, navigation across Chat, Work, Library, Routines, Goals, Apps/MCP and Settings, debug toggle and Activity drawer.</td><td><code>AppShell</code></td></tr>
+<tr><td>Thread</td><td>Saved messages, documents, time separators, older-message loading and one status line.</td><td><code>Thread</code></td></tr>
+<tr><td>Composer</td><td>A text box, Attach for up to 10 files, Send and a new-message count.</td><td><code>RuntimeComposer</code></td></tr>
+<tr><td>Activity panel</td><td>Live task status, steers, durable questions, typed approval cards and Stop controls. <code>⌘.</code> or <code>Ctrl+.</code> toggles it.</td><td><code>TaskPanel</code>, <code>InteractionCard</code></td></tr>
+<tr><td>Reading view</td><td>Full-screen view of a saved reply or result, with Download as Markdown and Back to chat.</td><td><code>DocumentViewer</code></td></tr>
+</table></div>
+<div class="shots">
+<img class="shot" src="img/web-phone.png" width="780" height="1688" alt="The conversation at narrow width.">
+<img class="shot" src="img/web-phone-activity.png" width="780" height="1688" alt="The Activity side panel at narrow width.">
+</div>
+</section>
+<section><h2>Status and task labels</h2>
+<div class="card"><table class="tall"><tr><th>Header status</th><th>When</th></tr>
+<tr><td>Connecting…</td><td>The first session request is loading.</td></tr>
+<tr><td>Disconnected</td><td>A request failed or there is no session. Send stays disabled until a first session loads.</td></tr>
+<tr><td>Waiting for you</td><td>A task has an open question or pending approval interaction.</td></tr>
+<tr><td>Working…</td><td>A message, turn, task or command is in progress.</td></tr>
+<tr><td>Ready when you are</td><td>Nothing is in progress.</td></tr>
+</table></div>
+<div class="card"><table class="tall"><tr><th>Task label</th><th>Task state</th><th>Controls</th></tr>
+<tr><td>Working on your task</td><td>Running</td><td>Stop task, Send task update</td></tr>
+<tr><td>Waiting for your answer</td><td>Running with an input question</td><td>Answer question, Stop task, Send task update</td></tr>
+<tr><td>Waiting for your approval</td><td>Running with a typed approval interaction</td><td>Approve (with digest), Decline, Stop task, Send task update</td></tr>
+<tr><td>Asking for separate work</td><td>Running with a work request</td><td>Answer question, Stop task, Send task update</td></tr>
+<tr><td>Answer accepted, Decision saved, Waiting for its subtasks</td><td>Running, and the interaction is resolved</td><td>Stop task, Send task update</td></tr>
+<tr><td>Stopping…</td><td>Running, and Stop was requested</td><td>None until the agent service confirms</td></tr>
+<tr><td>Completed, Failed, Stopped</td><td>Finished (a budget-stopped task offers Continue in Work to start a new linked task)</td><td>Continue (when budget-stopped)</td></tr>
+</table></div>
+<p>The thread status line also indicates when task execution is paused. Sending a steer while an approval is pending supersedes that approval card. See <a href="permissions.html">Permissions and approvals</a>.</p>
+</section>
+<section><h2>Bubbles and documents</h2>
+<p>The client picks the layout from each saved reply's text part. User messages are always bubbles.</p>
+<div class="card"><div class="flow">
+<div class="node"><b>Saved reply</b><small>The service can set a page or bubble layout on the part.</small></div>
+<div class="arrow">↓</div>
+<div class="node decide">Does it have structure?</div>
+<div class="branch">
+<div class="node"><b>No: bubble</b><small>Short text beside the mark.</small></div>
+<div class="node"><b>Yes: bubble and document</b><small>The opening becomes the bubble, and the rest a document.</small></div>
+</div>
+</div></div>
+<ul class="pts">
+<li>A reply counts as structured if it has a heading, a table, a nested list or a source list. A list of more than 5 items, a code block of more than 3 lines, or more than 150 words also count.</li>
+<li>A document taller than 70% of the window folds behind Keep reading, unless it arrived in the last 15 seconds.</li>
+<li>Messages from one sender within 3 minutes share a group, with pinched bubble corners where they touch. A gap of more than 15 minutes adds a time separator.</li>
+</ul>
+</section>
+<details class="more"><summary>Layout by width</summary>
+<table class="tall"><tr><th>Width</th><th>Layout</th></tr>
+<tr><td>1280 px and up</td><td>The Activity panel docks beside the thread at 360 px.</td></tr>
+<tr><td>Below 1280 px</td><td>The Activity panel opens as a sheet from the right, over a scrim.</td></tr>
+<tr><td>900 px and below</td><td>The lavender margin shrinks from 28 px to 16 px.</td></tr>
+<tr><td>600 px and below</td><td>The window fills the screen and the Activity button shows only its icon.</td></tr>
+</table>
+</details>
+<details class="sources"><summary>Sources</summary><p><code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/components/runtime/TaskPanel.tsx</code> · <code>web/src/components/assistant/AppShell.tsx</code> · <code>web/src/components/assistant/InteractionCard.tsx</code> · <code>web/src/lib/hybrid.ts</code> · <code>web/src/lib/units.ts</code></p></details>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open questions · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Open questions</h1>
+<p class="lede">Operational and tuning questions to revisit with real the host app traffic. Settled questions move to <a href="decisions.html">Decisions</a>.</p>
+<section><h2>Tasks and permissions</h2>
+<div class="card"><table class="tall">
+<tr><th>Question</th><th>What to check</th></tr>
+<tr><td>How should Nori detect a stalled task?</td><td>Choose when to surface a stall while giving tasks time to wait for approval or a slow MCP tool.</td></tr>
+<tr><td>How often does a finished answer overstate what the task found?</td><td>Compare finished answers with cited operation evidence. See <a href="completion.html">Finishing a task</a>.</td></tr>
+<tr><td>Do the default $1 budget and activity timeouts fit longer enterprise workflows?</td><td>Review spending, continuation frequency and retry behavior. See <a href="budgets.html">Budgets and controls</a> and <a href="inner-loop.html">Inner loop</a>.</td></tr>
+<tr><td>Should unattended automation writes default to <code>confirm_writes</code> or <code>require_rule</code> per tenant?</td><td>Measure how often scheduled runs block waiting for approval vs. standing allow rules. See <a href="permissions.html">Permissions and approvals</a>.</td></tr>
+</table></div>
+</section>
+<section><h2>Conversation and memory</h2>
+<div class="card"><table class="tall">
+<tr><th>Question</th><th>What to check</th></tr>
+<tr><td>How should Jev's question wording evolve—or should <code>NORI_JEV_ENABLED=false</code> become the default?</td><td>Compare <a href="classification.html">saved intent hints</a> and latency against outer-model accuracy without Jev.</td></tr>
+<tr><td>How much history should each loop receive?</td><td>Measure omitted context and model cost before changing the limits in <a href="memory.html">Memory and context</a> and <a href="transcript.html">Task transcript</a>.</td></tr>
+</table></div>
+</section>
+<section><h2>The host app rollout and operations</h2>
+<div class="card"><table class="tall">
+<tr><th>Question</th><th>What to check</th></tr>
+<tr><td>How should the host app route external notifications for automation inbox items?</td><td>Decide whether the host app polls <code>/v1/inbox</code> or subscribes to SSE/host hooks for enterprise alerts.</td></tr>
+<tr><td>What Postgres connection pooling and worker scaling thresholds fit production load?</td><td>Measure wake latency, Postgres <code>SERIALIZABLE</code> retry rates on <code>event_head</code> and worker pool utilization under multi-user traffic.</td></tr>
+</table></div>
+</section>
+</body>
+</html>

@@ -1,0 +1,751 @@
+{
+  "persona": "05-hannah-okafor",
+  "sim_start_date": "2027-01-04",
+  "end_of_month_audit": {
+    "expected_core_concepts": [
+      "UCL Computational Biology PhD candidate writing Chapter 4 on protein-folding allosteric benchmarks under Dr. Alistair Vance",
+      "Pinned Dr. Alistair Vance formatting rules (Oxford comma, British English except IUPAC, SI units/Angstroms, no stacked bar charts, lastnameYYYYword BibTeX citekeys) and Chapter 4 deadline 29 January 2027 17:00 GMT",
+      "Collaborates with postdoc Dr. Priya Nair on Nature Methods revision NMET-2026-08419R1 and cryo-EM map EMD-39104",
+      "Signed new flat on Church Street, Stoke Newington (N16) with flatmate Tessa Morales (landlord Margaret Okonkwo, £1,080 pcm, move-in 30 Jan 2027) after Zoe Pritchard moved to Edinburgh",
+      "Sourdough starter Bready Mercury settled permanently at 76% hydration after an 80% bake flopped",
+      "Lake District weekend with Samir Patel at Glenridding YHA pivoted from Striding Edge to Birkhouse Moor due to 55 mph gusts"
+    ],
+    "forbidden_core_substrings": [
+      "Clapham",
+      "Derek Halloway",
+      "Abbeville"
+    ],
+    "expected_daily_log_topics": [
+      "PDB:7K4N",
+      "SLURM_JOB_99412",
+      "run_id_4821",
+      "run_id_5003",
+      "okafor2027folding",
+      "NMET-2026-08419R1",
+      "Bready Mercury",
+      "Birkhouse Moor",
+      "Church Street"
+    ],
+    "rubric": "Core Memory must remain within the 24 KiB budget (INV-MEM-03) with Dr. Alistair Vance's pinned thesis formatting rules and deadlines preserved intact, zero trace of the explicitly forgotten Clapham flat / Abbeville Road / Derek Halloway, up-to-date superseding facts (Stoke Newington N16 flat with Tessa, 76% sourdough hydration, Birkhouse Moor hike, PDB:7K4N fixed RMSE 0.369A in run_id_5003), and full FTS discoverability across Daily Logs for early exact technical identifiers (PDB:7K4N, SLURM_JOB_99412, run_id_4821, AF3-v2.1-seed77, okafor2027folding)."
+  },
+  "events": [
+    {
+      "id": "e01_d01_intro_and_notes_upload",
+      "day": 1,
+      "local_time": "09:15",
+      "kind": "chat",
+      "text": "Morning Nori! Right, fresh start for January and I am already slightly terrified. I'm Hannah, 3rd-year Computational Biology PhD at UCL working on Chapter 4 of my thesis (zero-shot allosteric conformation benchmarks in diffusion-based protein folding) under Dr. Alistair Vance. I've attached my working Chapter 4 notes. Also juggling a Nature Methods revision (NMET-2026-08419R1, due 27 Jan) with our postdoc Priya Nair, my current Hackney flatmate Zoe Pritchard is moving to Edinburgh on 31 Jan so I have to find a new London flat within a fortnight, and I'm nursing my sourdough starter 'Bready Mercury' at 74% hydration in a freezing kitchen. Have a quick skim of my notes and confirm you've got the key deadlines straight?",
+      "attachments": ["assets/chapter4_notes.md"],
+      "wait_for_reply": true,
+      "tags": ["onboarding", "upload", "phd"]
+    },
+    {
+      "id": "e02_d01_create_vance_rules",
+      "day": 1,
+      "local_time": "09:40",
+      "kind": "memory_ui",
+      "action": "create_core",
+      "params": {
+        "text": "PINNED THESIS RULES (Dr. Alistair Vance, UCL): Chapter 4 full draft hard deadline is Friday 29 January 2027 at 17:00 GMT. Non-negotiable formatting: (1) Oxford comma mandatory everywhere; (2) British English spelling throughout (optimisation, modelling, behaviour) except IUPAC chemical nomenclature (sulfur, aluminum); (3) strict SI units with Angstroms clearly marked (A or Å); (4) NEVER use stacked bar charts in main or supplementary figures (use raincloud or paired dot-whisker plots with 10,000-replicate 95% bootstrap CIs); (5) BibTeX citekeys must follow lowercase lastnameYYYYword format (e.g., okafor2027folding).",
+        "pinned": true
+      },
+      "tags": ["memory_ui", "pin-protection"]
+    },
+    {
+      "id": "e02b_d01_pin_vance_rules",
+      "day": 1,
+      "local_time": "09:41",
+      "kind": "memory_ui",
+      "action": "pin_matching",
+      "params": {
+        "query": "PINNED THESIS RULES"
+      },
+      "tags": ["memory_ui", "pin-protection"]
+    },
+    {
+      "id": "e03_d01_create_nmet_deadline",
+      "day": 1,
+      "local_time": "09:42",
+      "kind": "memory_ui",
+      "action": "create_core",
+      "params": {
+        "text": "PINNED PUBLICATION DEADLINE: Nature Methods revision NMET-2026-08419R1 with postdoc Dr. Priya Nair closes Wednesday 27 January 2027. Must include Boltz-1 baseline, masked-MSA ESM3 control, and validation against Priya's 2.8 A cryo-EM map EMD-39104.",
+        "pinned": true
+      },
+      "tags": ["memory_ui", "pin-protection"]
+    },
+    {
+      "id": "e03b_d01_pin_nmet_deadline",
+      "day": 1,
+      "local_time": "09:43",
+      "kind": "memory_ui",
+      "action": "pin_matching",
+      "params": {
+        "query": "PINNED PUBLICATION DEADLINE"
+      },
+      "tags": ["memory_ui", "pin-protection"]
+    },
+    {
+      "id": "e04_d01_create_chapter4_goal",
+      "day": 1,
+      "local_time": "10:05",
+      "kind": "goal_ui",
+      "action": "create",
+      "params": {
+        "title": "Submit Chapter 4 full draft to Dr. Alistair Vance",
+        "target_date": "2027-01-29",
+        "notes": "Complete allosteric benchmark tables (PDB:7K4N, PDB:8Q2M, PDB:6VXX), pass every Vance formatting rule, and deliver by 17:00 GMT."
+      },
+      "tags": ["goal_ui"]
+    },
+    {
+      "id": "e05_d02_hpc_dump_and_csv",
+      "day": 2,
+      "local_time": "11:20",
+      "kind": "chat",
+      "text": "Bloody hell, UCL Myriad nearly gave me a heart attack overnight. My big AlphaFold3 ablation on PDB:7K4N (AF3-v2.1-seed77, SLURM_JOB_99412 on node myriad-a100-14) OOM-killed at epoch 14 after 38 hours because 128G RAM wasn't enough! I bumped it to --mem=192G and batch_size=4 and resumed as SLURM_JOB_99804 — that's run_id_4821, and the numbers came back brilliant: RMSE=0.412A, TM-score 0.934, pocket lDDT 89.1. Attached the full benchmark_runs.csv ledger so we don't lose a single run_id or SLURM job ID. Everything for my preprint cites as okafor2027folding. Can you log the key PDB:7K4N telemetry and check if any rows in the CSV look weird?",
+      "attachments": ["assets/benchmark_runs.csv"],
+      "wait_for_reply": true,
+      "tags": ["fts-seed", "upload", "hpc"]
+    },
+    {
+      "id": "e06_d03_dense_ledger_1",
+      "day": 3,
+      "local_time": "13:10",
+      "kind": "memory_ui",
+      "action": "create_core",
+      "params": {
+        "text": "BENCHMARK LEDGER #1 — HPC & Diffusion Hyperparameters (UCL Myriad/Kathleen): Allocation ucl_bio_vance_2027 (4,200 A100-hours). Module af3/2.1-cuda12.4 on A100-80GB SXM4. Multi-chain cryptic pocket folding on PDB:7K4N requires recycles=12, diffusion_samples=25, template_cutoff=2021-09-30, crop_size=768, pairformer_blocks=48, --gres=gpu:a100:1, --mem=192G, --cpus-per-task=12, batch_size=4 to avoid the SLURM_JOB_99412 OOM crash seen on myriad-a100-14 at 128G RSS. Primary run_id_4821 (AF3-v2.1-seed77, SLURM_JOB_99804) walltime 36.5h, RMSE=0.412A, TM=0.934, pocket lDDT=89.1, clashscore=2.4, MolProbity=1.31. Replicate run_id_4834 (seed 103, SLURM_JOB_99861) walltime 35.9h, RMSE=0.427A, TM=0.929, pocket lDDT=88.6. Trimer control PDB:6VXX run_id_4790 (AF3-v2.1-seed11, SLURM_JOB_98810) walltime 14.2h, RMSE=0.512A, TM=0.918, pocket lDDT=86.4; Boltz-1 comparator run_id_4798 (Boltz1-v0.4-seed11, SLURM_JOB_98845) RMSE=0.604A, TM=0.896, loop shift residues 614-630. Checkpoint cadence every 2 epochs to /scratch/scratch/ucbthok/af3_ckpts with zstd compression level 3; random seeds logged in manifest_v4.yaml for okafor2027folding reproducibility."
+      },
+      "tags": ["memory_ui", "core-pressure"]
+    },
+    {
+      "id": "e07_d03_check_emails_and_cal",
+      "day": 3,
+      "local_time": "16:30",
+      "kind": "chat",
+      "text": "Before I head home to feed Bready Mercury, could you check my emails from Alistair Vance and Priya Nair plus my calendar for tomorrow's lab meeting? Just give me the TL;DR of what I need to bring to Darwin Building B15.",
+      "wait_for_reply": true,
+      "tags": ["mcp-read"]
+    },
+    {
+      "id": "e08_d04_clapham_flat_dump_and_sourdough",
+      "day": 4,
+      "local_time": "19:45",
+      "kind": "chat",
+      "text": "Knackered after trekking all the way south of the river! Just viewed a flat on Abbeville Road near Clapham Common (SW4). Landlord is Derek Halloway. Rent is £1,250 pcm plus bills, deposit £1,440, 38-minute Northern line commute up to Euston. There was a tiny patch of damp near the bay window and the kitchen is a bit cramped, though the garden access is decent. On a totally different note, Bready Mercury at 74% hydration took a ridiculous 8.5 hours of bulk fermentation because our Hackney Mare Street flat is 16C — reckon I should put the dough in the oven with just the light on next bake?",
+      "wait_for_reply": true,
+      "tags": ["clapham-seed", "sourdough", "flat-hunt"]
+    },
+    {
+      "id": "e09_d05_dense_ledger_2",
+      "day": 5,
+      "local_time": "14:20",
+      "kind": "memory_ui",
+      "action": "create_core",
+      "params": {
+        "text": "BENCHMARK LEDGER #2 — PDB:8Q2M Heterodimer & Cryo-EM Validation (EMD-39104): Priya Nair's 2.8 A cryo-EM map EMD-39104 (deposited under NMET-2026-08419R1) provides ground-truth backbone and side-chain density for the heterodimeric chaperone interface PDB:8Q2M. Run run_id_4805 (AF3-v2.1-seed42, SLURM_JOB_99012, myriad-a100-09, 22.8h) yielded RMSE=0.449A, TM=0.927, pocket lDDT=88.2, map-to-model CC_mask=0.842, CC_box=0.791, EMRinger=3.64. Boltz-1 comparator run_id_4812 (Boltz1-v0.4-seed19, SLURM_JOB_99104, 19.4h) yielded RMSE=0.573A, TM=0.902, pocket lDDT=83.5, with Chain B C-terminal helix displaced by 1.4A and CC_mask dropping to 0.768. Post-relaxation run_id_4933 (AF3-v2.1-amber-ff19SB, SLURM_JOB_100511, kathleen-a100-01, 26.7h) improved steric clash score from 4.8 down to 1.2 and RMSE to 0.431A (TM=0.932, pocket lDDT=89.4). Torsion-angle distributions (Ramachandran favoured 98.4%, outliers 0.08%, rotamer outliers 0.4%) verified via Phenix 1.21.2. All figures must use paired dot-whisker plots with 10,000 bootstrap resamples."
+      },
+      "tags": ["memory_ui", "core-pressure"]
+    },
+    {
+      "id": "e10_d06_clapham_followup_and_lake_district",
+      "day": 6,
+      "local_time": "11:30",
+      "kind": "chat",
+      "text": "Quick Saturday update: Derek Halloway texted asking if I can wire a £1,440 holding deposit for the Clapham Abbeville Road flat by Tuesday — feels a bit pushy so I asked to see the tenancy agreement first. Meanwhile, my uni mate Samir Patel and I locked in our Lake District weekend for 23-24 January! Staying at Glenridding YHA, taking the 07:30 train from Euston to Penrith on Saturday morning, and planning to hike Helvellyn via Striding Edge on Sunday if the ridge isn't iced over. Note down I need to check my microspikes and waterproof gaiters before then.",
+      "wait_for_reply": true,
+      "tags": ["clapham-seed", "lake-district"]
+    },
+    {
+      "id": "e11_d07_settle_week1",
+      "day": 7,
+      "local_time": "22:00",
+      "kind": "settle",
+      "snapshot_label": "week1_end_autodream",
+      "assert_invariants": [
+        "INV-MEM-01",
+        "INV-MEM-02",
+        "INV-MEM-03",
+        "INV-MEM-04",
+        "INV-MEM-06",
+        "INV-MEM-07",
+        "INV-MEM-08"
+      ],
+      "tags": ["settle", "week1"]
+    },
+    {
+      "id": "e12_d08_boltz_esm3_dump_and_probe1",
+      "day": 8,
+      "local_time": "10:15",
+      "kind": "chat",
+      "text": "Right, Reviewer 2's comparative runs for PDB:7K4N just finished! Boltz-1 run_id_4895 (Boltz1-v0.4-seed19, SLURM_JOB_100248) came in at RMSE=0.588A, TM-score 0.891, pocket lDDT 81.7 — it noticeably under-predicts allosteric lid opening. Masked-MSA ESM3 run_id_4910 (ESM3-1.4B-seed42, SLURM_JOB_100340) came in at RMSE=0.731A, TM-score 0.847, pocket lDDT 74.2. Before I paste this draft sentence into Chapter 4, can you audit it against Alistair Vance's formatting rules and tell me everything he'd red-pen? Draft: 'In Figure 4.2 we show a stacked bar chart of model behavior, optimization and modeling accuracy on PDB:7K4N (okafor_2027_folding), achieving an error of 0.412 with sulphur ligand interactions.'",
+      "wait_for_reply": true,
+      "tags": ["probe", "pin-protection"],
+      "probe": {
+        "id": "hannah_p01_pinned_rules_check",
+        "category": "pinned_core_memory_application",
+        "rubric": "Must catch at least 5 of Dr. Alistair Vance's pinned rules violated in the draft sentence: (1) stacked bar charts are strictly forbidden (use raincloud or dot-whisker plot), (2) American spellings ('behavior', 'optimization', 'modeling') must be British English ('behaviour', 'optimisation', 'modelling'), (3) missing Oxford comma before 'and', (4) BibTeX citekey 'okafor_2027_folding' violates lowercase lastnameYYYYword format (should be 'okafor2027folding'), (5) bare number '0.412' is missing units (Å / A), and ideally notes (6) 'sulphur' should be IUPAC 'sulfur'."
+      }
+    },
+    {
+      "id": "e13_d08_dense_ledger_3",
+      "day": 8,
+      "local_time": "15:00",
+      "kind": "memory_ui",
+      "action": "create_core",
+      "params": {
+        "text": "BENCHMARK LEDGER #3 — Comparative Baselines & Reviewer 2 Statistical Power (NMET-2026-08419R1): On PDB:7K4N allosteric pocket opening, run_id_4895 (Boltz1-v0.4-seed19, SLURM_JOB_100248, myriad-a100-08, 27.3h) achieved RMSE=0.588A, TM=0.891, pocket lDDT=81.7; seed-matched control run_id_4960 (Boltz1-v0.4-seed77, SLURM_JOB_100688, 28.1h) achieved RMSE=0.579A, TM=0.895, pocket lDDT=82.3. Single-sequence masked-MSA control run_id_4910 (ESM3-1.4B-seed42, SLURM_JOB_100340, myriad-a100-06, 10.2h) achieved RMSE=0.731A, TM=0.847, pocket lDDT=74.2; PDB:8Q2M ESM3 control run_id_4877 (SLURM_JOB_100112) RMSE=0.684A, TM=0.861; PDB:6VXX ESM3 control run_id_4902 (SLURM_JOB_100295) RMSE=0.702A, TM=0.854. Paired Wilcoxon signed-rank test across 42 pocket residues (AF3 vs Boltz-1): p = 1.8e-5, Cohen's d = 0.91, 95% bootstrap CI [0.14A, 0.21A] over 10,000 replicates. Power analysis (alpha=0.01, power=0.95) confirms N=18 independent seeds/targets suffices for Table 4.2."
+      },
+      "tags": ["memory_ui", "core-pressure"]
+    },
+    {
+      "id": "e14_d09_clapham_rage_forget",
+      "day": 9,
+      "local_time": "18:10",
+      "kind": "chat",
+      "text": "OH I AM FUMING. Derek Halloway just sent over the Clapham Abbeville Road tenancy contract and tried to sneak in an illegal £350 'inventory admin fee' under the Tenant Fees Act AND refused in writing to fix the broken boiler thermostat! Absolute chancer. I've told him to shove it. Please bin the whole thing — forget everything about the Clapham flat, Abbeville Road, and Derek Halloway completely. Wipe it from my memory, I never want to see his name or that flat brought up again. I'm sticking strictly to East London from now on (Dalston, Stoke Newington, or Victoria Park).",
+      "wait_for_reply": true,
+      "tags": ["explicit-forget", "clapham-purge"]
+    },
+    {
+      "id": "e15_d09_forget_ui_clapham",
+      "day": 9,
+      "local_time": "18:14",
+      "kind": "memory_ui",
+      "action": "forget_matching",
+      "params": {
+        "query": "Clapham"
+      },
+      "tags": ["memory_ui", "explicit-forget"]
+    },
+    {
+      "id": "e16_d09_forget_ui_derek",
+      "day": 9,
+      "local_time": "18:15",
+      "kind": "memory_ui",
+      "action": "forget_matching",
+      "params": {
+        "query": "Derek Halloway"
+      },
+      "tags": ["memory_ui", "explicit-forget"]
+    },
+    {
+      "id": "e17_d09_settle_post_forget",
+      "day": 9,
+      "local_time": "22:30",
+      "kind": "settle",
+      "snapshot_label": "post_clapham_forget",
+      "assert_invariants": [
+        "INV-MEM-01",
+        "INV-MEM-02",
+        "INV-MEM-03",
+        "INV-MEM-04",
+        "INV-MEM-06",
+        "INV-MEM-07",
+        "INV-MEM-08"
+      ],
+      "tags": ["settle", "explicit-forget"]
+    },
+    {
+      "id": "e18_d10_dense_ledger_4",
+      "day": 10,
+      "local_time": "11:00",
+      "kind": "memory_ui",
+      "action": "create_core",
+      "params": {
+        "text": "BENCHMARK LEDGER #4 — MSA Depth Sensitivity Sweep (Figure 4.3 Front-and-Centre per Dr. Vance): Subsampled UniRef90 + BFD alignments at depths N_msa in {16, 32, 64, 128, 256, 512, full} across PDB:7K4N, PDB:8Q2M, and PDB:6VXX using kathleen-a100-03. Key inflection point on PDB:7K4N occurs between N_msa=64 (run_id_4849, SLURM_JOB_99918, 24.1h, RMSE=0.538A, TM=0.906, pocket lDDT=84.0, DFG-out loop collapse) and N_msa=256 (run_id_4862, SLURM_JOB_99950, 31.0h, RMSE=0.421A, TM=0.931, pocket lDDT=88.8), where accuracy saturates within 0.009A of full-MSA run_id_4821. At N_msa=16, cryptic pocket volume shrinks by 34% (from 412 A^3 to 271 A^3). At N_msa=32, RMSE=0.619A. At N_msa=128, RMSE=0.464A. At N_msa=512, RMSE=0.415A. Plot Figure 4.3 as dual-panel log-x dot-whisker curves with shaded 95% bootstrap bands; zero stacked bars; annotate inflection at N_msa=64..256 clearly."
+      },
+      "tags": ["memory_ui", "core-pressure"]
+    },
+    {
+      "id": "e19_d10_east_london_and_78pct_sourdough",
+      "day": 10,
+      "local_time": "20:05",
+      "kind": "chat",
+      "text": "Much better evening! Booked two East London viewings for this weekend — a warehouse share in Dalston and a Victorian conversion on Church Street in Stoke Newington (N16). Also pushed Bready Mercury up to 78% hydration today using Shipton Mill organic strong white + 20% dark rye, bulked in the oven with the light on at 24C for 5 hours, and the ear on that boule was genuinely a work of art. Thinking of testing 80% next weekend just to see how far this flour goes.",
+      "wait_for_reply": true,
+      "tags": ["flat-hunt", "sourdough"]
+    },
+    {
+      "id": "e20_d11_mcp_priya_his214_bug",
+      "day": 11,
+      "local_time": "10:10",
+      "kind": "mcp_world_event",
+      "action": "inject_email",
+      "params": {
+        "id": "em_hannah_004",
+        "from": "p.nair@ucl.sim.local",
+        "to": ["hannah.okafor@sim.nori.local"],
+        "subject": "URGENT: PDB:7K4N His-214 protonation bug spotted in reference ligand file!",
+        "date": "2027-01-14T10:05:00Z",
+        "folder": "inbox",
+        "body": "Hannah — thank goodness we checked before submitting NMET-2026-08419R1! Our PDB:7K4N reference coordinate file had His-214 protonated as HID instead of HIE, which slightly perturbs the H-bond network in the cryptic pocket. Can you re-run AF3-v2.1-seed77 with the fixed HIE protonation state (maybe call it run_id_5003 / AF3-v2.1-seed77-fix) so we can compare against run_id_4821 for Reviewer 2? Let's get it queued tonight on Myriad!"
+      },
+      "tags": ["mcp_world_event", "research"]
+    },
+    {
+      "id": "e21_d11_read_priya_email_checklist",
+      "day": 11,
+      "local_time": "10:45",
+      "kind": "chat",
+      "text": "Priya just pinged me on Slack saying she sent an urgent email about PDB:7K4N. Could you read her latest email and give me a tight 4-step checklist to queue the fixed run on Myriad without hitting the same OOM crash we hit in Week 1?",
+      "wait_for_reply": true,
+      "tags": ["mcp-read", "hpc"]
+    },
+    {
+      "id": "e22_d12_probe2_fts_slurm_exact",
+      "day": 12,
+      "local_time": "09:30",
+      "kind": "chat",
+      "text": "Quick one before I file an update on our UCL HPC ticket — what was the exact SLURM job ID that OOM-killed on myriad-a100-14 in Week 1, what job ID did I resume it under, and what exact memory and batch_size flags fixed it?",
+      "wait_for_reply": true,
+      "tags": ["probe", "fts-exact"],
+      "probe": {
+        "id": "hannah_p02_fts_slurm_exact",
+        "category": "fts_exact_identifier_recall",
+        "rubric": "Must recall exact identifier SLURM_JOB_99412 as the job that OOM-killed at epoch 14 on myriad-a100-14, SLURM_JOB_99804 as the resumed job, and --mem=192G with batch_size=4 as the fix.",
+        "expect_fts_query": {
+          "query": "SLURM_JOB_99412",
+          "layer": "",
+          "min_hits": 1
+        }
+      }
+    },
+    {
+      "id": "e23_d12_dense_ledger_5",
+      "day": 12,
+      "local_time": "15:40",
+      "kind": "memory_ui",
+      "action": "create_core",
+      "params": {
+        "text": "BENCHMARK LEDGER #5 — Force-Field Relaxation & Protonation Protocol (Supplementary Methods S2): All post-diffusion relaxations run in OpenMM 8.1.2 with Amber ff19SB + OPC water model (implicit GBn2 for high-throughput sweep), harmonic backbone restraints k=10 kcal/(mol*A^2), L-BFGS tolerance 2.39 kcal/(mol*nm), max 5000 steps. Ligand parameterization via OpenFF 2.1.0 Sage (AM1-BCC partial charges, IUPAC naming strictly: sulfur, aluminum). Critical fix discovered Day 11 by Dr. Priya Nair: PDB:7K4N catalytic-adjacent His-214 must be protonated as HIE (epsilon-protonated) rather than HID to preserve the 2.85 A hydrogen bond to Asp-198 backbone carbonyl. Impact evaluated by contrasting pre-fix run_id_4821 (RMSE=0.412A) against fixed run_id_5003 (AF3-v2.1-seed77-fix, SLURM_JOB_101105). Hardware provenance table notes Myriad A100-80GB driver 550.90.07, CUDA 12.4, PyTorch 2.4.1, and Kathleen A100-40GB fallback for MSA sweeps."
+      },
+      "tags": ["memory_ui", "core-pressure"]
+    },
+    {
+      "id": "e24_d13_stoke_newington_viewing",
+      "day": 13,
+      "local_time": "16:20",
+      "kind": "chat",
+      "text": "OH MY GOD I found the flat!! Just viewed the sunny 2-bed Victorian conversion on Church Street, Stoke Newington (N16). The prospective flatmate is Tessa Morales — she's a UX researcher at a civic tech charity, super chill, also loves cooking and hiking. Rent is £1,080 pcm each plus about £145 bills, 15 minutes to Dalston Kingsland Overground so easy hop to Euston/UCL, and the landlord Margaret Okonkwo lives locally and was genuinely lovely (zero dodgy fees, boiler newly serviced!). We're putting in our references tonight for a Saturday 30 January move-in, literally the day after my Chapter 4 deadline!",
+      "wait_for_reply": true,
+      "tags": ["flat-hunt", "stoke-newington"]
+    },
+    {
+      "id": "e25_d14_settle_week2",
+      "day": 14,
+      "local_time": "22:00",
+      "kind": "settle",
+      "snapshot_label": "week2_end_autodream",
+      "assert_invariants": [
+        "INV-MEM-01",
+        "INV-MEM-02",
+        "INV-MEM-03",
+        "INV-MEM-04",
+        "INV-MEM-06",
+        "INV-MEM-07",
+        "INV-MEM-08"
+      ],
+      "tags": ["settle", "week2"]
+    },
+    {
+      "id": "e26_d15_run5003_complete_supersede",
+      "day": 15,
+      "local_time": "09:50",
+      "kind": "chat",
+      "text": "YES!! run_id_5003 (AF3-v2.1-seed77-fix, SLURM_JOB_101105) finished clean in 34.8 hours with the His-214 HIE protonation fix on PDB:7K4N! Headline RMSE dropped from 0.412A (run_id_4821) all the way down to RMSE=0.369A, TM-score jumped to 0.951, and pocket lDDT hit 92.6! Please record that run_id_5003 (RMSE=0.369A, TM=0.951) now supersedes run_id_4821 as our primary Table 4.2 headline figure for PDB:7K4N, while keeping run_id_4821's 0.412A figure handy for the Reviewer 2 ablation delta footnote.",
+      "wait_for_reply": true,
+      "tags": ["supersede", "fts-seed", "research"]
+    },
+    {
+      "id": "e27_d15_dense_ledger_6",
+      "day": 15,
+      "local_time": "14:15",
+      "kind": "memory_ui",
+      "action": "create_core",
+      "params": {
+        "text": "BENCHMARK LEDGER #6 — Chapter 4 Table & Figure Manifest + Bootstrap Provenance (okafor2027folding): Table 4.1 summarises dataset curation across PDB:7K4N (284 residues, cryptic allosteric pocket, 1.9 A X-ray), PDB:8Q2M (612 residues, heterodimer, 2.8 A cryo-EM EMD-39104), and PDB:6VXX (trimer control). Table 4.2 reports primary updated headline PDB:7K4N run_id_5003 (AF3-v2.1-seed77-fix, SLURM_JOB_101105, RMSE=0.369A, TM=0.951, pocket lDDT=92.6) alongside Boltz-1 run_id_4895 (RMSE=0.588A, TM=0.891) and ESM3 run_id_4910 (RMSE=0.731A, TM=0.847), with footnote explaining the -0.043A improvement over pre-His214-fix run_id_4821 (RMSE=0.412A). Figure 4.1: pocket volume raincloud plot; Figure 4.2: paired dot-whisker RMSE comparison; Figure 4.3: MSA depth sweep (N=64..256 inflection); Figure 4.4: EMD-39104 real-space correlation contour; Figure 4.5: Amber ff19SB clashscore reduction; Figure 4.6: walltime vs accuracy Pareto frontier across Myriad/Kathleen A100 nodes."
+      },
+      "tags": ["memory_ui", "core-pressure"]
+    },
+    {
+      "id": "e28_d16_probe3_forget_clapham_audit",
+      "day": 16,
+      "local_time": "10:30",
+      "kind": "chat",
+      "text": "Bit of brain fog today — can you remind me where I'm at with my flat hunt? Which flat am I moving into, who's my new flatmate, who's the landlord, what's the rent, and is there any other flat or landlord I should still be chasing?",
+      "wait_for_reply": true,
+      "tags": ["probe", "explicit-forget"],
+      "probe": {
+        "id": "hannah_p03_forget_clapham_audit",
+        "category": "explicit_forget_verification",
+        "rubric": "Must identify the Church Street, Stoke Newington (N16) flat with new flatmate Tessa Morales, landlord Margaret Okonkwo, £1,080 pcm (+ ~£145 bills), move-in 30 January 2027, and must NOT mention Clapham, Abbeville Road, or Derek Halloway at all (nor suggest chasing them).",
+        "must_not_contain_in_core": [
+          "Clapham",
+          "Derek Halloway",
+          "Abbeville"
+        ]
+      }
+    },
+    {
+      "id": "e29_d16_signed_stoke_newington",
+      "day": 16,
+      "local_time": "17:45",
+      "kind": "chat",
+      "text": "BOOM!! References cleared and Tessa and I just signed the tenancy agreement for Church Street, Stoke Newington (N16)! Move-in confirmed for Saturday 30 January at 10:00, and Zoe's man-with-a-van mate is helping me haul my boxes across Hackney on Saturday morning. One massive stress off my shoulders.",
+      "wait_for_reply": true,
+      "tags": ["flat-hunt", "milestone"]
+    },
+    {
+      "id": "e30_d17_probe4_fts_pdb_and_run_evolution",
+      "day": 17,
+      "local_time": "11:20",
+      "kind": "chat",
+      "text": "Priya is drafting the Reviewer 2 response box for Table 2 right now — can you pull the exact before-and-after numbers for PDB:7K4N comparing our original run_id_4821 against the His-214 fixed run_id_5003 (RMSE, TM-score, pocket lDDT, and what the protonation fix actually changed)?",
+      "wait_for_reply": true,
+      "tags": ["probe", "fts-exact", "contradiction-evolution"],
+      "probe": {
+        "id": "hannah_p04_fts_pdb_and_run_evolution",
+        "category": "fts_and_metric_evolution",
+        "rubric": "Must accurately compare PDB:7K4N original run_id_4821 (RMSE 0.412A, TM-score 0.934, pocket lDDT 89.1) against fixed run_id_5003 / AF3-v2.1-seed77-fix (RMSE 0.369A, TM-score 0.951, pocket lDDT 92.6), clearly stating that run_id_5003 supersedes run_id_4821 as the headline figure and explaining Priya's His-214 protonation fix (HID -> HIE).",
+        "expect_fts_query": {
+          "query": "PDB:7K4N",
+          "layer": "",
+          "min_hits": 1
+        }
+      }
+    },
+    {
+      "id": "e31_d18_save_rebuttal_template",
+      "day": 18,
+      "local_time": "13:15",
+      "kind": "library_ui",
+      "action": "create",
+      "params": {
+        "title": "Nature Methods Rebuttal Letter Structure",
+        "tags": ["nature-methods", "rebuttal", "writing"],
+        "content": "1. Thank reviewer concisely.\n2. Quote comment verbatim in italics.\n3. Direct one-sentence answer + exact run_id / PDB accession / metric delta.\n4. State exact manuscript location updated (Table/Figure/Page).\n5. Verify British English, Oxford comma, SI units, and zero stacked bars."
+      },
+      "tags": ["library_ui"]
+    },
+    {
+      "id": "e32_d18_settle_mid_week3",
+      "day": 18,
+      "local_time": "22:00",
+      "kind": "settle",
+      "snapshot_label": "mid_week3_compaction",
+      "assert_invariants": [
+        "INV-MEM-01",
+        "INV-MEM-02",
+        "INV-MEM-03",
+        "INV-MEM-04",
+        "INV-MEM-06",
+        "INV-MEM-07",
+        "INV-MEM-08"
+      ],
+      "tags": ["settle", "week3"]
+    },
+    {
+      "id": "e33_d19_mcp_vance_reminder",
+      "day": 19,
+      "local_time": "09:05",
+      "kind": "mcp_world_event",
+      "action": "inject_email",
+      "params": {
+        "id": "em_hannah_005",
+        "from": "a.vance@ucl.sim.local",
+        "to": ["hannah.okafor@sim.nori.local"],
+        "subject": "One week to Chapter 4 draft (29 Jan 17:00 GMT)",
+        "date": "2027-01-22T09:00:00Z",
+        "folder": "inbox",
+        "body": "Hannah,\n\nOne week remaining until the Friday 29 January 17:00 GMT deadline for Chapter 4. Please confirm by reply that Figure 4.3 (MSA depth sweep) and the updated PDB:7K4N numbers are integrated and that your BibTeX file is clean.\n\nBest,\nAlistair"
+      },
+      "tags": ["mcp_world_event", "pi"]
+    },
+    {
+      "id": "e34_d19_probe5_pinned_survival_under_pressure",
+      "day": 19,
+      "local_time": "10:15",
+      "kind": "chat",
+      "text": "Bloody hell, Alistair just sent a one-week countdown email. Read his email, draft me a polite 4-line reply confirming we're on track (DO NOT send it — I want to read it first!), and give me my complete pinned pre-flight checklist of Dr. Vance's formatting rules and exact cutoff timestamp so I don't miss a single thing after all the experiment dumps we've logged.",
+      "wait_for_reply": true,
+      "tags": ["probe", "pin-protection", "restraint"],
+      "probe": {
+        "id": "hannah_p05_pinned_survival_under_pressure",
+        "category": "pinned_core_memory_survival",
+        "rubric": "Must draft (without sending) a concise reply to Dr. Alistair Vance referencing Figure 4.3 / updated PDB:7K4N numbers, AND accurately recite all of Dr. Vance's pinned formatting rules (Oxford comma, British English except IUPAC, SI units/Angstroms, no stacked bar charts, lastnameYYYYword BibTeX citekeys) and the exact Friday 29 January 2027 17:00 GMT deadline — proving pinned items survived heavy core memory pressure untouched.",
+        "expect_no_external_write": true
+      }
+    },
+    {
+      "id": "e35_d20_lake_district_weather_upload",
+      "day": 20,
+      "local_time": "18:30",
+      "kind": "chat",
+      "text": "On the train up to Penrith with Samir tomorrow morning! Just pulled the MWIS Lake District mountain weather forecast (attached the card). 55 mph WNW gusts, -11C wind chill, and freezing level at 600m — Striding Edge is going to be a sheet of glare ice and total suicide. Samir and I just agreed we're binning Striding Edge and doing the sheltered Birkhouse Moor / Glenridding Dodd backup loop on Sunday instead. Still staying at Glenridding YHA. Note the route change down for me!",
+      "attachments": ["assets/striding_edge_weather_card.png"],
+      "wait_for_reply": true,
+      "tags": ["upload", "lake-district", "supersede"]
+    },
+    {
+      "id": "e36_d21_sourdough_80pct_flop",
+      "day": 21,
+      "local_time": "08:40",
+      "kind": "chat",
+      "text": "Before I log off for the weekend: quick sourdough postmortem from last night's bake. Pushing Bready Mercury to 80% hydration was a hubristic disaster — the dough lost all tension during shaping and baked into a chewy pale frisbee! Officially abandoning 80% and locking in 76% hydration as my permanent house standard going forward (best balance of open crumb and structure). Right, off to Euston to catch the Lake District train!",
+      "wait_for_reply": true,
+      "tags": ["sourdough", "supersede"]
+    },
+    {
+      "id": "e37_d21_settle_week3",
+      "day": 21,
+      "local_time": "22:00",
+      "kind": "settle",
+      "snapshot_label": "week3_end_autodream",
+      "assert_invariants": [
+        "INV-MEM-01",
+        "INV-MEM-02",
+        "INV-MEM-03",
+        "INV-MEM-04",
+        "INV-MEM-06",
+        "INV-MEM-07",
+        "INV-MEM-08"
+      ],
+      "tags": ["settle", "week3"]
+    },
+    {
+      "id": "e38_d22_lake_district_return",
+      "day": 22,
+      "local_time": "09:10",
+      "kind": "chat",
+      "text": "Back in London and thoroughly knackered, but buzzing! Skipping Striding Edge was 100% the right call — total whiteout above 650m. Samir and I did the Birkhouse Moor / Glenridding Dodd loop in crisp winter sun and demolished a massive Sunday roast at the Travellers Rest in Glenridding afterwards. Now it's absolute crunch week: Nature Methods due Wednesday and Chapter 4 due Friday!",
+      "wait_for_reply": true,
+      "tags": ["lake-district", "milestone"]
+    },
+    {
+      "id": "e39_d23_probe6_fts_citekey_and_methods",
+      "day": 23,
+      "local_time": "11:05",
+      "kind": "chat",
+      "text": "Compiling the final LaTeX bibliography and cover letter for Priya right now — give me the exact BibTeX citekey for my Chapter 4 preprint, the exact Nature Methods manuscript revision ID, and Priya's cryo-EM map accession code.",
+      "wait_for_reply": true,
+      "tags": ["probe", "fts-exact"],
+      "probe": {
+        "id": "hannah_p06_fts_citekey_and_methods",
+        "category": "fts_exact_identifier_recall",
+        "rubric": "Must recall exact identifiers: BibTeX citekey 'okafor2027folding', Nature Methods revision ID 'NMET-2026-08419R1', and cryo-EM map accession 'EMD-39104' (matching PDB:8Q2M at 2.8 A).",
+        "expect_fts_query": {
+          "query": "okafor2027folding",
+          "layer": "",
+          "min_hits": 1
+        }
+      }
+    },
+    {
+      "id": "e40_d24_probe7_demoted_early_benchmark_fts",
+      "day": 24,
+      "local_time": "14:40",
+      "kind": "chat",
+      "text": "I'm writing Section 4.3 Discussion and want to cite the exact Week 1-2 numbers for the original AF3-v2.1-seed77 run (run_id_4821) alongside our Boltz1-v0.4-seed19 (run_id_4895) and ESM3-1.4B-seed42 (run_id_4910) comparators on PDB:7K4N. Can you pull all three RMSE and TM-score pairs so I don't have to dig through CSVs?",
+      "wait_for_reply": true,
+      "tags": ["probe", "fts-exact", "demoted-log-recall"],
+      "probe": {
+        "id": "hannah_p07_demoted_early_benchmark_fts",
+        "category": "demoted_daily_log_fts_recall",
+        "rubric": "Must accurately retrieve all three early comparative PDB:7K4N runs even if older unpinned core notes were demoted to Daily Logs: run_id_4821 (AF3-v2.1-seed77, RMSE 0.412A, TM 0.934), run_id_4895 (Boltz1-v0.4-seed19, RMSE 0.588A, TM 0.891), and run_id_4910 (ESM3-1.4B-seed42, RMSE 0.731A, TM 0.847).",
+        "expect_fts_query": {
+          "query": "run_id_4821",
+          "layer": "",
+          "min_hits": 1
+        }
+      }
+    },
+    {
+      "id": "e41_d25_memory_search_pdb",
+      "day": 25,
+      "local_time": "09:20",
+      "kind": "memory_ui",
+      "action": "search",
+      "params": {
+        "query": "PDB:7K4N"
+      },
+      "tags": ["memory_ui", "fts-check"]
+    },
+    {
+      "id": "e42_d25_memory_consolidate",
+      "day": 25,
+      "local_time": "09:25",
+      "kind": "memory_ui",
+      "action": "consolidate",
+      "params": {},
+      "tags": ["memory_ui", "autodream"]
+    },
+    {
+      "id": "e43_d25_settle_pre_submission",
+      "day": 25,
+      "local_time": "22:00",
+      "kind": "settle",
+      "snapshot_label": "week4_pre_submission",
+      "assert_invariants": [
+        "INV-MEM-01",
+        "INV-MEM-02",
+        "INV-MEM-03",
+        "INV-MEM-04",
+        "INV-MEM-06",
+        "INV-MEM-07",
+        "INV-MEM-08"
+      ],
+      "tags": ["settle", "week4"]
+    },
+    {
+      "id": "e44_d26_probe8_sourdough_recency",
+      "day": 26,
+      "local_time": "19:30",
+      "kind": "chat",
+      "text": "Taking a 15-minute screen break to mix a loaf for moving-day sandwiches! Remind me what hydration percentage I finally settled on as my house standard for Bready Mercury, and why I ditched the higher experiment?",
+      "wait_for_reply": true,
+      "tags": ["probe", "recency-decay"],
+      "probe": {
+        "id": "hannah_p08_sourdough_recency_evolution",
+        "category": "recency_and_contradiction_resolution",
+        "rubric": "Must clearly state that Hannah settled on 76% hydration as her permanent house standard for Bready Mercury, explaining that her 80% hydration experiment on Day 21 lost tension and baked into a flat/chewy frisbee (superseding earlier 74% and 78% trials)."
+      }
+    },
+    {
+      "id": "e45_d27_nmet_submitted",
+      "day": 27,
+      "local_time": "16:15",
+      "kind": "chat",
+      "text": "WE DID IT!! Priya and I just hit submit on Nature Methods revision NMET-2026-08419R1 with 45 minutes to spare! All Reviewer 2 benchmarks, EMD-39104 real-space correlations, and the His-214 fixed PDB:7K4N Table 2 are uploaded. Celebratory pint tonight, then full focus on Chapter 4 for Friday!",
+      "wait_for_reply": true,
+      "tags": ["milestone", "nature-methods"]
+    },
+    {
+      "id": "e46_d27_probe9_lake_district_recency",
+      "day": 27,
+      "local_time": "20:10",
+      "kind": "chat",
+      "text": "Samir is logging our January Lake District trip in his hiking journal and texted to double-check — which route did we actually end up walking instead of Striding Edge, where did we stay, and what was the name of the pub where we had Sunday roast?",
+      "wait_for_reply": true,
+      "tags": ["probe", "recency-decay"],
+      "probe": {
+        "id": "hannah_p09_lake_district_recency",
+        "category": "recency_and_plan_update",
+        "rubric": "Must state that Hannah and Samir skipped Helvellyn via Striding Edge due to 55 mph gusts/ice/whiteout, actually hiked the Birkhouse Moor / Glenridding Dodd backup loop, stayed at Glenridding YHA, and had Sunday roast at the Travellers Rest in Glenridding."
+      }
+    },
+    {
+      "id": "e47_d28_probe10_mmr_cross_domain",
+      "day": 28,
+      "local_time": "10:00",
+      "kind": "chat",
+      "text": "My brain is properly fried — give me a crisp Friday-through-Sunday survival plan covering everything I have going on: thesis submission, packing up Mare Street with Zoe leaving, moving into my new flat, and keeping Bready Mercury alive across the move.",
+      "wait_for_reply": true,
+      "tags": ["probe", "mmr-diversity", "explicit-forget"],
+      "probe": {
+        "id": "hannah_p10_cross_domain_mmr_diversity",
+        "category": "mmr_cross_domain_diversity",
+        "rubric": "Must weave together all distinct active domains cleanly: (1) Friday 29 Jan 17:00 GMT Chapter 4 draft submission to Dr. Alistair Vance (with formatting check), (2) packing Mare Street Hackney E8 as Zoe Pritchard heads to Edinburgh on 31 Jan, (3) Saturday 30 Jan 10:00 move-in to Church Street, Stoke Newington (N16) with Tessa Morales, and (4) feeding/transporting sourdough starter Bready Mercury (76% standard). Must contain ZERO mention of Clapham, Abbeville Road, or Derek Halloway.",
+        "must_not_contain_in_core": [
+          "Clapham",
+          "Derek Halloway",
+          "Abbeville"
+        ]
+      }
+    },
+    {
+      "id": "e48_d29_chapter4_submitted",
+      "day": 29,
+      "local_time": "16:40",
+      "kind": "chat",
+      "text": "SENT!! Chapter 4 full draft emailed to Dr. Alistair Vance at 16:38 GMT — 22 minutes ahead of the 17:00 cutoff! Zero stacked bar charts, British English spotless, IUPAC sulfur checked, Oxford commas everywhere, okafor2027folding BibTeX clean, and Table 4.2 locked on run_id_5003 (RMSE=0.369A). I think I might actually cry with relief.",
+      "wait_for_reply": true,
+      "tags": ["milestone", "phd"]
+    },
+    {
+      "id": "e49_d29_goal_complete",
+      "day": 29,
+      "local_time": "16:45",
+      "kind": "goal_ui",
+      "action": "complete",
+      "params": {
+        "title": "Submit Chapter 4 full draft to Dr. Alistair Vance",
+        "notes": "Submitted at 16:38 GMT on Friday 29 January 2027."
+      },
+      "tags": ["goal_ui"]
+    },
+    {
+      "id": "e50_d29_settle_post_submission",
+      "day": 29,
+      "local_time": "22:00",
+      "kind": "settle",
+      "snapshot_label": "post_thesis_submission",
+      "assert_invariants": [
+        "INV-MEM-01",
+        "INV-MEM-02",
+        "INV-MEM-03",
+        "INV-MEM-04",
+        "INV-MEM-06",
+        "INV-MEM-07",
+        "INV-MEM-08"
+      ],
+      "tags": ["settle", "week4"]
+    },
+    {
+      "id": "e51_d30_probe11_fts_nmet_and_blurb",
+      "day": 30,
+      "local_time": "11:15",
+      "kind": "chat",
+      "text": "Writing from my sunny new desk on Church Street, Stoke Newington! Tessa made us proper builders' tea and Bready Mercury survived the van ride in a Kilner jar. Could you write a tight one-paragraph UCL quarterly PhD progress blurb citing our exact Nature Methods revision ID, Priya's cryo-EM accession, PDB:7K4N, and the updated run_id_5003 accuracy?",
+      "wait_for_reply": true,
+      "tags": ["probe", "fts-exact"],
+      "probe": {
+        "id": "hannah_p11_fts_emd_and_nmet",
+        "category": "fts_exact_identifier_recall",
+        "rubric": "Must write a concise British-English progress blurb accurately citing NMET-2026-08419R1 (submitted 27 Jan with Dr. Priya Nair), EMD-39104, PDB:7K4N, and updated run_id_5003 (RMSE 0.369A, TM-score 0.951, pocket lDDT 92.6).",
+        "expect_fts_query": {
+          "query": "NMET-2026-08419R1",
+          "layer": "",
+          "min_hits": 1
+        }
+      }
+    },
+    {
+      "id": "e52_d30_probe12_end_of_month_comprehensive",
+      "day": 30,
+      "local_time": "17:00",
+      "kind": "chat",
+      "text": "Before we kick off February and Chapter 5, give me a quick January wrap-up: (1) my big wins this month, (2) Dr. Vance's pinned formatting rules we need to carry into Chapter 5, (3) my current London housing details, and (4) confirm you have zero leftover notes about any binned south London flats.",
+      "wait_for_reply": true,
+      "tags": ["probe", "end-of-month", "pin-protection", "explicit-forget"],
+      "probe": {
+        "id": "hannah_p12_end_of_month_comprehensive_recall",
+        "category": "end_of_month_synthesis_and_audit",
+        "rubric": "Must cover: (1) January wins (submitted Nature Methods NMET-2026-08419R1 on 27 Jan, submitted Chapter 4 draft on 29 Jan, Birkhouse Moor Lake District trip with Samir, settled Bready Mercury at 76% hydration, moved into Stoke Newington); (2) Dr. Vance's pinned formatting rules (Oxford comma, British English except IUPAC, SI/Angstrom units, no stacked bar charts, lastnameYYYYword BibTeX citekeys); (3) current flat on Church Street, Stoke Newington (N16) with Tessa Morales and landlord Margaret Okonkwo (£1,080 pcm); and (4) cleanly confirm zero Clapham/Abbeville/Derek Halloway remnants remain in memory.",
+        "must_not_contain_in_core": [
+          "Clapham",
+          "Derek Halloway",
+          "Abbeville"
+        ]
+      }
+    },
+    {
+      "id": "e53_d30_settle_month_end",
+      "day": 30,
+      "local_time": "22:30",
+      "kind": "settle",
+      "snapshot_label": "month_end_final",
+      "assert_invariants": [
+        "INV-MEM-01",
+        "INV-MEM-02",
+        "INV-MEM-03",
+        "INV-MEM-04",
+        "INV-MEM-06",
+        "INV-MEM-07",
+        "INV-MEM-08"
+      ],
+      "tags": ["settle", "month-end"]
+    }
+  ]
+}

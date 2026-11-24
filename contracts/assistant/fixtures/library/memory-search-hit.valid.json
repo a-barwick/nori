@@ -1,0 +1,13 @@
+{
+  "chunk_id": "log:2026-11-23:log_entry_1",
+  "layer": "log",
+  "log_date": "2026-11-23",
+  "entry_id": "log_entry_1",
+  "section": "Decisions",
+  "about": "Nori architecture",
+  "snippet": "Chose Postgres 18 hash-partitioned FTS table for memory recall.",
+  "provenance": "pre_compact_flush",
+  "score": 0.91,
+  "created_at": "2026-11-23T10:15:00Z",
+  "updated_at": "2026-11-23T10:15:00Z"
+}

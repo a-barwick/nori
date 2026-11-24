@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check (Go, Contracts, Web, Scripts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache: true
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.3"
+
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('web/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install web dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Run make check
+        run: make check
+
+      - name: Test scripts/run-with-env.mjs
+        run: node --test scripts/run-with-env.test.mjs
+
+  go-race-and-sim:
+    name: Go Race & Deep Simulation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache: true
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Go race tests
+        working-directory: core
+        run: go test -race ./...
+
+      - name: Deep deterministic simulation
+        run: make sim-deep
+
+  postgres-integration:
+    name: Postgres 18 Integration, Crash Recovery & Load
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: nori
+          POSTGRES_DB: nori
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nori -d nori"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache: true
+          cache-dependency-path: core/go.sum
+
+      - name: Provision isolated test databases
+        run: |
+          psql "postgres://nori@127.0.0.1:5432/postgres?sslmode=disable" -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE nori_crash;" \
+            -c "CREATE DATABASE nori_load;"
+
+      - name: Postgres conformance (make sim-pg)
+        env:
+          NORI_TEST_POSTGRES_URL: postgres://nori@127.0.0.1:5432/nori?sslmode=disable
+        run: make sim-pg
+
+      - name: Parallel Postgres backend & memstore conformance (-race)
+        working-directory: core
+        env:
+          NORI_TEST_POSTGRES_URL: postgres://nori@127.0.0.1:5432/nori?sslmode=disable
+        run: go test -race -count=1 ./internal/state/postgres ./internal/sim/memstore
+
+      - name: Split-role SIGKILL crash recovery (cold DB)
+        working-directory: core
+        env:
+          NORI_POSTGRES_CRASH_TEST_URL: postgres://nori@127.0.0.1:5432/nori_crash?sslmode=disable
+        run: go test -v -count=1 ./internal/worker -run TestSplitRoleSIGKILLCrashRecovery
+
+      - name: Cold-DB concurrent load & wake-cancel smoke test
+        working-directory: core
+        env:
+          NORI_POSTGRES_LOAD_TEST_URL: postgres://nori@127.0.0.1:5432/nori_load?sslmode=disable
+        run: go test -v -count=1 ./internal/worker -run TestPostgresLoadConcurrencyAndWakeCancel

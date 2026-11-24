@@ -1,0 +1,86 @@
+// Simulated data for each step on the request page. Endpoints and field names follow the code.
+// Values are invented, and "…" marks a shortened value or fields left out to keep the example readable.
+const INPUT = '3f6c1e94-8a27-4d0b-9c35-71be20d4a6f1';
+const REPORT = 'a41d7c02-5e3b-4f68-b2c9-0d8e6f13a975';
+const TIME = '2026-10-31T16:04:12Z';
+const MESSAGE = 'Pull the latest Q3 revenue summary. Also draft a launch brief.';
+const REQUEST = 'Pull the latest Q3 revenue summary.';
+
+window.REQUEST_FLOW = [
+  [ // 1. The user sends a message
+    { from: 'the host app / client', to: 'Go service', edge: 'user-service', call: 'POST /v1/conversations/assistant/messages', source: 'core/internal/api/conversation.go',
+      request: { id: INPUT, text: MESSAGE },
+      response: { status: 202, body: { state: 'accepted', turnId: INPUT, conversation: { id: 'assistant', mode: 'assistant', position: 41 } } },
+      other: ['400 if the ID isn\'t a UUID or the message isn\'t 1–8192 bytes', '409 if the same ID arrives with different text', '202 with state: "queued" if saved but wake confirmation failed; retrying with the same ID is safe.'] },
+    { from: 'Go service', to: 'Postgres', edge: 'service-postgres', call: 'conversation_inputs/{id}', source: 'core/internal/state/conversation.go',
+      saved: { id: INPUT, text: MESSAGE, position: 12, created_at: TIME } },
+    { from: 'Go service', to: 'Postgres', edge: 'wake-service', call: 'nori_user_wakes + NOTIFY nori_wake', source: 'core/internal/state/postgres/leases.go',
+      request: { kind: 'conversation', user_id: 'usr_…', wake_at: TIME },
+      note: 'The wake row commits in the same transaction as the input and emits a lightweight NOTIFY nori_wake hint carrying no message content or credentials.' },
+  ],
+  [ // 2. An outer turn claims the batch
+    { from: 'Worker pool', to: 'Go service', edge: 'wake-service', call: 'ClaimDueUserWakes -> Process', source: 'core/internal/worker/pool.go',
+      request: { kind: 'conversation', lease_seconds: 30 }, response: { status: 200, body: { processed: true } },
+      other: ['If another worker holds the conversation lease, the wake backs off and retries after lease expiry or the next poll'] },
+    { from: 'Go service', to: 'Postgres', edge: 'service-postgres', call: 'conversation/control', source: 'core/internal/state/conversation.go',
+      saved: { received: 12, consumed: 11, active: 'turn-…', owner: 'process-…', fence: 37, lease_until: '2026-10-31T16:04:42Z' },
+      note: 'Only the current fence can write, so a stale turn can\'t publish anything.' },
+  ],
+  [ // 3. Jev classifies and the model decides
+    { from: 'Go service', to: 'Postgres', edge: 'service-postgres', call: 'model_usage/{id}', source: 'core/internal/state/state.go',
+      saved: { id: 'c90e…', input_id: INPUT, provider: 'outer', model: 'gpt-6.1-sol', cost_status: 'unknown', request_status: 'pending', created_at: TIME },
+      note: 'Written before the call. If the call is rejected or the process dies, the row still shows it was attempted.' },
+    { from: 'Go service', to: 'Jev', edge: 'service-models', call: 'POST api.typesafe.ai/v1/systemone', source: 'core/internal/conversation/jev.go',
+      request: { model: 'jev-latest', state: { messages: [MESSAGE], conversation: ['…'] }, questions: { request_work: { type: 'choice', instructions: 'Independently check whether the CURRENT input batch contains this intent…', criteria: { present: 'The current input batch contains this intent.', absent: '…' } }, '…': 'one question per intent' } },
+      response: { answers: { request_work: { choice: 'present', confidence: 0.97 }, converse: { choice: 'absent', confidence: 0.88 }, '…': '…' } } },
+    { from: 'Go service', to: 'OpenAI', edge: 'service-models', call: 'POST /chat/completions', source: 'core/internal/conversation/openai.go',
+      request: { model: 'gpt-6.1-sol', max_completion_tokens: 4096, reasoning_effort: 'low', service_tier: 'default', store: false, prompt_cache_options: { mode: 'explicit' }, messages: [{ role: 'system', content: '…' }, { role: 'user', content: MESSAGE }], response_format: { type: 'json_schema', json_schema: { name: 'nori_response', strict: true, schema: '…' } } },
+      response: { model: 'gpt-6.1-sol', service_tier: 'default', choices: [{ message: { role: 'assistant', content: JSON.stringify({ actions: [{ name: 'dispatch', arguments: { request: REQUEST } }, { name: 'dispatch', arguments: { request: 'Draft a launch brief.' } }], text: '' }) }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 2104, completion_tokens: 88, total_tokens: 2192, prompt_tokens_details: { cached_tokens: 0 } } },
+      note: 'A second call with user messages and task IDs only verifies independent dispatches and steers. Direct OpenAI tariffs price cached input tokens at 1/20th of uncached input.' },
+  ],
+  [ // 4. Commands are validated together, then accepted
+    { from: 'Go service', to: 'Postgres', edge: 'service-postgres', call: 'task_commands/{id}', source: 'core/internal/state/records/commands.go',
+      saved: { id: REPORT, run_id: REPORT, kind: 'start', text: REQUEST, position: 1, revision: 1, delivered: false, source_input_ids: [INPUT], created_at: TIME },
+      note: 'The start command\'s ID is also the task ID. There\'s one of these per dispatch.' },
+    { from: 'Go service', to: 'Postgres', edge: 'service-postgres', call: 'runs/{id}', source: 'core/internal/state/run.go',
+      saved: { id: REPORT, status: 'running', request: REQUEST, revision: 1, incorporated: 0, spent_usd: 0, budget_usd: 1, cancel_requested: false, started_at: TIME } },
+    { from: 'Go service', to: 'the host app / client', edge: 'user-service', call: 'GET /v1/conversations/assistant/events?after=41', source: 'core/internal/api/conversation_events.go',
+      request: {},
+      response: { status: 200, body: { seq: 42, kind: 'message', messages: [{ id: '…', role: 'assistant', text: "On it. I've started both.", parts: [{ type: 'text', text: "On it. I've started both." }], created_at: TIME }] } },
+      note: 'The SSE stream delivers committed changes to the client. Resume with ?after=N or Last-Event-ID.' },
+  ],
+  [ // 5. The worker pool claims each task lease
+    { from: 'Go service', to: 'Postgres', edge: 'service-pool', call: 'nori_task_leases + NOTIFY nori_wake', source: 'core/internal/state/postgres/leases.go',
+      saved: { user_id: 'usr_…', task_id: REPORT, status: 'runnable', lease_until: TIME },
+      note: 'Written in the same Postgres transaction as the start command and run record, eliminating any cross-service relay gap.' },
+    { from: 'Worker pool', to: 'Postgres', edge: 'pool-inner', call: 'ClaimRunnableTasks + ClaimTaskLease', source: 'core/internal/worker/pool.go',
+      saved: { task_id: REPORT, owner: 'worker-…', fence: 1, lease_until: '2026-10-31T16:04:42Z' },
+      note: 'worker.Pool acquires a 30-second fenced lease on TaskControl and launches task.Runner.' },
+  ],
+  [ // 6. Inner loops work, wait and finish
+    { from: 'Worker', to: 'Responses API', edge: 'inner-models', call: 'POST /v1/responses', source: 'core/internal/agent/responses/responses.go',
+      request: { model: 'gpt-6.1-terra', instructions: '…', input: [{ role: 'user', content: REQUEST }], max_output_tokens: 8192, store: false, tools: ['web_search', 'mcp__reporting__list_reports', 'complete', 'request_input', '…'] },
+      response: { status: 'completed', output: [{ type: 'function_call', call_id: 'call_3', name: 'mcp__reporting__list_reports', arguments: '{"quarter":"Q3"}' }], usage: { input_tokens: 412, output_tokens: 36, total_tokens: 448, input_tokens_details: { cached_tokens: 0 } } },
+      note: 'The tools field holds full schemas, shortened here to a few names. Missing cost is recorded as cost_status: "unknown" without failing the response.' },
+    { from: 'Worker', to: 'MCP server', edge: 'inner-tools', call: 'tools/call (Streamable HTTP)', source: 'core/internal/connectors/mcp/mcp.go',
+      request: { jsonrpc: '2.0', method: 'tools/call', params: { name: 'list_reports', arguments: { quarter: 'Q3' } } },
+      response: { content: [{ type: 'text', text: 'Q3 revenue: +14% YoY across NA, EMEA, APAC.' }] },
+      note: 'Each MCP tool call is checked by core/internal/permissions and recorded as an operation before dispatch.' },
+    { from: 'Worker', to: 'Postgres', edge: 'inner-postgres', call: 'runs/{id}', source: 'core/internal/state/run.go',
+      saved: { id: REPORT, status: 'running', revision: 1, incorporated: 1, spent_usd: 0.0006, budget_usd: 1, events: ['…'] },
+      note: 'Authoritative checkpoint and live spend live in TaskControl and runs/{id} in Postgres.' },
+  ],
+  [ // 7. The result comes back as a conversation event
+    { from: 'Worker', to: 'Postgres', edge: 'inner-postgres', call: 'conversation_inputs/event-{id}', source: 'core/internal/state/records/commands.go',
+      saved: { id: `event-${REPORT}-terminal`, position: 13, created_at: TIME, event: { id: `${REPORT}-terminal`, run_id: REPORT, kind: 'result', sequence: 1, instruction_revision: 1, text: 'Q3 revenue is up 14% year over year across three regions.', created_at: TIME } },
+      note: 'Saved in the same transaction as the task\'s final state. Other kinds are needs_input, failure and stopped.' },
+    { from: 'Go service', to: 'OpenAI', edge: 'service-models', call: 'POST /chat/completions', source: 'core/internal/conversation/openai.go',
+      request: { model: 'gpt-6.1-sol', max_completion_tokens: 4096, reasoning_effort: 'low', service_tier: 'default', store: false, prompt_cache_options: { mode: 'explicit' }, messages: ['…', { role: 'user', content: 'Task result: …' }] },
+      response: { choices: [{ message: { role: 'assistant', content: 'Q3 revenue is up 14% year over year across three regions.' } }], usage: { prompt_tokens: 2240, completion_tokens: 21, total_tokens: 2261 } },
+      note: 'Notification turns run without task tools, so this turn can only compare cited evidence and explain the result.' },
+    { from: 'Go service', to: 'the host app / client', edge: 'user-service', call: 'GET /v1/conversations/assistant/events?after=60', source: 'core/internal/api/conversation_events.go',
+      request: {},
+      response: { status: 200, body: { seq: 61, kind: 'message', messages: [{ id: '…', role: 'assistant', text: 'Q3 revenue is up 14% year over year across three regions.', parts: [{ type: 'text', text: 'Q3 revenue is up 14% year over year across three regions.' }], result_ids: ['…'], created_at: TIME }] } } },
+  ],
+];

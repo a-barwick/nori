@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Classifying a message · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Classifying a message</h1>
+<p class="lede">Jev, a classifier model, marks the intents in the current user messages. The outer model gets them as a hint.</p>
+<div class="card">
+<div class="flow">
+<div class="node"><b>Current batch</b><small>“Could you check when my domain renews?”</small></div>
+<div class="arrow">↓ <span class="lbl">batch and earlier messages</span></div>
+<div class="node"><b>Jev</b><small>Answers present or absent for each of nine intents.</small></div>
+<div class="arrow">↓ <span class="lbl">nine answers</span></div>
+<div class="node decide">How many intents are present?</div>
+<div class="branch3">
+<div class="node"><b>One</b><small>Intent is that label. Confidence is that answer's confidence.</small></div>
+<div class="node"><b>Several</b><small>Intent is <code>mixed</code>. Labels are listed, with the lowest confidence.</small></div>
+<div class="node"><b>None</b><small>The runtime sets <code>converse</code>. That fallback stores no confidence.</small></div>
+</div>
+<div class="arrow">↓ <span class="lbl">hint, saved with the turn</span></div>
+<div class="node outer"><b>Outer model</b><small>Reads the hint and task records, then writes the reply and commands.</small></div>
+</div>
+<p class="note">If the batch has no user message, the call fails, or any answer is missing or neither present nor absent, the hint is unavailable and has no intent label. The turn still calls the outer model.</p>
+</div>
+<section><h2>The nine questions</h2>
+<p>Jev answers each question on its own. Present labels are saved in the order below.</p>
+<div class="card"><table class="tall">
+<tr><th>Intent</th><th>Means</th><th>Example</th></tr>
+<tr><td><code>converse</code></td><td>Conversation, discussion or unclassifiable input</td><td>“Let's discuss the architecture.”</td></tr>
+<tr><td><code>ask</code></td><td>A question, with or without independent work</td><td>“When is my appointment?”</td></tr>
+<tr><td><code>request_work</code></td><td>A request for independent work</td><td>“Draft a reply to Sam.”</td></tr>
+<tr><td><code>steer</code></td><td>Changed instructions for existing work</td><td>“Actually, use Thursday.”</td></tr>
+<tr><td><code>provide_input</code></td><td>Information, or an answer for existing work</td><td>“His address is 12 Main Street.”</td></tr>
+<tr><td><code>decide</code></td><td>An approval or another requested decision</td><td>“Approve that draft.”</td></tr>
+<tr><td><code>inspect</code></td><td>A question about existing work or its outcome</td><td>“Did you send it?”</td></tr>
+<tr><td><code>control</code></td><td>A request to stop or control existing work</td><td>“Stop the research.”</td></tr>
+<tr><td><code>update_memory</code></td><td>An explicit request to change persistent memory</td><td>“Remember that I prefer evenings.”</td></tr>
+</table></div>
+<ul class="pts"><li>Jev reads the batch in order, and a later message can correct an earlier one.</li><li>Earlier conversation only resolves a reference such as “Thursday”.</li><li>The questions leave out tools, access and reply format.</li></ul>
+<p>How the question wording should change is on <a href="open-questions.html">Open questions</a>.</p>
+</section>
+<section><h2>What Jev receives</h2>
+<div class="card"><table class="tall">
+<tr><th>Piece</th><th>Sent</th></tr>
+<tr><td>Current user messages</td><td>Yes, in acceptance order. They are not also copied into the history.</td></tr>
+<tr><td>Earlier visible messages</td><td>Yes. Role and text only. Task records there are marked as background.</td></tr>
+<tr><td>User messages accepted after this batch</td><td>No.</td></tr>
+<tr><td>Introduction, or a task notification</td><td>No. Neither is a user message, so a batch of only those does not call Jev.</td></tr>
+<tr><td>Saved model protocol</td><td>No. The outer model receives it with the turn.</td></tr>
+</table></div>
+<p>A task panel answer, steer, stop, approval response or direct task update is saved as a command and is not classified. See <a href="api.html">Service API</a>.</p>
+</section>
+<section><h2>What the outer model receives</h2>
+<p>The runtime saves the hint before the outer model call. A restart for a newer message classifies the new batch.</p>
+<p>The hint sits beside the task records as context. Confidence doesn't allow or block a command. “Could you check when my domain renews?” can be an ask alone, and the outer model can still dispatch a lookup.</p>
+<details class="more"><summary>How Jev calls are recorded</summary><p>Before calling Jev, the runtime records provider <code>jev</code> and model <code>jev-latest</code> with an unknown cost. Jev returns no verified price. If that record fails, the request is not sent.</p></details>
+</section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/classifier.go</code> · <code>core/internal/conversation/jev.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/state/conversation.go</code> · <code>core/internal/api/http.go</code></p></details>
+</body>
+</html>

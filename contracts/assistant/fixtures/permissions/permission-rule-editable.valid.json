@@ -1,0 +1,16 @@
+{
+  "effect": "deny",
+  "tool_ids": [
+    "*"
+  ],
+  "connection_ids": [
+    "conn_google_work"
+  ],
+  "resource_ids": [
+    "*"
+  ],
+  "action_classes": [
+    "sensitive_send"
+  ],
+  "title": "Never send from work"
+}

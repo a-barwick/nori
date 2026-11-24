@@ -1,0 +1,6 @@
+{
+  "email": "alex@example.com",
+  "name": "Alex Kim",
+  "role": "required",
+  "response": "needs_action"
+}

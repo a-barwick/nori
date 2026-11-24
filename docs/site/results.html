@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Results and files · Nori</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Results and files</h1>
+<p class="lede">A saved result reopens later with version history, and its record shows whether it reached the user.</p>
+<div class="card"><div class="states"><span class="state">Created</span><span class="state-arrow">→</span><span class="state">Checked</span><span class="state-arrow">→</span><span class="state">Reported</span><span class="state-arrow">→</span><span class="state run">Delivered</span></div>
+<p class="note" style="margin-top:12px">These are separate timestamps on one record. For “Draft the Q3 launch brief”, the task saves the result, the completion check verifies its evidence, an outer reply links it, and the client reports showing that reply.</p></div>
+<section><h2>What a result records</h2>
+<ul class="pts"><li>A stable ID, and its kind: an answer, a file, an image or a link.</li><li>The task that created it, and the instruction revision it answers.</li><li>The saved tool results its answer cites, and anything left unmet.</li><li>A saved artifact counts as checked only when the answer cites it.</li></ul></section>
+<section><h2>Finding and revising it later</h2>
+<div class="card">
+<p><span class="say me">Show me that Q3 brief.</span> <span class="note">The outer loop sees up to 20 recent results and displays one with <code>show_result</code> without starting a task.</span></p>
+<p class="note">The runtime checks each requested result before publishing the reply. If a result is missing, the reply says so and still shows any available results.</p>
+<p><span class="say me">Revise it for EMEA.</span> <span class="note">A task saves a new version linked to the original. A task that doesn't finish leaves the original current.</span></p>
+<p class="note">When two tasks revise the same result, the first completed revision stays current. The later output is saved separately with a conflict notice. Both outputs and earlier versions stay readable via <code>GET /v1/library/{id}/versions</code>.</p>
+<p><span class="say me">What did we find last week?</span> <span class="note">A task searches earlier results with <code>results_find</code> and reads specific results with <code>result_read</code>.</span></p>
+</div></section>
+<section><h2>Files the user attaches</h2>
+<div class="card"><div class="flow">
+<div class="node"><b>Client / host app</b><small>Uploads a file with a stable UUID before sending the message. Retrying stores one copy.</small></div>
+<div class="arrow">↓ <span class="lbl">bytes, up to 10 MiB</span></div>
+<div class="node"><b>Agent service</b><small>Validates image and PDF headers or UTF-8 CSV text, then writes bytes to private storage.</small></div>
+<div class="arrow">↓ <span class="lbl">message with upload IDs</span></div>
+<div class="node outer"><b>Outer loop</b><small>Sees a file's name, type and size, and never its raw contents.</small></div>
+<div class="arrow">↓ <span class="lbl">start, steer or answer command</span></div>
+<div class="node inner"><b>Inner loop</b><small>Reads only files assigned to the task. Images are inspected via <code>upload_inspect</code> in a separate no-tools model call.</small></div>
+</div></div>
+<p>A CSV must have a <code>.csv</code> name and UTF-8 text without NUL bytes; SVG uploads are refused because SVG can execute scripts. Both outer and inner prompts treat file names and contents strictly as untrusted data.</p></section>
+<section><h2>Where things live</h2>
+<div class="card"><table class="tall"><tr><th>Thing</th><th>Where</th></tr>
+<tr><td>Metadata, versions and links</td><td>Postgres (<code>results</code> and <code>uploads</code> collections)</td></tr>
+<tr><td>Attached files and saved result bytes</td><td>Private S3 bucket (<code>state/s3</code>) on AWS, or local directory (<code>state/localfs</code>) in development, under user-scoped <code>artifacts/</code> prefixes</td></tr>
+<tr><td>Task control &amp; discovery rows</td><td>References only; large bytes stay in S3/localfs and private history blocks</td></tr>
+</table>
+<p class="note">Files are served through the authenticated API with <code>Content-Disposition: attachment</code> and a sandboxed CSP header so untrusted bytes never execute in the app origin.</p></div></section>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state/results.go</code> · <code>core/internal/state/records/results.go</code> · <code>core/internal/state/records/tasks.go</code> · <code>core/internal/state/records/conversation.go</code> · <code>core/internal/state/uploads.go</code> · <code>core/internal/state/artifacts.go</code> · <code>core/internal/state/s3/s3.go</code> · <code>core/internal/state/localfs/localfs.go</code> · <code>core/internal/agent/results.go</code> · <code>core/internal/agent/uploads.go</code> · <code>core/internal/agent/inspect.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/api/library.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/runner.go</code> · <code>web/src/components/chat/Parts.tsx</code></p></details>
+</body>
+</html>
