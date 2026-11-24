@@ -28,11 +28,12 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>nori</string>
+				<string>com.googleusercontent.apps.8273801370-im0dvqnf5v60e9djiba88uuvo5n52g9g</string>
 			</array>
 		</dict>
 	</array>
 	<key>GOOGLE_OAUTH_CLIENT_ID</key>
-	<string>REPLACE_WITH_IOS_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com</string>
+	<string>8273801370-im0dvqnf5v60e9djiba88uuvo5n52g9g.apps.googleusercontent.com</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
