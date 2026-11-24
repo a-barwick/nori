@@ -13,7 +13,7 @@
 <div class="card"><div class="states"><span class="state">Created</span><span class="state-arrow">→</span><span class="state">Checked</span><span class="state-arrow">→</span><span class="state">Reported</span><span class="state-arrow">→</span><span class="state run">Delivered</span></div>
 <p class="note" style="margin-top:12px">These are separate timestamps on one record. For “Draft the Q3 launch brief”, the task saves the result, the completion check verifies its evidence, an outer reply links it, and the client reports showing that reply.</p></div>
 <section><h2>What a result records</h2>
-<ul class="pts"><li>A stable ID, and its kind: an answer, a file, an image or a link.</li><li>The task that created it, and the instruction revision it answers.</li><li>The saved tool results its answer cites, and anything left unmet.</li><li>A saved artifact counts as checked only when the answer cites it.</li></ul></section>
+<ul class="pts"><li>A stable ID, and its kind: an answer, a file, a screenshot or a link.</li><li>The task that created it, and the instruction revision it answers.</li><li>The saved tool results its answer cites, and anything left unmet.</li><li>A saved artifact counts as checked only when the answer cites it.</li></ul></section>
 <section><h2>Finding and revising it later</h2>
 <div class="card">
 <p><span class="say me">Show me that Q3 brief.</span> <span class="note">The outer loop sees up to 20 recent results and displays one with <code>show_result</code> without starting a task.</span></p>
@@ -26,13 +26,13 @@
 <div class="card"><div class="flow">
 <div class="node"><b>Client / host app</b><small>Uploads a file with a stable UUID before sending the message. Retrying stores one copy.</small></div>
 <div class="arrow">↓ <span class="lbl">bytes, up to 10 MiB</span></div>
-<div class="node"><b>Agent service</b><small>Validates image and PDF headers or UTF-8 CSV text, then writes bytes to private storage.</small></div>
+<div class="node"><b>Agent service</b><small>Validates image and PDF headers or UTF-8 text (CSV, ICS, Markdown, plain text), then writes bytes to private storage.</small></div>
 <div class="arrow">↓ <span class="lbl">message with upload IDs</span></div>
 <div class="node outer"><b>Outer loop</b><small>Sees a file's name, type and size, and never its raw contents.</small></div>
 <div class="arrow">↓ <span class="lbl">start, steer or answer command</span></div>
 <div class="node inner"><b>Inner loop</b><small>Reads only files assigned to the task. Images are inspected via <code>upload_inspect</code> in a separate no-tools model call.</small></div>
 </div></div>
-<p>A CSV must have a <code>.csv</code> name and UTF-8 text without NUL bytes; SVG uploads are refused because SVG can execute scripts. Both outer and inner prompts treat file names and contents strictly as untrusted data.</p></section>
+<p>Text uploads (<code>.csv</code>, <code>.ics</code>, <code>.md</code>/<code>.markdown</code>, <code>.txt</code>) must be valid UTF-8 without NUL bytes; SVG uploads are refused because SVG can execute scripts. Both outer and inner prompts treat file names and contents strictly as untrusted data.</p></section>
 <section><h2>Where things live</h2>
 <div class="card"><table class="tall"><tr><th>Thing</th><th>Where</th></tr>
 <tr><td>Metadata, versions and links</td><td>Postgres (<code>results</code> and <code>uploads</code> collections)</td></tr>

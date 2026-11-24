@@ -10,7 +10,7 @@
 <body>
 <h1>Code map</h1>
 <p class="lede">Where to look when you want to read or change something across the Go engine, the host app adapter, contract suite and test workbench.</p>
-<p>Go code lives under <span class="mono">core/</span>, the headless the host app Fetch adapter under <span class="mono">integrations/embed/</span>, shared JSON Schemas under <span class="mono">contracts/assistant/</span>, and the local test workbench under <span class="mono">web/src/</span>.
+<p>Go code lives under <span class="mono">core/</span>, the headless host app Fetch adapter under <span class="mono">integrations/embed/</span>, shared JSON Schemas under <span class="mono">contracts/assistant/</span>, the local test workbench under <span class="mono">web/src/</span>, the native SwiftUI iOS client under <span class="mono">ios/</span>, and the multi-day persona simulation suite under <span class="mono">sim/personas/</span> and <span class="mono">scripts/persona-sim/</span>.
   Dependencies run in one direction: entrypoints build an <span class="mono">app</span> via <span class="mono">platform</span>, whose <span class="mono">api</span> routes and <span class="mono">worker</span> pool call <span class="mono">conversation</span>, <span class="mono">task</span>, <span class="mono">permissions</span>, <span class="mono">scheduler</span>, <span class="mono">connections</span> and <span class="mono">connectors/mcp</span> over <span class="mono">state</span>.</p>
 <p>Infrastructure sits behind narrow contracts: <span class="mono">state/postgres</span> provides transactional JSONB records plus <span class="mono">nori_task_leases</span>, <span class="mono">nori_user_wakes</span> and <span class="mono">LISTEN/NOTIFY</span>, <span class="mono">wake</span> wraps durable wake/repair helpers, and <span class="mono">secret</span> handles AWS Secrets Manager and envelope-encrypted Postgres rows.</p>
   <div class="card">
@@ -37,25 +37,29 @@
           <tr><td>Durable Postgres wake dispatch and repair helpers</td><td><span class="mono">core/internal/wake/</span></td></tr>
           <tr><td>AWS Secrets Manager and envelope-encrypted Postgres credentials</td><td><span class="mono">core/internal/secret/, secret/awssecrets/, secret/rowstore/</span></td></tr>
           <tr><td>OpenTelemetry, Sentry and Arize export with privacy allowlists</td><td><span class="mono">core/internal/observability/</span></td></tr>
+          <tr><td>Deterministic simulation test suite and invariant checkers</td><td><span class="mono">core/internal/sim/</span></td></tr>
           <tr><td>Distroless Dockerfile, AWS adapter guide and local Postgres Compose</td><td><span class="mono">core/infrastructure/</span></td></tr>
-          <tr><th colspan="2">The host app integration &amp; contracts</th></tr>
-          <tr><td>Headless the host app Fetch handler (<code>/api/nori/*</code>) and integration guide</td><td><span class="mono">integrations/embed/adapter.mjs, integrations/embed/README.md</span></td></tr>
+          <tr><th colspan="2">Host app integration, contracts &amp; simulation</th></tr>
+          <tr><td>Headless host app Fetch handler (<code>/api/nori/*</code>) and integration guide</td><td><span class="mono">integrations/embed/adapter.mjs, integrations/embed/README.md</span></td></tr>
           <tr><td>JSON Schema 2020-12 definitions, fixtures and live HTTP scenarios</td><td><span class="mono">contracts/assistant/</span></td></tr>
-          <tr><th colspan="2">Test workbench <span class="mono">web/src/</span></th></tr>
-          <tr><td>Assistant thread, Work, Library, Routines, Goals, Apps/MCP and Settings screens</td><td><span class="mono">web/src/app/(nori)/, web/src/components/assistant/, components/runtime/, components/chat/</span></td></tr>
+          <tr><td>10-persona × 30-day evaluation fixtures, runner and grader</td><td><span class="mono">sim/personas/, scripts/persona-sim/</span></td></tr>
+          <tr><th colspan="2">Test workbench <span class="mono">web/src/</span> &amp; iOS client <span class="mono">ios/</span></th></tr>
+          <tr><td>Assistant thread, Work, Library, Memory, Automations, Goals, Apps and Settings screens</td><td><span class="mono">web/src/app/(nori)/, web/src/components/assistant/, components/runtime/, components/chat/</span></td></tr>
           <tr><td>Runtime state hook, SSE stream, OIDC auth and server forwarding</td><td><span class="mono">web/src/lib/runtime/</span></td></tr>
           <tr><td>Generated assistant contract TypeScript types</td><td><span class="mono">web/src/lib/contracts/assistant.ts</span></td></tr>
           <tr><td>Browser/server privacy filters and <code>/sentry-tunnel</code> route</td><td><span class="mono">web/src/lib/observability/, web/src/app/sentry-tunnel/route.ts</span></td></tr>
           <tr><td>Theme tokens and Nori mark (<a href="theme.html">Theme</a>)</td><td><span class="mono">web/src/app/globals.css, web/src/components/mark/NoriMark.tsx</span></td></tr>
+          <tr><td>Native SwiftUI iOS client (<code>NoriApp</code>, <code>NoriKit</code>)</td><td><span class="mono">ios/Nori.xcodeproj, ios/NoriApp/, ios/NoriKit/</span></td></tr>
     </table>
   </div>
   <div class="card">
-    <h3 style="margin-top:0">The four binaries <span class="mono" style="font-size:11px;color:#8a8268">core/cmd/</span></h3>
+    <h3 style="margin-top:0">The five binaries <span class="mono" style="font-size:11px;color:#8a8268">core/cmd/</span></h3>
     <ul class="pts" style="margin-bottom:0">
       <li><code>nori</code> — Hosted service binary (<code>--role=all|api|worker</code>; HS256 service-authenticated HTTP API and/or unified Postgres-native worker pool, AWS adapters by default).</li>
       <li><code>nori-local</code> — Loopback development binary running both the HTTP API and the unified Postgres-native worker pool in one process.</li>
       <li><code>nori-user</code> — CLI for provisioning and inspecting user records in Postgres.</li>
       <li><code>contracts-check</code> — Strict validator for <code>contracts/assistant/</code> JSON Schemas, Go round-trip decoding, generated TypeScript types and live HTTP scenarios.</li>
+      <li><code>nori-sim</code> — Virtual-clock simulation server used by the multi-day persona simulation and grading suite.</li>
     </ul>
   </div>
 

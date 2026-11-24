@@ -18,7 +18,7 @@
 <tr><td>Host integration</td><td>The host app mounts <code>integrations/embed/adapter.mjs</code> and mints HS256 service tokens</td><td>Slim Next.js workbench on <code>:3210</code> or the host app demo stack</td></tr>
 </table></div>
 <div class="grid2">
-<div class="card tight"><p class="keyline">Authentication boundary</p><p class="note">Hosted deployments verify OIDC ID tokens (<code>NORI_OIDC_ISSUER</code>, <code>NORI_OIDC_AUDIENCE</code>) or the host app's verified session at the host layer, resolve the user, and call the Go API with 1-minute HS256 service tokens (<code>nori-service</code>). Only <code>/healthz</code> is unauthenticated.</p></div>
+<div class="card tight"><p class="keyline">Authentication boundary</p><p class="note">Hosted deployments verify OIDC ID tokens (<code>NORI_OIDC_ISSUER</code>, <code>NORI_OIDC_AUDIENCE</code>) or the host app's verified session at the host layer, resolve the user, and call the Go API with 1-minute HS256 service tokens (<code>nori-service</code>). Only <code>/healthz</code> and <code>/readyz</code> are unauthenticated.</p></div>
 <div class="card tight"><p class="keyline">Graceful drain &amp; split roles</p><p class="note">Run <code>--role=api</code> and <code>--role=worker</code> separately to scale horizontally. On <code>SIGTERM</code>, workers stop claiming new leases, drain in-flight runners up to 25 seconds to a checkpoint boundary, and release leases immediately for another replica.</p></div>
 </div>
 <section><h2>Secrets and credentials</h2>

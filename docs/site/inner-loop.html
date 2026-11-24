@@ -11,7 +11,7 @@
 <h1>Inner loop</h1>
 <p class="lede">Each task calls a model, runs built-in or MCP tools through the permission-checked executor and saves results for the next step.</p>
 <div class="card"><div class="flow">
-<div class="node inner"><b>Task workflow</b><small>Reads commands in order and checks the shared budget before calling the model.</small></div>
+<div class="node inner"><b>Task runner</b><small>Reads commands in order and checks the shared budget before calling the model.</small></div>
 <div class="arrow">↓ <span class="lbl">“Pull the latest Q3 revenue summary” and saved history</span></div>
 <div class="node inner"><b>Inner model</b><small>Returns tool calls, a question, a work request or a completion proposal.</small></div>
 <div class="arrow">↓ <span class="lbl">proposed calls</span></div>
@@ -20,7 +20,7 @@
 <div class="node computer"><b>Tool executor &amp; MCP</b><small>Runs built-in runtime tools or calls connected MCP servers and returns evidence.</small></div>
 <div class="arrow">↓ <span class="lbl">tool result</span></div>
 <div class="node"><b>Runtime</b><small>Saves results for the next step, or publishes the checked outcome after cleanup.</small></div>
-<div class="loopback">↺ saved results return to the task workflow</div>
+<div class="loopback">↺ saved results return to the task runner</div>
 </div></div>
 <p>See <a href="completion.html">Finishing a task</a> for the checks, and <a href="tasks.html">Task lifecycle</a> for the states.</p>
 <section><h2>When instructions change</h2>

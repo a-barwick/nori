@@ -12,7 +12,7 @@
 <p class="lede">The slim Next.js test workbench talks to its own server proxy, which checks authentication and origin before calling the Go agent service.</p>
 <section><h2>Request path</h2>
 <div class="card"><div class="flow">
-<div class="node"><b>React client</b><small><code>NoriApp</code> and screen components use <code>useRuntime</code> and assistant API helpers for requests and saved state.</small></div>
+<div class="node"><b>React client</b><small><code>ChatScreen</code> and screen components use <code>useRuntime</code> and assistant API helpers for requests and saved state.</small></div>
 <div class="arrow">↓ <span class="lbl">same-origin /api/ requests and an SSE stream</span></div>
 <div class="node"><b>Next.js server</b><small>Verifies OIDC (on AWS) or local loopback dev identity, checks origin and attaches an HS256 service token.</small></div>
 <div class="arrow">↓ <span class="lbl">/users/{id}/... with service credentials</span></div>
@@ -72,9 +72,9 @@
 </ul>
 <h3>Sign-in and limits</h3>
 <ul class="pts">
-<li>Hosted AWS deployments verify OIDC ID tokens via <code>jose</code> JWKS discovery (<code>NORI_OIDC_ISSUER</code>, <code>NORI_OIDC_AUDIENCE</code>, <code>NORI_OIDC_COOKIE</code>) and resolve the verified email to a provisioned Nori user. Unsigned identity headers are never accepted.</li>
+<li>Hosted AWS deployments verify OIDC ID tokens via <code>jose</code> JWKS discovery (<code>NORI_OIDC_ISSUER</code>, <code>NORI_OIDC_AUDIENCE</code>, <code>NORI_OIDC_COOKIE</code>) by default, and still retain <code>NORI_AUTH_PROVIDER=iap</code> for IAP-fronted deployments. Unsigned identity headers are never accepted.</li>
 <li>POST routes require a matching <code>Origin</code>, and reads require same-origin fetches. Browser credentials are never forwarded to the agent service; the server mints 1-minute HS256 service tokens.</li>
-<li>The hosted proxy allows JSON bodies up to 128,000 characters and waits up to 145 seconds; streams and uploads wait up to 170 seconds.</li>
+<li>The hosted proxy allows JSON bodies up to 128,000 UTF-8 bytes (64,000 bytes in local mode) and waits up to 145 seconds; streams and uploads wait up to 170 seconds.</li>
 <li>On local loopback development, the local identity flow passes and proxies to <code>NORI_LOCAL_AGENT_URL</code>.</li>
 <li><code>/api/health</code> is the only API route without user authentication.</li>
 </ul>

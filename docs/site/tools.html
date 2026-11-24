@@ -28,7 +28,7 @@
 <tr><td><code>upload_inspect</code></td><td>Worker (no-tools model)</td><td>Read</td><td>Text answer to one question about an attached image.</td></tr>
 <tr><td><code>result_link</code></td><td>Worker</td><td>Control</td><td>The ID of a <a href="results.html">saved result</a> linking to a URL.</td></tr>
 <tr><td><code>results_find</code>, <code>result_read</code></td><td>Worker</td><td>Read</td><td>Earlier saved results and tasks matching a query or ID.</td></tr>
-<tr><td><code>memory_read</code></td><td>Worker</td><td>Read</td><td>Saved <a href="memory.html">memories</a> and the older-turn summary.</td></tr>
+<tr><td><code>memory_read</code>, <code>memory_search</code>, <code>memory_get</code></td><td>Worker</td><td>Read</td><td>Saved <a href="memory.html">memories</a>, full-text memory search, line-range reads and the older-turn summary.</td></tr>
 <tr><td><code>conversation_read</code>, <code>conversation_find</code></td><td>Worker</td><td>Read</td><td>An earlier message by ID or matching earlier chat messages.</td></tr>
 <tr><td><code>task_history_read</code>, <code>operation_read</code></td><td>Worker</td><td>Read</td><td>Earlier transcript blocks or a specific tool call's saved output.</td></tr>
 <tr><td><code>capability_load</code></td><td>Worker</td><td>Read</td><td>Adds optional <a href="catalog.html">capability</a> tool definitions to subsequent turns.</td></tr>

@@ -29,7 +29,7 @@
 <section><h2>What stays saved</h2>
 <ul class="pts">
 <li>The runtime saves the attempt as <code>error</code> and publishes the error text as the assistant message for the turn.</li>
-<li>The runtime makes no second outer model call in that attempt. The runtime accepts no dispatch, steer, answer or stop commands from the attempt.</li>
+<li>The runtime makes no second outer model call in that attempt (except a single reduced-context retry after a context-window overflow, dropping recent turns). The runtime accepts no dispatch, steer, answer or stop commands from a failed attempt.</li>
 <li>A user message in the batch stays unresolved. The next user turn includes that message again as an input.</li>
 <li>After a request error or unusable response, for each task event in the batch, the runtime re-reads the task after the failed call and appends its current saved status. The text quotes saved output for a finished task and copies the open question for a waiting task.</li>
 <li>The runtime writes the usage record before it sends the provider request. A failed request can leave the cost in that record as unknown.</li>

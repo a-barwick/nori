@@ -14,19 +14,21 @@
 <tr><td>One persistent thread per user</td><td>Chat, delegate and revisit past work in one continuous assistant thread inside a host app.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Outer loop</td></tr>
 <tr><td>Concurrent durable tasks</td><td>Run independent background tasks on Postgres-native workers while conversation stays responsive.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Inner loop</td></tr>
 <tr><td>Prompt-injection provenance guard</td><td>Verify independent dispatches and steers with a second model call that sees only user messages and runtime IDs.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Safety</td></tr>
-<tr><td>Memory you can inspect and correct</td><td><a href="memory.html">Save, update and forget</a> explicit memories, with quote-verified compaction of older turns.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Memory</td></tr>
+<tr><td>Memory you can inspect and correct</td><td><a href="memory.html">Three-tier memory</a> (Curated Core, Daily Log, Working Memory) with session-idle extraction, AutoDream consolidation and quote-verified compaction.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Memory</td></tr>
 <tr><td>Ports and MCP tool bus</td><td>Connect enterprise MCP servers and provider-agnostic connections without coupling the core to vendor OAuth apps.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Extensions</td></tr>
 <tr><td>Typed permissions and approvals</td><td>Enforce deny-wins rules and action-digest-bound approval cards before sensitive or unknown-effect calls run.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Authority</td></tr>
 <tr><td>Automations, goals and inbox</td><td>Schedule recurring work with deterministic occurrences and deliver outcomes to the in-app inbox.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Scheduler</td></tr>
 <tr><td>Deliverables with evidence</td><td>Save versioned results and verify cited tool evidence before marking a task complete.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Completion</td></tr>
-<tr><td>Headless the host app embedding</td><td>Mount Nori under <code>/api/nori/*</code> behind the host app's session auth with strict per-user isolation.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Integration</td></tr>
+<tr><td>Headless host app embedding</td><td>Mount Nori under <code>/api/nori/*</code> behind the host app's session auth with strict per-user isolation.</td><td class="nw"><span class="dot built"></span>Working</td><td class="nw">Integration</td></tr>
 </table></div>
 <section><h2>How we measure progress</h2>
-<p>Progress is verified by automated contract checks, deterministic simulations and live multi-user integration gates rather than ad-hoc manual runs.</p>
+<p>Progress is verified by automated contract checks, deterministic simulations, multi-day persona evaluations and live multi-user integration gates rather than ad-hoc manual runs.</p>
 <div class="card"><table class="tall"><tr><th>Check</th><th>What it proves</th></tr>
 <tr><td><code>go run ./cmd/contracts-check -strict</code></td><td>Validates every JSON Schema 2020-12 contract under <code>contracts/assistant/</code>, round-trips every fixture through strict Go decoders, checks generated TypeScript types and runs live HTTP scenarios.</td></tr>
 <tr><td><code>make check</code></td><td>Runs <code>go vet</code>, <code>gofmt</code>, Go unit tests, strict contract validation, TypeScript typecheck and ESLint across <code>core/</code> and <code>web/</code>.</td></tr>
-<tr><td>The host app environment gate</td><td>Exercises the full message, MCP read/write approval and result flow across two distinct authorized identities, including SSE reconnects and strict cross-user isolation (404 on another user's resources).</td></tr>
+<tr><td><code>make sim-deep</code> &amp; <code>make sim-pg</code></td><td>Runs the deterministic simulation test suite (<code>core/internal/sim/</code>) checking invariants under crashes, races, restarts and Postgres concurrency.</td></tr>
+<tr><td><code>make sim-personas-smoke</code> / <code>-memory</code> / <code>-full</code></td><td>Drives the 10-persona × 30-day real-LLM simulation and grading suite (<code>sim/personas/</code>, <code>scripts/persona-sim/</code>, <code>core/cmd/nori-sim/</code>) against virtual time.</td></tr>
+<tr><td>Host app environment gate</td><td>Exercises the full message, MCP read/write approval and result flow across two distinct authorized identities, including SSE reconnects and strict cross-user isolation (404 on another user's resources).</td></tr>
 </table></div>
 </section>
 <details class="more"><summary>Ten technical capabilities</summary>
@@ -34,7 +36,7 @@
 <tr><td>Responsive chat, durable tasks</td><td>Conversation stays available while Postgres-native workers run with fenced leases and explicit checkpoints.</td></tr>
 <tr><td>Explicit task state</td><td>Tasks, commands, revisions, results and blockers are persisted in Postgres.</td></tr>
 <tr><td>Separate memory stores</td><td>Explicit user memory, compacted summaries, active work and permission rules stay separate with clear provenance.</td></tr>
-<tr><td>Bounded context assembly</td><td>Outer turns stay under 40 KiB; long task transcripts replace older tool outputs with retrievable operation IDs.</td></tr>
+<tr><td>Bounded context assembly</td><td>Outer turns stay under 96 KiB reply budget (128 KiB input cap); long task transcripts replace older tool outputs with retrievable operation IDs.</td></tr>
 <tr><td>Ports and MCP tool bus</td><td>Versioned extension definitions pinned by digest, remote/local MCP clients and a provider-agnostic connections port.</td></tr>
 <tr><td>Permission enforcement</td><td>Uniform deny-wins rule evaluation and action-digest-bound approvals across all tools and compose scripts.</td></tr>
 <tr><td>Capability discovery</td><td>Task instructions list capabilities and availability; optional capabilities load tool schemas on demand.</td></tr>

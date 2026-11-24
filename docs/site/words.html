@@ -26,7 +26,7 @@
 <tr><td>Log event</td><td>A numbered entry in Postgres's event log naming a message, task, result or read position that changed. See <a href="api.html#the-event-stream">Service API</a>.</td></tr>
 <tr><td>Inbox</td><td>Either the ordered Postgres queue of pending inputs for the outer loop (<code>conversation_inputs</code>), or the user-facing in-app inbox (<code>/v1/inbox</code>) for automation deliveries.</td></tr>
 <tr><td>Accepted</td><td>Committed to Postgres. It does not mean the downstream worker has applied it yet.</td></tr>
-<tr><td>Applied</td><td>A task workflow has read the command by position and incorporated it into its transcript.</td></tr>
+<tr><td>Applied</td><td>A task runner (<code>task.Runner</code>) has read the command by position and incorporated it into its transcript.</td></tr>
 <tr><td>Revision</td><td>An integer that increments on edits or task instruction changes so stale updates and approvals are caught with HTTP 409.</td></tr>
 <tr><td>Position</td><td>Where a command sits in a task's ordered list, or where an SSE client sits in the event log.</td></tr>
 <tr><td>Lease and fence</td><td>How one outer turn claims a user's conversation in Postgres, and how a stale turn is prevented from publishing.</td></tr>
@@ -44,6 +44,8 @@
 <tr><td>Transcript</td><td>The ordered messages, tool calls, tool results and provider state of one task, stored as private history blocks in Postgres.</td></tr>
 <tr><td>Trace and span</td><td>A span is one timed operation (such as a model or tool call); a trace links spans sharing a W3C trace ID. See <a href="observability.html">Observability</a>.</td></tr>
 <tr><td>Pause &amp; Stop</td><td>Pause blocks new task admission system-wide while chat stays available; Stop cancels one task and its subtasks.</td></tr>
+<tr><td>AutoDream</td><td>Periodic memory consolidation (<code>dream_consolidate</code>) that distills daily logs and working memory into curated Core memory. See <a href="memory.html">Memory and context</a>.</td></tr>
+<tr><td><code>nori-sim</code></td><td>Virtual-clock simulation binary (<code>core/cmd/nori-sim</code>) used by the 10-persona × 30-day evaluation suite (<code>sim/personas/</code>, <code>scripts/persona-sim/</code>).</td></tr>
 </table></div>
 </body>
 </html>

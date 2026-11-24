@@ -37,11 +37,11 @@
 <table class="tall"><tr><th>Transcript type</th><th>Saved JSON</th></tr>
 <tr><td>Message</td><td><code>{"parts": [...], "role": "user" | "model"}</code></td></tr>
 <tr><td>Text</td><td><code>{"text": "..."}</code></td></tr>
-<tr><td>Tool call</td><td><code>{"functionCall": {"id": "...", "args": {...}, "name": "..."}}</code></td></tr>
-<tr><td>Tool result</td><td><code>{"functionResponse": {"id": "...", "name": "...", "response": {...}}}</code></td></tr>
-<tr><td>Provider state</td><td><code>{"thought": true, "thoughtSignature": "..."}</code>, where the signature is base64 of <code>nori.responses:</code> followed by the output items the Responses API returned.</td></tr>
+<tr><td>Tool call</td><td><code>{"tool_call": {"id": "...", "name": "...", "args": {...}}}</code></td></tr>
+<tr><td>Tool result</td><td><code>{"tool_result": {"id": "...", "name": "...", "response": {...}}}</code></td></tr>
+<tr><td>Provider state</td><td><code>{"provider": {"format": "...", "data": "&lt;base64&gt;"}}</code>, where <code>format</code> is <code>nori.responses</code> (OpenRouter), <code>nori.openai.responses</code> (direct OpenAI) or <code>nori.gateway.responses</code> (gateway).</td></tr>
 </table>
-<p>The field names stay compatible with historical transcript blocks so retained task histories read and replay cleanly across worker builds.</p>
+<p><code>task/history.go</code> marshals <code>transcript.Message</code> directly so saved transcript blocks stay provider-neutral and replay cleanly across worker builds.</p>
 <p>The Responses adapter (<code>core/internal/agent/responses/</code>) targets direct OpenAI (<code>gpt-6.1-terra</code>), OpenRouter (<code>openai/gpt-6.1-terra</code>) or a deployment-owned model gateway (<code>core/internal/modelgateway/</code>). It replays a turn verbatim when it carries provider state the adapter wrote, and rebuilds other turns from their text, tool calls and tool results.</p>
 </details>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/transcript/</code> · <code>core/internal/agent/model.go</code> · <code>core/internal/agent/responses/</code> · <code>core/internal/modelgateway/http.go</code> · <code>core/internal/usage/openai.go</code> · <code>core/internal/task/history.go</code> · <code>core/internal/task/context.go</code> · <code>core/internal/agent/steps.go</code></p></details>

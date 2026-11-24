@@ -18,10 +18,10 @@
 <div class="grid2"><a class="card tight go" href="theme.html"><b>Theme</b><span>Colors, type, tokens and the mark.</span></a><a class="card tight go" href="frontend.html"><b>Workbench architecture</b><span>Components, requests, live updates and telemetry.</span></a></div>
 <section><h2>The screens</h2>
 <div class="card"><table class="tall"><tr><th>Part</th><th>What it shows</th><th>Component</th></tr>
-<tr><td>Header &amp; shell</td><td>Nori's mark and status, navigation across Chat, Work, Library, Routines, Goals, Apps/MCP and Settings, debug toggle and Activity drawer.</td><td><code>AppShell</code></td></tr>
+<tr><td>Header &amp; shell</td><td>Nori's mark and status, navigation across Chat, Work, Library, Memory, Automations, Goals, Apps and Settings (debug toggle lives in <code>SettingsScreen</code>).</td><td><code>AppShell</code></td></tr>
 <tr><td>Thread</td><td>Saved messages, documents, time separators, older-message loading and one status line.</td><td><code>Thread</code></td></tr>
 <tr><td>Composer</td><td>A text box, Attach for up to 10 files, Send and a new-message count.</td><td><code>RuntimeComposer</code></td></tr>
-<tr><td>Activity panel</td><td>Live task status, steers, durable questions, typed approval cards and Stop controls. <code>⌘.</code> or <code>Ctrl+.</code> toggles it.</td><td><code>TaskPanel</code>, <code>InteractionCard</code></td></tr>
+<tr><td>Activity panel</td><td>Live task status, steers, durable questions and Stop controls, toggled from <code>ChatScreen</code> via <code>⌘.</code> or <code>Ctrl+.</code>. Typed approval cards and budget-limit Continue actions render in Work.</td><td><code>TaskPanel</code> (approvals: <code>WorkScreen</code>, <code>InteractionCard</code>)</td></tr>
 <tr><td>Reading view</td><td>Full-screen view of a saved reply or result, with Download as Markdown and Back to chat.</td><td><code>DocumentViewer</code></td></tr>
 </table></div>
 <div class="shots">
@@ -32,19 +32,19 @@
 <section><h2>Status and task labels</h2>
 <div class="card"><table class="tall"><tr><th>Header status</th><th>When</th></tr>
 <tr><td>Connecting…</td><td>The first session request is loading.</td></tr>
+<tr><td>Reconnecting…</td><td>The SSE stream failed repeatedly and is backing off to reconnect.</td></tr>
 <tr><td>Disconnected</td><td>A request failed or there is no session. Send stays disabled until a first session loads.</td></tr>
-<tr><td>Waiting for you</td><td>A task has an open question or pending approval interaction.</td></tr>
+<tr><td>N thing(s) need(s) you</td><td>One or more tasks have an open question or pending approval interaction.</td></tr>
 <tr><td>Working…</td><td>A message, turn, task or command is in progress.</td></tr>
 <tr><td>Ready when you are</td><td>Nothing is in progress.</td></tr>
 </table></div>
 <div class="card"><table class="tall"><tr><th>Task label</th><th>Task state</th><th>Controls</th></tr>
-<tr><td>Working on your task</td><td>Running</td><td>Stop task, Send task update</td></tr>
+<tr><td>Working on your task / Running a long job</td><td>Running</td><td>Stop task, Send task update</td></tr>
 <tr><td>Waiting for your answer</td><td>Running with an input question</td><td>Answer question, Stop task, Send task update</td></tr>
-<tr><td>Waiting for your approval</td><td>Running with a typed approval interaction</td><td>Approve (with digest), Decline, Stop task, Send task update</td></tr>
 <tr><td>Asking for separate work</td><td>Running with a work request</td><td>Answer question, Stop task, Send task update</td></tr>
-<tr><td>Answer accepted, Decision saved, Waiting for its subtasks</td><td>Running, and the interaction is resolved</td><td>Stop task, Send task update</td></tr>
-<tr><td>Stopping…</td><td>Running, and Stop was requested</td><td>None until the agent service confirms</td></tr>
-<tr><td>Completed, Failed, Stopped</td><td>Finished (a budget-stopped task offers Continue in Work to start a new linked task)</td><td>Continue (when budget-stopped)</td></tr>
+<tr><td>Answer accepted, Waiting for its subtasks</td><td>Running, and the question or subtask dispatch is resolved</td><td>Stop task, Send task update</td></tr>
+<tr><td>Stopping…, Stopping owned work…, Finishing and cleaning up…, Cleanup pending</td><td>Winding down or cleaning up after Stop or completion</td><td>None until the agent service confirms</td></tr>
+<tr><td>Completed, Incomplete, Failed, Stopped</td><td>Finished (typed approval cards and budget-stopped Continue actions live in Work)</td><td>Continue in <code>WorkScreen</code> (when budget-stopped)</td></tr>
 </table></div>
 <p>The thread status line also indicates when task execution is paused. Sending a steer while an approval is pending supersedes that approval card. See <a href="permissions.html">Permissions and approvals</a>.</p>
 </section>

@@ -38,7 +38,7 @@
 <tr data-flow="tool-stop"><td><code>stop(run_id)</code></td><td>Stop one task and its subtasks.</td></tr>
 <tr><td><code>hold(task_id, question)</code></td><td>Hold a conversational question until that task's result arrives.</td></tr>
 <tr><td><code>show_result(result_id)</code></td><td>Show a <a href="results.html">saved result</a> without starting a task.</td></tr>
-<tr><td><code>remember(text, about, replaces)</code>, <code>forget(memory_id)</code></td><td>Save, update or delete an explicit <a href="memory.html">memory</a>.</td></tr>
+<tr><td><code>remember(text, about, section, replaces)</code>, <code>forget(memory_id)</code></td><td>Save, update or delete an explicit <a href="memory.html">memory</a>.</td></tr>
 </table><p class="note">A plain reply has no tool call. There is no <code>continue</code> tool; tasks that hit their budget stop incomplete and can be continued as a linked new task from Work.</p></div></section>
 <section><h2>Inner loop control tools</h2>
 <p>Each must be the only call in its response.</p>

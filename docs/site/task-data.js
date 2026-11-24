@@ -56,9 +56,9 @@
 
     start: [
       { from: 'Outer loop', to: 'Postgres', call: 'runs/{id} + nori_task_leases', source: CODE.state, note: 'This example starts from an outer-loop dispatch; the runnable lease row commits in the same transaction.',
-        saved: run({ request: REQUEST, protocol_version: 2, revision: 1, position: 1, started_at: TIME }) },
-      { from: 'Worker pool', to: 'Postgres', call: 'ClaimRunnableTasks + ClaimTaskLease', source: 'core/internal/worker/pool.go',
-        saved: { task_id: TASK, owner: 'worker-…', fence: 1, status: 'runnable' } },
+        saved: run({ request: REQUEST, revision: 1, position: 1, started_at: TIME }) },
+      { from: 'Worker pool', to: 'Postgres', call: 'ClaimTask + AcquireTaskControl', source: 'core/internal/worker/pool.go',
+        saved: { run_id: TASK, owner: 'worker-…', fence: 1, runnable: true } },
       { from: 'Runner', to: 'Inner model', call: 'next model call', source: CODE.runner, request: { role: 'user', parts: [{ text: REQUEST }] } },
     ],
     steer: [
@@ -85,8 +85,8 @@
 
     'move-ask': askFlow,
     'move-budget': [
-      { from: 'Runner', to: 'Postgres', call: 'runs/{id}', source: CODE.runner, note: 'Checked between model calls. Reaching the spending ceiling ends the task incomplete with no extra model call or continue question; the user can start a linked continuation task from Work.',
-        saved: run({ status: 'failed', expected_incomplete: true, spent_usd: 1.0021, budget_usd: 1, error: 'Reached the $1.00 spending limit before finishing.', finished_at: TIME }) },
+      { from: 'Runner', to: 'Postgres', call: 'runs/{id}', source: CODE.runner, note: 'Checked between model calls. Reaching the spending ceiling ends the task incomplete (expected_incomplete on the publish request) with no extra model call or continue question; the user can start a linked continuation task from Work.',
+        saved: run({ status: 'failed', spent_usd: 1.0021, budget_usd: 1, error: 'Reached the $1.00 spending limit before finishing.', finished_at: TIME }) },
       ...event(`${TASK}-terminal`, 'failure', 2, { reason: 'Reached the $1.00 spending limit before finishing.', operation_refs: ['op-…'] }),
     ],
     'move-done': [

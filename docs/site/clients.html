@@ -9,11 +9,11 @@
 </head>
 <body>
 <h1>The host app and clients</h1>
-<p class="lede">Nori embeds headlessly inside a host app via a zero-dependency Fetch adapter, with a slim Next.js workbench for local development and testing.</p>
+<p class="lede">Nori embeds headlessly inside a host app via a zero-dependency Fetch adapter, with a slim Next.js workbench and a native SwiftUI iOS client.</p>
 <div class="card"><div class="flow">
 <div class="branch">
-<div class="node"><b>The host app (production front-door)</b><small>Mounts <code>integrations/embed/adapter.mjs</code> under <code>/api/nori/*</code> behind the host app's session auth.</small></div>
-<div class="node"><b>Test workbench (<code>web/</code>)</b><small>Local Next.js UI exercising chat, Work, approvals, MCP, automations and library.</small></div>
+<div class="node"><b>Host app (production front-door)</b><small>Mounts <code>integrations/embed/adapter.mjs</code> under <code>/api/nori/*</code> behind the host app's session auth.</small></div>
+<div class="node"><b>Test workbench (<code>web/</code>) &amp; iOS app (<code>ios/</code>)</b><small>Next.js dev workbench and native SwiftUI iOS client exercising chat, Work, approvals, memory, MCP and library.</small></div>
 </div>
 <div class="arrow">↓ <span class="lbl">server-verified user ID + HS256 service token</span></div>
 <div class="node outer"><b>Go agent service (<code>nori</code>)</b><small>Owns conversation turns, task dispatch, permissions, SSE streams and state.</small></div>
@@ -22,11 +22,12 @@
 </div></div>
 <section><h2>Clients</h2>
 <div class="card"><table class="tall"><tr><th>Client</th><th>Role</th><th>Where</th></tr>
-<tr><td>The host app adapter</td><td>Zero-dependency Fetch handler (<code>createNoriHandler</code>) that verifies the host app sessions, maps <code>{issuer, subject}</code> to a provisioned <code>noriUserId</code>, attaches service auth and proxies <code>/api/nori/*</code> to Nori's <code>/users/{id}/v1/*</code> routes.</td><td><code>integrations/embed/adapter.mjs</code>, <a href="api.html#embed-adapter-routes">Service API</a></td></tr>
-<tr><td>Test workbench</td><td>Slim Next.js application for locally exercising the persistent thread, Work/Activity panel, approval cards, MCP servers, automations, goals and library.</td><td><a href="web-client.html">Test workbench</a>, <a href="frontend.html">Workbench architecture</a></td></tr>
+<tr><td>Host app adapter</td><td>Zero-dependency Fetch handler (<code>createNoriHandler</code>) that verifies host app sessions, maps <code>{issuer, subject}</code> to a provisioned <code>noriUserId</code>, attaches service auth and proxies <code>/api/nori/*</code> to Nori's <code>/users/{id}/v1/*</code> routes.</td><td><code>integrations/embed/adapter.mjs</code>, <a href="api.html#the-host-app-adapter-routes">Service API</a></td></tr>
+<tr><td>Test workbench</td><td>Slim Next.js application for locally exercising the persistent thread, Work/Activity panel, approval cards, memory, MCP servers, automations, goals and library.</td><td><a href="web-client.html">Test workbench</a>, <a href="frontend.html">Workbench architecture</a></td></tr>
+<tr><td>iOS client</td><td>Native SwiftUI iOS app (<code>NoriApp</code> + <code>NoriKit</code> with <code>NoriCore</code>, <code>NoriDesign</code> and <code>NoriFeatures</code>) talking to the same user-scoped API and SSE streams.</td><td><code>ios/Nori.xcodeproj</code>, <code>ios/README.md</code></td></tr>
 </table></div>
 </section>
-<section><h2>Headless the host app integration</h2>
+<section><h2>Headless host app integration</h2>
 <p><code>integrations/embed/adapter.mjs</code> lets the host app embed Nori without duplicating agent orchestration or state:</p>
 <ul class="pts">
 <li><b>Identity mapping:</b> the host app supplies <code>verifyIdentity(request)</code> returning <code>{ issuer, subject }</code> and a server-side binding table mapping each identity to a distinct provisioned Nori user ID. Missing sessions return 401; unmapped identities return 403.</li>
