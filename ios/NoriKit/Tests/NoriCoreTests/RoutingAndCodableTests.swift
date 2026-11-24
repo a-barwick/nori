@@ -4,52 +4,43 @@ import Testing
 
 @Suite("Routing, Deep Links & Codable Round-Trips")
 struct RoutingAndCodableTests {
-    @Test("Direct Go Core router prefixes user-scoped routes with /users/{id}/")
+    @Test("Live Core router prefixes user-scoped routes with /users/{id}/")
     func directCoreRouting() throws {
-        let router = try NoriEndpointRouter(profile: .simulatorLocal)
+        let router = NoriEndpointRouter(baseURL: NoriConfig.serverURL)
 
-        let healthURL = try router.unscopedURL(path: "/healthz")
-        #expect(healthURL.absoluteString == "http://127.0.0.1:8088/healthz")
+        let readyURL = try router.unscopedURL(path: "/readyz")
+        #expect(readyURL.absoluteString == "https://nori-core-8273801370.us-central1.run.app/readyz")
 
         let resolveURL = try router.unscopedURL(path: "/api/users/resolve")
-        #expect(resolveURL.absoluteString == "http://127.0.0.1:8088/api/users/resolve")
+        #expect(resolveURL.absoluteString == "https://nori-core-8273801370.us-central1.run.app/api/users/resolve")
 
         let snapshotURL = try router.scopedURL(path: "/v1/snapshot", userID: "usr-42")
-        #expect(snapshotURL.absoluteString == "http://127.0.0.1:8088/users/usr-42/v1/snapshot")
+        #expect(snapshotURL.absoluteString == "https://nori-core-8273801370.us-central1.run.app/users/usr-42/v1/snapshot")
 
         let eventsURL = try router.scopedURL(
             path: "/v1/events",
             userID: "usr-42",
             queryItems: [URLQueryItem(name: "after", value: "12")]
         )
-        #expect(eventsURL.absoluteString == "http://127.0.0.1:8088/users/usr-42/v1/events?after=12")
+        #expect(eventsURL.absoluteString == "https://nori-core-8273801370.us-central1.run.app/users/usr-42/v1/events?after=12")
 
         let turnURL = try router.scopedURL(path: "/api/turn", userID: "usr-42")
-        #expect(turnURL.absoluteString == "http://127.0.0.1:8088/users/usr-42/api/turn")
+        #expect(turnURL.absoluteString == "https://nori-core-8273801370.us-central1.run.app/users/usr-42/api/turn")
     }
 
-    @Test("Hosted BFF router applies /api or /api/nori prefix without duplicating /api")
-    func hostedBFFRouting() throws {
-        let router = try NoriEndpointRouter(profile: .hostedOIDC)
+    @Test("Google OAuth PKCE builds reversed redirect scheme and validates state")
+    func googleOAuthPKCE() throws {
+        let clientID = "123456-abc.apps.googleusercontent.com"
+        #expect(NoriConfig.reversedClientIDScheme(for: clientID) == "com.googleusercontent.apps.123456-abc")
+        #expect(NoriConfig.googleRedirectURI(for: clientID) == "com.googleusercontent.apps.123456-abc:/oauth2redirect")
 
-        let snapshotURL = try router.scopedURL(path: "/v1/snapshot", userID: nil)
-        #expect(snapshotURL.absoluteString == "https://nori.example.com/api/v1/snapshot")
+        let pkce = GoogleOAuthPKCE(clientID: clientID)
+        let authURL = try pkce.authorizationURL()
+        #expect(authURL.host == "accounts.google.com")
+        #expect(authURL.query?.contains("code_challenge_method=S256") == true)
 
-        let turnURL = try router.scopedURL(path: "/api/turn", userID: nil)
-        #expect(turnURL.absoluteString == "https://nori.example.com/api/turn")
-
-        let customProfile = ServerProfile(
-            id: "custom-bff",
-            preset: .custom,
-            name: "Custom BFF",
-            subtitle: "",
-            mode: .hostedBFF,
-            baseURLString: "https://host.example.com",
-            apiPrefix: "/api/nori"
-        )
-        let customRouter = try NoriEndpointRouter(profile: customProfile)
-        let mcpURL = try customRouter.scopedURL(path: "/v1/mcp", userID: nil)
-        #expect(mcpURL.absoluteString == "https://host.example.com/api/nori/v1/mcp")
+        let goodCallback = URL(string: "com.googleusercontent.apps.123456-abc:/oauth2redirect?code=xyz&state=\(pkce.state)")!
+        #expect(try pkce.extractAuthorizationCode(from: goodCallback) == "xyz")
     }
 
     @Test("Parses nori:// deep links for tabs, sheets, subroutes, and OAuth")

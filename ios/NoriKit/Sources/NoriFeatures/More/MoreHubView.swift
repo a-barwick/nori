@@ -43,7 +43,6 @@ public struct MoreHubView: View {
 
     private var serverPill: (label: String, tone: NoriTone) {
         switch store.connectionState {
-        case .demo: return ("Demo", .accent)
         case .connected: return ("Live", .ok)
         case .connecting: return ("Connecting", .neutral)
         case .reconnecting: return ("Retrying", .warning)
@@ -53,7 +52,6 @@ public struct MoreHubView: View {
 
     private var serverIconTone: NoriTone {
         switch store.connectionState {
-        case .demo: return .accent
         case .connected: return .ok
         case .connecting, .reconnecting: return .warning
         case .offline: return .danger
@@ -68,10 +66,10 @@ public struct MoreHubView: View {
 
     private var capabilitiesSummary: String {
         let count = store.capabilities?.assistantFeatures?.values.filter { $0 }.count ?? 0
-        if count > 0 {
-            return "\(store.profile.mode.displayLabel) · \(count) capabilities"
+        if let email = store.authState.email, !email.isEmpty {
+            return count > 0 ? "\(email) · \(count) capabilities" : email
         }
-        return store.profile.mode.displayLabel
+        return count > 0 ? "\(count) capabilities" : "Signed in"
     }
 
     public var body: some View {
@@ -128,15 +126,15 @@ public struct MoreHubView: View {
                     }
                     .buttonStyle(.plain)
 
-                    // Server Tile
-                    NavigationLink(value: MoreRoute.settings(.server)) {
+                    // Account Tile
+                    NavigationLink(value: MoreRoute.settings(.account)) {
                         HubTileCard(
-                            icon: "server.rack",
+                            icon: "person.crop.circle",
                             iconTone: serverIconTone,
                             pillText: serverPill.label,
                             pillTone: serverPill.tone,
-                            title: "Server",
-                            subtitle: store.profile.name
+                            title: "Account",
+                            subtitle: store.authState.email ?? "Signed in"
                         )
                     }
                     .buttonStyle(.plain)

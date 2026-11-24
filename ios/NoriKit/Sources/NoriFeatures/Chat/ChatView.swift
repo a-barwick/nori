@@ -409,13 +409,8 @@ public struct ChatView: View {
 
     private func handleVoicePrompt() {
         triggerLightHaptic()
-        if store.isDemoMode {
-            draft = "Summarize my open Q4 vendor renewals and check if Datadog responded."
-            isInputFocused = true
-        } else {
-            store.showToast("Use the iOS keyboard microphone to dictate")
-            isInputFocused = true
-        }
+        store.showToast("Use the iOS keyboard microphone to dictate")
+        isInputFocused = true
     }
 
     private func importLocalFile(url: URL) {

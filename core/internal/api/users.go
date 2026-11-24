@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"nori/internal/httpjson"
+	"nori/internal/serviceauth"
 	"nori/internal/users"
 )
 
@@ -54,7 +55,12 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			serveReadyz(w, r, opts.ReadyCheck, opts.ReadyTimeout)
 			return
 		}
+		verifiedEmail, isUserToken := serviceauth.VerifiedEmail(r.Context())
 		if r.URL.Path == "/metrics" {
+			if isUserToken {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Forbidden."})
+				return
+			}
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.Header().Set("Allow", "GET, HEAD")
 				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed."})
@@ -83,7 +89,15 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": message})
 				return
 			}
-			row, err := directory.FindEmail(r.Context(), body.Email)
+			lookupEmail := body.Email
+			if isUserToken {
+				if trimmed := strings.ToLower(strings.TrimSpace(body.Email)); trimmed != "" && trimmed != verifiedEmail {
+					writeJSON(w, http.StatusForbidden, map[string]string{"error": "Sign-in email mismatch."})
+					return
+				}
+				lookupEmail = verifiedEmail
+			}
+			row, err := directory.FindEmail(r.Context(), lookupEmail)
 			if err != nil {
 				writeJSON(w, 403, map[string]string{"error": "No user for this sign-in."})
 				return
@@ -106,6 +120,10 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			r.URL = &copyURL
 		}
 		if id == "" && r.Method == "POST" && r.URL.Path == "/api/resume" {
+			if isUserToken {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Forbidden."})
+				return
+			}
 			rows, err := directory.List(r.Context())
 			if err != nil {
 				writeError(w, err)
@@ -138,6 +156,10 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 		row, err := directory.Get(r.Context(), id)
 		if err != nil {
 			writeJSON(w, 403, map[string]string{"error": "A known user is required."})
+			return
+		}
+		if isUserToken && !strings.EqualFold(row.Email, verifiedEmail) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "Access denied."})
 			return
 		}
 		routes, release, err := open(r.Context(), row)

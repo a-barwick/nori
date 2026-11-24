@@ -4,67 +4,25 @@ import Foundation
 
 public struct NoriEndpointRouter: Sendable, Hashable {
     public let baseURL: URL
-    public let mode: ServerMode
-    public let apiPrefix: String
 
-    public init(baseURL: URL, mode: ServerMode, apiPrefix: String = "") {
+    public init(baseURL: URL = NoriConfig.serverURL) {
         self.baseURL = baseURL
-        self.mode = mode
-        self.apiPrefix = apiPrefix
     }
 
-    public init(profile: ServerProfile) throws {
-        guard let url = profile.baseURL else {
-            throw NoriAPIError(message: "Invalid server URL: \(profile.baseURLString)")
-        }
-        self.baseURL = url
-        self.mode = profile.mode
-        self.apiPrefix = profile.apiPrefix
-    }
-
-    /// Builds a URL for an unscoped endpoint (`/healthz`, `/api/users/resolve`).
+    /// Builds a URL for an unscoped endpoint (`/readyz`, `/api/users/resolve`).
     public func unscopedURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
         let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
-        let fullPath: String
-        switch mode {
-        case .directCore, .demo:
-            fullPath = normalizedPath
-        case .hostedBFF:
-            fullPath = joinedHostedPath(normalizedPath)
-        }
-        return try buildURL(path: fullPath, queryItems: queryItems)
+        return try buildURL(path: normalizedPath, queryItems: queryItems)
     }
 
     /// Builds a URL for a user-scoped endpoint (`/v1/...`, `/api/turn`, `/api/command`).
-    public func scopedURL(path: String, userID: String?, queryItems: [URLQueryItem] = []) throws -> URL {
+    public func scopedURL(path: String, userID: String, queryItems: [URLQueryItem] = []) throws -> URL {
+        guard !userID.isEmpty else {
+            throw NoriAPIError(message: "User ID has not been resolved.", statusCode: 401)
+        }
         let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
-        let fullPath: String
-        switch mode {
-        case .directCore:
-            guard let userID, !userID.isEmpty else {
-                throw NoriAPIError(message: "User ID has not been resolved for direct core mode.")
-            }
-            let encodedUser = userID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? userID
-            fullPath = "/users/\(encodedUser)\(normalizedPath)"
-        case .hostedBFF:
-            fullPath = joinedHostedPath(normalizedPath)
-        case .demo:
-            fullPath = normalizedPath
-        }
-        return try buildURL(path: fullPath, queryItems: queryItems)
-    }
-
-    private func joinedHostedPath(_ path: String) -> String {
-        let cleanPrefix = apiPrefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if cleanPrefix.isEmpty {
-            return path
-        }
-        let prefixed = "/\(cleanPrefix)"
-        // Avoid duplicating `/api/api/...` when prefix is `/api` and path starts with `/api/`.
-        if path == prefixed || path.hasPrefix(prefixed + "/") {
-            return path
-        }
-        return prefixed + path
+        let encodedUser = userID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? userID
+        return try buildURL(path: "/users/\(encodedUser)\(normalizedPath)", queryItems: queryItems)
     }
 
     private func buildURL(path: String, queryItems: [URLQueryItem]) throws -> URL {
@@ -90,22 +48,22 @@ public struct NoriEndpointRouter: Sendable, Hashable {
 // MARK: - Live HTTP + SSE Transport
 
 public actor LiveNoriTransport: NoriTransport {
-    public let profile: ServerProfile
+    public let baseURL: URL
     private let router: NoriEndpointRouter
     private let session: URLSession
     private let streamSession: URLSession
-    private let keychain: KeychainStore
+    private let authProvider: AuthTokenProvider
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private var resolvedUserID: String?
 
     public init(
-        profile: ServerProfile,
-        urlSession: URLSession? = nil,
-        keychain: KeychainStore = KeychainStore()
-    ) throws {
-        self.profile = profile
-        self.router = try NoriEndpointRouter(profile: profile)
+        baseURL: URL = NoriConfig.serverURL,
+        authProvider: AuthTokenProvider = AuthTokenProvider(),
+        urlSession: URLSession? = nil
+    ) {
+        self.baseURL = baseURL
+        self.router = NoriEndpointRouter(baseURL: baseURL)
         if let urlSession {
             self.session = urlSession
             self.streamSession = urlSession
@@ -123,23 +81,24 @@ public actor LiveNoriTransport: NoriTransport {
             sseConfig.requestCachePolicy = .reloadIgnoringLocalCacheData
             self.streamSession = URLSession(configuration: sseConfig)
         }
-        self.keychain = keychain
+        self.authProvider = authProvider
         self.encoder = JSONEncoder()
         self.decoder = JSONDecoder()
     }
 
+    public func clearCachedIdentity() {
+        resolvedUserID = nil
+    }
+
     // MARK: - Identity & Auth Headers
 
-    private func ensureUserID() async throws -> String? {
-        guard profile.mode == .directCore else { return nil }
+    private func ensureUserID() async throws -> String {
         if let resolvedUserID { return resolvedUserID }
         let url = try router.unscopedURL(path: "/api/users/resolve")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try encoder.encode(["email": profile.email])
-
-        let (data, response) = try await session.data(for: req)
+        req.httpBody = try encoder.encode([String: String]())
+        let (data, response) = try await performAuthenticated(req, contentType: "application/json")
         try validateHTTPResponse(response, data: data)
         struct ResolveResponse: Decodable { let id: String }
         let resolved = try decoder.decode(ResolveResponse.self, from: data)
@@ -147,14 +106,27 @@ public actor LiveNoriTransport: NoriTransport {
         return resolved.id
     }
 
-    private func applyHeaders(to request: inout URLRequest, contentType: String? = nil) {
-        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+    private func performAuthenticated(_ baseRequest: URLRequest, contentType: String? = nil) async throws -> (Data, URLResponse) {
+        let token = try await authProvider.validIDToken(forceRefresh: false)
+        var req = baseRequest
+        req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if let contentType {
-            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
-        if profile.mode == .hostedBFF, let token = keychain.loadToken(account: profile.id), !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: req)
+        if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+            // Retry once with a freshly refreshed Google ID token.
+            let freshToken = try await authProvider.validIDToken(forceRefresh: true)
+            var retryReq = baseRequest
+            retryReq.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+            retryReq.setValue("Bearer \(freshToken)", forHTTPHeaderField: "Authorization")
+            if let contentType {
+                retryReq.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            }
+            return try await session.data(for: retryReq)
         }
+        return (data, response)
     }
 
     private func validateHTTPResponse(_ response: URLResponse, data: Data) throws {
@@ -192,8 +164,7 @@ public actor LiveNoriTransport: NoriTransport {
         let url = try router.scopedURL(path: path, userID: userID, queryItems: queryItems)
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
-        applyHeaders(to: &req)
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await performAuthenticated(req)
         try validateHTTPResponse(response, data: data)
         return try decoder.decode(T.self, from: data)
     }
@@ -207,9 +178,8 @@ public actor LiveNoriTransport: NoriTransport {
         let url = try router.scopedURL(path: path, userID: userID)
         var req = URLRequest(url: url)
         req.httpMethod = method
-        applyHeaders(to: &req, contentType: "application/json")
         req.httpBody = try encoder.encode(body)
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await performAuthenticated(req, contentType: "application/json")
         try validateHTTPResponse(response, data: data)
         return try decoder.decode(Response.self, from: data)
     }
@@ -245,11 +215,11 @@ public actor LiveNoriTransport: NoriTransport {
     public func ping() async -> HealthCheckResult {
         let start = ContinuousClock.now
         do {
-            let url = try router.unscopedURL(path: "/healthz")
+            let url = try router.unscopedURL(path: "/readyz")
             var req = URLRequest(url: url)
             req.httpMethod = "GET"
             req.timeoutInterval = 8
-            applyHeaders(to: &req)
+            req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
             let (data, response) = try await session.data(for: req)
             let elapsed = start.duration(to: .now)
             let ms = Int(elapsed.components.seconds * 1000) + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
@@ -259,10 +229,7 @@ public actor LiveNoriTransport: NoriTransport {
                 let model: String?
             }
             let body = try decoder.decode(HealthBody.self, from: data)
-            // Also validate directCore user resolution when pinging directCore so Setup catches bad emails early.
-            if profile.mode == .directCore {
-                _ = try await ensureUserID()
-            }
+            _ = try await ensureUserID()
             return HealthCheckResult(ok: body.status == "ok", status: body.status, model: body.model, latencyMs: max(1, ms))
         } catch {
             let elapsed = start.duration(to: .now)
@@ -338,6 +305,7 @@ public actor LiveNoriTransport: NoriTransport {
                 while !Task.isCancelled {
                     do {
                         let userID = try await self.ensureUserID()
+                        let token = try await self.authProvider.validIDToken(forceRefresh: false)
                         let url = try self.router.scopedURL(
                             path: "/v1/events",
                             userID: userID,
@@ -347,11 +315,7 @@ public actor LiveNoriTransport: NoriTransport {
                         req.httpMethod = "GET"
                         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                         req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-                        if self.profile.mode == .hostedBFF,
-                           let token = self.keychain.loadToken(account: self.profile.id),
-                           !token.isEmpty {
-                            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                        }
+                        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
                         let (bytes, response) = try await self.streamSession.bytes(for: req)
                         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -456,9 +420,8 @@ public actor LiveNoriTransport: NoriTransport {
         )
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        applyHeaders(to: &req, contentType: mediaType)
         req.httpBody = data
-        let (responseData, response) = try await session.data(for: req)
+        let (responseData, response) = try await performAuthenticated(req, contentType: mediaType)
         try validateHTTPResponse(response, data: responseData)
         return try decoder.decode(Attachment.self, from: responseData)
     }

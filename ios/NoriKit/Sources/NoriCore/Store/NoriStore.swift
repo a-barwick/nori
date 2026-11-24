@@ -65,7 +65,6 @@ public enum NoriDeepLink: Sendable, Hashable {
 }
 
 public enum ConnectionState: String, Sendable, Hashable {
-    case demo
     case connected
     case connecting
     case reconnecting
@@ -93,10 +92,10 @@ public struct StatusLine: Sendable, Hashable {
 @Observable
 @MainActor
 public final class NoriStore {
-    // MARK: Connection & Profile State
-    public var profile: ServerProfile
-    public var savedProfiles: [ServerProfile]
-    public var connectionState: ConnectionState
+    // MARK: Auth & Connection State
+    public var authState: AuthState = .signedOut
+    public var authError: String?
+    public var connectionState: ConnectionState = .offline
     public var capabilities: Capabilities?
     public var lastPing: HealthCheckResult?
 
@@ -127,31 +126,27 @@ public final class NoriStore {
     public var pendingDeepLink: NoriDeepLink?
 
     // MARK: Internals
-    private let profileStore: ServerProfileStore
-    private let keychain: KeychainStore
+    private let authProvider: AuthTokenProvider
+    private let liveTransport: LiveNoriTransport?
     private var transport: any NoriTransport
     private var eventTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
     private var hasBootstrapped: Bool = false
 
     public init(
-        profile: ServerProfile? = nil,
         transport: (any NoriTransport)? = nil,
-        profileStore: ServerProfileStore = ServerProfileStore(),
-        keychain: KeychainStore = KeychainStore()
+        authProvider: AuthTokenProvider = AuthTokenProvider()
     ) {
-        self.profileStore = profileStore
-        self.keychain = keychain
-        let initialProfile = profile ?? profileStore.loadActiveProfile()
-        self.profile = initialProfile
-        self.savedProfiles = profileStore.loadProfiles()
-        self.connectionState = initialProfile.mode == .demo ? .demo : .connecting
-
+        self.authProvider = authProvider
         if let transport {
+            self.liveTransport = transport as? LiveNoriTransport
             self.transport = transport
         } else {
-            self.transport = Self.makeTransport(for: initialProfile, keychain: keychain)
+            let live = LiveNoriTransport(baseURL: NoriConfig.serverURL, authProvider: authProvider)
+            self.liveTransport = live
+            self.transport = live
         }
+        self.connectionState = .offline
 
         self.session = Session()
         self.workItems = []
@@ -169,18 +164,6 @@ public final class NoriStore {
         self.goals = []
         self.permissions = []
         self.preferences = Preferences()
-    }
-
-    private static func makeTransport(for profile: ServerProfile, keychain: KeychainStore) -> any NoriTransport {
-        switch profile.mode {
-        case .demo:
-            return DemoNoriTransport()
-        case .directCore, .hostedBFF:
-            if let live = try? LiveNoriTransport(profile: profile, keychain: keychain) {
-                return live
-            }
-            return DemoNoriTransport()
-        }
     }
 
     // MARK: - Derived Properties
@@ -255,35 +238,97 @@ public final class NoriStore {
         min(1.0, Double(coreMemoryUsedBytes) / Double(coreMemoryBudgetBytes))
     }
 
-    public var isDemoMode: Bool {
-        profile.mode == .demo
-    }
-
-    // MARK: - Lifecycle & Snapshot Sync
+    // MARK: - Lifecycle, Auth & Snapshot Sync
 
     public func bootstrapIfNeeded() async {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
-        await refreshAll()
-        startEventStream()
+        if let saved = await authProvider.loadSession() {
+            authState = .signedIn(email: saved.email)
+            await refreshAll()
+            if authState.isSignedIn {
+                startEventStream()
+            }
+        } else {
+            authState = .signedOut
+            connectionState = .offline
+        }
+    }
+
+    public func completeGoogleSignIn(callbackURL: URL, pkce: GoogleOAuthPKCE) async {
+        authError = nil
+        authState = .signingIn
+        do {
+            let code = try pkce.extractAuthorizationCode(from: callbackURL)
+            let session = try await pkce.exchangeCode(code)
+            await authProvider.saveSession(session)
+            if let liveTransport {
+                await liveTransport.clearCachedIdentity()
+            }
+            let snapshot = try await transport.fetchFullSnapshot()
+            applySnapshot(snapshot)
+            authState = .signedIn(email: session.email)
+            connectionState = .connected
+            lastError = nil
+            startEventStream()
+        } catch let apiErr as NoriAPIError where apiErr.statusCode == 401 || apiErr.statusCode == 403 {
+            await authProvider.clearSession()
+            authState = .signedOut
+            connectionState = .offline
+            authError = "This Google account is not authorized to access Nori."
+        } catch {
+            await authProvider.clearSession()
+            authState = .signedOut
+            connectionState = .offline
+            authError = error.localizedDescription
+        }
+    }
+
+    public func signOut() async {
+        stopEventStream()
+        await authProvider.clearSession()
+        if let liveTransport {
+            await liveTransport.clearCachedIdentity()
+        }
+        authState = .signedOut
+        authError = nil
+        connectionState = .offline
+        capabilities = nil
+        lastPing = nil
+        session = Session()
+        workItems = []
+        workDetails = [:]
+        interactions = []
+        mcpServers = []
+        mcpTools = [:]
+        connections = []
+        libraryItems = []
+        searchHits = []
+        coreMemories = []
+        memoryLogs = []
+        workingMemory = WorkingMemory()
+        automations = []
+        goals = []
+        permissions = []
+        preferences = Preferences()
+        isThinking = false
     }
 
     public func refreshAll() async {
         isLoading = true
         defer { isLoading = false }
-        if profile.mode != .demo {
-            connectionState = .connecting
-        }
+        connectionState = .connecting
         do {
             let snapshot = try await transport.fetchFullSnapshot()
             applySnapshot(snapshot)
-            connectionState = profile.mode == .demo ? .demo : .connected
+            connectionState = .connected
             lastError = nil
+        } catch let apiErr as NoriAPIError where apiErr.statusCode == 401 || apiErr.statusCode == 403 {
+            await signOut()
+            authError = "Your session expired or your account is not authorized. Please sign in again."
         } catch {
             lastError = error.localizedDescription
-            if profile.mode != .demo {
-                connectionState = .reconnecting
-            }
+            connectionState = .reconnecting
         }
     }
 
@@ -308,7 +353,7 @@ public final class NoriStore {
 
     public func startEventStream() {
         stopEventStream()
-        guard profile.mode != .demo else { return }
+        guard authState.isSignedIn else { return }
         let startPosition = session.position ?? 0
         let activeTransport = transport
 
@@ -332,7 +377,7 @@ public final class NoriStore {
     }
 
     private func handleStreamEvent(_ event: NoriStreamEvent) async {
-        connectionState = profile.mode == .demo ? .demo : .connected
+        connectionState = .connected
         if let seq = event.sequence, seq > (session.position ?? 0) {
             session.position = seq
         }
@@ -413,18 +458,13 @@ public final class NoriStore {
                 attachmentIDs: attachments.map(\.id)
             )
             // Keep the confirmed user message visible while the core worker processes the turn.
-            if profile.mode != .demo,
-               !updated.messages.contains(where: { $0.id == expectedUserMessageID || $0.turnID == clientID && $0.role == .user }) {
+            if !updated.messages.contains(where: { $0.id == expectedUserMessageID || $0.turnID == clientID && $0.role == .user }) {
                 var savedBubble = optimistic
                 savedBubble.receipt = .saved
                 updated.messages.append(savedBubble)
             }
             self.session = updated
-            if profile.mode == .demo {
-                isThinking = false
-            } else {
-                isThinking = updated.conversation?.processing == true || updated.conversation?.pending == true
-            }
+            isThinking = updated.conversation?.processing == true || updated.conversation?.pending == true
         } catch {
             session.messages.removeAll { $0.id == expectedUserMessageID }
             isThinking = false
@@ -932,55 +972,8 @@ public final class NoriStore {
     public func pingServer() async -> HealthCheckResult {
         let result = await transport.ping()
         lastPing = result
-        if result.ok {
-            connectionState = profile.mode == .demo ? .demo : .connected
-        } else if profile.mode != .demo {
-            connectionState = .offline
-        }
+        connectionState = result.ok ? .connected : .offline
         return result
-    }
-
-    public func saveBearerToken(_ token: String, for profileID: String? = nil) {
-        let account = profileID ?? profile.id
-        if token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            keychain.deleteToken(account: account)
-        } else {
-            keychain.saveToken(token, account: account)
-        }
-    }
-
-    public func loadBearerToken(for profileID: String? = nil) -> String {
-        keychain.loadToken(account: profileID ?? profile.id) ?? ""
-    }
-
-    public func switchProfile(_ newProfile: ServerProfile) async {
-        stopEventStream()
-        profile = newProfile
-        profileStore.saveActiveProfile(newProfile)
-        if let idx = savedProfiles.firstIndex(where: { $0.id == newProfile.id }) {
-            savedProfiles[idx] = newProfile
-        } else {
-            savedProfiles.append(newProfile)
-        }
-        profileStore.saveProfiles(savedProfiles)
-        transport = Self.makeTransport(for: newProfile, keychain: keychain)
-        connectionState = newProfile.mode == .demo ? .demo : .connecting
-        lastPing = nil
-        await refreshAll()
-        startEventStream()
-        showToast("Switched to \(newProfile.name)")
-    }
-
-    public func triggerDemoApproval() async {
-        guard let demo = transport as? DemoNoriTransport else {
-            showToast("Demo approval is available in Demo Mode")
-            return
-        }
-        let created = await demo.triggerDemoApproval()
-        if let snapshot = try? await demo.fetchFullSnapshot() {
-            applySnapshot(snapshot)
-        }
-        showToast("New approval queued: \(created.taskTitle ?? "Action")")
     }
 
     // MARK: - Incoming URL & Toast

@@ -31,17 +31,12 @@
 			</array>
 		</dict>
 	</array>
+	<key>GOOGLE_OAUTH_CLIENT_ID</key>
+	<string>REPLACE_WITH_IOS_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Connect to your local Nori server on your Mac over Wi-Fi or Tailscale.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

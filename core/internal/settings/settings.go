@@ -260,12 +260,17 @@ func fromEnvironment(defaultCloud string) Settings {
 		}
 	}
 	return Settings{
-		Connections:   connectionsFromEnvironment(),
-		Features:      Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") == "false"},
-		Cloud:         cloud,
-		Role:          role,
-		AWS:           AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION"))},
-		ServiceAuth:   serviceauth.Config{Key: os.Getenv("NORI_SERVICE_TOKEN_KEY"), Audience: get("NORI_SERVICE_AUDIENCE", "nori")},
+		Connections: connectionsFromEnvironment(),
+		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") == "false"},
+		Cloud:       cloud,
+		Role:        role,
+		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION"))},
+		ServiceAuth: serviceauth.Config{
+			Key:             os.Getenv("NORI_SERVICE_TOKEN_KEY"),
+			Audience:        get("NORI_SERVICE_AUDIENCE", "nori"),
+			GoogleClientIDs: splitCSV(os.Getenv("NORI_GOOGLE_OAUTH_CLIENT_IDS"), false),
+			AllowedEmails:   splitCSV(os.Getenv("NORI_ALLOWED_EMAILS"), true),
+		},
 		BindHost:      get("BIND_HOST", "127.0.0.1"),
 		Port:          os.Getenv("PORT"),
 		Models:        modelsFromEnvironment(),
@@ -397,6 +402,20 @@ func loadFile(path string) error {
 		}
 	}
 	return nil
+}
+
+func splitCSV(raw string, lower bool) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		v := strings.TrimSpace(part)
+		if lower {
+			v = strings.ToLower(v)
+		}
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func mcpCommands(raw string) map[string][]string {

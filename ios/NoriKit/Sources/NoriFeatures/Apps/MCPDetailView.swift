@@ -250,11 +250,6 @@ public struct MCPDetailView: View {
 
     private func startOAuthFlow(for server: MCPServer) {
         authError = nil
-        if store.isDemoMode {
-            showingDemoOAuth = true
-            return
-        }
-
         isBusy = true
         Task {
             defer { isBusy = false }

@@ -28,6 +28,32 @@ public struct NoriRootView: View {
     }
 
     public var body: some View {
+        Group {
+            if store.authState.isSignedIn {
+                signedInBody
+            } else {
+                SignInView(store: store)
+            }
+        }
+        .task {
+            await store.bootstrapIfNeeded()
+            if let pending = store.pendingDeepLink {
+                applyDeepLink(pending)
+                store.pendingDeepLink = nil
+            }
+        }
+        .onOpenURL { url in
+            store.handleIncomingURL(url)
+        }
+        .onChange(of: store.pendingDeepLink) { _, next in
+            guard let next else { return }
+            applyDeepLink(next)
+            store.pendingDeepLink = nil
+        }
+    }
+
+    @ViewBuilder
+    private var signedInBody: some View {
         ZStack(alignment: .top) {
             TabView(selection: $selectedTab) {
                 ChatView(
@@ -145,21 +171,6 @@ public struct NoriRootView: View {
             DocumentReaderSheet(store: store, itemID: doc.id)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
-        }
-        .task {
-            await store.bootstrapIfNeeded()
-            if let pending = store.pendingDeepLink {
-                applyDeepLink(pending)
-                store.pendingDeepLink = nil
-            }
-        }
-        .onOpenURL { url in
-            store.handleIncomingURL(url)
-        }
-        .onChange(of: store.pendingDeepLink) { _, next in
-            guard let next else { return }
-            applyDeepLink(next)
-            store.pendingDeepLink = nil
         }
     }
 

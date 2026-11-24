@@ -3,7 +3,7 @@ import NoriCore
 import NoriDesign
 
 public enum SettingsSection: String, Hashable, Sendable {
-    case server
+    case account
     case permissions
     case preferences
     case diagnostics
@@ -13,14 +13,6 @@ public struct SettingsView: View {
     @Bindable private var store: NoriStore
     public let initialSection: SettingsSection?
 
-    @State private var selectedProfileID: String = ""
-    @State private var urlText: String = ""
-    @State private var emailText: String = ""
-    @State private var apiPrefixText: String = ""
-    @State private var bearerToken: String = ""
-    @State private var isTestingConnection = false
-    @State private var isSwitchingServer = false
-
     @State private var showingEditPreferences = false
 
     public init(store: NoriStore, initialSection: SettingsSection? = nil) {
@@ -28,26 +20,12 @@ public struct SettingsView: View {
         self.initialSection = initialSection
     }
 
-    private var activeDraftProfile: ServerProfile {
-        let base = store.savedProfiles.first(where: { $0.id == selectedProfileID }) ?? store.profile
-        var copy = base
-        if copy.mode != .demo {
-            let trimmedURL = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedURL.isEmpty {
-                copy.baseURLString = trimmedURL
-            }
-            copy.email = emailText.trimmingCharacters(in: .whitespacesAndNewlines)
-            copy.apiPrefix = apiPrefixText.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return copy
-    }
-
     public var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    serverSection
-                        .id(SettingsSection.server)
+                    accountSection
+                        .id(SettingsSection.account)
 
                     permissionsSection
                         .id(SettingsSection.permissions)
@@ -63,7 +41,6 @@ public struct SettingsView: View {
                 .padding(.bottom, 32)
             }
             .onAppear {
-                syncDraftFromStore(profile: store.profile)
                 if let initialSection {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                         withAnimation(.easeOut(duration: 0.2)) {
@@ -85,229 +62,35 @@ public struct SettingsView: View {
         }
     }
 
-    // MARK: - Nori Server Connection Switcher
+    // MARK: - Account
 
     @ViewBuilder
-    private var serverSection: some View {
-        NoriSectionHeader("Nori server connection") {
-            if let ping = store.lastPing {
-                NoriPill(
-                    ping.ok ? "\(ping.latencyMs) ms" : "Unreachable",
-                    tone: ping.ok ? .ok : .danger
-                )
-            } else {
-                NoriPill(store.profile.mode.displayLabel, tone: store.isDemoMode ? .accent : .neutral)
-            }
+    private var accountSection: some View {
+        NoriSectionHeader("Account") {
+            NoriPill(
+                store.connectionState == .connected ? "Connected" : store.connectionState.rawValue.capitalized,
+                tone: store.connectionState == .connected ? .ok : .warning
+            )
         }
 
         NoriRows {
-            ForEach(Array(store.savedProfiles.enumerated()), id: \.element.id) { index, preset in
-                let isLast = index == store.savedProfiles.count - 1
-                let isSelected = selectedProfileID == preset.id
-                let isActive = store.profile.id == preset.id
-
-                Button {
-                    selectPreset(preset)
-                } label: {
-                    VStack(spacing: 0) {
-                        HStack(alignment: .center, spacing: 11) {
-                            ZStack {
-                                Circle()
-                                    .strokeBorder(
-                                        isSelected ? NoriColors.accent : NoriColors.hairlineStrong,
-                                        lineWidth: 2
-                                    )
-                                    .frame(width: 18, height: 18)
-                                if isSelected {
-                                    Circle()
-                                        .fill(NoriColors.accent)
-                                        .frame(width: 10, height: 10)
-                                }
-                            }
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(preset.name)
-                                    .font(NoriTypography.rowTitle)
-                                    .foregroundStyle(NoriColors.ink)
-                                Text(preset.baseURLString)
-                                    .font(NoriTypography.monoSmall)
-                                    .foregroundStyle(NoriColors.ink2)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Text(preset.subtitle)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(NoriColors.ink3)
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                            if isActive {
-                                if let ping = store.lastPing, ping.ok {
-                                    NoriPill("\(ping.latencyMs) ms", tone: .ok)
-                                } else {
-                                    NoriPill("Active", tone: preset.mode == .demo ? .accent : .ok)
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 12)
-                        .contentShape(Rectangle())
-
-                        if !isLast {
-                            Rectangle()
-                                .fill(NoriColors.hairline)
-                                .frame(height: 1)
-                                .padding(.leading, 42)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-
-        // Editable Connection Parameters (for non-demo presets)
-        if activeDraftProfile.mode != .demo {
-            NoriCard {
-                VStack(alignment: .leading, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Server URL")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(NoriColors.ink2)
-                        TextField("http://127.0.0.1:8080", text: $urlText)
-                            .textFieldStyle(.plain)
-                            .font(NoriTypography.mono)
-                            .autocorrectionDisabled()
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.URL)
-                            #endif
-                            .padding(.horizontal, 11)
-                            .frame(height: 38)
-                            .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
-                                    .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                            )
-                    }
-
-                    if activeDraftProfile.mode == .directCore {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Local user email (NORI_LOCAL_EMAIL)")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(NoriColors.ink2)
-                            TextField("local@nori.invalid", text: $emailText)
-                                .textFieldStyle(.plain)
-                                .font(NoriTypography.mono)
-                                .autocorrectionDisabled()
-                                #if os(iOS)
-                                .textInputAutocapitalization(.never)
-                                .keyboardType(.emailAddress)
-                                #endif
-                                .padding(.horizontal, 11)
-                                .frame(height: 38)
-                                .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
-                                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                                )
-                        }
-                    } else if activeDraftProfile.mode == .hostedBFF {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("API prefix (e.g. /api or /api/nori)")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(NoriColors.ink2)
-                            TextField("/api", text: $apiPrefixText)
-                                .textFieldStyle(.plain)
-                                .font(NoriTypography.mono)
-                                .autocorrectionDisabled()
-                                #if os(iOS)
-                                .textInputAutocapitalization(.never)
-                                #endif
-                                .padding(.horizontal, 11)
-                                .frame(height: 38)
-                                .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
-                                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                                )
-                        }
-
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Bearer token (stored in iOS Keychain)")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(NoriColors.ink2)
-                            SecureField("Paste OIDC / BFF access token", text: $bearerToken)
-                                .textFieldStyle(.plain)
-                                .font(NoriTypography.mono)
-                                .autocorrectionDisabled()
-                                .padding(.horizontal, 11)
-                                .frame(height: 38)
-                                .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
-                                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                                )
-                        }
-                    }
-                }
-            }
-            .padding(.top, 10)
-        }
-
-        // Apply & Live /healthz Test Row
-        HStack(spacing: 8) {
-            Button {
-                applyAndConnect()
-            } label: {
-                if isSwitchingServer {
-                    ProgressView().tint(.white)
-                } else {
-                    Text(activeDraftProfile.id == store.profile.id ? "Save & Reconnect" : "Connect Profile")
-                }
-            }
-            .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
-            .disabled(isSwitchingServer)
-
-            Button {
-                testConnection()
-            } label: {
-                if isTestingConnection {
-                    ProgressView()
-                } else {
-                    Label("Test /healthz", systemImage: "antenna.radiowaves.left.and.right")
-                }
-            }
-            .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-            .disabled(isTestingConnection)
-        }
-        .padding(.top, 10)
-
-        if let ping = store.lastPing {
-            NoriNotice(
-                title: ping.ok
-                    ? "Connected · \(ping.status.uppercased()) (\(ping.latencyMs) ms)"
-                    : "Health check failed (\(ping.latencyMs) ms)",
-                detail: ping.ok
-                    ? (ping.model.map { "Model: \($0)" } ?? "Server responded cleanly to /healthz.")
-                    : (ping.errorMessage ?? "Could not reach \(store.profile.baseURLString)/healthz."),
-                tone: ping.ok ? .ok : .danger,
-                systemImage: ping.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+            NoriRow(
+                title: store.authState.email ?? "Signed in",
+                detail: "Signed in with Google",
+                systemImage: "person.crop.circle.fill",
+                iconTone: .accent,
+                showDivider: false
             )
-            .padding(.top, 10)
         }
 
-        if store.isDemoMode {
-            HStack {
-                Button {
-                    Task { await store.triggerDemoApproval() }
-                } label: {
-                    Label("Simulate incoming approval", systemImage: "bell.badge")
-                }
-                .buttonStyle(NoriButtonStyle(.quiet, compact: true))
-                Spacer()
-            }
-            .padding(.top, 8)
+        Button {
+            Task { await store.signOut() }
+        } label: {
+            Text("Sign Out")
+                .frame(maxWidth: .infinity)
         }
+        .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: true))
+        .padding(.top, 10)
     }
 
     // MARK: - Standing Permissions
@@ -399,7 +182,7 @@ public struct SettingsView: View {
         NoriCard {
             VStack(alignment: .leading, spacing: 10) {
                 diagRow("Status", value: store.connectionState.rawValue.capitalized)
-                diagRow("Runtime", value: store.profile.mode.displayLabel)
+                diagRow("Server", value: NoriConfig.serverURL.host() ?? "nori-core")
                 if let caps = store.capabilities {
                     let contracts = [caps.contract, caps.conversationContract, caps.assistantContract]
                         .compactMap { $0 }
@@ -455,50 +238,6 @@ public struct SettingsView: View {
             parts.append("To \(recipients.joined(separator: ", "))")
         }
         return parts.isEmpty ? "Standing rule" : parts.joined(separator: " · ")
-    }
-
-    private func syncDraftFromStore(profile: ServerProfile) {
-        selectedProfileID = profile.id
-        urlText = profile.baseURLString
-        emailText = profile.email
-        apiPrefixText = profile.apiPrefix
-        bearerToken = store.loadBearerToken(for: profile.id)
-    }
-
-    private func selectPreset(_ preset: ServerProfile) {
-        selectedProfileID = preset.id
-        urlText = preset.baseURLString
-        emailText = preset.email
-        apiPrefixText = preset.apiPrefix
-        bearerToken = store.loadBearerToken(for: preset.id)
-    }
-
-    private func applyAndConnect() {
-        let updated = activeDraftProfile
-        isSwitchingServer = true
-        if updated.mode == .hostedBFF {
-            store.saveBearerToken(bearerToken, for: updated.id)
-        }
-        Task {
-            await store.switchProfile(updated)
-            _ = await store.pingServer()
-            isSwitchingServer = false
-        }
-    }
-
-    private func testConnection() {
-        isTestingConnection = true
-        let draft = activeDraftProfile
-        if draft.mode == .hostedBFF {
-            store.saveBearerToken(bearerToken, for: draft.id)
-        }
-        Task {
-            if draft != store.profile {
-                await store.switchProfile(draft)
-            }
-            _ = await store.pingServer()
-            isTestingConnection = false
-        }
     }
 }
 

@@ -36,7 +36,7 @@ public struct ActivitySheetView: View {
             return NoriColors.warning
         case .connecting:
             return NoriColors.ink3
-        case .demo, .connected:
+        case .connected:
             return NoriColors.accentSignal
         }
     }
@@ -47,7 +47,7 @@ public struct ActivitySheetView: View {
             return "Connection interrupted"
         case .connecting:
             return "Connecting to Nori…"
-        case .demo, .connected:
+        case .connected:
             if store.isThinking && activeTasks.isEmpty {
                 return "Thinking…"
             }

@@ -10,7 +10,12 @@ import (
 
 const issuer = "nori-service"
 
-type Config struct{ Key, Audience string }
+type Config struct {
+	Key, Audience   string
+	GoogleClientIDs []string
+	AllowedEmails   []string
+	GoogleJWKSURL   string
+}
 
 func (c Config) Validate() error {
 	if len(c.Key) < 32 || strings.TrimSpace(c.Audience) == "" {
@@ -34,16 +39,30 @@ func (c Config) Valid(raw string) bool {
 	return err == nil && token.Valid && claims.IssuedAt != nil && claims.ExpiresAt != nil && claims.ExpiresAt.Sub(claims.IssuedAt.Time) > 0 && claims.ExpiresAt.Sub(claims.IssuedAt.Time) <= time.Minute
 }
 func (c Config) Protect(next http.Handler) http.Handler {
+	var jwks *jwksCache
+	if len(c.GoogleClientIDs) > 0 {
+		jwks = newJWKSCache(c.GoogleJWKSURL)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
 			next.ServeHTTP(w, r)
 			return
 		}
 		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-		if !ok || scheme != "Bearer" || !c.Valid(token) {
-			http.Error(w, "Service authentication required", http.StatusUnauthorized)
+		if !ok || scheme != "Bearer" {
+			http.Error(w, "Authentication required", http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
+		if c.Valid(token) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if jwks != nil {
+			if email, ok := verifyGoogleIDToken(r.Context(), jwks, token, c.GoogleClientIDs, c.AllowedEmails); ok {
+				next.ServeHTTP(w, r.WithContext(WithVerifiedEmail(r.Context(), email)))
+				return
+			}
+		}
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
 	})
 }
