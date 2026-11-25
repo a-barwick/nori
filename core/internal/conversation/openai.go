@@ -224,17 +224,26 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 func logRefusal(ctx context.Context, res *http.Response) bool {
 	var body struct {
 		Error struct {
-			Type string          `json:"type"`
-			Code json.RawMessage `json:"code"`
+			Type    string          `json:"type"`
+			Code    json.RawMessage `json:"code"`
+			Message string          `json:"message"`
 		} `json:"error"`
 	}
 	data, _ := io.ReadAll(io.LimitReader(res.Body, 16<<10))
 	_ = json.Unmarshal(data, &body)
+	errMsg := ""
+	if body.Error.Type == "invalid_request_error" {
+		errMsg = body.Error.Message
+		if len(errMsg) > 300 {
+			errMsg = errMsg[:300]
+		}
+	}
 	h := res.Header
 	slog.WarnContext(ctx, "outer model refused",
 		"status", res.StatusCode,
 		"error_type", body.Error.Type,
 		"error_code", string(body.Error.Code),
+		"error_message", errMsg,
 		"retry_after", h.Get("Retry-After"),
 		"limit_requests", h.Get("X-Ratelimit-Limit-Requests"),
 		"remaining_requests", h.Get("X-Ratelimit-Remaining-Requests"),

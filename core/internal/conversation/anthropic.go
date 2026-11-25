@@ -303,7 +303,7 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 	var systemBlocks []map[string]any
 	var messages []map[string]any
 	appendMsg := func(role, text string, cache bool) {
-		if text == "" {
+		if strings.TrimSpace(text) == "" {
 			return
 		}
 		block := map[string]any{"type": "text", "text": text}
