@@ -158,6 +158,15 @@ public protocol NoriTransport: Sendable {
     ) async throws -> MutationReceipt<Automation>
     func fetchGoals() async throws -> [Goal]
     func fetchPermissions() async throws -> [PermissionRule]
+    func createPermissionRule(
+        _ rule: PermissionRuleEditable,
+        requestID: String
+    ) async throws -> MutationReceipt<PermissionRule>
+    func revokePermissionRule(
+        id: String,
+        expectedRevision: Int,
+        requestID: String
+    ) async throws -> MutationReceipt<PermissionRule>
     func fetchPreferences() async throws -> Preferences
     func savePreferences(
         _ preferences: Preferences,

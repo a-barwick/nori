@@ -76,6 +76,8 @@ public struct ApprovalAccount: Sendable, Codable, Hashable {
 
 public struct ApprovalPayload: Sendable, Codable, Hashable {
     public var summary: String
+    public var toolID: String?
+    public var warning: String?
     public var effect: Effect
     public var account: ApprovalAccount
     public var resources: [ResourceRef]
@@ -86,6 +88,8 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case summary
+        case toolID = "tool_id"
+        case warning
         case effect
         case account
         case resources
@@ -96,6 +100,8 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
 
     public init(
         summary: String,
+        toolID: String? = nil,
+        warning: String? = nil,
         effect: Effect,
         account: ApprovalAccount,
         resources: [ResourceRef] = [],
@@ -104,6 +110,8 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         summaryHead: String? = nil
     ) {
         self.summary = summary
+        self.toolID = toolID
+        self.warning = warning
         self.effect = effect
         self.account = account
         self.resources = resources
@@ -375,9 +383,9 @@ public struct Interaction: Sendable, Codable, Hashable, Identifiable {
     }
 }
 
-public enum InteractionAnswer: Sendable, Hashable {
+public enum InteractionAnswer: Sendable, Hashable, Encodable {
     case answer(text: String, optionIDs: [String]? = nil)
-    case approve(actionDigest: String)
+    case approve(actionDigest: String, rememberRule: Bool = false)
     case decline(actionDigest: String?)
     case chooseAccount(connectionID: String, rememberAsDefault: Bool = false)
 
@@ -389,8 +397,15 @@ public enum InteractionAnswer: Sendable, Hashable {
                 dict["option_ids"] = .array(optionIDs.map { .string($0) })
             }
             return dict
-        case .approve(let digest):
-            return ["kind": .string("approve"), "action_digest": .string(digest)]
+        case .approve(let digest, let rememberRule):
+            var dict: [String: AnyJSON] = [
+                "kind": .string("approve"),
+                "action_digest": .string(digest)
+            ]
+            if rememberRule {
+                dict["remember_rule"] = .bool(true)
+            }
+            return dict
         case .decline(let digest):
             var dict: [String: AnyJSON] = ["kind": .string("decline")]
             if let digest, !digest.isEmpty {
@@ -404,5 +419,10 @@ public enum InteractionAnswer: Sendable, Hashable {
                 "remember_as_default": .bool(remember)
             ]
         }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(payloadDictionary)
     }
 }
