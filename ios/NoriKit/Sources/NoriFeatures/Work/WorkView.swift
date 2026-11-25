@@ -5,10 +5,10 @@ import NoriDesign
 // MARK: - Work Tab Filter
 
 public enum WorkTabFilter: String, Sendable, Hashable, CaseIterable {
-    case needsYou = "needs_you"
-    case working
-    case scheduled
-    case finished
+    case tasks
+    case artifacts
+    case goals
+    case routines
 }
 
 public typealias WorkSegment = WorkTabFilter
@@ -52,27 +52,24 @@ enum WorkStatusPresentation {
 public struct WorkView: View {
     @Bindable private var store: NoriStore
     private let externalSelection: Binding<WorkTabFilter>?
-    private let onOpenActivity: () -> Void
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
-    private let onOpenRoutines: () -> Void
     private let onOpenTask: ((String) -> Void)?
 
-    @State private var internalTab: WorkTabFilter = .needsYou
+    @State private var internalTab: WorkTabFilter = .tasks
     @State private var selectedTaskDestination: String?
+    @State private var didApplyInitialDefaultTab: Bool = false
+    @State private var showAllRecentTasks: Bool = false
+    @State private var isResolvedExpanded: Bool = false
 
     public init(
         store: NoriStore,
         selectedTab: Binding<WorkTabFilter>? = nil,
-        onOpenActivity: @escaping () -> Void = {},
         onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in },
-        onOpenRoutines: @escaping () -> Void = {},
         onOpenTask: ((String) -> Void)? = nil
     ) {
         self.store = store
         self.externalSelection = selectedTab
-        self.onOpenActivity = onOpenActivity
         self.onOpenDocument = onOpenDocument
-        self.onOpenRoutines = onOpenRoutines
         self.onOpenTask = onOpenTask
     }
 
@@ -84,71 +81,60 @@ public struct WorkView: View {
         activeTabBinding.wrappedValue
     }
 
-    private var enabledAutomations: [Automation] {
-        store.automations.filter { $0.status == .enabled }
-    }
-
-    private var orderedInteractions: [Interaction] {
-        let pending = store.interactions.filter { $0.status == .pending }
-        let resolved = store.interactions.filter { $0.status != .pending }
-        return pending + resolved
-    }
-
-    private var segmentOptions: [NoriSegmentOption<WorkTabFilter>] {
+    private var tabOptions: [NoriSegmentOption<WorkTabFilter>] {
         [
-            NoriSegmentOption(value: .needsYou, label: "Needs you", count: store.needsYouCount),
-            NoriSegmentOption(value: .working, label: "Working", count: store.activeTasksCount),
-            NoriSegmentOption(value: .scheduled, label: "Scheduled", count: enabledAutomations.count),
-            NoriSegmentOption(value: .finished, label: "Done", count: nil)
+            NoriSegmentOption(
+                value: .tasks,
+                label: "Tasks",
+                count: store.needsYouCount > 0 ? store.needsYouCount : nil
+            ),
+            NoriSegmentOption(value: .artifacts, label: "Artifacts"),
+            NoriSegmentOption(value: .goals, label: "Goals"),
+            NoriSegmentOption(value: .routines, label: "Routines")
         ]
+    }
+
+    private var pendingInteractions: [Interaction] {
+        store.pendingInteractions
+    }
+
+    private var resolvedInteractions: [Interaction] {
+        store.interactions.filter { $0.status != .pending }
+    }
+
+    private var orphanNeedsYouTasks: [WorkItem] {
+        let pendingTaskIDs = Set(pendingInteractions.compactMap(\.taskID))
+        return store.workItems.filter { item in
+            item.bucket == .needsYou && !pendingTaskIDs.contains(item.taskID)
+        }
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Large title header
-            HStack(alignment: .center, spacing: 10) {
-                Text("Work")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(NoriColors.ink)
-                Spacer(minLength: 8)
-                Button(action: onOpenActivity) {
-                    Image(systemName: "waveform.path.ecg")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(NoriColors.ink)
-                        .frame(width: 34, height: 34)
-                        .background(NoriColors.fill1, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open Activity sheet")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
+            headerSection
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    NoriSegmentedTabs(options: segmentOptions, selection: activeTabBinding)
-
-                    switch activeTab {
-                    case .needsYou:
-                        needsYouContent
-                    case .working:
-                        workingContent
-                    case .scheduled:
-                        scheduledContent
-                    case .finished:
-                        finishedContent
+            Group {
+                switch activeTab {
+                case .tasks:
+                    tasksContent
+                case .artifacts:
+                    LibraryView(store: store, onOpenDocument: onOpenDocument)
+                case .goals:
+                    GoalsView(store: store) {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            activeTabBinding.wrappedValue = .tasks
+                        }
                     }
+                case .routines:
+                    RoutinesView(store: store)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 28)
             }
-            .refreshable {
-                await store.refreshWorkAndInteractions()
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(NoriColors.canvas.ignoresSafeArea())
+        .onAppear {
+            applySmartDefaultTabIfNeeded()
+        }
         .navigationDestination(item: $selectedTaskDestination) { taskID in
             WorkDetailView(
                 store: store,
@@ -161,112 +147,223 @@ public struct WorkView: View {
         #endif
     }
 
-    // MARK: - Tab Contents
+    // MARK: - Header
 
-    @ViewBuilder
-    private var needsYouContent: some View {
-        let cards = orderedInteractions
-        let orphanNeedsYouTasks = store.workItems.filter { item in
-            item.bucket == .needsYou && !cards.contains(where: { $0.taskID == item.taskID })
-        }
-
-        if cards.isEmpty && orphanNeedsYouTasks.isEmpty {
-            NoriEmptyState(
-                title: "All clear",
-                message: "Nothing needs you right now."
-            )
-        } else {
-            VStack(spacing: 12) {
-                ForEach(cards) { interaction in
-                    InteractionCardView(
-                        store: store,
-                        interaction: interaction,
-                        onOpenTask: { taskID in
-                            navigateToTask(taskID)
-                        }
-                    )
-                }
-
-                if !orphanNeedsYouTasks.isEmpty {
-                    NoriRows {
-                        ForEach(Array(orphanNeedsYouTasks.enumerated()), id: \.element.id) { idx, item in
-                            workRow(item: item, showDivider: idx < orphanNeedsYouTasks.count - 1)
-                        }
-                    }
-                }
+    private var headerSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center) {
+                Text("Work")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(NoriColors.ink)
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+
+            NoriUnderlineTabs(options: tabOptions, selection: activeTabBinding)
         }
+        .background(
+            NoriTopWash()
+                .ignoresSafeArea(edges: .top)
+        )
     }
 
-    @ViewBuilder
-    private var workingContent: some View {
+    // MARK: - Tasks Tab
+
+    private var tasksContent: some View {
+        let pending = pendingInteractions
+        let orphans = orphanNeedsYouTasks
+        let needsYouTotal = pending.count + orphans.count
         let active = store.activeWorkItems
-        if active.isEmpty {
-            NoriEmptyState(
-                title: "Nothing is running",
-                message: "Ask Nori for something in Chat and background work will show up here."
-            )
-        } else {
-            NoriRows {
-                ForEach(Array(active.enumerated()), id: \.element.id) { idx, item in
-                    workRow(item: item, showDivider: idx < active.count - 1)
-                }
-            }
-        }
-    }
+        let finished = store.finishedWorkItems
+        let resolved = resolvedInteractions
+        let visibleRecent = showAllRecentTasks ? finished : Array(finished.prefix(5))
+        let isAllClear = pending.isEmpty && orphans.isEmpty && active.isEmpty
 
-    @ViewBuilder
-    private var scheduledContent: some View {
-        let scheduled = enabledAutomations
-        if scheduled.isEmpty {
-            NoriEmptyState(
-                title: "No automations scheduled",
-                message: "Enable recurring briefs or checks in Automations to see upcoming runs here."
-            ) {
-                Button("Open Automations", action: onOpenRoutines)
-                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-            }
-        } else {
-            NoriRows {
-                ForEach(Array(scheduled.enumerated()), id: \.element.id) { idx, automation in
-                    Button(action: onOpenRoutines) {
-                        NoriRow(
-                            title: automation.title,
-                            detail: triggerSummary(for: automation.trigger),
-                            systemImage: "repeat",
-                            iconTone: .accent,
-                            showChevron: true,
-                            showDivider: idx < scheduled.count - 1
-                        ) {
-                            if let nextAt = automation.nextAt, !nextAt.isEmpty {
-                                NoriPill(NoriDateFormatting.relative(nextAt), tone: .neutral)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                // 1. Needs you
+                if needsYouTotal > 0 {
+                    NoriSectionHeader("Needs you · \(needsYouTotal)")
+                    VStack(spacing: 12) {
+                        ForEach(pending) { interaction in
+                            InteractionCardView(
+                                store: store,
+                                interaction: interaction,
+                                onOpenTask: navigateToTask
+                            )
+                        }
+
+                        if !orphans.isEmpty {
+                            NoriRows {
+                                ForEach(Array(orphans.enumerated()), id: \.element.id) { idx, item in
+                                    workRow(item: item, showDivider: idx < orphans.count - 1)
+                                }
                             }
                         }
                     }
-                    .buttonStyle(.plain)
+                    .padding(.bottom, 6)
                 }
+
+                // 2. Calm All clear hero card when nothing needs you and nothing is running
+                if isAllClear {
+                    allClearCard
+                        .padding(.top, 4)
+                        .padding(.bottom, 8)
+                }
+
+                // 3. Running
+                if !active.isEmpty {
+                    NoriSectionHeader(active.count > 1 ? "Running · \(active.count)" : "Running")
+                    VStack(spacing: 10) {
+                        ForEach(active) { item in
+                            runningTaskCard(item: item)
+                        }
+                    }
+                    .padding(.bottom, 6)
+                }
+
+                // 4. Recent
+                if !finished.isEmpty {
+                    NoriSectionHeader("Recent")
+                    NoriRows {
+                        ForEach(Array(visibleRecent.enumerated()), id: \.element.id) { idx, item in
+                            workRow(item: item, showDivider: idx < visibleRecent.count - 1)
+                        }
+                    }
+
+                    if finished.count > 5 {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showAllRecentTasks.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Text(showAllRecentTasks ? "Show fewer" : "Show all (\(finished.count))")
+                                Image(systemName: showAllRecentTasks ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                            }
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(NoriColors.ink2)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 2)
+                    }
+                }
+
+                // 5. Recently resolved interactions (collapsed by default)
+                if !resolved.isEmpty {
+                    recentlyResolvedSection(resolved)
+                        .padding(.top, 14)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 96)
+        }
+        .background(NoriColors.canvas)
+        .refreshable {
+            await store.refreshWorkAndInteractions()
+        }
+    }
+
+    // MARK: - Task Components
+
+    private var allClearCard: some View {
+        NoriHeroCard(padding: 16) {
+            HStack(alignment: .center, spacing: 14) {
+                NoriMark(size: 34, state: .idle)
+                    .frame(width: 46, height: 46)
+                    .background(
+                        NoriColors.surface,
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("All clear")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(NoriColors.ink)
+                    Text("Nothing needs you right now.")
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(NoriColors.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
             }
         }
     }
 
-    @ViewBuilder
-    private var finishedContent: some View {
-        let finished = store.finishedWorkItems
-        if finished.isEmpty {
-            NoriEmptyState(
-                title: "No finished tasks yet",
-                message: "Completed, incomplete, and stopped tasks appear here."
+    private func runningTaskCard(item: WorkItem) -> some View {
+        let progressText: String = {
+            if item.cancelRequested {
+                return "Stopping…"
+            }
+            if let progress = item.progress?.trimmingCharacters(in: .whitespacesAndNewlines), !progress.isEmpty {
+                return progress
+            }
+            return "Started \(NoriDateFormatting.relative(item.startedAt))"
+        }()
+
+        return Button {
+            navigateToTask(item.taskID)
+        } label: {
+            HStack(alignment: .center, spacing: 11) {
+                PulsingStatusDot(
+                    color: item.operations.uncertain > 0 ? NoriColors.warning : NoriColors.accent,
+                    size: 7.5,
+                    animated: !item.cancelRequested
+                )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.title)
+                        .font(NoriTypography.rowTitle)
+                        .foregroundStyle(NoriColors.ink)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+
+                    Text(progressText)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(NoriColors.ink2)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if item.operations.uncertain > 0 {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(NoriColors.warning)
+                        .accessibilityLabel("Has an unconfirmed action")
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(NoriColors.ink3)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color(hex: 0xFAF8FE),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
             )
-        } else {
-            NoriRows {
-                ForEach(Array(finished.enumerated()), id: \.element.id) { idx, item in
-                    workRow(item: item, showDivider: idx < finished.count - 1)
-                }
-            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color(hex: 0xDFD4F6), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
-
-    // MARK: - Work Row
 
     private func workRow(item: WorkItem, showDivider: Bool) -> some View {
         let pill = WorkStatusPresentation.pill(for: item)
@@ -301,17 +398,66 @@ public struct WorkView: View {
         .buttonStyle(.plain)
     }
 
-    private func triggerSummary(for trigger: AutomationTrigger) -> String {
-        if let displayCadence = trigger.displayCadence, !displayCadence.isEmpty {
-            return displayCadence
+    private func recentlyResolvedSection(_ resolved: [Interaction]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isResolvedExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text("Recently resolved (\(resolved.count))")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(NoriColors.ink2)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(NoriColors.ink3)
+                        .rotationEffect(.degrees(isResolvedExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(
+                    NoriColors.fill1,
+                    in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(isResolvedExpanded ? "Collapses resolved items" : "Expands resolved items")
+
+            if isResolvedExpanded {
+                VStack(spacing: 10) {
+                    ForEach(resolved) { interaction in
+                        InteractionCardView(
+                            store: store,
+                            interaction: interaction,
+                            onOpenTask: navigateToTask
+                        )
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
-        if let rrule = trigger.rrule, !rrule.isEmpty {
-            return rrule
+    }
+
+    // MARK: - Helpers
+
+    private func applySmartDefaultTabIfNeeded() {
+        guard !didApplyInitialDefaultTab else { return }
+        didApplyInitialDefaultTab = true
+        guard activeTab == .tasks else { return }
+
+        if store.pendingInteractions.isEmpty
+            && store.activeWorkItems.isEmpty
+            && store.finishedWorkItems.isEmpty
+            && !store.libraryItems.isEmpty {
+            activeTabBinding.wrappedValue = .artifacts
         }
-        if let at = trigger.at, !at.isEmpty {
-            return "Once at \(NoriDateFormatting.shortDateTime(at))"
-        }
-        return trigger.summaryLabel
     }
 
     private func navigateToTask(_ taskID: String) {
