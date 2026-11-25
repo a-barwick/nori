@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Figtree, IBM_Plex_Mono } from "next/font/google";
 import { connection } from "next/server";
+import { APPEARANCE_BOOT_SCRIPT } from "@/lib/appearance";
 import { browserObservabilityConfig } from "@/lib/observability/config.server";
 import "./globals.css";
 
@@ -29,8 +30,15 @@ export const instant = false;
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   await connection();
   return (
-    <html lang="en" className={`${figtree.variable} ${plexMono.variable} h-full`}
-      data-nori-observability={JSON.stringify(browserObservabilityConfig())}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${figtree.variable} ${plexMono.variable} h-full`}
+      data-nori-observability={JSON.stringify(browserObservabilityConfig())}
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
+      </head>
       <body className="h-full overflow-clip">
         {children}
       </body>

@@ -23,7 +23,6 @@ import {
   Empty,
   Failure,
   Field,
-  HeroCard,
   inputBase,
   inputClass,
   Loading,
@@ -49,9 +48,9 @@ function parseWorkTab(raw: string | null): WorkTab {
 
 export function statusPill(item: WorkItem): { tone: Tone; label: string } {
   if (item.cancel_requested && item.status === "running") return { tone: "neutral", label: "Stopping" };
-  if (item.bucket === "needs_you") return { tone: "accent", label: "Pending" };
+  if (item.bucket === "needs_you") return { tone: "warning", label: "Action needed" };
   if (item.status === "running") {
-    return item.operations.uncertain ? { tone: "warning", label: "Checking" } : { tone: "neutral", label: "Working" };
+    return item.operations.uncertain ? { tone: "warning", label: "Checking" } : { tone: "working", label: "Working" };
   }
   if (item.status === "completed") {
     return item.operations.uncertain ? { tone: "warning", label: "Unconfirmed" } : { tone: "ok", label: "Done" };
@@ -92,18 +91,11 @@ export function WorkScreen() {
   );
 
   const pendingTotal = pendingInteractions.length + orphanPendingTasks.length;
-  const statusSubtitle =
-    [
-      runningTasks.length > 0 ? `${runningTasks.length} running` : null,
-      pendingTotal > 0 ? `${pendingTotal} pending` : null,
-    ]
-      .filter(Boolean)
-      .join(" · ") || "All caught up";
 
   return (
     <Screen
       title="Work"
-      subtitle={statusSubtitle}
+      hideHeaderTitle
       tabs={
         <UnderlineTabs<WorkTab>
           label="Work"
@@ -162,100 +154,94 @@ function TasksHub({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {error ? <Failure error={error} onRetry={onRetry} /> : null}
-      <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-[1.28fr_1fr]">
-        {/* Left column: Pending actions or calm All caught up hero card */}
-        <div>
-          {pendingTotal > 0 ? (
-            <Section title={`Pending · ${pendingTotal}`}>
-              <div className="space-y-3">
-                {pendingInteractions.map((interaction) => (
-                  <InteractionCard key={interaction.id} interaction={interaction} />
-                ))}
-                {orphanPendingTasks.length > 0 && (
-                  <Rows label="Pending tasks">
-                    {orphanPendingTasks.map((item) => (
-                      <WorkRow key={item.task_id} item={item} />
-                    ))}
-                  </Rows>
-                )}
-              </div>
-            </Section>
-          ) : (
-            <HeroCard className="flex items-center gap-3.5">
-              <div className="grid size-[46px] shrink-0 place-items-center rounded-[14px] border border-hairline bg-surface">
-                <NoriMark size={30} state="idle" />
-              </div>
-              <div>
-                <p className="text-[16px] font-bold text-ink">All caught up</p>
-                <p className="text-[13.5px] text-ink-2">
-                  {runningTasks.length > 0 ? "No pending approvals or questions." : "No pending approvals or active tasks."}
-                </p>
-              </div>
-            </HeroCard>
-          )}
-        </div>
 
-        {/* Right column: Running cards + Recent rows */}
-        <div>
-          {runningTasks.length > 0 && (
-            <Section title={runningTasks.length > 1 ? `Running · ${runningTasks.length}` : "Running"}>
-              <div className="space-y-2.5">
-                {runningTasks.map((item) => (
-                  <Link
-                    key={item.task_id}
-                    href={`/work/${encodeURIComponent(item.task_id)}`}
-                    className="nori-running-card flex items-center gap-3 px-4 py-3.5 transition-colors hover:border-hairline-strong hover:bg-accent-subtle"
-                  >
-                    <span
-                      className={cn(
-                        "size-[7.5px] shrink-0 rounded-full",
-                        item.operations.uncertain > 0 ? "bg-warning" : "bg-accent",
-                        !item.cancel_requested && "pulse-dot",
-                      )}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-row font-semibold text-ink">{item.title}</span>
-                      <span className="mt-0.5 block line-clamp-2 text-meta text-ink-2">
-                        {item.cancel_requested ? "Stopping…" : item.progress || `Started ${relative(item.started_at)}`}
-                      </span>
-                    </span>
-                    {item.operations.uncertain > 0 && (
-                      <AlertTriangle size={14} className="shrink-0 text-warning" aria-label="Has an unconfirmed action" />
-                    )}
-                    <ChevronRight size={15} className="shrink-0 text-ink-3" aria-hidden />
-                  </Link>
-                ))}
-              </div>
-            </Section>
-          )}
-
-          {finishedTasks.length > 0 ? (
-            <Section title="Recent">
-              <Rows label="Recent tasks">
-                {visibleRecent.map((item) => (
+      {/* 1. Action needed (or slim All clear strip when idle) */}
+      {pendingTotal > 0 ? (
+        <Section title={`Action needed · ${pendingTotal}`}>
+          <div className="space-y-3">
+            {pendingInteractions.map((interaction) => (
+              <InteractionCard key={interaction.id} interaction={interaction} />
+            ))}
+            {orphanPendingTasks.length > 0 && (
+              <Rows label="Tasks needing action">
+                {orphanPendingTasks.map((item) => (
                   <WorkRow key={item.task_id} item={item} />
                 ))}
               </Rows>
-              {finishedTasks.length > 5 && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllRecent((open) => !open)}
-                  className="mt-2 flex w-full items-center justify-center gap-1 py-2 text-meta font-semibold text-ink-2 hover:text-ink"
-                >
-                  <span>{showAllRecent ? "Show fewer" : `Show all (${finishedTasks.length})`}</span>
-                  <ChevronDown size={14} className={cn("transition-transform", showAllRecent && "rotate-180")} aria-hidden />
-                </button>
-              )}
-            </Section>
-          ) : !runningTasks.length ? (
-            <Section title="Recent">
-              <Empty>Finished tasks appear here.</Empty>
-            </Section>
-          ) : null}
+            )}
+          </div>
+        </Section>
+      ) : (
+        <div
+          data-all-clear
+          className="flex items-center gap-3 rounded-card border border-card-border bg-surface px-4 py-3"
+        >
+          <span className="grid size-8 shrink-0 place-items-center rounded-[10px] bg-fill-1">
+            <NoriMark size={22} state="idle" />
+          </span>
+          <p className="text-[15px] font-semibold text-ink">All clear</p>
         </div>
-      </div>
+      )}
+
+      {/* 2. Running */}
+      {runningTasks.length > 0 && (
+        <Section title={runningTasks.length > 1 ? `Running · ${runningTasks.length}` : "Running"}>
+          <div className="space-y-2.5">
+            {runningTasks.map((item) => (
+              <Link
+                key={item.task_id}
+                href={`/work/${encodeURIComponent(item.task_id)}`}
+                className="nori-running-card flex items-center gap-3 px-4 py-3.5 transition-colors hover:border-hairline-strong hover:bg-accent-subtle"
+              >
+                <span
+                  className={cn(
+                    "size-[7.5px] shrink-0 rounded-full",
+                    item.operations.uncertain > 0 ? "bg-warning" : "bg-accent",
+                    !item.cancel_requested && "pulse-dot",
+                  )}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-row font-semibold text-ink">{item.title}</span>
+                  <span className="mt-0.5 block line-clamp-2 text-meta text-ink-2">
+                    {item.cancel_requested ? "Stopping…" : item.progress || `Started ${relative(item.started_at)}`}
+                  </span>
+                </span>
+                {item.operations.uncertain > 0 && (
+                  <AlertTriangle size={14} className="shrink-0 text-warning" aria-label="Has an unconfirmed action" />
+                )}
+                <ChevronRight size={15} className="shrink-0 text-ink-3" aria-hidden />
+              </Link>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* 3. Recent */}
+      {finishedTasks.length > 0 ? (
+        <Section title="Recent">
+          <Rows label="Recent tasks">
+            {visibleRecent.map((item) => (
+              <WorkRow key={item.task_id} item={item} />
+            ))}
+          </Rows>
+          {finishedTasks.length > 5 && (
+            <button
+              type="button"
+              onClick={() => setShowAllRecent((open) => !open)}
+              className="mt-2 flex w-full items-center justify-center gap-1 py-2 text-meta font-semibold text-ink-2 hover:text-ink"
+            >
+              <span>{showAllRecent ? "Show fewer" : `Show all (${finishedTasks.length})`}</span>
+              <ChevronDown size={14} className={cn("transition-transform", showAllRecent && "rotate-180")} aria-hidden />
+            </button>
+          )}
+        </Section>
+      ) : !runningTasks.length ? (
+        <Section title="Recent">
+          <Empty>Finished tasks appear here.</Empty>
+        </Section>
+      ) : null}
     </div>
   );
 }
@@ -640,7 +626,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
       )}
 
       {pendingInteractions.length > 0 && (
-        <Section title="Pending">
+        <Section title="Action needed">
           <div className="space-y-3">
             {pendingInteractions.map((interaction) => (
               <InteractionCard key={interaction.id} interaction={interaction} compact />

@@ -88,7 +88,7 @@ export function ReminderCard({ part }: { part: Part }) {
       data-reminder-status={status}
       className={cn(
         "rounded-card border px-3.5 py-3",
-        cancelled ? "border-hairline bg-fill-1/60" : "border-hairline-strong bg-surface shadow-[0_1px_2px_rgba(25,9,54,0.05)]",
+        cancelled ? "border-card-border bg-sidebar" : "border-card-border bg-surface shadow-card",
       )}
     >
       <div className="flex flex-wrap items-center gap-2">

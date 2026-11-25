@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Check, CheckCircle2, ChevronRight, Circle, Plus, Trash2 } from "lucide-react";
+import { ArrowUpRight, CalendarCheck2, Check, CheckCircle2, ChevronRight, Circle, FileText, MailCheck, Plane, Plus, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
@@ -13,7 +13,6 @@ import type { Automation, Goal, GoalEditable, LibraryItem, WorkItem } from "@/li
 import { cn } from "@/lib/utils";
 import {
   Confirm,
-  Empty,
   Failure,
   Field,
   inputBase,
@@ -33,20 +32,83 @@ import {
 
 type List<T> = { items: T[] };
 const STATUS: Record<Goal["status"], { tone: Tone; label: string }> = {
-  active: { tone: "accent", label: "Active" },
+  active: { tone: "working", label: "Active" },
   paused: { tone: "neutral", label: "Paused" },
   completed: { tone: "ok", label: "Done" },
   abandoned: { tone: "neutral", label: "Dropped" },
 };
+
+export const GOAL_EXAMPLES = [
+  {
+    id: "trip",
+    icon: Plane,
+    title: "Plan a weekend trip",
+    prompt:
+      "Create a goal to plan a weekend trip: compare flight and hotel options under $900, ask for my approval before booking, and add the confirmed itinerary to my calendar by Friday.",
+  },
+  {
+    id: "inbox",
+    icon: MailCheck,
+    title: "Clean up my inbox",
+    prompt:
+      "Create a goal to clean up my inbox by Sunday: find recurring newsletters and promos from the last 30 days, propose what to unsubscribe from for my approval, and summarize what remains.",
+  },
+  {
+    id: "prep",
+    icon: FileText,
+    title: "Prep for next week's meeting",
+    prompt:
+      "Create a goal to prepare for next week's review meeting: pull together recent updates and open action items, draft a 1-page brief, and check in with me 24 hours before.",
+  },
+  {
+    id: "appointment",
+    icon: CalendarCheck2,
+    title: "Book a dentist appointment",
+    prompt:
+      "Create a goal to book my dentist appointment: check my calendar for open mornings next week, draft the scheduling message for my approval, and mark it done once the appointment is confirmed.",
+  },
+] as const;
 
 function met(goal: Goal) {
   const done = goal.completion_criteria.filter((criterion) => criterion.met).length;
   return `${done} of ${goal.completion_criteria.length}`;
 }
 
+function GoalQuickStartGrid({ onStart }: { onStart: (prompt: string) => void }) {
+  return (
+    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2" data-goal-examples>
+      {GOAL_EXAMPLES.map((example) => {
+        const Icon = example.icon;
+        return (
+          <button
+            key={example.id}
+            type="button"
+            onClick={() => onStart(example.prompt)}
+            className="group flex items-center gap-3 rounded-card border border-card-border bg-surface px-4 py-3.5 text-left transition-[border-color,background-color] hover:border-lavender-border hover:bg-wash-top"
+          >
+            <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
+              <Icon size={17} strokeWidth={1.85} aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[14.5px] font-semibold text-ink">
+              {example.title}
+            </span>
+            <ArrowUpRight
+              size={15}
+              className="shrink-0 text-ink-3 transition-colors group-hover:text-accent-text"
+              aria-hidden
+            />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Embeddable Goals view used inside Work -> Goals and standalone /goals. */
 export function GoalsContent() {
-  const { has } = useAssistant();
+  const { has, runtime } = useAssistant();
+  const router = useRouter();
+  const [showExamples, setShowExamples] = useState(false);
   const list = useResource<List<Goal>>(has("goals") ? "/goals" : null, { poll: 30_000 });
   if (!has("goals")) return <NotYet what="Goals" />;
 
@@ -55,44 +117,67 @@ export function GoalsContent() {
   const closed = items.filter((goal) => goal.status === "completed" || goal.status === "abandoned");
   const blocked = open.filter((goal) => goal.blockers.length);
 
+  const startExampleInChat = (prompt: string) => {
+    runtime.setDraft(prompt);
+    router.push("/?compose=1");
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {blocked.length ? (
-          <NoriLine>
-            {blocked.length === 1 ? "One goal is waiting on input." : `${blocked.length} goals are waiting on input.`}
-          </NoriLine>
-        ) : (
-          <div />
-        )}
-        <Link
-          href="/goals/new"
-          className="inline-flex h-8 items-center gap-1.5 rounded-full bg-accent px-3.5 text-meta font-semibold text-on-accent transition-colors hover:bg-accent-hover"
-        >
-          <Plus size={14} aria-hidden />
-          New goal
-        </Link>
-      </div>
+    <div className="space-y-5">
+      {items.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {blocked.length ? (
+            <NoriLine>
+              {blocked.length === 1 ? "One goal is waiting on input." : `${blocked.length} goals are waiting on input.`}
+            </NoriLine>
+          ) : (
+            <div />
+          )}
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="quiet" onClick={() => setShowExamples((v) => !v)}>
+              <Sparkles size={13} aria-hidden />
+              {showExamples ? "Hide examples" : "Ideas"}
+            </Button>
+            <Link
+              href="/goals/new"
+              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-accent px-3.5 text-meta font-semibold text-on-accent transition-colors hover:bg-accent-hover"
+            >
+              <Plus size={14} aria-hidden />
+              New goal
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {items.length > 0 && showExamples && (
+        <Section title="Quick-start in Chat">
+          <GoalQuickStartGrid onStart={startExampleInChat} />
+        </Section>
+      )}
 
       {list.error && <Failure error={list.error} onRetry={() => void list.reload()} />}
 
       {list.loading ? (
         <Loading />
       ) : !items.length ? (
-        <Empty
-          title="No goals yet"
-          action={
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-card border border-card-border bg-surface p-5">
+            <p className="min-w-0 flex-1 max-w-xl text-body text-ink">
+              Give Nori something bigger you want done—like planning a trip or organizing an event—and it will keep track of every step until it’s finished.
+            </p>
             <Link
               href="/goals/new"
-              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-meta font-semibold text-on-accent hover:bg-accent-hover"
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-accent px-4 text-meta font-semibold text-on-accent transition-colors hover:bg-accent-hover"
             >
               <Plus size={14} aria-hidden />
               New goal
             </Link>
-          }
-        >
-          Tell Nori what you want done by when, and it tracks criteria and blockers here.
-        </Empty>
+          </div>
+
+          <Section title="Quick-start in Chat">
+            <GoalQuickStartGrid onStart={startExampleInChat} />
+          </Section>
+        </div>
       ) : (
         <>
           {open.length > 0 && (
@@ -102,7 +187,7 @@ export function GoalsContent() {
                 const total = goal.completion_criteria.length;
                 const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
                 return (
-                  <article key={goal.id} className="rounded-card border border-hairline bg-surface p-4">
+                  <article key={goal.id} className="rounded-card border border-card-border bg-surface p-4">
                     <div className="flex items-start justify-between gap-3">
                       <Link
                         href={`/goals/${encodeURIComponent(goal.id)}`}
@@ -134,13 +219,13 @@ export function GoalsContent() {
                       <Link
                         key={idx}
                         href={blocker.interaction_id ? "/work?tab=tasks" : blocker.connection_id ? "/apps" : `/goals/${encodeURIComponent(goal.id)}`}
-                        className="mt-3 flex items-center justify-between gap-3 rounded-[14px] border border-lavender-border bg-wash-top px-3 py-2.5 text-[12.5px] transition-colors hover:bg-accent-subtle"
+                        className="mt-3 flex items-center justify-between gap-3 rounded-[14px] border border-lavender-border bg-accent-subtle px-3 py-2.5 text-[12.5px] transition-colors hover:bg-fill-2"
                       >
                         <span className="min-w-0">
-                          <span className="font-semibold text-accent-text">Blocked: </span>
+                          <span className="font-semibold text-accent-text">Action needed: </span>
                           <span className="text-ink">{blocker.text}</span>
                         </span>
-                        <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-lavender-border bg-surface px-2.5 py-1 text-[12px] font-semibold text-accent-text">
+                        <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-lavender-border bg-fill-1 px-2.5 py-1 text-[12px] font-semibold text-accent-text">
                           Review
                           <ChevronRight size={12} aria-hidden />
                         </span>

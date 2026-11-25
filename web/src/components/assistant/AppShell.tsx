@@ -5,8 +5,10 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, type ReactNode } from "react";
 import { MotionConfig } from "motion/react";
 import { Tooltip } from "radix-ui";
-import { ListChecks, MessageCircle, MoreHorizontal } from "lucide-react";
+import { ListChecks, MoreHorizontal } from "lucide-react";
+import { NoriTabIcon } from "@/components/mark/NoriMark";
 import { AppFrame } from "@/components/shell/AppFrame";
+import { useAppearance } from "@/lib/appearance";
 import { AssistantProvider, useAssistant } from "@/lib/assistant/context";
 import { useSummary } from "@/lib/assistant/sources";
 import { cn } from "@/lib/utils";
@@ -15,7 +17,7 @@ import { Badge } from "./ui";
 type NavItem = {
   href: string;
   label: string;
-  icon: typeof MessageCircle;
+  renderIcon: (active: boolean, size: number) => ReactNode;
   badge?: number;
   badgeLabel?: string;
   dot?: boolean;
@@ -24,6 +26,7 @@ type NavItem = {
 };
 
 export function AppShell({ localMode, children }: { localMode: boolean; children: ReactNode }) {
+  useAppearance();
   return (
     <Tooltip.Provider delayDuration={500}>
       <MotionConfig reducedMotion="user">
@@ -56,15 +59,15 @@ function Frame({ children }: { children: ReactNode }) {
     {
       href: "/",
       label: "Chat",
-      icon: MessageCircle,
+      renderIcon: (active, size) => <NoriTabIcon active={active} size={size} />,
       match: (p) => p === "/",
     },
     {
       href: "/work",
       label: "Work",
-      icon: ListChecks,
+      renderIcon: (_active, size) => <ListChecks size={size} strokeWidth={1.85} aria-hidden />,
       badge: pending,
-      badgeLabel: "pending",
+      badgeLabel: "items needing action",
       match: (p) =>
         p.startsWith("/work") ||
         p.startsWith("/library") ||
@@ -74,7 +77,7 @@ function Frame({ children }: { children: ReactNode }) {
     {
       href: "/more",
       label: "More",
-      icon: MoreHorizontal,
+      renderIcon: (_active, size) => <MoreHorizontal size={size} strokeWidth={1.85} aria-hidden />,
       dot: appsAttention > 0,
       dotLabel: `${appsAttention} apps require attention`,
       match: (p) =>
@@ -88,7 +91,6 @@ function Frame({ children }: { children: ReactNode }) {
   const desktopNav = (
     <nav aria-label="Main" className="nori-pill-nav">
       {items.map((item) => {
-        const Icon = item.icon;
         const active = item.match(path);
         return (
           <Link
@@ -97,7 +99,7 @@ function Frame({ children }: { children: ReactNode }) {
             aria-current={active ? "page" : undefined}
             className="nori-pill-nav-item"
           >
-            <Icon size={17} strokeWidth={1.85} aria-hidden />
+            {item.renderIcon(active, 18)}
             <span>{item.label}</span>
             {item.badge ? <Badge count={item.badge} label={item.badgeLabel ?? ""} /> : null}
             {!item.badge && item.dot ? (
@@ -115,7 +117,6 @@ function Frame({ children }: { children: ReactNode }) {
   const mobileTabs = (
     <nav aria-label="Main" className="nori-tabbar flex shrink-0 border-t border-hairline bg-surface sm:hidden">
       {items.map((item) => {
-        const Icon = item.icon;
         const active = item.match(path);
         return (
           <Link
@@ -125,7 +126,7 @@ function Frame({ children }: { children: ReactNode }) {
             className={cn("nori-tab", active && "text-accent-text")}
           >
             <span className="relative">
-              <Icon size={22} strokeWidth={1.8} aria-hidden />
+              {item.renderIcon(active, 22)}
               {item.badge ? (
                 <span className="absolute -top-1.5 -right-2.5">
                   <Badge count={item.badge} label={item.badgeLabel ?? ""} />

@@ -92,25 +92,40 @@ function Receipt({ state }: { state: "sending" | "saved" }) {
   );
 }
 
-function WorkLine({ label, onDetails }: { label: string; onDetails?: () => void }) {
+function WorkLine({
+  label,
+  thinking,
+  onDetails,
+}: {
+  label: string;
+  thinking?: boolean;
+  onDetails?: () => void;
+}) {
   return (
     <div
-      className="anim-fade mt-4 flex w-full max-w-[680px] items-center justify-between gap-3 rounded-row border border-hairline bg-fill-1 px-3.5 py-2.5 text-meta text-ink-2"
+      className="anim-fade mt-4 flex w-full max-w-[680px] items-center gap-3"
       role="status"
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <NoriMark size={18} state="thinking" />
-        <span className="truncate">{label}</span>
-      </div>
-      {onDetails && (
-        <button
-          type="button"
-          className="shrink-0 font-semibold text-accent-text hover:underline"
-          onClick={onDetails}
-        >
-          Details
-        </button>
+      {thinking && (
+        <span className="w-7 shrink-0" data-active-avatar="true">
+          <NoriMark size={28} state="thinking" />
+        </span>
       )}
+      <div className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-row border border-card-border bg-fill-1 px-3.5 py-2.5 text-meta text-ink-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {!thinking && <NoriMark size={18} state="thinking" />}
+          <span className="truncate">{label}</span>
+        </div>
+        {onDetails && (
+          <button
+            type="button"
+            className="shrink-0 font-semibold text-accent-text hover:underline"
+            onClick={onDetails}
+          >
+            Details
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -156,13 +171,26 @@ function ErrorCard({
   );
 }
 
+function latestNoriMessageId(units: Unit[]): string | undefined {
+  for (let i = units.length - 1; i >= 0; i -= 1) {
+    const unit = units[i];
+    if (unit.type === "group" && unit.sender === "nori") {
+      const last = unit.units.at(-1);
+      if (last) return last.item.id;
+    }
+  }
+  return undefined;
+}
+
 function UnitView({
   unit,
+  activeNoriMessageId,
   onOpenDocument,
   onRetryMessage,
   retryingMessageId,
 }: {
   unit: Unit;
+  activeNoriMessageId?: string;
   onOpenDocument: OpenDocument;
   onRetryMessage?: (item: TextItem) => void;
   retryingMessageId?: string;
@@ -193,7 +221,12 @@ function UnitView({
         <div className={cn("mt-4 flex flex-col gap-1", unit.sender === "me" ? "items-end" : "items-start")}>
           {unit.units.map((u, i) => (
             <div key={u.key} className={cn("flex w-full", unit.sender === "me" ? "justify-end" : "justify-start")}>
-              <BubbleUnit unit={u} pos={posOf(i, unit.units.length)} sender={unit.sender} />
+              <BubbleUnit
+                unit={u}
+                pos={posOf(i, unit.units.length)}
+                sender={unit.sender}
+                showAvatar={unit.sender === "nori" && u.item.id === activeNoriMessageId}
+              />
             </div>
           ))}
           {unit.sender === "nori" &&
@@ -210,6 +243,7 @@ export function Thread({
   onUnread,
   conversation,
   status,
+  thinking = false,
   emptyMessage,
   onOpenDocument,
   onStatusDetails,
@@ -232,6 +266,7 @@ export function Thread({
   onOpenDocument: OpenDocument;
   conversation: Conversation;
   status?: string;
+  thinking?: boolean;
   emptyMessage: string;
   onUnread: (count: number, jump: () => void) => void;
   interactions?: InlineInteractionEntry[];
@@ -242,6 +277,7 @@ export function Thread({
   const thread = conversation;
   const items = thread.items;
   const units = useMemo(() => buildUnits(items), [items]);
+  const activeNoriMessageId = useMemo(() => (thinking ? undefined : latestNoriMessageId(units)), [thinking, units]);
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -407,13 +443,11 @@ export function Thread({
               <p className="arrive text-section font-semibold text-ink" style={{ animationDelay: "180ms" }}>
                 {emptyMessage}
               </p>
-              <p className="max-w-sm text-meta text-ink-2">
-                Messages, files, and background work all live in one continuous thread.
-              </p>
             </div>
           )}
           {units.map((u) => (
             <UnitView
+              activeNoriMessageId={activeNoriMessageId}
               onOpenDocument={onOpenDocument}
               onRetryMessage={onRetryMessage}
               retryingMessageId={retryingMessageId}
@@ -423,7 +457,7 @@ export function Thread({
           ))}
           {!!interactions?.length && (
             <section
-              aria-label="Pending actions"
+              aria-label="Action needed"
               data-inline-interactions
               className="mt-4 w-full max-w-[680px] space-y-3"
             >
@@ -438,7 +472,7 @@ export function Thread({
               ))}
             </section>
           )}
-          {status && <WorkLine label={status} onDetails={onStatusDetails} />}
+          {status && <WorkLine label={status} thinking={thinking} onDetails={onStatusDetails} />}
         </div>
         <div className="sr-only">{announcement}</div>
       </div>

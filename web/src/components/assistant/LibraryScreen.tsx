@@ -14,7 +14,7 @@ import { invalidate, useAction, useResource } from "@/lib/assistant/useResource"
 import type { LibraryItem, LibraryItem as BaseItem, SearchHit, SearchResponse } from "@/lib/contracts/assistant";
 import { useBlobURL } from "@/lib/useBlobURL";
 import { cn } from "@/lib/utils";
-import { Confirm, Empty, Failure, HeroCard, inputClass, Loading, Notice, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
+import { Confirm, Empty, Failure, inputClass, Loading, Notice, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
 
 type List<T> = { items: T[] };
 type Kind = "all" | "documents" | "files" | "events" | "messages";
@@ -133,39 +133,10 @@ export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
       ),
     [items, kind, settled, has],
   );
-  const featured = !settled && kind === "all" ? filtered[0] : undefined;
-  const rest = featured ? filtered.slice(1) : filtered;
-  const collections = useMemo(() => [...new Set(rest.map((item) => item.collection).filter(Boolean))] as string[], [rest]);
+  const collections = useMemo(() => [...new Set(filtered.map((item) => item.collection).filter(Boolean))] as string[], [filtered]);
 
   return (
     <div className="space-y-4">
-      {featured && (
-        <Link href={`/library/${encodeURIComponent(featured.id)}`} className="block transition-transform active:scale-[0.995]">
-          <HeroCard>
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <Pill tone="accent">
-                Latest artifact{featured.version > 1 ? ` · v${featured.version}` : ""}
-              </Pill>
-              <span className="text-caption text-ink-2">{relative(featured.created_at)}</span>
-            </div>
-            <h2 className="text-[17px] font-bold tracking-[-0.015em] text-ink">{featured.title}</h2>
-            {featured.preview_text && (
-              <p className="mt-1.5 line-clamp-2 text-[13.5px] leading-relaxed text-ink-2">
-                {plainText(featured.preview_text)}
-              </p>
-            )}
-            <div className="mt-3.5 flex items-center justify-between gap-2">
-              <span className="text-caption text-ink-2">
-                {[featured.collection, provenanceLabel(featured)].filter(Boolean).join(" · ")}
-              </span>
-              <span className="inline-flex h-8 items-center rounded-full bg-accent px-3.5 text-meta font-semibold text-on-accent">
-                Open
-              </span>
-            </div>
-          </HeroCard>
-        </Link>
-      )}
-
       <label className="relative block">
         <span className="sr-only">Filter artifacts</span>
         <Search size={15} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-3" aria-hidden />
@@ -175,7 +146,7 @@ export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Filter artifacts & saved files…"
-          className={cn(inputClass, "h-10 bg-fill-1 pl-9 text-[14px] focus-visible:bg-surface")}
+          className={cn(inputClass, "h-10 pl-9 text-[14px]")}
         />
       </label>
 
@@ -239,39 +210,59 @@ export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
           {library.error && <Failure error={library.error} onRetry={() => void library.reload()} />}
           {library.loading ? (
             <Loading />
-          ) : rest.length ? (
-            <>
-              {(collections.length ? [...collections, undefined] : [undefined]).map((collection) => {
-                const rows = rest.filter((item) => (item.collection ?? undefined) === collection);
-                if (!rows.length) return null;
-                return (
-                  <Section key={collection ?? "_"} title={collections.length ? (collection ?? "Saved") : "Saved library"}>
-                    <Rows>
-                      {rows.map((item) => (
-                        <Row
-                          key={item.id}
-                          href={`/library/${encodeURIComponent(item.id)}`}
-                          leading={<KindIcon item={item} />}
-                          title={item.title}
-                          detail={[
-                            item.preview_text ? plainText(item.preview_text) : "",
-                            `${provenanceLabel(item)} · ${relative(item.created_at)}`,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
-                          trailing={item.version > 1 ? <Pill>v{item.version}</Pill> : undefined}
-                        />
-                      ))}
-                    </Rows>
-                  </Section>
-                );
-              })}
-            </>
-          ) : !featured ? (
+          ) : filtered.length ? (
+            collections.length ? (
+              <>
+                {[...collections, undefined].map((collection) => {
+                  const rows = filtered.filter((item) => (item.collection ?? undefined) === collection);
+                  if (!rows.length) return null;
+                  return (
+                    <Section key={collection ?? "_"} title={collection ?? "Saved"}>
+                      <Rows>
+                        {rows.map((item) => (
+                          <Row
+                            key={item.id}
+                            href={`/library/${encodeURIComponent(item.id)}`}
+                            leading={<KindIcon item={item} />}
+                            title={item.title}
+                            detail={[
+                              item.preview_text ? plainText(item.preview_text) : "",
+                              `${provenanceLabel(item)} · ${relative(item.created_at)}`,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                            trailing={item.version > 1 ? <Pill>v{item.version}</Pill> : undefined}
+                          />
+                        ))}
+                      </Rows>
+                    </Section>
+                  );
+                })}
+              </>
+            ) : (
+              <Rows label="Saved artifacts">
+                {filtered.map((item) => (
+                  <Row
+                    key={item.id}
+                    href={`/library/${encodeURIComponent(item.id)}`}
+                    leading={<KindIcon item={item} />}
+                    title={item.title}
+                    detail={[
+                      item.preview_text ? plainText(item.preview_text) : "",
+                      `${provenanceLabel(item)} · ${relative(item.created_at)}`,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                    trailing={item.version > 1 ? <Pill>v{item.version}</Pill> : undefined}
+                  />
+                ))}
+              </Rows>
+            )
+          ) : (
             <Empty title={settled ? "No matching artifacts" : "Nothing saved yet"}>
               {settled ? `Nothing saved matches “${settled}”.` : "Documents Nori creates and files you share appear here."}
             </Empty>
-          ) : null}
+          )}
         </>
       )}
     </div>

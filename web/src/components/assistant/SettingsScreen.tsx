@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Brain, Bug, History, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Activity, Brain, History, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
+import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
+import { APPEARANCE_OPTIONS, useAppearance, type NoriAppearance } from "@/lib/appearance";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, when } from "@/lib/assistant/format";
@@ -21,19 +23,22 @@ import {
 } from "@/lib/assistant/permissions";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Connection, MCPServer, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
+import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { cn } from "@/lib/utils";
 import { OperationRows, shownOperations } from "./WorkScreen";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
 
 type List<T> = { items: T[] };
-export type SettingsSection = "permissions" | "preferences" | "history" | "diagnostics";
+export type SettingsSection = "permissions" | "preferences" | "appearance" | "account" | "history" | "diagnostics";
 
 const SECTIONS: { id: SettingsSection | "memory"; title: string; icon: typeof ShieldCheck; href?: string; feature?: Parameters<ReturnType<typeof useAssistant>["has"]>[0] }[] = [
-  { id: "permissions", title: "Permissions", icon: ShieldCheck, feature: "permissions" },
-  { id: "preferences", title: "Preferences", icon: SlidersHorizontal, feature: "preferences" },
+  { id: "permissions", title: "Standing Permissions", icon: ShieldCheck, feature: "permissions" },
+  { id: "preferences", title: "Preferences & Budgets", icon: SlidersHorizontal, feature: "preferences" },
+  { id: "appearance", title: "Appearance", icon: Monitor },
   { id: "memory", title: "Memory", icon: Brain, href: "/memory", feature: "memory" },
-  { id: "history", title: "Action history", icon: History, feature: "operations" },
-  { id: "diagnostics", title: "Diagnostics", icon: Bug },
+  { id: "account", title: "Account", icon: UserCircle },
+  { id: "history", title: "Action History", icon: History, feature: "operations" },
+  { id: "diagnostics", title: "Diagnostics", icon: Activity },
 ];
 
 export function SettingsIndex() {
@@ -49,7 +54,17 @@ export function SettingsScreen({ section }: { section: SettingsSection }) {
   const meta = SECTIONS.find((item) => item.id === section)!;
   if (meta.feature && !has(meta.feature)) return <Screen title={meta.title} back="/more" backLabel="More"><NotYet what={meta.title} /></Screen>;
   return <Screen title={meta.title} back="/more" backLabel="More">
-    {section === "permissions" ? <Permissions /> : section === "preferences" ? <PreferencesForm /> : section === "history" ? <ActionHistory /> : <Diagnostics />}
+    {section === "permissions"
+      ? <Permissions />
+      : section === "preferences"
+        ? <PreferencesForm />
+        : section === "appearance"
+          ? <AppearanceSettings />
+          : section === "account"
+            ? <AccountSettings />
+            : section === "history"
+              ? <ActionHistory />
+              : <Diagnostics />}
   </Screen>;
 }
 
@@ -239,18 +254,103 @@ function ActionHistory() {
   </>;
 }
 
+const APPEARANCE_ICON: Record<NoriAppearance, typeof Monitor> = {
+  system: Monitor,
+  light: Sun,
+  dark: Moon,
+};
+
+function AppearanceSettings() {
+  const [appearance, setAppearance] = useAppearance();
+  return (
+    <div className="rounded-card border border-card-border bg-surface p-4 sm:p-5">
+      {/* Live interactive preview matching iOS AppearanceSettingsView */}
+      <div className="space-y-3 rounded-tile border border-hairline bg-canvas p-4">
+        <div className="flex justify-end">
+          <span className="rounded-full bg-accent px-3.5 py-2 text-[13px] font-medium text-on-accent">
+            What do I have tomorrow?
+          </span>
+        </div>
+        <div className="flex items-start gap-2.5">
+          <NoriMark size={22} state="idle" />
+          <p className="pt-0.5 text-[13px] leading-relaxed text-ink">
+            Two morning meetings and a reminder at noon.
+          </p>
+        </div>
+      </div>
+
+      {/* System / Light / Dark segmented control */}
+      <div
+        role="radiogroup"
+        aria-label="Appearance"
+        className="mt-4 grid grid-cols-3 gap-1 rounded-full border border-card-border bg-fill-1 p-1"
+      >
+        {APPEARANCE_OPTIONS.map((option) => {
+          const Icon = APPEARANCE_ICON[option.id];
+          const selected = appearance === option.id;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onClick={() => setAppearance(option.id)}
+              className={cn(
+                "t-fast flex h-9 items-center justify-center gap-1.5 rounded-full text-[13px] font-semibold transition-[background-color,color,box-shadow]",
+                selected
+                  ? "bg-chip-selected-bg text-chip-selected-fg border border-chip-selected-border"
+                  : "border border-transparent text-ink-2 hover:text-ink",
+              )}
+            >
+              <Icon size={14} strokeWidth={2} aria-hidden />
+              <span>{option.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AccountSettings() {
+  const { localMode, runtime } = useAssistant();
+  const reconnecting = runtime.error === SERVICE_UNAVAILABLE || runtime.error === STREAM_RECONNECTING;
+  const offline = !!runtime.error && !reconnecting;
+  const statusPill = reconnecting
+    ? { tone: "warning" as const, label: "Reconnecting" }
+    : offline || !runtime.session
+      ? { tone: "danger" as const, label: runtime.loading ? "Connecting" : "Offline" }
+      : { tone: "ok" as const, label: "Live" };
+
+  return (
+    <Rows label="Account">
+      <Row
+        leading={
+          <span className="grid size-9 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
+            <UserCircle size={18} strokeWidth={1.85} aria-hidden />
+          </span>
+        }
+        title={localMode ? "Local Nori" : "Hosted Nori"}
+        trailing={<Pill tone={statusPill.tone}>{statusPill.label}</Pill>}
+      />
+    </Rows>
+  );
+}
+
 function Diagnostics() {
   const { capabilities, debug, setDebug, localMode } = useAssistant();
   const features = capabilities?.assistant_features ?? {};
   return <>
     <label className="flex min-h-11 items-center gap-3 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={debug} onChange={(event) => setDebug(event.target.checked)} />Show model and tool details in Chat</label>
     <Section title="This Nori">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
-        <dt className="text-ink-3">Runtime</dt><dd>{localMode ? "Local" : "Hosted"}</dd>
-        <dt className="text-ink-3">Contracts</dt><dd className="font-mono text-mono-data">{[capabilities?.contract, capabilities?.conversationContract, capabilities?.assistant_contract].filter(Boolean).join(" · ") || "unknown"}</dd>
-        <dt className="text-ink-3">Available</dt><dd>{Object.entries(features).filter(([, on]) => on).map(([name]) => name).join(", ") || "Chat and tasks only"}</dd>
-        {capabilities?.upload_accept && <><dt className="text-ink-3">Uploads</dt><dd>{capabilities.upload_accept.media_types.join(", ")}</dd></>}
-      </dl>
+      <div className="rounded-card border border-card-border bg-surface p-4">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
+          <dt className="text-ink-3">Runtime</dt><dd>{localMode ? "Local" : "Hosted"}</dd>
+          <dt className="text-ink-3">Contracts</dt><dd className="font-mono text-mono-data">{[capabilities?.contract, capabilities?.conversationContract, capabilities?.assistant_contract].filter(Boolean).join(" · ") || "unknown"}</dd>
+          <dt className="text-ink-3">Available</dt><dd>{Object.entries(features).filter(([, on]) => on).map(([name]) => name).join(", ") || "Chat and tasks only"}</dd>
+          {capabilities?.upload_accept && <><dt className="text-ink-3">Uploads</dt><dd>{capabilities.upload_accept.media_types.join(", ")}</dd></>}
+        </dl>
+      </div>
     </Section>
   </>;
 }

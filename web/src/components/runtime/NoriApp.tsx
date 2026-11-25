@@ -169,7 +169,7 @@ export function ChatScreen() {
     : activeTasks.length
       ? runtime.tasksUnavailable
         ? "Task execution is paused. You can still chat with Nori."
-        : `${activeTasks.length} ${activeTasks.length === 1 ? "task" : "tasks"} running${waitingCount ? ` · ${waitingCount} pending` : ""}`
+        : `${activeTasks.length} ${activeTasks.length === 1 ? "task" : "tasks"} running${waitingCount ? ` · ${waitingCount} needing action` : ""}`
       : undefined;
 
   return (
@@ -181,6 +181,7 @@ export function ChatScreen() {
           onStatusDetails={() => setActivityOpen(true)}
           onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
           status={work}
+          thinking={runtime.conversationBusy}
           interactions={inlineInteractions}
           onInteractionResolved={handleInteractionResolved}
           onRetryMessage={(item) => void runtime.retryTurn({ turn_id: item.turnId, message_id: item.id })}
@@ -272,7 +273,7 @@ export function ChatScreen() {
           <Dialog.Overlay className="scrim fixed inset-0 z-40 bg-overlay sm:top-[60px]" />
           <Dialog.Content
             aria-describedby={undefined}
-            className="sheet-right fixed inset-y-0 right-0 z-40 w-[min(460px,100vw)] border-l border-hairline bg-surface shadow-sheet sm:top-[60px]"
+            className="sheet-right fixed inset-y-0 right-0 z-40 w-[min(460px,100vw)] border-l border-hairline bg-sheet shadow-sheet sm:top-[60px]"
           >
             <Dialog.Title className="sr-only">Task activity</Dialog.Title>
             {panel}

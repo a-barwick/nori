@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { SettingsScreen, type SettingsSection } from "@/components/assistant/SettingsScreen";
 
-const SECTIONS = ["permissions", "preferences", "history", "diagnostics"];
+const SECTIONS = ["permissions", "preferences", "appearance", "account", "history", "diagnostics"];
 
 export default async function Page({
   params,

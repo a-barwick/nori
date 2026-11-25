@@ -2,7 +2,7 @@
 
 Platform-agnostic visual identity, semantic token architecture, and interaction rules for Nori across all clients (iOS, Web, and embedded surfaces).
 
-> **Platform extensions:** For SwiftUI tokens, native Liquid Glass chrome, sheet contracts, and simulator verification, see [`ios/DESIGN_SYSTEM.md`](../ios/DESIGN_SYSTEM.md).
+> **Platform extensions:** For SwiftUI tokens, native Liquid Glass chrome, sheet contracts, and simulator verification, see [`ios/DESIGN_SYSTEM.md`](../ios/DESIGN_SYSTEM.md). For Web CSS/Tailwind v4 tokens, anti-FOUC appearance wiring, and layout contracts, see [`web/DESIGN_SYSTEM.md`](../web/DESIGN_SYSTEM.md).
 
 ---
 
