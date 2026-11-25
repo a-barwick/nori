@@ -240,8 +240,8 @@ function Approval({
     )}
     <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-meta">
       {send && !!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
-      <dt className="text-ink-3">{send ? "From" : "Account"}</dt><dd className="text-ink">{payload.account.label}</dd>
-      {!send && !!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
+      {!!payload.account.label && <><dt className="text-ink-3">{send ? "From" : "Account"}</dt><dd className="text-ink">{payload.account.label}</dd></>}
+      {!send && !!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
       <dt className="text-ink-3">Effect</dt><dd><Pill tone={payload.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[payload.effect]}</Pill></dd>
     </dl>
     {!!payload.material_effects?.length && <ul className="mt-3 space-y-1 text-meta text-ink-2">{payload.material_effects.map((effect) => <li key={effect} className="flex gap-2"><ShieldCheck size={14} className="mt-0.5 shrink-0 text-ink-3" aria-hidden />{effect}</li>)}</ul>}

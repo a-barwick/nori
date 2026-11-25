@@ -117,14 +117,21 @@ export function NewRule({ connections, servers, onDone }: { connections: Connect
   const action = useAction();
   const [effect, setEffect] = useState<RuleEffect>("allow");
   const [account, setAccount] = useState(connections[0]?.id ?? "*");
+  const [toolIds, setToolIds] = useState("");
   const [classes, setClasses] = useState<PermissionRule["action_classes"]>(["reversible_write"]);
   const [recipients, setRecipients] = useState("");
   const [expires, setExpires] = useState("");
+  const onTargetChange = (next: string) => {
+    setAccount(next);
+    if (servers.some((item) => item.id === next) && !classes.includes("unknown")) {
+      setClasses((prev) => [...prev, "unknown"]);
+    }
+  };
   const save = () => action.run("save", async () => {
     await mutate("/permissions", {
       request_id: newRequestID(),
       expected_revision: 0,
-      value: buildPermissionRuleEditable({ effect, account, classes, recipients, expires }),
+      value: buildPermissionRuleEditable({ effect, account, classes, toolIds, recipients, expires }),
     });
     invalidate("/permissions"); onDone();
   });
@@ -139,10 +146,11 @@ export function NewRule({ connections, servers, onDone }: { connections: Connect
         <option value="ask">{RULE_EFFECT_META.ask.label}</option>
         <option value="deny">{RULE_EFFECT_META.deny.label}</option>
       </select></Field>
-      <Field label="Target"><select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputBase, "w-auto")}><option value="*">All tools &amp; MCP servers</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}{servers.map((item) => <option key={item.id} value={item.id}>{item.name} (MCP)</option>)}</select></Field>
+      <Field label="Target"><select value={account} onChange={(event) => onTargetChange(event.target.value)} className={cn(inputBase, "w-auto")}><option value="*">All tools &amp; MCP servers</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}{servers.map((item) => <option key={item.id} value={item.id}>{item.name} (MCP)</option>)}</select></Field>
     </div>
-    <fieldset><legend className="mb-1.5 text-meta font-medium">Actions</legend><div className="flex flex-wrap gap-2">{(["read", "reversible_write", "sensitive_send"] as const).map((effectClass) => <label key={effectClass} className={cn("flex min-h-11 items-center gap-2 rounded-full border px-3 text-meta", classes.includes(effectClass) ? "border-accent bg-accent-subtle" : "border-hairline")}>
+    <fieldset><legend className="mb-1.5 text-meta font-medium">Actions</legend><div className="flex flex-wrap gap-2">{(["read", "reversible_write", "sensitive_send", "unknown"] as const).map((effectClass) => <label key={effectClass} className={cn("flex min-h-11 items-center gap-2 rounded-full border px-3 text-meta", classes.includes(effectClass) ? "border-accent bg-accent-subtle" : "border-hairline")}>
       <input type="checkbox" className="accent-[var(--accent)]" checked={classes.includes(effectClass)} onChange={() => setClasses(classes.includes(effectClass) ? classes.filter((other) => other !== effectClass) : [...classes, effectClass])} />{EFFECT_LABEL[effectClass]}</label>)}</div></fieldset>
+    <Field label="Tool ID (optional)"><input value={toolIds} onChange={(event) => setToolIds(event.target.value)} placeholder="* (any tool), or mcp/server_id/tool_name" className={inputClass} /></Field>
     {classes.includes("sensitive_send") && <Field label={effect === "allow" ? "Only to" : "Only to (optional)"}><input value={recipients} onChange={(event) => setRecipients(event.target.value)} placeholder={effect === "allow" ? "sam@example.com, family@example.com" : "Any recipient, or sam@example.com"} className={inputClass} /></Field>}
     <Field label="Until (optional)"><input type="date" value={expires} onChange={(event) => setExpires(event.target.value)} className={cn(inputBase, "w-auto")} /></Field>
     <p className="rounded-tile bg-fill-1 px-3 py-2 text-meta text-ink">{example}</p>

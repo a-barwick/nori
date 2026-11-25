@@ -1194,3 +1194,65 @@ func TestAutoReviewGuardrailsAndModelWrapper(t *testing.T) {
 		}
 	})
 }
+
+func TestMCPServerConnectionIDRuleMatching(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestEnv(t).svc
+
+	// Standing "Always allow" rule created via approval card (connection_ids: ["*"], action_classes: ["unknown"]).
+	if _, err := svc.SaveRule(ctx, "", "req-allow-mcp", 0, permissions.RuleEditable{
+		Effect:        "allow",
+		ToolIDs:       []string{"mcp/mcp_srv1/email_send"},
+		ConnectionIDs: []string{"*"},
+		ResourceIDs:   []string{"*"},
+		ActionClasses: []string{"unknown"},
+		Title:         "Always allow email_send",
+	}); err != nil {
+		t.Fatalf("SaveRule allow: %v", err)
+	}
+
+	// Verify Always allow works on mcp_srv1.
+	dec, err := svc.Check(ctx, permissions.Request{
+		RunID: "run-1", Origin: "user", ToolID: "mcp/mcp_srv1/email_send", Effect: "unknown",
+	})
+	if err != nil || dec.Result != "allow" {
+		t.Fatalf("Check before ask rule = (%+v, %v), want allow", dec, err)
+	}
+
+	// Add Settings "Ask first" rule targeting mcp_srv1 via connection_ids: ["mcp_srv1"] with tool_ids: ["*"].
+	if _, err := svc.SaveRule(ctx, "", "req-ask-mcp", 0, permissions.RuleEditable{
+		Effect:        "ask",
+		ToolIDs:       []string{"*"},
+		ConnectionIDs: []string{"mcp_srv1"},
+		ResourceIDs:   []string{"*"},
+		ActionClasses: []string{"unknown"},
+		Title:         "Ask before qa-workspace MCP actions",
+	}); err != nil {
+		t.Fatalf("SaveRule ask: %v", err)
+	}
+
+	// Ask rule targeting mcp_srv1 must override the Always allow rule!
+	dec2, err := svc.Check(ctx, permissions.Request{
+		RunID: "run-2", Origin: "user", ToolID: "mcp/mcp_srv1/email_send", Effect: "unknown",
+	})
+	if err != nil || dec2.Result != "needs_interaction" {
+		t.Fatalf("Check with mcp_srv1 ask rule = (%+v, %v), want needs_interaction", dec2, err)
+	}
+
+	// Ask rule for mcp_srv1 must NOT match a different MCP server (mcp_srv2).
+	if _, err := svc.SaveRule(ctx, "", "req-allow-mcp2", 0, permissions.RuleEditable{
+		Effect:        "allow",
+		ToolIDs:       []string{"mcp/mcp_srv2/email_send"},
+		ConnectionIDs: []string{},
+		ResourceIDs:   []string{},
+		ActionClasses: []string{"unknown"},
+	}); err != nil {
+		t.Fatalf("SaveRule allow mcp_srv2: %v", err)
+	}
+	dec3, err := svc.Check(ctx, permissions.Request{
+		RunID: "run-3", Origin: "user", ToolID: "mcp/mcp_srv2/email_send", Effect: "unknown",
+	})
+	if err != nil || dec3.Result != "allow" {
+		t.Fatalf("Check on mcp_srv2 (empty connection_ids allow rule) = (%+v, %v), want allow", dec3, err)
+	}
+}

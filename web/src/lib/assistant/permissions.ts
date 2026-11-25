@@ -99,21 +99,24 @@ export function buildPermissionRuleEditable({
   effect,
   account,
   classes,
+  toolIds = "",
   recipients = "",
   expires = "",
 }: {
   effect: RuleEffect;
   account: string;
   classes: Effect[];
+  toolIds?: string;
   recipients?: string;
   expires?: string;
 }): PermissionRuleEditable {
+  const parsedToolIds = toolIds.split(",").map((value) => value.trim()).filter(Boolean);
   const parsedRecipients = classes.includes("sensitive_send")
     ? recipients.split(",").map((value) => value.trim()).filter(Boolean)
     : [];
   return {
     effect,
-    tool_ids: ["*"],
+    tool_ids: parsedToolIds.length ? parsedToolIds : ["*"],
     connection_ids: [account],
     resource_ids: ["*"],
     action_classes: classes,

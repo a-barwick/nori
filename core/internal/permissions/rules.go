@@ -350,6 +350,18 @@ func coversFold(selector, values []string) bool {
 	return true
 }
 
+func mcpServerID(toolID string) string {
+	if !strings.HasPrefix(toolID, "mcp/") {
+		return ""
+	}
+	rest := strings.TrimPrefix(toolID, "mcp/")
+	server, _, ok := strings.Cut(rest, "/")
+	if !ok || server == "" {
+		return ""
+	}
+	return server
+}
+
 func (s *Service) applies(rule Rule, req Request) bool {
 	if rule.ExpiresAt != nil && s.now().After(*rule.ExpiresAt) {
 		return false
@@ -363,8 +375,15 @@ func (s *Service) applies(rule Rule, req Request) bool {
 	if !matches(rule.ActionClasses, req.Effect) || !matches(rule.ToolIDs, req.ToolID) {
 		return false
 	}
-	if (req.ConnectionID != "" || len(rule.ConnectionIDs) > 0) && !matches(rule.ConnectionIDs, req.ConnectionID) {
-		return false
+	if req.ConnectionID != "" {
+		if !matches(rule.ConnectionIDs, req.ConnectionID) {
+			return false
+		}
+	} else if len(rule.ConnectionIDs) > 0 {
+		serverID := mcpServerID(req.ToolID)
+		if !matches(rule.ConnectionIDs, "") && (serverID == "" || !matchesFold(rule.ConnectionIDs, serverID)) {
+			return false
+		}
 	}
 	if rule.Effect == "allow" {
 		if len(rule.ResourceIDs) > 0 && !slices.Contains(rule.ResourceIDs, Wildcard) && len(req.ResourceIDs) == 0 {
