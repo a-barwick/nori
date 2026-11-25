@@ -852,7 +852,7 @@ func TestComposeReplayDivergenceHaltsWithoutRepeatingWrites(t *testing.T) {
 		ctx = users.WithID(ctx, h.user.ID)
 		composeAllowWrites(t, ctx, h)
 
-		run := h.startTask(ctx, "Replay divergence on tool definition change")
+		run := h.startTask(ctx, "Update alpha/beta and send hello to alice@example.com for replay divergence")
 		baseRef, rev := composeSyncTask(t, ctx, h, run)
 		composeExec := composeExecPtr(t, ctx, h)
 

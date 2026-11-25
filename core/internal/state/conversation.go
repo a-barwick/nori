@@ -130,7 +130,7 @@ const (
 	MessagePageSize = 80
 	// HistoryTurnsExamined bounds the turns one history read returns. RecentTurnLimit and RecentTurnBytes bound the
 	// ones replayed to the model.
-	HistoryTurnsExamined = 40
+	HistoryTurnsExamined = 64
 	// TraceLimit bounds the attempts returned for debugging.
 	TraceLimit = 60
 )

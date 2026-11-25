@@ -515,12 +515,31 @@ public final class NoriStore {
             if let idx = interactions.firstIndex(where: { $0.id == interaction.id }) {
                 interactions[idx] = receipt.resource
             }
-            // Refresh linked state cleanly
-            let snapshot = try await transport.fetchFullSnapshot()
-            applySnapshot(snapshot)
+            // Refresh linked state cleanly (interactions, work, and permissions when remembering a rule)
+            if let snapshot = try? await transport.fetchFullSnapshot() {
+                applySnapshot(snapshot)
+            } else {
+                async let freshInteractions = try? transport.fetchInteractions()
+                async let freshWork = try? transport.fetchWorkItems(bucket: nil)
+                if let items = await freshInteractions {
+                    self.interactions = items
+                }
+                if let work = await freshWork {
+                    self.workItems = work
+                }
+            }
+            if case .approve(_, let rememberRule) = answer, rememberRule,
+               let freshPermissions = try? await transport.fetchPermissions() {
+                self.permissions = freshPermissions
+            }
 
             switch answer {
-            case .approve: showToast("Approved — Nori is completing the action")
+            case .approve(_, let rememberRule):
+                showToast(
+                    rememberRule
+                        ? "Always allowed — rule saved & Nori is completing the action"
+                        : "Approved — Nori is completing the action"
+                )
             case .decline: showToast("Declined — nothing was sent")
             case .answer: showToast("Answer sent to Nori")
             case .chooseAccount: showToast("Account selected")
@@ -531,8 +550,11 @@ public final class NoriStore {
         }
     }
 
-    public func approveInteraction(_ interaction: Interaction) async {
-        await resolveInteraction(interaction, answer: .approve(actionDigest: interaction.actionDigest ?? ""))
+    public func approveInteraction(_ interaction: Interaction, rememberRule: Bool = false) async {
+        await resolveInteraction(
+            interaction,
+            answer: .approve(actionDigest: interaction.actionDigest ?? "", rememberRule: rememberRule)
+        )
     }
 
     public func declineInteraction(_ interaction: Interaction) async {
@@ -962,6 +984,39 @@ public final class NoriStore {
                 workItems = items
             }
             showToast("Running \"\(auto.title)\" now")
+        } catch {
+            lastError = error.localizedDescription
+            showToast(error.localizedDescription)
+        }
+    }
+
+    public func createPermissionRule(_ rule: PermissionRuleEditable) async -> Bool {
+        do {
+            let receipt = try await transport.createPermissionRule(rule, requestID: UUID().uuidString.lowercased())
+            if let idx = permissions.firstIndex(where: { $0.id == receipt.resource.id }) {
+                permissions[idx] = receipt.resource
+            } else {
+                permissions.insert(receipt.resource, at: 0)
+            }
+            showToast("Permission rule saved")
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    public func revokePermissionRule(id: String) async {
+        guard let rule = permissions.first(where: { $0.id == id }) else { return }
+        do {
+            _ = try await transport.revokePermissionRule(
+                id: id,
+                expectedRevision: rule.revision,
+                requestID: UUID().uuidString.lowercased()
+            )
+            permissions.removeAll { $0.id == id }
+            showToast("Permission rule removed")
         } catch {
             lastError = error.localizedDescription
             showToast(error.localizedDescription)

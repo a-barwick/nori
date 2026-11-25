@@ -170,6 +170,15 @@ func (d *Driver) CheckInnerInvariants(ctx context.Context) error {
 		case "permission_rule":
 			if len(auth.RuleIDs) == 0 {
 				violations = append(violations, fmt.Errorf("executed[%d] (run=%s, op=%s): permission_rule authority has empty RuleIDs", i, call.RunID, call.OperationID))
+			} else {
+				for _, ruleID := range auth.RuleIDs {
+					if rule, rerr := rt.Permissions.Rule(ctx, ruleID); rerr == nil && rule.Effect != "allow" {
+						violations = append(violations, fmt.Errorf(
+							"executed[%d] (run=%s, op=%s): permission_rule authority cited non-allow rule %q (effect=%q)",
+							i, call.RunID, call.OperationID, ruleID, rule.Effect,
+						))
+					}
+				}
 			}
 		}
 	}

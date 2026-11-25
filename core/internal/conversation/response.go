@@ -27,6 +27,7 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string
 	}
 	for _, tool := range tools {
 		if commandPlan && tool.Function.Name != "dispatch" && tool.Function.Name != "steer" &&
+			tool.Function.Name != "stop" && tool.Function.Name != "answer" && tool.Function.Name != "hold" &&
 			tool.Function.Name != state.MemoryRemember && tool.Function.Name != state.MemoryForget {
 			continue
 		}

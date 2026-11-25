@@ -72,7 +72,7 @@
             "required": ["title", "effect", "tool_names"],
             "properties": {
               "title": { "type": "string" },
-              "effect": { "type": "string", "enum": ["allow", "deny"] },
+              "effect": { "type": "string", "enum": ["allow", "ask", "deny"] },
               "tool_names": {
                 "type": "array",
                 "items": { "type": "string" }

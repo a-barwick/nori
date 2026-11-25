@@ -480,7 +480,13 @@ func (r *Runner) recoverActions(ctx context.Context, t *state.ConversationTurn) 
 		}
 		if receipt != nil {
 			a.Status, a.CreatedAt, a.Command = "accepted", receipt.Command.CreatedAt, receipt.Command
-			t.Attempt.Results[i] = string(toolResult(reply.Calls[i].ID, commandResult(*receipt)))
+			callID := a.ID
+			if i < len(reply.Calls) && reply.Calls[i].ID != "" {
+				callID = reply.Calls[i].ID
+			}
+			if i < len(t.Attempt.Results) {
+				t.Attempt.Results[i] = string(toolResult(callID, commandResult(*receipt)))
+			}
 		}
 	}
 	return nil
@@ -516,13 +522,21 @@ func (r *Runner) dispatchPending(ctx context.Context, f state.ConversationFence,
 			}
 			for j, i := range indices {
 				a := &t.Attempt.Actions[i]
+				callID := a.ID
+				if i < len(reply.Calls) && reply.Calls[i].ID != "" {
+					callID = reply.Calls[i].ID
+				}
 				if err != nil {
 					a.Status, a.Error = "rejected", err.Error()
-					t.Attempt.Results[i] = string(toolResult(reply.Calls[i].ID, map[string]string{"error": prompts.Runtime("command-batch-rejected", nil) + a.Error}))
+					if i < len(t.Attempt.Results) {
+						t.Attempt.Results[i] = string(toolResult(callID, map[string]string{"error": prompts.Runtime("command-batch-rejected", nil) + a.Error}))
+					}
 				} else {
 					receipt := receipts[j]
 					a.Status, a.CreatedAt, a.Command = "accepted", receipt.Command.CreatedAt, receipt.Command
-					t.Attempt.Results[i] = string(toolResult(reply.Calls[i].ID, commandResult(receipt)))
+					if i < len(t.Attempt.Results) {
+						t.Attempt.Results[i] = string(toolResult(callID, commandResult(receipt)))
+					}
 				}
 			}
 			if e := r.checkpoint(ctx, f, *t); e != nil {
@@ -601,11 +615,7 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	if flushState.hasWork {
-		target := flushState.wakeAt
-		if flushState.ready || target.IsZero() {
-			target = now
-		}
-		consider(maxTime(target, r.compactAfter))
+		consider(maxTime(now, r.compactAfter))
 	}
 
 	extractState, err := r.planExtract(ctx, control, summary, now, false)

@@ -1154,7 +1154,7 @@ export type MCPCredentialInput = {
 export type PermissionRule = {
   id: ID;
   revision: Revision;
-  effect: "allow" | "deny";
+  effect: "allow" | "ask" | "deny";
   tool_ids: string[];
   connection_ids: ID[];
   resource_ids: string[];
@@ -1172,7 +1172,7 @@ export type PermissionRule = {
   summary?: string;
 };
 export type PermissionRuleEditable = {
-  effect: "allow" | "deny";
+  effect: "allow" | "ask" | "deny";
   tool_ids: string[];
   connection_ids: ID[];
   resource_ids: string[];
@@ -1209,6 +1209,8 @@ export type QuestionPayload = {
 /** The digest lives only on Interaction.action_digest (F10). */
 export type ApprovalPayload = {
   summary: string;
+  tool_id?: string;
+  warning?: string;
   effect: Effect;
   account: {
     connection_id: ID;
@@ -1289,6 +1291,7 @@ export type InteractionResponse = {
   } | {
     kind: "approve" | "decline";
     action_digest: string;
+    remember_rule?: boolean;
   } | {
     kind: "choose_account";
     connection_id: ID;

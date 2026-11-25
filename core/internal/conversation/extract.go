@@ -63,7 +63,7 @@ func (r *Runner) planExtract(
 			continue
 		}
 		completed = append(completed, t)
-		if slices.ContainsFunc(t.Inputs, state.ConversationInput.IsUser) {
+		if isUserTurn(t) {
 			userTurns++
 		}
 	}
@@ -127,8 +127,8 @@ func (r *Runner) planExtract(
 
 // extractIdleMemory extracts durable Core memories and Daily Log entries from
 // completed turns after EffectiveExtractedThrough() once either
-// ExtractTurnThreshold (5) unextracted turns accumulate or the session has been
-// idle for IdleExtractDelay (5m), leaving Through, FlushedThrough, Items,
+// ExtractTurnThreshold (3) unextracted user turns accumulate or the session has been
+// idle for IdleExtractDelay (2m), leaving Through, FlushedThrough, Items,
 // Gist, Excerpts, and Turns completely untouched so verbatim turns remain in
 // the active window.
 func (r *Runner) extractIdleMemory(ctx context.Context) error {

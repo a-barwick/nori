@@ -1216,6 +1216,16 @@
       "file": "fixtures/library/search-hit.memory-jump.valid.json",
       "schema": "library.schema.json#/$defs/SearchHit",
       "valid": true
+    },
+    {
+      "file": "fixtures/permissions/rule.ask-first.valid.json",
+      "schema": "permissions.schema.json#/$defs/PermissionRule",
+      "valid": true
+    },
+    {
+      "file": "fixtures/permissions/response.approve-always.valid.json",
+      "schema": "permissions.schema.json#/$defs/InteractionResponse",
+      "valid": true
     }
   ]
 }

@@ -81,7 +81,28 @@ var pinnedRegressionSeeds = []regressionSeed{
 		kind:        regressionFullStack,
 		seed:        207,
 		steps:       120,
-		description: "20m session-idle memory extraction, 6-turn fast flush, +20m5s virtual-clock jumps, and concurrent inner-task memory_search recall must converge cleanly",
+		description: "2m session-idle memory extraction, 3-turn fast threshold extract, +2m5s virtual-clock jumps, and concurrent inner-task memory_search recall must converge cleanly",
+	},
+	{
+		name:        "fullstack_seed_33_repeat_log_promote_dedup",
+		kind:        regressionFullStack,
+		seed:        33,
+		steps:       120,
+		description: "promoting the same Daily Log entry twice with distinct request IDs must deduplicate in place rather than violating INV-MEM-05.duplicate_memory (fixed in core/internal/state/records/memory.go)",
+	},
+	{
+		name:        "fullstack_seed_311_ask_rules_remember_rule_autoreview",
+		kind:        regressionFullStack,
+		seed:        311,
+		steps:       120,
+		description: "3-state permission rules (deny > ask > allow), atomic Always allow (remember_rule), 30m approval expiry, and action-boundary AutoReview under full-stack chaos",
+	},
+	{
+		name:        "fullstack_seed_419_buffered_compaction_fast_extract_30m_expiry",
+		kind:        regressionFullStack,
+		seed:        419,
+		steps:       120,
+		description: "buffered compaction (16 user turns / 28 total), fast 3-turn/2m memory extraction, single-call outer follow-ups, and 30m expiry under multi-user faults",
 	},
 }
 
@@ -147,14 +168,16 @@ func TestFullWorldNextConversationWakeAndMemoryChaos(t *testing.T) {
 		t.Fatalf("expected non-zero memory/burst/consolidate chaos coverage, got memMut=%d bursts=%d cons=%d", memMut, bursts, cons)
 	}
 
-	// 2. Directly verify NextConversationWake (+2m idle flush delay) arm -> virtual clock jump -> claim -> flush -> park.
+	// 2. Directly verify NextConversationWake (+2m IdleExtractDelay with zero premature idle compaction)
+	// arm -> virtual clock jump -> claim -> extract -> park, followed by SoftCompactUserTurns compaction.
 	w := sim.NewFullWorld(777, sim.FullWorldConfig{
 		NumUsers:      1,
 		DisableFaults: true,
 	})
 	uw := w.Users[0]
 
-	// Complete 8 turns (> CompactKeep=5, < SoftCompactTurns=12) spaced 5s apart so quiet idle flush is deferred +2m.
+	// Complete 8 user turns (< SoftCompactUserTurns=16): turns 3 & 6 extract immediately via
+	// ExtractTurnThreshold=3, turns 7..8 schedule +2m IdleExtractDelay, and ZERO compaction occurs.
 	for i := range 8 {
 		if _, err := uw.Outer.AcceptInput(ctx, fmt.Sprintf("idle wake turn %d remember project_falcon_%d", i+1, i+1)); err != nil {
 			t.Fatalf("AcceptInput %d: %v", i, err)
@@ -165,7 +188,19 @@ func TestFullWorldNextConversationWakeAndMemoryChaos(t *testing.T) {
 		w.Clock.Advance(5 * time.Second)
 	}
 
-	// Ensure LaneConversation wake is claimed and re-armed via NextConversationWake.
+	sumBeforeIdle, err := uw.Store.ConversationSummary(ctx)
+	if err != nil {
+		t.Fatalf("ConversationSummary after 8 turns: %v", err)
+	}
+	if !sumBeforeIdle.Through.IsZero() || !sumBeforeIdle.EffectiveFlushedThrough().IsZero() {
+		t.Fatalf("expected zero compaction for 8 user turns (< SoftCompactUserTurns=%d), got through=%v flushed=%v",
+			state.SoftCompactUserTurns, sumBeforeIdle.Through, sumBeforeIdle.EffectiveFlushedThrough())
+	}
+	if sumBeforeIdle.EffectiveExtractedThrough().IsZero() {
+		t.Fatalf("expected ExtractTurnThreshold=%d to have already extracted turns 1..6", state.ExtractTurnThreshold)
+	}
+
+	// Ensure LaneConversation wake is claimed and re-armed via NextConversationWake (+2m IdleExtractDelay).
 	if err := w.Backend.WakeUser(ctx, uw.User.ID, docstore.LaneConversation, time.Time{}); err != nil {
 		t.Fatalf("WakeUser: %v", err)
 	}
@@ -174,55 +209,26 @@ func TestFullWorldNextConversationWakeAndMemoryChaos(t *testing.T) {
 	if err != nil || !ok || claim1.UserID != uw.User.ID {
 		t.Fatalf("ClaimUserWake #1: ok=%v claim=%+v err=%v", ok, claim1, err)
 	}
-	wakeAt, err := uw.Outer.Workers[0].NextConversationWake(ctx)
-	if err != nil || wakeAt.IsZero() || !wakeAt.After(w.Clock.Now()) {
-		t.Fatalf("expected future delayed NextConversationWake (+2m idle flush), got wakeAt=%v now=%v err=%v", wakeAt, w.Clock.Now(), err)
+	extractWakeAt, err := uw.Outer.Workers[0].NextConversationWake(ctx)
+	if err != nil || extractWakeAt.IsZero() || !extractWakeAt.After(w.Clock.Now()) {
+		t.Fatalf("expected future delayed NextConversationWake (+2m IdleExtractDelay), got wakeAt=%v now=%v err=%v", extractWakeAt, w.Clock.Now(), err)
 	}
-	if err := w.Backend.ReleaseUserWake(ctx, uw.User.ID, docstore.LaneConversation, owner1, claim1.WakeSeq, wakeAt); err != nil {
+	if err := w.Backend.ReleaseUserWake(ctx, uw.User.ID, docstore.LaneConversation, owner1, claim1.WakeSeq, extractWakeAt); err != nil {
 		t.Fatalf("ReleaseUserWake delayed: %v", err)
 	}
 
-	// Before wakeAt, ClaimUserWake must NOT claim the delayed wake.
+	// Before extractWakeAt, ClaimUserWake must NOT claim the delayed wake.
 	if _, claimedEarly, err := w.Backend.ClaimUserWake(ctx, docstore.LaneConversation, "sim-pool-early", state.ConversationLease); err != nil || claimedEarly {
 		t.Fatalf("expected delayed LaneConversation wake not claimable before wakeAt, claimedEarly=%v err=%v", claimedEarly, err)
 	}
 
-	// Advance virtual clock past wakeAt (+2m idle flush delay) and verify LaneConversation wakes and compacts turns 1..3 while keeping 5 turns verbatim.
-	w.Clock.Advance(wakeAt.Sub(w.Clock.Now()) + time.Second)
+	// Advance virtual clock past extractWakeAt (+2m IdleExtractDelay) and verify turns 7..8 extract
+	// WITHOUT compacting (Through/FlushedThrough remain zero) and LaneConversation parks cleanly.
+	w.Clock.Advance(extractWakeAt.Sub(w.Clock.Now()) + time.Second)
 	owner2 := "sim-pool-2"
 	claim2, ok, err := w.Backend.ClaimUserWake(ctx, docstore.LaneConversation, owner2, state.ConversationLease)
 	if err != nil || !ok || claim2.UserID != uw.User.ID {
 		t.Fatalf("ClaimUserWake #2 after +2m: ok=%v claim=%+v err=%v", ok, claim2, err)
-	}
-	if err := uw.Outer.ProcessWorker(ctx, 0); err != nil {
-		t.Fatalf("ProcessWorker idle flush: %v", err)
-	}
-	sum, err := uw.Store.ConversationSummary(ctx)
-	if err != nil {
-		t.Fatalf("ConversationSummary after idle flush: %v", err)
-	}
-	if sum.EffectiveFlushedThrough().IsZero() || !sum.EffectiveFlushedThrough().Equal(sum.Through) {
-		t.Fatalf("expected FlushedThrough == Through > 0 after delayed idle wake flush, got flushed=%v through=%v", sum.EffectiveFlushedThrough(), sum.Through)
-	}
-
-	// The remaining 5 verbatim turns must now schedule a +20m IdleExtractDelay wake.
-	extractWakeAt, err := uw.Outer.Workers[0].NextConversationWake(ctx)
-	if err != nil || extractWakeAt.IsZero() || !extractWakeAt.After(w.Clock.Now()) {
-		t.Fatalf("expected future +20m NextConversationWake for remaining 5 verbatim turns, got wakeAt=%v now=%v err=%v", extractWakeAt, w.Clock.Now(), err)
-	}
-	if err := w.Backend.ReleaseUserWake(ctx, uw.User.ID, docstore.LaneConversation, owner2, claim2.WakeSeq, extractWakeAt); err != nil {
-		t.Fatalf("ReleaseUserWake extract wake: %v", err)
-	}
-	if _, claimedEarly, err := w.Backend.ClaimUserWake(ctx, docstore.LaneConversation, "sim-pool-early-extract", state.ConversationLease); err != nil || claimedEarly {
-		t.Fatalf("expected +20m LaneConversation wake not claimable before extractWakeAt, claimedEarly=%v err=%v", claimedEarly, err)
-	}
-
-	// Advance past +20m IdleExtractDelay -> extract remaining 5 verbatim turns without compacting -> park cleanly.
-	w.Clock.Advance(extractWakeAt.Sub(w.Clock.Now()) + time.Second)
-	owner3 := "sim-pool-3"
-	claim3, ok, err := w.Backend.ClaimUserWake(ctx, docstore.LaneConversation, owner3, state.ConversationLease)
-	if err != nil || !ok || claim3.UserID != uw.User.ID {
-		t.Fatalf("ClaimUserWake #3 after +20m: ok=%v claim=%+v err=%v", ok, claim3, err)
 	}
 	if err := uw.Outer.ProcessWorker(ctx, 0); err != nil {
 		t.Fatalf("ProcessWorker idle extract: %v", err)
@@ -231,20 +237,40 @@ func TestFullWorldNextConversationWakeAndMemoryChaos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConversationSummary after idle extract: %v", err)
 	}
-	if !sumAfterExtract.Through.Equal(sum.Through) || !sumAfterExtract.EffectiveFlushedThrough().Equal(sum.EffectiveFlushedThrough()) {
-		t.Fatalf("idle extract must not alter Through/FlushedThrough: before=(%v,%v) after=(%v,%v)",
-			sum.Through, sum.EffectiveFlushedThrough(), sumAfterExtract.Through, sumAfterExtract.EffectiveFlushedThrough())
+	if !sumAfterExtract.Through.IsZero() || !sumAfterExtract.EffectiveFlushedThrough().IsZero() {
+		t.Fatalf("idle extract must never compact 8-turn thread: through=%v flushed=%v",
+			sumAfterExtract.Through, sumAfterExtract.EffectiveFlushedThrough())
 	}
-	if !sumAfterExtract.EffectiveExtractedThrough().After(sum.Through) {
-		t.Fatalf("expected EffectiveExtractedThrough (%v) > Through (%v) after +20m idle extract",
-			sumAfterExtract.EffectiveExtractedThrough(), sum.Through)
+	if !sumAfterExtract.EffectiveExtractedThrough().After(sumBeforeIdle.EffectiveExtractedThrough()) {
+		t.Fatalf("expected EffectiveExtractedThrough to advance after +2m idle extract: before=%v after=%v",
+			sumBeforeIdle.EffectiveExtractedThrough(), sumAfterExtract.EffectiveExtractedThrough())
 	}
 	nextWake, err := uw.Outer.Workers[0].NextConversationWake(ctx)
 	if err != nil || !nextWake.IsZero() {
-		t.Fatalf("expected NextConversationWake to be zero after flush+extract completed, got %v err=%v", nextWake, err)
+		t.Fatalf("expected NextConversationWake to be zero after idle extract completed, got %v err=%v", nextWake, err)
 	}
-	if parked, err := w.Backend.ParkUserWake(ctx, uw.User.ID, docstore.LaneConversation, owner3, claim3.WakeSeq); err != nil || !parked {
+	if parked, err := w.Backend.ParkUserWake(ctx, uw.User.ID, docstore.LaneConversation, owner2, claim2.WakeSeq); err != nil || !parked {
 		t.Fatalf("expected ParkUserWake after idle extract, parked=%v err=%v", parked, err)
+	}
+
+	// Drive 8 more user turns (reaching SoftCompactUserTurns=16) and verify compaction triggers,
+	// keeping CompactKeep (14) turns verbatim with FlushedThrough == Through > 0.
+	for i := 8; i < state.SoftCompactUserTurns; i++ {
+		if _, err := uw.Outer.AcceptInput(ctx, fmt.Sprintf("buffered compact turn %d remember project_falcon_%d", i+1, i+1)); err != nil {
+			t.Fatalf("AcceptInput %d: %v", i, err)
+		}
+		if err := uw.Outer.ProcessWorker(ctx, 0); err != nil {
+			t.Fatalf("ProcessWorker %d: %v", i, err)
+		}
+		w.Clock.Advance(5 * time.Second)
+	}
+	sumCompacted, err := uw.Store.ConversationSummary(ctx)
+	if err != nil {
+		t.Fatalf("ConversationSummary after SoftCompactUserTurns: %v", err)
+	}
+	if sumCompacted.EffectiveFlushedThrough().IsZero() || !sumCompacted.EffectiveFlushedThrough().Equal(sumCompacted.Through) {
+		t.Fatalf("expected FlushedThrough == Through > 0 at SoftCompactUserTurns=%d, got flushed=%v through=%v",
+			state.SoftCompactUserTurns, sumCompacted.EffectiveFlushedThrough(), sumCompacted.Through)
 	}
 
 	if err := w.DrainToQuiescence(ctx); err != nil {
@@ -277,12 +303,12 @@ func runShortSessionIdleExtractAndRecall(t *testing.T, ctx context.Context, seed
 	})
 	uw := w.Users[0]
 
-	// 1. Short 3-turn session (<= CompactKeep=5, so zero compaction should occur).
+	// 1. Short 2-turn session (< ExtractTurnThreshold=3, so extraction defers to +2m IdleExtractDelay
+	// and zero compaction occurs).
 	const token = "aurora_beacon_942"
 	prompts := []string{
 		"remember preference " + token + " for quarterly engineering reports",
 		"project " + token + " stores durable facts in postgres",
-		"constraint for " + token + " keep recent 5 turns verbatim",
 	}
 	for i, msg := range prompts {
 		if _, err := uw.Outer.AcceptInput(ctx, msg); err != nil {

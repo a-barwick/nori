@@ -178,11 +178,7 @@ func NewFullWorld(seed int64, cfg FullWorldConfig) *FullWorld {
 		}
 	}
 	if cfg.UserSends == "" {
-		if workloadRNG.IntN(2) == 0 {
-			cfg.UserSends = "ask"
-		} else {
-			cfg.UserSends = "allow"
-		}
+		cfg.UserSends = "ask"
 	}
 
 	storeFaults := cfg.StoreFaults
@@ -992,8 +988,10 @@ func (w *FullWorld) stepFullPermissions(ctx context.Context, uw *FullUserWorld) 
 			case "approval":
 				r := w.RNG.IntN(10)
 				switch {
-				case r < 7:
+				case r < 5:
 					resp = permissions.Response{Kind: "approve", ActionDigest: card.ActionDigest}
+				case r < 7:
+					resp = permissions.Response{Kind: "approve", ActionDigest: card.ActionDigest, RememberRule: true}
 				case r < 9:
 					resp = permissions.Response{Kind: "decline", ActionDigest: card.ActionDigest}
 				default:
@@ -1097,10 +1095,7 @@ func (w *FullWorld) stepFullPermissions(ctx context.Context, uw *FullUserWorld) 
 }
 
 func (w *FullWorld) randomFullRuleEditable() permissions.RuleEditable {
-	effect := "allow"
-	if w.RNG.IntN(3) == 0 {
-		effect = "deny"
-	}
+	effect := []string{"allow", "ask", "deny"}[w.RNG.IntN(3)]
 	toolSets := [][]string{
 		{inner.ToolIDWrite},
 		{inner.ToolIDSend},
@@ -1716,18 +1711,18 @@ func (w *FullWorld) stepFullTimeAndPause(ctx context.Context) {
 	}
 
 	// Curated time-jump ladder spanning quiet windows, TaskLease/ConversationLease (30s),
-	// IdleFlushDelay (+2m), IdleExtractDelay (+5m), compaction pauses (10m),
-	// IdleDreamDelay (+15m), DreamMinInterval (+12h), interaction/rule expiries,
+	// IdleExtractDelay (+2m), compaction pauses (10m), IdleDreamDelay (+15m),
+	// ApprovalExpiry (+30m), DreamMinInterval (+12h), interaction/rule expiries,
 	// and multi-day automation schedules.
 	durations := []time.Duration{
 		200 * time.Millisecond,
 		2 * time.Second,
 		15 * time.Second,
 		45 * time.Second,
-		state.IdleFlushDelay + 5*time.Second,   // +2m5s flush idle wake
-		state.IdleExtractDelay + 5*time.Second, // +5m5s session-idle extraction wake
+		state.IdleExtractDelay + 5*time.Second, // +2m5s session-idle extraction wake
 		11 * time.Minute,                       // compaction backoff clear
 		state.IdleDreamDelay + 5*time.Second,   // +15m5s AutoDream quiet wake
+		31 * time.Minute,                       // crosses 30m ApprovalExpiry
 		2 * time.Hour,
 		state.DreamMinInterval + 5*time.Minute, // +12h5m AutoDream min interval
 		25 * time.Hour,

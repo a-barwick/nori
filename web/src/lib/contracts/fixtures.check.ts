@@ -2809,3 +2809,38 @@ export const fx_library_search_hit_memory_jump_valid: SearchHit = {
   "score": 1.15
 };
 
+// fixtures/permissions/rule.ask-first.valid.json
+export const fx_permissions_rule_ask_first_valid: PermissionRule = {
+  "id": "rule_ask_1",
+  "revision": 1,
+  "effect": "ask",
+  "tool_ids": [
+    "nori.google/mail/messages.send"
+  ],
+  "connection_ids": [
+    "conn_google_personal"
+  ],
+  "resource_ids": [
+    "*"
+  ],
+  "action_classes": [
+    "sensitive_send"
+  ],
+  "recipients": [
+    "*"
+  ],
+  "title": "Ask before sending email",
+  "created_at": "2026-11-09T09:00:00Z"
+};
+
+// fixtures/permissions/response.approve-always.valid.json
+export const fx_permissions_response_approve_always_valid: InteractionResponse = {
+  "request_id": "6f1c2a0e-1b7e-4f0a-9c2d-3e4f5a6b7c8d",
+  "expected_revision": 1,
+  "value": {
+    "kind": "approve",
+    "action_digest": "sha256:act1",
+    "remember_rule": true
+  }
+};
+

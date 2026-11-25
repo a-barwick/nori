@@ -941,3 +941,211 @@ func TestInteractionsUndeliveredAnswersPast200(t *testing.T) {
 		t.Fatalf("non-deterministic digest for past-200 undelivered simulation: %s vs %s", d1, d2)
 	}
 }
+
+func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
+	ctx := context.Background()
+
+	runSeed := func(seed int64) string {
+		h := newPermSimHarness(t, seed, "ask", "confirm_writes")
+
+		// 1. Broad "allow" rule for mail.send on conn_1.
+		if _, err := h.svc.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
+			Effect:        "allow",
+			ToolIDs:       []string{"mail.send"},
+			ConnectionIDs: []string{"conn_1"},
+			ResourceIDs:   []string{permissions.Wildcard},
+			ActionClasses: []string{"sensitive_send"},
+			Recipients:    []string{permissions.Wildcard},
+			Title:         "Always allow mail.send",
+		}); err != nil {
+			t.Fatalf("seed=%d SaveRule allow: %v", seed, err)
+		}
+
+		// 2. "ask" rule for board@example.com MUST beat wildcard "allow" (ask > allow).
+		askReceipt, err := h.svc.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
+			Effect:        "ask",
+			ToolIDs:       []string{"mail.send"},
+			ConnectionIDs: []string{permissions.Wildcard},
+			ResourceIDs:   []string{permissions.Wildcard},
+			ActionClasses: []string{"sensitive_send"},
+			Recipients:    []string{"board@example.com"},
+			Title:         "Ask before emailing board",
+		})
+		if err != nil {
+			t.Fatalf("seed=%d SaveRule ask: %v", seed, err)
+		}
+		var askRule permissions.Rule
+		if err := json.Unmarshal(askReceipt.Resource, &askRule); err != nil {
+			t.Fatalf("seed=%d unmarshal askRule: %v", seed, err)
+		}
+
+		// 3. "deny" rule for leak@evil.test MUST beat both "ask" and "allow" (deny > ask > allow).
+		if _, err := h.svc.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
+			Effect:        "deny",
+			ToolIDs:       []string{"mail.send"},
+			ConnectionIDs: []string{permissions.Wildcard},
+			ResourceIDs:   []string{permissions.Wildcard},
+			ActionClasses: []string{"sensitive_send"},
+			Recipients:    []string{"leak@evil.test"},
+			Title:         "Never email leak@evil.test",
+		}); err != nil {
+			t.Fatalf("seed=%d SaveRule deny: %v", seed, err)
+		}
+
+		// Ordinary recipient matches wildcard allow.
+		allowDec, err := h.svc.Check(ctx, permissions.Request{
+			RunID: "run_p1", Revision: 1, Origin: "user", ToolID: "mail.send",
+			Effect: "sensitive_send", ConnectionID: "conn_1",
+			Recipients: []string{"teammate@example.com"}, Digest: "dig_allow_1",
+		})
+		if err != nil || allowDec.Result != "allow" || allowDec.Source != "permission_rule" {
+			t.Fatalf("seed=%d expected wildcard allow for teammate, got dec=%+v err=%v", seed, allowDec, err)
+		}
+
+		// Mixed case board@example.com triggers "ask" overriding wildcard "allow".
+		boardVariant := randomizeCase(h.rng, "board@example.com")
+		askDec, err := h.svc.Check(ctx, permissions.Request{
+			RunID: "run_p1", Revision: 1, Origin: "user", ToolID: "mail.send",
+			Effect: "sensitive_send", ConnectionID: "conn_1",
+			Recipients: []string{"teammate@example.com", boardVariant}, Digest: "dig_board_1",
+		})
+		if err != nil || askDec.Result != "needs_interaction" || !slices.Contains(askDec.RuleIDs, askRule.ID) {
+			t.Fatalf("seed=%d expected ask to beat allow for %q, got dec=%+v err=%v", seed, boardVariant, askDec, err)
+		}
+
+		// Combined board + leak@evil.test triggers "deny" overriding both "ask" and "allow".
+		denyDec, err := h.svc.Check(ctx, permissions.Request{
+			RunID: "run_p1", Revision: 1, Origin: "user", ToolID: "mail.send",
+			Effect: "sensitive_send", ConnectionID: "conn_1",
+			Recipients: []string{boardVariant, randomizeCase(h.rng, "leak@evil.test")}, Digest: "dig_deny_1",
+		})
+		if err != nil || denyDec.Result != "deny" {
+			t.Fatalf("seed=%d expected deny > ask > allow, got dec=%+v err=%v", seed, denyDec, err)
+		}
+
+		// Explicit human approval for exact (run_p1, rev=1, dig_board_1) overrides "ask" without re-prompting,
+		// while a different digest STILL asks.
+		rev := int64(1)
+		exp := h.clock.Now().Add(30 * time.Minute)
+		boardCard, err := h.svc.Open(ctx, permissions.Interaction{
+			ID: "int_board_1", TaskID: "run_p1", InstructionRevision: &rev,
+			Kind: "approval", Prompt: "Send update to board", ActionDigest: "dig_board_1",
+			ExpiresAt: &exp, ConnectionID: "conn_1", ToolID: "mail.send", ToolTitle: "mail.send",
+			ActionClass: "sensitive_send", Recipients: []string{"board@example.com"},
+		}, "")
+		if err != nil {
+			t.Fatalf("seed=%d Open boardCard: %v", seed, err)
+		}
+		if _, _, err := h.svc.Respond(ctx, boardCard.ID, h.nextReqID(), boardCard.Revision, permissions.Response{
+			Kind: "approve", ActionDigest: "dig_board_1",
+		}); err != nil {
+			t.Fatalf("seed=%d Respond boardCard: %v", seed, err)
+		}
+		approvedDec, err := h.svc.Check(ctx, permissions.Request{
+			RunID: "run_p1", Revision: 1, Origin: "user", ToolID: "mail.send",
+			Effect: "sensitive_send", ConnectionID: "conn_1",
+			Recipients: []string{"board@example.com"}, Digest: "dig_board_1",
+		})
+		if err != nil || approvedDec.Result != "allow" || !approvedDec.ApprovedByHuman || approvedDec.Source != "approval" {
+			t.Fatalf("seed=%d expected ApprovedByHuman allow for approved digest, got dec=%+v err=%v", seed, approvedDec, err)
+		}
+		otherDigestDec, err := h.svc.Check(ctx, permissions.Request{
+			RunID: "run_p1", Revision: 1, Origin: "user", ToolID: "mail.send",
+			Effect: "sensitive_send", ConnectionID: "conn_1",
+			Recipients: []string{"board@example.com"}, Digest: "dig_board_2",
+		})
+		if err != nil || otherDigestDec.Result != "needs_interaction" {
+			t.Fatalf("seed=%d expected unapproved digest to still ask, got dec=%+v err=%v", seed, otherDigestDec, err)
+		}
+
+		// 4. Atomic "Always allow" (remember_rule: true) on a fresh tool (slack.post) + idempotent retry (0 duplicates)
+		// + ignored/rejected on decline + overridden by subsequent "ask" rule.
+		slackCard, err := h.svc.Open(ctx, permissions.Interaction{
+			ID: "int_slack_always", TaskID: "run_slack_1", InstructionRevision: &rev,
+			Kind: "approval", Prompt: "Post to #general", ActionDigest: "dig_slack_1",
+			ExpiresAt: &exp, ConnectionID: "conn_slack", ToolID: "slack.post", ToolTitle: "Slack Post",
+			ActionClass: "sensitive_send", Recipients: []string{"#general"},
+		}, "")
+		if err != nil {
+			t.Fatalf("seed=%d Open slackCard: %v", seed, err)
+		}
+		rulesBefore, _ := h.svc.Rules(ctx)
+		alwaysReqID := h.nextReqID()
+		if _, _, err := h.svc.Respond(ctx, slackCard.ID, alwaysReqID, slackCard.Revision, permissions.Response{
+			Kind: "approve", ActionDigest: "dig_slack_1", RememberRule: true,
+		}); err != nil {
+			t.Fatalf("seed=%d Respond always allow: %v", seed, err)
+		}
+		// Idempotent retry with identical requestID must NOT create a duplicate rule.
+		if _, _, err := h.svc.Respond(ctx, slackCard.ID, alwaysReqID, slackCard.Revision, permissions.Response{
+			Kind: "approve", ActionDigest: "dig_slack_1", RememberRule: true,
+		}); err != nil {
+			t.Fatalf("seed=%d Respond always allow retry: %v", seed, err)
+		}
+		rulesAfter, _ := h.svc.Rules(ctx)
+		if len(rulesAfter) != len(rulesBefore)+1 {
+			t.Fatalf("seed=%d expected exactly 1 rule added by Always allow + retry, before=%d after=%d",
+				seed, len(rulesBefore), len(rulesAfter))
+		}
+		// Subsequent fresh call to slack.post on conn_slack auto-allows!
+		slackFollowDec, err := h.svc.Check(ctx, permissions.Request{
+			RunID: "run_slack_2", Revision: 1, Origin: "user", ToolID: "slack.post",
+			Effect: "sensitive_send", ConnectionID: "conn_slack",
+			Recipients: []string{"#engineering"}, Digest: "dig_slack_2",
+		})
+		if err != nil || slackFollowDec.Result != "allow" || slackFollowDec.Source != "permission_rule" {
+			t.Fatalf("seed=%d expected Always allow rule to authorize follow-up slack.post, got dec=%+v err=%v", seed, slackFollowDec, err)
+		}
+
+		// Decline with remember_rule: true must NEVER create a rule!
+		decCard, err := h.svc.Open(ctx, permissions.Interaction{
+			ID: "int_decline_rem", TaskID: "run_dec_rem", InstructionRevision: &rev,
+			Kind: "approval", Prompt: "Post to #secret", ActionDigest: "dig_dec_rem",
+			ExpiresAt: &exp, ConnectionID: "conn_slack_2", ToolID: "slack.post", ToolTitle: "Slack Post",
+			ActionClass: "sensitive_send", Recipients: []string{"#secret"},
+		}, "")
+		if err != nil {
+			t.Fatalf("seed=%d Open decCard: %v", seed, err)
+		}
+		rulesPreDecline, _ := h.svc.Rules(ctx)
+		_, _, _ = h.svc.Respond(ctx, decCard.ID, h.nextReqID(), decCard.Revision, permissions.Response{
+			Kind: "decline", ActionDigest: "dig_dec_rem", RememberRule: true,
+		})
+		rulesPostDecline, _ := h.svc.Rules(ctx)
+		if len(rulesPostDecline) != len(rulesPreDecline) {
+			t.Fatalf("seed=%d decline with remember_rule must never create rules: before=%d after=%d",
+				seed, len(rulesPreDecline), len(rulesPostDecline))
+		}
+
+		// Adding an "ask" rule for slack.post overrides the standing "Always allow" rule.
+		if _, err := h.svc.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
+			Effect:        "ask",
+			ToolIDs:       []string{"slack.post"},
+			ConnectionIDs: []string{"conn_slack"},
+			ResourceIDs:   []string{permissions.Wildcard},
+			ActionClasses: []string{"sensitive_send"},
+			Recipients:    []string{permissions.Wildcard},
+			Title:         "Re-enable ask for Slack",
+		}); err != nil {
+			t.Fatalf("seed=%d SaveRule override ask: %v", seed, err)
+		}
+		overriddenDec, err := h.svc.Check(ctx, permissions.Request{
+			RunID: "run_slack_3", Revision: 1, Origin: "user", ToolID: "slack.post",
+			Effect: "sensitive_send", ConnectionID: "conn_slack",
+			Recipients: []string{"#engineering"}, Digest: "dig_slack_3",
+		})
+		if err != nil || overriddenDec.Result != "needs_interaction" {
+			t.Fatalf("seed=%d expected later ask rule to override Always allow, got dec=%+v err=%v", seed, overriddenDec, err)
+		}
+
+		return h.backend.Digest()
+	}
+
+	for _, seed := range []int64{17, 42} {
+		d1 := runSeed(seed)
+		d2 := runSeed(seed)
+		if d1 != d2 {
+			t.Fatalf("seed=%d non-deterministic digest: %s vs %s", seed, d1, d2)
+		}
+	}
+}

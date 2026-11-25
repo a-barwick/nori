@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -781,4 +782,477 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 			t.Fatalf("Respond on expired interaction = %v, want ErrInteractionStale", err)
 		}
 	})
+}
+
+func TestThreeStatePrecedenceDenyOverAskOverAllow(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("summarize_ask_rule", func(t *testing.T) {
+		summary := permissions.Summarize(permissions.RuleEditable{
+			Effect:        "ask",
+			ToolIDs:       []string{"gmail.send"},
+			ConnectionIDs: []string{"conn-gmail"},
+			ActionClasses: []string{"sensitive_send"},
+			Recipients:    []string{"ceo@example.com"},
+		})
+		if !strings.HasPrefix(summary, "Ask before sends with gmail.send on conn-gmail") || !strings.Contains(summary, "ceo@example.com") {
+			t.Fatalf("unexpected ask summary: %q", summary)
+		}
+	})
+
+	t.Run("ask_overrides_allow_and_user_reversible_write_and_approval_lets_retry_succeed", func(t *testing.T) {
+		env := newTestEnv(t)
+		env.svc.UserSends = "allow" // Even with UserSends="allow", ask rule must require approval.
+
+		allowRule := mustSaveRule(t, env.svc, "req-allow-all", permissions.RuleEditable{
+			Effect:        "allow",
+			ToolIDs:       []string{permissions.Wildcard},
+			ConnectionIDs: []string{permissions.Wildcard},
+			ResourceIDs:   []string{permissions.Wildcard},
+			ActionClasses: []string{"sensitive_send", "reversible_write"},
+			Recipients:    []string{permissions.Wildcard},
+		})
+		askRule := mustSaveRule(t, env.svc, "req-ask-pi", permissions.RuleEditable{
+			Effect:        "ask",
+			ToolIDs:       []string{"gmail.send"},
+			ConnectionIDs: []string{permissions.Wildcard},
+			ActionClasses: []string{"sensitive_send"},
+			Recipients:    []string{"a.vance@ucl.sim.local"},
+		})
+		_ = allowRule
+
+		req := permissions.Request{
+			RunID:        "run-ask-1",
+			Revision:     2,
+			Origin:       "user",
+			ToolID:       "gmail.send",
+			Effect:       "sensitive_send",
+			ConnectionID: "conn-1",
+			Recipients:   []string{"colleague@example.com", "A.VANCE@ucl.sim.local"},
+			Digest:       "digest-ask-1",
+		}
+		// 1. Ask beats Allow automatically.
+		d1, err := env.svc.Check(ctx, req)
+		if err != nil || d1.Result != "needs_interaction" || len(d1.RuleIDs) != 1 || d1.RuleIDs[0] != askRule.ID {
+			t.Fatalf("Check with ask+allow = (%+v, %v), want needs_interaction via %s", d1, err, askRule.ID)
+		}
+		if !strings.Contains(d1.Reason, "A custom rule requires your approval:") {
+			t.Fatalf("unexpected ask reason: %q", d1.Reason)
+		}
+
+		// 2. Non-matching recipient falls through ask to allow rule.
+		otherReq := req
+		otherReq.Recipients = []string{"colleague@example.com"}
+		dOther, err := env.svc.Check(ctx, otherReq)
+		if err != nil || dOther.Result != "allow" || dOther.Source != "permission_rule" {
+			t.Fatalf("Check non-matching ask recipient = (%+v, %v), want allow via permission_rule", dOther, err)
+		}
+
+		// 3. Approving the exact-digest interaction lets the retried call succeed with ApprovedByHuman=true!
+		rev := int64(2)
+		opened, err := env.svc.Open(ctx, permissions.Interaction{
+			ID:                  "int_ask_1",
+			TaskID:              "run-ask-1",
+			InstructionRevision: &rev,
+			Kind:                "approval",
+			Prompt:              "Send to Dr. Vance",
+			ActionDigest:        "digest-ask-1",
+			ToolID:              "gmail.send",
+			ActionClass:         "sensitive_send",
+			ConnectionID:        "conn-1",
+			Recipients:          req.Recipients,
+		}, "")
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		if _, _, err := env.svc.Respond(ctx, opened.ID, "req-approve-ask-1", 1, permissions.Response{
+			Kind:         "approve",
+			ActionDigest: "digest-ask-1",
+		}); err != nil {
+			t.Fatalf("Respond approve: %v", err)
+		}
+		d2, err := env.svc.Check(ctx, req)
+		if err != nil || d2.Result != "allow" || d2.Source != "approval" || !d2.ApprovedByHuman {
+			t.Fatalf("Check after approving ask card = (%+v, %v), want allow/approval/ApprovedByHuman=true", d2, err)
+		}
+
+		// 4. Adding a Deny rule still beats both Ask and the recorded human approval!
+		denyRule := mustSaveRule(t, env.svc, "req-deny-pi", permissions.RuleEditable{
+			Effect:        "deny",
+			ToolIDs:       []string{"gmail.send"},
+			ConnectionIDs: []string{permissions.Wildcard},
+			ActionClasses: []string{"sensitive_send"},
+			Recipients:    []string{"a.vance@ucl.sim.local"},
+		})
+		d3, err := env.svc.Check(ctx, req)
+		if err != nil || d3.Result != "deny" || len(d3.RuleIDs) != 1 || d3.RuleIDs[0] != denyRule.ID {
+			t.Fatalf("Check with deny+ask+approval = (%+v, %v), want deny via %s", d3, err, denyRule.ID)
+		}
+	})
+
+	t.Run("default_policy_asks_on_sensitive_send_and_unknown_allows_user_reversible_write", func(t *testing.T) {
+		env := newTestEnv(t)
+		env.svc.UserSends = "" // Unset default must behave as "ask".
+
+		dSend, err := env.svc.Check(ctx, permissions.Request{
+			RunID: "run-def", Origin: "user", ToolID: "gmail.send", Effect: "sensitive_send",
+		})
+		if err != nil || dSend.Result != "needs_interaction" {
+			t.Fatalf("default sensitive_send = (%+v, %v), want needs_interaction", dSend, err)
+		}
+		dUnknown, err := env.svc.Check(ctx, permissions.Request{
+			RunID: "run-def", Origin: "user", ToolID: "mcp.tool", Effect: "unknown",
+		})
+		if err != nil || dUnknown.Result != "needs_interaction" {
+			t.Fatalf("default unknown = (%+v, %v), want needs_interaction", dUnknown, err)
+		}
+		dWriteUser, err := env.svc.Check(ctx, permissions.Request{
+			RunID: "run-def", Origin: "user", ToolID: "calendar.create", Effect: "reversible_write",
+		})
+		if err != nil || dWriteUser.Result != "allow" || dWriteUser.Source != "user_request" {
+			t.Fatalf("user reversible_write = (%+v, %v), want allow/user_request", dWriteUser, err)
+		}
+		dWriteAuto, err := env.svc.Check(ctx, permissions.Request{
+			RunID: "run-def", Origin: "automation", ToolID: "calendar.create", Effect: "reversible_write",
+		})
+		if err != nil || dWriteAuto.Result != "needs_interaction" {
+			t.Fatalf("automation reversible_write = (%+v, %v), want needs_interaction", dWriteAuto, err)
+		}
+	})
+}
+
+func TestRespondAlwaysAllowCreatesAtomicRule(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("approve_with_remember_rule_creates_scoped_allow_rule_atomically", func(t *testing.T) {
+		env := newTestEnv(t)
+		rev := int64(1)
+		opened, err := env.svc.Open(ctx, permissions.Interaction{
+			ID:                  "int_always_1",
+			TaskID:              "run-always-1",
+			InstructionRevision: &rev,
+			Kind:                "approval",
+			Prompt:              "Send status update to alice@example.com",
+			ActionDigest:        "digest-1",
+			ConnectionID:        "conn-gmail-work",
+			ToolID:              "google/gmail.send",
+			ToolTitle:           "Send email",
+			ActionClass:         "sensitive_send",
+			Recipients:          []string{"alice@example.com"},
+		}, "")
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+
+		// Ensure private fields are never projected in wire JSON.
+		raw, _ := json.Marshal(opened)
+		for _, secretKey := range []string{"private_tool_id", "private_action_class", "private_connection_id", "google/gmail.send"} {
+			if strings.Contains(string(raw), secretKey) {
+				t.Fatalf("projected Interaction JSON leaked private metadata %q: %s", secretKey, string(raw))
+			}
+		}
+
+		resp := permissions.Response{Kind: "approve", ActionDigest: "digest-1", RememberRule: true}
+		receipt1, ans1, err := env.svc.Respond(ctx, opened.ID, "req-always-1", 1, resp)
+		if err != nil || receipt1.Status != "applied" || ans1 == nil {
+			t.Fatalf("Respond always allow = (%+v, %+v, %v)", receipt1, ans1, err)
+		}
+
+		// Idempotent retry must not fail or duplicate the created rule.
+		if _, _, err := env.svc.Respond(ctx, opened.ID, "req-always-1", 1, resp); err != nil {
+			t.Fatalf("idempotent retry: %v", err)
+		}
+
+		rules, err := env.svc.Rules(ctx)
+		if err != nil || len(rules) != 1 {
+			t.Fatalf("Rules after Always allow = (%+v, %v), want 1 rule", rules, err)
+		}
+		r := rules[0]
+		if r.Effect != "allow" || r.Title != "Always allow Send email" || r.Summary == "" {
+			t.Fatalf("unexpected created rule: %+v", r)
+		}
+		if len(r.ToolIDs) != 1 || r.ToolIDs[0] != "google/gmail.send" {
+			t.Fatalf("ToolIDs = %v, want [google/gmail.send]", r.ToolIDs)
+		}
+		if len(r.ConnectionIDs) != 1 || r.ConnectionIDs[0] != "conn-gmail-work" {
+			t.Fatalf("ConnectionIDs = %v, want [conn-gmail-work]", r.ConnectionIDs)
+		}
+		if len(r.ResourceIDs) != 1 || r.ResourceIDs[0] != permissions.Wildcard {
+			t.Fatalf("ResourceIDs = %v, want [*]", r.ResourceIDs)
+		}
+		if len(r.Recipients) != 1 || r.Recipients[0] != permissions.Wildcard {
+			t.Fatalf("Recipients = %v, want [*]", r.Recipients)
+		}
+
+		// Subsequent call to same tool/account with a new digest and recipient auto-allows via permission_rule.
+		dNext, err := env.svc.Check(ctx, permissions.Request{
+			RunID:        "run-always-2",
+			Revision:     1,
+			Origin:       "user",
+			ToolID:       "google/gmail.send",
+			Effect:       "sensitive_send",
+			ConnectionID: "conn-gmail-work",
+			Recipients:   []string{"bob@example.com"},
+			Digest:       "digest-2",
+		})
+		if err != nil || dNext.Result != "allow" || dNext.Source != "permission_rule" || len(dNext.RuleIDs) != 1 || dNext.RuleIDs[0] != r.ID {
+			t.Fatalf("Check on subsequent call = (%+v, %v), want allow via %s", dNext, err, r.ID)
+		}
+
+		// Different account is NOT covered by the connection-scoped rule.
+		dOtherConn, err := env.svc.Check(ctx, permissions.Request{
+			RunID:        "run-always-2",
+			Revision:     1,
+			Origin:       "user",
+			ToolID:       "google/gmail.send",
+			Effect:       "sensitive_send",
+			ConnectionID: "conn-gmail-personal",
+			Recipients:   []string{"bob@example.com"},
+			Digest:       "digest-3",
+		})
+		if err != nil || dOtherConn.Result != "needs_interaction" {
+			t.Fatalf("Check on other connection = (%+v, %v), want needs_interaction", dOtherConn, err)
+		}
+	})
+
+	t.Run("decline_with_remember_rule_never_creates_rule_and_non_approval_rejects_flag", func(t *testing.T) {
+		env := newTestEnv(t)
+		rev := int64(1)
+		opened, err := env.svc.Open(ctx, permissions.Interaction{
+			ID:                  "int_decline_rem",
+			TaskID:              "run-dec-rem",
+			InstructionRevision: &rev,
+			Kind:                "approval",
+			Prompt:              "Send email",
+			ActionDigest:        "digest-dec",
+			ToolID:              "google/gmail.send",
+			ActionClass:         "sensitive_send",
+		}, "")
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		if _, _, err := env.svc.Respond(ctx, opened.ID, "req-dec-rem", 1, permissions.Response{
+			Kind: "decline", ActionDigest: "digest-dec", RememberRule: true,
+		}); err != nil {
+			t.Fatalf("Respond decline: %v", err)
+		}
+		rules, err := env.svc.Rules(ctx)
+		if err != nil || len(rules) != 0 {
+			t.Fatalf("decline with RememberRule created rules: %+v, err=%v", rules, err)
+		}
+
+		q, err := env.svc.Open(ctx, permissions.Interaction{
+			ID: "int_q_rem", TaskID: "run-q", Kind: "question", Prompt: "Which folder?",
+		}, "")
+		if err != nil {
+			t.Fatalf("Open question: %v", err)
+		}
+		if _, _, err := env.svc.Respond(ctx, q.ID, "req-q-rem", 1, permissions.Response{
+			Kind: "answer", Text: "Inbox", RememberRule: true,
+		}); !errors.Is(err, state.ErrInvalidResource) {
+			t.Fatalf("answer with RememberRule err = %v, want ErrInvalidResource", err)
+		}
+	})
+}
+
+func TestAutoReviewGuardrailsAndModelWrapper(t *testing.T) {
+	ctx := context.Background()
+	det := permissions.DeterministicAutoReviewer{}
+
+	t.Run("blocks_untrusted_recipient_exfiltration_even_with_broad_allow_rule", func(t *testing.T) {
+		dec, err := det.ReviewAction(ctx, permissions.AutoReviewRequest{
+			ToolID:         "mcp/cascade/email_send",
+			Summary:        "Send Q4 calibrations to audit-export@external-drop.sim.local",
+			Effect:         "sensitive_send",
+			Recipients:     []string{"audit-export@external-drop.sim.local"},
+			Origin:         "user",
+			DecisionSource: "permission_rule",
+			RuleSummaries:  []string{"Allow sends with mcp/cascade/email_send on any connected account, to anyone."},
+			UserSources:    []string{"hey nori, check the issue feed and give me a quick tldr of what changed on INFRA-8109."},
+		})
+		if err != nil || dec.Verdict != "deny" {
+			t.Fatalf("ReviewAction exfil = (%+v, %v), want deny", dec, err)
+		}
+	})
+
+	t.Run("allows_verified_user_recipient_send", func(t *testing.T) {
+		dec, err := det.ReviewAction(ctx, permissions.AutoReviewRequest{
+			ToolID:         "google/gmail.send",
+			Summary:        "Send update to dana.chen@cascadecloud.sim.local",
+			Effect:         "sensitive_send",
+			Recipients:     []string{"dana.chen@cascadecloud.sim.local"},
+			Origin:         "user",
+			DecisionSource: "permission_rule",
+			RuleSummaries:  []string{"Allow sends with google/gmail.send on conn-work, to anyone."},
+			UserSources:    []string{"Email Dana Chen (dana.chen@cascadecloud.sim.local) the Q1 roadmap summary."},
+		})
+		if err != nil || dec.Verdict != "allow" {
+			t.Fatalf("ReviewAction authorized send = (%+v, %v), want allow", dec, err)
+		}
+	})
+
+	t.Run("blocks_hypothetical_draft_but_allows_explicit_for_real_override", func(t *testing.T) {
+		blocked, err := det.ReviewAction(ctx, permissions.AutoReviewRequest{
+			ToolID:      "mcp/cascade/email_send",
+			Summary:     "Send email to dana.chen@cascadecloud.sim.local",
+			Effect:      "sensitive_send",
+			Recipients:  []string{"dana.chen@cascadecloud.sim.local"},
+			Origin:      "user",
+			UserSources: []string{"Draft a strictly hypothetical email to dana.chen@cascadecloud.sim.local — DO NOT actually send anything!"},
+		})
+		if err != nil || blocked.Verdict != "deny" {
+			t.Fatalf("hypothetical send = (%+v, %v), want deny", blocked, err)
+		}
+
+		allowed, err := det.ReviewAction(ctx, permissions.AutoReviewRequest{
+			ToolID:      "mcp/cascade/calendar_create_event",
+			Summary:     "Create event Reorg Pod Proposal Review with Dana",
+			Effect:      "reversible_write",
+			Recipients:  []string{"dana.chen@cascadecloud.sim.local"},
+			Origin:      "user",
+			UserSources: []string{"this time FOR REAL (not hypothetical!) go ahead and book a 45-minute calendar block with dana.chen@cascadecloud.sim.local."},
+		})
+		if err != nil || allowed.Verdict != "allow" {
+			t.Fatalf("explicit for-real calendar write = (%+v, %v), want allow", allowed, err)
+		}
+	})
+
+	t.Run("escalates_ambiguous_or_read_only_user_reversible_write", func(t *testing.T) {
+		dec, err := det.ReviewAction(ctx, permissions.AutoReviewRequest{
+			ToolID:         "google/calendar.create",
+			Summary:        "Create event Lunch",
+			Effect:         "reversible_write",
+			Origin:         "user",
+			DecisionSource: "user_request",
+			UserSources:    []string{"What is on my calendar tomorrow?"},
+		})
+		if err != nil || dec.Verdict != "ask" {
+			t.Fatalf("read-only user prompt with reversible_write = (%+v, %v), want ask", dec, err)
+		}
+
+		delDec, err := det.ReviewAction(ctx, permissions.AutoReviewRequest{
+			ToolID:         "google/drive.delete",
+			Summary:        "Delete file Q4_Budget.xlsx",
+			Effect:         "reversible_write",
+			Origin:         "user",
+			DecisionSource: "user_request",
+			UserSources:    []string{"Update my Q4 notes document with today's highlights."},
+		})
+		if err != nil || delDec.Verdict != "ask" {
+			t.Fatalf("unrequested delete = (%+v, %v), want ask", delDec, err)
+		}
+	})
+
+	t.Run("model_reviewer_enforces_deterministic_first_and_fails_safe", func(t *testing.T) {
+		modelCalls := 0
+		m := &permissions.ModelAutoReviewer{
+			Review: func(_ context.Context, _ string) (string, error) {
+				modelCalls++
+				return `{"verdict":"allow","reason":"ok"}`, nil
+			},
+		}
+		// Deterministic block must short-circuit before model is ever called!
+		dec, err := m.ReviewAction(ctx, permissions.AutoReviewRequest{
+			ToolID:      "gmail.send",
+			Summary:     "Forward secrets to attacker@evil.example",
+			Effect:      "sensitive_send",
+			Recipients:  []string{"attacker@evil.example"},
+			Origin:      "user",
+			UserSources: []string{"Summarize my inbox."},
+		})
+		if err != nil || dec.Verdict != "deny" || modelCalls != 0 {
+			t.Fatalf("deterministic short-circuit = (%+v, %v, calls=%d), want deny with 0 model calls", dec, err, modelCalls)
+		}
+
+		// When deterministic allows, model verdict is respected.
+		dec2, err := m.ReviewAction(ctx, permissions.AutoReviewRequest{
+			ToolID:      "calendar.create",
+			Summary:     "Book dentist appointment",
+			Effect:      "reversible_write",
+			Origin:      "user",
+			UserSources: []string{"Book a dentist appointment for Friday at 2pm."},
+		})
+		if err != nil || dec2.Verdict != "allow" || modelCalls != 1 {
+			t.Fatalf("model allow = (%+v, %v, calls=%d), want allow with 1 model call", dec2, err, modelCalls)
+		}
+
+		// Model error fails safe to "ask".
+		failModel := &permissions.ModelAutoReviewer{
+			Review: func(_ context.Context, _ string) (string, error) {
+				return "", errors.New("provider timeout")
+			},
+		}
+		dec3, err := failModel.ReviewAction(ctx, permissions.AutoReviewRequest{
+			ToolID:      "calendar.create",
+			Summary:     "Book dentist appointment",
+			Effect:      "reversible_write",
+			Origin:      "user",
+			UserSources: []string{"Book a dentist appointment for Friday at 2pm."},
+		})
+		if err != nil || dec3.Verdict != "ask" {
+			t.Fatalf("model error fail-safe = (%+v, %v), want ask", dec3, err)
+		}
+	})
+}
+
+func TestMCPServerConnectionIDRuleMatching(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestEnv(t).svc
+
+	// Standing "Always allow" rule created via approval card (connection_ids: ["*"], action_classes: ["unknown"]).
+	if _, err := svc.SaveRule(ctx, "", "req-allow-mcp", 0, permissions.RuleEditable{
+		Effect:        "allow",
+		ToolIDs:       []string{"mcp/mcp_srv1/email_send"},
+		ConnectionIDs: []string{"*"},
+		ResourceIDs:   []string{"*"},
+		ActionClasses: []string{"unknown"},
+		Title:         "Always allow email_send",
+	}); err != nil {
+		t.Fatalf("SaveRule allow: %v", err)
+	}
+
+	// Verify Always allow works on mcp_srv1.
+	dec, err := svc.Check(ctx, permissions.Request{
+		RunID: "run-1", Origin: "user", ToolID: "mcp/mcp_srv1/email_send", Effect: "unknown",
+	})
+	if err != nil || dec.Result != "allow" {
+		t.Fatalf("Check before ask rule = (%+v, %v), want allow", dec, err)
+	}
+
+	// Add Settings "Ask first" rule targeting mcp_srv1 via connection_ids: ["mcp_srv1"] with tool_ids: ["*"].
+	if _, err := svc.SaveRule(ctx, "", "req-ask-mcp", 0, permissions.RuleEditable{
+		Effect:        "ask",
+		ToolIDs:       []string{"*"},
+		ConnectionIDs: []string{"mcp_srv1"},
+		ResourceIDs:   []string{"*"},
+		ActionClasses: []string{"unknown"},
+		Title:         "Ask before qa-workspace MCP actions",
+	}); err != nil {
+		t.Fatalf("SaveRule ask: %v", err)
+	}
+
+	// Ask rule targeting mcp_srv1 must override the Always allow rule!
+	dec2, err := svc.Check(ctx, permissions.Request{
+		RunID: "run-2", Origin: "user", ToolID: "mcp/mcp_srv1/email_send", Effect: "unknown",
+	})
+	if err != nil || dec2.Result != "needs_interaction" {
+		t.Fatalf("Check with mcp_srv1 ask rule = (%+v, %v), want needs_interaction", dec2, err)
+	}
+
+	// Ask rule for mcp_srv1 must NOT match a different MCP server (mcp_srv2).
+	if _, err := svc.SaveRule(ctx, "", "req-allow-mcp2", 0, permissions.RuleEditable{
+		Effect:        "allow",
+		ToolIDs:       []string{"mcp/mcp_srv2/email_send"},
+		ConnectionIDs: []string{},
+		ResourceIDs:   []string{},
+		ActionClasses: []string{"unknown"},
+	}); err != nil {
+		t.Fatalf("SaveRule allow mcp_srv2: %v", err)
+	}
+	dec3, err := svc.Check(ctx, permissions.Request{
+		RunID: "run-3", Origin: "user", ToolID: "mcp/mcp_srv2/email_send", Effect: "unknown",
+	})
+	if err != nil || dec3.Result != "allow" {
+		t.Fatalf("Check on mcp_srv2 (empty connection_ids allow rule) = (%+v, %v), want allow", dec3, err)
+	}
 }

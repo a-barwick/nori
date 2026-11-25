@@ -140,7 +140,7 @@ public struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if store.messages.isEmpty {
+                    if store.messages.isEmpty && store.pendingInteractions.isEmpty {
                         NoriEmptyState(
                             title: store.isLoading ? "Loading conversation…" : "Ask Nori anything",
                             message: store.isLoading
@@ -154,6 +154,22 @@ public struct ChatView: View {
                         ForEach(units) { unit in
                             threadUnitView(unit)
                         }
+                    }
+
+                    if !store.pendingInteractions.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(store.pendingInteractions) { item in
+                                InteractionCardView(
+                                    store: store,
+                                    interaction: item,
+                                    compact: true,
+                                    onOpenTask: onOpenTask
+                                )
+                                .id("inline-interaction-\(item.id)")
+                            }
+                        }
+                        .padding(.top, 4)
+                        .padding(.bottom, 10)
                     }
 
                     if store.isThinking || store.activeTasksCount > 0 {
@@ -179,6 +195,11 @@ public struct ChatView: View {
                 await store.refreshAll()
             }
             .onChange(of: store.messages.count) { _, _ in
+                withAnimation(.easeOut(duration: 0.24)) {
+                    proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                }
+            }
+            .onChange(of: store.pendingInteractions.map(\.id)) { _, _ in
                 withAnimation(.easeOut(duration: 0.24)) {
                     proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                 }

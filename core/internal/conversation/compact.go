@@ -180,15 +180,63 @@ type flushPlan struct {
 	catchUp            bool
 	hasWork            bool
 	ready              bool
-	wakeAt             time.Time
 	latestTurnAt       time.Time
 	batch              []state.ConversationTurn
 	batchThrough       time.Time
 }
 
+func isUserTurn(t state.ConversationTurn) bool {
+	return slices.ContainsFunc(t.Inputs, state.ConversationInput.IsUser)
+}
+
+// verbatimKeepCount returns how many newest completed turns to keep verbatim so
+// at least CompactKeep total turns AND CompactKeepUserTurns user turns survive
+// compaction (bounded by RecentTurnLimit, RecentTurnBytes, and optional byteLimit).
+// When stopAtThrough is non-zero (catch-up), turns at or before stopAtThrough are never kept.
+func verbatimKeepCount(newestFirst []state.ConversationTurn, stopAtThrough time.Time, byteLimit int) int {
+	windowCap := min(len(newestFirst), state.RecentTurnLimit)
+	targetUserTurns := 0
+	for i := 0; i < windowCap; i++ {
+		if !stopAtThrough.IsZero() && !newestFirst[i].StartedAt.After(stopAtThrough) {
+			break
+		}
+		if isUserTurn(newestFirst[i]) {
+			targetUserTurns++
+			if targetUserTurns >= state.CompactKeepUserTurns {
+				break
+			}
+		}
+	}
+
+	keep, keptUsers, keptBytes := 0, 0, 0
+	for keep < windowCap {
+		t := newestFirst[keep]
+		if !stopAtThrough.IsZero() && !t.StartedAt.After(stopAtThrough) {
+			break
+		}
+		if keep >= state.CompactKeep && keptUsers >= targetUserTurns {
+			break
+		}
+		b := state.TurnBytes(t)
+		if keptBytes+b > state.RecentTurnBytes {
+			break
+		}
+		if byteLimit > 0 && keptBytes+b >= byteLimit {
+			break
+		}
+		keptBytes += b
+		if isUserTurn(t) {
+			keptUsers++
+		}
+		keep++
+	}
+	return keep
+}
+
 // planFlush evaluates whether completed turns after EffectiveFlushedThrough()
-// need coupled pre-compaction flushing now, or at a future idle wake time.
-// Shared by NextConversationWake and flushAndCompact so both agree exactly.
+// need coupled pre-compaction flushing now (threshold pressure or hot-window catch-up).
+// Compaction never triggers on idle time alone. Shared by NextConversationWake and
+// flushAndCompact so both agree exactly.
 func (r *Runner) planFlush(
 	ctx context.Context,
 	control state.ConversationControl,
@@ -234,33 +282,32 @@ func (r *Runner) planFlush(
 	pageFull := len(newestRaw) == state.HistoryTurnsExamined
 	completed := make([]state.ConversationTurn, 0, len(newestRaw))
 	totalBytes := 0
+	userTurns := 0
 	for _, t := range newestRaw {
 		if t.Status != "completed" {
 			continue
 		}
 		completed = append(completed, t)
 		totalBytes += state.TurnBytes(t)
+		if isUserTurn(t) {
+			userTurns++
+		}
 	}
 	if len(completed) > 0 && completed[0].StartedAt.After(plan.latestTurnAt) {
 		plan.latestTurnAt = completed[0].StartedAt
 	}
 
-	// Keep the newest turns verbatim unless they have already moved past Through.
-	keep, keptBytes := 0, 0
-	for keep < len(completed) && keep < state.CompactKeep {
-		if plan.catchUp && !completed[keep].StartedAt.After(plan.base.Through) {
-			break
-		}
-		b := state.TurnBytes(completed[keep])
-		if keep > 0 && keptBytes+b > state.RecentTurnBytes {
-			break
-		}
-		if totalBytes >= state.SoftCompactBytes && keptBytes+b >= state.SoftCompactBytes {
-			break
-		}
-		keptBytes += b
-		keep++
+	// Keep the newest turns verbatim (at least CompactKeep total AND CompactKeepUserTurns user turns,
+	// bounded by RecentTurnBytes) unless they have already moved past Through.
+	var stopAtThrough time.Time
+	if plan.catchUp {
+		stopAtThrough = plan.base.Through
 	}
+	byteLimit := 0
+	if totalBytes >= state.SoftCompactBytes {
+		byteLimit = state.SoftCompactBytes
+	}
+	keep := verbatimKeepCount(completed, stopAtThrough, byteLimit)
 	eligibleNewestFirst := completed[keep:]
 	hasEligible := len(eligibleNewestFirst) > 0 || pageFull
 
@@ -268,23 +315,17 @@ func (r *Runner) planFlush(
 		return plan, nil
 	}
 
-	immediate := plan.catchUp || pageFull || len(completed) >= state.SoftCompactTurns || totalBytes >= state.SoftCompactBytes
-	idleEligible := len(completed) > state.CompactKeep
-	if !immediate && !idleEligible {
+	needed := plan.catchUp ||
+		pageFull ||
+		userTurns >= state.SoftCompactUserTurns ||
+		len(completed) >= state.SoftCompactTurns ||
+		totalBytes >= state.SoftCompactBytes
+	if !needed {
 		return plan, nil
 	}
 
 	plan.hasWork = true
-	if immediate {
-		plan.ready = true
-	} else {
-		dueAt := plan.latestTurnAt.Add(state.IdleFlushDelay)
-		if !plan.latestTurnAt.IsZero() && now.Before(dueAt) {
-			plan.wakeAt = dueAt
-			return plan, nil
-		}
-		plan.ready = true
-	}
+	plan.ready = true
 
 	if !collectBatch {
 		return plan, nil
@@ -927,11 +968,7 @@ func (r *Runner) advanceHotWindow(ctx context.Context) error {
 	if len(turns) <= state.RecentTurnLimit && size <= state.RecentTurnBytes {
 		return nil
 	}
-	keep, keptBytes := 0, 0
-	for keep < len(turns) && keep < state.CompactKeep && keptBytes+state.TurnBytes(turns[keep]) <= state.RecentTurnBytes {
-		keptBytes += state.TurnBytes(turns[keep])
-		keep++
-	}
+	keep := verbatimKeepCount(turns, time.Time{}, 0)
 	older := turns[keep:]
 	if pageFull && len(older) > 0 {
 		newest := older[0].StartedAt

@@ -56,11 +56,11 @@ func TestDST_FlushBeforeCompactAtomicityAndFailureRecovery(t *testing.T) {
 	checker, targets := newMemoryInvariantChecker(rig)
 	scriptPlainReplies(h)
 
-	// Drive SoftCompactTurns (12) turns so flush_and_compact triggers on turn 12.
-	// Queue the 3 flush faults right before turn 12 so they target flush_and_compact
-	// rather than earlier 5-turn decoupled extractions.
-	for i := range state.SoftCompactTurns {
-		if i == state.SoftCompactTurns-1 {
+	// Drive SoftCompactUserTurns (16) user turns so flush_and_compact triggers on turn 16.
+	// Queue the 3 flush faults right before turn 16 so they target flush_and_compact
+	// rather than earlier 3-turn decoupled extractions.
+	for i := range state.SoftCompactUserTurns {
+		if i == state.SoftCompactUserTurns-1 {
 			h.SummaryModels[0].QueueFaultModes(
 				outer.CompactionFaultProviderError,
 				outer.CompactionFaultMissingTool,
@@ -130,8 +130,12 @@ func TestDST_FlushBeforeCompactAtomicityAndFailureRecovery(t *testing.T) {
 	}
 
 	// Phase 2: CommitThenError during coupled flush_and_compact.
-	// Advance past 10m backoff after strike 3 and drive another SoftCompactTurns batch.
+	// Advance past 10m backoff after strike 3 and drain turn 16's idle extraction first so
+	// Phase 2's CommitThenError targets flush_and_compact cleanly.
 	rig.clock.Advance(10*time.Minute + time.Second)
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker pre-Phase2 extract drain: %v", err)
+	}
 	commitFaultArmed := false
 	h.SummaryModels[0].SetCommitThenErrorTrigger(func() {
 		commitFaultArmed = true
@@ -139,8 +143,9 @@ func TestDST_FlushBeforeCompactAtomicityAndFailureRecovery(t *testing.T) {
 		rig.storeFaults.SetEnabled(true)
 	})
 
-	for i := range state.SoftCompactTurns {
-		if i == state.SoftCompactTurns-state.CompactKeep-1 {
+	phase2Turns := state.SoftCompactUserTurns - state.CompactKeep
+	for i := range phase2Turns {
+		if i == phase2Turns-1 {
 			h.SummaryModels[0].QueueFaultModes(outer.CompactionFaultCommitThenError)
 		}
 		rig.clock.Advance(time.Second)
@@ -197,9 +202,9 @@ func TestDST_MidFlushUserArrivalPreemption(t *testing.T) {
 	checker, targets := newMemoryInvariantChecker(rig)
 	scriptPlainReplies(h)
 
-	// Use worker without summarizer to build SoftCompactTurns (12) completed turns cleanly.
+	// Use worker without summarizer to build SoftCompactUserTurns (16) completed turns cleanly.
 	seeder := newPlainWorkerRunner(rig, 601, nil)
-	for i := range state.SoftCompactTurns {
+	for i := range state.SoftCompactUserTurns {
 		rig.clock.Advance(time.Second)
 		if _, err := h.AcceptInput(ctx, fmt.Sprintf("preempt-seed-%02d preference: prefer quiet mornings", i+1)); err != nil {
 			t.Fatalf("AcceptInput seed %d: %v", i, err)
@@ -217,13 +222,13 @@ func TestDST_MidFlushUserArrivalPreemption(t *testing.T) {
 		t.Fatalf("expected FlushedThrough=0 before worker 0 flush, got %+v", sumBefore)
 	}
 
-	// Hook worker 0's compaction call #1: inject a live user message and fire the
+	// Hook worker 0's compaction call: inject a live user message and fire the
 	// deterministic 500ms compaction watcher tick to cancel watchCtx mid-flush.
 	preempted := false
 	tickSucceeded := false
 	urgentText := "Urgent user message arriving mid-flush!"
-	h.SummaryModels[0].SetOnBeforeRespond(func(hookCtx context.Context, toolName string, callNum int, _ agent.Request) error {
-		if callNum != 1 || toolName != "flush_and_compact" {
+	h.SummaryModels[0].SetOnBeforeRespond(func(hookCtx context.Context, toolName string, _ int, _ agent.Request) error {
+		if preempted || toolName != "flush_and_compact" {
 			return nil
 		}
 		preempted = true
@@ -292,6 +297,11 @@ func TestDST_MidFlushUserArrivalPreemption(t *testing.T) {
 	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
 		t.Fatalf("CheckSafetyAt final: %v", err)
 	}
+	// Drain any remaining unextracted turns after +2m idle so quiescence holds cleanly.
+	rig.clock.Advance(state.IdleExtractDelay + time.Second)
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker final idle extract: %v", err)
+	}
 	if err := checker.CheckQuiescence(ctx, targets, rig.clock.Now()); err != nil {
 		t.Fatalf("CheckQuiescence final: %v", err)
 	}
@@ -305,11 +315,11 @@ func TestDST_RapidBurstHotWindowAndIdleCatchup(t *testing.T) {
 	checker, targets := newMemoryInvariantChecker(rig)
 	scriptPlainReplies(h)
 
-	// Drive a 50-turn rapid burst (> state.HistoryTurnsExamined=48) through a hot-path
+	// Drive a 70-turn rapid burst (> state.HistoryTurnsExamined=64) through a hot-path
 	// worker with no out-of-band summarizer so advanceHotWindow keeps live replies
 	// under OuterInputBytes by staging lossless Excerpts while leaving FlushedThrough=0.
 	hotWorker := newPlainWorkerRunner(rig, 602, nil)
-	const burstTurns = 50
+	const burstTurns = 70
 	for i := range burstTurns {
 		rig.clock.Advance(time.Second)
 		msg := fmt.Sprintf("burst-turn-%02d preference: remember burst-fact-%02d for architecture review", i+1, i+1)
@@ -341,9 +351,8 @@ func TestDST_RapidBurstHotWindowAndIdleCatchup(t *testing.T) {
 		t.Fatalf("CheckSafetyAt post-burst: %v", err)
 	}
 
-	// Advance +2m (IdleFlushDelay) and drain idle catch-up passes on Worker 0 until
-	// FlushedThrough == Through and all retired Excerpts are cleared.
-	rig.clock.Advance(state.IdleFlushDelay + time.Second)
+	// Drain catch-up passes on Worker 0 immediately (no IdleFlushDelay wait needed for catch-up)
+	// until FlushedThrough == Through and all retired Excerpts are cleared.
 	for pass := range 10 {
 		if err := h.ProcessWorker(ctx, 0); err != nil {
 			t.Fatalf("ProcessWorker(0) catch-up pass %d: %v", pass, err)
@@ -489,9 +498,9 @@ func TestDST_CoreOverflowDemotionAndPinnedProtection(t *testing.T) {
 		t.Fatalf("expected newest unpinned item overflow-marker-%02d to remain in Core", unpinnedWrites)
 	}
 
-	// Advance past idle flush delay and drain so quiescence holds cleanly.
+	// Advance past IdleExtractDelay and drain so quiescence holds cleanly.
 	scriptPlainReplies(h)
-	rig.clock.Advance(state.IdleFlushDelay + time.Second)
+	rig.clock.Advance(state.IdleExtractDelay + time.Second)
 	for range 4 {
 		if err := h.ProcessWorker(ctx, 0); err != nil {
 			t.Fatalf("ProcessWorker drain: %v", err)
@@ -499,6 +508,11 @@ func TestDST_CoreOverflowDemotionAndPinnedProtection(t *testing.T) {
 	}
 	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
 		t.Fatalf("CheckSafetyAt final: %v", err)
+	}
+	// Drain any remaining unextracted turns after +2m idle so quiescence holds cleanly.
+	rig.clock.Advance(state.IdleExtractDelay + time.Second)
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker final idle extract: %v", err)
 	}
 	if err := checker.CheckQuiescence(ctx, targets, rig.clock.Now()); err != nil {
 		t.Fatalf("CheckQuiescence final: %v", err)
@@ -526,7 +540,8 @@ func TestDST_PromptInjectionAndProvenanceGuard(t *testing.T) {
 		t.Fatalf("create pinned security anchor: %v", err)
 	}
 
-	// 2. Verify command_plan.go fix #1: Mixed dispatch + remember turn succeeds for BOTH!
+	// 2. Verify Track 2 single-call clean turn: Mixed dispatch + remember succeeds in 1 LLM call
+	// (ZERO CommandPlan call) when there is no untrusted task output!
 	mixedDispatchReq := "Research boutique hotels in Lisbon"
 	mixedMemText := "User prefers boutique hotels near transit."
 	mixedPlanCalled := false
@@ -545,8 +560,8 @@ func TestDST_PromptInjectionAndProvenanceGuard(t *testing.T) {
 	if err := h.ProcessWorker(ctx, 0); err != nil {
 		t.Fatalf("ProcessWorker mixed dispatch+remember: %v", err)
 	}
-	if !mixedPlanCalled {
-		t.Fatal("expected CommandPlan to run for mixed dispatch+remember turn")
+	if mixedPlanCalled {
+		t.Fatal("expected clean mixed dispatch+remember turn to run in 1 LLM call without CommandPlan")
 	}
 	openTasks, err := rig.store.OpenTasks(ctx)
 	if err != nil || len(openTasks) != 1 || openTasks[0].Request != mixedDispatchReq {
@@ -638,13 +653,21 @@ func TestDST_PromptInjectionAndProvenanceGuard(t *testing.T) {
 
 	// 4. Adversarial flush_and_compact fault modes: task_outcome -> Core, unverified input_id, quote mismatch.
 	scriptPlainReplies(h)
-	h.SummaryModels[0].QueueFaultModes(
+	adversarialModes := []outer.CompactionFaultMode{
 		outer.CompactionFaultTaskOutcomeToCore,
 		outer.CompactionFaultUnverifiedInputID,
 		outer.CompactionFaultQuoteMismatch,
-	)
-	for batch := range 3 {
-		for i := range state.SoftCompactTurns {
+	}
+	for batch, mode := range adversarialModes {
+		turnsNeeded := state.SoftCompactUserTurns - state.CompactKeep
+		if batch == 0 {
+			// 2 user turns already completed in steps 2-3 above.
+			turnsNeeded = state.SoftCompactUserTurns - 2
+		}
+		for i := range turnsNeeded {
+			if i == turnsNeeded-1 {
+				h.SummaryModels[0].QueueFaultModes(mode)
+			}
 			rig.clock.Advance(time.Second)
 			if _, err := h.AcceptInput(ctx, fmt.Sprintf("guard-batch-%d-turn-%02d preference: keep audit logs", batch+1, i+1)); err != nil {
 				t.Fatalf("AcceptInput guard %d/%d: %v", batch, i, err)
@@ -694,6 +717,11 @@ func TestDST_PromptInjectionAndProvenanceGuard(t *testing.T) {
 	}
 	if !foundPinned {
 		t.Fatalf("pinned-security-anchor was lost or altered during adversarial passes: %+v", finalMems)
+	}
+	// Drain any remaining unextracted turns after +2m idle so quiescence holds cleanly.
+	rig.clock.Advance(state.IdleExtractDelay + time.Second)
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker final idle extract: %v", err)
 	}
 	if err := checker.CheckQuiescence(ctx, targets, rig.clock.Now()); err != nil {
 		t.Fatalf("CheckQuiescence final: %v", err)
@@ -752,36 +780,29 @@ func runAutoDreamAndReplicaMergeScenario(t *testing.T, seed int64) string {
 		}
 	}
 
-	// 2. Drive enough turns across 4 soft-compact batches so >= DreamMinLogEntries (10)
+	// 2. Drive SoftCompactUserTurns (16) user turns so >= DreamMinLogEntries (10)
 	// user-sourced Daily Log entries accumulate and FlushedThrough == Through.
-	for batch := range 4 {
-		for i := range state.SoftCompactTurns {
-			rig.clock.Advance(time.Second)
-			if _, err := h.AcceptInput(ctx, fmt.Sprintf("dream-seed-b%d-t%02d preference: concise status reports", batch+1, i+1)); err != nil {
-				t.Fatalf("AcceptInput dream seed %d/%d: %v", batch, i, err)
-			}
-			if err := h.ProcessWorker(ctx, 0); err != nil {
-				t.Fatalf("ProcessWorker dream seed %d/%d: %v", batch, i, err)
-			}
+	for i := range state.SoftCompactUserTurns {
+		rig.clock.Advance(time.Second)
+		if _, err := h.AcceptInput(ctx, fmt.Sprintf("dream-seed-t%02d preference: concise status reports", i+1)); err != nil {
+			t.Fatalf("AcceptInput dream seed %d: %v", i, err)
 		}
-	}
-	// Drain idle flush so FlushedThrough == Through cleanly.
-	rig.clock.Advance(state.IdleFlushDelay + time.Second)
-	if err := h.ProcessWorker(ctx, 0); err != nil {
-		t.Fatalf("ProcessWorker idle flush before dream: %v", err)
+		if err := h.ProcessWorker(ctx, 0); err != nil {
+			t.Fatalf("ProcessWorker dream seed %d: %v", i, err)
+		}
 	}
 	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
 		t.Fatalf("CheckSafetyAt before dream: %v", err)
 	}
 
-	// 3. With IdleExtractDelay (5m) < IdleDreamDelay (15m), the remaining 5 verbatim turns
-	// schedule session-idle extraction at +5m first; drain it so AutoDream's +15m wake is next.
+	// 3. With IdleExtractDelay (2m) < IdleDreamDelay (15m), the remaining unextracted verbatim
+	// turn(s) schedule session-idle extraction at +2m first; drain it so AutoDream's +15m wake is next.
 	extractWake, err := h.Workers[0].NextConversationWake(ctx)
 	if err != nil {
-		t.Fatalf("NextConversationWake before 5m extract: %v", err)
+		t.Fatalf("NextConversationWake before 2m extract: %v", err)
 	}
 	if extractWake.IsZero() || !extractWake.After(rig.clock.Now()) {
-		t.Fatalf("expected +5m idle extraction deferred wake, got wakeAt=%s now=%s", extractWake, rig.clock.Now())
+		t.Fatalf("expected +2m idle extraction deferred wake, got wakeAt=%s now=%s", extractWake, rig.clock.Now())
 	}
 	rig.clock.Set(extractWake.Add(time.Second))
 	if err := h.ProcessWorker(ctx, 0); err != nil {
@@ -958,11 +979,10 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 	checker, targets := newMemoryInvariantChecker(rig)
 	scriptPlainReplies(h)
 
-	// 1. User sends 3 messages about an August 2027 family trip (< CompactKeep = 5).
+	// 1. User sends 2 messages about an August 2027 family trip (< ExtractTurnThreshold = 3).
 	tripMessages := []string{
 		"Remember we are planning our August 2027 family trip to Kyoto with four adults and two kids.",
-		"We prefer nonstop flights and ryokan accommodations near Gion for the August 2027 family trip.",
-		"Our budget constraint for the August 2027 family trip is 12000 USD total.",
+		"Our budget constraint for the August 2027 family trip is 12000 USD total and we prefer ryokan near Gion.",
 	}
 	tripInputIDs := make([]string, 0, len(tripMessages))
 	for i, msg := range tripMessages {
@@ -984,30 +1004,30 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 	}
 
 	turns := completedTurnsChronological(t, ctx, rig.store)
-	if len(turns) != 3 {
-		t.Fatalf("expected 3 completed turns, got %d", len(turns))
+	if len(turns) != 2 {
+		t.Fatalf("expected 2 completed turns, got %d", len(turns))
 	}
-	turn1, turn3 := turns[0], turns[2]
+	turn2 := turns[1]
 
-	// 2. Before +20m: NextConversationWake returns latestTurnAt + IdleExtractDelay (20m),
+	// 2. Before +2m: NextConversationWake returns latestTurnAt + IdleExtractDelay (2m),
 	// Store.Memories is still empty, and CheckSafetyAt passes.
-	wantExtractWake := turn3.StartedAt.Add(state.IdleExtractDelay)
+	wantExtractWake := turn2.StartedAt.Add(state.IdleExtractDelay)
 	wakeBefore, err := h.Workers[0].NextConversationWake(ctx)
 	if err != nil {
-		t.Fatalf("NextConversationWake before 20m: %v", err)
+		t.Fatalf("NextConversationWake before 2m: %v", err)
 	}
 	if !wakeBefore.Equal(wantExtractWake) {
-		t.Fatalf("expected NextConversationWake=%s (latestTurnAt + 20m), got %s", wantExtractWake, wakeBefore)
+		t.Fatalf("expected NextConversationWake=%s (latestTurnAt + 2m), got %s", wantExtractWake, wakeBefore)
 	}
 	memsBefore, err := rig.store.Memories(ctx)
 	if err != nil {
-		t.Fatalf("Memories before 20m: %v", err)
+		t.Fatalf("Memories before 2m: %v", err)
 	}
 	if len(memsBefore) != 0 {
-		t.Fatalf("expected Store.Memories empty before 20m, got %+v", memsBefore)
+		t.Fatalf("expected Store.Memories empty before 2m, got %+v", memsBefore)
 	}
 	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
-		t.Fatalf("CheckSafetyAt before 20m: %v", err)
+		t.Fatalf("CheckSafetyAt before 2m: %v", err)
 	}
 
 	// 3. Advance half of IdleExtractDelay and run ProcessWorker -> extraction MUST NOT fire early.
@@ -1029,33 +1049,33 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 		t.Fatalf("CheckSafetyAt before IdleExtractDelay: %v", err)
 	}
 
-	// 4. Advance past +20m and run ProcessWorker -> extractIdleMemory commits Core + Daily Log,
-	// advances ExtractedThrough == turn3.StartedAt, leaves Through & FlushedThrough zero (all 3
+	// 4. Advance past +2m and run ProcessWorker -> extractIdleMemory commits Core + Daily Log,
+	// advances ExtractedThrough == turn2.StartedAt, leaves Through & FlushedThrough zero (all 2
 	// turns remain verbatim!), and parks NextConversationWake at zero.
-	rig.clock.Set(turn3.StartedAt.Add(state.IdleExtractDelay + time.Second))
+	rig.clock.Set(turn2.StartedAt.Add(state.IdleExtractDelay + time.Second))
 	if err := h.ProcessWorker(ctx, 0); err != nil {
-		t.Fatalf("ProcessWorker at +20m: %v", err)
+		t.Fatalf("ProcessWorker at +2m: %v", err)
 	}
 	statsAfterExtract := h.SummaryModels[0].Stats()
 	if statsAfterExtract.ExtractCalls != 1 || statsAfterExtract.FlushCalls != 0 {
-		t.Fatalf("expected 1 extract_only call and 0 flush calls at +20m, got %+v", statsAfterExtract)
+		t.Fatalf("expected 1 extract_only call and 0 flush calls at +2m, got %+v", statsAfterExtract)
 	}
 	sumAfterExtract, err := rig.store.ConversationSummary(ctx)
 	if err != nil {
-		t.Fatalf("ConversationSummary at +20m: %v", err)
+		t.Fatalf("ConversationSummary at +2m: %v", err)
 	}
-	if !sumAfterExtract.ExtractedThrough.Equal(turn3.StartedAt) {
-		t.Fatalf("expected ExtractedThrough=%s after +20m idle extract, got %s", turn3.StartedAt, sumAfterExtract.ExtractedThrough)
+	if !sumAfterExtract.ExtractedThrough.Equal(turn2.StartedAt) {
+		t.Fatalf("expected ExtractedThrough=%s after +2m idle extract, got %s", turn2.StartedAt, sumAfterExtract.ExtractedThrough)
 	}
 	if !sumAfterExtract.Through.IsZero() || !sumAfterExtract.FlushedThrough.IsZero() || len(sumAfterExtract.Items) != 0 || sumAfterExtract.Gist != "" {
-		t.Fatalf("expected Through=0, FlushedThrough=0, empty Items/Gist (all 3 turns verbatim), got %+v", sumAfterExtract)
+		t.Fatalf("expected Through=0, FlushedThrough=0, empty Items/Gist (all 2 turns verbatim), got %+v", sumAfterExtract)
 	}
 	coreAfterExtract, err := rig.store.Memories(ctx)
 	if err != nil {
-		t.Fatalf("Memories after +20m: %v", err)
+		t.Fatalf("Memories after +2m: %v", err)
 	}
 	if len(coreAfterExtract) == 0 {
-		t.Fatalf("expected Core memories committed after +20m idle extract")
+		t.Fatalf("expected Core memories committed after +2m idle extract")
 	}
 	coreHits, err := rig.store.SearchMemory(ctx, docstore.MemorySearchQuery{
 		Query: "Kyoto",
@@ -1063,7 +1083,7 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 		Now:   rig.clock.Now(),
 	})
 	if err != nil || len(coreHits) == 0 {
-		t.Fatalf("expected Core memory search hit for Kyoto after +20m extract, hits=%d err=%v", len(coreHits), err)
+		t.Fatalf("expected Core memory search hit for Kyoto after +2m extract, hits=%d err=%v", len(coreHits), err)
 	}
 	logHits, err := rig.store.SearchMemory(ctx, docstore.MemorySearchQuery{
 		Query: "12000",
@@ -1071,23 +1091,23 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 		Now:   rig.clock.Now(),
 	})
 	if err != nil || len(logHits) == 0 {
-		t.Fatalf("expected Daily Log search hit for 12000 after +20m extract, hits=%d err=%v", len(logHits), err)
+		t.Fatalf("expected Daily Log search hit for 12000 after +2m extract, hits=%d err=%v", len(logHits), err)
 	}
 	wakeAfterExtract, err := h.Workers[0].NextConversationWake(ctx)
 	if err != nil {
-		t.Fatalf("NextConversationWake after +20m extract: %v", err)
+		t.Fatalf("NextConversationWake after +2m extract: %v", err)
 	}
 	if !wakeAfterExtract.IsZero() {
-		t.Fatalf("expected NextConversationWake to be zero (parked) after +20m extract, got %s", wakeAfterExtract)
+		t.Fatalf("expected NextConversationWake to be zero (parked) after +2m extract, got %s", wakeAfterExtract)
 	}
 	if err := h.CheckOuterInvariants(ctx); err != nil {
-		t.Fatalf("CheckOuterInvariants after +20m extract: %v", err)
+		t.Fatalf("CheckOuterInvariants after +2m extract: %v", err)
 	}
 	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
-		t.Fatalf("CheckSafetyAt after +20m extract: %v", err)
+		t.Fatalf("CheckSafetyAt after +2m extract: %v", err)
 	}
 	if err := checker.CheckQuiescence(ctx, targets, rig.clock.Now()); err != nil {
-		t.Fatalf("CheckQuiescence after +20m extract: %v", err)
+		t.Fatalf("CheckQuiescence after +2m extract: %v", err)
 	}
 
 	turn1CoreBefore, turn1LogBefore, reemitLeaks := countMemoryRefs(t, ctx, rig.store, tripInputIDs[0])
@@ -1097,7 +1117,10 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 	}
 
 	// 5. Advance +10h (overnight gap): enable adversarial "reemit_already_extracted" mode
-	// on FakeSummaryModel, and send 3 more messages (6 turns total = CompactKeep + 1).
+	// on FakeSummaryModel, send 3 return messages (5 turns total -> immediate ExtractTurnThreshold=3
+	// extraction with ZERO compaction), verify 15 total turns + idle NEVER compacts, then send
+	// turn 16 (SoftCompactUserTurns) to verify flush_and_compact compacts turns 1..2 with
+	// already_extracted=true while dropping ALL re-emitted Turn 1 memories/logs!
 	rig.clock.Advance(10 * time.Hour)
 	h.SummaryModels[0].SetFaultMode(outer.CompactionFaultReemitAlreadyExtracted)
 
@@ -1151,49 +1174,84 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 		}
 	}
 
-	turns = completedTurnsChronological(t, ctx, rig.store)
-	if len(turns) != state.CompactKeep+1 {
-		t.Fatalf("expected %d completed turns (CompactKeep+1), got %d", state.CompactKeep+1, len(turns))
-	}
-	turn6 := turns[len(turns)-1]
-
-	// 6a. Immediately after Turn 6: NextConversationWake returns latestTurnAt + 2m (IdleFlushDelay).
-	wantFlushWake := turn6.StartedAt.Add(state.IdleFlushDelay)
-	wakeFlush, err := h.Workers[0].NextConversationWake(ctx)
+	// After 5 total turns (3 new turns == ExtractTurnThreshold): Turns 3..5 extracted immediately,
+	// Through/FlushedThrough remain zero!
+	sumAfter5, err := rig.store.ConversationSummary(ctx)
 	if err != nil {
-		t.Fatalf("NextConversationWake after turn 6: %v", err)
+		t.Fatalf("ConversationSummary after 5 turns: %v", err)
 	}
-	if !wakeFlush.Equal(wantFlushWake) {
-		t.Fatalf("expected NextConversationWake=%s (latestTurnAt + 2m), got %s", wantFlushWake, wakeFlush)
+	if !sumAfter5.Through.IsZero() || !sumAfter5.FlushedThrough.IsZero() {
+		t.Fatalf("expected zero compaction after 5 turns, got through=%s flushed=%s", sumAfter5.Through, sumAfter5.FlushedThrough)
 	}
 
-	// 6b. Advance +2m and run ProcessWorker -> flushAndCompact compacts Turn 1 into Summary.Items + Gist
-	// (FlushedThrough == Through == turn1.StartedAt) while dropping ALL re-emitted Turn 1 memories/logs!
-	rig.clock.Set(turn6.StartedAt.Add(state.IdleFlushDelay + time.Second))
+	// Verify memories from Turns 3..5 were extracted immediately by ExtractTurnThreshold=3.
+	naraHits, err := rig.store.SearchMemory(ctx, docstore.MemorySearchQuery{
+		Query: "Nara",
+		Layer: docstore.MemoryLayerCore,
+		Now:   rig.clock.Now(),
+	})
+	if err != nil || len(naraHits) == 0 {
+		t.Fatalf("expected Turn 3 Nara memory in Core after 3-turn threshold extract, hits=%d err=%v", len(naraHits), err)
+	}
+	diningHits, err := rig.store.SearchMemory(ctx, docstore.MemorySearchQuery{
+		Query: "dining",
+		Layer: docstore.MemoryLayerLog,
+		Now:   rig.clock.Now(),
+	})
+	if err != nil || len(diningHits) == 0 {
+		t.Fatalf("expected Turn 5 dining note in Daily Logs after 3-turn threshold extract, hits=%d err=%v", len(diningHits), err)
+	}
+
+	// Drive up to SoftCompactUserTurns-1 (15) turns, advance +10m idle -> still ZERO compaction!
+	for turnNum := 6; turnNum < state.SoftCompactUserTurns; turnNum++ {
+		rig.clock.Advance(time.Second)
+		if _, err := h.AcceptInput(ctx, fmt.Sprintf("trip-followup-%02d preference: confirm rail pass details", turnNum)); err != nil {
+			t.Fatalf("AcceptInput turn %d: %v", turnNum, err)
+		}
+		if err := h.ProcessWorker(ctx, 0); err != nil {
+			t.Fatalf("ProcessWorker turn %d: %v", turnNum, err)
+		}
+	}
+	rig.clock.Advance(10 * time.Minute)
 	if err := h.ProcessWorker(ctx, 0); err != nil {
-		t.Fatalf("ProcessWorker at +2m fast flush: %v", err)
+		t.Fatalf("ProcessWorker 15-turn idle: %v", err)
+	}
+	sumAt15, err := rig.store.ConversationSummary(ctx)
+	if err != nil {
+		t.Fatalf("ConversationSummary at 15 turns: %v", err)
+	}
+	if !sumAt15.Through.IsZero() || !sumAt15.FlushedThrough.IsZero() {
+		t.Fatalf("expected ZERO idle compaction at 15 user turns (< SoftCompactUserTurns=%d), got through=%s flushed=%s",
+			state.SoftCompactUserTurns, sumAt15.Through, sumAt15.FlushedThrough)
+	}
+
+	// Turn 16 (SoftCompactUserTurns): triggers flush_and_compact on Turns 1..2 (keeping 14 verbatim),
+	// marks Turn 1 with already_extracted=true, compacts Turn 1 into Summary.Items + Gist, and drops
+	// ALL re-emitted Turn 1 memories/logs!
+	rig.clock.Advance(time.Second)
+	if _, err := h.AcceptInput(ctx, "trip-turn-16 preference: pack lightweight rain jackets"); err != nil {
+		t.Fatalf("AcceptInput turn 16: %v", err)
+	}
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker turn 16: %v", err)
 	}
 	if !sawAlreadyExtractedTurn1 {
 		t.Fatalf("expected flush_and_compact prompt to mark Turn 1 with already_extracted=true")
 	}
 	statsAfterFlush := h.SummaryModels[0].Stats()
 	if statsAfterFlush.FlushCalls != 1 {
-		t.Fatalf("expected 1 flush_and_compact call after +2m, got %+v", statsAfterFlush)
+		t.Fatalf("expected 1 flush_and_compact call at SoftCompactUserTurns, got %+v", statsAfterFlush)
 	}
 	sumAfterFlush, err := rig.store.ConversationSummary(ctx)
 	if err != nil {
-		t.Fatalf("ConversationSummary after +2m flush: %v", err)
+		t.Fatalf("ConversationSummary after turn 16 flush: %v", err)
 	}
-	if !sumAfterFlush.FlushedThrough.Equal(turn1.StartedAt) || !sumAfterFlush.Through.Equal(turn1.StartedAt) {
-		t.Fatalf("expected FlushedThrough==Through==%s after 6-turn fast flush, got flushed=%s through=%s",
-			turn1.StartedAt, sumAfterFlush.FlushedThrough, sumAfterFlush.Through)
-	}
-	if !sumAfterFlush.ExtractedThrough.Equal(turn3.StartedAt) {
-		t.Fatalf("expected ExtractedThrough to remain %s after flushing Turn 1, got %s",
-			turn3.StartedAt, sumAfterFlush.ExtractedThrough)
+	if !sumAfterFlush.FlushedThrough.Equal(turn2.StartedAt) || !sumAfterFlush.Through.Equal(turn2.StartedAt) {
+		t.Fatalf("expected FlushedThrough==Through==%s after 16-turn flush, got flushed=%s through=%s",
+			turn2.StartedAt, sumAfterFlush.FlushedThrough, sumAfterFlush.Through)
 	}
 	if len(sumAfterFlush.Items) == 0 || strings.TrimSpace(sumAfterFlush.Gist) == "" {
-		t.Fatalf("expected Turn 1 compacted into Summary.Items + Gist, got items=%d gist=%q",
+		t.Fatalf("expected Turns 1..2 compacted into Summary.Items + Gist, got items=%d gist=%q",
 			len(sumAfterFlush.Items), sumAfterFlush.Gist)
 	}
 	foundTurn1Summary := false
@@ -1210,81 +1268,43 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 		t.Fatalf("expected ZERO duplicate Core/Daily-Log entries for Turn 1 despite reemit_already_extracted: before=(%d,%d) after=(%d,%d) leaks=%d",
 			turn1CoreBefore, turn1LogBefore, turn1CoreAfterFlush, turn1LogAfterFlush, reemitLeaks)
 	}
-	if err := h.CheckOuterInvariants(ctx); err != nil {
-		t.Fatalf("CheckOuterInvariants after +2m flush: %v", err)
-	}
-	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
-		t.Fatalf("CheckSafetyAt after +2m flush: %v", err)
+	turn3Core, turn3Log, reemitLeaksFinal := countMemoryRefs(t, ctx, rig.store, returnInputIDs[0])
+	if turn3Core == 0 || turn3Log == 0 || reemitLeaksFinal != 0 {
+		t.Fatalf("expected Turn 3 extracted cleanly with zero reemit leaks: core=%d log=%d leaks=%d",
+			turn3Core, turn3Log, reemitLeaksFinal)
 	}
 
-	// 6c. After +2m flush, Turns 2..6 remain verbatim and Turns 4..6 schedule +20m idle extraction.
-	wantSecondExtractWake := turn6.StartedAt.Add(state.IdleExtractDelay)
-	wakeSecondExtract, err := h.Workers[0].NextConversationWake(ctx)
-	if err != nil {
-		t.Fatalf("NextConversationWake after +2m flush: %v", err)
-	}
-	if !wakeSecondExtract.Equal(wantSecondExtractWake) {
-		t.Fatalf("expected NextConversationWake=%s (+20m idle extract for Turns 4..6), got %s",
-			wantSecondExtractWake, wakeSecondExtract)
-	}
-	rig.clock.Set(turn6.StartedAt.Add(state.IdleExtractDelay + time.Second))
+	// Drain remaining turn 16 extraction at +2m and verify quiescence.
+	turns = completedTurnsChronological(t, ctx, rig.store)
+	turn16 := turns[len(turns)-1]
+	rig.clock.Set(turn16.StartedAt.Add(state.IdleExtractDelay + time.Second))
 	if err := h.ProcessWorker(ctx, 0); err != nil {
-		t.Fatalf("ProcessWorker at +20m second idle extract: %v", err)
+		t.Fatalf("ProcessWorker turn 16 idle extract: %v", err)
 	}
-	sumFinal, err := rig.store.ConversationSummary(ctx)
-	if err != nil {
-		t.Fatalf("ConversationSummary final: %v", err)
+	// If >= 10 Daily Log entries accumulated, AutoDream schedules +15m; advance past it if due.
+	if wake, err := h.Workers[0].NextConversationWake(ctx); err == nil && !wake.IsZero() {
+		rig.clock.Set(wake.Add(time.Second))
+		if err := h.ProcessWorker(ctx, 0); err != nil {
+			t.Fatalf("ProcessWorker post-extract dream wake: %v", err)
+		}
 	}
-	if !sumFinal.FlushedThrough.Equal(turn1.StartedAt) || !sumFinal.Through.Equal(turn1.StartedAt) {
-		t.Fatalf("expected FlushedThrough==Through==%s preserved after Turns 4..6 extract, got flushed=%s through=%s",
-			turn1.StartedAt, sumFinal.FlushedThrough, sumFinal.Through)
-	}
-	if !sumFinal.ExtractedThrough.Equal(turn6.StartedAt) {
-		t.Fatalf("expected ExtractedThrough==%s after Turns 4..6 extract, got %s",
-			turn6.StartedAt, sumFinal.ExtractedThrough)
-	}
-
-	// Verify memories from Turns 4..6 were extracted and are searchable.
-	naraHits, err := rig.store.SearchMemory(ctx, docstore.MemorySearchQuery{
-		Query: "Nara",
-		Layer: docstore.MemoryLayerCore,
-		Now:   rig.clock.Now(),
-	})
-	if err != nil || len(naraHits) == 0 {
-		t.Fatalf("expected Turn 4 Nara memory in Core after +20m extract, hits=%d err=%v", len(naraHits), err)
-	}
-	diningHits, err := rig.store.SearchMemory(ctx, docstore.MemorySearchQuery{
-		Query: "dining",
-		Layer: docstore.MemoryLayerLog,
-		Now:   rig.clock.Now(),
-	})
-	if err != nil || len(diningHits) == 0 {
-		t.Fatalf("expected Turn 6 dining note in Daily Logs after +20m extract, hits=%d err=%v", len(diningHits), err)
-	}
-	turn4Core, turn4Log, reemitLeaksFinal := countMemoryRefs(t, ctx, rig.store, returnInputIDs[0])
-	if turn4Core == 0 || turn4Log == 0 || reemitLeaksFinal != 0 {
-		t.Fatalf("expected Turn 4 extracted cleanly with zero reemit leaks: core=%d log=%d leaks=%d",
-			turn4Core, turn4Log, reemitLeaksFinal)
-	}
-	turn1CoreFinal, turn1LogFinal, _ := countMemoryRefs(t, ctx, rig.store, tripInputIDs[0])
-	if turn1CoreFinal != turn1CoreBefore || turn1LogFinal != turn1LogBefore {
-		t.Fatalf("Turn 1 counts changed after second extract: before=(%d,%d) final=(%d,%d)",
-			turn1CoreBefore, turn1LogBefore, turn1CoreFinal, turn1LogFinal)
-	}
-
-	// Wake is parked at zero and INV-MEM-01..08 hold at quiescence.
 	wakeFinal, err := h.Workers[0].NextConversationWake(ctx)
 	if err != nil {
 		t.Fatalf("NextConversationWake final: %v", err)
 	}
 	if !wakeFinal.IsZero() {
-		t.Fatalf("expected zero NextConversationWake once all 6 turns extracted, got %s", wakeFinal)
+		t.Fatalf("expected zero NextConversationWake once converged, got %s", wakeFinal)
 	}
 	if err := h.CheckOuterInvariants(ctx); err != nil {
 		t.Fatalf("CheckOuterInvariants final: %v", err)
 	}
 	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
 		t.Fatalf("CheckSafetyAt final: %v", err)
+	}
+	// Drain any remaining unextracted turns after +2m idle so quiescence holds cleanly.
+	rig.clock.Advance(state.IdleExtractDelay + time.Second)
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker final idle extract: %v", err)
 	}
 	if err := checker.CheckQuiescence(ctx, targets, rig.clock.Now()); err != nil {
 		t.Fatalf("CheckQuiescence final: %v", err)
@@ -1312,15 +1332,16 @@ func TestDST_MixedFlushDeduplicationAndExtractFallback(t *testing.T) {
 	checker, targets := newMemoryInvariantChecker(rig)
 	scriptPlainReplies(h)
 
-	// Phase 1: 3-strike idle extraction failure triggers lossless extractive Daily Log fallback
-	// and advances ExtractedThrough while leaving Through and FlushedThrough zero.
+	// Phase 1: 3-strike idle extraction failure on 2 turns (< ExtractTurnThreshold=3) triggers
+	// lossless extractive Daily Log fallback and advances ExtractedThrough while leaving
+	// Through and FlushedThrough zero.
 	h.SummaryModels[0].QueueFaultModes(
 		outer.CompactionFaultProviderError,
 		outer.CompactionFaultMissingTool,
 		outer.CompactionFaultProviderError,
 	)
 	var phase1InputIDs []string
-	for i := range 3 {
+	for i := range 2 {
 		rig.clock.Advance(time.Second)
 		id, err := h.AcceptInput(ctx, fmt.Sprintf("Remember phase1-fallback-fact-%d for our trip.", i+1))
 		if err != nil {
@@ -1332,10 +1353,10 @@ func TestDST_MixedFlushDeduplicationAndExtractFallback(t *testing.T) {
 		}
 	}
 	turns := completedTurnsChronological(t, ctx, rig.store)
-	turn3 := turns[2]
+	turn2 := turns[1]
 
-	// Strike 1 at +20m: ExtractFailures=1, ExtractedThrough stays 0.
-	rig.clock.Set(turn3.StartedAt.Add(state.IdleExtractDelay + time.Second))
+	// Strike 1 at +2m: ExtractFailures=1, ExtractedThrough stays 0.
+	rig.clock.Set(turn2.StartedAt.Add(state.IdleExtractDelay + time.Second))
 	if err := h.ProcessWorker(ctx, 0); err != nil {
 		t.Fatalf("ProcessWorker extract strike 1: %v", err)
 	}
@@ -1366,9 +1387,9 @@ func TestDST_MixedFlushDeduplicationAndExtractFallback(t *testing.T) {
 		t.Fatalf("ProcessWorker extract strike 3: %v", err)
 	}
 	sum3, _ := rig.store.ConversationSummary(ctx)
-	if !sum3.ExtractedThrough.Equal(turn3.StartedAt) || !sum3.Through.IsZero() || !sum3.FlushedThrough.IsZero() || sum3.ExtractFailures != 0 {
+	if !sum3.ExtractedThrough.Equal(turn2.StartedAt) || !sum3.Through.IsZero() || !sum3.FlushedThrough.IsZero() || sum3.ExtractFailures != 0 {
 		t.Fatalf("after extract strike 3 expected ExtractedThrough=%s Through=0 FlushedThrough=0 ExtractFailures=0, got %+v",
-			turn3.StartedAt, sum3)
+			turn2.StartedAt, sum3)
 	}
 	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
 		t.Fatalf("CheckSafetyAt extract strike 3: %v", err)
@@ -1384,36 +1405,40 @@ func TestDST_MixedFlushDeduplicationAndExtractFallback(t *testing.T) {
 
 	t1CoreBefore, t1LogBefore, _ := countMemoryRefs(t, ctx, rig.store, phase1InputIDs[0])
 
-	// Phase 2: Send 9 more messages rapidly (12 turns total == SoftCompactTurns) after backoff
-	// expires so a SINGLE flushAndCompact batch contains BOTH already_extracted=true (Turns 1..3)
-	// AND already_extracted=false (Turns 4..7) under CompactionFaultReemitAlreadyExtracted!
+	// Phase 2: Seed 16 more unextracted user turns (18 total) via a no-summarizer seeder, then run
+	// Worker 0 under CompactionFaultReemitAlreadyExtracted so a SINGLE flushAndCompact batch
+	// contains BOTH already_extracted=true (Turns 1..2) AND already_extracted=false (Turns 3..4)!
 	rig.clock.Advance(11 * time.Minute)
-	h.SummaryModels[0].SetFaultMode(outer.CompactionFaultReemitAlreadyExtracted)
+	seeder := newPlainWorkerRunner(rig, 608, nil)
 	var phase2InputIDs []string
-	for i := range state.SoftCompactTurns - 3 {
+	for i := range state.SoftCompactUserTurns {
 		rig.clock.Advance(time.Second)
-		id, err := h.AcceptInput(ctx, fmt.Sprintf("Remember mixed-batch-unextracted-%02d constraint: verify dedup.", i+4))
+		id, err := h.AcceptInput(ctx, fmt.Sprintf("Remember mixed-batch-unextracted-%02d constraint: verify dedup.", i+3))
 		if err != nil {
-			t.Fatalf("AcceptInput phase2 %d: %v", i+4, err)
+			t.Fatalf("AcceptInput phase2 %d: %v", i+3, err)
 		}
 		phase2InputIDs = append(phase2InputIDs, id)
-		if err := h.ProcessWorker(ctx, 0); err != nil {
-			t.Fatalf("ProcessWorker phase2 %d: %v", i+4, err)
+		if err := seeder.Process(ctx); err != nil {
+			t.Fatalf("seeder.Process phase2 %d: %v", i+3, err)
 		}
-		if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
-			t.Fatalf("CheckSafetyAt phase2 %d: %v", i+4, err)
-		}
+	}
+	h.SummaryModels[0].SetFaultMode(outer.CompactionFaultReemitAlreadyExtracted)
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker phase2 mixed flush: %v", err)
+	}
+	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
+		t.Fatalf("CheckSafetyAt phase2 mixed flush: %v", err)
 	}
 
 	turns = completedTurnsChronological(t, ctx, rig.store)
-	turn7 := turns[len(turns)-state.CompactKeep-1]
+	turn4 := turns[len(turns)-state.CompactKeep-1]
 	sumMixed, err := rig.store.ConversationSummary(ctx)
 	if err != nil {
 		t.Fatalf("ConversationSummary mixed: %v", err)
 	}
-	if !sumMixed.FlushedThrough.Equal(turn7.StartedAt) || !sumMixed.Through.Equal(turn7.StartedAt) || sumMixed.ExtractedThrough.Before(turn7.StartedAt) {
+	if !sumMixed.FlushedThrough.Equal(turn4.StartedAt) || !sumMixed.Through.Equal(turn4.StartedAt) || sumMixed.ExtractedThrough.Before(turn4.StartedAt) {
 		t.Fatalf("expected FlushedThrough==Through==%s and ExtractedThrough>=%s after mixed flush, got flushed=%s through=%s extracted=%s",
-			turn7.StartedAt, turn7.StartedAt, sumMixed.FlushedThrough, sumMixed.Through, sumMixed.ExtractedThrough)
+			turn4.StartedAt, turn4.StartedAt, sumMixed.FlushedThrough, sumMixed.Through, sumMixed.ExtractedThrough)
 	}
 
 	// Turn 1 (already_extracted=true) must have ZERO duplicates despite reemit_already_extracted.
@@ -1422,15 +1447,226 @@ func TestDST_MixedFlushDeduplicationAndExtractFallback(t *testing.T) {
 		t.Fatalf("expected zero duplicate entries for already_extracted Turn 1 in mixed batch: before=(%d,%d) after=(%d,%d) leaks=%d",
 			t1CoreBefore, t1LogBefore, t1CoreAfter, t1LogAfter, leaks)
 	}
-	// Turn 4 (already_extracted=false in the same batch) MUST have been extracted to Core & Daily Logs!
-	t4Core, t4Log, _ := countMemoryRefs(t, ctx, rig.store, phase2InputIDs[0])
-	if t4Core == 0 || t4Log == 0 {
-		t.Fatalf("expected unextracted Turn 4 in mixed batch to commit Core & Daily Log entries, got core=%d log=%d", t4Core, t4Log)
+	// Turn 3 (already_extracted=false in the same batch) MUST have been extracted to Core & Daily Logs!
+	t3Core, t3Log, _ := countMemoryRefs(t, ctx, rig.store, phase2InputIDs[0])
+	if t3Core == 0 || t3Log == 0 {
+		t.Fatalf("expected unextracted Turn 3 in mixed batch to commit Core & Daily Log entries, got core=%d log=%d", t3Core, t3Log)
 	}
 	if err := h.CheckOuterInvariants(ctx); err != nil {
 		t.Fatalf("CheckOuterInvariants mixed: %v", err)
 	}
 	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
 		t.Fatalf("CheckSafetyAt mixed: %v", err)
+	}
+}
+
+func TestDST_BufferedCompactionKeepUserTurnsUnderTaskEventFlood(t *testing.T) {
+	silenceStdLog(t)
+	ctx := context.Background()
+	rig := newTestRig(509, rigOptions{numWorkers: 2, disableFaults: true})
+	h := rig.harness
+	checker, targets := newMemoryInvariantChecker(rig)
+	scriptPlainReplies(h)
+
+	// 1. Interleave 10 user turns with 20 background TaskEvent notification turns (30 total >= SoftCompactTurns=28).
+	// Even under heavy TaskEvent flood, compaction MUST keep all CompactKeepUserTurns (10) user exchanges verbatim!
+	userTurnIDs := make([]string, 0, state.CompactKeepUserTurns)
+	var eventTaskSeq int
+	emitTaskEventTurn := func(label string) {
+		t.Helper()
+		eventTaskSeq++
+		runID := fmt.Sprintf("flood-task-%02d", eventTaskSeq)
+		if _, err := rig.store.AcceptCommandBatch(ctx, []state.Command{{
+			ID:    fmt.Sprintf("cmd-flood-%02d", eventTaskSeq),
+			RunID: runID,
+			Kind:  state.CommandStart,
+			Text:  "Background check " + label,
+		}}, nil); err != nil {
+			t.Fatalf("AcceptCommandBatch %s: %v", label, err)
+		}
+		run, err := rig.store.GetRun(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetRun %s: %v", runID, err)
+		}
+		if err := rig.store.Incorporate(ctx, state.IncorporateRequest{
+			RunID: run.ID, Position: run.Position, Revision: run.Revision,
+		}); err != nil {
+			t.Fatalf("Incorporate %s: %v", label, err)
+		}
+		rig.clock.Advance(time.Second)
+		if _, err := rig.store.Publish(ctx, state.PublishRequest{
+			RunID:    run.ID,
+			Revision: run.Revision,
+			Status:   state.RunCompleted,
+			Text:     "Completed background notification " + label,
+		}); err != nil {
+			t.Fatalf("Publish %s: %v", label, err)
+		}
+		if err := h.ProcessWorker(ctx, 0); err != nil {
+			t.Fatalf("ProcessWorker event %s: %v", label, err)
+		}
+	}
+
+	// Start with 4 TaskEvent turns, then alternate user + TaskEvent turns until 10 user turns + 20 TaskEvent turns.
+	for i := range 4 {
+		emitTaskEventTurn(fmt.Sprintf("pre-%02d", i+1))
+	}
+	for u := range state.CompactKeepUserTurns {
+		rig.clock.Advance(time.Second)
+		id, err := h.AcceptInput(ctx, fmt.Sprintf("user-exchange-%02d preference: preserve my recent context %02d", u+1, u+1))
+		if err != nil {
+			t.Fatalf("AcceptInput user %d: %v", u+1, err)
+		}
+		userTurnIDs = append(userTurnIDs, id)
+		if err := h.ProcessWorker(ctx, 0); err != nil {
+			t.Fatalf("ProcessWorker user %d: %v", u+1, err)
+		}
+		// Add 2 TaskEvent turns after the first 8 user turns (16 more -> 20 TaskEvent turns total).
+		if u < 8 {
+			emitTaskEventTurn(fmt.Sprintf("mid-%02d-a", u+1))
+			emitTaskEventTurn(fmt.Sprintf("mid-%02d-b", u+1))
+		}
+	}
+
+	sum, err := rig.store.ConversationSummary(ctx)
+	if err != nil {
+		t.Fatalf("ConversationSummary after TaskEvent flood: %v", err)
+	}
+	if sum.Through.IsZero() || !sum.EffectiveFlushedThrough().Equal(sum.Through) {
+		t.Fatalf("expected SoftCompactTurns=%d to compact old TaskEvent turns, got through=%s flushed=%s",
+			state.SoftCompactTurns, sum.Through, sum.EffectiveFlushedThrough())
+	}
+
+	// Verify ALL 10 user turns remain strictly AFTER sum.Through (verbatim, uncompacted!).
+	verbatimTurns, err := rig.store.ConversationTurnsAfter(ctx, sum.Through)
+	if err != nil {
+		t.Fatalf("ConversationTurnsAfter(Through): %v", err)
+	}
+	verbatimUserInputs := map[string]bool{}
+	for _, tr := range verbatimTurns {
+		for _, in := range tr.Inputs {
+			if in.IsUser() {
+				verbatimUserInputs[in.ID] = true
+			}
+		}
+	}
+	for idx, uid := range userTurnIDs {
+		if !verbatimUserInputs[uid] {
+			t.Fatalf("user exchange #%d (%s) was evicted by TaskEvent flood! verbatimUserInputs=%d",
+				idx+1, uid, len(verbatimUserInputs))
+		}
+	}
+	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
+		t.Fatalf("CheckSafetyAt after TaskEvent flood: %v", err)
+	}
+}
+
+func TestDST_FastExtractAndUncompactedAutoDream(t *testing.T) {
+	silenceStdLog(t)
+	ctx := context.Background()
+	rig := newTestRig(510, rigOptions{numWorkers: 2, disableFaults: true})
+	h := rig.harness
+	checker, targets := newMemoryInvariantChecker(rig)
+	scriptPlainReplies(h)
+
+	// Seed duplicate unpinned Core memories so AutoDream deduplication is observable.
+	for _, dupID := range []string{"uncompacted-dup-1", "uncompacted-dup-2"} {
+		rig.clock.Advance(time.Second)
+		if _, err := rig.store.MutateMemory(ctx, state.MemoryMutationRequest{
+			RequestID: "req-" + dupID,
+			Kind:      state.MemoryMutateCreateCore,
+			TargetID:  dupID,
+			Text:      "User prefers dark roast coffee.",
+			About:     "the user",
+			Section:   "Preferences",
+		}); err != nil {
+			t.Fatalf("create %s: %v", dupID, err)
+		}
+	}
+
+	// 1. 2 user turns (< ExtractTurnThreshold=3) -> waits +2m IdleExtractDelay -> extracts without compacting.
+	for i := range 2 {
+		rig.clock.Advance(time.Second)
+		if _, err := h.AcceptInput(ctx, fmt.Sprintf("uncompacted-turn-%02d preference: remember fast extract fact %02d", i+1, i+1)); err != nil {
+			t.Fatalf("AcceptInput %d: %v", i+1, err)
+		}
+		if err := h.ProcessWorker(ctx, 0); err != nil {
+			t.Fatalf("ProcessWorker %d: %v", i+1, err)
+		}
+	}
+	rig.clock.Advance(state.IdleExtractDelay + time.Second)
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker +2m idle extract: %v", err)
+	}
+	sum2, _ := rig.store.ConversationSummary(ctx)
+	if sum2.ExtractedThrough.IsZero() || !sum2.Through.IsZero() {
+		t.Fatalf("expected +2m idle extract with Through=0, got extracted=%s through=%s", sum2.ExtractedThrough, sum2.Through)
+	}
+
+	// 2. Drive 10 more user turns (12 total < SoftCompactUserTurns=16) so >= 10 user-sourced
+	// Daily Log entries accumulate strictly via ExtractTurnThreshold=3 + IdleExtractDelay=2m
+	// while Through remains ZERO!
+	for i := 2; i < 12; i++ {
+		rig.clock.Advance(time.Second)
+		if _, err := h.AcceptInput(ctx, fmt.Sprintf("uncompacted-turn-%02d preference: remember daily log entry %02d", i+1, i+1)); err != nil {
+			t.Fatalf("AcceptInput %d: %v", i+1, err)
+		}
+		if err := h.ProcessWorker(ctx, 0); err != nil {
+			t.Fatalf("ProcessWorker %d: %v", i+1, err)
+		}
+	}
+	// Drain any remaining unextracted turn at +2m.
+	rig.clock.Advance(state.IdleExtractDelay + time.Second)
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker post-12 idle extract: %v", err)
+	}
+	sumBeforeDream, _ := rig.store.ConversationSummary(ctx)
+	if !sumBeforeDream.Through.IsZero() || !sumBeforeDream.FlushedThrough.IsZero() {
+		t.Fatalf("expected Through==0 and FlushedThrough==0 for 12-turn uncompacted thread, got %+v", sumBeforeDream)
+	}
+
+	// 3. AutoDream MUST schedule +15m quiet wake even though Through.IsZero(), and consolidate cleanly!
+	dreamWake, err := h.Workers[0].NextConversationWake(ctx)
+	if err != nil {
+		t.Fatalf("NextConversationWake uncompacted AutoDream: %v", err)
+	}
+	if dreamWake.IsZero() || !dreamWake.After(rig.clock.Now()) {
+		t.Fatalf("expected uncompacted AutoDream deferred wake (+15m), got wake=%s now=%s", dreamWake, rig.clock.Now())
+	}
+	rig.clock.Set(dreamWake.Add(time.Second))
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker uncompacted AutoDream: %v", err)
+	}
+
+	sumAfterDream, _ := rig.store.ConversationSummary(ctx)
+	if sumAfterDream.LastDreamAt.IsZero() || sumAfterDream.DreamThrough.IsZero() {
+		t.Fatalf("expected AutoDream to commit on uncompacted thread (Through.IsZero()), got %+v", sumAfterDream)
+	}
+	if !sumAfterDream.Through.IsZero() {
+		t.Fatalf("AutoDream must not compact history; expected Through=0, got %s", sumAfterDream.Through)
+	}
+	mems, err := rig.store.Memories(ctx)
+	if err != nil {
+		t.Fatalf("Memories after uncompacted AutoDream: %v", err)
+	}
+	coffeeCount := 0
+	for _, m := range mems {
+		if m.Text == "User prefers dark roast coffee." {
+			coffeeCount++
+		}
+	}
+	if coffeeCount != 1 {
+		t.Fatalf("expected uncompacted AutoDream to deduplicate coffee preference from 2 to 1, got %d", coffeeCount)
+	}
+	if err := checker.CheckSafetyAt(ctx, targets, rig.clock.Now()); err != nil {
+		t.Fatalf("CheckSafetyAt final: %v", err)
+	}
+	// Drain any remaining unextracted turns after +2m idle so quiescence holds cleanly.
+	rig.clock.Advance(state.IdleExtractDelay + time.Second)
+	if err := h.ProcessWorker(ctx, 0); err != nil {
+		t.Fatalf("ProcessWorker final idle extract: %v", err)
+	}
+	if err := checker.CheckQuiescence(ctx, targets, rig.clock.Now()); err != nil {
+		t.Fatalf("CheckQuiescence final: %v", err)
 	}
 }
