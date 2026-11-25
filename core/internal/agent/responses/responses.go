@@ -62,6 +62,10 @@ func NewGateway(baseURL, key, model string, meter usage.Meter) *Client {
 
 func (c *Client) direct() bool { return c.gatewayURL == "" && c.ModelName == directModel }
 
+// SupportsNativeWebSearch reports whether this client executes web search natively
+// through OpenAI's built-in Responses API web_search tool.
+func (c *Client) SupportsNativeWebSearch() bool { return c.direct() }
+
 func (c *Client) Provider() string {
 	if c.gatewayURL != "" {
 		return modelgateway.Provider
@@ -123,7 +127,11 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, err
 	}
 	tools := []any{}
+	nativeWebSearch := req.WebSearch && c.SupportsNativeWebSearch()
 	for _, tool := range req.Tools {
+		if nativeWebSearch && tool.Name == "web_search" {
+			continue
+		}
 		if tool.Schema != nil {
 			tools = append(tools, map[string]any{
 				"type": "function", "name": tool.Name, "description": tool.Description, "strict": false, "parameters": tool.Schema,
@@ -137,6 +145,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		tools = append(tools, map[string]any{
 			"type": "function", "name": tool.Name, "description": tool.Description, "strict": true, "parameters": parameters,
 		})
+	}
+	if nativeWebSearch {
+		tools = append(tools, map[string]any{"type": "web_search"})
 	}
 	fields := map[string]any{
 		"model": c.ModelName, "input": input, "instructions": req.Instructions,
@@ -221,16 +232,37 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 	calls := []transcript.ToolCall{}
 	text := []string{}
+	webSearches := []agent.WebSearchCall{}
+	citations := []agent.URLCitation{}
+	seenCitations := map[string]bool{}
 	for _, raw := range response.Output {
 		var item struct {
+			ID        string `json:"id"`
 			Role      string `json:"role"`
 			Type      string `json:"type"`
+			Status    string `json:"status"`
 			CallID    string `json:"call_id"`
 			Name      string `json:"name"`
 			Arguments string `json:"arguments"`
-			Content   []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+			Action    *struct {
+				Type    string   `json:"type"`
+				Query   string   `json:"query"`
+				Queries []string `json:"queries"`
+				URL     string   `json:"url"`
+				Pattern string   `json:"pattern"`
+				Sources []struct {
+					Type string `json:"type"`
+					URL  string `json:"url"`
+				} `json:"sources"`
+			} `json:"action"`
+			Content []struct {
+				Type        string `json:"type"`
+				Text        string `json:"text"`
+				Annotations []struct {
+					Type  string `json:"type"`
+					URL   string `json:"url"`
+					Title string `json:"title"`
+				} `json:"annotations"`
 			} `json:"content"`
 		}
 		if json.Unmarshal(raw, &item) != nil {
@@ -247,6 +279,31 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			}
 			calls = append(calls, call)
 			message.Parts = append(message.Parts, transcript.Part{ToolCall: &call})
+		case "web_search_call":
+			if c.gatewayURL != "" {
+				return out, errors.New("model gateway returned an unsupported Responses output item. Check function calling compatibility")
+			}
+			ws := agent.WebSearchCall{
+				ID:     strings.TrimSpace(item.ID),
+				Status: strings.TrimSpace(item.Status),
+			}
+			if item.Action != nil {
+				ws.Action = strings.TrimSpace(item.Action.Type)
+				ws.Query = strings.TrimSpace(item.Action.Query)
+				for _, q := range item.Action.Queries {
+					if q = strings.TrimSpace(q); q != "" {
+						ws.Queries = append(ws.Queries, q)
+					}
+				}
+				ws.URL = strings.TrimSpace(item.Action.URL)
+				ws.Pattern = strings.TrimSpace(item.Action.Pattern)
+				for _, src := range item.Action.Sources {
+					if u := strings.TrimSpace(src.URL); u != "" {
+						ws.Sources = append(ws.Sources, u)
+					}
+				}
+			}
+			webSearches = append(webSearches, ws)
 		case "message":
 			if c.gatewayURL != "" && item.Role != "assistant" {
 				return out, errors.New("model gateway returned a Responses message without the assistant role")
@@ -254,6 +311,14 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			for _, content := range item.Content {
 				if content.Type == "output_text" {
 					text = append(text, content.Text)
+					for _, ann := range content.Annotations {
+						if ann.Type == "url_citation" {
+							if u := strings.TrimSpace(ann.URL); u != "" && !seenCitations[u] {
+								seenCitations[u] = true
+								citations = append(citations, agent.URLCitation{URL: u, Title: strings.TrimSpace(ann.Title)})
+							}
+						}
+					}
 				} else if c.gatewayURL != "" {
 					return out, errors.New("model gateway returned unsupported Responses message content. Check model output or access policy")
 				}
@@ -265,6 +330,13 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 				return out, errors.New("model gateway returned an unsupported Responses output item. Check function calling compatibility")
 			}
 		}
+	}
+	if len(webSearches) > 0 {
+		out.Cost = c.addWebSearchCost(&record, out.Cost, out.CostKnown, webSearches)
+		out.WebSearches = webSearches
+	}
+	if len(citations) > 0 {
+		out.Citations = citations
 	}
 	visibleText := strings.TrimSpace(strings.Join(text, "\n"))
 	if len(calls) == 0 {

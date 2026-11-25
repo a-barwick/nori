@@ -312,7 +312,11 @@ func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome,
 	modelCtx, stop := context.WithDeadline(ctx, modelRequestDeadline(ctx, time.Now()))
 	defer stop()
 	response, e := a.Agent.Decide(observability.SuppressErrorCapture(modelCtx), in.Messages, true, !in.Subtask)
-	span.SetAttributes(attribute.Bool("nori.output.present", response.Answer != ""), attribute.Int("nori.tool.call_count", len(response.Calls)))
+	span.SetAttributes(
+		attribute.Bool("nori.output.present", response.Answer != ""),
+		attribute.Int("nori.tool.call_count", len(response.Calls)),
+		attribute.Int("nori.web_search.call_count", len(response.WebSearches)),
+	)
 	recordActivityFailure(modelCtx, e, "task.model")
 	outcome := ModelOutcome{Response: response, ContextOverflow: errors.Is(e, contextview.ErrOverflow)}
 	if e != nil {
@@ -333,6 +337,9 @@ func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome,
 		}
 	} else if response.NotSent {
 		trace.CostStatus = "not_sent"
+	}
+	for _, ws := range response.WebSearches {
+		trace.Calls = append(trace.Calls, state.TraceCall{Name: "web_search", Arguments: traceJSON(ws)})
 	}
 	for _, call := range response.Calls {
 		trace.Calls = append(trace.Calls, state.TraceCall{Name: call.Name, Arguments: traceJSON(call.Args)})

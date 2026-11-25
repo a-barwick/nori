@@ -351,6 +351,9 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 		}
 	}
 	response := outcome.Response
+	if len(response.WebSearches) > 0 {
+		a.recordNativeWebSearches(ctx, in.RunID, in.Revision, modelID, response.WebSearches, response.Citations)
+	}
 	out = RefModelOutcome{Cost: response.Cost, CostKnown: response.CostKnown, NotSent: response.NotSent, Failure: outcome.Failure}
 	var entries []transcript.Message
 	if response.Message != nil {

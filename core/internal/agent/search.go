@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -93,4 +94,44 @@ func clipText(text string, limit int) string {
 		limit--
 	}
 	return text[:limit] + "…"
+}
+
+const maxSearchSummaryBytes = 200
+
+func compactSearchText(text string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+}
+
+// FormatSearchQuerySummary formats a human-readable Work Actions summary for a web search query.
+func FormatSearchQuerySummary(query string) string {
+	q := compactSearchText(query)
+	if q == "" {
+		return "Searched the web"
+	}
+	return "Searched: " + clipText(q, maxSearchSummaryBytes)
+}
+
+// FormatWebSearchSummary formats a human-readable Work Actions summary for a native provider web_search_call.
+func FormatWebSearchSummary(call WebSearchCall) string {
+	if q := compactSearchText(call.Query); q != "" {
+		return "Searched: " + clipText(q, maxSearchSummaryBytes)
+	}
+	if len(call.Queries) > 0 {
+		var parts []string
+		for _, raw := range call.Queries {
+			if q := compactSearchText(raw); q != "" {
+				parts = append(parts, q)
+			}
+		}
+		if len(parts) > 0 {
+			return "Searched: " + clipText(strings.Join(parts, ", "), maxSearchSummaryBytes)
+		}
+	}
+	if pattern := compactSearchText(call.Pattern); pattern != "" && (call.Action == "find_in_page" || call.Action == "find") {
+		return "Searched page for: " + clipText(pattern, maxSearchSummaryBytes)
+	}
+	if u := compactSearchText(call.URL); u != "" {
+		return "Read page: " + clipText(u, maxSearchSummaryBytes)
+	}
+	return "Searched the web"
 }

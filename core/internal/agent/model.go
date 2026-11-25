@@ -20,6 +20,12 @@ type Model interface {
 	Inspect(ctx context.Context, req InspectRequest) (Inspection, error)
 }
 
+// NativeWebSearchModel is optionally implemented by a Model whose provider
+// executes web search natively (such as OpenAI's Responses API web_search tool).
+type NativeWebSearchModel interface {
+	SupportsNativeWebSearch() bool
+}
+
 type Request struct {
 	Instructions    string
 	Messages        []transcript.Message
@@ -27,6 +33,27 @@ type Request struct {
 	MaxOutputTokens int
 	// Reasoning is the reasoning effort to ask for. Empty leaves the provider's default.
 	Reasoning string
+	// WebSearch enables the provider's native web search tool when supported.
+	WebSearch bool
+}
+
+// WebSearchCall records one provider-executed web search action (such as an OpenAI
+// Responses API web_search_call output item) observed during a model turn.
+type WebSearchCall struct {
+	ID      string   `json:"id,omitempty"`
+	Status  string   `json:"status,omitempty"`
+	Action  string   `json:"action,omitempty"`
+	Query   string   `json:"query,omitempty"`
+	Queries []string `json:"queries,omitempty"`
+	URL     string   `json:"url,omitempty"`
+	Pattern string   `json:"pattern,omitempty"`
+	Sources []string `json:"sources,omitempty"`
+}
+
+// URLCitation records a URL citation annotation emitted alongside model output text.
+type URLCitation struct {
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
 }
 
 type Response struct {
@@ -35,6 +62,10 @@ type Response struct {
 	Message *transcript.Message
 	Calls   []transcript.ToolCall
 	Answer  string
+	// WebSearches lists provider-executed native web search actions from this turn.
+	WebSearches []WebSearchCall `json:"web_searches,omitempty"`
+	// Citations lists deduplicated URL citations from provider output annotations.
+	Citations []URLCitation `json:"citations,omitempty"`
 	// Usage is nil when the provider reported none. Cost is the reported or calculated USD
 	// cost of this request, valid only when CostKnown is true.
 	Usage     *Usage

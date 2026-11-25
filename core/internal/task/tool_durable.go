@@ -2,8 +2,12 @@ package task
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -109,9 +113,11 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	}
 	defer done()
 	defer span.End()
+	createdAt := a.now().UTC().Truncate(time.Microsecond)
 	op := state.OperationRecord{
 		ID: in.OperationID, CallID: in.Call.ID, Name: in.Call.Name, Revision: in.Revision,
 		EffectClass: effect, Outcome: "pending", RecoveryUntil: until, ParentOperationID: in.ParentOperationID,
+		CreatedAt: &createdAt,
 	}
 	if in.Exec != nil {
 		op.Tool = &state.DefinitionRef{ID: in.Exec.Tool.ID, Version: in.Exec.Tool.Version, Digest: in.Exec.Tool.Digest}
@@ -124,6 +130,10 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		if plan.call.Grant != nil {
 			op.ConnectionID = plan.call.Grant.Connection.ID
 		}
+	} else if in.Call.Name == "web_search" {
+		query, _ := in.Call.Args["query"].(string)
+		summary := agent.FormatSearchQuerySummary(query)
+		op.Action = &state.Action{Digest: searchActionDigest(summary), Text: clip(summary, 2000)}
 	}
 	if recovering != nil {
 		op = *recovering
@@ -132,6 +142,14 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			op.CallID = in.Call.ID
 			op.EffectClass = effect
 			op.Outcome = "pending"
+			if op.CreatedAt == nil {
+				op.CreatedAt = &createdAt
+			}
+			if op.Action == nil && plan == nil && in.Call.Name == "web_search" {
+				query, _ := in.Call.Args["query"].(string)
+				summary := agent.FormatSearchQuerySummary(query)
+				op.Action = &state.Action{Digest: searchActionDigest(summary), Text: clip(summary, 2000)}
+			}
 		}
 		if op.Name == "" {
 			op.Name = in.Call.Name
@@ -304,4 +322,102 @@ func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.Op
 		return persist("failed", output, err)
 	}
 	return persist(toolOutcome(output), output, nil)
+}
+
+func searchActionDigest(summary string) string {
+	sum := sha256.Sum256([]byte("web_search:" + summary))
+	return hex.EncodeToString(sum[:])
+}
+
+func nativeWebSearchOutcome(status string) string {
+	switch status {
+	case "failed":
+		return "failed"
+	case "in_progress", "searching":
+		return "attempted"
+	default:
+		return "confirmed"
+	}
+}
+
+// recordNativeWebSearches records provider-executed native web_search_call items
+// (such as OpenAI Responses API built-in web_search) as read-only operations on the
+// run so Work Actions and operation_read reflect every search query cleanly.
+func (a *Activities) recordNativeWebSearches(
+	ctx context.Context,
+	runID string,
+	revision int64,
+	modelID string,
+	calls []agent.WebSearchCall,
+	citations []agent.URLCitation,
+) {
+	if len(calls) == 0 {
+		return
+	}
+	save, cancel := receiptContext(ctx)
+	defer cancel()
+	now := a.now().UTC().Truncate(time.Microsecond)
+	for i, ws := range calls {
+		opID := fmt.Sprintf("%s-ws-%s-%d", runID, modelID, i+1)
+		callID := ws.ID
+		if !state.ValidEvidenceID(callID) {
+			callID = opID
+		}
+		summary := agent.FormatWebSearchSummary(ws)
+		outcome := nativeWebSearchOutcome(ws.Status)
+		payload := map[string]any{
+			"operation_id": opID,
+			"outcome":      outcome,
+			"effect_class": "read",
+			"provider":     a.Agent.Model.Provider(),
+			"native":       true,
+			"summary":      summary,
+		}
+		if ws.Action != "" {
+			payload["action"] = ws.Action
+		}
+		if ws.Query != "" {
+			payload["query"] = ws.Query
+		}
+		if len(ws.Queries) > 0 {
+			payload["queries"] = ws.Queries
+		}
+		if ws.URL != "" {
+			payload["url"] = ws.URL
+		}
+		if ws.Pattern != "" {
+			payload["pattern"] = ws.Pattern
+		}
+		if len(ws.Sources) > 0 {
+			payload["sources"] = ws.Sources
+		}
+		if len(citations) > 0 {
+			payload["citations"] = citations
+		}
+		var resultRef string
+		if data, err := json.Marshal(payload); err == nil {
+			if ref, err := a.Store.AppendHistory(save, runID, "", data); err == nil {
+				resultRef = ref
+			} else {
+				slog.WarnContext(save, "native web_search history append failed", "operation_id", opID, "err", err)
+			}
+		}
+		op := state.OperationRecord{
+			ID:          opID,
+			CallID:      callID,
+			Name:        "web_search",
+			EffectClass: "read",
+			Outcome:     outcome,
+			ResultRef:   resultRef,
+			Revision:    revision,
+			Attempt:     1,
+			Action:      &state.Action{Digest: searchActionDigest(summary), Text: clip(summary, 2000)},
+			CreatedAt:   &now,
+		}
+		if err := a.Store.PutOperation(save, runID, op); err != nil {
+			slog.WarnContext(save, "native web_search operation record failed", "operation_id", opID, "err", err)
+			continue
+		}
+		observability.Event(save, "task.operation.recorded", attribute.String("nori.operation.id", op.ID), attribute.String("nori.tool.outcome", outcome))
+	}
 }

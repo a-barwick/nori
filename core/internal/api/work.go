@@ -95,7 +95,6 @@ type operationProjection struct {
 	TaskTitle       string          `json:"task_title,omitempty"`
 	ResultIDs       []string        `json:"result_ids,omitempty"`
 	Cost            json.RawMessage `json:"cost,omitempty"`
-	CreatedAt       *time.Time      `json:"created_at,omitempty"`
 	UpdatedAt       *time.Time      `json:"updated_at,omitempty"`
 }
 
@@ -307,16 +306,20 @@ func (a *Assistant) detail(ctx context.Context, taskID string) (workDetail, erro
 
 func (a *Assistant) projectOperations(ctx context.Context, run state.Run, ops []state.OperationRecord) []operationProjection {
 	labels := map[string]string{}
-	if records, _, err := a.Connections.Records(ctx); err == nil {
-		for _, record := range records {
-			labels[record.ID] = record.Account.Label
+	if a.Connections != nil {
+		if records, _, err := a.Connections.Records(ctx); err == nil {
+			for _, record := range records {
+				labels[record.ID] = record.Account.Label
+			}
 		}
 	}
 	out := make([]operationProjection, 0, len(ops))
 	for _, op := range ops {
 		p := operationProjection{OperationRecord: op, Owner: operationOwner{Type: "task", ID: run.ID}, TaskTitle: clip(run.Request, 200)}
-		if op.Action != nil {
+		if op.Action != nil && op.Action.Text != "" {
 			p.ActionSummary = op.Action.Text
+		} else if op.Name == "web_search" {
+			p.ActionSummary = "Searched the web"
 		}
 		if op.Tool != nil {
 			p.BindingDigest = op.Tool.Digest
@@ -324,7 +327,9 @@ func (a *Assistant) projectOperations(ctx context.Context, run state.Run, ops []
 		if op.ConnectionID != "" {
 			p.AccountSummary = labels[op.ConnectionID]
 		}
-		p.AuthoritySource = a.Permissions.AuthoritySource(ctx, op.AuthorityRef)
+		if op.AuthorityRef != "" && a.Permissions != nil {
+			p.AuthoritySource = a.Permissions.AuthoritySource(ctx, op.AuthorityRef)
+		}
 		for _, ref := range op.ProviderRefs {
 			if ref.URL != "" {
 				p.ReceiptURL = ref.URL

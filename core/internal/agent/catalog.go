@@ -31,6 +31,14 @@ const (
 
 func (c Capability) ToolList() string { return strings.Join(c.Tools, ", ") }
 
+func (s *Service) usesNativeWebSearch() bool {
+	if s == nil || s.Model == nil {
+		return false
+	}
+	native, ok := s.Model.(NativeWebSearchModel)
+	return ok && native.SupportsNativeWebSearch()
+}
+
 func (s *Service) catalog(dynamic []extensions.CapabilityState, snapshot *extensions.Snapshot) []Capability {
 	tools := map[string][]string{}
 	for _, definition := range taskToolDefinitions {
@@ -39,7 +47,7 @@ func (s *Service) catalog(dynamic []extensions.CapabilityState, snapshot *extens
 		}
 	}
 	search := prompts.Runtime("capability-available", nil)
-	if s.Capabilities.SearchKey == "" {
+	if !s.usesNativeWebSearch() && s.Capabilities.SearchKey == "" {
 		search = prompts.Runtime("capability-search-unavailable", nil)
 	}
 	catalog := []Capability{

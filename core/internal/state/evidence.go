@@ -44,6 +44,8 @@ type OperationRecord struct {
 	ParentOperationID string `json:"parent_operation_id,omitempty" firestore:"parent_operation_id,omitempty"`
 	// ProviderRefs are the provider's identities for what the call read or changed. Later evidence may add to them.
 	ProviderRefs []ProviderRef `json:"provider_refs,omitempty" firestore:"provider_refs,omitempty"`
+	// CreatedAt is when the operation was first recorded. Nil on older records predating this field.
+	CreatedAt *time.Time `json:"created_at,omitempty" firestore:"created_at,omitempty"`
 }
 
 // DefinitionRef names an immutable registry definition.
@@ -194,6 +196,10 @@ func ValidateOperation(runID string, op OperationRecord) (OperationRecord, error
 	if len(op.ArtifactIDs) == 0 {
 		op.ArtifactIDs = nil
 	}
+	if op.CreatedAt != nil {
+		t := op.CreatedAt.UTC().Truncate(time.Microsecond)
+		op.CreatedAt = &t
+	}
 	return op, nil
 }
 
@@ -253,6 +259,14 @@ func PlanOperation(saved *SavedOperation, op OperationRecord) (OperationWrite, e
 	}
 	if len(old.ArtifactIDs) == 0 {
 		old.ArtifactIDs = nil
+	}
+	if old.CreatedAt != nil {
+		t := old.CreatedAt.UTC().Truncate(time.Microsecond)
+		old.CreatedAt = &t
+	}
+	if op.CreatedAt != nil {
+		t := op.CreatedAt.UTC().Truncate(time.Microsecond)
+		op.CreatedAt = &t
 	}
 	if reflect.DeepEqual(old, op) {
 		return OperationWrite{Noop: true}, nil

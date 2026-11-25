@@ -76,6 +76,9 @@ func (d *Database) putOperation(ctx context.Context, runID string, op state.Oper
 		case !notFound(err):
 			return err
 		}
+		if saved != nil && saved.Record.CreatedAt != nil && op.CreatedAt == nil {
+			op.CreatedAt = saved.Record.CreatedAt
+		}
 		write, err := state.PlanOperation(saved, op)
 		if err != nil || write.Noop {
 			return err
@@ -143,6 +146,9 @@ func (d *Database) putOperation(ctx context.Context, runID string, op state.Oper
 		}
 		if len(op.ProviderRefs) > 0 {
 			data["provider_refs"] = op.ProviderRefs
+		}
+		if op.CreatedAt != nil {
+			data["created_at"] = op.CreatedAt
 		}
 		if err := tx.Set(ref, data, docstore.MergeAll); err != nil {
 			return err

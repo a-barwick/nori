@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// OpenAIWebSearchCallCostUSD is OpenAI's listed Responses API web_search tool
+// call fee of $10.00 per 1,000 calls. Search result tokens are billed separately
+// through the model's standard input token usage.
+const OpenAIWebSearchCallCostUSD = 0.01
+
 func matchOpenAIModel(model, name string) bool {
 	return model == name || (strings.HasPrefix(model, name+"-") && len(model) > len(name)+1)
 }

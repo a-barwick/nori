@@ -360,3 +360,130 @@ func TestConversationEndpointsAvoidRedundantWakesAndRepairTaskOnlyWork(t *testin
 		t.Fatalf("Repairer WakeConversation calls on pending assistant work = %d, want 1", got)
 	}
 }
+
+func TestWorkDetailWebSearchOperationsProjection(t *testing.T) {
+	ctx := context.Background()
+	fixedNow := time.Date(2026, 11, 25, 6, 49, 10, 0, time.UTC)
+	backend := memstore.New()
+	u := users.User{
+		ID:          "44444444-4444-4444-8444-444444444444",
+		Email:       "dana@example.com",
+		DisplayName: "Dana",
+		TimeZone:    "America/Los_Angeles",
+	}
+	store := state.Compose(records.NewShared(backend, u, 5.0), memstore.NewArtifacts())
+	conn := connections.New(store, secret.Unavailable{}, "http://127.0.0.1:3211/api/v1/connections/oauth/callback")
+	perms := &permissions.Service{Store: store, UnattendedWrites: "confirm_writes", UserSends: "allow"}
+
+	assistant := &Assistant{
+		Store:       store,
+		Connections: conn,
+		Permissions: perms,
+		Features:    map[string]bool{"work": true, "interactions": true},
+	}
+	mux := http.NewServeMux()
+	assistant.register(mux)
+
+	taskID := "ffffffff-ffff-4fff-8fff-ffffffffffff"
+	if _, err := store.AcceptCommandBatch(ctx, []state.Command{{
+		ID: taskID, RunID: taskID, Kind: state.CommandStart, Text: "Check SF weather Thursday", CreatedAt: fixedNow,
+	}}, nil); err != nil {
+		t.Fatalf("AcceptCommandBatch: %v", err)
+	}
+
+	opsToSeed := []state.OperationRecord{
+		{
+			ID:          taskID + "-ws-1",
+			CallID:      "ws_1",
+			Name:        "web_search",
+			EffectClass: "read",
+			Outcome:     "confirmed",
+			Revision:    1,
+			Attempt:     1,
+			Action:      &state.Action{Digest: "d1", Text: "Searched: San Francisco weather Thursday"},
+			CreatedAt:   &fixedNow,
+		},
+		{
+			ID:          taskID + "-ws-2",
+			CallID:      "ws_2",
+			Name:        "web_search",
+			EffectClass: "read",
+			Outcome:     "failed",
+			Revision:    1,
+			Attempt:     1,
+			Action:      &state.Action{Digest: "d2", Text: "Searched: unreachable weather station"},
+			CreatedAt:   &fixedNow,
+		},
+		{
+			ID:          taskID + "-ws-3-legacy",
+			CallID:      "ws_3",
+			Name:        "web_search",
+			EffectClass: "read",
+			Outcome:     "confirmed",
+			Revision:    1,
+			Attempt:     1,
+		},
+	}
+	for _, op := range opsToSeed {
+		if err := store.PutOperation(ctx, taskID, op); err != nil {
+			t.Fatalf("PutOperation(%s): %v", op.ID, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/work/"+taskID, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /v1/work/%s status=%d body=%s", taskID, rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Operations []json.RawMessage `json:"operations"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode work detail: %v", err)
+	}
+	if len(payload.Operations) != 3 {
+		t.Fatalf("len(operations) = %d, want 3", len(payload.Operations))
+	}
+
+	wantSummaries := []string{
+		"Searched: San Francisco weather Thursday",
+		"Searched: unreachable weather station",
+		"Searched the web",
+	}
+	wantOutcomes := []string{"confirmed", "failed", "confirmed"}
+
+	for i, raw := range payload.Operations {
+		if _, err := RoundTrip("execution.schema.json#/$defs/OperationProjection", raw); err != nil {
+			t.Fatalf("op[%d] contract RoundTrip failed: %v (raw=%s)", i, err, string(raw))
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("unmarshal op[%d]: %v", i, err)
+		}
+		if m["name"] != "web_search" {
+			t.Fatalf("op[%d] name = %#v, want web_search", i, m["name"])
+		}
+		if m["effect_class"] != "read" {
+			t.Fatalf("op[%d] effect_class = %#v, want read", i, m["effect_class"])
+		}
+		if m["outcome"] != wantOutcomes[i] {
+			t.Fatalf("op[%d] outcome = %#v, want %q", i, m["outcome"], wantOutcomes[i])
+		}
+		if m["action_summary"] != wantSummaries[i] {
+			t.Fatalf("op[%d] action_summary = %#v, want %q", i, m["action_summary"], wantSummaries[i])
+		}
+		if _, hasAuth := m["authority_source"]; hasAuth {
+			t.Fatalf("op[%d] must omit authority_source for internal web_search, got %#v", i, m["authority_source"])
+		}
+		if _, hasAccount := m["account_summary"]; hasAccount {
+			t.Fatalf("op[%d] must omit account_summary for internal web_search, got %#v", i, m["account_summary"])
+		}
+		if i < 2 {
+			if m["created_at"] != fixedNow.Format(time.RFC3339) {
+				t.Fatalf("op[%d] created_at = %#v, want %q", i, m["created_at"], fixedNow.Format(time.RFC3339))
+			}
+		}
+	}
+}

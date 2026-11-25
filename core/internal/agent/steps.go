@@ -102,18 +102,20 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 	clock := transcript.Message{Role: transcript.RoleUser, Parts: []transcript.Part{{Text: prompts.Runtime("task-clock", map[string]any{
 		"Now":   now.Format("Monday, 2 January 2006 15:04 MST") + " (" + location.String() + ")",
 		"Today": now.Format("Monday, 2 January 2006"), "Tomorrow": now.AddDate(0, 0, 1).Format("Monday, 2 January 2006")})}}}
+	nativeSearch := s.usesNativeWebSearch()
 	resp, err = s.Model.Respond(ctx, Request{
 		Instructions:    prompts.TaskWorker + "\nUser details (data): " + facts + "\n" + s.catalogInstruction(catalog, location),
 		Messages:        append(messages[:len(messages):len(messages)], clock),
-		Tools:           offeredTools(catalog, snapshot, messages, wait, work),
+		Tools:           offeredTools(catalog, snapshot, messages, wait, work, nativeSearch),
 		MaxOutputTokens: modelOutputTokenLimit,
+		WebSearch:       nativeSearch,
 	})
 	resp.Tools = snapshot
 	return resp, err
 }
 
 // Leaving a schema out shortens the request. Execution still checks every call.
-func offeredTools(catalog []Capability, snapshot *extensions.Snapshot, messages []transcript.Message, wait, work bool) []transcript.Tool {
+func offeredTools(catalog []Capability, snapshot *extensions.Snapshot, messages []transcript.Message, wait, work, nativeSearch bool) []transcript.Tool {
 	results := []map[string]any{}
 	for _, message := range messages {
 		for _, part := range message.Parts {
@@ -131,6 +133,9 @@ func offeredTools(catalog []Capability, snapshot *extensions.Snapshot, messages 
 	access := availableTools(wait, work)
 	selected := make([]transcript.Tool, 0, len(taskToolDefinitions))
 	for _, definition := range taskToolDefinitions {
+		if nativeSearch && definition.Name == "web_search" {
+			continue
+		}
 		if definition.access <= access && (definition.capability == "" || loaded[definition.capability]) {
 			selected = append(selected, definition.Tool)
 		}
