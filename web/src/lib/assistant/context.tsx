@@ -1,11 +1,13 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { useHydrated } from "@/lib/hooks";
 import { useRuntime } from "@/lib/runtime/useRuntime";
-import type { Capabilities, AssistantFeature, ModelProfileCatalog } from "@/lib/contracts/assistant";
+import type { Capabilities, AssistantFeature } from "@/lib/contracts/assistant";
 import type { ModelSelection } from "@/lib/types";
 import { useResource } from "./useResource";
+
+type ModelProfileCatalog = NonNullable<Capabilities["model_profiles"]>;
 
 type Runtime = ReturnType<typeof useRuntime>;
 type Assistant = {
@@ -75,17 +77,15 @@ export function AssistantProvider({ localMode, children }: { localMode: boolean;
   const ready = !!capabilities || !!capabilitiesError;
   const [debugOverride, setDebugState] = useState<boolean | undefined>();
   const debug = debugOverride ?? (hydrated && (() => { try { return localStorage.getItem(DEBUG_KEY) === "1"; } catch { return false; } })());
-  const [rawSelection, setRawSelection] = useState<ModelSelection>(EMPTY_SELECTION);
-  useEffect(() => {
-    if (!hydrated) return;
-    setRawSelection(readStoredModelSelection());
-  }, [hydrated]);
+  const storedSelection = useMemo(() => (hydrated ? readStoredModelSelection() : EMPTY_SELECTION), [hydrated]);
+  const [modelOverride, setModelOverride] = useState<ModelSelection | undefined>();
+  const rawSelection = modelOverride ?? storedSelection;
   const modelSelection = useMemo(
     () => (capabilities ? pruneModelSelection(rawSelection, capabilities.model_profiles) : rawSelection),
     [rawSelection, capabilities],
   );
   const setModelSelection = useCallback((next: ModelSelection) => {
-    setRawSelection(next);
+    setModelOverride(next);
     try {
       const hasAny = !!(next.chat_profile_id || next.chat_reasoning || next.task_profile_id || next.task_reasoning);
       if (hasAny) localStorage.setItem(MODEL_SELECTION_KEY, JSON.stringify(next));
