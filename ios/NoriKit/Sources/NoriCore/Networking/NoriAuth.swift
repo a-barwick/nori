@@ -8,6 +8,9 @@ public enum NoriConfig {
     /// Live Nori Core production endpoint on Cloud Run.
     public static let serverURL = URL(string: "https://nori-core-8273801370.us-central1.run.app")!
 
+    /// iOS deep-link callback target for Connections and MCP OAuth sign-in.
+    public static let oauthCallbackURL = "nori://oauth/callback"
+
     /// Google OAuth 2.0 iOS Client ID configured in Info.plist (`GOOGLE_OAUTH_CLIENT_ID`).
     public static var googleOAuthClientID: String {
         (Bundle.main.object(forInfoDictionaryKey: "GOOGLE_OAUTH_CLIENT_ID") as? String)?
@@ -150,7 +153,12 @@ public struct GoogleOAuthPKCE: Sendable {
         session: URLSession = .shared
     ) async throws -> AuthSession {
         guard !clientID.isEmpty else {
-            throw NoriAPIError(message: "Google Sign-In client ID is missing.", statusCode: 401)
+            throw NoriAPIError(
+                message: "Google Sign-In client ID is missing.",
+                statusCode: 0,
+                code: "missing_client_id",
+                retryable: false
+            )
         }
         var req = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
         req.httpMethod = "POST"
@@ -170,8 +178,34 @@ public struct GoogleOAuthPKCE: Sendable {
         response: URLResponse,
         existingRefreshToken: String?
     ) throws -> AuthSession {
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw NoriAPIError(message: "Google token exchange failed. Please sign in again.", statusCode: 401)
+        guard let http = response as? HTTPURLResponse else {
+            throw NoriAPIError(
+                message: "Invalid response from Google token endpoint.",
+                statusCode: 0,
+                code: "invalid_response",
+                retryable: true
+            )
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            struct OAuthErrorResponse: Decodable {
+                let error: String?
+                let error_description: String?
+            }
+            let oauthErr = try? JSONDecoder().decode(OAuthErrorResponse.self, from: data)
+            if http.statusCode == 400 || http.statusCode == 401 {
+                throw NoriAPIError(
+                    message: oauthErr?.error_description ?? "Google token exchange failed. Please sign in again.",
+                    statusCode: http.statusCode,
+                    code: oauthErr?.error ?? "invalid_grant",
+                    retryable: false
+                )
+            }
+            throw NoriAPIError(
+                message: oauthErr?.error_description ?? "Google authentication service temporarily unavailable (\(http.statusCode)).",
+                statusCode: http.statusCode,
+                code: oauthErr?.error ?? "token_endpoint_unavailable",
+                retryable: true
+            )
         }
         struct TokenResponse: Decodable {
             let id_token: String?
@@ -180,7 +214,12 @@ public struct GoogleOAuthPKCE: Sendable {
         }
         let decoded = try JSONDecoder().decode(TokenResponse.self, from: data)
         guard let idToken = decoded.id_token, !idToken.isEmpty else {
-            throw NoriAPIError(message: "Google did not return an ID token.", statusCode: 401)
+            throw NoriAPIError(
+                message: "Google did not return an ID token.",
+                statusCode: 502,
+                code: "missing_id_token",
+                retryable: true
+            )
         }
         let email = extractEmailFromJWT(idToken) ?? ""
         let expiresIn = TimeInterval(decoded.expires_in ?? 3500)
@@ -238,11 +277,17 @@ public actor AuthTokenProvider {
     private let keychain: KeychainStore
     private let account = "nori.google.auth.session.v1"
     private let urlSession: URLSession
+    private let clientID: String?
     private var cached: AuthSession?
 
-    public init(keychain: KeychainStore = KeychainStore(), urlSession: URLSession = .shared) {
+    public init(
+        keychain: KeychainStore = KeychainStore(),
+        urlSession: URLSession = .shared,
+        clientID: String? = nil
+    ) {
         self.keychain = keychain
         self.urlSession = urlSession
+        self.clientID = clientID
     }
 
     public func loadSession() -> AuthSession? {
@@ -271,25 +316,53 @@ public actor AuthTokenProvider {
 
     public func validIDToken(forceRefresh: Bool = false) async throws -> String {
         guard let current = loadSession() else {
-            throw NoriAPIError(message: "Sign in required.", statusCode: 401)
+            throw NoriAPIError(message: "Sign in required.", statusCode: 401, code: "no_session", retryable: false)
         }
         if !forceRefresh && !current.isExpiringSoon {
             return current.idToken
         }
         guard let refreshToken = current.refreshToken, !refreshToken.isEmpty else {
             clearSession()
-            throw NoriAPIError(message: "Session expired. Please sign in again.", statusCode: 401)
+            throw NoriAPIError(
+                message: "Session expired. Please sign in again.",
+                statusCode: 401,
+                code: "missing_refresh_token",
+                retryable: false
+            )
         }
         do {
-            let refreshed = try await GoogleOAuthPKCE.refreshIDToken(
+            var refreshed = try await GoogleOAuthPKCE.refreshIDToken(
                 refreshToken: refreshToken,
+                clientID: clientID ?? NoriConfig.googleOAuthClientID,
                 session: urlSession
             )
+            if refreshed.email.isEmpty {
+                refreshed.email = current.email
+            }
             saveSession(refreshed)
             return refreshed.idToken
-        } catch {
+        } catch let apiErr as NoriAPIError where apiErr.statusCode == 400 || apiErr.statusCode == 401 {
+            // Only clear persisted session when Google explicitly rejects the refresh token (HTTP 400/401).
             clearSession()
-            throw NoriAPIError(message: "Session expired. Please sign in again.", statusCode: 401)
+            throw NoriAPIError(
+                message: "Session expired. Please sign in again.",
+                statusCode: 401,
+                code: apiErr.code ?? "invalid_grant",
+                retryable: false
+            )
+        } catch let apiErr as NoriAPIError {
+            // Preserve session on transient 5xx/429 or configuration errors.
+            throw apiErr
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Preserve session on transient URLSession/network/DNS/timeout failures.
+            throw NoriAPIError(
+                message: error.localizedDescription,
+                statusCode: 0,
+                code: "network_error",
+                retryable: true
+            )
         }
     }
 }

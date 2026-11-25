@@ -248,6 +248,22 @@ public struct MCPServerInput: Sendable, Codable, Hashable {
     }
 }
 
+/// Write-only credential payload for `POST /v1/mcp/{id}/credential`.
+public struct MCPCredentialInput: Sendable, Codable, Hashable {
+    public var requestID: String
+    public var token: String
+
+    enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
+        case token
+    }
+
+    public init(requestID: String, token: String) {
+        self.requestID = requestID
+        self.token = token
+    }
+}
+
 // MARK: - Connections
 
 public enum ConnectionStatus: String, Sendable, Codable, Hashable {

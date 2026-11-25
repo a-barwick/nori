@@ -127,6 +127,7 @@ public struct PresencePayload: Sendable, Codable, Hashable {
 }
 
 public enum NoriStreamEvent: Sendable, Hashable {
+    case connectionState(ConnectionState)
     case reset(position: Int)
     case message(seq: Int?, message: Message)
     case task(seq: Int?, run: Run)
@@ -139,6 +140,7 @@ public enum NoriStreamEvent: Sendable, Hashable {
 
     public var sequence: Int? {
         switch self {
+        case .connectionState: return nil
         case .reset(let pos): return pos
         case .message(let seq, _): return seq
         case .task(let seq, _): return seq
