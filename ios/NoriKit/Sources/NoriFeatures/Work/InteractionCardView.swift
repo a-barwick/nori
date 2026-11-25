@@ -181,7 +181,7 @@ public struct InteractionCardView: View {
     private var resolvedBody: some View {
         if interaction.status == .superseded {
             Text(interaction.supersededBy != nil
-                 ? "A newer version replaced this. It’s in Needs you."
+                 ? "A newer version replaced this. It’s in Action needed."
                  : "A newer version replaced this.")
                 .font(.system(size: 13))
                 .foregroundStyle(NoriColors.ink2)

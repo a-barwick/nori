@@ -1,5 +1,8 @@
 import SwiftUI
 import NoriCore
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Exact onigiri silhouette path ported from `web/src/components/mark/NoriMark.tsx` (96×96 coordinate space).
 public struct OnigiriRiceShape: Shape {
@@ -181,4 +184,100 @@ public struct NoriMedallion: View {
         }
         .frame(width: size, height: size)
     }
+}
+
+// MARK: - Tab Bar Icon
+
+public extension NoriMark {
+    /// Monochrome template image of the Nori onigiri avatar sized for iOS `TabView` `.tabItem`.
+    @MainActor
+    static func tabBarIcon(selected: Bool) -> Image {
+        #if canImport(UIKit)
+        return Image(uiImage: selected ? cachedSelectedTabIcon : cachedUnselectedTabIcon)
+        #else
+        return Image(systemName: selected ? "message.fill" : "message")
+        #endif
+    }
+
+    #if canImport(UIKit)
+    @MainActor private static let cachedUnselectedTabIcon: UIImage = renderTabBarUIImage(selected: false)
+    @MainActor private static let cachedSelectedTabIcon: UIImage = renderTabBarUIImage(selected: true)
+
+    @MainActor
+    private static func renderTabBarUIImage(selected: Bool) -> UIImage {
+        let side: CGFloat = 25
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = 0 // native screen scale
+
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
+        let image = renderer.image { rendererContext in
+            let ctx = rendererContext.cgContext
+            let box = CGRect(x: 0, y: 0, width: side, height: side)
+            let s = side / 96.0
+            let ricePath = OnigiriRiceShape().path(in: box).cgPath
+
+            let wrapRect = CGRect(x: 30.0 * s, y: 61.0 * s, width: 36.0 * s, height: 30.0 * s)
+            let wrapPath = UIBezierPath(roundedRect: wrapRect, cornerRadius: 3.0 * s).cgPath
+
+            let leftEyeRect = CGRect(x: (38.5 - 3.8) * s, y: (45.5 - 4.4) * s, width: 7.6 * s, height: 8.8 * s)
+            let rightEyeRect = CGRect(x: (57.5 - 3.8) * s, y: (45.5 - 4.4) * s, width: 7.6 * s, height: 8.8 * s)
+
+            let mouthPath = CGMutablePath()
+            mouthPath.move(to: CGPoint(x: 43.5 * s, y: 53.5 * s))
+            mouthPath.addQuadCurve(
+                to: CGPoint(x: 52.5 * s, y: 53.5 * s),
+                control: CGPoint(x: 48.0 * s, y: 57.6 * s)
+            )
+
+            ctx.setFillColor(UIColor.black.cgColor)
+            ctx.setStrokeColor(UIColor.black.cgColor)
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+
+            if selected {
+                // Solid onigiri silhouette with negative-space expression & seaweed wrap seam
+                ctx.addPath(ricePath)
+                ctx.fillPath()
+
+                ctx.setBlendMode(.clear)
+                // Eyes
+                ctx.fillEllipse(in: leftEyeRect)
+                ctx.fillEllipse(in: rightEyeRect)
+                // Smile
+                ctx.addPath(mouthPath)
+                ctx.setLineWidth(max(1.2, 3.0 * s))
+                ctx.strokePath()
+                // Crisp seam separating the seaweed wrap from the rice body
+                ctx.saveGState()
+                ctx.addPath(ricePath)
+                ctx.clip()
+                ctx.addPath(wrapPath)
+                ctx.setLineWidth(max(1.2, 3.0 * s))
+                ctx.strokePath()
+                ctx.restoreGState()
+            } else {
+                // Outline onigiri silhouette with solid seaweed wrap & expression
+                ctx.saveGState()
+                ctx.addPath(ricePath)
+                ctx.clip()
+                ctx.addPath(wrapPath)
+                ctx.fillPath()
+                ctx.restoreGState()
+
+                ctx.addPath(ricePath)
+                ctx.setLineWidth(max(1.5, 5.4 * s))
+                ctx.strokePath()
+
+                ctx.fillEllipse(in: leftEyeRect)
+                ctx.fillEllipse(in: rightEyeRect)
+
+                ctx.addPath(mouthPath)
+                ctx.setLineWidth(max(1.1, 3.0 * s))
+                ctx.strokePath()
+            }
+        }
+        return image.withRenderingMode(.alwaysTemplate)
+    }
+    #endif
 }

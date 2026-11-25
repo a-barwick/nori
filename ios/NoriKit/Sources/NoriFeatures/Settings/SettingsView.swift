@@ -2,84 +2,113 @@ import SwiftUI
 import NoriCore
 import NoriDesign
 
-public enum SettingsSection: String, Hashable, Sendable {
-    case account
-    case appearance
-    case permissions
-    case preferences
-    case diagnostics
-}
+// MARK: - Standing Permissions Screen
 
-public struct SettingsView: View {
-    @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
+public struct StandingPermissionsView: View {
     @Bindable private var store: NoriStore
-    public let initialSection: SettingsSection?
-
-    @State private var showingEditPreferences = false
     @State private var showingAddPermissionRule = false
     @State private var rulePendingRemoval: PermissionRule?
-    @State private var isPingingServer = false
-    @Namespace private var appearancePickerNamespace
 
-    private var appearance: NoriAppearance {
-        NoriAppearance(storedRawValue: appearanceRawValue)
+    public init(store: NoriStore) {
+        self.store = store
     }
 
-    public init(store: NoriStore, initialSection: SettingsSection? = nil) {
-        self.store = store
-        self.initialSection = initialSection
+    private var orderedPermissionGroups: [(effect: PermissionRule.RuleEffect, rules: [PermissionRule])] {
+        let precedence: [PermissionRule.RuleEffect] = [.deny, .ask, .allow]
+        return precedence.compactMap { effect in
+            let matched = store.permissions.filter { $0.effect == effect }
+            return matched.isEmpty ? nil : (effect, matched)
+        }
+    }
+
+    private func pillTone(for effect: PermissionRule.RuleEffect) -> NoriTone {
+        switch effect {
+        case .deny: return .danger
+        case .ask: return .warning
+        case .allow: return .ok
+        }
     }
 
     public var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    accountSection
-                        .id(SettingsSection.account)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                NoriNotice(
+                    title: "Rule precedence",
+                    detail: "Never allow beats everything; Ask first always overrides Allow automatically.",
+                    tone: .neutral,
+                    systemImage: "shield.lefthalf.filled"
+                )
 
-                    appearanceSection
-                        .id(SettingsSection.appearance)
+                if store.permissions.isEmpty {
+                    NoriCard {
+                        Text("No custom rules yet. Nori asks before each change or external send.")
+                            .font(NoriTypography.meta)
+                            .foregroundStyle(NoriColors.ink2)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(orderedPermissionGroups, id: \.effect) { group in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(group.effect.displayLabel)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(NoriColors.ink3)
+                                    .padding(.leading, 4)
 
-                    permissionsSection
-                        .id(SettingsSection.permissions)
-
-                    preferencesSection
-                        .id(SettingsSection.preferences)
-
-                    diagnosticsSection
-                        .id(SettingsSection.diagnostics)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
-                .padding(.bottom, 96)
-            }
-            .refreshable {
-                async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
-                async let summaryTask: Void = store.refreshSummary()
-                _ = await (permsPrefsTask, summaryTask)
-            }
-            .onAppear {
-                if let initialSection {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(initialSection, anchor: .top)
+                                NoriRows {
+                                    ForEach(Array(group.rules.enumerated()), id: \.element.id) { index, rule in
+                                        let isLast = index == group.rules.count - 1
+                                        NoriRow(
+                                            title: rule.summary ?? rule.title ?? "Permission rule",
+                                            detail: permissionDetail(for: rule),
+                                            showDivider: !isLast,
+                                            wrapTitle: true
+                                        ) {
+                                            HStack(spacing: 6) {
+                                                NoriPill(
+                                                    rule.effect.badgeLabel,
+                                                    tone: pillTone(for: rule.effect)
+                                                )
+                                                Button {
+                                                    rulePendingRemoval = rule
+                                                } label: {
+                                                    Image(systemName: "trash")
+                                                        .font(.system(size: 12.5, weight: .medium))
+                                                        .foregroundStyle(NoriColors.ink3)
+                                                        .frame(width: 28, height: 28)
+                                                        .contentShape(Rectangle())
+                                                }
+                                                .buttonStyle(.plain)
+                                                .accessibilityLabel("Remove rule")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
+        }
+        .refreshable {
+            await store.refreshPermissionsAndPreferences()
         }
         .background(NoriColors.canvas)
-        .navigationTitle("Settings")
+        .navigationTitle("Standing Permissions")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         #endif
-        .sheet(isPresented: $showingEditPreferences) {
-            EditPreferencesSheet(store: store)
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
-                .presentationBackground(NoriColors.sheetBackground)
-                .presentationCornerRadius(NoriRadius.sheet)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Add rule") {
+                    showingAddPermissionRule = true
+                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(NoriColors.accent)
+            }
         }
         .sheet(isPresented: $showingAddPermissionRule) {
             AddPermissionRuleSheet(store: store)
@@ -108,263 +137,37 @@ public struct SettingsView: View {
         }
     }
 
-    // MARK: - Account
-
-    @ViewBuilder
-    private var accountSection: some View {
-        NoriSectionHeader("Account") {
-            if store.connectionState == .reconnecting {
-                NoriPill("Reconnecting", tone: .warning)
-            } else if store.connectionState == .offline {
-                NoriPill("Offline", tone: .danger)
-            }
+    private func permissionDetail(for rule: PermissionRule) -> String {
+        var parts: [String] = []
+        if !rule.actionClasses.isEmpty {
+            parts.append(rule.actionClasses.map(\.displayLabel).joined(separator: ", "))
         }
-
-        NoriRows {
-            NoriRow(
-                title: store.authState.email ?? "Signed in",
-                detail: "Signed in with Google",
-                systemImage: "person.crop.circle.fill",
-                iconTone: .accent,
-                showDivider: false
-            )
+        if rule.connectionIDs.contains("*") {
+            parts.append("All tools & MCP servers")
+        } else if !rule.connectionIDs.isEmpty {
+            parts.append(rule.connectionIDs.joined(separator: ", "))
         }
-
-        Button {
-            Task { await store.signOut() }
-        } label: {
-            Text("Sign Out")
-                .frame(maxWidth: .infinity)
+        if rule.automationID != nil {
+            parts.append("Automation")
         }
-        .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: true))
-        .padding(.top, 10)
+        if let recipients = rule.recipients, !recipients.isEmpty {
+            parts.append("To \(recipients.joined(separator: ", "))")
+        }
+        if let expiresAt = rule.expiresAt, !expiresAt.isEmpty {
+            parts.append(NoriDateFormatting.expiryCountdown(expiresAt))
+        }
+        return parts.isEmpty ? "Standing rule" : parts.joined(separator: " · ")
     }
+}
 
-    // MARK: - Appearance
+// MARK: - Preferences & Budgets Screen
 
-    @ViewBuilder
-    private var appearanceSection: some View {
-        NoriSectionHeader("Appearance") {
-            Text(appearance.displayLabel)
-                .font(NoriTypography.caption)
-                .foregroundStyle(NoriColors.ink3)
-        }
+public struct PreferencesBudgetsView: View {
+    @Bindable private var store: NoriStore
+    @State private var showingEditPreferences = false
 
-        NoriCard(padding: 14) {
-            VStack(alignment: .leading, spacing: 14) {
-                // Interactive appearance preview reflecting live palette & mascot
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        NoriMark(size: 26, state: .idle)
-                        HStack(spacing: 5) {
-                            Text("Nori")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(NoriColors.ink)
-                            Circle()
-                                .fill(NoriColors.markActivity)
-                                .frame(width: 6.5, height: 6.5)
-                        }
-                        Spacer(minLength: 8)
-                        NoriPill("Confirmed", tone: .ok)
-                    }
-
-                    HStack {
-                        Spacer(minLength: 32)
-                        Text("What do I have tomorrow?")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(NoriColors.onAccent)
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 7)
-                            .background(NoriColors.brandPrimary, in: Capsule())
-                    }
-
-                    HStack(alignment: .top, spacing: 7) {
-                        NoriMark(size: 20, state: .idle)
-                            .padding(.top, 1)
-                        Text("Two morning meetings and a reminder at noon.")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(NoriColors.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    NoriColors.canvas,
-                    in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                )
-
-                // System / Light / Dark segmented control
-                HStack(spacing: 4) {
-                    ForEach(NoriAppearance.allCases) { option in
-                        let isSelected = appearance == option
-                        Button {
-                            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                                appearanceRawValue = option.rawValue
-                            }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: option.systemImage)
-                                    .font(.system(size: 12, weight: .semibold))
-                                Text(option.displayLabel)
-                                    .font(.system(size: 13, weight: .semibold))
-                            }
-                            .foregroundStyle(isSelected ? NoriColors.ink : NoriColors.ink2)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 34)
-                            .background {
-                                if isSelected {
-                                    Capsule()
-                                        .fill(Color.adaptive(light: 0xFFFFFF, dark: 0x2C253D))
-                                        .overlay(
-                                            Capsule()
-                                                .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                                        )
-                                        .matchedGeometryEffect(id: "noriAppearanceSelection", in: appearancePickerNamespace)
-                                }
-                            }
-                            .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(isSelected ? .isSelected : [])
-                    }
-                }
-                .padding(3)
-                .background(NoriColors.elevated, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                )
-
-                Text("Interactive appearance preview · System follows iOS display settings.")
-                    .font(NoriTypography.caption)
-                    .foregroundStyle(NoriColors.ink3)
-            }
-        }
-    }
-
-    // MARK: - Standing Permissions
-
-    private var orderedPermissionGroups: [(effect: PermissionRule.RuleEffect, rules: [PermissionRule])] {
-        let precedence: [PermissionRule.RuleEffect] = [.deny, .ask, .allow]
-        return precedence.compactMap { effect in
-            let matched = store.permissions.filter { $0.effect == effect }
-            return matched.isEmpty ? nil : (effect, matched)
-        }
-    }
-
-    private func pillTone(for effect: PermissionRule.RuleEffect) -> NoriTone {
-        switch effect {
-        case .deny: return .danger
-        case .ask: return .warning
-        case .allow: return .ok
-        }
-    }
-
-    @ViewBuilder
-    private var permissionsSection: some View {
-        NoriSectionHeader("Standing permissions") {
-            HStack(spacing: 10) {
-                Text("\(store.permissions.count)")
-                    .font(NoriTypography.caption)
-                    .foregroundStyle(NoriColors.ink3)
-                Button("Add rule") {
-                    showingAddPermissionRule = true
-                }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(NoriColors.accent)
-                .buttonStyle(.plain)
-            }
-        }
-
-        NoriNotice(
-            title: "Rule precedence",
-            detail: "Never allow beats everything; Ask first always overrides Allow automatically.",
-            tone: .neutral,
-            systemImage: "shield.lefthalf.filled"
-        )
-        .padding(.bottom, 10)
-
-        if store.permissions.isEmpty {
-            NoriCard {
-                Text("No custom rules yet. Nori asks before each change or external send.")
-                    .font(NoriTypography.meta)
-                    .foregroundStyle(NoriColors.ink2)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(orderedPermissionGroups, id: \.effect) { group in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(group.effect.displayLabel)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(NoriColors.ink3)
-                            .padding(.leading, 4)
-
-                        NoriRows {
-                            ForEach(Array(group.rules.enumerated()), id: \.element.id) { index, rule in
-                                let isLast = index == group.rules.count - 1
-                                NoriRow(
-                                    title: rule.summary ?? rule.title ?? "Permission rule",
-                                    detail: permissionDetail(for: rule),
-                                    showDivider: !isLast,
-                                    wrapTitle: true
-                                ) {
-                                    HStack(spacing: 6) {
-                                        NoriPill(
-                                            rule.effect.badgeLabel,
-                                            tone: pillTone(for: rule.effect)
-                                        )
-                                        Button {
-                                            rulePendingRemoval = rule
-                                        } label: {
-                                            Image(systemName: "trash")
-                                                .font(.system(size: 12.5, weight: .medium))
-                                                .foregroundStyle(NoriColors.ink3)
-                                                .frame(width: 28, height: 28)
-                                                .contentShape(Rectangle())
-                                        }
-                                        .buttonStyle(.plain)
-                                        .accessibilityLabel("Remove rule")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Preferences & Budgets
-
-    @ViewBuilder
-    private var preferencesSection: some View {
-        NoriSectionHeader("Preferences & Budgets") {
-            Button("Edit") {
-                showingEditPreferences = true
-            }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(NoriColors.accent)
-            .buttonStyle(.plain)
-        }
-
-        NoriRows {
-            NoriRow(
-                title: "Time zone",
-                detail: store.preferences.timezone,
-                showDivider: true
-            )
-
-            NoriRow(
-                title: "Task budget",
-                detail: budgetDetailString,
-                showDivider: false
-            )
-        }
+    public init(store: NoriStore) {
+        self.store = store
     }
 
     private var budgetDetailString: String {
@@ -375,52 +178,286 @@ public struct SettingsView: View {
         return taskStr
     }
 
-    // MARK: - Diagnostics
+    public var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                NoriRows {
+                    NoriRow(
+                        title: "Time zone",
+                        detail: store.preferences.timezone,
+                        showDivider: true
+                    )
 
-    @ViewBuilder
-    private var diagnosticsSection: some View {
-        NoriSectionHeader("Diagnostics") {
-            Button(isPingingServer ? "Checking…" : "Check health") {
-                pingServerHealth()
-            }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(NoriColors.accent)
-            .buttonStyle(.plain)
-            .disabled(isPingingServer)
-        }
-
-        NoriCard {
-            VStack(alignment: .leading, spacing: 10) {
-                diagRow("Status", value: store.connectionState.rawValue.capitalized)
-                diagRow("Server", value: NoriConfig.serverURL.host() ?? "nori-core")
-                if let ping = store.lastPing {
-                    let pingTime = NoriDateFormatting.shortTime(ISO8601DateFormatter().string(from: ping.checkedAt))
-                    let pingSummary = ping.ok
-                        ? "Healthy · \(ping.latencyMs) ms · \(pingTime)"
-                        : "\(ping.errorMessage ?? ping.status) · \(ping.latencyMs) ms · \(pingTime)"
-                    diagRow("Health", value: pingSummary)
+                    NoriRow(
+                        title: "Task budget",
+                        detail: budgetDetailString,
+                        showDivider: false
+                    )
                 }
-                if let caps = store.capabilities {
-                    let contracts = [caps.contract, caps.conversationContract, caps.assistantContract]
-                        .compactMap { $0 }
-                        .joined(separator: " · ")
-                    diagRow("Contracts", value: contracts, monospaced: true)
-                    if let model = caps.model, !model.isEmpty {
-                        diagRow("Model", value: model, monospaced: true)
-                    }
-                    if let features = caps.assistantFeatures {
-                        let enabled = features.filter(\.value).map(\.key).sorted()
-                        if !enabled.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Connected capabilities")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(NoriColors.ink3)
-                                FlowCapabilitiesView(items: enabled)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
+        }
+        .refreshable {
+            await store.refreshPermissionsAndPreferences()
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle("Preferences & Budgets")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Edit") {
+                    showingEditPreferences = true
+                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(NoriColors.accent)
+            }
+        }
+        .sheet(isPresented: $showingEditPreferences) {
+            EditPreferencesSheet(store: store)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
+        }
+    }
+}
+
+// MARK: - Appearance Screen
+
+public struct AppearanceSettingsView: View {
+    @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
+    @Namespace private var appearancePickerNamespace
+
+    public init() {}
+
+    private var appearance: NoriAppearance {
+        NoriAppearance(storedRawValue: appearanceRawValue)
+    }
+
+    public var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                NoriCard(padding: 14) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        // Interactive appearance preview reflecting live palette & mascot
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Spacer(minLength: 32)
+                                Text("What do I have tomorrow?")
+                                    .font(.system(size: 12.5))
+                                    .foregroundStyle(NoriColors.onAccent)
+                                    .padding(.horizontal, 11)
+                                    .padding(.vertical, 7)
+                                    .background(NoriColors.brandPrimary, in: Capsule())
                             }
-                            .padding(.top, 2)
+
+                            HStack(alignment: .top, spacing: 7) {
+                                NoriMark(size: 20, state: .idle)
+                                    .padding(.top, 1)
+                                Text("Two morning meetings and a reminder at noon.")
+                                    .font(.system(size: 12.5))
+                                    .foregroundStyle(NoriColors.ink)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            NoriColors.canvas,
+                            in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                        )
+
+                        // System / Light / Dark segmented control
+                        HStack(spacing: 4) {
+                            ForEach(NoriAppearance.allCases) { option in
+                                let isSelected = appearance == option
+                                Button {
+                                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                        appearanceRawValue = option.rawValue
+                                    }
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: option.systemImage)
+                                            .font(.system(size: 12, weight: .semibold))
+                                        Text(option.displayLabel)
+                                            .font(.system(size: 13, weight: .semibold))
+                                    }
+                                    .foregroundStyle(isSelected ? NoriColors.ink : NoriColors.ink2)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 34)
+                                    .background {
+                                        if isSelected {
+                                            Capsule()
+                                                .fill(Color.adaptive(light: 0xFFFFFF, dark: 0x2C253D))
+                                                .overlay(
+                                                    Capsule()
+                                                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                                                )
+                                                .matchedGeometryEffect(id: "noriAppearanceSelection", in: appearancePickerNamespace)
+                                        }
+                                    }
+                                    .contentShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                            }
+                        }
+                        .padding(3)
+                        .background(NoriColors.elevated, in: Capsule())
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                        )
+
+                        Text("System follows your iOS display settings.")
+                            .font(NoriTypography.caption)
+                            .foregroundStyle(NoriColors.ink3)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle("Appearance")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        #endif
+    }
+}
+
+// MARK: - Account Screen
+
+public struct AccountSettingsView: View {
+    @Bindable private var store: NoriStore
+
+    public init(store: NoriStore) {
+        self.store = store
+    }
+
+    public var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                NoriRows {
+                    NoriRow(
+                        title: store.authState.email ?? "Signed in",
+                        detail: "Signed in with Google",
+                        systemImage: "person.crop.circle.fill",
+                        iconTone: .accent,
+                        showDivider: false
+                    ) {
+                        if store.connectionState == .reconnecting {
+                            NoriPill("Reconnecting", tone: .warning)
+                        } else if store.connectionState == .offline {
+                            NoriPill("Offline", tone: .danger)
                         }
                     }
                 }
+
+                Button {
+                    Task { await store.signOut() }
+                } label: {
+                    Text("Sign Out")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: true))
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
+        }
+        .refreshable {
+            await store.refreshSummary()
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle("Account")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        #endif
+    }
+}
+
+// MARK: - Diagnostics Screen
+
+public struct DiagnosticsSettingsView: View {
+    @Bindable private var store: NoriStore
+    @State private var isPingingServer = false
+
+    public init(store: NoriStore) {
+        self.store = store
+    }
+
+    public var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                NoriCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        diagRow("Status", value: store.connectionState.rawValue.capitalized)
+                        diagRow("Server", value: NoriConfig.serverURL.host() ?? "nori-core")
+                        if let ping = store.lastPing {
+                            let pingTime = NoriDateFormatting.shortTime(ISO8601DateFormatter().string(from: ping.checkedAt))
+                            let pingSummary = ping.ok
+                                ? "Healthy · \(ping.latencyMs) ms · \(pingTime)"
+                                : "\(ping.errorMessage ?? ping.status) · \(ping.latencyMs) ms · \(pingTime)"
+                            diagRow("Health", value: pingSummary)
+                        }
+                        if let caps = store.capabilities {
+                            let contracts = [caps.contract, caps.conversationContract, caps.assistantContract]
+                                .compactMap { $0 }
+                                .joined(separator: " · ")
+                            diagRow("Contracts", value: contracts, monospaced: true)
+                            if let model = caps.model, !model.isEmpty {
+                                diagRow("Model", value: model, monospaced: true)
+                            }
+                            if let features = caps.assistantFeatures {
+                                let enabled = features.filter(\.value).map(\.key).sorted()
+                                if !enabled.isEmpty {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text("Connected capabilities")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(NoriColors.ink3)
+                                        FlowCapabilitiesView(items: enabled)
+                                    }
+                                    .padding(.top, 2)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
+        }
+        .refreshable {
+            await store.refreshSummary()
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle("Diagnostics")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(isPingingServer ? "Checking…" : "Check health") {
+                    pingServerHealth()
+                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(NoriColors.accent)
+                .disabled(isPingingServer)
             }
         }
     }
@@ -450,28 +487,6 @@ public struct SettingsView: View {
                 .foregroundStyle(NoriColors.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private func permissionDetail(for rule: PermissionRule) -> String {
-        var parts: [String] = []
-        if !rule.actionClasses.isEmpty {
-            parts.append(rule.actionClasses.map(\.displayLabel).joined(separator: ", "))
-        }
-        if rule.connectionIDs.contains("*") {
-            parts.append("All tools & MCP servers")
-        } else if !rule.connectionIDs.isEmpty {
-            parts.append(rule.connectionIDs.joined(separator: ", "))
-        }
-        if rule.automationID != nil {
-            parts.append("Automation")
-        }
-        if let recipients = rule.recipients, !recipients.isEmpty {
-            parts.append("To \(recipients.joined(separator: ", "))")
-        }
-        if let expiresAt = rule.expiresAt, !expiresAt.isEmpty {
-            parts.append(NoriDateFormatting.expiryCountdown(expiresAt))
-        }
-        return parts.isEmpty ? "Standing rule" : parts.joined(separator: " · ")
     }
 }
 
