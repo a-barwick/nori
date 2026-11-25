@@ -220,7 +220,19 @@ public struct ChatView: View {
                             }
                         }
 
-                        if shouldShowInlineWorkLine {
+                        if let streaming = store.streamingAssistantText, !streaming.isEmpty {
+                            HStack(alignment: .top, spacing: 8) {
+                                NoriMark(size: 28, state: .thinking)
+                                    .matchedGeometryEffect(id: "active-nori-avatar", in: noriAvatarNamespace)
+                                Text(streaming)
+                                    .font(.body)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(.top, 4)
+                            .padding(.bottom, 10)
+                            .id("streaming-reply-anchor")
+                        } else if shouldShowInlineWorkLine {
                             if store.isThinking {
                                 HStack(alignment: .center, spacing: 8) {
                                     NoriMark(size: 28, state: .thinking)

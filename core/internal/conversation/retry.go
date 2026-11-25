@@ -154,7 +154,7 @@ func (m *OpenAIModel) maxRetryAfter() time.Duration {
 	return defaultOuterMaxRetryAfter
 }
 
-func (m *OpenAIModel) doWithRetry(ctx context.Context, endpoint string, body []byte) (*http.Response, error) {
+func (m *OpenAIModel) doWithRetry(ctx context.Context, endpoint string, body []byte, onRetry func(statusCode int) error) (*http.Response, error) {
 	retries := m.maxRetries()
 	baseDelay := m.retryBaseDelay()
 	maxDelay := m.maxRetryAfter()
@@ -183,6 +183,11 @@ func (m *OpenAIModel) doWithRetry(ctx context.Context, endpoint string, body []b
 			if sleepErr := sleepWithContext(ctx, delay, m.Sleep); sleepErr != nil {
 				return nil, sleepErr
 			}
+			if onRetry != nil {
+				if rErr := onRetry(0); rErr != nil {
+					return nil, rErr
+				}
+			}
 			continue
 		}
 
@@ -190,6 +195,7 @@ func (m *OpenAIModel) doWithRetry(ctx context.Context, endpoint string, body []b
 			return res, nil
 		}
 
+		status := res.StatusCode
 		retryAfter := res.Header.Get("Retry-After")
 		if m.gatewayURL == "" {
 			_ = logRefusal(ctx, res)
@@ -202,12 +208,17 @@ func (m *OpenAIModel) doWithRetry(ctx context.Context, endpoint string, body []b
 		slog.WarnContext(ctx, "outer model transient HTTP error; retrying",
 			"attempt", attempt+1,
 			"max_retries", retries,
-			"status", res.StatusCode,
+			"status", status,
 			"retry_after", retryAfter,
 			"delay_ms", delay.Milliseconds(),
 		)
 		if sleepErr := sleepWithContext(ctx, delay, m.Sleep); sleepErr != nil {
 			return nil, sleepErr
+		}
+		if onRetry != nil {
+			if rErr := onRetry(status); rErr != nil {
+				return nil, rErr
+			}
 		}
 	}
 }

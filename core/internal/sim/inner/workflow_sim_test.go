@@ -1395,7 +1395,22 @@ func TestWorkflowSimContextOverflowLargeBackground(t *testing.T) {
 		}, 0.10), nil, true
 	})
 
-	run := h.startTaskRecord(ctx, currentRequest)
+	runID := h.ids.Next()
+	receipts, err := h.store.AcceptCommandBatch(ctx, []state.Command{{
+		ID:        runID,
+		RunID:     runID,
+		Kind:      state.CommandStart,
+		Text:      currentRequest,
+		CreatedAt: h.clock.Now().UTC(),
+		Origin:    &state.TaskOrigin{ContinuesTaskID: priorRun.ID},
+	}}, nil)
+	if err != nil {
+		t.Fatalf("AcceptCommandBatch continued run: %v", err)
+	}
+	run := receipts[0].Run
+	if _, err := h.backend.EnsureTaskLease(ctx, h.user.ID, run.ID, time.Time{}); err != nil {
+		t.Fatalf("EnsureTaskLease continued run: %v", err)
+	}
 	if outcome, err := h.runTask(ctx, run.ID, "", nil); err != nil || outcome != task.OutcomeDone {
 		t.Fatalf("continued run failed on overflow retry: outcome=%s err=%v", outcome, err)
 	}
@@ -1474,7 +1489,22 @@ func TestWorkflowSimContextOverflowLargeBackground(t *testing.T) {
 			}, 0.10), nil, true
 		})
 
-		next := h2.startTaskRecord(ctx, "Continue after giant UTF-8 prior task")
+		nextID := h2.ids.Next()
+		nextReceipts, err := h2.store.AcceptCommandBatch(ctx, []state.Command{{
+			ID:        nextID,
+			RunID:     nextID,
+			Kind:      state.CommandStart,
+			Text:      "Continue after giant UTF-8 prior task",
+			CreatedAt: h2.clock.Now().UTC(),
+			Origin:    &state.TaskOrigin{ContinuesTaskID: prior.ID},
+		}}, nil)
+		if err != nil {
+			t.Fatalf("AcceptCommandBatch continued utf8 run: %v", err)
+		}
+		next := nextReceipts[0].Run
+		if _, err := h2.backend.EnsureTaskLease(ctx, h2.user.ID, next.ID, time.Time{}); err != nil {
+			t.Fatalf("EnsureTaskLease continued utf8 run: %v", err)
+		}
 		if outcome, err := h2.runTask(ctx, next.ID, "", nil); err != nil || outcome != task.OutcomeDone {
 			t.Fatalf("overflow retry failed: outcome=%s err=%v", outcome, err)
 		}

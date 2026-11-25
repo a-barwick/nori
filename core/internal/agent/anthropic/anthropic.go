@@ -165,8 +165,28 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
 
 	out.NotSent = false
-	res, err := c.doWithRetry(reqCtx, body)
+	onRetry := func(statusCode int) error {
+		prev := record
+		if statusCode > 0 {
+			prev.RequestStatus = "received"
+		} else {
+			prev.RequestStatus = "unknown"
+		}
+		_ = usage.Finish(ctx, c.Meter, prev)
+		record = usage.Attempt(ctx, provider, c.ModelName)
+		if err := c.Meter.RecordUsage(ctx, record); err != nil {
+			record.RequestStatus = "not_sent"
+			return err
+		}
+		record.RequestStatus = "unknown"
+		return nil
+	}
+	res, err := c.doWithRetry(reqCtx, body, onRetry)
 	if err != nil {
+		if errors.Is(err, usage.ErrUserQuotaExceeded) {
+			record.RequestStatus = "not_sent"
+			return out, err
+		}
 		if llmguard.IsGuardError(err) {
 			out.NotSent = true
 			record.RequestStatus = "not_sent"
@@ -384,7 +404,7 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	return out, nil
 }
 
-func (c *Client) doWithRetry(ctx context.Context, body []byte) (*http.Response, error) {
+func (c *Client) doWithRetry(ctx context.Context, body []byte, onRetry func(statusCode int) error) (*http.Response, error) {
 	client := c.httpClient()
 	const maxRetries = 3
 	baseDelay := 500 * time.Millisecond
@@ -408,6 +428,11 @@ func (c *Client) doWithRetry(ctx context.Context, body []byte) (*http.Response, 
 				return nil, ctx.Err()
 			case <-time.After(delay):
 			}
+			if onRetry != nil {
+				if rErr := onRetry(0); rErr != nil {
+					return nil, rErr
+				}
+			}
 			continue
 		}
 		retryable := res.StatusCode == http.StatusTooManyRequests ||
@@ -416,6 +441,7 @@ func (c *Client) doWithRetry(ctx context.Context, body []byte) (*http.Response, 
 		if !retryable || attempt >= maxRetries {
 			return res, nil
 		}
+		status := res.StatusCode
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
 		_ = res.Body.Close()
 		delay := baseDelay << attempt
@@ -423,6 +449,11 @@ func (c *Client) doWithRetry(ctx context.Context, body []byte) (*http.Response, 
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(delay):
+		}
+		if onRetry != nil {
+			if rErr := onRetry(status); rErr != nil {
+				return nil, rErr
+			}
 		}
 	}
 }

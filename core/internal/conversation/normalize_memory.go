@@ -11,9 +11,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"nori/internal/agent"
+	"nori/internal/llmguard"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
+	"nori/internal/transcript"
+	"nori/internal/usage"
 )
 
 const manualMemoryNormalizeTimeout = 10 * time.Second
@@ -38,17 +42,37 @@ type NormalizedMemory struct {
 // NewMemoryNormalizer returns a lightweight AI normalizer backed by an outer ReplyModel.
 // When model is nil or the call fails/times out, callers fall back cleanly to raw fields.
 func NewMemoryNormalizer(model ReplyModel) func(ctx context.Context, in ManualMemoryInput) (NormalizedMemory, error) {
+	return NewMemoryNormalizerWithMeter(model, nil)
+}
+
+// NewMemoryNormalizerWithMeter wraps ReplyModel-based memory normalization with durable usage metering.
+func NewMemoryNormalizerWithMeter(model ReplyModel, meter usage.Meter) func(ctx context.Context, in ManualMemoryInput) (NormalizedMemory, error) {
 	if model == nil {
 		return nil
 	}
 	return func(ctx context.Context, in ManualMemoryInput) (NormalizedMemory, error) {
-		return NormalizeManualMemory(ctx, model, in)
+		return normalizeManualMemoryWithMeter(ctx, model, meter, in)
+	}
+}
+
+// NewSummaryModelMemoryNormalizer runs manual memory normalization on the lower-tier inner
+// SummaryModel (which already carries durable usage metering), falling back to raw user text on error.
+func NewSummaryModelMemoryNormalizer(model SummaryModel) func(ctx context.Context, in ManualMemoryInput) (NormalizedMemory, error) {
+	if model == nil {
+		return nil
+	}
+	return func(ctx context.Context, in ManualMemoryInput) (NormalizedMemory, error) {
+		return normalizeManualMemoryWithSummaryModel(ctx, model, in)
 	}
 }
 
 // NormalizeManualMemory cleans up phrasing into concise third-person form, infers section and
 // about (respecting explicit caller overrides), and detects duplicate/updated existing memories.
 func NormalizeManualMemory(ctx context.Context, model ReplyModel, in ManualMemoryInput) (NormalizedMemory, error) {
+	return normalizeManualMemoryWithMeter(ctx, model, nil, in)
+}
+
+func normalizeManualMemoryWithMeter(ctx context.Context, model ReplyModel, meter usage.Meter, in ManualMemoryInput) (NormalizedMemory, error) {
 	rawText := strings.TrimSpace(in.Text)
 	explicitAbout := strings.TrimSpace(in.About)
 	explicitSection := strings.TrimSpace(in.Section)
@@ -61,7 +85,93 @@ func NormalizeManualMemory(ctx context.Context, model ReplyModel, in ManualMemor
 		return fallback, nil
 	}
 
-	existing := userProvenanceMemories(in.Existing)
+	payload, validExisting, err := buildNormalizeMemoryPayload(rawText, explicitAbout, explicitSection, in.Existing)
+	if err != nil {
+		return fallback, err
+	}
+
+	sysMsg := modelMessage(map[string]string{
+		"role":    "system",
+		"content": prompts.Runtime("normalize-memory", nil),
+	})
+	userMsg := modelMessage(map[string]string{
+		"role":    "user",
+		"content": string(payload),
+	})
+
+	normCtx, cancel := context.WithTimeout(llmguard.WithScope(ctx, llmguard.ScopeExtract), manualMemoryNormalizeTimeout)
+	defer cancel()
+
+	var recordFn func(context.Context, state.Usage) error
+	if meter != nil {
+		recordFn = func(rctx context.Context, u state.Usage) error {
+			if u.InputID == "" {
+				u.InputID = "memory-normalize"
+			}
+			return meter.RecordUsage(rctx, u)
+		}
+	}
+
+	reply, err := model.Respond(normCtx, ReplyRequest{
+		Messages:       []json.RawMessage{sysMsg, userMsg},
+		NoDispatch:     true,
+		RecordUsage:    recordFn,
+		TelemetryInput: "manual-memory-normalize",
+	})
+	if meter != nil && reply.Usage.ID != "" {
+		if reply.Usage.InputID == "" {
+			reply.Usage.InputID = "memory-normalize"
+		}
+		_ = usage.Finish(ctx, meter, reply.Usage)
+	}
+	if err != nil {
+		slog.WarnContext(ctx, "manual memory normalizer failed; using raw input", "err", err)
+		return fallback, err
+	}
+
+	return finishNormalizedMemory(ctx, reply.Text, rawText, explicitAbout, explicitSection, validExisting, fallback)
+}
+
+func normalizeManualMemoryWithSummaryModel(ctx context.Context, model SummaryModel, in ManualMemoryInput) (NormalizedMemory, error) {
+	rawText := strings.TrimSpace(in.Text)
+	explicitAbout := strings.TrimSpace(in.About)
+	explicitSection := strings.TrimSpace(in.Section)
+	fallback := NormalizedMemory{
+		Text:    rawText,
+		About:   cmp.Or(explicitAbout, "the user"),
+		Section: explicitSection,
+	}
+	if model == nil || rawText == "" {
+		return fallback, nil
+	}
+
+	payload, validExisting, err := buildNormalizeMemoryPayload(rawText, explicitAbout, explicitSection, in.Existing)
+	if err != nil {
+		return fallback, err
+	}
+
+	normCtx, cancel := context.WithTimeout(
+		usage.WithScope(llmguard.WithScope(ctx, llmguard.ScopeExtract), "memory-normalize", ""),
+		manualMemoryNormalizeTimeout,
+	)
+	defer cancel()
+
+	resp, err := model.Respond(normCtx, agent.Request{
+		Instructions:    prompts.Runtime("normalize-memory", nil),
+		Messages:        []transcript.Message{transcript.UserText(string(payload))},
+		MaxOutputTokens: 1024,
+		Reasoning:       "low",
+		SingleTurn:      true,
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "manual memory normalizer failed; using raw input", "err", err)
+		return fallback, err
+	}
+	return finishNormalizedMemory(ctx, resp.Answer, rawText, explicitAbout, explicitSection, validExisting, fallback)
+}
+
+func buildNormalizeMemoryPayload(rawText, explicitAbout, explicitSection string, allExisting []state.Memory) ([]byte, map[string]state.Memory, error) {
+	existing := userProvenanceMemories(allExisting)
 	existing = slices.Clone(existing)
 	state.SortCoreMemories(existing)
 	validExisting := make(map[string]state.Memory, len(existing))
@@ -81,40 +191,17 @@ func NormalizeManualMemory(ctx context.Context, model ReplyModel, in ManualMemor
 			Section: m.Section,
 		})
 	}
-
 	payload, err := json.Marshal(map[string]any{
 		"raw_text":          rawText,
 		"explicit_about":    explicitAbout,
 		"explicit_section":  explicitSection,
 		"existing_memories": items,
 	})
-	if err != nil {
-		return fallback, err
-	}
+	return payload, validExisting, err
+}
 
-	sysMsg := modelMessage(map[string]string{
-		"role":    "system",
-		"content": prompts.Runtime("normalize-memory", nil),
-	})
-	userMsg := modelMessage(map[string]string{
-		"role":    "user",
-		"content": string(payload),
-	})
-
-	normCtx, cancel := context.WithTimeout(ctx, manualMemoryNormalizeTimeout)
-	defer cancel()
-
-	reply, err := model.Respond(normCtx, ReplyRequest{
-		Messages:       []json.RawMessage{sysMsg, userMsg},
-		NoDispatch:     true,
-		TelemetryInput: "manual-memory-normalize",
-	})
-	if err != nil {
-		slog.WarnContext(ctx, "manual memory normalizer failed; using raw input", "err", err)
-		return fallback, err
-	}
-
-	parsed, err := parseNormalizedMemory(reply.Text)
+func finishNormalizedMemory(ctx context.Context, rawReply, rawText, explicitAbout, explicitSection string, validExisting map[string]state.Memory, fallback NormalizedMemory) (NormalizedMemory, error) {
+	parsed, err := parseNormalizedMemory(rawReply)
 	if err != nil {
 		slog.WarnContext(ctx, "manual memory normalizer returned invalid JSON; using raw input", "err", err)
 		return fallback, err

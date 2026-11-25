@@ -285,7 +285,7 @@ func fromEnvironment(defaultCloud string) Settings {
 	}
 	return Settings{
 		Connections: connectionsFromEnvironment(),
-		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") == "false"},
+		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") != "true"},
 		Cloud:       cloud,
 		EnvProfile:  envProfile,
 		Role:        role,
@@ -300,7 +300,7 @@ func fromEnvironment(defaultCloud string) Settings {
 		Port:          os.Getenv("PORT"),
 		Models:        modelsFromEnvironment(envProfile),
 		Store:         store,
-		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32("NORI_USER_MAX_CALLS_PER_HOUR")), MaxUSDPerDay: parseOptionalNonNegativeFloat("NORI_USER_MAX_USD_PER_DAY")},
+		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32Default("NORI_USER_MAX_CALLS_PER_HOUR", 300)), MaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_USER_MAX_USD_PER_DAY", 15.0)},
 		SearchKey:     os.Getenv("BRAVE_SEARCH_API_KEY"),
 		TaskBudgetUSD: taskBudget,
 		Observability: Observability{
@@ -347,6 +347,13 @@ func parseEnvInt32(name string) int32 {
 		return -1
 	}
 	return int32(v)
+}
+
+func parseEnvInt32Default(name string, fallback int32) int32 {
+	if strings.TrimSpace(os.Getenv(name)) == "" {
+		return fallback
+	}
+	return parseEnvInt32(name)
 }
 
 func parseEnvDuration(name string) time.Duration {

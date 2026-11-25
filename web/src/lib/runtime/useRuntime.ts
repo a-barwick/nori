@@ -153,6 +153,7 @@ export function useRuntime(localMode = false) {
   const outage = useRef(false);
   useEffect(() => { outage.current = error === SERVICE_UNAVAILABLE; }, [error]);
   const [streamError, setStreamError] = useState("");
+  const [streamingDelta, setStreamingDelta] = useState<{ turn_id: string; text: string } | null>(null);
   const [streamAwake, setStreamAwake] = useState(true);
   const position = useRef(0);
   const wasConversationBusy = useRef(false);
@@ -461,6 +462,7 @@ export function useRuntime(localMode = false) {
     let timer: ReturnType<typeof setTimeout>;
     let failures = 0;
     let stopped = false;
+    const completedTurns = new Set<string>();
     const applyPresence = (presence: Presence) => {
       const { conversation } = presence;
       if (conversation.revision < appliedRevision.current) return;
@@ -468,6 +470,7 @@ export function useRuntime(localMode = false) {
       setSession((current) => current && { ...current, conversation, paused: presence.paused });
       updatePending((current) => current.filter((item) => !conversation.input_ids.includes(item.id)));
       const now = conversation.pending || conversation.processing;
+      if (!now) setStreamingDelta(null);
       // A finished turn's traces are in the snapshot. Read it once at the end of a turn, and never on a reconnect.
       if (wasConversationBusy.current && !now) void refresh(controller.signal).catch(() => undefined);
       wasConversationBusy.current = now;
@@ -508,7 +511,22 @@ export function useRuntime(localMode = false) {
       };
       listen<{ message: Message }>("message", ({ message }) => {
         setSession((current) => current && { ...current, messages: mergeById(current.messages, [message]).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)) });
+        if (message.role === "assistant") {
+          if (message.turn_id && message.status !== "superseded") {
+            completedTurns.add(message.turn_id);
+          }
+          setStreamingDelta((current) => (!current || !message.turn_id || current.turn_id === message.turn_id ? null : current));
+        }
         updatePending((current) => current.filter((item) => message.id !== `${item.id}-user`));
+      });
+      listen<{ turn_id: string; text: string }>("assistant_delta", (delta) => {
+        if (!delta || typeof delta.text !== "string") return;
+        if (delta.text.length === 0) {
+          setStreamingDelta((current) => (!current || !delta.turn_id || current.turn_id === delta.turn_id ? null : current));
+          return;
+        }
+        if (delta.turn_id && completedTurns.has(delta.turn_id)) return;
+        setStreamingDelta(delta);
       });
       listen<{ run: Run }>("task", ({ run }) => {
         setSession((current) => current && { ...current, runs: mergeRuns(current.runs, [run]) });
@@ -652,7 +670,7 @@ export function useRuntime(localMode = false) {
 
   return { session, draft, setDraft, draftFiles,
     attachFiles: (files: File[]) => attach(files, upload, setError), retryFile: (item: DraftFile) => retry(item, upload),
-    removeFile, error: error || streamError, loading, loadingOlder, retryingMessageId, pending, setSelectedId,
+    removeFile, error: error || streamError, streamingDelta, loading, loadingOlder, retryingMessageId, pending, setSelectedId,
     activeTasks, selected, tasksUnavailable, busy, conversationBusy, taskCommands, taskDrafts,
     setTaskDraft: (id: string, text: string) => setTaskDrafts((current) => ({ ...current, [id]: text })),
     refreshHistory, loadOlder, send, retry: submit, retryTurn, dismissPending, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand, markShown };

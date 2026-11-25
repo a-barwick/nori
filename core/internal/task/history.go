@@ -3,9 +3,12 @@ package task
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -94,6 +97,8 @@ type RefToolOutcome struct {
 	// InteractionID and Prompt are set when a registry tool waits on the user's approval or account choice.
 	InteractionID string `json:",omitempty"`
 	Prompt        string `json:",omitempty"`
+	// ToolSig is a compact hash of (tool_name, canonical_args, outcome) for semantic loop detection.
+	ToolSig string `json:",omitempty"`
 }
 type RefInput struct {
 	Step
@@ -153,6 +158,17 @@ func clip(text string, limit int) string {
 		cut--
 	}
 	return text[:cut] + "…"
+}
+
+func toolCallSignature(name string, args map[string]any, outcome string) string {
+	rawArgs, _ := json.Marshal(args)
+	h := sha256.New()
+	_, _ = h.Write([]byte(name))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write(rawArgs)
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(outcome))
+	return outcome + ":" + hex.EncodeToString(h.Sum(nil)[:8])
 }
 func lastCall(messages []transcript.Message, index int) (transcript.ToolCall, error) {
 	for i := len(messages) - 1; i >= 0; i-- {
@@ -417,14 +433,137 @@ func finishModelRound(in RefModelInput, calls []transcript.ToolCall, tools *exte
 	}
 	return entries
 }
-func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolOutcome, err error) {
-	ctx, span := startActivity(ctx, "task.history.tool", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
-	defer func() { recordActivityFailure(ctx, err, "task.history.tool"); span.End() }()
-	messages, e := a.history(ctx, in.RunID, in.Ref)
+
+type RefToolBatchItem struct {
+	OperationID string
+	Index       int
+	Exec        *extensions.Exec `json:",omitempty"`
+}
+
+type RefToolBatchInput struct {
+	Step
+	Ref      string
+	ReadOnly bool
+	Items    []RefToolBatchItem
+}
+
+type RefToolBatchOutcome struct {
+	Ref         string
+	Items       []RefToolOutcome
+	TotalCost   float64
+	CostUnknown bool
+	AnyRevised  bool
+	FirstErr    error
+	FirstErrIdx int
+}
+
+func lastCallFromBlocks(blocks [][]byte, index int) (transcript.ToolCall, error) {
+	for b := len(blocks) - 1; b >= 0; b-- {
+		var chunk []transcript.Message
+		decoder := json.NewDecoder(bytes.NewReader(blocks[b]))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&chunk); err != nil {
+			return transcript.ToolCall{}, errTranscriptBlockInvalid
+		}
+		for i := len(chunk) - 1; i >= 0; i-- {
+			if chunk[i].Role != transcript.RoleModel {
+				continue
+			}
+			calls := chunk[i].ToolCalls()
+			if index >= 0 && index < len(calls) {
+				return calls[index], nil
+			}
+			return transcript.ToolCall{}, errCallRefUnresolved
+		}
+	}
+	return transcript.ToolCall{}, errCallRefUnresolved
+}
+
+// ToolBatchRef executes a contiguous slice of independent read-only tool calls
+// concurrently with deterministic pre-assigned OperationIDs, then appends all
+// tool results in original call order in a single history block.
+func (a *Activities) ToolBatchRef(ctx context.Context, in RefToolBatchInput) (out RefToolBatchOutcome, err error) {
+	ctx, span := startActivity(ctx, "task.history.tool_batch", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
+	defer func() { recordActivityFailure(ctx, err, "task.history.tool_batch"); span.End() }()
+	blocks, e := a.Store.ReadHistory(ctx, in.RunID, in.Ref)
 	if e != nil {
 		return out, e
 	}
-	call, e := lastCall(messages, in.Index)
+	calls := make([]transcript.ToolCall, len(in.Items))
+	for i, item := range in.Items {
+		call, cErr := lastCallFromBlocks(blocks, item.Index)
+		if cErr != nil {
+			return out, cErr
+		}
+		calls[i] = call
+	}
+
+	results := make([]map[string]any, len(in.Items))
+	errs := make([]error, len(in.Items))
+	var wg sync.WaitGroup
+	for i, item := range in.Items {
+		wg.Add(1)
+		go func(idx int, it RefToolBatchItem, call transcript.ToolCall) {
+			defer wg.Done()
+			res, tErr := a.durableTool(ctx, ToolInput{
+				Step:        in.Step,
+				OperationID: it.OperationID,
+				Call:        call,
+				Exec:        it.Exec,
+				ReadOnly:    in.ReadOnly,
+			})
+			results[idx] = res
+			errs[idx] = tErr
+		}(i, item, calls[i])
+	}
+	wg.Wait()
+
+	for i, tErr := range errs {
+		if tErr != nil {
+			out.FirstErr = tErr
+			out.FirstErrIdx = i
+			return out, tErr
+		}
+	}
+
+	msgs := make([]transcript.Message, len(in.Items))
+	out.Items = make([]RefToolOutcome, len(in.Items))
+	for i, item := range in.Items {
+		result := results[i]
+		if result == nil {
+			result = map[string]any{}
+		}
+		result["evidence_ref"] = item.OperationID
+		msgs[i] = transcript.ToolResultMessage(calls[i].ID, calls[i].Name, result)
+		var itemOut RefToolOutcome
+		itemOut.Outcome, _ = result["outcome"].(string)
+		itemOut.EffectClass, _ = result["effect_class"].(string)
+		itemOut.Cost, _ = result["cost_usd"].(float64)
+		itemOut.CostUnknown, _ = result["cost_unknown"].(bool)
+		itemOut.ToolSig = toolCallSignature(calls[i].Name, calls[i].Args, itemOut.Outcome)
+		if itemOut.Outcome == "needs_interaction" {
+			itemOut.InteractionID, _ = result["interaction_id"].(string)
+			itemOut.Prompt, _ = result["prompt"].(string)
+		}
+		out.TotalCost += itemOut.Cost
+		out.CostUnknown = out.CostUnknown || itemOut.CostUnknown
+		out.Items[i] = itemOut
+	}
+	out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, msgs)
+	if e != nil {
+		return out, errors.New("The tool results could not be saved to task history.")
+	}
+	return out, nil
+}
+
+func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolOutcome, err error) {
+	ctx, span := startActivity(ctx, "task.history.tool", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
+	defer func() { recordActivityFailure(ctx, err, "task.history.tool"); span.End() }()
+	blocks, e := a.Store.ReadHistory(ctx, in.RunID, in.Ref)
+	if e != nil {
+		return out, e
+	}
+	call, e := lastCallFromBlocks(blocks, in.Index)
 	if e != nil {
 		return out, e
 	}
@@ -456,11 +595,16 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	out.EffectClass, _ = result["effect_class"].(string)
 	out.Cost, _ = result["cost_usd"].(float64)
 	out.CostUnknown, _ = result["cost_unknown"].(bool)
+	out.ToolSig = toolCallSignature(call.Name, call.Args, out.Outcome)
 	if out.Outcome == "needs_interaction" {
 		out.InteractionID, _ = result["interaction_id"].(string)
 		out.Prompt, _ = result["prompt"].(string)
 	}
 	if out.Outcome == "uncertain" && out.EffectClass != "read" {
+		messages, hErr := a.history(ctx, in.RunID, in.Ref)
+		if hErr != nil {
+			return out, hErr
+		}
 		out.Unresolved, out.Clears, e = a.nameUnresolved(ctx, in.RunID, messages)
 		if e != nil {
 			return out, e

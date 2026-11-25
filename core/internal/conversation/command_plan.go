@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"nori/internal/prompts"
@@ -295,14 +296,31 @@ func (r *Runner) commandPlanMessages(ctx context.Context, t *state.ConversationT
 		AcceptedCommands []planCommand   `json:"accepted_commands"`
 	}
 	buildTaskGroup := func(records []*TaskContextRecord) ([]planTask, error) {
+		if len(records) == 0 {
+			return []planTask{}, nil
+		}
+		sourcesByIdx := make([][]state.ConversationInput, len(records))
+		errs := make([]error, len(records))
+		if len(records) == 1 {
+			sourcesByIdx[0], errs[0] = r.tasks.Store.ReadTaskSourceInputs(ctx, records[0].ID)
+		} else {
+			var wg sync.WaitGroup
+			for i, task := range records {
+				wg.Add(1)
+				go func(idx int, id string) {
+					defer wg.Done()
+					sourcesByIdx[idx], errs[idx] = r.tasks.Store.ReadTaskSourceInputs(ctx, id)
+				}(i, task.ID)
+			}
+			wg.Wait()
+		}
 		group := make([]planTask, 0, len(records))
-		for _, task := range records {
-			sources, err := r.tasks.Store.ReadTaskSourceInputs(ctx, task.ID)
-			if err != nil {
-				return nil, fmt.Errorf("user task sources unavailable; no commands accepted: %w", err)
+		for i, task := range records {
+			if errs[i] != nil {
+				return nil, fmt.Errorf("user task sources unavailable; no commands accepted: %w", errs[i])
 			}
 			users := []userMessage{}
-			for _, in := range sources {
+			for _, in := range sourcesByIdx[i] {
 				if in.IsUser() {
 					users = append(users, user(in))
 				}

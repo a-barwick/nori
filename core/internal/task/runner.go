@@ -41,6 +41,9 @@ type Runner struct {
 	// StepBudget optionally limits how many state-machine steps one Run call executes
 	// (0 = unlimited). Used by deterministic simulation drivers to interleave workers.
 	StepBudget int
+	// MaxModelAttempts optionally overrides the default per-task model attempt ceiling
+	// (default: 24 for main tasks, 14 for subtasks).
+	MaxModelAttempts int
 	// Drain, when closed, asks Run to stop cleanly at the next checkpoint boundary
 	// and release its TaskControl + discovery lease for immediate takeover by another replica.
 	Drain <-chan struct{}

@@ -100,6 +100,9 @@ type Runner struct {
 	After     func(time.Duration) <-chan time.Time
 	NewTicker func(time.Duration) (<-chan time.Time, func())
 	SyncWork  bool
+	// OnDelta, when set, receives ephemeral streaming text snapshots for confirmed
+	// action-free outer replies (never on turns with actions or untrusted task output).
+	OnDelta func(turnID, text string)
 }
 
 func (r *Runner) runWork(work *sync.WaitGroup, fn func()) {
@@ -576,7 +579,18 @@ func buildProtocol(t *state.ConversationTurn, text string) {
 		t.Protocol = append(t.Protocol, string(inputMessage(in)))
 	}
 	t.Protocol = append(t.Protocol, t.Context...)
-	if t.Attempt.Reply != "" && !t.Attempt.ProtocolInvalid {
+	// When a structured turn had zero actions/memory/shows and its published reply matches
+	// the model draft verbatim, store only the clean published assistant reply instead of
+	// duplicating the same prose inside both the JSON wrapper and a trailing assistant message.
+	cleanActionFree := t.Attempt.StructuredReply &&
+		!t.Attempt.ProtocolInvalid &&
+		t.Attempt.Status != "error" &&
+		len(t.Attempt.Actions) == 0 &&
+		len(t.Attempt.Results) == 0 &&
+		len(t.Attempt.Memory) == 0 &&
+		len(t.Attempt.ShowResults) == 0 &&
+		text == t.Attempt.Text
+	if t.Attempt.Reply != "" && !t.Attempt.ProtocolInvalid && !cleanActionFree {
 		t.Protocol = append(t.Protocol, t.Attempt.Reply)
 		if t.Attempt.StructuredReply && len(t.Attempt.Results) > 0 {
 			results, _ := json.Marshal(t.Attempt.Results)
@@ -595,7 +609,7 @@ func buildProtocol(t *state.ConversationTurn, text string) {
 			"content": prompts.Runtime("runner-saved-memory-changes-for-the-preceding-response-a-chang", nil) + string(changes),
 		})))
 	}
-	if t.Attempt.StructuredReply || t.Attempt.Reply == "" || t.Attempt.Status == "error" || text != t.Attempt.Text {
+	if cleanActionFree || t.Attempt.StructuredReply || t.Attempt.Reply == "" || t.Attempt.Status == "error" || text != t.Attempt.Text {
 		t.Protocol = append(t.Protocol, string(modelMessage(map[string]string{"role": "assistant", "content": text})))
 	}
 }

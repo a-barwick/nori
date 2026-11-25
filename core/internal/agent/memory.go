@@ -26,17 +26,22 @@ func (s *Service) memoryRead(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	saved := []map[string]any{}
+	saved := make([]map[string]any, 0, len(memories))
 	for _, m := range memories {
-		saved = append(saved, map[string]any{
+		entry := map[string]any{
 			"memory_id":  m.ID,
 			"about":      m.About,
-			"section":    m.Section,
-			"pinned":     m.Pinned,
 			"provenance": m.EffectiveProvenance(),
 			"text":       m.Text,
-			"saved_at":   m.UpdatedAt,
-		})
+			"saved_at":   m.UpdatedAt.UTC().Format("2006-01-02"),
+		}
+		if m.Section != "" {
+			entry["section"] = m.Section
+		}
+		if m.Pinned {
+			entry["pinned"] = true
+		}
+		saved = append(saved, entry)
 	}
 	out := map[string]any{"memories": saved, "note": memoryNote}
 	summary, err := s.Store.ConversationSummary(ctx)
@@ -48,23 +53,28 @@ func (s *Service) memoryRead(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	if summary.Applies(contextFrom) {
-		items := []map[string]any{}
+		items := make([]map[string]any, 0, len(summary.Items))
 		for _, item := range summary.Items {
-			items = append(items, map[string]any{
+			row := map[string]any{
 				"id":         state.SummaryItemID(item),
 				"kind":       item.Kind,
 				"user_words": item.Quote,
 				"input_id":   item.InputID,
-				"model_note": item.Note,
-			})
+			}
+			if item.Note != "" {
+				row["model_note"] = item.Note
+			}
+			items = append(items, row)
 		}
-		out["conversation_summary"] = map[string]any{
-			"flushed_through": summary.EffectiveFlushedThrough(),
-			"through":         summary.Through,
-			"items":           items,
-			"model_gist":      summary.Gist,
-			"source_excerpts": summary.Excerpts,
+		cs := map[string]any{
+			"through":    summary.Through.UTC().Format(time.RFC3339),
+			"items":      items,
+			"model_gist": summary.Gist,
 		}
+		if len(summary.Excerpts) > 0 {
+			cs["excerpt_count"] = len(summary.Excerpts)
+		}
+		out["conversation_summary"] = cs
 	}
 	return out, nil
 }

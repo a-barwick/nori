@@ -26,6 +26,74 @@ const (
 	legacySummaryToolName   = "save_summary"
 )
 
+// slimCoreMemory strips verbose SourceText and timestamps from maintenance prompts
+// (compaction, extraction, AutoDream), saving ~60% of core_memories input bytes.
+type slimCoreMemory struct {
+	ID            string                 `json:"id"`
+	Text          string                 `json:"text"`
+	About         string                 `json:"about,omitempty"`
+	Section       string                 `json:"section,omitempty"`
+	Pinned        bool                   `json:"pinned,omitempty"`
+	Provenance    state.MemoryProvenance `json:"provenance,omitempty"`
+	SourceInputID string                 `json:"source_input_id,omitempty"`
+}
+
+func projectMaintenanceMemories(memories []state.Memory, includeSourceID bool) []slimCoreMemory {
+	out := make([]slimCoreMemory, 0, len(memories))
+	for _, m := range memories {
+		about := m.About
+		if about == "the user" {
+			about = ""
+		}
+		prov := m.EffectiveProvenance()
+		if prov == state.ProvenanceUserExplicit {
+			prov = ""
+		}
+		item := slimCoreMemory{
+			ID:         m.ID,
+			Text:       m.Text,
+			About:      about,
+			Section:    m.Section,
+			Pinned:     m.Pinned,
+			Provenance: prov,
+		}
+		if includeSourceID {
+			item.SourceInputID = m.SourceInputID
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// extractOnlyTool omits summary_items/gist for session-idle extraction calls.
+var extractOnlyTool = transcript.Tool{
+	Name:        flushAndCompactToolName,
+	Description: prompts.Runtime("flush-and-compact", nil),
+	Parameters: &transcript.Schema{
+		Type:     transcript.TypeObject,
+		Required: []string{"core_upserts", "daily_log_entries"},
+		Properties: map[string]*transcript.Schema{
+			"core_upserts":      flushAndCompactTool.Parameters.Properties["core_upserts"],
+			"daily_log_entries": flushAndCompactTool.Parameters.Properties["daily_log_entries"],
+		},
+	},
+}
+
+// summaryOnlyTool omits core_upserts/daily_log_entries when all turns in a flush batch
+// were already extracted during idle extraction.
+var summaryOnlyTool = transcript.Tool{
+	Name:        flushAndCompactToolName,
+	Description: prompts.Runtime("flush-and-compact", nil),
+	Parameters: &transcript.Schema{
+		Type:     transcript.TypeObject,
+		Required: []string{"summary_items", "gist"},
+		Properties: map[string]*transcript.Schema{
+			"summary_items": flushAndCompactTool.Parameters.Properties["summary_items"],
+			"gist":          flushAndCompactTool.Parameters.Properties["gist"],
+		},
+	},
+}
+
 // flushAndCompactTool asks the compaction model to perform pre-compaction memory
 // extraction (Core upserts + Daily Log notes) and Working Memory summarization
 // in a single pass. The runtime verifies every citation before committing.
@@ -482,6 +550,7 @@ func (r *Runner) flushAndCompact(ctx context.Context) error {
 	batchUserTimes := map[string]time.Time{}
 	batchRuns := map[string]bool{}
 	rendered := make([]any, 0, len(plan.batch))
+	anyUnextracted := false
 	for _, t := range plan.batch {
 		view, users, runs := compactionTurn(t)
 		alreadyExtracted := !t.StartedAt.After(effectiveExtracted)
@@ -493,6 +562,7 @@ func (r *Runner) flushAndCompact(ctx context.Context) error {
 		if alreadyExtracted {
 			continue
 		}
+		anyUnextracted = true
 		recordBatchUserTimes(t, batchUserTimes)
 		for id, text := range users {
 			batchUsers[id] = text
@@ -504,7 +574,6 @@ func (r *Runner) flushAndCompact(ctx context.Context) error {
 
 	loc := r.userLocation(ctx)
 	promptPayload := map[string]any{
-		"core_memories": coreMemories,
 		"previous_summary": map[string]any{
 			"items": plan.base.Items,
 			"gist":  plan.base.Gist,
@@ -514,11 +583,16 @@ func (r *Runner) flushAndCompact(ctx context.Context) error {
 		"timezone":           loc.String(),
 		"turns":              rendered,
 	}
+	tool := summaryOnlyTool
+	if anyUnextracted {
+		promptPayload["core_memories"] = projectMaintenanceMemories(coreMemories, false)
+		tool = flushAndCompactTool
+	}
 	promptBytes, _ := json.Marshal(promptPayload)
 
 	modelCtx, cancel := context.WithTimeout(llmguard.WithScope(ctx, llmguard.ScopeCompaction), 2*time.Minute)
 	defer cancel()
-	output, callErr := r.callFlushAndCompact(modelCtx, string(promptBytes))
+	output, callErr := r.callFlushAndCompactWithTool(modelCtx, string(promptBytes), tool)
 	if callErr != nil {
 		if ctx.Err() != nil {
 			// Preempted by arriving user input or shutdown: leave FlushedThrough untouched.
@@ -1047,17 +1121,22 @@ func maxTime(a, b time.Time) time.Time {
 }
 
 func (r *Runner) callFlushAndCompact(ctx context.Context, prompt string) (flushModelOutput, error) {
+	return r.callFlushAndCompactWithTool(ctx, prompt, flushAndCompactTool)
+}
+
+func (r *Runner) callFlushAndCompactWithTool(ctx context.Context, prompt string, tool transcript.Tool) (flushModelOutput, error) {
 	ctx = usage.WithScope(ctx, "compaction", "compaction")
 	if r.Now != nil || r.NewID != nil {
 		ctx = usage.WithSession(ctx, usage.Session{Now: r.Now, NewID: r.NewID})
 	}
-	// Use low reasoning effort for structured extraction/compaction to cut
-	// output/reasoning token spend and latency while preserving schema fidelity.
+	// Use low reasoning effort and single-turn mode for structured extraction/compaction
+	// to cut output/reasoning token spend and latency while preserving schema fidelity.
 	response, err := r.summarizer.Respond(ctx, agent.Request{
 		Instructions:    prompts.Compaction,
-		Tools:           []transcript.Tool{flushAndCompactTool},
+		Tools:           []transcript.Tool{tool},
 		MaxOutputTokens: 4096,
 		Reasoning:       "low",
+		SingleTurn:      true,
 		Messages:        []transcript.Message{{Role: transcript.RoleUser, Parts: []transcript.Part{{Text: prompt}}}},
 	})
 	if err != nil {

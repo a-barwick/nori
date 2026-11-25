@@ -148,7 +148,7 @@ func (c *Client) sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request, error)) (*http.Response, error) {
+func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request, error), onRetry func(statusCode int) error) (*http.Response, error) {
 	retries := c.maxRetries()
 	baseDelay := c.retryBaseDelay()
 	maxDelay := c.maxRetryAfter()
@@ -173,6 +173,11 @@ func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request
 			if sleepErr := c.sleep(ctx, delay); sleepErr != nil {
 				return nil, sleepErr
 			}
+			if onRetry != nil {
+				if rErr := onRetry(0); rErr != nil {
+					return nil, rErr
+				}
+			}
 			continue
 		}
 
@@ -180,6 +185,7 @@ func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request
 			return res, nil
 		}
 
+		status := res.StatusCode
 		retryAfter := res.Header.Get("Retry-After")
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 16<<10))
 		_ = res.Body.Close()
@@ -188,12 +194,17 @@ func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request
 		slog.WarnContext(ctx, "inner model transient HTTP error; retrying",
 			"attempt", attempt+1,
 			"max_retries", retries,
-			"status", res.StatusCode,
+			"status", status,
 			"retry_after", retryAfter,
 			"delay_ms", delay.Milliseconds(),
 		)
 		if sleepErr := c.sleep(ctx, delay); sleepErr != nil {
 			return nil, sleepErr
+		}
+		if onRetry != nil {
+			if rErr := onRetry(status); rErr != nil {
+				return nil, rErr
+			}
 		}
 	}
 }

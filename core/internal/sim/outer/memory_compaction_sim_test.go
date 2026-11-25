@@ -1154,6 +1154,9 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 		"Remember we should add a Nara day-trip to the August 2027 itinerary.",
 		"We prefer morning shinkansen departures from Tokyo to Kyoto.",
 		"Let us finalize our dining reservations list for the trip next week.",
+		"Please remember we prefer boutique ryokans with private onsen.",
+		"Also note we want a direct flight home from Osaka Kansai.",
+		"Keep a day open in Kyoto for Arashiyama bamboo grove.",
 	}
 	returnInputIDs := make([]string, 0, len(returnMessages))
 	for i, msg := range returnMessages {
@@ -1174,24 +1177,24 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 		}
 	}
 
-	// After 5 total turns (3 new turns == ExtractTurnThreshold): Turns 3..5 extracted immediately,
+	// After 8 total turns (6 new turns == ExtractTurnThreshold): Turns 3..8 extracted immediately,
 	// Through/FlushedThrough remain zero!
 	sumAfter5, err := rig.store.ConversationSummary(ctx)
 	if err != nil {
-		t.Fatalf("ConversationSummary after 5 turns: %v", err)
+		t.Fatalf("ConversationSummary after threshold turns: %v", err)
 	}
 	if !sumAfter5.Through.IsZero() || !sumAfter5.FlushedThrough.IsZero() {
-		t.Fatalf("expected zero compaction after 5 turns, got through=%s flushed=%s", sumAfter5.Through, sumAfter5.FlushedThrough)
+		t.Fatalf("expected zero compaction after threshold turns, got through=%s flushed=%s", sumAfter5.Through, sumAfter5.FlushedThrough)
 	}
 
-	// Verify memories from Turns 3..5 were extracted immediately by ExtractTurnThreshold=3.
+	// Verify memories from Turns 3..8 were extracted immediately by ExtractTurnThreshold=6.
 	naraHits, err := rig.store.SearchMemory(ctx, docstore.MemorySearchQuery{
 		Query: "Nara",
 		Layer: docstore.MemoryLayerCore,
 		Now:   rig.clock.Now(),
 	})
 	if err != nil || len(naraHits) == 0 {
-		t.Fatalf("expected Turn 3 Nara memory in Core after 3-turn threshold extract, hits=%d err=%v", len(naraHits), err)
+		t.Fatalf("expected Turn 3 Nara memory in Core after threshold extract, hits=%d err=%v", len(naraHits), err)
 	}
 	diningHits, err := rig.store.SearchMemory(ctx, docstore.MemorySearchQuery{
 		Query: "dining",
@@ -1199,11 +1202,11 @@ func runShortSessionIdleExtractAnd10HourReturn(t *testing.T, seed int64) string 
 		Now:   rig.clock.Now(),
 	})
 	if err != nil || len(diningHits) == 0 {
-		t.Fatalf("expected Turn 5 dining note in Daily Logs after 3-turn threshold extract, hits=%d err=%v", len(diningHits), err)
+		t.Fatalf("expected Turn 5 dining note in Daily Logs after threshold extract, hits=%d err=%v", len(diningHits), err)
 	}
 
 	// Drive up to SoftCompactUserTurns-1 (15) turns, advance +10m idle -> still ZERO compaction!
-	for turnNum := 6; turnNum < state.SoftCompactUserTurns; turnNum++ {
+	for turnNum := 2 + len(returnMessages) + 1; turnNum < state.SoftCompactUserTurns; turnNum++ {
 		rig.clock.Advance(time.Second)
 		if _, err := h.AcceptInput(ctx, fmt.Sprintf("trip-followup-%02d preference: confirm rail pass details", turnNum)); err != nil {
 			t.Fatalf("AcceptInput turn %d: %v", turnNum, err)

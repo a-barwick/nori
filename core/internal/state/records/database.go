@@ -179,6 +179,90 @@ func (d *Database) RecordUsage(ctx context.Context, usage state.Usage) error {
 	return err
 }
 
+// ReserveUsage atomically checks rolling per-user hourly call and daily spend+exposure caps
+// and writes the pending usage row inside a single transaction, eliminating TOCTOU races across
+// concurrent requests and replicas. Estimated exposure is kept separate from recorded CostUSD.
+func (d *Database) ReserveUsage(
+	ctx context.Context,
+	u state.Usage,
+	hourCutoff, dayCutoff time.Time,
+	maxCallsPerHour int,
+	maxUSDPerDay float64,
+	unknownEstimateUSD float64,
+) (bool, error) {
+	since := dayCutoff
+	if hourCutoff.Before(since) {
+		since = hourCutoff
+	}
+	allowed := false
+	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		allowed = false
+		// Serialize concurrent quota admissions for this user via a dedicated lock document.
+		quotaRef := d.root().Collection("meta").Doc("usage_quota")
+		var quotaDoc struct {
+			Seq int64 `firestore:"seq"`
+		}
+		if snap, err := tx.Get(quotaRef); err == nil && snap.Exists() {
+			_ = snap.DataTo(&quotaDoc)
+		} else if err != nil && !errors.Is(err, docstore.ErrNotFound) {
+			return err
+		}
+		// Idempotent re-check if this exact usage ID was already reserved.
+		if existingSnap, err := tx.Get(d.usage().Doc(u.ID)); err == nil && existingSnap.Exists() {
+			allowed = true
+			return nil
+		} else if err != nil && !errors.Is(err, docstore.ErrNotFound) {
+			return err
+		}
+		rows, err := documents[state.Usage](tx.Documents(d.usage().Where("created_at", ">=", since)))
+		if err != nil {
+			return err
+		}
+		var hourCalls int
+		var dayActualUSD, dayExposureUSD float64
+		for _, r := range rows {
+			if r.RequestStatus == "not_sent" || r.ID == u.ID {
+				continue
+			}
+			if !r.CreatedAt.Before(hourCutoff) {
+				hourCalls++
+			}
+			if !r.CreatedAt.Before(dayCutoff) {
+				if r.CostUSD != nil && *r.CostUSD > 0 {
+					dayActualUSD += *r.CostUSD
+				} else if r.CostStatus != "provider" && r.CostStatus != "calculated" {
+					if r.EstimatedExposureUSD > 0 {
+						dayExposureUSD += r.EstimatedExposureUSD
+					} else {
+						dayExposureUSD += unknownEstimateUSD
+					}
+				}
+			}
+		}
+		if maxCallsPerHour > 0 && hourCalls+1 > maxCallsPerHour {
+			return nil
+		}
+		incomingExposure := u.EstimatedExposureUSD
+		if incomingExposure <= 0 {
+			incomingExposure = unknownEstimateUSD
+		}
+		if maxUSDPerDay > 0 && dayActualUSD+dayExposureUSD+incomingExposure > maxUSDPerDay {
+			return nil
+		}
+		u.EstimatedExposureUSD = incomingExposure
+		quotaDoc.Seq++
+		if err := tx.Set(quotaRef, map[string]any{"seq": quotaDoc.Seq, "updated_at": u.CreatedAt}); err != nil {
+			return err
+		}
+		if err := tx.Set(d.usage().Doc(u.ID), u); err != nil {
+			return err
+		}
+		allowed = true
+		return nil
+	})
+	return allowed, err
+}
+
 // UsageWindowSummary aggregates durable usage rows for this user in a single scan
 // since dayCutoff so multi-replica Cloud Run instances enforce shared per-user
 // hourly call and daily spend admission limits.

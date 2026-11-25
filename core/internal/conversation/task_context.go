@@ -7,7 +7,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
@@ -19,7 +18,7 @@ type TaskContext struct {
 	RecentTasks  []*TaskContextRecord `json:"recent_task_records"`
 	SavedResults []SavedResult        `json:"saved_results,omitempty"`
 	Truncated    bool                 `json:"truncated"`
-	Instructions string               `json:"instructions"`
+	Instructions string               `json:"instructions,omitempty"`
 }
 
 // SavedResult is what the outer loop knows about a saved result. Titles came from task requests and tool calls, so
@@ -81,8 +80,7 @@ type TaskContextCommand struct {
 // ContextRecords reads each selected task's accepted commands once. Direct panel
 // commands are user instructions even though they create no conversation message.
 func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunIDs []string, since time.Time) (TaskContext, error) {
-	result := TaskContext{ActiveTasks: []*TaskContextRecord{}, EventTasks: []*TaskContextRecord{}, RecentTasks: []*TaskContextRecord{},
-		Instructions: prompts.Runtime("task-commands", nil)}
+	result := TaskContext{ActiveTasks: []*TaskContextRecord{}, EventTasks: []*TaskContextRecord{}, RecentTasks: []*TaskContextRecord{}}
 	seen := map[string]bool{}
 	var records []*TaskContextRecord
 	add := func(id string, destination *[]*TaskContextRecord) error {
@@ -140,13 +138,16 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 		if seen[run.ID] {
 			continue
 		}
-		if len(result.RecentTasks) >= 10 {
+		if len(result.RecentTasks) >= 6 {
 			result.Truncated = true
 			continue
 		}
 		if err := add(run.ID, &result.RecentTasks); err != nil {
 			return result, err
 		}
+	}
+	for _, rec := range result.RecentTasks {
+		slimTerminalRecord(rec)
 	}
 	saved, err := t.Store.RecentResults(ctx, state.RecentResultLimit)
 	if err != nil {
@@ -189,7 +190,26 @@ func (t *Tasks) contextRecord(ctx context.Context, id string) (*TaskContextRecor
 	return record, nil
 }
 
+func slimTerminalRecord(record *TaskContextRecord) {
+	if record == nil || record.Status == state.RunRunning {
+		return
+	}
+	trimContextText(&record.Request, 200, &record.TextTruncated)
+	trimContextText(&record.Result, 280, &record.TextTruncated)
+	trimContextText(&record.Error, 200, &record.TextTruncated)
+	if len(record.Commands) > 2 {
+		record.Commands = record.Commands[len(record.Commands)-2:]
+		record.CommandHistoryTruncated = true
+	}
+	for i := range record.Commands {
+		trimContextText(&record.Commands[i].Text, 120, &record.Commands[i].TextTruncated)
+	}
+}
+
 func fitTaskContext(result *TaskContext, records []*TaskContextRecord) error {
+	for _, rec := range result.RecentTasks {
+		slimTerminalRecord(rec)
+	}
 	fits := func() bool { data, err := json.Marshal(*result); return err == nil && len(data) <= taskContextLimit }
 	if fits() {
 		return nil

@@ -23,6 +23,7 @@ import (
 const (
 	dreamConsolidateToolName = "dream_consolidate"
 	dreamLogReadLimit        = 90
+	dreamMaxLogBytes         = 24 << 10
 )
 
 var dreamConsolidateTool = transcript.Tool{
@@ -343,11 +344,35 @@ func (r *Runner) dreamConsolidate(ctx context.Context, manual bool) (state.Conve
 		}
 	}
 
+	// Process bounded log batches in chronological oldest-first order so DreamThrough
+	// never jumps past unconsolidated older entries.
+	slices.SortFunc(promptLogs, func(a, b promptLogEntry) int {
+		if a.CreatedAt.Before(b.CreatedAt) {
+			return -1
+		}
+		if a.CreatedAt.After(b.CreatedAt) {
+			return 1
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	selectedLogs := make([]promptLogEntry, 0, len(promptLogs))
+	selectedBytes := 0
+	logsTruncated := false
+	for _, entry := range promptLogs {
+		raw, _ := json.Marshal(entry)
+		if len(selectedLogs) > 0 && selectedBytes+len(raw) > dreamMaxLogBytes {
+			logsTruncated = true
+			break
+		}
+		selectedLogs = append(selectedLogs, entry)
+		selectedBytes += len(raw)
+	}
+
 	now := r.now()
 	loc := r.userLocation(runCtx)
 	promptPayload := map[string]any{
-		"core_memories":     coreMemories,
-		"daily_logs":        promptLogs,
+		"core_memories":     projectMaintenanceMemories(coreMemories, true),
+		"daily_logs":        selectedLogs,
 		"local_date":        now.In(loc).Format("2006-01-02"),
 		"timezone":          loc.String(),
 		"core_budget_bytes": state.CoreMemoryBytes,
@@ -362,12 +387,18 @@ func (r *Runner) dreamConsolidate(ctx context.Context, manual bool) (state.Conve
 	}
 
 	nowUTC := r.now().UTC()
+	processedThrough := nowUTC
+	if logsTruncated && len(selectedLogs) > 0 {
+		// Advance DreamThrough only through the batch actually processed so remaining
+		// newer entries are picked up on the next consolidation cycle.
+		processedThrough = selectedLogs[len(selectedLogs)-1].CreatedAt.UTC()
+	}
 	coreUpserts, coreDeletes, dailyLogEntries := verifyDreamOutput(output, coreMemories, verifiedSources, nowUTC)
 
 	expected := summary
 	const maxManualRetries = 2
 	for attempt := 0; ; attempt++ {
-		next := buildNextDreamSummary(expected, from, nowUTC)
+		next := buildNextDreamSummary(expected, from, processedThrough, nowUTC)
 		committed, err := r.tasks.Store.CommitDreamConsolidate(runCtx, state.DreamConsolidateRequest{
 			ExpectedSummary: expected,
 			NextSummary:     next,
@@ -398,7 +429,7 @@ func (r *Runner) dreamConsolidate(ctx context.Context, manual bool) (state.Conve
 	}
 }
 
-func buildNextDreamSummary(base state.ConversationSummary, from, nowUTC time.Time) state.ConversationSummary {
+func buildNextDreamSummary(base state.ConversationSummary, from, processedThrough, nowUTC time.Time) state.ConversationSummary {
 	next := base
 	if !base.From.Equal(from) {
 		next = state.ConversationSummary{From: from, Items: []state.SummaryItem{}}
@@ -406,7 +437,7 @@ func buildNextDreamSummary(base state.ConversationSummary, from, nowUTC time.Tim
 	if next.Items == nil {
 		next.Items = []state.SummaryItem{}
 	}
-	next.DreamThrough = nowUTC
+	next.DreamThrough = processedThrough
 	next.LastDreamAt = nowUTC
 	next.UpdatedAt = nowUTC
 	return next
@@ -598,7 +629,8 @@ func (r *Runner) callDreamConsolidate(ctx context.Context, prompt string) (dream
 		Instructions:    prompts.Runtime("dream", nil),
 		Tools:           []transcript.Tool{dreamConsolidateTool},
 		MaxOutputTokens: 4096,
-		Reasoning:       "medium",
+		Reasoning:       "low",
+		SingleTurn:      true,
 		Messages:        []transcript.Message{{Role: transcript.RoleUser, Parts: []transcript.Part{{Text: prompt}}}},
 	})
 	if err != nil {

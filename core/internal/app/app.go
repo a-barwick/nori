@@ -39,6 +39,7 @@ type App struct {
 	Model          string
 	handler        http.Handler
 	Assistant      *api.Assistant
+	Deltas         *api.DeltaBroker
 	Scheduler      *scheduler.Service
 }
 
@@ -80,6 +81,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		return nil, false, fmt.Errorf("user time zone must be an IANA time zone")
 	}
 	userFacts := user.Facts()
+	deltas := api.NewDeltaBroker()
 	result := &App{
 		UserID:   user.ID,
 		Store:    store,
@@ -87,6 +89,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		Features: cfg.Features,
 		Waker:    waker,
 		Model:    model,
+		Deltas:   deltas,
 	}
 	services, err := platform.Assistant(cfg, user, store)
 	if err != nil {
@@ -110,23 +113,23 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	}
 	toolSource := &agent.Service{Extensions: services.Tools}
 	result.Scheduler = services.Scheduler
+	summaryModels := cfg.Models
+	if summaryModels.EffectiveInnerProvider() == "openrouter" && summaryModels.Inner == "" {
+		summaryModels.Inner = settings.DefaultOpenRouterInnerModel
+	}
+	summarizer := platform.TaskModelForUser(summaryModels, store, user.ID)
 	result.Assistant = &api.Assistant{
 		Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
 		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, MCP: services.MCP,
 		Features:      AssistantFeatures(services.Connections, cfg.Features.DisableBackgroundTasks),
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
-		NormalizeMemory: newMemoryNormalizer(outer, cfg),
+		NormalizeMemory: newMemoryNormalizer(summarizer, outer, store, cfg),
 	}
 	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
 	if cfg.Features.DisableBackgroundTasks {
 		return result, collapsed, nil
 	}
 	tasks := &conversation.Tasks{Store: store}
-	summaryModels := cfg.Models
-	if summaryModels.EffectiveInnerProvider() == "openrouter" && summaryModels.Inner == "" {
-		summaryModels.Inner = settings.DefaultOpenRouterInnerModel
-	}
-	summarizer := platform.TaskModelForUser(summaryModels, store, user.ID)
 	var classifier conversation.IntentClassifier
 	if !cfg.Features.DisableJev {
 		classifier = platform.ClassifierForUser(cfg.Models, user.ID)
@@ -135,6 +138,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	runner.UserFacts = userFacts
 	runner.Profile = platform.Profile(user, services.Connections)
 	runner.Clock = conversation.Clock{Location: location}
+	runner.OnDelta = deltas.Publish
 
 	taskService := agent.New(store, platform.TaskModelForUser(cfg.Models, store, user.ID))
 	taskService.Capabilities = agent.Capabilities{SearchKey: cfg.SearchKey, Location: location}
@@ -159,7 +163,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 			Adapters:     services.Adapters,
 			Connections:  services.Connections,
 			Permissions:  services.Permissions,
-			AutoReviewer: newAutoReviewer(outer, cfg),
+			AutoReviewer: newAutoReviewer(outer, store, cfg),
 		},
 	}
 
@@ -235,7 +239,7 @@ func (a *App) Close() {
 }
 
 func (a *App) apiDeps() api.Deps {
-	return api.Deps{Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features, Assistant: a.Assistant}
+	return api.Deps{Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features, Assistant: a.Assistant, Deltas: a.Deltas}
 }
 
 // Resume repairs this user's discovery leases/wakes (including StopPaused while globally paused)
@@ -611,6 +615,14 @@ func AssistantFeatures(conns *connections.Service, disableBackgroundTasks bool) 
 // action-boundary guardrails. Deterministic blocks/escalations always run first and never
 // invoke the model; model errors fail safe to "ask".
 func NewOuterModelAutoReviewer(model conversation.ReplyModel) permissions.AutoReviewer {
+	return NewOuterModelAutoReviewerWithMeter(model, nil)
+}
+
+// NewOuterModelAutoReviewerWithMeter wires durable usage metering into AutoReviewer calls
+// so action-boundary reviews count against per-user spend caps and usage ledgers.
+func NewOuterModelAutoReviewerWithMeter(model conversation.ReplyModel, meter interface {
+	RecordUsage(context.Context, state.Usage) error
+}) permissions.AutoReviewer {
 	if model == nil {
 		return permissions.DeterministicAutoReviewer{}
 	}
@@ -622,11 +634,29 @@ func NewOuterModelAutoReviewer(model conversation.ReplyModel) permissions.AutoRe
 			if err != nil {
 				return "", err
 			}
+			var recordFn func(context.Context, state.Usage) error
+			if meter != nil {
+				recordFn = func(rctx context.Context, u state.Usage) error {
+					if u.InputID == "" {
+						u.InputID = "auto-review"
+					}
+					return meter.RecordUsage(rctx, u)
+				}
+			}
 			reply, err := model.Respond(reviewCtx, conversation.ReplyRequest{
 				Messages:       []json.RawMessage{msg},
 				NoDispatch:     true,
+				RecordUsage:    recordFn,
 				TelemetryInput: "action-boundary auto-review",
 			})
+			if meter != nil && reply.Usage.ID != "" {
+				if reply.Usage.InputID == "" {
+					reply.Usage.InputID = "auto-review"
+				}
+				saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				_ = meter.RecordUsage(saveCtx, reply.Usage)
+				saveCancel()
+			}
 			if err != nil {
 				return "", err
 			}
@@ -635,18 +665,29 @@ func NewOuterModelAutoReviewer(model conversation.ReplyModel) permissions.AutoRe
 	}
 }
 
-func newAutoReviewer(outer conversation.ReplyModel, cfg settings.Settings) permissions.AutoReviewer {
+func newAutoReviewer(outer conversation.ReplyModel, meter interface {
+	RecordUsage(context.Context, state.Usage) error
+}, cfg settings.Settings) permissions.AutoReviewer {
 	_, outerKey := cfg.Models.OuterCredential()
 	if outer != nil && cfg.Models.TestURL == "" && (cfg.Models.UsesGatewayOuter() || outerKey != "") {
-		return NewOuterModelAutoReviewer(outer)
+		return NewOuterModelAutoReviewerWithMeter(outer, meter)
 	}
 	return permissions.DeterministicAutoReviewer{}
 }
 
-func newMemoryNormalizer(outer conversation.ReplyModel, cfg settings.Settings) func(context.Context, conversation.ManualMemoryInput) (conversation.NormalizedMemory, error) {
+func newMemoryNormalizer(inner conversation.SummaryModel, outer conversation.ReplyModel, meter interface {
+	RecordUsage(context.Context, state.Usage) error
+}, cfg settings.Settings) func(context.Context, conversation.ManualMemoryInput) (conversation.NormalizedMemory, error) {
+	if cfg.Models.TestURL != "" {
+		return nil
+	}
+	_, innerKey := cfg.Models.TaskCredential()
+	if inner != nil && (cfg.Models.UsesGatewayInner() || innerKey != "") {
+		return conversation.NewSummaryModelMemoryNormalizer(inner)
+	}
 	_, outerKey := cfg.Models.OuterCredential()
-	if outer != nil && cfg.Models.TestURL == "" && (cfg.Models.UsesGatewayOuter() || outerKey != "") {
-		return conversation.NewMemoryNormalizer(outer)
+	if outer != nil && (cfg.Models.UsesGatewayOuter() || outerKey != "") {
+		return conversation.NewMemoryNormalizerWithMeter(outer, meter)
 	}
 	return nil
 }

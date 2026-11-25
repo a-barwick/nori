@@ -35,6 +35,8 @@ type Request struct {
 	Reasoning string
 	// WebSearch enables the provider's native web search tool when supported.
 	WebSearch bool
+	// SingleTurn disables multi-turn encrypted reasoning state export (e.g. compaction/extract/dream).
+	SingleTurn bool
 }
 
 // WebSearchCall records one provider-executed web search action (such as an OpenAI

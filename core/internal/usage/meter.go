@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -87,6 +88,9 @@ func RecordReportedCost(record *state.Usage, cost *float64) bool {
 
 // Finish persists the final observation independently of caller cancellation.
 func Finish(ctx context.Context, meter Meter, u state.Usage) error {
+	if u.CostUSD == nil && u.EstimatedExposureUSD <= 0 && u.RequestStatus != "not_sent" {
+		u.EstimatedExposureUSD = EstimateExposureUSD(u.Model)
+	}
 	save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	return meter.RecordUsage(save, u)
@@ -98,6 +102,20 @@ var ErrUserQuotaExceeded = errors.New("usage: per-user rate or spend limit excee
 
 const defaultUnknownCallEstimateUSD = 0.02
 
+// EstimateExposureUSD returns a conservative pre-I/O USD reservation for a model call,
+// kept separate from recorded actual spend (CostUSD).
+func EstimateExposureUSD(model string) float64 {
+	m := strings.ToLower(strings.TrimSpace(model))
+	switch {
+	case strings.Contains(m, "opus") || strings.Contains(m, "gpt-6.2-sol") || strings.Contains(m, "gpt-6.1-sol"):
+		return 0.05
+	case strings.Contains(m, "haiku") || strings.Contains(m, "mini") || strings.Contains(m, "nano") || strings.Contains(m, "terra"):
+		return 0.01
+	default:
+		return defaultUnknownCallEstimateUSD
+	}
+}
+
 // WindowReader summarizes a user's durable usage records (backed by Postgres)
 // across hourly and daily cutoffs in a single scan so multi-replica Cloud Run
 // instances enforce shared per-user rate and spend admission limits.
@@ -105,11 +123,21 @@ type WindowReader interface {
 	UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff time.Time) (hourCalls int, daySpendUSD float64, dayUnknownCalls int, err error)
 }
 
+// AtomicReserver checks per-user quotas and writes the pending usage reservation
+// inside a single storage transaction so concurrent requests cannot race past a cap.
+type AtomicReserver interface {
+	ReserveUsage(ctx context.Context, u state.Usage, hourCutoff, dayCutoff time.Time, maxCallsPerHour int, maxUSDPerDay float64, unknownEstimateUSD float64) (bool, error)
+}
+
 // WithAdmission enforces Postgres-backed pre-I/O per-user rate and spend caps
 // before persisting a "pending" usage attempt. Non-pending terminal updates
 // always pass through so completed calls are never dropped.
 func WithAdmission(local Meter, reader WindowReader, maxCallsPerHour int, maxUSDPerDay float64, now func() time.Time) Meter {
-	if reader == nil || (maxCallsPerHour <= 0 && maxUSDPerDay <= 0) {
+	reserver, hasReserver := local.(AtomicReserver)
+	if !hasReserver {
+		reserver, hasReserver = reader.(AtomicReserver)
+	}
+	if (!hasReserver && reader == nil) || (maxCallsPerHour <= 0 && maxUSDPerDay <= 0) {
 		return local
 	}
 	return Func(func(ctx context.Context, u state.Usage) error {
@@ -128,6 +156,26 @@ func WithAdmission(local Meter, reader WindowReader, maxCallsPerHour int, maxUSD
 			if maxUSDPerDay > 0 {
 				dayCutoff = t.Add(-24 * time.Hour)
 			}
+			if u.EstimatedExposureUSD <= 0 {
+				u.EstimatedExposureUSD = EstimateExposureUSD(u.Model)
+			}
+			if hasReserver {
+				allowed, err := reserver.ReserveUsage(ctx, u, hourCutoff, dayCutoff, maxCallsPerHour, maxUSDPerDay, defaultUnknownCallEstimateUSD)
+				if err == nil {
+					if !allowed {
+						slog.WarnContext(ctx, "per-user atomic usage reservation exceeded limit before provider I/O",
+							"model", u.Model, "incoming_exposure_usd", u.EstimatedExposureUSD, "max_calls_per_hour", maxCallsPerHour, "max_usd_per_day", maxUSDPerDay)
+						return ErrUserQuotaExceeded
+					}
+					return nil
+				}
+				if !errors.Is(err, state.ErrReserveUnsupported) {
+					return err
+				}
+				if reader == nil {
+					return local.RecordUsage(ctx, u)
+				}
+			}
 			hourCalls, daySpendUSD, dayUnknownCalls, err := reader.UsageWindowSummary(ctx, hourCutoff, dayCutoff)
 			if err != nil {
 				return err
@@ -138,13 +186,16 @@ func WithAdmission(local Meter, reader WindowReader, maxCallsPerHour int, maxUSD
 				return ErrUserQuotaExceeded
 			}
 			if maxUSDPerDay > 0 {
-				exposure := daySpendUSD + float64(dayUnknownCalls)*defaultUnknownCallEstimateUSD
-				if exposure >= maxUSDPerDay {
+				exposure := daySpendUSD + float64(dayUnknownCalls)*defaultUnknownCallEstimateUSD + u.EstimatedExposureUSD
+				if exposure > maxUSDPerDay {
 					slog.WarnContext(ctx, "per-user daily spend limit exceeded before provider I/O",
 						"spend_usd", daySpendUSD, "unknown_calls", dayUnknownCalls, "exposure_usd", exposure, "limit_usd", maxUSDPerDay)
 					return ErrUserQuotaExceeded
 				}
 			}
+		} else if u.CostUSD != nil || u.RequestStatus == "not_sent" {
+			// Terminal record with known actual spend or not_sent clears estimated exposure.
+			u.EstimatedExposureUSD = 0
 		}
 		return local.RecordUsage(ctx, u)
 	})

@@ -25,6 +25,8 @@ type Deps struct {
 	Ops      Operations
 	// Assistant serves the /v1 management routes. Nil leaves them unregistered.
 	Assistant *Assistant
+	// Deltas optionally broadcasts ephemeral action-free outer streaming text snapshots.
+	Deltas *DeltaBroker
 	// ReadyCheck optionally verifies backend readiness for /readyz and /api/readyz.
 	ReadyCheck func(context.Context) error
 	// ReadyTimeout optionally overrides the default 2s readiness probe timeout.

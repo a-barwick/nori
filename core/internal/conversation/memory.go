@@ -15,8 +15,8 @@ import (
 	"nori/internal/state/docstore"
 )
 
-// memoryMessage shows the saved Core memories. It comes right after the instructions, so it is part of the
-// byte-for-byte deterministic KV-cache-stable prefix of every request.
+// memoryMessage shows the saved Core memories in compact JSON (omitting default
+// about="the user" and provenance="user_explicit" as documented in the header).
 func memoryMessage(memories []state.Memory) json.RawMessage {
 	content := prompts.Runtime("memories-none", nil)
 	if len(memories) > 0 {
@@ -25,7 +25,7 @@ func memoryMessage(memories []state.Memory) json.RawMessage {
 		type shown struct {
 			ID         string `json:"id"`
 			Text       string `json:"text"`
-			About      string `json:"about"`
+			About      string `json:"about,omitempty"`
 			Section    string `json:"section,omitempty"`
 			Pinned     bool   `json:"pinned,omitempty"`
 			Provenance string `json:"provenance,omitempty"`
@@ -33,13 +33,21 @@ func memoryMessage(memories []state.Memory) json.RawMessage {
 		}
 		list := make([]shown, 0, len(ordered))
 		for _, m := range ordered {
+			about := m.About
+			if about == "the user" {
+				about = ""
+			}
+			prov := string(m.EffectiveProvenance())
+			if prov == string(state.ProvenanceUserExplicit) {
+				prov = ""
+			}
 			list = append(list, shown{
 				ID:         m.ID,
 				Text:       m.Text,
-				About:      m.About,
+				About:      about,
 				Section:    m.Section,
 				Pinned:     m.Pinned,
-				Provenance: string(m.EffectiveProvenance()),
+				Provenance: prov,
 				Saved:      m.UpdatedAt.Format("2006-01-02"),
 			})
 		}
@@ -60,14 +68,15 @@ func summaryMessage(s state.ConversationSummary) json.RawMessage {
 	for _, item := range s.Items {
 		items = append(items, shown{item.Kind, item.Quote, item.InputID, item.Note})
 	}
-	data, _ := json.Marshal(map[string]any{
-		"items":              items,
-		"model_gist":         s.Gist,
-		"turns_indexed":      s.Turns,
-		"source_excerpts":    s.Excerpts,
-		"flushed_through":    s.EffectiveFlushedThrough(),
-		"refinement_through": s.RefinementThrough,
-	})
+	payload := map[string]any{
+		"items":         items,
+		"model_gist":    s.Gist,
+		"turns_indexed": s.Turns,
+	}
+	if len(s.Excerpts) > 0 {
+		payload["source_excerpts"] = s.Excerpts
+	}
+	data, _ := json.Marshal(payload)
 	return modelMessage(map[string]string{"role": "system", "content": prompts.Runtime("summary", map[string]any{"Summary": string(data)})})
 }
 
