@@ -23,7 +23,7 @@ export type Trigger = ({
   predicate_ref: string;
   min_interval_seconds: number;
 });
-/** Per-definition policy. The default offered at creation depends on D3; no hidden global default. */
+/** Per-definition policy for runs missed during downtime. Optional on creation; defaults to "latest". */
 export type MissedRun = "skip" | "latest" | "all";
 export type Automation = {
   id: ID;
@@ -70,7 +70,7 @@ export type AutomationEditable = {
   };
   budget_usd: number;
   max_active_runs: number;
-  missed_run: MissedRun;
+  missed_run?: MissedRun;
   execution_window_seconds: number;
   destination_ids: ID[];
   end_at?: Instant;

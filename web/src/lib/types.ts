@@ -1,7 +1,7 @@
 export type Sender = "nori" | "me";
 
 /** One piece of a message. A client that doesn't know the type shows `fallback`. */
-export type Part = { type: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number; url?: string;
+export type Part = { type: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number; url?: string; scheduled_at?: string;
   /** Card parts (contract CardPart): a typed reference to server state. */
   schema_version?: number; kind?: string; resource?: { kind: string; id: string; revision?: number }; actions?: string[] };
 /** A saved output of a task. Created, checked, reported and delivered are separate facts. */
@@ -14,11 +14,17 @@ export type Attachment = { id: string; name: string; media_type: string; size: n
 export type DraftFile = Attachment & { status: "uploading" | "ready" | "error"; error?: string; file: File; /** 0–1 while uploading, when the browser reports it. */ progress?: number };
 export type MarkState = "idle" | "attentive" | "thinking";
 
+export type MessageStatus = "completed" | "failed" | "cancelled" | "superseded";
+export type MessageError = { code: string; message: string; retryable: boolean };
+
 export interface TextItem {
   id: string;
   sender: Sender;
   at: number;
   text: string;
+  status?: MessageStatus;
+  error?: MessageError;
+  turnId?: string;
   display?: Part["display"];
   parts?: Part[];
   debug?: DebugInfo;
@@ -33,7 +39,7 @@ export interface Thread {
 
 // Wire types for the Go runtime API. Field names match its JSON exactly.
 
-export type Message = { id: string; run_id: string; turn_id?: string; role: "user" | "assistant"; text: string; parts?: Part[]; result_ids?: string[]; created_at: string };
+export type Message = { id: string; run_id: string; turn_id?: string; role: "user" | "assistant"; status?: MessageStatus; text: string; parts?: Part[]; error?: MessageError; result_ids?: string[]; created_at: string };
 type RunEvent = { id?: string; sequence?: number; instruction_revision?: number; kind: string; text: string; created_at: string };
 type TaskQuestion = { id: string; kind: "input" | "work"; text: string; call_id?: string; instruction_revision: number; resolved_by?: string };
 type TaskHold = { id: string; task_id: string; question: string; status: "pending" | "ready" | "answered" | "failed"; answered_turn_id?: string; created_at: string };

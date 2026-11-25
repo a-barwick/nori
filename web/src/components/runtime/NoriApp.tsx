@@ -82,17 +82,22 @@ export function ChatScreen() {
   );
   const conversation = useMemo<Conversation>(() => {
     const generatedRequests = new Set(session?.dispatches?.map((dispatch) => `${dispatch.id}-user`));
-    const items: TextItem[] = (session?.messages ?? []).filter((message) => !(message.run_id && message.id === `${message.run_id}-user` && message.turn_id) && !generatedRequests.has(message.id)).map((message) => ({
-      id: message.id,
-      sender: message.role === "user" ? "me" : "nori",
-      at: Date.parse(message.created_at),
-      ...partsOf(message),
-      debug: debug && message.role === "assistant"
-        ? { run: session?.runs.find((run) => run.id === message.run_id), turns: session?.traces?.filter((trace) => trace.turn_id === (message.turn_id || message.id.replace(/-assistant$/, ""))), turnId: message.turn_id }
-        : undefined,
-    }));
+    const items: TextItem[] = (session?.messages ?? [])
+      .filter((message) => message.status !== "superseded" && !(message.run_id && message.id === `${message.run_id}-user` && message.turn_id) && !generatedRequests.has(message.id))
+      .map((message) => ({
+        id: message.id,
+        sender: message.role === "user" ? "me" : "nori",
+        at: Date.parse(message.created_at),
+        status: message.status,
+        error: message.error,
+        turnId: message.turn_id,
+        ...partsOf(message),
+        debug: debug && message.role === "assistant"
+          ? { run: session?.runs.find((run) => run.id === message.run_id), turns: session?.traces?.filter((trace) => trace.turn_id === (message.turn_id || message.id.replace(/-assistant$/, ""))), turnId: message.turn_id }
+          : undefined,
+      }));
     // Saved: the core has the message (its receipt or the stream returned it) and Nori hasn't replied yet.
-    const lastNori = items.findLast((item) => item.sender === "nori");
+    const lastNori = items.findLast((item) => item.sender === "nori" && item.status !== "failed");
     const lastMine = items.findLast((item) => item.sender === "me");
     if (lastMine && (!lastNori || lastNori.at < lastMine.at) && (session?.conversation?.pending || session?.conversation?.processing)) lastMine.receipt = "saved";
     for (const item of pending) {
@@ -138,7 +143,8 @@ export function ChatScreen() {
   );
   // An outage clears by itself (the stream and snapshot retry with a growing wait), so say that instead of an error.
   const reconnecting = error === SERVICE_UNAVAILABLE || error === STREAM_RECONNECTING;
-  const notice = reconnecting ? "Can't reach Nori right now. Reconnecting on its own…" : error || (session?.conversation?.routing_blocked && !runtime.conversationBusy
+  const hasVisibleFailedCard = conversation.items.some((item) => item.sender === "nori" && item.status === "failed");
+  const notice = reconnecting ? "Can't reach Nori right now. Reconnecting on its own…" : error || (session?.conversation?.routing_blocked && !runtime.conversationBusy && !hasVisibleFailedCard
     ? "Some work is waiting for this message to be resolved. Send a follow-up to retry or clarify."
     : "");
   const waitingCount = activeTasks.filter((run) => run.question ? !run.question.resolved_by : run.waiting).length;
@@ -171,6 +177,8 @@ export function ChatScreen() {
             status={work}
             interactions={inlineInteractions}
             onInteractionResolved={handleInteractionResolved}
+            onRetryMessage={(item) => void runtime.retryTurn({ turn_id: item.turnId, message_id: item.id })}
+            retryingMessageId={runtime.retryingMessageId}
             onUnread={onUnread}
             onShown={runtime.markShown}
             readPosition={session?.read_position}

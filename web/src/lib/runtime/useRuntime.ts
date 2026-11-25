@@ -158,6 +158,7 @@ export function useRuntime(localMode = false) {
   const wasConversationBusy = useRef(false);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [retryingMessageId, setRetryingMessageId] = useState<string>();
   const [pending, setPending] = useState<Pending[]>([]);
   const pendingRef = useRef(pending);
   const [taskCommands, setTaskCommands] = useState<PendingTaskCommand[]>([]);
@@ -167,7 +168,7 @@ export function useRuntime(localMode = false) {
   const [selectedId, setSelectedId] = useState<string>();
   const [visible, setVisible] = useState(true);
   const [shownMessageIDs, setShownMessageIDs] = useState<Set<string>>(() => new Set());
-  const shownMessageID = session?.messages.findLast((message) => message.role === "assistant" && shownMessageIDs.has(message.id))?.id ?? "";
+  const shownMessageID = session?.messages.findLast((message) => message.role === "assistant" && message.status !== "failed" && message.status !== "superseded" && shownMessageIDs.has(message.id))?.id ?? "";
   const [deliveryRetry, setDeliveryRetry] = useState(0);
   const [readRetry, setReadRetry] = useState(0);
   const controllers = useRef(new Set<AbortController>());
@@ -260,7 +261,7 @@ export function useRuntime(localMode = false) {
       if (!input?.turn_id) continue;
       const attempt = session.traces?.filter((trace) => trace.turn_id === input.turn_id).sort((a,b) => b.attempt - a.attempt)[0];
       if (attempt?.status === "error") { finishTiming(id, "error"); continue; }
-      if (attempt?.status !== "completed" || !session.messages.some((message) => message.role === "assistant" && !message.run_id && message.turn_id === input.turn_id)) continue;
+      if (attempt?.status !== "completed" || !session.messages.some((message) => message.role === "assistant" && !message.run_id && message.turn_id === input.turn_id && message.status !== "failed" && message.status !== "superseded")) continue;
       finishTiming(id, "reply");
       Sentry.addBreadcrumb({ category: "nori", message: "reply received" });
     }
@@ -617,6 +618,32 @@ export function useRuntime(localMode = false) {
     updateTaskCommands((current) => current.filter((item) => item.command.id !== id || !item.rejected));
   }
 
+  const retryTurn = useCallback(async (opts?: { turn_id?: string; message_id?: string }) => {
+    if (replacingSnapshot.current) return;
+    const key = opts?.message_id ?? opts?.turn_id ?? "retry";
+    setRetryingMessageId(key);
+    const controller = new AbortController();
+    controllers.current.add(controller);
+    const serial = ++requestSerial.current;
+    try {
+      const payload: Record<string, string> = {};
+      if (opts?.turn_id) payload.turn_id = opts.turn_id;
+      if (opts?.message_id) payload.message_id = opts.message_id;
+      const data = await post<Session>("retry", payload, controller.signal);
+      if (!controller.signal.aborted) {
+        applySnapshot(data, serial);
+        setError("");
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setError(err instanceof Error ? err.message : "Could not retry that message.");
+      }
+    } finally {
+      controllers.current.delete(controller);
+      setRetryingMessageId((current) => (current === key ? undefined : current));
+    }
+  }, [applySnapshot]);
+
   function dismissPending(id: string) {
     if (submissions.current.has(id)) return;
     updatePending((current) => current.filter((item) => item.id !== id || !item.error));
@@ -625,8 +652,8 @@ export function useRuntime(localMode = false) {
 
   return { session, draft, setDraft, draftFiles,
     attachFiles: (files: File[]) => attach(files, upload, setError), retryFile: (item: DraftFile) => retry(item, upload),
-    removeFile, error: error || streamError, loading, loadingOlder, pending, setSelectedId,
+    removeFile, error: error || streamError, loading, loadingOlder, retryingMessageId, pending, setSelectedId,
     activeTasks, selected, tasksUnavailable, busy, conversationBusy, taskCommands, taskDrafts,
     setTaskDraft: (id: string, text: string) => setTaskDrafts((current) => ({ ...current, [id]: text })),
-    refreshHistory, loadOlder, send, retry: submit, dismissPending, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand, markShown };
+    refreshHistory, loadOlder, send, retry: submit, retryTurn, dismissPending, commandTask, retryTaskCommand: submitTaskCommand, dismissTaskCommand, markShown };
 }

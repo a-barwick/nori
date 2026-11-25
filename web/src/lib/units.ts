@@ -7,7 +7,8 @@ export type GroupUnit = { key: string; item: TextItem; markdown: string };
 export type Unit =
   | { type: "sep"; key: string; label: string }
   | { type: "group"; key: string; sender: Sender; units: GroupUnit[] }
-  | { type: "page"; key: string; item: TextItem; body: string };
+  | { type: "page"; key: string; item: TextItem; body: string }
+  | { type: "error"; key: string; item: TextItem };
 
 const GROUP_WINDOW = minutes(3);
 const SEPARATOR_GAP = minutes(15);
@@ -24,6 +25,12 @@ export function buildUnits(items: TextItem[]): Unit[] {
       group = undefined;
     }
     prevAt = item.at;
+    if (item.sender === "nori" && item.status === "failed") {
+      out.push({ type: "error", key: `e-${item.id}`, item });
+      group = undefined;
+      lastGroupAt = item.at;
+      continue;
+    }
     const classified = item.sender === "me" ? { mode: "bubble" as const, body: item.text } : classify(item.text, item.display);
     if (!group || group.sender !== item.sender || item.at - lastGroupAt > GROUP_WINDOW) {
       group = { type: "group", key: `g-${item.id}`, sender: item.sender, units: [] };
