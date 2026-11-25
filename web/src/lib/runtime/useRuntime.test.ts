@@ -471,4 +471,59 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
       hook.unmount();
     }
   });
+
+  test("retryTurn posts to /api/retry with turn_id/message_id and applies updated session snapshot", async () => {
+    const calls: { url: string; body?: Record<string, unknown> }[] = [];
+    const failedMessage = {
+      id: "turn-1-assistant",
+      run_id: "",
+      turn_id: "turn-1",
+      role: "assistant" as const,
+      status: "failed" as const,
+      text: "Nori's model service is temporarily busy. Your message is saved — tap Retry to try again.",
+      error: {
+        code: "provider_overloaded",
+        message: "Nori's model service is temporarily busy. Your message is saved — tap Retry to try again.",
+        retryable: true,
+      },
+      created_at: "2026-11-25T07:01:18Z",
+    };
+
+    g.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
+      calls.push({ url, body });
+      if (url.startsWith("/api/v1/snapshot")) {
+        return Response.json(baseSession({ messages: [failedMessage], position: 10 }));
+      }
+      if (url === "/api/retry") {
+        return Response.json(
+          baseSession({
+            position: 11,
+            messages: [{ ...failedMessage, status: "superseded" }],
+            conversation: { pending: true, processing: false, input_ids: [], restart_count: 0, frozen: false, revision: 6, consumed: 0 },
+          }),
+          { status: 202 },
+        );
+      }
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const hook = mountHook(() => useRuntime());
+    try {
+      await flush();
+      assert.equal(hook.current.session?.messages[0].status, "failed");
+
+      await hook.current.retryTurn({ turn_id: "turn-1", message_id: "turn-1-assistant" });
+      await flush();
+
+      const retryCall = calls.find((call) => call.url === "/api/retry");
+      assert.ok(retryCall);
+      assert.deepEqual(retryCall.body, { turn_id: "turn-1", message_id: "turn-1-assistant" });
+      assert.equal(hook.current.session?.messages[0].status, "superseded");
+      assert.equal(hook.current.conversationBusy, true);
+    } finally {
+      hook.unmount();
+    }
+  });
 });

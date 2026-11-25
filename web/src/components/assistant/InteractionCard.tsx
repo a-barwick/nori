@@ -64,10 +64,15 @@ function useRespond(interaction: Interaction, onResolved?: OnInteractionResolved
   return { respond, ...action, current, legacy };
 }
 
+function isInternalScheduleApproval(payload: Partial<ApprovalPayload>) {
+  return !!payload.tool_id?.startsWith("nori/") && !payload.account?.connection_id && !payload.account?.label?.trim();
+}
+
 /** Core uses an approval's whole summary as its prompt (task external.go); the card shows that summary below, so the heading is a short question. */
 function heading(interaction: Interaction) {
   const payload = interaction.payload as Partial<ApprovalPayload>;
   if (interaction.kind !== "approval" || interaction.prompt !== payload.summary) return interaction.prompt;
+  if (payload.tool_id === "nori/assistant/automation-create") return "Create this routine?";
   return ({ sensitive_send: "Send this?", reversible_write: "Make this change?", read: "Allow this?" } as Record<string, string>)[payload.effect ?? ""] ?? "Approve this action?";
 }
 
@@ -219,7 +224,13 @@ function Approval({
   const cut = send ? payload.summary.indexOf("\n") : -1;
   const summaryHeading = cut >= 0 ? payload.summary.slice(0, cut) : payload.summary;
   const message = cut >= 0 ? payload.summary.slice(cut + 1) : "";
-  const warning = payload.warning?.trim();
+  const rawWarning = payload.warning?.trim();
+  const internalSchedule = isInternalScheduleApproval(payload);
+  const warning = internalSchedule && rawWarning
+    ? rawWarning.replace(/^This modifies external records\.?\s*/i, "").trim()
+    : rawWarning;
+  const accountLabel = payload.account?.label?.trim();
+  const showMeta = !internalSchedule || !!accountLabel || !!payload.recipients?.length;
   const buttonSize = inline ? "sm" : "md";
   return <div>
     <p className={cn("whitespace-pre-line text-ink [overflow-wrap:anywhere]", inline ? "text-row" : "text-body")}>{summaryHeading}</p>
@@ -238,12 +249,14 @@ function Approval({
         <p className="min-w-0 flex-1 whitespace-pre-line [overflow-wrap:anywhere]">{warning}</p>
       </div>
     )}
-    <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-meta">
-      {send && !!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
-      {!!payload.account.label && <><dt className="text-ink-3">{send ? "From" : "Account"}</dt><dd className="text-ink">{payload.account.label}</dd></>}
-      {!send && !!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
-      <dt className="text-ink-3">Effect</dt><dd><Pill tone={payload.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[payload.effect]}</Pill></dd>
-    </dl>
+    {showMeta && (
+      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-meta">
+        {send && !!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
+        {!!accountLabel && <><dt className="text-ink-3">{send ? "From" : "Account"}</dt><dd className="text-ink">{accountLabel}</dd></>}
+        {!send && !!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
+        <dt className="text-ink-3">Effect</dt><dd><Pill tone={payload.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[payload.effect]}</Pill></dd>
+      </dl>
+    )}
     {!!payload.material_effects?.length && <ul className="mt-3 space-y-1 text-meta text-ink-2">{payload.material_effects.map((effect) => <li key={effect} className="flex gap-2"><ShieldCheck size={14} className="mt-0.5 shrink-0 text-ink-3" aria-hidden />{effect}</li>)}</ul>}
     <div className={cn("flex flex-wrap gap-2", inline ? "mt-3" : "mt-4")}>
       <Button

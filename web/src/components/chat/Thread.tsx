@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy, FileText } from "lucide-react";
+import { AlertCircle, Check, Copy, FileText, RefreshCw } from "lucide-react";
 import { InteractionCard, type OnInteractionResolved } from "@/components/assistant/InteractionCard";
 import { DebugBlock } from "@/components/dev/DebugBlock";
 import { NoriMark } from "@/components/mark/NoriMark";
@@ -89,12 +89,74 @@ function WorkLine({ label, onDetails }: { label: string; onDetails?: () => void 
   );
 }
 
-function UnitView({ unit, onOpenDocument }: { unit: Unit; onOpenDocument: OpenDocument }) {
+function ErrorCard({
+  item,
+  onRetry,
+  retrying,
+}: {
+  item: TextItem;
+  onRetry?: (item: TextItem) => void;
+  retrying?: boolean;
+}) {
+  const message = item.error?.message || item.text || "Something went wrong. Please try again.";
+  const retryable = item.error ? item.error.retryable : true;
+  return (
+    <article
+      role="alert"
+      data-item-id={item.id}
+      data-message-error
+      data-error-code={item.error?.code}
+      className="mt-4 max-w-[min(680px,100%)] rounded-card border border-danger/25 bg-surface px-4 py-3.5 shadow-[0_1px_2px_rgba(25,9,54,0.05)]"
+    >
+      <div className="flex items-start gap-2.5">
+        <AlertCircle size={18} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-meta font-semibold text-ink">Reply didn’t go through</span>
+            <span className="text-caption text-ink-3">· {clock(item.at)}</span>
+          </div>
+          <p className="mt-1 whitespace-pre-line text-body text-ink-2 [overflow-wrap:anywhere]">{message}</p>
+          {retryable && onRetry && (
+            <div className="mt-3">
+              <Button size="sm" variant="primary" disabled={retrying} onClick={() => onRetry(item)}>
+                <RefreshCw size={14} className={retrying ? "animate-spin motion-reduce:animate-none" : undefined} aria-hidden />
+                {retrying ? "Retrying…" : "Retry"}
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function UnitView({
+  unit,
+  onOpenDocument,
+  onRetryMessage,
+  retryingMessageId,
+}: {
+  unit: Unit;
+  onOpenDocument: OpenDocument;
+  onRetryMessage?: (item: TextItem) => void;
+  retryingMessageId?: string;
+}) {
   switch (unit.type) {
     case "sep":
       return <div className="my-6 text-center text-caption text-ink-3">{unit.label}</div>;
     case "page":
       return <><PageBlock onOpenDocument={onOpenDocument} item={unit.item} body={unit.body} />{unit.item.debug && <DebugBlock info={unit.item.debug} />}</>;
+    case "error":
+      return (
+        <>
+          <ErrorCard
+            item={unit.item}
+            onRetry={onRetryMessage}
+            retrying={retryingMessageId === unit.item.id || (!!unit.item.turnId && retryingMessageId === unit.item.turnId)}
+          />
+          {unit.item.debug && <DebugBlock info={unit.item.debug} />}
+        </>
+      );
     case "group":
       return (
         <div className={cn("mt-4 flex flex-col gap-1", unit.sender === "me" ? "items-end" : "items-start")}>
@@ -124,6 +186,8 @@ export function Thread({
   readPosition,
   interactions,
   onInteractionResolved,
+  onRetryMessage,
+  retryingMessageId,
 }: {
   onShown?: (messageIDs: string[]) => void;
   readPosition?: ReadPosition;
@@ -138,6 +202,8 @@ export function Thread({
   onUnread: (count: number, jump: () => void) => void;
   interactions?: InlineInteractionEntry[];
   onInteractionResolved?: OnInteractionResolved;
+  onRetryMessage?: (item: TextItem) => void;
+  retryingMessageId?: string;
 }) {
   const thread = conversation;
   const items = thread.items;
@@ -177,7 +243,7 @@ export function Thread({
     const report = () => {
       if (document.hidden) return;
       const ids = new Set([...shown].map((node) => (node as HTMLElement).dataset.itemId));
-      const replies = items.filter((item) => item.sender === "nori" && ids.has(item.id));
+      const replies = items.filter((item) => item.sender === "nori" && item.status !== "failed" && ids.has(item.id));
       if (replies.length) onShown(replies.map((item) => item.id));
     };
     const observer = new IntersectionObserver((entries) => {
@@ -293,7 +359,13 @@ export function Thread({
             </div>
           )}
           {units.map((u) => (
-            <UnitView onOpenDocument={onOpenDocument} key={u.key} unit={u} />
+            <UnitView
+              onOpenDocument={onOpenDocument}
+              onRetryMessage={onRetryMessage}
+              retryingMessageId={retryingMessageId}
+              key={u.key}
+              unit={u}
+            />
           ))}
           {!!interactions?.length && (
             <section aria-label="Needs your approval or answer" data-inline-interactions className="mt-4 space-y-3">

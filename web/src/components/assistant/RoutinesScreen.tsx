@@ -274,7 +274,7 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
             <h2 className="text-row font-semibold">Next runs</h2>
             <ul className="mt-1 text-body text-ink">{preview.next_runs.slice(0, 5).map((run) => <li key={run}>{when(run, preview.timezone)}</li>)}</ul>
             {preview.authority_summary && <p className="mt-3 text-meta text-ink-2">Standing permission: {preview.authority_summary}</p>}
-            <p className="mt-1 text-meta text-ink-2">{preview.missed_run_explanation}</p>
+            {preview.missed_run_explanation && <p className="mt-1 text-meta text-ink-2">{preview.missed_run_explanation}</p>}
             {preview.warnings.map((warning) => <p key={warning.code} className="mt-2 text-meta text-warning">{warning.message}</p>)}
           </>}
         </section>}

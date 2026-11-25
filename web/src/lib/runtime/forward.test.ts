@@ -235,6 +235,13 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
       "turn",
     );
     assert.equal(bigOp.status, 413);
+
+    // Retry operation is allowlisted and proxied to upstream api/retry
+    const retryOp = await operationRoute(
+      new Request(`${APP_ORIGIN}/api/retry`, { method: "POST", headers: await authHeaders(email), body: JSON.stringify({ turn_id: "t1" }) }),
+      "retry",
+    );
+    assert.equal(retryOp.status, 200);
   });
 
   test("OAuth callback requires GET navigate and sanitizes unsafe redirect Locations", async () => {
