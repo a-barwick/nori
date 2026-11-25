@@ -2664,8 +2664,23 @@ def main() -> int:
     parser.add_argument("--target-url", default="http://127.0.0.1:8080", help="Local Nori URL when using --workbench-seed")
     parser.add_argument("--keep-db", action="store_true", help="Keep the ephemeral Postgres database after completion")
     parser.add_argument("--no-grade", action="store_true", help="Skip automatic grading after run")
+    parser.add_argument("--outer-model", default=None, help="Outer conversation model ID (overrides NORI_AGENT_MODEL, e.g. gpt-6.2-sol)")
+    parser.add_argument("--outer-reasoning", choices=["low", "medium", "high"], default=None,
+                        help="Outer conversation reasoning effort (overrides NORI_OUTER_REASONING_EFFORT)")
+    parser.add_argument("--inner-model", default=None, help="Inner task/flush/dream model ID (overrides MODEL_NAME, e.g. gpt-6.1-terra)")
+    parser.add_argument("--inner-reasoning", choices=["low", "medium", "high"], default=None,
+                        help="Inner task loop default reasoning effort (overrides NORI_INNER_REASONING_EFFORT)")
     parser.add_argument("--compare", type=Path, help="Optional baseline scorecard.json to diff against")
     args = parser.parse_args()
+
+    if args.outer_model:
+        os.environ["NORI_AGENT_MODEL"] = args.outer_model
+    if args.outer_reasoning:
+        os.environ["NORI_OUTER_REASONING_EFFORT"] = args.outer_reasoning
+    if args.inner_model:
+        os.environ["MODEL_NAME"] = args.inner_model
+    if args.inner_reasoning:
+        os.environ["NORI_INNER_REASONING_EFFORT"] = args.inner_reasoning
 
     if args.concurrency > 1 and args.workbench_seed:
         raise SystemExit(

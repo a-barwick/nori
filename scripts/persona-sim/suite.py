@@ -603,9 +603,33 @@ def main() -> int:
                     help="Abort before starting if OpenRouter credits are below this (USD; 0 disables). Default 15")
     ap.add_argument("--max-usd", type=float, default=None,
                     help="Abort queued personas and fail if cumulative model_usage cost exceeds this USD cap.")
+    ap.add_argument("--outer-model", default=None, help="Outer conversation model ID (overrides NORI_AGENT_MODEL, e.g. gpt-6.2-sol)")
+    ap.add_argument("--outer-reasoning", choices=["low", "medium", "high"], default=None,
+                    help="Outer conversation reasoning effort (overrides NORI_OUTER_REASONING_EFFORT)")
+    ap.add_argument("--inner-model", default=None, help="Inner task/flush/dream model ID (overrides MODEL_NAME, e.g. gpt-6.1-terra)")
+    ap.add_argument("--inner-reasoning", choices=["low", "medium", "high"], default=None,
+                    help="Inner task loop default reasoning effort (overrides NORI_INNER_REASONING_EFFORT)")
     ap.add_argument("--collect-only", nargs="+", type=Path, metavar="PERSONA_DIR",
                     help="Skip running; collect existing persona bundles into a new run dir and grade")
     args, extra = ap.parse_known_args()
+
+    model_overrides: dict[str, str] = {}
+    if args.outer_model:
+        os.environ["NORI_AGENT_MODEL"] = args.outer_model
+        extra = [*extra, "--outer-model", args.outer_model]
+        model_overrides["outer_model"] = args.outer_model
+    if args.outer_reasoning:
+        os.environ["NORI_OUTER_REASONING_EFFORT"] = args.outer_reasoning
+        extra = [*extra, "--outer-reasoning", args.outer_reasoning]
+        model_overrides["outer_reasoning"] = args.outer_reasoning
+    if args.inner_model:
+        os.environ["MODEL_NAME"] = args.inner_model
+        extra = [*extra, "--inner-model", args.inner_model]
+        model_overrides["inner_model"] = args.inner_model
+    if args.inner_reasoning:
+        os.environ["NORI_INNER_REASONING_EFFORT"] = args.inner_reasoning
+        extra = [*extra, "--inner-reasoning", args.inner_reasoning]
+        model_overrides["inner_reasoning"] = args.inner_reasoning
 
     _abort.clear()
     _budget_abort.clear()
@@ -668,6 +692,7 @@ def main() -> int:
 
     manifest_payload = {
         "personas": manifest,
+        "models": model_overrides,
         "cost_summary": cost_summary,
         "max_usd": args.max_usd,
         "budget_exceeded": budget_exceeded,
