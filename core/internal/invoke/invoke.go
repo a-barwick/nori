@@ -51,6 +51,12 @@ type Prepared struct {
 	// Keys are provider idempotency keys derived from the action, such as a client-chosen event ID. They are not
 	// part of the approval digest: an approved action re-called unchanged must match its approval.
 	Keys map[string]string
+	// PromptTitle optionally overrides the approval card heading (while Summary stays the body).
+	PromptTitle string
+	// SkipAutoReview bypasses AutoReviewer for simple internal user-requested actions (e.g. one-time Nori reminders).
+	SkipAutoReview bool
+	// RequireConfirmation requests an explicit approval card unless already human-approved or covered by a standing rule.
+	RequireConfirmation bool
 }
 
 // Result is what the provider showed. The executor maps it onto the operation ledger.

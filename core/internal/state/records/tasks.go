@@ -200,7 +200,7 @@ func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision i
 		if len(eventTraceContext) == 0 {
 			eventTraceContext = run.TraceContext
 		}
-		if reportsToAssistant(run) {
+		if reportsToAssistant(run) && !question.Interactive {
 			inserted, err := d.appendTaskEvent(tx, run, event, eventTraceContext)
 			if err != nil || !inserted {
 				return err

@@ -131,6 +131,7 @@ type Publication struct {
 	BypassRouting      bool
 	ExpectedIncomplete bool
 	Answer             *state.ResultDraft
+	Parts              []state.Part
 }
 type Projection struct {
 	Step
@@ -422,28 +423,49 @@ func traceText(text string) string {
 	}
 	return text + "… [truncated]"
 }
+func questionPayloadJSON(q state.Question) json.RawMessage {
+	input := q.Input
+	if input == "" {
+		input = "text"
+	}
+	payload := struct {
+		Input   string                 `json:"input"`
+		Options []state.QuestionOption `json:"options,omitempty"`
+	}{
+		Input:   input,
+		Options: q.Options,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return json.RawMessage(`{"input":"text"}`)
+	}
+	return data
+}
+
 func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) {
 	ctx, span := startActivity(ctx, "task.question", "CHAIN", a.activityRun(ctx, p.RunID), p.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.question"); span.End() }()
-	if err := a.Store.ProjectQuestion(ctx, p.RunID, p.Revision, p.Question); err != nil {
+	// Fence before opening any interaction so a superseded or cancelled task never creates an orphaned card.
+	run, err := a.Store.Guard(ctx, p.RunID, p.Revision)
+	if err != nil {
 		return err
 	}
-	// Every task question is also an Interaction, so it stays readable after it is answered or superseded.
-	// Approvals and account choices were opened by the executor under the same ID and are left as they are.
-	if a.Executor != nil && a.Executor.Permissions != nil {
+	// Every user-facing task question is an Interaction card, opened BEFORE ProjectQuestion emits EventTask
+	// so clients reacting to SSE find the pending card immediately. Because the card itself is the single
+	// source of truth in chat, mark Interactive=true so ProjectQuestion does not wake the outer loop to emit
+	// a duplicate assistant text bubble. Work requests (kind="work") remain outer-loop proposals, not cards.
+	if p.Question.Kind != state.QuestionWork && a.Executor != nil && a.Executor.Permissions != nil {
 		revision := p.Revision
-		title := ""
-		if run, err := a.Store.GetRun(ctx, p.RunID); err == nil {
-			title = clip(run.Request, 200)
-		}
+		title := clip(run.Request, 200)
 		if _, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
 			ID: p.Question.ID, TaskID: p.RunID, InstructionRevision: &revision, Kind: "question", Prompt: p.Question.Text,
-			Payload: json.RawMessage(`{"input":"text"}`), LegacyQuestionID: p.Question.ID, TaskTitle: title,
+			Payload: questionPayloadJSON(p.Question), LegacyQuestionID: p.Question.ID, TaskTitle: title,
 		}, ""); err != nil {
 			return err
 		}
+		p.Question.Interactive = true
 	}
-	return nil
+	return a.Store.ProjectQuestion(ctx, p.RunID, p.Revision, p.Question)
 }
 func (a *Activities) Publish(ctx context.Context, p Publication) (result state.Run, resultErr error) {
 	run := a.activityRun(ctx, p.RunID)
@@ -475,7 +497,8 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 	}
 	r, err := a.Store.Publish(ctx, state.PublishRequest{
 		RunID: p.RunID, Revision: p.Revision, Status: p.Status, Detail: p.Detail, Text: p.Text,
-		CostUnknown: p.CostUnknown, Spent: p.Spent, BypassRouting: p.BypassRouting, Answer: p.Answer, ExpectedIncomplete: p.ExpectedIncomplete,
+		CostUnknown: p.CostUnknown, Spent: p.Spent, BypassRouting: p.BypassRouting, Answer: p.Answer,
+		ExpectedIncomplete: p.ExpectedIncomplete, Parts: p.Parts,
 	})
 	return r, err
 }

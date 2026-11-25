@@ -39,13 +39,13 @@ var specs = []spec{
 		"Read the text of a CSV, ICS calendar, plain-text or Markdown file this task was given. Use it to list a calendar file's events or summarize a document; it changes nothing.",
 		`{"type": "object", "properties": {"upload_id": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}}, "required": ["upload_id"], "additionalProperties": false}`},
 	{"automation_create", "Create a reminder, routine or monitor", "nori_automations", "Reminders and routines", "nori.automations/create", "reversible_write", "provider_key",
-		"Create a one-time reminder, a recurring routine, an event-relative reminder or a bounded monitor that runs the instruction at its schedule and delivers the result to the user's inbox. missed_run says what happens to runs Nori could not make: skip, latest or all. There is no default: ask the user or take it from what they said, and state the choice. Things to weigh: catching up with the latest run suits reading or summarizing routines; a reminder that missed its time may still be useful within a window (execution_window_seconds); a missed run that changes or sends something usually should not run late (skip). Requested standing authority for changes or sends while the user is away is shown to the user for approval.",
+		"Create a one-time reminder, a recurring routine, an event-relative reminder or a bounded monitor that runs the instruction at its schedule and delivers the result to the user's inbox. Do not ask the user about missed_run or execution_window_seconds unless they bring it up; Nori uses reliable defaults automatically (delivering one-time reminders within a grace window and running the latest missed instance for recurring routines). Only set missed_run (skip, latest, or all) when the user explicitly requests custom missed-run behavior. Requested standing authority for changes or sends while the user is away is shown to the user for approval.",
 		`{"type": "object", "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 200}, "instruction": {"type": "string", "minLength": 1, "maxLength": 6000}, ` + triggerSchema + `,
 			"missed_run": {"enum": ["skip", "latest", "all"]}, "execution_window_seconds": {"type": "integer", "minimum": 0}, "max_active_runs": {"type": "integer", "minimum": 1, "maximum": 10},
 			"budget_usd": {"type": "number", "minimum": 0, "maximum": 20}, "connection_ids": {"type": "array", "items": {"type": "string"}}, "destination_ids": {"type": "array", "items": {"type": "string"}},
 			"end_at": {"type": "string"}, "max_occurrences": {"type": "integer", "minimum": 1}, "goal_id": {"type": "string"},
 			"requested_authority": {"type": "object", "properties": {"action_classes": {"type": "array", "items": {"enum": ["read", "reversible_write", "sensitive_send"]}}, "tool_ids": {"type": "array", "items": {"type": "string"}}, "recipients": {"type": "array", "items": {"type": "string"}}, "max_operations": {"type": "integer", "minimum": 1}}, "required": ["action_classes"], "additionalProperties": false}
-		}, "required": ["title", "instruction", "trigger", "missed_run"], "additionalProperties": false}`},
+		}, "required": ["title", "instruction", "trigger"], "additionalProperties": false}`},
 	{"automations_list", "List reminders and routines", "nori_automations", "Reminders and routines", "nori.automations/list", "read", "safe",
 		"List the user's reminders, routines and monitors with their next run, last result and status.",
 		`{"type": "object", "properties": {"status": {"enum": ["enabled", "paused", "cancelled"]}}, "additionalProperties": false}`},
@@ -136,8 +136,26 @@ func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared
 				}
 			}
 		}
-		summary := fmt.Sprintf("Create %q. Next runs: %v. %s %s", value.Title, preview.NextRuns, preview.AuthoritySummary, preview.MissedRunExplanation)
-		return invoke.Prepared{Summary: summary, Effect: effect, Spec: spec}, nil
+		zone := strings.TrimSpace(call.TimeZone)
+		if zone == "" {
+			zone = strings.TrimSpace(preview.Timezone)
+		}
+		summary := formatAutomationSummary(value, preview, zone)
+		simpleOneTime := value.Trigger.Kind == "once" && len(value.ConnectionIDs) == 0 && effect == extensions.EffectReversibleWrite
+		if simpleOneTime {
+			return invoke.Prepared{Summary: summary, Effect: effect, Spec: spec, SkipAutoReview: true}, nil
+		}
+		promptTitle := "Create this routine?"
+		if value.Trigger.Kind == "once" || value.Trigger.Kind == "event_relative" {
+			promptTitle = "Create this reminder?"
+		}
+		return invoke.Prepared{
+			Summary:             summary,
+			Effect:              effect,
+			Spec:                spec,
+			PromptTitle:         promptTitle,
+			RequireConfirmation: true,
+		}, nil
 	case "nori.automations/act":
 		return invoke.Prepared{Summary: fmt.Sprintf("%s automation %s", invoke.String(call.Args, "action"), invoke.String(call.Args, "automation_id")), Effect: extensions.EffectReversibleWrite, Spec: spec}, nil
 	case "nori.goals/create":
@@ -149,6 +167,18 @@ func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared
 	}
 	_ = operation
 	return invoke.Prepared{Summary: call.Exec.Binding.Target, Effect: extensions.EffectRead, Spec: spec}, nil
+}
+
+func (a Adapter) resolveZone(ctx context.Context, call invoke.Call) string {
+	if z := strings.TrimSpace(call.TimeZone); z != "" {
+		return z
+	}
+	if a.Scheduler != nil && a.Scheduler.Timezone != nil {
+		if z := strings.TrimSpace(a.Scheduler.Timezone(ctx)); z != "" {
+			return z
+		}
+	}
+	return ""
 }
 
 // Reconcile settles an interrupted reminder or routine create from Nori's own store: the saved automation under the
@@ -164,12 +194,47 @@ func (a Adapter) Reconcile(ctx context.Context, call invoke.Call, _ invoke.Prepa
 	if err != nil {
 		return invoke.Result{}, false
 	}
-	return savedResult(created), true
+	return savedResult(created, a.resolveZone(ctx, call)), true
 }
 
-func savedResult(created scheduler.Automation) invoke.Result {
-	return invoke.Result{Outcome: "confirmed", Content: map[string]any{"automation": created,
-		"summary": fmt.Sprintf("Saved %q; next run %v. The user can see and change it in Routines.", created.Title, created.NextAt)}}
+func savedResult(created scheduler.Automation, zone string) invoke.Result {
+	if strings.TrimSpace(zone) == "" {
+		zone = strings.TrimSpace(created.Trigger.Timezone)
+	}
+	scheduleText := ""
+	scheduledAt := ""
+	if created.NextAt != nil {
+		scheduleText = formatLocalTime(*created.NextAt, zone)
+		scheduledAt = created.NextAt.UTC().Format(time.RFC3339)
+	} else if created.Trigger.At != nil {
+		scheduleText = formatLocalTime(*created.Trigger.At, zone)
+		scheduledAt = created.Trigger.At.UTC().Format(time.RFC3339)
+	}
+	summary := fmt.Sprintf("Saved %q. You can see and change it in Routines.", created.Title)
+	if scheduleText != "" {
+		summary = fmt.Sprintf("Saved %q for %s. You can see and change it in Routines.", created.Title, scheduleText)
+	}
+	content := map[string]any{
+		"automation": created,
+		"summary":    summary,
+	}
+	if created.Trigger.Kind == "once" && len(created.ConnectionIDs) == 0 {
+		fallback := fmt.Sprintf("Reminder set · %s", created.Title)
+		if scheduleText != "" {
+			fallback = fmt.Sprintf("Reminder set · %s · %s", scheduleText, created.Title)
+		}
+		card := map[string]any{
+			"id":       created.ID,
+			"name":     created.Title,
+			"text":     scheduleText,
+			"fallback": fallback,
+		}
+		if scheduledAt != "" {
+			card["scheduled_at"] = scheduledAt
+		}
+		content["reminder_card"] = card
+	}
+	return invoke.Result{Outcome: "confirmed", Content: content}
 }
 
 func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepared) invoke.Result {
@@ -194,7 +259,7 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepare
 		}
 		var created scheduler.Automation
 		_ = json.Unmarshal(receipt.Resource, &created)
-		return savedResult(created)
+		return savedResult(created, a.resolveZone(ctx, call))
 	case "nori.uploads/read":
 		if call.Upload == nil {
 			return failed(errors.New("attachments are not available here"))
@@ -310,3 +375,205 @@ func (Source) Inventory(context.Context) (extensions.Inventory, error) {
 }
 
 func parseInstant(value string) (time.Time, error) { return time.Parse(time.RFC3339, value) }
+
+func formatLocalTime(t time.Time, zone string) string {
+	loc := time.UTC
+	if strings.TrimSpace(zone) != "" {
+		if loaded, err := time.LoadLocation(strings.TrimSpace(zone)); err == nil {
+			loc = loaded
+		}
+	}
+	local := t.In(loc)
+	return local.Format("Mon, Jan 2 at 3:04 PM MST")
+}
+
+func formatLocalClock(t time.Time, zone string) string {
+	loc := time.UTC
+	if strings.TrimSpace(zone) != "" {
+		if loaded, err := time.LoadLocation(strings.TrimSpace(zone)); err == nil {
+			loc = loaded
+		}
+	}
+	return t.In(loc).Format("3:04 PM MST")
+}
+
+func formatAutomationSummary(value scheduler.Editable, preview scheduler.Preview, zone string) string {
+	var lines []string
+	lines = append(lines, strings.TrimSpace(value.Title))
+	if schedule := formatScheduleLine(value.Trigger, preview.NextRuns, zone); schedule != "" {
+		lines = append(lines, schedule)
+	}
+	if auth := strings.TrimSpace(preview.AuthoritySummary); auth != "" {
+		lines = append(lines, auth)
+	}
+	if missed := strings.TrimSpace(preview.MissedRunExplanation); missed != "" {
+		lines = append(lines, missed)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatScheduleLine(t scheduler.Trigger, nextRuns []time.Time, zone string) string {
+	switch t.Kind {
+	case "once":
+		if len(nextRuns) > 0 {
+			return formatLocalTime(nextRuns[0], zone)
+		}
+		if t.At != nil {
+			return formatLocalTime(*t.At, zone)
+		}
+	case "recurring":
+		cadence := describeRRule(t.RRule)
+		if len(nextRuns) > 0 {
+			clock := formatLocalClock(nextRuns[0], zone)
+			nextStr := formatLocalTime(nextRuns[0], zone)
+			if cadence != "" {
+				return fmt.Sprintf("%s at %s · Next: %s", cadence, clock, nextStr)
+			}
+			return "Next: " + nextStr
+		}
+		if cadence != "" {
+			return cadence
+		}
+	case "event_relative":
+		if len(nextRuns) > 0 {
+			return "Next: " + formatLocalTime(nextRuns[0], zone)
+		}
+		if t.OffsetSeconds != nil {
+			return formatEventOffset(*t.OffsetSeconds)
+		}
+	case "watch":
+		return formatWatchInterval(t.MinIntervalSeconds)
+	}
+	return ""
+}
+
+func describeRRule(rrule string) string {
+	fields := map[string]string{}
+	for _, part := range strings.Split(strings.ToUpper(strings.TrimSpace(rrule)), ";") {
+		if k, v, ok := strings.Cut(part, "="); ok {
+			fields[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	freq := fields["FREQ"]
+	interval := fields["INTERVAL"]
+	if interval == "" {
+		interval = "1"
+	}
+	byDay := fields["BYDAY"]
+	switch freq {
+	case "HOURLY":
+		if interval == "1" {
+			return "Every hour"
+		}
+		return "Every " + interval + " hours"
+	case "DAILY":
+		if interval == "1" {
+			return "Every day"
+		}
+		return "Every " + interval + " days"
+	case "WEEKLY":
+		if interval == "1" {
+			switch byDay {
+			case "MO,TU,WE,TH,FR":
+				return "Every weekday"
+			case "SA,SU":
+				return "Every weekend"
+			case "":
+				return "Every week"
+			default:
+				if names := formatWeekdays(byDay); names != "" {
+					return "Every " + names
+				}
+				return "Every week"
+			}
+		}
+		if names := formatWeekdays(byDay); names != "" {
+			return fmt.Sprintf("Every %s weeks on %s", interval, names)
+		}
+		return "Every " + interval + " weeks"
+	case "MONTHLY":
+		if interval == "1" {
+			return "Every month"
+		}
+		return "Every " + interval + " months"
+	case "YEARLY":
+		if interval == "1" {
+			return "Every year"
+		}
+		return "Every " + interval + " years"
+	}
+	return ""
+}
+
+func formatWeekdays(byDay string) string {
+	dayMap := map[string]string{
+		"MO": "Monday", "TU": "Tuesday", "WE": "Wednesday", "TH": "Thursday",
+		"FR": "Friday", "SA": "Saturday", "SU": "Sunday",
+	}
+	var names []string
+	for _, code := range strings.Split(byDay, ",") {
+		name, ok := dayMap[strings.TrimSpace(code)]
+		if !ok {
+			return ""
+		}
+		names = append(names, name)
+	}
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	case 2:
+		return names[0] + " and " + names[1]
+	default:
+		return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
+	}
+}
+
+func formatEventOffset(offsetSeconds int64) string {
+	if offsetSeconds == 0 {
+		return "At event start"
+	}
+	dir := "after"
+	abs := offsetSeconds
+	if offsetSeconds < 0 {
+		dir = "before"
+		abs = -offsetSeconds
+	}
+	if abs%3600 == 0 {
+		hours := abs / 3600
+		if hours == 1 {
+			return "1 hour " + dir + " event"
+		}
+		return fmt.Sprintf("%d hours %s event", hours, dir)
+	}
+	if abs%60 == 0 {
+		mins := abs / 60
+		if mins == 1 {
+			return "1 minute " + dir + " event"
+		}
+		return fmt.Sprintf("%d minutes %s event", mins, dir)
+	}
+	return fmt.Sprintf("%d seconds %s event", abs, dir)
+}
+
+func formatWatchInterval(seconds int64) string {
+	if seconds <= 0 {
+		return "Monitor"
+	}
+	if seconds%3600 == 0 {
+		hours := seconds / 3600
+		if hours == 1 {
+			return "Checks every hour"
+		}
+		return fmt.Sprintf("Checks every %d hours", hours)
+	}
+	if seconds%60 == 0 {
+		mins := seconds / 60
+		if mins == 1 {
+			return "Checks every minute"
+		}
+		return fmt.Sprintf("Checks every %d minutes", mins)
+	}
+	return fmt.Sprintf("Checks every %d seconds", seconds)
+}

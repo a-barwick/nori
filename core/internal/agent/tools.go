@@ -90,7 +90,24 @@ var taskToolDefinitions = func() []taskToolDefinition {
 	runtimeControl := ToolPolicy{Effect: "control", Runtime: true}
 	paidRead := ToolPolicy{Effect: "read", Runtime: true, InterruptedCostUnknown: true}
 	search := ToolPolicy{Effect: "read", Runtime: true, InterruptedCostUSD: SearchCostUSD}
-	requestInput := defineTaskTool("request_input", params("question"), "", unknown)
+	requestInputOption := &transcript.Schema{
+		Type: transcript.TypeObject,
+		Properties: map[string]*transcript.Schema{
+			"id":    {Type: transcript.TypeString, Description: "Short stable option identifier (e.g. \"opt_1\")."},
+			"label": {Type: transcript.TypeString, Description: "Concise user-facing label for this option."},
+		},
+		Required: []string{"id", "label"},
+	}
+	requestInputParams := &transcript.Schema{
+		Type: transcript.TypeObject,
+		Properties: map[string]*transcript.Schema{
+			"question": {Type: transcript.TypeString, Description: "Self-contained question for the user."},
+			"input":    {Type: transcript.TypeString, Enum: []string{"text", "choice", "multi_choice", "confirm", "date"}, Description: "Input style: \"confirm\" for yes/no, \"choice\" or \"multi_choice\" for small option sets, \"date\" for a date, or \"text\" for free-form answers."},
+			"options":  {Type: transcript.TypeArray, Items: requestInputOption, Description: "Choice options when input is \"choice\" or \"multi_choice\"; pass [] otherwise."},
+		},
+		Required: []string{"question", "input", "options"},
+	}
+	requestInput := defineTaskTool("request_input", requestInputParams, "", unknown)
 	requestInput.access, requestInput.unavailable = inputTools, "tool-request-input-is-not-available"
 	requestWork := defineTaskTool("request_work", params("request", "why"), "", unknown)
 	requestWork.access, requestWork.unavailable = delegationTools, "tool-request-work-is-not-available-in-a-subtask"
@@ -296,6 +313,53 @@ func ValidateCalls(calls []transcript.ToolCall, wait, work bool, snapshot *exten
 			question, _ := call.Args["question"].(string)
 			if question == "" || len(question) > state.MaxMessageBytes {
 				return errors.New(prompts.Runtime("tool-request-input-needs-a-question-of-1-8192-bytes", nil))
+			}
+			inputKind := "text"
+			if raw, ok := call.Args["input"]; ok && raw != nil {
+				s, ok := raw.(string)
+				if !ok {
+					return errors.New("request_input input must be text, choice, multi_choice, confirm, or date")
+				}
+				if trimmed := strings.TrimSpace(s); trimmed != "" {
+					inputKind = trimmed
+				}
+			}
+			switch inputKind {
+			case "text", "choice", "multi_choice", "confirm", "date":
+			default:
+				return errors.New("request_input input must be text, choice, multi_choice, confirm, or date")
+			}
+			var optionCount int
+			if rawOpts, ok := call.Args["options"]; ok && rawOpts != nil {
+				opts, ok := rawOpts.([]any)
+				if !ok {
+					return errors.New("request_input options must be an array of {id, label}")
+				}
+				if len(opts) > 12 {
+					return errors.New("request_input supports at most 12 options")
+				}
+				seenOpt := map[string]bool{}
+				for _, item := range opts {
+					m, ok := item.(map[string]any)
+					if !ok {
+						return errors.New("request_input options must be objects with id and label")
+					}
+					id, _ := m["id"].(string)
+					label, _ := m["label"].(string)
+					id = strings.TrimSpace(id)
+					label = strings.TrimSpace(label)
+					if id == "" || len(id) > 80 || label == "" || len(label) > 200 {
+						return errors.New("request_input option requires non-empty id (<=80 bytes) and label (<=200 bytes)")
+					}
+					if seenOpt[id] {
+						return errors.New("request_input option ids must be unique")
+					}
+					seenOpt[id] = true
+					optionCount++
+				}
+			}
+			if (inputKind == "choice" || inputKind == "multi_choice") && optionCount == 0 {
+				return errors.New("request_input with choice or multi_choice requires at least one option")
 			}
 		case "request_work":
 			if len(calls) != 1 {
