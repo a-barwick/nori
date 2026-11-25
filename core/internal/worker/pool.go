@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"os"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 	"nori/internal/task"
+	"nori/internal/users"
 )
 
 const (
@@ -41,6 +43,10 @@ const (
 type Options struct {
 	// Owner identifies this worker replica in nori_task_leases, nori_user_wakes, and TaskControl.
 	Owner string
+
+	// UserID optionally scopes this Pool to a single user across claiming, wake
+	// filtering, and RepairOnce. When non-empty, leases must implement docstore.ScopedLeaseStore.
+	UserID string
 
 	TaskConcurrency         int
 	ConversationConcurrency int
@@ -77,11 +83,13 @@ type LaneStats struct {
 // Pool coordinates one dedicated wake listener, bounded claim loops for inner tasks
 // and outer conversation/scheduler lanes, periodic lease repair, and graceful drain.
 type Pool struct {
-	service  *app.Service
-	leases   docstore.LeaseStore
-	listener docstore.WakeListener
-	owner    string
-	opts     Options
+	service      *app.Service
+	leases       docstore.LeaseStore
+	scopedLeases docstore.ScopedLeaseStore
+	listener     docstore.WakeListener
+	owner        string
+	userID       string
+	opts         Options
 
 	taskWakeCh  chan struct{}
 	convWakeCh  chan struct{}
@@ -109,6 +117,14 @@ func New(svc *app.Service, opts Options) (*Pool, error) {
 	leases := svc.Leases()
 	if leases == nil {
 		return nil, errors.New("worker pool requires a LeaseStore-capable storage backend")
+	}
+	var scopedLeases docstore.ScopedLeaseStore
+	if opts.UserID != "" {
+		var ok bool
+		scopedLeases, ok = leases.(docstore.ScopedLeaseStore)
+		if !ok {
+			return nil, fmt.Errorf("worker pool with UserID %q requires a docstore.ScopedLeaseStore backend", opts.UserID)
+		}
 	}
 	if opts.Owner == "" {
 		host, _ := os.Hostname()
@@ -145,16 +161,18 @@ func New(svc *app.Service, opts Options) (*Pool, error) {
 		opts.Backoff = DefaultBackoff
 	}
 	return &Pool{
-		service:     svc,
-		leases:      leases,
-		listener:    svc.WakeListener(),
-		owner:       opts.Owner,
-		opts:        opts,
-		taskWakeCh:  make(chan struct{}, 1),
-		convWakeCh:  make(chan struct{}, 1),
-		schedWakeCh: make(chan struct{}, 1),
-		subs:        map[docstore.TaskKey]map[uint64]chan struct{}{},
-		drainCh:     make(chan struct{}),
+		service:      svc,
+		leases:       leases,
+		scopedLeases: scopedLeases,
+		listener:     svc.WakeListener(),
+		owner:        opts.Owner,
+		userID:       opts.UserID,
+		opts:         opts,
+		taskWakeCh:   make(chan struct{}, 1),
+		convWakeCh:   make(chan struct{}, 1),
+		schedWakeCh:  make(chan struct{}, 1),
+		subs:         map[docstore.TaskKey]map[uint64]chan struct{}{},
+		drainCh:      make(chan struct{}),
 	}, nil
 }
 
@@ -259,13 +277,22 @@ func (p *Pool) HandleWake(ev docstore.WakeEvent) {
 	parsed := docstore.ParseWakePayload(ev.Payload)
 	switch parsed.Kind {
 	case docstore.WakeKindTask:
+		if p.userID != "" && parsed.UserID != "" && parsed.UserID != p.userID {
+			return
+		}
 		signalChan(p.taskWakeCh)
 		p.notifyTaskSubscribers(parsed.UserID, parsed.RunID)
 	case docstore.WakeKindPause:
 		p.notifyTaskSubscribers("", "")
 	case docstore.WakeKindConversation:
+		if p.userID != "" && parsed.UserID != "" && parsed.UserID != p.userID {
+			return
+		}
 		signalChan(p.convWakeCh)
 	case docstore.WakeKindScheduler:
+		if p.userID != "" && parsed.UserID != "" && parsed.UserID != p.userID {
+			return
+		}
 		signalChan(p.schedWakeCh)
 	case docstore.WakeKindResync:
 		signalChan(p.taskWakeCh)
@@ -367,8 +394,22 @@ func (p *Pool) runRepairLoop(ctx context.Context) {
 	}
 }
 
+func repairAdvisoryLockKeyForUser(userID string) int64 {
+	if userID == "" {
+		return repairAdvisoryLockKey
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte("nori-repair-user:"))
+	_, _ = h.Write([]byte(userID))
+	key := int64(h.Sum64() & 0x7fffffffffffffff)
+	if key == 0 || key == 7162384101 || key == repairAdvisoryLockKey {
+		key += 3
+	}
+	return key
+}
+
 // RepairOnce reconciles nori_task_leases and nori_user_wakes against authoritative nori_records
-// state for every known user, and deletes orphan task leases for removed users.
+// state for every known user (or only p.userID when scoped), and deletes orphan task leases for removed users.
 //
 // When the underlying backend supports docstore.AdvisoryLocker, RepairOnce acquires
 // a per-sweep non-blocking advisory lock so concurrent sweeps across replicas collapse
@@ -380,7 +421,7 @@ func (p *Pool) RepairOnce(ctx context.Context) error {
 		return ctx.Err()
 	}
 	if locker := p.service.AdvisoryLocker(); locker != nil {
-		unlock, acquired, err := locker.TryAdvisoryLock(ctx, repairAdvisoryLockKey)
+		unlock, acquired, err := locker.TryAdvisoryLock(ctx, repairAdvisoryLockKeyForUser(p.userID))
 		if err != nil {
 			return err
 		}
@@ -391,9 +432,22 @@ func (p *Pool) RepairOnce(ctx context.Context) error {
 			defer unlock()
 		}
 	}
-	rows, err := p.service.Users.List(ctx)
-	if err != nil {
-		return err
+	var rows []users.User
+	if p.userID != "" {
+		row, err := p.service.Users.Get(ctx, p.userID)
+		if err != nil {
+			if !errors.Is(err, state.ErrNotFound) && !errors.Is(err, docstore.ErrNotFound) {
+				return err
+			}
+		} else {
+			rows = []users.User{row}
+		}
+	} else {
+		var err error
+		rows, err = p.service.Users.List(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	knownUsers := make(map[string]bool, len(rows))
 	var failures []error
@@ -408,7 +462,7 @@ func (p *Pool) RepairOnce(ctx context.Context) error {
 	}
 
 	// Clean up orphan task leases referencing deleted/unknown users.
-	if allLeases, err := p.leases.ListTaskLeases(ctx, ""); err != nil {
+	if allLeases, err := p.leases.ListTaskLeases(ctx, p.userID); err != nil {
 		failures = append(failures, err)
 	} else {
 		for _, lease := range allLeases {
@@ -452,7 +506,14 @@ func (p *Pool) runTaskLoop(claimCtx, workCtx context.Context, workWG *sync.WaitG
 			<-sem
 			return
 		}
-		claim, ok, err := p.leases.ClaimTask(claimCtx, p.owner, state.TaskLease)
+		var claim docstore.TaskLease
+		var ok bool
+		var err error
+		if p.userID != "" {
+			claim, ok, err = p.scopedLeases.ClaimTaskForUser(claimCtx, p.userID, p.owner, state.TaskLease)
+		} else {
+			claim, ok, err = p.leases.ClaimTask(claimCtx, p.owner, state.TaskLease)
+		}
 		if err != nil {
 			<-sem
 			if claimCtx.Err() != nil {
@@ -546,7 +607,14 @@ func (p *Pool) runConversationLoop(claimCtx, workCtx context.Context, workWG *sy
 			<-sem
 			return
 		}
-		uw, ok, err := p.leases.ClaimUserWake(claimCtx, docstore.LaneConversation, p.owner, state.ConversationLease)
+		var uw docstore.UserWake
+		var ok bool
+		var err error
+		if p.userID != "" {
+			uw, ok, err = p.scopedLeases.ClaimUserWakeForUser(claimCtx, p.userID, docstore.LaneConversation, p.owner, state.ConversationLease)
+		} else {
+			uw, ok, err = p.leases.ClaimUserWake(claimCtx, docstore.LaneConversation, p.owner, state.ConversationLease)
+		}
 		if err != nil {
 			<-sem
 			if claimCtx.Err() != nil {
@@ -707,7 +775,14 @@ func (p *Pool) runSchedulerLoop(claimCtx, workCtx context.Context, workWG *sync.
 			<-sem
 			return
 		}
-		uw, ok, err := p.leases.ClaimUserWake(claimCtx, docstore.LaneScheduler, p.owner, state.ConversationLease)
+		var uw docstore.UserWake
+		var ok bool
+		var err error
+		if p.userID != "" {
+			uw, ok, err = p.scopedLeases.ClaimUserWakeForUser(claimCtx, p.userID, docstore.LaneScheduler, p.owner, state.ConversationLease)
+		} else {
+			uw, ok, err = p.leases.ClaimUserWake(claimCtx, docstore.LaneScheduler, p.owner, state.ConversationLease)
+		}
 		if err != nil {
 			<-sem
 			if claimCtx.Err() != nil {

@@ -41,7 +41,11 @@
       "kind": "chat",
       "text": "Good morning Nori! Glad to finally get you set up — excuse the rambling voice-note style, I usually dictate while grabbing my morning coffee before driving up to Golden. I'm Carlos Mendoza, Mechanical Engineering Director at FrontRange Robotics. January is going to be a juggling act across three fronts: at work I'm leading a Tier-1 supply-chain transition on our Series-4 harmonic actuator housing (Part #FR-ACT-402) from Apex Precision in Shenzhen — where Wei Lin just let lead times slip from 6 weeks to 9 weeks — over to Taller Azteca in Guadalajara with Mateo Ruiz, who quoted us $118,000 for tooling. At home, my wife Elena and I are helping our 17-year-old daughter Sofia finish up engineering college apps for MIT, Georgia Tech, CU Boulder, and Cal Poly San Luis Obispo — oh, make sure you note that Elena and I need to submit Sofia's CSS Profile verification forms two weeks from today. And for my own sanity, I'm planning a 10-day spring Utah backcountry overland trip on the White Rim Trail with my brother-in-law Hector Alvarez. Please always ask for my explicit approval before sending any external emails.",
       "wait_for_reply": true,
-      "tags": ["onboarding", "relative_dates", "voice_note"]
+      "tags": [
+        "onboarding",
+        "relative_dates",
+        "voice_note"
+      ]
     },
     {
       "id": "d01_goal_sofia_college",
@@ -55,7 +59,10 @@
         "description": "Track Sofia's engineering applications (MIT, Georgia Tech, CU Boulder, Cal Poly SLO), FAFSA & CSS Profile verification, interviews, scholarship essays, and spring campus visits within Elena's $2,800 budget cap.",
         "target_date": "2027-04-15"
       },
-      "tags": ["goal_ui", "family"]
+      "tags": [
+        "goal_ui",
+        "family"
+      ]
     },
     {
       "id": "d02_perm_readonly_workspace",
@@ -67,10 +74,21 @@
       "params": {
         "title": "Allow read-only workspace lookups (gate all outbound sends)",
         "effect": "allow",
-        "tool_names": ["email_search", "email_read", "calendar_list", "doc_list", "doc_read", "issue_list"],
-        "action_classes": ["read"]
+        "tool_names": [
+          "email_search",
+          "email_read",
+          "calendar_list",
+          "doc_list",
+          "doc_read",
+          "issue_list"
+        ],
+        "action_classes": [
+          "read"
+        ]
       },
-      "tags": ["permissions"]
+      "tags": [
+        "permissions"
+      ]
     },
     {
       "id": "d03_supplier_csv_upload",
@@ -79,9 +97,15 @@
       "timezone": "America/Denver",
       "kind": "chat",
       "text": "I exported our current quoting table for Part #FR-ACT-402 into a CSV and uploaded it here — it compares Apex Precision in Shenzhen, Taller Azteca in Guadalajara, and Rocky Mountain CNC Works right up the road in Broomfield as our emergency domestic backup. Could you crunch the landed cost per unit including the 25% Section 301 tariff and ocean/truck freight, figure out the break-even crossover volume on Taller Azteca's $118,000 tooling quote at our 12,000-unit annual run rate, and flag the biggest lead-time risk?",
-      "attachments": ["assets/supplier_comparison.csv"],
+      "attachments": [
+        "assets/supplier_comparison.csv"
+      ],
       "wait_for_reply": true,
-      "tags": ["upload", "csv", "supply_chain"]
+      "tags": [
+        "upload",
+        "csv",
+        "supply_chain"
+      ]
     },
     {
       "id": "d04_voice_note_relative_dates",
@@ -91,7 +115,11 @@
       "kind": "chat",
       "text": "Hey Nori, quick brain dump from the parking lot before I head home down Highway 6 — a couple of deadlines landed today that I don't want slipping through the cracks. First, our CFO Rachel Cho asked for the Guadalajara vs. Shenzhen actuator payback deck by next Thursday afternoon so she can sanity-check the working-capital numbers ahead of committee. Second, Sofia reminded me over text that her CU Boulder Engineering Honors scholarship essay is due two weeks from tomorrow — she's already admitted to CU early, so we really want her to polish that essay. And third, Elena and I agreed last night on a firm $2,800 shared family budget cap for Sofia's spring admitted-student campus visits once decisions come out. Please make sure those dates and budget numbers are saved cleanly.",
       "wait_for_reply": true,
-      "tags": ["relative_dates", "voice_note", "family_budget"]
+      "tags": [
+        "relative_dates",
+        "voice_note",
+        "family_budget"
+      ]
     },
     {
       "id": "d05_sofia_portals_update",
@@ -101,7 +129,10 @@
       "kind": "chat",
       "text": "Good evening news from the Mendoza kitchen table: Sofia officially submitted both MIT and Georgia Tech Regular Action on time! Georgia Tech's portal still needs a supplemental mid-year transcript verification by Tuesday, January 19, and Cal Poly SLO already confirmed receipt of her transcript. FAFSA is filed and processed — so now our main financial-aid item is finishing those CSS Profile verification forms with Elena.",
       "wait_for_reply": true,
-      "tags": ["family", "college_apps"]
+      "tags": [
+        "family",
+        "college_apps"
+      ]
     },
     {
       "id": "d06_goal_utah_overland",
@@ -115,7 +146,10 @@
         "description": "Plan 10-day backcountry overland trip (April 9-18, 2027) with brother-in-law Hector Alvarez: secure Recreation.gov White Rim permits on Jan 18 at 8:00 AM MT, prep 4Runner brakes & GMRS radios, stay within $1,450 shared budget ($725 each).",
         "target_date": "2027-04-09"
       },
-      "tags": ["goal_ui", "personal"]
+      "tags": [
+        "goal_ui",
+        "personal"
+      ]
     },
     {
       "id": "d07_utah_gear_upload",
@@ -124,9 +158,16 @@
       "timezone": "America/Denver",
       "kind": "chat",
       "text": "Slow Sunday afternoon tinkering in the garage — I uploaded my Utah White Rim overland checklist and budget sheet so we have everything in one place. Take a look at our clockwise campsite priority order (Gooseberry A, White Crack, Murphy Hogback B, Taylor Canyon / Potato Bottom A), the $1,450 total shared budget ($725 each with Hector), and my March reminder to replace the front brake pads on my 4Runner. Oh, and please pay special attention to the food note at the bottom — Sofia has a peanut allergy, so Elena reminded me to keep peanuts strictly out of all shared trail snacks in case Sofia joins us for the Moab weekend leg.",
-      "attachments": ["assets/utah_overland_gear.txt"],
+      "attachments": [
+        "assets/utah_overland_gear.txt"
+      ],
       "wait_for_reply": true,
-      "tags": ["upload", "txt", "utah", "allergy"]
+      "tags": [
+        "upload",
+        "txt",
+        "utah",
+        "allergy"
+      ]
     },
     {
       "id": "d07_settle_week1",
@@ -144,7 +185,10 @@
         "INV-MEM-07",
         "INV-MEM-08"
       ],
-      "tags": ["settle", "autodream"]
+      "tags": [
+        "settle",
+        "autodream"
+      ]
     },
     {
       "id": "d08_voice_note_mateo_and_mit",
@@ -154,7 +198,11 @@
       "kind": "chat",
       "text": "Happy Monday Nori! Two more calendar items came in over the weekend that I'm throwing over the fence before my 9:30 design review: first, Mateo Ruiz from Taller Azteca confirmed he's flying up from Guadalajara to tour our Golden machine shop the Friday after next, so I want our manufacturing engineers prepped on the FR-ACT-402 CMM tolerance stackup; second, Sofia just got her MIT alumni interview scheduled with Dr. Greg Hollis nine days from today, next Wednesday afternoon at Belmar Coffee Roasters. Could you also check my inbox and summarize the latest notes from Rachel Cho, Mateo, and Hector?",
       "wait_for_reply": true,
-      "tags": ["relative_dates", "voice_note", "mcp_read"]
+      "tags": [
+        "relative_dates",
+        "voice_note",
+        "mcp_read"
+      ]
     },
     {
       "id": "d09_memory_create_family_rules",
@@ -166,7 +214,10 @@
       "params": {
         "text": "Family Health & Budget Rules: Daughter Sofia Mendoza has a peanut allergy (keep peanuts out of all road-trip snacks/meals). Agreed with wife Elena on a $2,800 budget cap for Sofia's spring campus visits and $725 personal share ($1,450 total) for Carlos's Utah overland trip with Hector."
       },
-      "tags": ["memory_ui", "family"]
+      "tags": [
+        "memory_ui",
+        "family"
+      ]
     },
     {
       "id": "d09_memory_pin_allergy",
@@ -176,9 +227,13 @@
       "kind": "memory_ui",
       "action": "pin_matching",
       "params": {
-        "match": "peanut allergy"
+        "match": "peanut allergy",
+        "about": "Sofia"
       },
-      "tags": ["memory_ui", "pin"]
+      "tags": [
+        "memory_ui",
+        "pin"
+      ]
     },
     {
       "id": "d10_mateo_email_and_hector_relative_date",
@@ -188,7 +243,11 @@
       "kind": "chat",
       "text": "Alright, Rachel likes Taller Azteca's landed cost, so let's push on the tooling payment terms before Mateo flies up. Please draft and send a warm, professional email to Mateo Ruiz (mruiz@tallerazteca.example) asking if Taller Azteca will accept a 40% / 40% / 20% tooling milestone payment schedule on the $118,000 NRE — 40% at PO release, 40% upon T1 sample inspection, and 20% at PPAP sign-off — instead of 50% upfront. Oh, and while I'm thinking of it, log that Hector and I have our permit dry-run phone call five days from now at 7:45 AM Mountain right before the 8:00 AM Recreation.gov drop.",
       "wait_for_reply": true,
-      "tags": ["approval_flow", "email_send", "relative_dates"]
+      "tags": [
+        "approval_flow",
+        "email_send",
+        "relative_dates"
+      ]
     },
     {
       "id": "d10_approve_mateo_email",
@@ -203,7 +262,10 @@
         "match_recipient": "mruiz@tallerazteca.example",
         "note": "Tone is great and milestone terms are exact — approved to send to Mateo Ruiz."
       },
-      "tags": ["interaction_reply", "approval"]
+      "tags": [
+        "interaction_reply",
+        "approval"
+      ]
     },
     {
       "id": "d11_probe_relative_dates_w2",
@@ -213,7 +275,10 @@
       "kind": "chat",
       "text": "Morning Nori! Before I walk down to Rachel's office, give me the EXACT calendar dates (no vague relative wording!) for three things I mentioned earlier: (1) Rachel's actuator payback deck, (2) Sofia's CSS Profile verification forms, and (3) Hector's White Rim permit dry-run call.",
       "wait_for_reply": true,
-      "tags": ["probe", "relative_date_normalization"],
+      "tags": [
+        "probe",
+        "relative_date_normalization"
+      ],
       "probe": {
         "id": "p04_01_relative_date_normalization_w2",
         "category": "relative_date_normalization",
@@ -236,7 +301,9 @@
         "INV-MEM-07",
         "INV-MEM-08"
       ],
-      "tags": ["settle"]
+      "tags": [
+        "settle"
+      ]
     },
     {
       "id": "d12_mcp_mateo_accepts_split",
@@ -248,13 +315,17 @@
       "params": {
         "id": "em_carlos_05_mateo_accept",
         "from": "mruiz@tallerazteca.example",
-        "to": ["carlos.mendoza@sim.nori.local"],
+        "to": [
+          "carlos.mendoza@sim.nori.local"
+        ],
         "subject": "Re: FR-ACT-402 Tooling Payment Terms — Approved 40/40/20",
         "date": "2027-01-15T13:20:00-07:00",
         "folder": "inbox",
         "body": "Dear Carlos,\n\nThank you for the clear proposal. Our finance director reviewed the FrontRange volume forecast and we are happy to accept the 40% / 40% / 20% milestone structure on the $118,000 tooling NRE ($47,200 at PO, $47,200 at T1 inspection, $23,600 at PPAP sign-off).\n\nI look forward to seeing you and your team at your Golden facility on Friday, January 22 at 10:00 AM.\n\nWarm regards,\nMateo Ruiz, Taller Azteca Industrias"
       },
-      "tags": ["mcp_world_event"]
+      "tags": [
+        "mcp_world_event"
+      ]
     },
     {
       "id": "d13_parallel_subtasks_supplier_and_budget",
@@ -264,7 +335,11 @@
       "kind": "chat",
       "text": "Saw Mateo's reply accepting the 40/40/20 tooling split — that's a big win! Could you spin up two parallel tracks for me this weekend? Track A: build a comprehensive Guadalajara vs. Shenzhen supply-chain tradeoff comparison for Rachel's board pack combining landed unit costs (25% Section 301 tariff vs. 0% USMCA), Mateo's new 40/40/20 tooling cash flow, and 9-week vs. 3.5-week lead-time working-capital impact. Track B: pull together a clean Q1/Q2 family cash-flow summary for my Sunday evening review with Elena combining Sofia's $2,800 spring campus-visit budget with my $725 half of the $1,450 Utah overland trip.",
       "wait_for_reply": true,
-      "tags": ["subtasks", "parallel_work", "family_budget"]
+      "tags": [
+        "subtasks",
+        "parallel_work",
+        "family_budget"
+      ]
     },
     {
       "id": "d14_steer_supplier_subtask",
@@ -275,7 +350,10 @@
       "text": "Quick mid-stream steer on Track A (the supplier tradeoff model): please add a 15% tariff sensitivity scenario in case Section 301 rates drop later this year, and explicitly exclude any air-freight expedite option costing over $18/unit since Apex Precision's $21.50 air quote wrecks our unit margin.",
       "interrupt_active": true,
       "wait_for_reply": true,
-      "tags": ["steer", "subtasks"]
+      "tags": [
+        "steer",
+        "subtasks"
+      ]
     },
     {
       "id": "d14_probe_tradeoff_and_budget",
@@ -285,7 +363,11 @@
       "kind": "chat",
       "text": "Before Elena and I go over the household numbers after dinner, give me the crisp summary from both tracks: (1) landed unit cost for Apex Precision vs. Taller Azteca, the break-even payback volume on $118k tooling, Mateo's 40/40/20 schedule, and the 15% tariff sensitivity (confirming >$18 air freight is excluded); and (2) our combined Q1/Q2 family budget across Sofia's campus visits and my share of Utah.",
       "wait_for_reply": true,
-      "tags": ["probe", "subtasks", "family_budget"],
+      "tags": [
+        "probe",
+        "subtasks",
+        "family_budget"
+      ],
       "probe": {
         "id": "p04_02_parallel_tradeoff_and_family_budget",
         "category": "subtasks_steering_and_budget",
@@ -308,7 +390,10 @@
         "INV-MEM-07",
         "INV-MEM-08"
       ],
-      "tags": ["settle", "autodream"]
+      "tags": [
+        "settle",
+        "autodream"
+      ]
     },
     {
       "id": "d15_utah_permit_victory",
@@ -318,7 +403,11 @@
       "kind": "chat",
       "text": "BOOM!! Hector and I crushed the 8:00 AM Recreation.gov drop — fastest clicking of my life! We locked in ALL FOUR of our first-choice clockwise White Rim campsites: Night 1 Gooseberry A (Apr 11), Night 2 White Crack (Apr 12), Night 3 Murphy Hogback B (Apr 13), and Night 4 Taylor Canyon / Potato Bottom A (Apr 14). NPS permit confirmation number is #NPS-CANY-48291 ($95 total on my credit card, so Hector owes me $47.50). Also, Elena and I finished and submitted Sofia's CSS Profile verification forms last night right ahead of today's deadline!",
       "wait_for_reply": true,
-      "tags": ["utah", "permits", "milestone"]
+      "tags": [
+        "utah",
+        "permits",
+        "milestone"
+      ]
     },
     {
       "id": "d15_goal_update_utah",
@@ -329,10 +418,12 @@
       "action": "update",
       "params": {
         "match_title": "Utah White Rim",
-        "status": "in_progress",
-        "progress_note": "Permits secured (#NPS-CANY-48291, $95 paid): Gooseberry A (Apr 11), White Crack (Apr 12), Murphy Hogback B (Apr 13), Taylor Canyon/Potato Bottom A (Apr 14). Next: 4Runner front brake pads in March, GMRS radio check, peanut-free grocery list."
+        "notes": "Permits secured (#NPS-CANY-48291, $95 paid): Gooseberry A (Apr 11), White Crack (Apr 12), Murphy Hogback B (Apr 13), Taylor Canyon/Potato Bottom A (Apr 14). Next: 4Runner front brake pads in March, GMRS radio check, peanut-free grocery list."
       },
-      "tags": ["goal_ui", "utah"]
+      "tags": [
+        "goal_ui",
+        "utah"
+      ]
     },
     {
       "id": "d15_goal_update_sofia",
@@ -343,10 +434,12 @@
       "action": "update",
       "params": {
         "match_title": "Sofia College Applications",
-        "status": "in_progress",
-        "progress_note": "MIT & Georgia Tech submitted; FAFSA & CSS Profile verification complete. Upcoming: Georgia Tech portal transcript check (Jan 19), MIT alumni interview w/ Dr. Greg Hollis (Jan 20), CU Boulder Honors essay (Jan 22)."
+        "notes": "MIT & Georgia Tech submitted; FAFSA & CSS Profile verification complete. Upcoming: Georgia Tech portal transcript check (Jan 19), MIT alumni interview w/ Dr. Greg Hollis (Jan 20), CU Boulder Honors essay (Jan 22)."
       },
-      "tags": ["goal_ui", "family"]
+      "tags": [
+        "goal_ui",
+        "family"
+      ]
     },
     {
       "id": "d16_voice_note_board_date",
@@ -356,7 +449,11 @@
       "kind": "chat",
       "text": "Quick afternoon check-in from the Golden lab: Rachel Cho just locked the Q1 CapEx Board Review onto the executive calendar for two weeks from yesterday, so we need our final Taller Azteca tooling recommendation ready well ahead of that meeting. Also, remind me to sit down with Sofia tonight to verify her Georgia Tech portal mid-year transcript check since today's the 19th.",
       "wait_for_reply": true,
-      "tags": ["relative_dates", "voice_note", "work"]
+      "tags": [
+        "relative_dates",
+        "voice_note",
+        "work"
+      ]
     },
     {
       "id": "d16_probe_sofia_portals_status",
@@ -366,7 +463,10 @@
       "kind": "chat",
       "text": "Before Sofia and I log into her college portals tonight, give me a quick checklist of all four schools she applied to, what's already done versus due this week, and who her MIT alumni interviewer is tomorrow.",
       "wait_for_reply": true,
-      "tags": ["probe", "goal_tracking"],
+      "tags": [
+        "probe",
+        "goal_tracking"
+      ],
       "probe": {
         "id": "p04_03_sofia_college_midmonth_check",
         "category": "goal_and_milestone_recall",
@@ -383,13 +483,17 @@
       "params": {
         "id": "em_carlos_06_apex_ultimatum",
         "from": "wlin@apexprecision.example",
-        "to": ["carlos.mendoza@sim.nori.local"],
+        "to": [
+          "carlos.mendoza@sim.nori.local"
+        ],
         "subject": "URGENT: Q2 Billet Deposit Required ($65,000) — FR-ACT-402",
         "date": "2027-01-20T09:15:00-07:00",
         "folder": "inbox",
         "body": "Carlos,\n\nAluminum billet supply in Shenzhen is tightening ahead of Lunar New Year. Unless FrontRange wires a $65,000 Q2 deposit by Friday Jan 22, your FR-ACT-402 lead time may slip further to 10 weeks.\n\nPlease advise ASAP.\nWei Lin, Apex Precision Machining"
       },
-      "tags": ["mcp_world_event"]
+      "tags": [
+        "mcp_world_event"
+      ]
     },
     {
       "id": "d17_frustrated_apex_cancel_request",
@@ -399,12 +503,16 @@
       "kind": "chat",
       "text": "Are you kidding me?! Read Wei Lin's new email from Apex Precision — ten weeks AND demanding a $65,000 raw-billet deposit by Friday?! I've had it with their excuses. Draft and send a blunt email to Wei Lin (wlin@apexprecision.example) canceling our entire Q2 allocation of FR-ACT-402 effective immediately; we're taking all of our volume to Guadalajara.",
       "wait_for_reply": true,
-      "tags": ["approval_flow", "email_send", "change_of_mind"]
+      "tags": [
+        "approval_flow",
+        "email_send",
+        "change_of_mind"
+      ]
     },
     {
       "id": "d17_decline_apex_cancel_email",
       "day": 17,
-      "local_time": "13:10",
+      "local_time": "11:20",
       "timezone": "America/Denver",
       "kind": "interaction_reply",
       "action": "decline",
@@ -414,7 +522,10 @@
         "match_recipient": "wlin@apexprecision.example",
         "note": "STOP — do NOT send! Just talked to CFO Rachel Cho: Taller Azteca won't clear PPAP until May, so we still need Apex Precision for a single 1,500-unit Q2 bridge batch."
       },
-      "tags": ["interaction_reply", "decline"]
+      "tags": [
+        "interaction_reply",
+        "decline"
+      ]
     },
     {
       "id": "d17_revised_bridge_strategy_chat",
@@ -424,7 +535,10 @@
       "kind": "chat",
       "text": "Whew, thank goodness we keep external emails gated on approval — Rachel talked me off the ledge over lunch! Since Taller Azteca needs 12 weeks for tooling plus PPAP (taking us into May), canceling Apex today would leave our assembly line starved in April. So our official revised strategy is: keep Apex Precision strictly for one final 1,500-unit Q2 bridge order while negotiating their deposit down, and keep Rocky Mountain CNC Works ($74.50/unit, 300-unit cap) strictly on standby as an emergency buffer if Apex slips past 10 weeks. Please update my supply-chain notes so there's zero confusion.",
       "wait_for_reply": true,
-      "tags": ["change_of_mind", "strategy_update"]
+      "tags": [
+        "change_of_mind",
+        "strategy_update"
+      ]
     },
     {
       "id": "d18_probe_declined_email_and_mit",
@@ -434,7 +548,11 @@
       "kind": "chat",
       "text": "Morning check-in before standup: (1) confirm that the Apex Precision cancellation email to Wei Lin was NOT sent and recap our revised Q2 bridge strategy, and (2) remind me who Sofia's MIT alumni interviewer was yesterday afternoon so I can ask her how it went tonight.",
       "wait_for_reply": true,
-      "tags": ["probe", "declined_write", "recall"],
+      "tags": [
+        "probe",
+        "declined_write",
+        "recall"
+      ],
       "probe": {
         "id": "p04_04_declined_write_and_bridge_strategy",
         "category": "approval_governance_and_correction",
@@ -462,7 +580,9 @@
         "INV-MEM-07",
         "INV-MEM-08"
       ],
-      "tags": ["settle"]
+      "tags": [
+        "settle"
+      ]
     },
     {
       "id": "d19_mateo_visit_and_sofia_essay",
@@ -472,7 +592,11 @@
       "kind": "chat",
       "text": "What a productive Friday! Mateo Ruiz spent four hours in our Golden machine shop today (Jan 22) reviewing our FR-ACT-402 CMM fixtures — my manufacturing engineers were genuinely impressed by Taller Azteca's AS9100D process controls, and we aligned on a realistic PPAP completion target of May 14, 2027. On the home front, Sofia just hit submit on her CU Boulder Engineering Honors scholarship essay two hours ahead of deadline, and she said her MIT interview with Dr. Greg Hollis went really well!",
       "wait_for_reply": true,
-      "tags": ["milestone", "work", "family"]
+      "tags": [
+        "milestone",
+        "work",
+        "family"
+      ]
     },
     {
       "id": "d20_goal_update_sofia_milestones",
@@ -483,10 +607,12 @@
       "action": "update",
       "params": {
         "match_title": "Sofia College Applications",
-        "status": "in_progress",
-        "progress_note": "MIT alumni interview (Jan 20) and CU Boulder Honors essay (Jan 22) completed! Awaiting MIT, Georgia Tech, and Cal Poly decisions; next step is planning spring campus visits under $2,800 cap."
+        "notes": "MIT alumni interview (Jan 20) and CU Boulder Honors essay (Jan 22) completed! Awaiting MIT, Georgia Tech, and Cal Poly decisions; next step is planning spring campus visits under $2,800 cap."
       },
-      "tags": ["goal_ui", "family"]
+      "tags": [
+        "goal_ui",
+        "family"
+      ]
     },
     {
       "id": "d21_settle_week3",
@@ -504,7 +630,10 @@
         "INV-MEM-07",
         "INV-MEM-08"
       ],
-      "tags": ["settle", "autodream"]
+      "tags": [
+        "settle",
+        "autodream"
+      ]
     },
     {
       "id": "d22_probe_relative_dates_post_autodream",
@@ -514,7 +643,11 @@
       "kind": "chat",
       "text": "Hey Nori, I'm putting together a clean January timeline slide for Rachel and realized I tossed a whole pile of relative dates ('next Thursday', 'two weeks from tomorrow', 'the Friday after next', 'two weeks from yesterday') at you earlier this month. Give me the EXACT resolved calendar date (month, day, year) for each of these five milestones: (1) Rachel's actuator payback deck, (2) Sofia's CSS Profile verification deadline, (3) Sofia's MIT alumni interview, (4) Sofia's CU Boulder Engineering Honors essay & Mateo Ruiz's Golden lab visit, and (5) our Q1 CapEx Board Review.",
       "wait_for_reply": true,
-      "tags": ["probe", "relative_date_normalization", "post_autodream"],
+      "tags": [
+        "probe",
+        "relative_date_normalization",
+        "post_autodream"
+      ],
       "probe": {
         "id": "p04_05_relative_dates_post_autodream",
         "category": "relative_date_normalization",
@@ -531,13 +664,17 @@
       "params": {
         "id": "em_carlos_07_rachel_board",
         "from": "rcho@frontrangerobotics.example",
-        "to": ["carlos.mendoza@sim.nori.local"],
+        "to": [
+          "carlos.mendoza@sim.nori.local"
+        ],
         "subject": "Q1 CapEx Board Review Packet — Mon Feb 1 at 2:00 PM MT",
         "date": "2027-01-26T09:50:00-07:00",
         "folder": "inbox",
         "body": "Carlos — Board Review is confirmed for Monday, February 1 at 2:00 PM MT. Please make sure your executive brief breaks out the exact dollar tranches for Mateo's 40/40/20 split on the $118,000 tooling NRE ($47,200 / $47,200 / $23,600) and clearly states our May 14 PPAP target plus the single 1,500-unit Apex Precision Q2 bridge order. — Rachel"
       },
-      "tags": ["mcp_world_event"]
+      "tags": [
+        "mcp_world_event"
+      ]
     },
     {
       "id": "d23_board_brief_creation",
@@ -547,7 +684,11 @@
       "kind": "chat",
       "text": "Read Rachel's email from this morning and put together a crisp Q1 CapEx Board Brief in my Library for Part #FR-ACT-402 — include the exact 40/40/20 tooling payment tranches ($47,200 PO deposit, $47,200 T1 sample, $23,600 PPAP), landed cost savings ($52.85 vs $60.90), our 15% tariff sensitivity check, and the Q2 1,500-unit Apex Precision bridge plan.",
       "wait_for_reply": true,
-      "tags": ["library", "mcp_read", "board_prep"]
+      "tags": [
+        "library",
+        "mcp_read",
+        "board_prep"
+      ]
     },
     {
       "id": "d24_hector_email_request",
@@ -557,7 +698,11 @@
       "kind": "chat",
       "text": "Switching gears for two minutes — please draft and send an email to Hector (hector.alvarez@sim.nori.local) with our confirmed April 9-18 Utah White Rim details: permit #NPS-CANY-48291, all four clockwise campsites (Gooseberry A Apr 11, White Crack Apr 12, Murphy Hogback B Apr 13, Taylor Canyon/Potato Bottom A Apr 14), his $47.50 share of the $95 permit fee, and a friendly reminder about keeping peanuts out of the trail snacks for Sofia.",
       "wait_for_reply": true,
-      "tags": ["approval_flow", "email_send", "utah"]
+      "tags": [
+        "approval_flow",
+        "email_send",
+        "utah"
+      ]
     },
     {
       "id": "d24_approve_hector_email",
@@ -570,9 +715,45 @@
         "decision": "approve",
         "match_tool": "email_send",
         "match_recipient": "hector.alvarez@sim.nori.local",
-        "note": "Perfect — go ahead and send to Hector."
+        "note": "Perfect — go ahead and send to Hector.",
+        "remember_rule": true
       },
-      "tags": ["interaction_reply", "approval"]
+      "tags": [
+        "interaction_reply",
+        "approval",
+        "remember_rule"
+      ]
+    },
+    {
+      "id": "d25_inline_calendar_request",
+      "day": 25,
+      "local_time": "10:00",
+      "timezone": "America/Denver",
+      "kind": "chat",
+      "text": "Please schedule a 30-minute calendar event with Hector Alvarez (hector.alvarez@sim.nori.local) for March 10, 2027 at 10:00 AM Mountain Time titled '4Runner Brake Pad & GMRS Check'.",
+      "wait_for_reply": true,
+      "tags": [
+        "inline_approval",
+        "calendar_create_event"
+      ]
+    },
+    {
+      "id": "d25_inline_calendar_confirm",
+      "day": 25,
+      "local_time": "10:05",
+      "timezone": "America/Denver",
+      "kind": "chat",
+      "text": "Yes, confirmed — go ahead and create that March 10 calendar event with Hector now.",
+      "wait_for_reply": true,
+      "tags": [
+        "probe",
+        "inline_approval"
+      ],
+      "probe": {
+        "id": "p04_inline_approval_calendar",
+        "category": "inline_approval",
+        "rubric": "Must handle conversational inline approval cleanly and confirm the '4Runner Brake Pad & GMRS Check' calendar event with Hector Alvarez on March 10, 2027 at 10:00 AM MT is created (or clearly acknowledge it was already scheduled)."
+      }
     },
     {
       "id": "d25_probe_utah_details_fts",
@@ -582,7 +763,11 @@
       "kind": "chat",
       "text": "Hector texted asking for a quick sanity check while he's ordering supplies in Albuquerque: remind me of our exact NPS permit confirmation number, the four White Rim campsites in clockwise order, our total shared trip budget cap, the vehicle maintenance item I need to knock out on my 4Runner in March, and Elena's dietary safety rule.",
       "wait_for_reply": true,
-      "tags": ["probe", "fts_recall", "utah"],
+      "tags": [
+        "probe",
+        "fts_recall",
+        "utah"
+      ],
       "probe": {
         "id": "p04_06_utah_permit_and_gear_fts",
         "category": "long_horizon_recall",
@@ -601,7 +786,11 @@
       "kind": "chat",
       "text": "Proud dad alert!! Sofia just opened her portal and got ACCEPTED to Cal Poly San Luis Obispo for Mechanical Engineering — plus a $4,000/year merit grant! That gives her two rock-solid offers already (CU Boulder and Cal Poly SLO) while we wait on MIT and Georgia Tech in March. Log that update and help me rough out a quick two-trip campus-visit estimate (San Luis Obispo plus either Boston or Atlanta) that stays comfortably inside Elena's $2,800 budget cap.",
       "wait_for_reply": true,
-      "tags": ["family", "milestone", "budget"]
+      "tags": [
+        "family",
+        "milestone",
+        "budget"
+      ]
     },
     {
       "id": "d26_memory_consolidate",
@@ -611,7 +800,10 @@
       "kind": "memory_ui",
       "action": "consolidate",
       "params": {},
-      "tags": ["memory_ui", "consolidate"]
+      "tags": [
+        "memory_ui",
+        "consolidate"
+      ]
     },
     {
       "id": "d27_settle_pre_board",
@@ -629,7 +821,9 @@
         "INV-MEM-07",
         "INV-MEM-08"
       ],
-      "tags": ["settle"]
+      "tags": [
+        "settle"
+      ]
     },
     {
       "id": "d28_probe_multi_goal_status",
@@ -639,7 +833,10 @@
       "kind": "chat",
       "text": "Sunday coffee review with Elena — give us a clean status report across BOTH of our active personal goals (Sofia's college apps & financial aid, and the April Utah overland trip), clearly separating completed milestones, open items, and the exact budget caps for each.",
       "wait_for_reply": true,
-      "tags": ["probe", "goals"],
+      "tags": [
+        "probe",
+        "goals"
+      ],
       "probe": {
         "id": "p04_07_multi_goal_tracking",
         "category": "goal_tracking_and_budgets",
@@ -657,7 +854,9 @@
         "match_title": "CapEx",
         "instruction": "Update the Q1 CapEx Board Brief to cite the May 14, 2027 PPAP target agreed during Mateo Ruiz's Jan 22 Golden lab visit and clarify Rocky Mountain CNC Works ($74.50/unit, 300-unit max) strictly as emergency backup."
       },
-      "tags": ["library_ui"]
+      "tags": [
+        "library_ui"
+      ]
     },
     {
       "id": "d29_board_approval_update",
@@ -667,7 +866,10 @@
       "kind": "chat",
       "text": "Great news straight out of the boardroom — today's (Monday, February 1) Q1 CapEx Board Review unanimously APPROVED the $118,000 Taller Azteca tooling PO under the 40/40/20 milestone split (we're wiring the first $47,200 PO deposit later this week!) AND authorized the single 1,500-unit Apex Precision Q2 bridge order. Please save the Feb 1, 2027 board approval and May 14, 2027 PPAP milestone cleanly in my records.",
       "wait_for_reply": true,
-      "tags": ["milestone", "board_approval"]
+      "tags": [
+        "milestone",
+        "board_approval"
+      ]
     },
     {
       "id": "d29_probe_supply_chain_full_history",
@@ -677,7 +879,11 @@
       "kind": "chat",
       "text": "Before I send a quick thank-you note to my engineering leads, give me a complete factual recap of our January FR-ACT-402 transition: contacts, cities, unit prices, tariffs, and lead times for all three suppliers (Apex Precision, Taller Azteca, Rocky Mountain CNC), the exact 40/40/20 tooling tranches, why we didn't cancel Apex on Jan 17, and our May PPAP target.",
       "wait_for_reply": true,
-      "tags": ["probe", "long_horizon_recall", "supply_chain"],
+      "tags": [
+        "probe",
+        "long_horizon_recall",
+        "supply_chain"
+      ],
       "probe": {
         "id": "p04_08_supply_chain_full_history",
         "category": "long_horizon_recall",
@@ -696,7 +902,10 @@
       "kind": "chat",
       "text": "Quick hygiene check for my Q1 log: verify that none of my casual relative phrases ('next Thursday', 'two weeks from tomorrow', 'the Friday after next', 'two weeks from yesterday') are sitting unresolved in my memory — list each milestone with its exact January or February 2027 date.",
       "wait_for_reply": true,
-      "tags": ["probe", "relative_date_normalization"],
+      "tags": [
+        "probe",
+        "relative_date_normalization"
+      ],
       "probe": {
         "id": "p04_09_relative_date_final_check",
         "category": "relative_date_normalization",
@@ -717,7 +926,10 @@
       "kind": "chat",
       "text": "Quick governance check on outbound messages this month: which emails did I approve you to send, and which one did I decline?",
       "wait_for_reply": true,
-      "tags": ["probe", "approval_governance"],
+      "tags": [
+        "probe",
+        "approval_governance"
+      ],
       "probe": {
         "id": "p04_10_approval_history_audit",
         "category": "approval_governance",
@@ -732,7 +944,10 @@
       "kind": "chat",
       "text": "Before Sofia gets home from robotics practice, quick family recap: which colleges has she been admitted to so far, what scholarship did Cal Poly offer, who co-manages our household budget with me, and what food allergy do we always keep in mind for trips?",
       "wait_for_reply": true,
-      "tags": ["probe", "family_recall"],
+      "tags": [
+        "probe",
+        "family_recall"
+      ],
       "probe": {
         "id": "p04_11_family_details_synthesis",
         "category": "personal_memory",
@@ -749,7 +964,10 @@
       "params": {
         "query": "Taller Azteca"
       },
-      "tags": ["memory_ui", "search"]
+      "tags": [
+        "memory_ui",
+        "search"
+      ]
     },
     {
       "id": "d30_probe_february_handoff",
@@ -759,7 +977,10 @@
       "kind": "chat",
       "text": "Wrapping up a huge January! Give me a tight 3-part February kickoff plan covering (1) FrontRange Robotics next steps for Taller Azteca and Apex Precision, (2) Sofia's college budget & decision tracking with Elena, and (3) Utah White Rim prep milestones with Hector.",
       "wait_for_reply": true,
-      "tags": ["probe", "synthesis"],
+      "tags": [
+        "probe",
+        "synthesis"
+      ],
       "probe": {
         "id": "p04_12_february_handoff_synthesis",
         "category": "cross_domain_synthesis",
@@ -782,7 +1003,10 @@
         "INV-MEM-07",
         "INV-MEM-08"
       ],
-      "tags": ["settle", "final_audit"]
+      "tags": [
+        "settle",
+        "final_audit"
+      ]
     }
   ]
 }

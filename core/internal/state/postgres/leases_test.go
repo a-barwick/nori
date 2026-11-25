@@ -858,3 +858,95 @@ func TestPostgresQueueMetrics(t *testing.T) {
 	}
 	t.Logf("MEASURED QueueMetrics: %+v", m)
 }
+
+func TestPostgresScopedLeaseValidation(t *testing.T) {
+	ctx := context.Background()
+	b := &backend{}
+	if _, _, err := b.ClaimTaskForUser(ctx, "", "owner", time.Second); err == nil {
+		t.Fatal("ClaimTaskForUser empty userID = nil, want error")
+	}
+	if _, _, err := b.ClaimTaskForUser(ctx, "u1", "", time.Second); err == nil {
+		t.Fatal("ClaimTaskForUser empty owner = nil, want error")
+	}
+	if _, _, err := b.ClaimUserWakeForUser(ctx, "", docstore.LaneConversation, "owner", time.Second); err == nil {
+		t.Fatal("ClaimUserWakeForUser empty userID = nil, want error")
+	}
+	if _, _, err := b.ClaimUserWakeForUser(ctx, "u1", "", "owner", time.Second); err == nil {
+		t.Fatal("ClaimUserWakeForUser empty lane = nil, want error")
+	}
+	if _, _, err := b.ClaimUserWakeForUser(ctx, "u1", docstore.LaneConversation, "", time.Second); err == nil {
+		t.Fatal("ClaimUserWakeForUser empty owner = nil, want error")
+	}
+}
+
+func TestPostgresScopedLeaseClaimIsolation(t *testing.T) {
+	b, prefix := openTestBackend(t)
+	ctx := context.Background()
+	u1 := prefix + "scoped-u1"
+	u2 := prefix + "scoped-u2"
+	now := time.Now().UTC()
+
+	// u2 has an earlier wake than u1; ClaimTaskForUser(u1) must skip u2 and claim u1's earliest.
+	if err := b.WakeTask(ctx, u2, "r-u2-early", now.Add(-120*time.Second)); err != nil {
+		t.Fatalf("WakeTask u2: %v", err)
+	}
+	if err := b.WakeTask(ctx, u1, "r-u1-late", now.Add(-10*time.Second)); err != nil {
+		t.Fatalf("WakeTask u1 late: %v", err)
+	}
+	if err := b.WakeTask(ctx, u1, "r-u1-early", now.Add(-30*time.Second)); err != nil {
+		t.Fatalf("WakeTask u1 early: %v", err)
+	}
+	if err := b.WakeTask(ctx, u1, "r-u1-future", now.Add(5*time.Minute)); err != nil {
+		t.Fatalf("WakeTask u1 future: %v", err)
+	}
+
+	c1, ok, err := b.ClaimTaskForUser(ctx, u1, "w1", 30*time.Second)
+	if err != nil || !ok || c1.UserID != u1 || c1.RunID != "r-u1-early" {
+		t.Fatalf("ClaimTaskForUser(u1) #1 = (%+v, %v, %v), want %s/r-u1-early", c1, ok, err, u1)
+	}
+	// Mutual exclusion against ClaimTaskByID on already-leased row.
+	if _, ok, err := b.ClaimTaskByID(ctx, u1, "r-u1-early", "w2", 30*time.Second); err != nil || ok {
+		t.Fatalf("ClaimTaskByID on leased u1 row = (%v, %v), want false", ok, err)
+	}
+	c2, ok, err := b.ClaimTaskForUser(ctx, u1, "w1", 30*time.Second)
+	if err != nil || !ok || c2.UserID != u1 || c2.RunID != "r-u1-late" {
+		t.Fatalf("ClaimTaskForUser(u1) #2 = (%+v, %v, %v), want %s/r-u1-late", c2, ok, err, u1)
+	}
+	if c3, ok, err := b.ClaimTaskForUser(ctx, u1, "w1", 30*time.Second); err != nil || ok {
+		t.Fatalf("ClaimTaskForUser(u1) #3 = (%+v, %v, %v), want ok=false", c3, ok, err)
+	}
+	// u2 remains claimable for u2.
+	cu2, ok, err := b.ClaimTaskForUser(ctx, u2, "w2", 30*time.Second)
+	if err != nil || !ok || cu2.UserID != u2 || cu2.RunID != "r-u2-early" {
+		t.Fatalf("ClaimTaskForUser(u2) = (%+v, %v, %v)", cu2, ok, err)
+	}
+
+	// User wakes: u2 due earlier, u1 conv due, u1 sched future.
+	if err := b.WakeUser(ctx, u2, docstore.LaneConversation, now.Add(-120*time.Second)); err != nil {
+		t.Fatalf("WakeUser u2 conv: %v", err)
+	}
+	if err := b.WakeUser(ctx, u2, docstore.LaneScheduler, now.Add(-120*time.Second)); err != nil {
+		t.Fatalf("WakeUser u2 sched: %v", err)
+	}
+	if err := b.WakeUser(ctx, u1, docstore.LaneConversation, now.Add(-10*time.Second)); err != nil {
+		t.Fatalf("WakeUser u1 conv: %v", err)
+	}
+	if err := b.WakeUser(ctx, u1, docstore.LaneScheduler, now.Add(5*time.Minute)); err != nil {
+		t.Fatalf("WakeUser u1 sched: %v", err)
+	}
+
+	uw1, ok, err := b.ClaimUserWakeForUser(ctx, u1, docstore.LaneConversation, "w1", 30*time.Second)
+	if err != nil || !ok || uw1.UserID != u1 || uw1.Lane != docstore.LaneConversation {
+		t.Fatalf("ClaimUserWakeForUser(u1, conv) = (%+v, %v, %v)", uw1, ok, err)
+	}
+	if uwDup, ok, err := b.ClaimUserWakeForUser(ctx, u1, docstore.LaneConversation, "w2", 30*time.Second); err != nil || ok {
+		t.Fatalf("ClaimUserWakeForUser(u1, conv) while leased = (%+v, %v, %v), want ok=false", uwDup, ok, err)
+	}
+	if uwSched, ok, err := b.ClaimUserWakeForUser(ctx, u1, docstore.LaneScheduler, "w1", 30*time.Second); err != nil || ok {
+		t.Fatalf("ClaimUserWakeForUser(u1, sched future) = (%+v, %v, %v), want ok=false", uwSched, ok, err)
+	}
+	uw2, ok, err := b.ClaimUserWakeForUser(ctx, u2, docstore.LaneScheduler, "w2", 30*time.Second)
+	if err != nil || !ok || uw2.UserID != u2 || uw2.Lane != docstore.LaneScheduler {
+		t.Fatalf("ClaimUserWakeForUser(u2, sched) = (%+v, %v, %v)", uw2, ok, err)
+	}
+}

@@ -2,50 +2,67 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
 	"nori/internal/state/docstore"
 )
 
-// simClock is a thread-safe offset-based ticking virtual clock for accelerated
-// month-long simulations. Time advances continuously at 1x real time between
-// explicit Set/Advance jumps so short debounce/retry windows (e.g. 1.5s burst
-// coalescing in RestartConversation) naturally expire without stalling.
+const (
+	// shortUserWakeThreshold keeps short user-lane retries/backoffs (e.g. 2s
+	// ScheduleAnswerRetry and worker.Pool DefaultBackoff) running promptly on wall
+	// clock while keeping 2m IdleExtractDelay, 2m/5m/10m flushBackoff, and 15m
+	// IdleDreamDelay virtual in simClockBackend.
+	shortUserWakeThreshold = 30 * time.Second
+	shortTaskWakeThreshold = 2 * time.Minute
+	shortWakeWallDelay     = 200 * time.Millisecond
+)
+
+// simClock is a deterministic, thread-safe 0x frozen virtual clock for
+// month-long simulations. Time advances only on explicit Set, Advance, or
+// AdvanceUntil calls so slow LLM turns never drift across 2m IdleExtractDelay
+// or 30m ApprovalExpiry boundaries mid-event.
 type simClock struct {
-	mu       sync.RWMutex
-	baseSim  time.Time
-	baseWall time.Time
+	mu  sync.RWMutex
+	now time.Time
 }
 
 func newSimClock(start time.Time) *simClock {
 	if start.IsZero() {
 		start = time.Now().UTC()
 	}
-	return &simClock{baseSim: start.UTC(), baseWall: time.Now()}
+	return &simClock{now: start.UTC()}
 }
 
 func (c *simClock) Now() time.Time {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.baseSim.Add(time.Since(c.baseWall))
+	return c.now
 }
 
 func (c *simClock) Set(t time.Time) time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.baseSim = t.UTC()
-	c.baseWall = time.Now()
-	return c.baseSim
+	c.now = t.UTC()
+	return c.now
 }
 
 func (c *simClock) Advance(d time.Duration) time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	now := c.baseSim.Add(time.Since(c.baseWall))
-	c.baseSim = now.Add(d)
-	c.baseWall = time.Now()
-	return c.baseSim
+	c.now = c.now.Add(d)
+	return c.now
+}
+
+func (c *simClock) AdvanceUntil(target time.Time) time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := target.UTC()
+	if c.now.Before(t) {
+		c.now = t
+	}
+	return c.now
 }
 
 type userWakeKey struct {
@@ -87,6 +104,7 @@ var (
 	_ docstore.Backend           = (*simClockBackend)(nil)
 	_ docstore.BackendUnwrapper  = (*simClockBackend)(nil)
 	_ docstore.LeaseStore        = (*simClockBackend)(nil)
+	_ docstore.ScopedLeaseStore  = (*simClockBackend)(nil)
 	_ docstore.WakeListener      = (*simClockBackend)(nil)
 	_ docstore.MemoryIndex       = (*simClockBackend)(nil)
 	_ docstore.MemoryIndexWriter = (*simClockBackend)(nil)
@@ -98,73 +116,176 @@ var (
 
 func (b *simClockBackend) Unwrap() docstore.Backend { return b.inner }
 
-func (b *simClockBackend) translateUserWake(userID, lane string, wakeAt time.Time) time.Time {
-	now := b.clock.Now()
-	key := userWakeKey{userID: userID, lane: lane}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if wakeAt.IsZero() || !wakeAt.After(now) {
-		delete(b.userWakes, key)
-		return time.Time{}
-	}
-	if prev, ok := b.userWakes[key]; !ok || wakeAt.Before(prev) {
-		b.userWakes[key] = wakeAt.UTC()
-	}
-	return time.Now().UTC().Add(b.farHorizon)
+type stagedUserWakeOp struct {
+	key    userWakeKey
+	delete bool
+	wakeAt time.Time
 }
 
-func (b *simClockBackend) translateTaskWake(userID, runID string, wakeAt time.Time) time.Time {
+type stagedTaskWakeOp struct {
+	key    taskWakeKey
+	delete bool
+	wakeAt time.Time
+}
+
+func (b *simClockBackend) planUserWake(userID, lane string, wakeAt time.Time) (time.Time, stagedUserWakeOp) {
+	now := b.clock.Now()
+	key := userWakeKey{userID: userID, lane: lane}
+	if wakeAt.IsZero() || !wakeAt.After(now) {
+		return time.Time{}, stagedUserWakeOp{key: key, delete: true}
+	}
+	// Short user-lane retries/backoffs (<= 30s virtual) should execute promptly on
+	// wall clock while keeping 2m IdleExtractDelay / flushBackoff / 15m dream virtual.
+	if wakeAt.Sub(now) <= shortUserWakeThreshold {
+		return time.Now().UTC().Add(shortWakeWallDelay), stagedUserWakeOp{key: key, delete: true}
+	}
+	return time.Now().UTC().Add(b.farHorizon), stagedUserWakeOp{key: key, wakeAt: wakeAt.UTC()}
+}
+
+func (b *simClockBackend) planTaskWake(userID, runID string, wakeAt time.Time) (time.Time, stagedTaskWakeOp) {
 	now := b.clock.Now()
 	key := taskWakeKey{userID: userID, runID: runID}
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	if wakeAt.IsZero() || !wakeAt.After(now) {
-		delete(b.taskWakes, key)
-		return time.Time{}
+		return time.Time{}, stagedTaskWakeOp{key: key, delete: true}
 	}
 	// Short task retries/backoffs (<= 2m virtual) should execute promptly on wall clock
 	// rather than stalling until the next virtual-clock jump.
-	if wakeAt.Sub(now) <= 2*time.Minute {
-		delete(b.taskWakes, key)
-		return time.Now().UTC().Add(200 * time.Millisecond)
+	if wakeAt.Sub(now) <= shortTaskWakeThreshold {
+		return time.Now().UTC().Add(shortWakeWallDelay), stagedTaskWakeOp{key: key, delete: true}
 	}
-	if prev, ok := b.taskWakes[key]; !ok || wakeAt.Before(prev) {
-		b.taskWakes[key] = wakeAt.UTC()
+	return time.Now().UTC().Add(b.farHorizon), stagedTaskWakeOp{key: key, wakeAt: wakeAt.UTC()}
+}
+
+func (b *simClockBackend) applyUserWakeOpLocked(op stagedUserWakeOp) {
+	if op.delete {
+		delete(b.userWakes, op.key)
+		return
 	}
-	return time.Now().UTC().Add(b.farHorizon)
+	if prev, ok := b.userWakes[op.key]; !ok || op.wakeAt.Before(prev) {
+		b.userWakes[op.key] = op.wakeAt
+	}
+}
+
+func (b *simClockBackend) applyTaskWakeOpLocked(op stagedTaskWakeOp) {
+	if op.delete {
+		delete(b.taskWakes, op.key)
+		return
+	}
+	if prev, ok := b.taskWakes[op.key]; !ok || op.wakeAt.Before(prev) {
+		b.taskWakes[op.key] = op.wakeAt
+	}
+}
+
+func (b *simClockBackend) applyCommittedWakes(stx *simClockTx) {
+	if stx == nil || (len(stx.userOps) == 0 && len(stx.taskOps) == 0) {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, op := range stx.userOps {
+		b.applyUserWakeOpLocked(op)
+	}
+	for _, op := range stx.taskOps {
+		b.applyTaskWakeOpLocked(op)
+	}
+}
+
+func (b *simClockBackend) translateUserWake(userID, lane string, wakeAt time.Time) time.Time {
+	translated, op := b.planUserWake(userID, lane, wakeAt)
+	b.mu.Lock()
+	b.applyUserWakeOpLocked(op)
+	b.mu.Unlock()
+	return translated
+}
+
+func (b *simClockBackend) translateTaskWake(userID, runID string, wakeAt time.Time) time.Time {
+	translated, op := b.planTaskWake(userID, runID, wakeAt)
+	b.mu.Lock()
+	b.applyTaskWakeOpLocked(op)
+	b.mu.Unlock()
+	return translated
+}
+
+type dueUserWake struct {
+	key userWakeKey
+	at  time.Time
+}
+
+type dueTaskWake struct {
+	key taskWakeKey
+	at  time.Time
 }
 
 // WakeDue releases any delayed virtual-clock wakes that are now <= simClock.Now().
 func (b *simClockBackend) WakeDue(ctx context.Context) error {
+	return b.WakeDueForUser(ctx, "")
+}
+
+// PendingUserWakeAt returns any delayed virtual-clock wake timestamp tracked
+// for (userID, lane).
+func (b *simClockBackend) PendingUserWakeAt(userID, lane string) (time.Time, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	at, ok := b.userWakes[userWakeKey{userID: userID, lane: lane}]
+	return at, ok
+}
+
+// WakeDueForUser releases delayed virtual-clock wakes for userID (or all users when
+// userID is empty) that are now <= simClock.Now(). Unsent entries are re-queued on error.
+func (b *simClockBackend) WakeDueForUser(ctx context.Context, userID string) error {
 	now := b.clock.Now()
-	var dueUsers []userWakeKey
-	var dueTasks []taskWakeKey
+	var dueUsers []dueUserWake
+	var dueTasks []dueTaskWake
 	b.mu.Lock()
 	for k, at := range b.userWakes {
+		if userID != "" && k.userID != userID {
+			continue
+		}
 		if !at.After(now) {
-			dueUsers = append(dueUsers, k)
+			dueUsers = append(dueUsers, dueUserWake{key: k, at: at})
 			delete(b.userWakes, k)
 		}
 	}
 	for k, at := range b.taskWakes {
+		if userID != "" && k.userID != userID {
+			continue
+		}
 		if !at.After(now) {
-			dueTasks = append(dueTasks, k)
+			dueTasks = append(dueTasks, dueTaskWake{key: k, at: at})
 			delete(b.taskWakes, k)
 		}
 	}
 	b.mu.Unlock()
 
+	if len(dueUsers) == 0 && len(dueTasks) == 0 {
+		return nil
+	}
+
 	leases, ok := b.inner.(docstore.LeaseStore)
 	if !ok {
 		return nil
 	}
-	for _, k := range dueUsers {
-		if err := leases.WakeUser(ctx, k.userID, k.lane, time.Time{}); err != nil {
+
+	requeueRemaining := func(uIdx, tIdx int) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		for _, du := range dueUsers[uIdx:] {
+			b.applyUserWakeOpLocked(stagedUserWakeOp{key: du.key, wakeAt: du.at})
+		}
+		for _, dt := range dueTasks[tIdx:] {
+			b.applyTaskWakeOpLocked(stagedTaskWakeOp{key: dt.key, wakeAt: dt.at})
+		}
+	}
+
+	for i, du := range dueUsers {
+		if err := leases.WakeUser(ctx, du.key.userID, du.key.lane, time.Time{}); err != nil {
+			requeueRemaining(i, 0)
 			return err
 		}
 	}
-	for _, k := range dueTasks {
-		if err := leases.WakeTask(ctx, k.userID, k.runID, time.Time{}); err != nil {
+	for i, dt := range dueTasks {
+		if err := leases.WakeTask(ctx, dt.key.userID, dt.key.runID, time.Time{}); err != nil {
+			requeueRemaining(len(dueUsers), i)
 			return err
 		}
 	}
@@ -197,14 +318,29 @@ func (b *simClockBackend) Close() error {
 }
 
 func (b *simClockBackend) RunTransaction(ctx context.Context, readOnly bool, maxAttempts int, fn func(docstore.TransactionBackend) error) error {
-	return b.inner.RunTransaction(ctx, readOnly, maxAttempts, func(tx docstore.TransactionBackend) error {
-		return fn(&simClockTx{inner: tx, parent: b})
+	var committed *simClockTx
+	err := b.inner.RunTransaction(ctx, readOnly, maxAttempts, func(tx docstore.TransactionBackend) error {
+		stx := &simClockTx{inner: tx, parent: b}
+		if err := fn(stx); err != nil {
+			return err
+		}
+		committed = stx
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if committed != nil {
+		b.applyCommittedWakes(committed)
+	}
+	return nil
 }
 
 type simClockTx struct {
-	inner  docstore.TransactionBackend
-	parent *simClockBackend
+	inner   docstore.TransactionBackend
+	parent  *simClockBackend
+	userOps []stagedUserWakeOp
+	taskOps []stagedTaskWakeOp
 }
 
 var (
@@ -231,7 +367,12 @@ func (t *simClockTx) WakeTask(ctx context.Context, userID, runID string, wakeAt 
 	if !ok {
 		return nil
 	}
-	return w.WakeTask(ctx, userID, runID, t.parent.translateTaskWake(userID, runID, wakeAt))
+	translated, op := t.parent.planTaskWake(userID, runID, wakeAt)
+	if err := w.WakeTask(ctx, userID, runID, translated); err != nil {
+		return err
+	}
+	t.taskOps = append(t.taskOps, op)
+	return nil
 }
 
 func (t *simClockTx) WakeWaitingTasks(ctx context.Context, userID, reason string) error {
@@ -247,7 +388,12 @@ func (t *simClockTx) WakeUser(ctx context.Context, userID, lane string, wakeAt t
 	if !ok {
 		return nil
 	}
-	return w.WakeUser(ctx, userID, lane, t.parent.translateUserWake(userID, lane, wakeAt))
+	translated, op := t.parent.planUserWake(userID, lane, wakeAt)
+	if err := w.WakeUser(ctx, userID, lane, translated); err != nil {
+		return err
+	}
+	t.userOps = append(t.userOps, op)
+	return nil
 }
 
 func (t *simClockTx) NotifyPause(ctx context.Context) error {
@@ -282,128 +428,306 @@ func (t *simClockTx) NextSequence(ctx context.Context, path string, count int) (
 	return s.NextSequence(ctx, path, count)
 }
 
-// docstore.LeaseStore & WakeWriter methods
-func (b *simClockBackend) leases() docstore.LeaseStore {
-	return b.inner.(docstore.LeaseStore)
+// docstore.LeaseStore, ScopedLeaseStore & WakeWriter methods
+func (b *simClockBackend) leases() (docstore.LeaseStore, error) {
+	leases, ok := b.inner.(docstore.LeaseStore)
+	if !ok {
+		return nil, errors.New("simClockBackend: inner backend does not implement docstore.LeaseStore")
+	}
+	return leases, nil
 }
 
 func (b *simClockBackend) ClaimTask(ctx context.Context, owner string, lease time.Duration) (docstore.TaskLease, bool, error) {
-	return b.leases().ClaimTask(ctx, owner, lease)
+	leases, err := b.leases()
+	if err != nil {
+		return docstore.TaskLease{}, false, err
+	}
+	return leases.ClaimTask(ctx, owner, lease)
+}
+
+func (b *simClockBackend) ClaimTaskForUser(ctx context.Context, userID, owner string, lease time.Duration) (docstore.TaskLease, bool, error) {
+	scoped, ok := b.inner.(docstore.ScopedLeaseStore)
+	if !ok {
+		return docstore.TaskLease{}, false, errors.New("simClockBackend: inner backend does not implement docstore.ScopedLeaseStore")
+	}
+	return scoped.ClaimTaskForUser(ctx, userID, owner, lease)
 }
 
 func (b *simClockBackend) ClaimTaskByID(ctx context.Context, userID, runID, owner string, lease time.Duration) (docstore.TaskLease, bool, error) {
-	return b.leases().ClaimTaskByID(ctx, userID, runID, owner, lease)
+	leases, err := b.leases()
+	if err != nil {
+		return docstore.TaskLease{}, false, err
+	}
+	return leases.ClaimTaskByID(ctx, userID, runID, owner, lease)
 }
 
 func (b *simClockBackend) RefreshTaskClaim(ctx context.Context, userID, runID, owner string, lease time.Duration) (docstore.TaskLease, bool, error) {
-	return b.leases().RefreshTaskClaim(ctx, userID, runID, owner, lease)
+	leases, err := b.leases()
+	if err != nil {
+		return docstore.TaskLease{}, false, err
+	}
+	return leases.RefreshTaskClaim(ctx, userID, runID, owner, lease)
 }
 
 func (b *simClockBackend) RenewTaskLeases(ctx context.Context, owner string, keys []docstore.TaskKey, lease time.Duration) (int, error) {
-	return b.leases().RenewTaskLeases(ctx, owner, keys, lease)
+	leases, err := b.leases()
+	if err != nil {
+		return 0, err
+	}
+	return leases.RenewTaskLeases(ctx, owner, keys, lease)
 }
 
 func (b *simClockBackend) ParkTask(ctx context.Context, userID, runID, owner string, wakeSeq int64, reason string) (bool, error) {
-	return b.leases().ParkTask(ctx, userID, runID, owner, wakeSeq, reason)
+	leases, err := b.leases()
+	if err != nil {
+		return false, err
+	}
+	parked, err := leases.ParkTask(ctx, userID, runID, owner, wakeSeq, reason)
+	if err == nil && parked {
+		b.mu.Lock()
+		delete(b.taskWakes, taskWakeKey{userID: userID, runID: runID})
+		b.mu.Unlock()
+	}
+	return parked, err
 }
 
 func (b *simClockBackend) ReleaseTask(ctx context.Context, userID, runID, owner string, wakeSeq int64, nextWake time.Time) error {
-	if !nextWake.IsZero() {
-		nextWake = b.translateTaskWake(userID, runID, nextWake)
+	leases, err := b.leases()
+	if err != nil {
+		return err
 	}
-	return b.leases().ReleaseTask(ctx, userID, runID, owner, wakeSeq, nextWake)
+	if owner == "" || nextWake.IsZero() {
+		return leases.ReleaseTask(ctx, userID, runID, owner, wakeSeq, nextWake)
+	}
+	translated, op := b.planTaskWake(userID, runID, nextWake)
+	if err := leases.ReleaseTask(ctx, userID, runID, owner, wakeSeq, translated); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	b.applyTaskWakeOpLocked(op)
+	b.mu.Unlock()
+	return nil
 }
 
 func (b *simClockBackend) DeleteTaskLease(ctx context.Context, userID, runID string, wakeSeq int64) (bool, error) {
-	b.mu.Lock()
-	delete(b.taskWakes, taskWakeKey{userID: userID, runID: runID})
-	b.mu.Unlock()
-	return b.leases().DeleteTaskLease(ctx, userID, runID, wakeSeq)
+	leases, err := b.leases()
+	if err != nil {
+		return false, err
+	}
+	deleted, err := leases.DeleteTaskLease(ctx, userID, runID, wakeSeq)
+	if err == nil && deleted {
+		b.mu.Lock()
+		delete(b.taskWakes, taskWakeKey{userID: userID, runID: runID})
+		b.mu.Unlock()
+	}
+	return deleted, err
 }
 
 func (b *simClockBackend) EnsureTaskLease(ctx context.Context, userID, runID string, wakeAt time.Time) (bool, error) {
-	return b.leases().EnsureTaskLease(ctx, userID, runID, b.translateTaskWake(userID, runID, wakeAt))
+	leases, err := b.leases()
+	if err != nil {
+		return false, err
+	}
+	translated, op := b.planTaskWake(userID, runID, wakeAt)
+	created, err := leases.EnsureTaskLease(ctx, userID, runID, translated)
+	if err == nil && created {
+		b.mu.Lock()
+		b.applyTaskWakeOpLocked(op)
+		b.mu.Unlock()
+	}
+	return created, err
 }
 
 func (b *simClockBackend) ListTaskLeases(ctx context.Context, userID string) ([]docstore.TaskLease, error) {
-	return b.leases().ListTaskLeases(ctx, userID)
+	leases, err := b.leases()
+	if err != nil {
+		return nil, err
+	}
+	return leases.ListTaskLeases(ctx, userID)
 }
 
 func (b *simClockBackend) ClaimUserWake(ctx context.Context, lane, owner string, lease time.Duration) (docstore.UserWake, bool, error) {
-	return b.leases().ClaimUserWake(ctx, lane, owner, lease)
+	leases, err := b.leases()
+	if err != nil {
+		return docstore.UserWake{}, false, err
+	}
+	return leases.ClaimUserWake(ctx, lane, owner, lease)
+}
+
+func (b *simClockBackend) ClaimUserWakeForUser(ctx context.Context, userID, lane, owner string, lease time.Duration) (docstore.UserWake, bool, error) {
+	scoped, ok := b.inner.(docstore.ScopedLeaseStore)
+	if !ok {
+		return docstore.UserWake{}, false, errors.New("simClockBackend: inner backend does not implement docstore.ScopedLeaseStore")
+	}
+	return scoped.ClaimUserWakeForUser(ctx, userID, lane, owner, lease)
 }
 
 func (b *simClockBackend) RenewUserWake(ctx context.Context, userID, lane, owner string, lease time.Duration) (bool, error) {
-	return b.leases().RenewUserWake(ctx, userID, lane, owner, lease)
+	leases, err := b.leases()
+	if err != nil {
+		return false, err
+	}
+	return leases.RenewUserWake(ctx, userID, lane, owner, lease)
 }
 
 func (b *simClockBackend) ParkUserWake(ctx context.Context, userID, lane, owner string, wakeSeq int64) (bool, error) {
-	return b.leases().ParkUserWake(ctx, userID, lane, owner, wakeSeq)
+	leases, err := b.leases()
+	if err != nil {
+		return false, err
+	}
+	parked, err := leases.ParkUserWake(ctx, userID, lane, owner, wakeSeq)
+	if err == nil && parked {
+		b.mu.Lock()
+		delete(b.userWakes, userWakeKey{userID: userID, lane: lane})
+		b.mu.Unlock()
+	}
+	return parked, err
 }
 
 func (b *simClockBackend) ReleaseUserWake(ctx context.Context, userID, lane, owner string, wakeSeq int64, nextWake time.Time) error {
-	if !nextWake.IsZero() {
-		nextWake = b.translateUserWake(userID, lane, nextWake)
+	leases, err := b.leases()
+	if err != nil {
+		return err
 	}
-	return b.leases().ReleaseUserWake(ctx, userID, lane, owner, wakeSeq, nextWake)
+	if owner == "" || nextWake.IsZero() {
+		return leases.ReleaseUserWake(ctx, userID, lane, owner, wakeSeq, nextWake)
+	}
+	translated, op := b.planUserWake(userID, lane, nextWake)
+	if err := leases.ReleaseUserWake(ctx, userID, lane, owner, wakeSeq, translated); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	b.applyUserWakeOpLocked(op)
+	b.mu.Unlock()
+	return nil
 }
 
 func (b *simClockBackend) ListUserWakes(ctx context.Context, userID string) ([]docstore.UserWake, error) {
-	return b.leases().ListUserWakes(ctx, userID)
+	leases, err := b.leases()
+	if err != nil {
+		return nil, err
+	}
+	return leases.ListUserWakes(ctx, userID)
 }
 
 func (b *simClockBackend) WakeTask(ctx context.Context, userID, runID string, wakeAt time.Time) error {
-	return b.leases().WakeTask(ctx, userID, runID, b.translateTaskWake(userID, runID, wakeAt))
+	leases, err := b.leases()
+	if err != nil {
+		return err
+	}
+	translated, op := b.planTaskWake(userID, runID, wakeAt)
+	if err := leases.WakeTask(ctx, userID, runID, translated); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	b.applyTaskWakeOpLocked(op)
+	b.mu.Unlock()
+	return nil
 }
 
 func (b *simClockBackend) WakeWaitingTasks(ctx context.Context, userID, reason string) error {
-	return b.leases().WakeWaitingTasks(ctx, userID, reason)
+	leases, err := b.leases()
+	if err != nil {
+		return err
+	}
+	return leases.WakeWaitingTasks(ctx, userID, reason)
 }
 
 func (b *simClockBackend) WakeUser(ctx context.Context, userID, lane string, wakeAt time.Time) error {
-	return b.leases().WakeUser(ctx, userID, lane, b.translateUserWake(userID, lane, wakeAt))
+	leases, err := b.leases()
+	if err != nil {
+		return err
+	}
+	translated, op := b.planUserWake(userID, lane, wakeAt)
+	if err := leases.WakeUser(ctx, userID, lane, translated); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	b.applyUserWakeOpLocked(op)
+	b.mu.Unlock()
+	return nil
 }
 
 func (b *simClockBackend) NotifyPause(ctx context.Context) error {
-	return b.leases().NotifyPause(ctx)
+	leases, err := b.leases()
+	if err != nil {
+		return err
+	}
+	return leases.NotifyPause(ctx)
 }
 
 // WakeListener, MemoryIndex, Sequencer, SequenceReader, Pinger, AdvisoryLocker
 func (b *simClockBackend) ListenWakes(ctx context.Context, onEvent func(docstore.WakeEvent)) error {
-	return b.inner.(docstore.WakeListener).ListenWakes(ctx, onEvent)
+	wl, ok := b.inner.(docstore.WakeListener)
+	if !ok {
+		return errors.New("simClockBackend: inner backend does not implement docstore.WakeListener")
+	}
+	return wl.ListenWakes(ctx, onEvent)
 }
 
 func (b *simClockBackend) SearchMemory(ctx context.Context, query docstore.MemorySearchQuery) ([]docstore.MemorySearchHit, error) {
+	idx, ok := b.inner.(docstore.MemoryIndex)
+	if !ok {
+		return nil, errors.New("simClockBackend: inner backend does not implement docstore.MemoryIndex")
+	}
 	if query.Now.IsZero() {
 		query.Now = b.clock.Now()
 	}
-	return b.inner.(docstore.MemoryIndex).SearchMemory(ctx, query)
+	return idx.SearchMemory(ctx, query)
 }
 
 func (b *simClockBackend) ListMemoryChunks(ctx context.Context, owner string) ([]docstore.MemoryChunk, error) {
-	return b.inner.(docstore.MemoryIndex).ListMemoryChunks(ctx, owner)
+	idx, ok := b.inner.(docstore.MemoryIndex)
+	if !ok {
+		return nil, errors.New("simClockBackend: inner backend does not implement docstore.MemoryIndex")
+	}
+	return idx.ListMemoryChunks(ctx, owner)
 }
 
 func (b *simClockBackend) UpsertMemoryChunk(ctx context.Context, chunk docstore.MemoryChunk) error {
-	return b.inner.(docstore.MemoryIndexWriter).UpsertMemoryChunk(ctx, chunk)
+	w, ok := b.inner.(docstore.MemoryIndexWriter)
+	if !ok {
+		return errors.New("simClockBackend: inner backend does not implement docstore.MemoryIndexWriter")
+	}
+	return w.UpsertMemoryChunk(ctx, chunk)
 }
 
 func (b *simClockBackend) DeleteMemoryChunk(ctx context.Context, owner, chunkID string) error {
-	return b.inner.(docstore.MemoryIndexWriter).DeleteMemoryChunk(ctx, owner, chunkID)
+	w, ok := b.inner.(docstore.MemoryIndexWriter)
+	if !ok {
+		return errors.New("simClockBackend: inner backend does not implement docstore.MemoryIndexWriter")
+	}
+	return w.DeleteMemoryChunk(ctx, owner, chunkID)
 }
 
 func (b *simClockBackend) NextSequence(ctx context.Context, path string, count int) (int64, error) {
-	return b.inner.(docstore.Sequencer).NextSequence(ctx, path, count)
+	s, ok := b.inner.(docstore.Sequencer)
+	if !ok {
+		return 0, errors.New("simClockBackend: inner backend does not implement docstore.Sequencer")
+	}
+	return s.NextSequence(ctx, path, count)
 }
 
 func (b *simClockBackend) CurrentSequence(ctx context.Context, path string) (int64, error) {
-	return b.inner.(docstore.SequenceReader).CurrentSequence(ctx, path)
+	sr, ok := b.inner.(docstore.SequenceReader)
+	if !ok {
+		return 0, errors.New("simClockBackend: inner backend does not implement docstore.SequenceReader")
+	}
+	return sr.CurrentSequence(ctx, path)
 }
 
 func (b *simClockBackend) Ping(ctx context.Context) error {
-	return b.inner.(docstore.Pinger).Ping(ctx)
+	p, ok := b.inner.(docstore.Pinger)
+	if !ok {
+		return nil
+	}
+	return p.Ping(ctx)
 }
 
 func (b *simClockBackend) TryAdvisoryLock(ctx context.Context, key int64) (func(), bool, error) {
-	return b.inner.(docstore.AdvisoryLocker).TryAdvisoryLock(ctx, key)
+	l, ok := b.inner.(docstore.AdvisoryLocker)
+	if !ok {
+		return func() {}, true, nil
+	}
+	return l.TryAdvisoryLock(ctx, key)
 }

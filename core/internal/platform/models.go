@@ -13,6 +13,7 @@ func ReplyModel(models settings.Models) conversation.ReplyModel {
 	}
 	model := conversation.NewOpenAIModel(models.OpenAIKey, models.Outer)
 	model.TestURL = models.TestURL
+	model.ReasoningEffort = models.OuterReasoning
 	return model
 }
 
@@ -24,5 +25,6 @@ func TaskModel(models settings.Models, meter usage.Meter) *responses.Client {
 	}
 	model := responses.New(key, models.Inner, meter)
 	model.TestURL = models.TestURL
+	model.DefaultReasoning = models.InnerReasoning
 	return model
 }

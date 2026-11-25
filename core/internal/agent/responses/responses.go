@@ -38,6 +38,8 @@ type Client struct {
 	gatewayURL string
 	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
 	TestURL string
+	// DefaultReasoning sets the reasoning effort for requests that do not specify one.
+	DefaultReasoning string
 }
 
 func New(key, model string, meter usage.Meter) *Client {
@@ -141,8 +143,12 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		"tools": tools, "max_output_tokens": req.MaxOutputTokens, "store": false,
 		"include": []string{"reasoning.encrypted_content"},
 	}
-	if c.gatewayURL == "" && req.Reasoning != "" {
-		fields["reasoning"] = map[string]string{"effort": req.Reasoning}
+	effort := req.Reasoning
+	if effort == "" {
+		effort = c.DefaultReasoning
+	}
+	if c.gatewayURL == "" && effort != "" {
+		fields["reasoning"] = map[string]string{"effort": effort}
 	}
 	c.requestOptions(fields)
 	body, err := json.Marshal(fields)

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -24,12 +25,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"nori/internal/app"
 	"nori/internal/httpserver"
 	"nori/internal/observability"
 	"nori/internal/platform"
 	"nori/internal/settings"
+	"nori/internal/state"
 	"nori/internal/state/docstore"
 	"nori/internal/state/postgres"
 	"nori/internal/users"
@@ -92,7 +95,14 @@ func main() {
 	allowDefaultDB := flag.Bool("allow-default-db", false, "Allow running against default local database (for workbench seeding)")
 	createDBFlag := flag.String("create-db", "", "Create a loopback ephemeral nori_sim_* database at this Postgres URL and exit")
 	dropDBFlag := flag.String("drop-db", "", "Drop a loopback ephemeral nori_sim_* database at this Postgres URL and exit")
+	userIDFlag := flag.String("user-id", "", "Optional user ID to scope worker.Pool and virtual-clock wake sweeps")
 	flag.Parse()
+
+	scopedUserID := strings.TrimSpace(*userIDFlag)
+	if scopedUserID != "" && !users.ValidID(scopedUserID) {
+		slog.Error("invalid --user-id", "user_id", scopedUserID)
+		os.Exit(2)
+	}
 
 	if *createDBFlag != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -198,8 +208,10 @@ func main() {
 
 	var pool *worker.Pool
 	if !s.Features.DisableBackgroundTasks {
+		workerOwner := fmt.Sprintf("nori-sim-%s", uuid.NewString()[:8])
 		pool, err = worker.New(svc, worker.Options{
-			Owner:                   "nori-sim-worker",
+			Owner:                   workerOwner,
+			UserID:                  scopedUserID,
 			TaskConcurrency:         16,
 			ConversationConcurrency: 8,
 			SchedulerConcurrency:    8,
@@ -242,7 +254,7 @@ func main() {
 		}()
 	}
 
-	simMux := buildSimHandler(svc, simBackend, clock)
+	simMux := buildSimHandler(svc, simBackend, clock, scopedUserID)
 	addr := net.JoinHostPort("127.0.0.1", cmp.Or(s.Port, "8080"))
 	server := httpserver.New(ctx, addr, simMux)
 	slog.InfoContext(runCtx, "nori-sim listening",
@@ -269,8 +281,9 @@ func writeSimJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func buildSimHandler(svc *app.Service, backend *simClockBackend, clock *simClock) http.Handler {
+func buildSimHandler(svc *app.Service, backend *simClockBackend, clock *simClock, scopedUserID string) http.Handler {
 	baseHandler := svc.Handler(true)
+	tracker := newSimInvariantTracker()
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /_sim/clock", func(w http.ResponseWriter, r *http.Request) {
@@ -298,7 +311,7 @@ func buildSimHandler(svc *app.Service, backend *simClockBackend, clock *simClock
 		if req.Force || target.After(cur) {
 			updated = clock.Set(target)
 		}
-		if err := wakeDueForAllUsers(r.Context(), svc, backend, updated); err != nil {
+		if err := wakeDueForAllUsers(r.Context(), svc, backend, updated, scopedUserID); err != nil {
 			writeSimJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -320,7 +333,7 @@ func buildSimHandler(svc *app.Service, backend *simClockBackend, clock *simClock
 			return
 		}
 		updated := clock.Advance(time.Duration(req.Seconds * float64(time.Second)))
-		if err := wakeDueForAllUsers(r.Context(), svc, backend, updated); err != nil {
+		if err := wakeDueForAllUsers(r.Context(), svc, backend, updated, scopedUserID); err != nil {
 			writeSimJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -371,7 +384,7 @@ func buildSimHandler(svc *app.Service, backend *simClockBackend, clock *simClock
 		}
 		defer release()
 
-		snap, err := inspectUserState(r.Context(), row, userApp, backend, clock.Now())
+		snap, err := inspectUserStateWithTracker(r.Context(), row, userApp, backend, clock.Now(), tracker)
 		if err != nil {
 			writeSimJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -379,11 +392,77 @@ func buildSimHandler(svc *app.Service, backend *simClockBackend, clock *simClock
 		writeSimJSON(w, http.StatusOK, snap)
 	})
 
+	mux.HandleFunc("POST /_sim/users/{id}/context_from", func(w http.ResponseWriter, r *http.Request) {
+		userID := r.PathValue("id")
+		row, err := svc.Users.Get(r.Context(), userID)
+		if err != nil {
+			writeSimJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		var req struct {
+			ContextFrom string `json:"context_from"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeSimJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		target := clock.Now().UTC().Truncate(time.Microsecond)
+		if req.ContextFrom != "" {
+			parsed, err := time.Parse(time.RFC3339Nano, req.ContextFrom)
+			if err != nil {
+				writeSimJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid RFC3339 context_from: " + err.Error()})
+				return
+			}
+			target = parsed.UTC().Truncate(time.Microsecond)
+		}
+		client := docstore.New(backend)
+		ref := client.Collection("owners").Doc(row.DataOwner()).Collection("conversation").Doc("control")
+		err = client.RunTransaction(r.Context(), func(_ context.Context, tx *docstore.Transaction) error {
+			var c state.ConversationControl
+			doc, err := tx.Get(ref)
+			if err == nil {
+				if err := doc.DataTo(&c); err != nil {
+					return err
+				}
+			} else if !errors.Is(err, docstore.ErrNotFound) {
+				return err
+			}
+			c.ContextFrom = target
+			return tx.Set(ref, c)
+		})
+		if err != nil {
+			writeSimJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeSimJSON(w, http.StatusOK, map[string]any{
+			"context_from": target.Format(time.RFC3339Nano),
+		})
+	})
+
 	mux.Handle("/", baseHandler)
 	return mux
 }
 
-func wakeDueForAllUsers(ctx context.Context, svc *app.Service, backend *simClockBackend, now time.Time) error {
+func wakeDueForAllUsers(ctx context.Context, svc *app.Service, backend *simClockBackend, now time.Time, scopedUserID string) error {
+	if scopedUserID != "" {
+		if err := backend.WakeDueForUser(ctx, scopedUserID); err != nil {
+			return err
+		}
+		row, err := svc.Users.Get(ctx, scopedUserID)
+		if err != nil {
+			if errors.Is(err, state.ErrNotFound) || errors.Is(err, docstore.ErrNotFound) {
+				return nil
+			}
+			return err
+		}
+		userApp, release, err := svc.Acquire(ctx, row)
+		if err != nil {
+			return nil
+		}
+		defer release()
+		_ = wakeDueForUser(ctx, userApp, backend, now)
+		return nil
+	}
 	if err := backend.WakeDue(ctx); err != nil {
 		return err
 	}
@@ -439,17 +518,24 @@ func drainUserToQuiescence(ctx context.Context, svc *app.Service, backend *simCl
 	}
 	defer release()
 
-	_ = backend.WakeDue(ctx)
+	_ = backend.WakeDueForUser(ctx, userID)
 	_ = wakeDueForUser(ctx, userApp, backend, clock.Now())
 
 	stableTicks := 0
 	var last drainResult
 	for round := 1; ; round++ {
+		_ = backend.WakeDueForUser(ctx, userID)
 		now := clock.Now()
 
-		conv, _, err := userApp.Store.ConversationStatus(ctx)
+		conv, activeTurn, err := userApp.Store.ConversationStatus(ctx)
 		if err != nil {
 			return last, err
+		}
+		if activeTurn != nil {
+			if _, wait := state.RestartWait(conv, *activeTurn, now); wait > 0 && wait <= 5*time.Second {
+				now = clock.AdvanceUntil(conv.LatestAt.Add(state.RestartQuiet + time.Millisecond))
+				_ = backend.WakeDueForUser(ctx, userID)
+			}
 		}
 		openTasks, err := userApp.Store.OpenTasks(ctx)
 		if err != nil {
@@ -506,14 +592,16 @@ func drainUserToQuiescence(ctx context.Context, svc *app.Service, backend *simCl
 		convRunnable := false
 		schedRunnable := false
 		if wakes, wErr := backend.ListUserWakes(ctx, userID); wErr == nil {
+			realNow := time.Now().UTC()
 			for _, w := range wakes {
-				if w.Owner != "" {
+				if w.Owner != "" && (w.LeaseUntil == nil || w.LeaseUntil.After(realNow)) {
 					laneBusy = true
 				}
-				if w.Lane == docstore.LaneConversation && w.Runnable {
+				// Only treat as already runnable in Postgres if wake_at is not parked at farHorizon.
+				if w.Lane == docstore.LaneConversation && w.Runnable && !w.WakeAt.After(realNow.Add(shortUserWakeThreshold)) {
 					convRunnable = true
 				}
-				if w.Lane == docstore.LaneScheduler && w.Runnable {
+				if w.Lane == docstore.LaneScheduler && w.Runnable && !w.WakeAt.After(realNow.Add(shortUserWakeThreshold)) {
 					schedRunnable = true
 				}
 			}

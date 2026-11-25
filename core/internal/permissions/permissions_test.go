@@ -739,6 +739,115 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 		}
 	})
 
+	t.Run("decline_user_note_forwarding_validation_and_legacy_fallback", func(t *testing.T) {
+		env := newTestEnv(t)
+		env.svc.OnDecline = func(_ context.Context, _ permissions.Interaction) string {
+			return " Draft removed."
+		}
+		rev := int64(2)
+		opened, err := env.svc.Open(ctx, permissions.Interaction{
+			ID:                  "int_decline_note",
+			TaskID:              "run-decline-note",
+			InstructionRevision: &rev,
+			Kind:                "approval",
+			Prompt:              "Cancel contract with Apex",
+			ActionDigest:        "digest-note",
+		}, "email")
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+
+		// Oversized decline text returns ErrInvalidResource without resolving.
+		if _, _, err := env.svc.Respond(ctx, opened.ID, "req-too-big", 1, permissions.Response{
+			Kind:         "decline",
+			ActionDigest: "digest-note",
+			Text:         strings.Repeat("x", state.MaxMessageBytes+1),
+		}); !errors.Is(err, state.ErrInvalidResource) {
+			t.Fatalf("oversized decline text err = %v, want ErrInvalidResource", err)
+		}
+
+		// Non-empty trimmed note is stored on Resolution.Text and appended after prefix before OnDecline.
+		resp := permissions.Response{
+			Kind:         "decline",
+			ActionDigest: "digest-note",
+			Text:         "  Wait until CFO approves Q2 bridge batch.  ",
+		}
+		_, ans1, err := env.svc.Respond(ctx, opened.ID, "req-note-ok", 1, resp)
+		if err != nil || ans1 == nil {
+			t.Fatalf("Respond decline with note = (%+v, %v)", ans1, err)
+		}
+		wantPrefix := "The user declined this action. Do not attempt it; report what was not done: Cancel contract with Apex User note: Wait until CFO approves Q2 bridge batch. Draft removed."
+		if ans1.Text != wantPrefix {
+			t.Fatalf("ans1.Text = %q, want %q", ans1.Text, wantPrefix)
+		}
+		gotInter, err := env.svc.Interaction(ctx, opened.ID)
+		if err != nil || gotInter.Resolution == nil || gotInter.Resolution.Text != "Wait until CFO approves Q2 bridge batch." {
+			t.Fatalf("Interaction resolution = (%+v, %v)", gotInter.Resolution, err)
+		}
+		// Idempotent retry returns identical text.
+		_, ans2, err := env.svc.Respond(ctx, opened.ID, "req-note-ok", 1, resp)
+		if err != nil || ans2 == nil || ans2.Text != ans1.Text {
+			t.Fatalf("retry answer = (%+v, %v), want Text=%q", ans2, err, ans1.Text)
+		}
+
+		// Whitespace-only text preserves exact legacy answer text without " User note:".
+		openedWS, err := env.svc.Open(ctx, permissions.Interaction{
+			ID:                  "int_decline_ws",
+			TaskID:              "run-decline-ws",
+			InstructionRevision: &rev,
+			Kind:                "approval",
+			Prompt:              "Send email",
+			ActionDigest:        "digest-ws",
+		}, "email")
+		if err != nil {
+			t.Fatalf("Open ws: %v", err)
+		}
+		_, ansWS, err := env.svc.Respond(ctx, openedWS.ID, "req-ws", 1, permissions.Response{
+			Kind:         "decline",
+			ActionDigest: "digest-ws",
+			Text:         "   \t\n  ",
+		})
+		if err != nil || ansWS == nil {
+			t.Fatalf("Respond decline ws = (%+v, %v)", ansWS, err)
+		}
+		wantWS := "The user declined this action. Do not attempt it; report what was not done: Send email Draft removed."
+		if ansWS.Text != wantWS {
+			t.Fatalf("ansWS.Text = %q, want %q", ansWS.Text, wantWS)
+		}
+		env.svc.MarkDelivered(ctx, opened.ID)
+		env.svc.MarkDelivered(ctx, openedWS.ID)
+
+		// Legacy fallback in UndeliveredAnswers (when answer_text is empty) preserves User note.
+		legacyBody := map[string]any{
+			"id":            "int_decline_legacy",
+			"task_id":       "run-decline-legacy",
+			"kind":          "approval",
+			"status":        "resolved",
+			"prompt":        "Delete archive",
+			"action_digest": "digest-legacy",
+			"resolution": map[string]any{
+				"kind": "decline",
+				"text": "Keep for audit",
+				"at":   env.currentTime().Format(time.RFC3339Nano),
+			},
+		}
+		legacyRes, err := state.NewResource(permissions.CollectionInteractions, "int_decline_legacy", 0, legacyBody, map[string]string{"status": "resolved", "task_id": "run-decline-legacy"}, env.currentTime())
+		if err != nil {
+			t.Fatalf("NewResource legacy: %v", err)
+		}
+		if _, err := env.store.PutResource(ctx, legacyRes, 0); err != nil {
+			t.Fatalf("PutResource legacy: %v", err)
+		}
+		undeliv, ids, err := env.svc.UndeliveredAnswers(ctx)
+		if err != nil || len(undeliv) != 1 || len(ids) != 1 || ids[0] != "int_decline_legacy" {
+			t.Fatalf("UndeliveredAnswers = (%+v, %+v, %v), want 1 legacy answer", undeliv, ids, err)
+		}
+		wantLegacy := "The user declined this action. Do not attempt it; report what was not done: Delete archive User note: Keep for audit"
+		if undeliv[0].Text != wantLegacy {
+			t.Fatalf("UndeliveredAnswers[0].Text = %q, want %q", undeliv[0].Text, wantLegacy)
+		}
+	})
+
 	t.Run("expiry_blocks_respond_and_updates_status_queries", func(t *testing.T) {
 		env := newTestEnv(t)
 		expires := env.currentTime().Add(5 * time.Minute)

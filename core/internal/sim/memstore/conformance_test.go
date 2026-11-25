@@ -2317,6 +2317,126 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("expected unclaimed runnable row wake_seq >= 2 after WakeWaitingTasks, got %d", cUnclaimed.WakeSeq)
 		}
 	})
+
+	t.Run("ScopedLeaseStoreClaimForUser", func(t *testing.T) {
+		scoped, ok := any(ls).(docstore.ScopedLeaseStore)
+		if !ok {
+			t.Fatalf("LeaseStore %T does not implement docstore.ScopedLeaseStore", ls)
+		}
+		u1 := prefix + "_scoped_u1"
+		u2 := prefix + "_scoped_u2"
+		rU1Early := prefix + "_s_u1_early"
+		rU1Late := prefix + "_s_u1_late"
+		rU1Future := prefix + "_s_u1_future"
+		rU2Earlier := prefix + "_s_u2_earlier"
+		trackTask(u1, rU1Early)
+		trackTask(u1, rU1Late)
+		trackTask(u1, rU1Future)
+		trackTask(u2, rU2Earlier)
+
+		if _, _, err := scoped.ClaimTaskForUser(ctx, "", "w1", time.Second); err == nil {
+			t.Fatal("ClaimTaskForUser with empty userID = nil, want error")
+		}
+		if _, _, err := scoped.ClaimTaskForUser(ctx, u1, "", time.Second); err == nil {
+			t.Fatal("ClaimTaskForUser with empty owner = nil, want error")
+		}
+		if _, _, err := scoped.ClaimUserWakeForUser(ctx, "", docstore.LaneConversation, "w1", time.Second); err == nil {
+			t.Fatal("ClaimUserWakeForUser with empty userID = nil, want error")
+		}
+		if _, _, err := scoped.ClaimUserWakeForUser(ctx, u1, "", "w1", time.Second); err == nil {
+			t.Fatal("ClaimUserWakeForUser with empty lane = nil, want error")
+		}
+		if _, _, err := scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneConversation, "", time.Second); err == nil {
+			t.Fatal("ClaimUserWakeForUser with empty owner = nil, want error")
+		}
+
+		now := time.Now().UTC()
+		if err := ls.WakeTask(ctx, u2, rU2Earlier, now.Add(-60*time.Second)); err != nil {
+			t.Fatalf("WakeTask u2: %v", err)
+		}
+		if err := ls.WakeTask(ctx, u1, rU1Late, now.Add(-10*time.Second)); err != nil {
+			t.Fatalf("WakeTask u1 late: %v", err)
+		}
+		if err := ls.WakeTask(ctx, u1, rU1Early, now.Add(-20*time.Second)); err != nil {
+			t.Fatalf("WakeTask u1 early: %v", err)
+		}
+		if err := ls.WakeTask(ctx, u1, rU1Future, now.Add(5*time.Minute)); err != nil {
+			t.Fatalf("WakeTask u1 future: %v", err)
+		}
+
+		// ClaimTaskForUser(u1) must skip u2's even-earlier task and claim u1's earliest due task.
+		c1, ok, err := scoped.ClaimTaskForUser(ctx, u1, "w1", 120*time.Millisecond)
+		if err != nil || !ok || c1.UserID != u1 || c1.RunID != rU1Early {
+			t.Fatalf("ClaimTaskForUser(u1) #1 = (%+v, %v, %v), want %s/%s", c1, ok, err, u1, rU1Early)
+		}
+		c2, ok, err := scoped.ClaimTaskForUser(ctx, u1, "w1", 5*time.Second)
+		if err != nil || !ok || c2.UserID != u1 || c2.RunID != rU1Late {
+			t.Fatalf("ClaimTaskForUser(u1) #2 = (%+v, %v, %v), want %s/%s", c2, ok, err, u1, rU1Late)
+		}
+		// Only u1 future and u2 due remain -> u1 must return ok=false.
+		if c3, ok, err := scoped.ClaimTaskForUser(ctx, u1, "w1", 5*time.Second); err != nil || ok {
+			t.Fatalf("ClaimTaskForUser(u1) #3 = (%+v, %v, %v), want ok=false", c3, ok, err)
+		}
+		// Lease expiry takeover for u1.
+		time.Sleep(180 * time.Millisecond)
+		taken, ok, err := scoped.ClaimTaskForUser(ctx, u1, "w2", 5*time.Second)
+		if err != nil || !ok || taken.UserID != u1 || taken.RunID != rU1Early || taken.Owner != "w2" {
+			t.Fatalf("ClaimTaskForUser(u1) expiry takeover = (%+v, %v, %v)", taken, ok, err)
+		}
+		// u2's task remained unclaimed and can be claimed for u2.
+		cu2, ok, err := scoped.ClaimTaskForUser(ctx, u2, "w2", 5*time.Second)
+		if err != nil || !ok || cu2.UserID != u2 || cu2.RunID != rU2Earlier {
+			t.Fatalf("ClaimTaskForUser(u2) = (%+v, %v, %v), want %s/%s", cu2, ok, err, u2, rU2Earlier)
+		}
+
+		// User-wake scoping: ClaimUserWakeForUser ignores u2's due wakes and future u1 wakes.
+		if err := ls.WakeUser(ctx, u2, docstore.LaneConversation, now.Add(-60*time.Second)); err != nil {
+			t.Fatalf("WakeUser u2 conv: %v", err)
+		}
+		if err := ls.WakeUser(ctx, u2, docstore.LaneScheduler, now.Add(-60*time.Second)); err != nil {
+			t.Fatalf("WakeUser u2 sched: %v", err)
+		}
+		if err := ls.WakeUser(ctx, u1, docstore.LaneConversation, now.Add(-5*time.Second)); err != nil {
+			t.Fatalf("WakeUser u1 conv: %v", err)
+		}
+		if err := ls.WakeUser(ctx, u1, docstore.LaneScheduler, now.Add(5*time.Minute)); err != nil {
+			t.Fatalf("WakeUser u1 sched future: %v", err)
+		}
+
+		uw1, ok, err := scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneConversation, "w1", 120*time.Millisecond)
+		if err != nil || !ok || uw1.UserID != u1 || uw1.Lane != docstore.LaneConversation {
+			t.Fatalf("ClaimUserWakeForUser(u1, conv) = (%+v, %v, %v)", uw1, ok, err)
+		}
+		// Mutual exclusion while leased.
+		if uwDup, ok, err := scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneConversation, "w2", 5*time.Second); err != nil || ok {
+			t.Fatalf("ClaimUserWakeForUser(u1, conv) while leased = (%+v, %v, %v), want ok=false", uwDup, ok, err)
+		}
+		// Future u1 scheduler wake must not claim (and must not claim u2's due scheduler wake).
+		if uwSched, ok, err := scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneScheduler, "w1", 5*time.Second); err != nil || ok {
+			t.Fatalf("ClaimUserWakeForUser(u1, sched future) = (%+v, %v, %v), want ok=false", uwSched, ok, err)
+		}
+		// Expiry takeover on u1 conversation lane.
+		time.Sleep(180 * time.Millisecond)
+		uwTakeover, ok, err := scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneConversation, "w2", 5*time.Second)
+		if err != nil || !ok || uwTakeover.UserID != u1 || uwTakeover.Owner != "w2" {
+			t.Fatalf("ClaimUserWakeForUser(u1, conv) takeover = (%+v, %v, %v)", uwTakeover, ok, err)
+		}
+		// Clean up u1/u2 user wakes.
+		_, _ = ls.ParkUserWake(ctx, u1, docstore.LaneConversation, "w2", uwTakeover.WakeSeq)
+		if uw2, ok, err := scoped.ClaimUserWakeForUser(ctx, u2, docstore.LaneConversation, "w2", 5*time.Second); err != nil || !ok {
+			t.Fatalf("ClaimUserWakeForUser(u2, conv) = (%+v, %v, %v)", uw2, ok, err)
+		} else {
+			_, _ = ls.ParkUserWake(ctx, u2, docstore.LaneConversation, "w2", uw2.WakeSeq)
+		}
+		if uw2s, ok, err := scoped.ClaimUserWakeForUser(ctx, u2, docstore.LaneScheduler, "w2", 5*time.Second); err != nil || !ok {
+			t.Fatalf("ClaimUserWakeForUser(u2, sched) = (%+v, %v, %v)", uw2s, ok, err)
+		} else {
+			_, _ = ls.ParkUserWake(ctx, u2, docstore.LaneScheduler, "w2", uw2s.WakeSeq)
+		}
+		for _, k := range []docstore.TaskKey{{UserID: u1, RunID: rU1Early}, {UserID: u1, RunID: rU1Late}, {UserID: u1, RunID: rU1Future}, {UserID: u2, RunID: rU2Earlier}} {
+			_, _ = ls.DeleteTaskLease(ctx, k.UserID, k.RunID, 0)
+		}
+	})
 }
 
 func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {

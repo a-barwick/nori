@@ -72,10 +72,11 @@ var (
 )
 
 var (
-	_ docstore.LeaseStore   = (*backend)(nil)
-	_ docstore.WakeListener = (*backend)(nil)
-	_ docstore.WakeWriter   = (*backend)(nil)
-	_ docstore.WakeWriter   = (*transaction)(nil)
+	_ docstore.LeaseStore       = (*backend)(nil)
+	_ docstore.ScopedLeaseStore = (*backend)(nil)
+	_ docstore.WakeListener     = (*backend)(nil)
+	_ docstore.WakeWriter       = (*backend)(nil)
+	_ docstore.WakeWriter       = (*transaction)(nil)
 )
 
 func (b *backend) readCommitted(ctx context.Context, readOnly bool, fn func(q executor) error) error {
@@ -504,6 +505,39 @@ func (b *backend) ClaimTask(ctx context.Context, owner string, lease time.Durati
 	return out, ok, err
 }
 
+func (b *backend) ClaimTaskForUser(ctx context.Context, userID, owner string, lease time.Duration) (docstore.TaskLease, bool, error) {
+	if userID == "" || owner == "" {
+		return docstore.TaskLease{}, false, errors.New("claim task for user requires user_id and owner")
+	}
+	var out docstore.TaskLease
+	var ok bool
+	err := b.readCommitted(ctx, false, func(q executor) error {
+		var err error
+		out, ok, err = scanTaskLease(q.QueryRow(ctx, `
+			WITH candidate AS (
+				SELECT user_id, run_id
+				FROM nori_task_leases
+				WHERE user_id = $1
+				  AND runnable = true
+				  AND wake_at <= now()
+				  AND (lease_until IS NULL OR lease_until <= now())
+				ORDER BY wake_at, updated_at
+				FOR UPDATE SKIP LOCKED
+				LIMIT 1
+			)
+			UPDATE nori_task_leases AS t
+			SET owner = $2,
+				lease_until = now() + ($3::bigint * interval '1 microsecond'),
+				updated_at = now()
+			FROM candidate
+			WHERE t.user_id = candidate.user_id AND t.run_id = candidate.run_id
+			RETURNING t.user_id, t.run_id, t.runnable, t.waiting_reason, t.owner, t.wake_seq, t.lease_until, t.wake_at, t.updated_at
+		`, userID, owner, leaseMicros(lease)))
+		return err
+	})
+	return out, ok, err
+}
+
 func (b *backend) ClaimTaskByID(ctx context.Context, userID, runID, owner string, lease time.Duration) (docstore.TaskLease, bool, error) {
 	if userID == "" || runID == "" || owner == "" {
 		return docstore.TaskLease{}, false, errors.New("claim task by id requires user_id, run_id, and owner")
@@ -795,6 +829,39 @@ func (b *backend) ClaimUserWake(ctx context.Context, lane, owner string, lease t
 			WHERE u.user_id = candidate.user_id AND u.lane = candidate.lane
 			RETURNING u.user_id, u.lane, u.runnable, u.wake_seq, u.wake_at, u.owner, u.lease_until, u.updated_at
 		`, lane, owner, leaseMicros(lease)))
+		return err
+	})
+	return out, ok, err
+}
+
+func (b *backend) ClaimUserWakeForUser(ctx context.Context, userID, lane, owner string, lease time.Duration) (docstore.UserWake, bool, error) {
+	if userID == "" || lane == "" || owner == "" {
+		return docstore.UserWake{}, false, errors.New("claim user wake for user requires user_id, lane, and owner")
+	}
+	var out docstore.UserWake
+	var ok bool
+	err := b.readCommitted(ctx, false, func(q executor) error {
+		var err error
+		out, ok, err = scanUserWake(q.QueryRow(ctx, `
+			WITH candidate AS (
+				SELECT user_id, lane
+				FROM nori_user_wakes
+				WHERE user_id = $1
+				  AND lane = $2
+				  AND runnable = true
+				  AND wake_at <= now()
+				  AND (lease_until IS NULL OR lease_until <= now())
+				FOR UPDATE SKIP LOCKED
+				LIMIT 1
+			)
+			UPDATE nori_user_wakes AS u
+			SET owner = $3,
+				lease_until = now() + ($4::bigint * interval '1 microsecond'),
+				updated_at = now()
+			FROM candidate
+			WHERE u.user_id = candidate.user_id AND u.lane = candidate.lane
+			RETURNING u.user_id, u.lane, u.runnable, u.wake_seq, u.wake_at, u.owner, u.lease_until, u.updated_at
+		`, userID, lane, owner, leaseMicros(lease)))
 		return err
 	})
 	return out, ok, err

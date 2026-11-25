@@ -25,6 +25,8 @@ func modelsFromEnvironment() Models {
 		GatewayURL: os.Getenv("NORI_MODEL_GATEWAY_URL"), GatewayKey: os.Getenv("NORI_MODEL_GATEWAY_API_KEY"),
 		OpenAIKey: os.Getenv("OPENAI_API_KEY"), JevKey: os.Getenv("JEV_API_KEY"), OpenRouterKey: os.Getenv("OPENROUTER_API_KEY"),
 		Outer: os.Getenv("NORI_AGENT_MODEL"), Inner: os.Getenv("MODEL_NAME"), TestURL: os.Getenv("NORI_MODEL_TEST_URL"),
+		OuterReasoning: strings.ToLower(strings.TrimSpace(os.Getenv("NORI_OUTER_REASONING_EFFORT"))),
+		InnerReasoning: strings.ToLower(strings.TrimSpace(os.Getenv("NORI_INNER_REASONING_EFFORT"))),
 	}
 	if !models.UsesGateway() {
 		models.Outer = cmp.Or(models.Outer, DefaultOuterModel)

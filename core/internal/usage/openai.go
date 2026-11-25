@@ -16,7 +16,7 @@ func SolCost(model, tier string, input, output, total *int64, cached int64) (flo
 // SolCostWithWrites prices a gpt-6.1-sol call with prompt caching: cache reads at 0.05x and 30-minute cache writes
 // at 1.25x the $2/M input rate (total rates, not surcharges). Ordinary input is input - cached - written.
 func SolCostWithWrites(model, tier string, input, output, total *int64, cached, written int64) (float64, error) {
-	if !matchOpenAIModel(model, "gpt-6.1-sol") || tier != "default" || input == nil || output == nil || total == nil ||
+	if (!matchOpenAIModel(model, "gpt-6.1-sol") && !matchOpenAIModel(model, "gpt-6.2-sol")) || tier != "default" || input == nil || output == nil || total == nil ||
 		*input < 0 || *input > 272_000 || *output < 0 || *output > 4096 || *total != *input+*output || cached < 0 || written < 0 ||
 		cached+written > *input {
 		return 0, errors.New("OpenAI usage does not match the configured tariff")

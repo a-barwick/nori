@@ -482,6 +482,48 @@ func (b *Backend) ClaimTask(ctx context.Context, owner string, lease time.Durati
 	return cloneTaskLease(best), true, nil
 }
 
+func (b *Backend) ClaimTaskForUser(ctx context.Context, userID, owner string, lease time.Duration) (docstore.TaskLease, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return docstore.TaskLease{}, false, err
+	}
+	if userID == "" {
+		return docstore.TaskLease{}, false, errors.New("memstore: user_id is required")
+	}
+	if owner == "" {
+		return docstore.TaskLease{}, false, errEmptyLeaseOwner
+	}
+	if err := b.faultInjector().maybeLeaseErrFor("claim_task_user:" + userID + ":" + owner); err != nil {
+		return docstore.TaskLease{}, false, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	now := b.now()
+	var best docstore.TaskLease
+	found := false
+	for _, row := range b.taskLeases {
+		if row.UserID != userID || !row.Runnable || row.WakeAt.After(now) {
+			continue
+		}
+		if row.LeaseUntil != nil && row.LeaseUntil.After(now) {
+			continue
+		}
+		if !found || compareTaskLeaseClaimOrder(row, best) < 0 {
+			best = row
+			found = true
+		}
+	}
+	if !found {
+		return docstore.TaskLease{}, false, nil
+	}
+	until := now.Add(lease)
+	best.Owner = owner
+	best.LeaseUntil = &until
+	best.UpdatedAt = now
+	b.taskLeases[docstore.TaskKey{UserID: best.UserID, RunID: best.RunID}] = best
+	return cloneTaskLease(best), true, nil
+}
+
 func (b *Backend) ClaimTaskByID(ctx context.Context, userID, runID, owner string, lease time.Duration) (docstore.TaskLease, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return docstore.TaskLease{}, false, err
@@ -748,6 +790,42 @@ func (b *Backend) ClaimUserWake(ctx context.Context, lane, owner string, lease t
 	best.UpdatedAt = now
 	b.userWakes[userWakeKey{userID: best.UserID, lane: best.Lane}] = best
 	return cloneUserWake(best), true, nil
+}
+
+func (b *Backend) ClaimUserWakeForUser(ctx context.Context, userID, lane, owner string, lease time.Duration) (docstore.UserWake, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return docstore.UserWake{}, false, err
+	}
+	if userID == "" {
+		return docstore.UserWake{}, false, errors.New("memstore: user_id is required")
+	}
+	if lane == "" {
+		return docstore.UserWake{}, false, errors.New("memstore: lane is required")
+	}
+	if owner == "" {
+		return docstore.UserWake{}, false, errEmptyLeaseOwner
+	}
+	if err := b.faultInjector().maybeLeaseErrFor("claim_user_for_user:" + userID + ":" + lane + ":" + owner); err != nil {
+		return docstore.UserWake{}, false, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	now := b.now()
+	key := userWakeKey{userID: userID, lane: lane}
+	row, ok := b.userWakes[key]
+	if !ok || !row.Runnable || row.WakeAt.After(now) {
+		return docstore.UserWake{}, false, nil
+	}
+	if row.LeaseUntil != nil && row.LeaseUntil.After(now) {
+		return docstore.UserWake{}, false, nil
+	}
+	until := now.Add(lease)
+	row.Owner = owner
+	row.LeaseUntil = &until
+	row.UpdatedAt = now
+	b.userWakes[key] = row
+	return cloneUserWake(row), true, nil
 }
 
 func (b *Backend) RenewUserWake(ctx context.Context, userID, lane, owner string, lease time.Duration) (bool, error) {

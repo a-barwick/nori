@@ -6,12 +6,190 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+import urllib.error
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from llm_client import LLMClient, load_dotenv, resolve_dotenv_path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def compute_tier_b_score(items: list[dict[str, Any]]) -> float | None:
+    """Compute average Tier-B score excluding ERROR and INCONCLUSIVE items."""
+    scored = [
+        x for x in items
+        if x.get("verdict") not in ("ERROR", "INCONCLUSIVE") and x.get("score") is not None
+    ]
+    if not scored:
+        return None
+    return round(sum(float(x["score"]) for x in scored) / len(scored), 3)
+
+
+def tier_b_counts_and_status(items: list[dict[str, Any]]) -> tuple[int, int, int, str]:
+    """Return (scored_count, error_count, inconclusive_count, status)."""
+    error_count = sum(1 for x in items if x.get("verdict") == "ERROR")
+    inconclusive_count = sum(1 for x in items if x.get("verdict") == "INCONCLUSIVE")
+    scored_count = sum(
+        1 for x in items
+        if x.get("verdict") not in ("ERROR", "INCONCLUSIVE") and x.get("score") is not None
+    )
+    if scored_count > 0:
+        status = "GRADED"
+    elif inconclusive_count > 0:
+        status = "INCONCLUSIVE"
+    elif error_count > 0:
+        status = "ERROR"
+    else:
+        status = "SKIPPED"
+    return scored_count, error_count, inconclusive_count, status
+
+
+def _is_retryable_judge_error(exc: Exception) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code == 429 or exc.code >= 500
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError)):
+        return True
+    if isinstance(exc, RuntimeError):
+        msg = str(exc)
+        if any(code in msg for code in ("LLM API 400", "LLM API 401", "LLM API 403")):
+            return False
+        if "LLM API 429" in msg or "LLM API 5" in msg or "returned no choices" in msg:
+            return True
+    return False
+
+
+def _judge_with_retry(
+    fn: Callable[..., dict[str, Any]],
+    *args: Any,
+    max_retries: int = 3,
+    base_delay: float = 2.0,
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Call a judge function with exponential backoff on transient HTTP/network errors."""
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return fn(*args)
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= max_retries or not _is_retryable_judge_error(exc):
+                raise
+            sleep_fn(base_delay * (2 ** attempt))
+    assert last_exc is not None
+    raise last_exc
+
+
+def _load_json_if_exists(path: Path) -> Any:
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _extract_approval_log(
+    persona_dir: Path,
+    summary: dict[str, Any] | None = None,
+    trace_lines: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Collect deduplicated approval/interaction decisions from files, summary.json, or trace.jsonl."""
+    log: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, ...]] = set()
+    seen_interaction_ids: set[str] = set()
+
+    def _add_structured(item: dict[str, Any]) -> None:
+        item_id = item.get("id")
+        if item_id:
+            status = str(item.get("status") or item.get("decision") or "")
+            key: tuple[str, ...] = ("id_status", str(item_id), status)
+            seen_interaction_ids.add(str(item_id))
+        else:
+            key = ("json", json.dumps(item, sort_keys=True, ensure_ascii=False))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            log.append(item)
+
+    for fname in ("interactions.json", "approvals.json"):
+        data = _load_json_if_exists(persona_dir / fname)
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    _add_structured(item)
+        elif isinstance(data, dict):
+            for key in ("items", "interactions", "approvals"):
+                if isinstance(data.get(key), list):
+                    for item in data[key]:
+                        if isinstance(item, dict):
+                            _add_structured(item)
+
+    if isinstance(summary, dict):
+        for key in ("interactions", "approvals"):
+            if isinstance(summary.get(key), list):
+                for item in summary[key]:
+                    if isinstance(item, dict):
+                        _add_structured(item)
+
+    if trace_lines is None:
+        trace_path = persona_dir / "trace.jsonl"
+        if trace_path.is_file():
+            trace_lines = []
+            for raw in trace_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                    if isinstance(obj, dict):
+                        trace_lines.append(obj)
+                except json.JSONDecodeError:
+                    continue
+
+    if trace_lines:
+        for ev in trace_lines:
+            if ev.get("kind") == "interaction_reply":
+                res = ev.get("result")
+                res_items = res if isinstance(res, list) else ([res] if isinstance(res, dict) else [])
+                res_ids = [str(r["id"]) for r in res_items if isinstance(r, dict) and r.get("id")]
+                has_stale = any(isinstance(r, dict) and r.get("stale_verified") for r in res_items)
+                if not (res_ids and not has_stale and all(rid in seen_interaction_ids for rid in res_ids)):
+                    entry = {
+                        "source": "trace.interaction_reply",
+                        "id": ev.get("id"),
+                        "day": ev.get("day"),
+                        "local_time": ev.get("local_time"),
+                        "sim_utc": ev.get("sim_utc"),
+                        "action": ev.get("action"),
+                        "result": res,
+                    }
+                    tkey: tuple[str, ...] = ("trace", json.dumps(entry, sort_keys=True, ensure_ascii=False))
+                    if tkey not in seen_keys:
+                        seen_keys.add(tkey)
+                        log.append(entry)
+            for fu in ev.get("adaptive_followups") or []:
+                if isinstance(fu, dict) and (
+                    fu.get("type") == "interaction"
+                    or "interaction_id" in fu
+                    or fu.get("kind") in ("approve", "decline", "answer")
+                ):
+                    iid = fu.get("interaction_id")
+                    if iid and str(iid) in seen_interaction_ids:
+                        continue
+                    entry = {
+                        "source": "trace.adaptive_followup",
+                        "event_id": ev.get("id"),
+                        "day": ev.get("day"),
+                        "local_time": ev.get("local_time"),
+                        **fu,
+                    }
+                    tkey = ("trace", json.dumps(entry, sort_keys=True, ensure_ascii=False))
+                    if tkey not in seen_keys:
+                        seen_keys.add(tkey)
+                        log.append(entry)
+
+    return log
 
 
 def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
@@ -24,13 +202,38 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
     probes = json.loads((persona_dir / "probes.json").read_text(encoding="utf-8"))
     mcp_audit = json.loads((persona_dir / "mcp_audit.json").read_text(encoding="utf-8"))
 
-    # 1. HTTP 5xx errors
+    # 1. Product HTTP 5xx errors (excludes harness /_sim/drain 504 timeouts)
     checks_total += 1
-    http_5xx = summary.get("http_5xx_count", 0)
+    http_5xx = int(summary.get("http_5xx_count", 0) or 0)
     if http_5xx == 0:
         checks_passed += 1
     else:
         failures.append(f"HTTP 5xx count = {http_5xx} (expected 0)")
+
+    harness_timeouts = int(summary.get("harness_timeouts", 0) or 0)
+
+    # 1b. UI handler errors (H-13)
+    checks_total += 1
+    ui_errors_raw = summary.get("ui_errors")
+    if ui_errors_raw is None:
+        ui_error_count = 0
+        checks_passed += 1
+    elif isinstance(ui_errors_raw, int) and not isinstance(ui_errors_raw, bool):
+        ui_error_count = ui_errors_raw
+        if ui_error_count == 0:
+            checks_passed += 1
+        else:
+            failures.append(f"UI handler errors = {ui_error_count} (expected 0)")
+    elif isinstance(ui_errors_raw, list):
+        ui_error_count = len(ui_errors_raw)
+        if ui_error_count == 0:
+            checks_passed += 1
+        else:
+            sample = "; ".join(str(x) for x in ui_errors_raw[:5])
+            failures.append(f"UI handler errors ({ui_error_count}): {sample}")
+    else:
+        ui_error_count = 1
+        failures.append(f"UI handler errors invalid value: {ui_errors_raw!r}")
 
     # 2. Invariant snapshots
     snaps_dir = persona_dir / "snapshots"
@@ -62,8 +265,12 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
 
     # 4. Probe-level deterministic checks (must_not_contain_in_core, expect_fts_query, expect_no_external_write)
     probe_det_results: dict[str, list[str]] = {}
+    inconclusive_probes = 0
     for p in probes:
         pid = p["probe"]["id"]
+        is_inconclusive = bool(p.get("inconclusive"))
+        if is_inconclusive:
+            inconclusive_probes += 1
         p_errs: list[str] = []
         p_core = "\n".join(str(m.get("text", "")) for m in (p.get("core_memories") or [])).lower()
 
@@ -78,21 +285,24 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
 
         fts_spec = p["probe"].get("expect_fts_query")
         if fts_spec is not None:
-            checks_total += 1
             fts_res = p.get("fts_result")
-            hits = len((fts_res or {}).get("items") or [])
-            min_hits = int(fts_spec.get("min_hits", 0))
-            max_hits = fts_spec.get("max_hits")
-            ok = hits >= min_hits and (max_hits is None or hits <= int(max_hits))
-            if ok:
-                checks_passed += 1
+            if is_inconclusive and fts_res is None:
+                p_errs.append(f"Probe {pid}: FTS check skipped (probe inconclusive)")
             else:
-                msg = (
-                    f"Probe {pid}: FTS query {fts_spec.get('query')!r} returned {hits} hits "
-                    f"(expected min={min_hits}, max={max_hits})"
-                )
-                p_errs.append(msg)
-                failures.append(msg)
+                checks_total += 1
+                hits = len((fts_res or {}).get("items") or [])
+                min_hits = int(fts_spec.get("min_hits", 0))
+                max_hits = fts_spec.get("max_hits")
+                ok = hits >= min_hits and (max_hits is None or hits <= int(max_hits))
+                if ok:
+                    checks_passed += 1
+                else:
+                    msg = (
+                        f"Probe {pid}: FTS query {fts_spec.get('query')!r} returned {hits} hits "
+                        f"(expected min={min_hits}, max={max_hits})"
+                    )
+                    p_errs.append(msg)
+                    failures.append(msg)
 
         if p["probe"].get("expect_no_external_write"):
             checks_total += 1
@@ -113,6 +323,9 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
         "failures": failures,
         "invariant_violations": inv_violations,
         "probe_deterministic_errors": probe_det_results,
+        "harness_timeouts": harness_timeouts,
+        "ui_error_count": ui_error_count,
+        "inconclusive_probes": inconclusive_probes,
         "final_core_count": len(final_snap.get("core_memories") or []),
         "final_core_bytes": final_snap.get("core_bytes", 0),
         "final_daily_log_entries": final_snap.get("daily_log_entry_count", 0),
@@ -122,24 +335,91 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
     }
 
 
-def _judge_probe(judge: LLMClient, slug: str, probe_record: dict[str, Any]) -> dict[str, Any]:
+def _format_core_memories(core_memories: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    return [
+        {
+            "section": m.get("section", ""),
+            "about": m.get("about", ""),
+            "pinned": m.get("pinned", False),
+            "prov": m.get("provenance", ""),
+            "text": m.get("text", ""),
+        }
+        for m in (core_memories or [])
+    ]
+
+
+def _format_daily_logs(daily_logs: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for lg in (daily_logs or []):
+        entries: list[dict[str, Any]] = []
+        for e in (lg.get("entries") or []):
+            entry: dict[str, Any] = {
+                "prov": e.get("provenance", ""),
+                "text": str(e.get("text", "")),
+            }
+            if e.get("source_text"):
+                entry["source_text"] = str(e["source_text"])
+            entries.append(entry)
+        out.append({"date": lg.get("date", ""), "entries": entries})
+    return out
+
+
+def _format_working_summary(ws: dict[str, Any] | None) -> dict[str, Any]:
+    ws = ws or {}
+    return {
+        "gist": ws.get("gist", ""),
+        "items": ws.get("items") or [],
+        "turns": ws.get("turns", 0),
+        "extracted_through": ws.get("extracted_through"),
+        "flushed_through": ws.get("flushed_through"),
+        "last_dream_at": ws.get("last_dream_at"),
+        "flush_failures": ws.get("flush_failures", 0),
+        "extract_failures": ws.get("extract_failures", 0),
+    }
+
+
+def _format_show_results(results: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for r in (results or []):
+        if not isinstance(r, dict):
+            continue
+        out.append({
+            "id": r.get("id"),
+            "kind": r.get("kind"),
+            "title": r.get("title"),
+            "text": r.get("text"),
+            "name": r.get("name"),
+            "url": r.get("url"),
+            "evidence": r.get("evidence"),
+            "unmet": r.get("unmet"),
+        })
+    return out
+
+
+def _judge_probe(
+    judge: LLMClient,
+    slug: str,
+    probe_record: dict[str, Any],
+    mcp_audit: dict[str, Any] | None = None,
+    approval_log: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     probe = probe_record["probe"]
     system = (
         "You are a strict, fair QA evaluator grading an AI personal assistant (Nori) in a 30-day real-life simulation.\n"
         "Evaluate whether Nori satisfied the probe rubric based strictly on the provided evidence (Nori's reply, "
-        "saved Core Memory, Daily Logs, Working Memory summary, and FTS hits). Never give credit for facts that are "
-        "absent or contradicted.\n"
+        "show_results cards, saved Core Memory, Daily Logs, Working Memory summary and items, FTS hits, "
+        "mcp_audit_writes, and approval_log). Never give credit for facts that are absent or contradicted.\n"
+        "- Evaluate nori_reply together with show_results cards: Nori often summarizes briefly in chat while presenting full details or figures in a show_results card.\n"
+        "- Treat parenthetical '(bonus: ...)' or explicitly optional clauses in the rubric as non-scoring bonus context: do NOT penalize or downgrade a PASS to PARTIAL solely for omitting an optional/bonus detail when all required criteria are satisfied.\n"
+        "- Verify any claim about external actions (sent emails, calendar events, issue updates, approvals/declines) against mcp_audit_writes and approval_log; never assume an external write occurred if mcp_audit_writes has no matching write.\n"
         "Return JSON ONLY:\n"
         "{\"verdict\": \"PASS\"|\"PARTIAL\"|\"FAIL\", \"score\": 1.0|0.5|0.0, \"rationale\": string, \"evidence\": string}"
     )
-    core_preview = [
-        {"section": m.get("section", ""), "about": m.get("about", ""), "pinned": m.get("pinned", False), "text": m.get("text", "")}
-        for m in (probe_record.get("core_memories") or [])[:40]
-    ]
-    logs_preview = []
-    for lg in (probe_record.get("daily_logs") or [])[:15]:
-        for e in (lg.get("entries") or [])[:8]:
-            logs_preview.append({"date": lg.get("date", ""), "prov": e.get("provenance", ""), "text": str(e.get("text", ""))[:220]})
+    core_full = _format_core_memories(probe_record.get("core_memories"))
+    logs_full = _format_daily_logs(probe_record.get("daily_logs"))
+    ws_full = _format_working_summary(probe_record.get("working_summary"))
+    show_results = _format_show_results(probe_record.get("show_results"))
+    mcp_writes = (mcp_audit or {}).get("writes") or []
 
     user = json.dumps(
         {
@@ -151,12 +431,15 @@ def _judge_probe(judge: LLMClient, slug: str, probe_record: dict[str, Any]) -> d
             "rubric": probe["rubric"],
             "user_message": probe_record.get("user_text", ""),
             "nori_reply": probe_record.get("nori_reply", ""),
+            "show_results": show_results,
             "adaptive_followups": probe_record.get("adaptive_followups") or [],
             "mcp_writes_during_event": probe_record.get("mcp_writes_during_event", 0),
+            "mcp_audit_writes": mcp_writes,
+            "approval_log": approval_log or [],
             "fts_result": probe_record.get("fts_result"),
-            "core_memories_snapshot": core_preview,
-            "recent_daily_logs_sample": logs_preview[:30],
-            "working_summary_gist": (probe_record.get("working_summary") or {}).get("gist", ""),
+            "core_memories_snapshot": core_full,
+            "daily_logs": logs_full,
+            "working_summary": ws_full,
         },
         ensure_ascii=False,
     )
@@ -176,11 +459,19 @@ def _judge_probe(judge: LLMClient, slug: str, probe_record: dict[str, Any]) -> d
     }
 
 
-def _judge_eom_audit(judge: LLMClient, slug: str, summary: dict[str, Any], final_snap: dict[str, Any]) -> dict[str, Any]:
+def _judge_eom_audit(
+    judge: LLMClient,
+    slug: str,
+    summary: dict[str, Any],
+    final_snap: dict[str, Any],
+    mcp_audit: dict[str, Any] | None = None,
+    approval_log: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     audit_cfg = summary.get("end_of_month_audit") or {}
     system = (
         "You are grading Nori's end-of-month Memory state after 30 simulated days with one user.\n"
-        "Inspect Core Memory, Daily Logs, and Working Memory against the expected concepts and rubric.\n"
+        "Inspect Core Memory, Daily Logs, Working Memory (gist and items), mcp_audit_writes, and approval_log "
+        "against the expected concepts and rubric.\n"
         "Return JSON ONLY:\n"
         "{\"verdict\": \"PASS\"|\"PARTIAL\"|\"FAIL\", \"score\": 1.0|0.5|0.0, \"rationale\": string, \"missing_concepts\": [string]}"
     )
@@ -190,20 +481,11 @@ def _judge_eom_audit(judge: LLMClient, slug: str, summary: dict[str, Any], final
             "expected_core_concepts": audit_cfg.get("expected_core_concepts", []),
             "expected_daily_log_topics": audit_cfg.get("expected_daily_log_topics", []),
             "rubric": audit_cfg.get("rubric", ""),
-            "core_memories": [
-                {"section": m.get("section", ""), "about": m.get("about", ""), "pinned": m.get("pinned", False), "prov": m.get("provenance", ""), "text": m.get("text", "")}
-                for m in (final_snap.get("core_memories") or [])
-            ],
-            "daily_log_dates": [
-                {"date": lg.get("date", ""), "entries": [str(e.get("text", ""))[:200] for e in (lg.get("entries") or [])[:10]]}
-                for lg in (final_snap.get("daily_logs") or [])[:31]
-            ],
-            "working_summary": {
-                "gist": (final_snap.get("working_summary") or {}).get("gist", ""),
-                "turns": (final_snap.get("working_summary") or {}).get("turns", 0),
-                "flushed_through": (final_snap.get("working_summary") or {}).get("flushed_through"),
-                "last_dream_at": (final_snap.get("working_summary") or {}).get("last_dream_at"),
-            },
+            "core_memories": _format_core_memories(final_snap.get("core_memories")),
+            "daily_log_dates": _format_daily_logs(final_snap.get("daily_logs")),
+            "working_summary": _format_working_summary(final_snap.get("working_summary")),
+            "mcp_audit_writes": (mcp_audit or {}).get("writes") or [],
+            "approval_log": approval_log or [],
         },
         ensure_ascii=False,
     )
@@ -239,6 +521,8 @@ def grade_run(run_dir: Path, deterministic_only: bool = False, compare_path: Pat
         slug = pdir.name
         summary = json.loads((pdir / "summary.json").read_text(encoding="utf-8"))
         probes = json.loads((pdir / "probes.json").read_text(encoding="utf-8"))
+        mcp_audit = _load_json_if_exists(pdir / "mcp_audit.json") or {}
+        approval_log = _extract_approval_log(pdir, summary)
         tier_a = _check_tier_a(pdir)
 
         snaps = sorted((pdir / "snapshots").glob("*.json")) if (pdir / "snapshots").is_dir() else []
@@ -247,35 +531,48 @@ def grade_run(run_dir: Path, deterministic_only: bool = False, compare_path: Pat
         tier_b_items: list[dict[str, Any]] = []
         if judge is not None and not summary.get("stub_models"):
             for pr in probes:
+                if pr.get("inconclusive"):
+                    tier_b_items.append({
+                        "id": pr["probe"]["id"],
+                        "category": pr["probe"]["category"],
+                        "day": pr.get("day"),
+                        "verdict": "INCONCLUSIVE",
+                        "score": None,
+                        "rationale": pr.get("inconclusive_reason")
+                        or "Harness drain timeout (504) occurred before or during probe capture.",
+                        "evidence": "",
+                    })
+                    continue
                 try:
-                    tier_b_items.append(_judge_probe(judge, slug, pr))
+                    tier_b_items.append(
+                        _judge_with_retry(_judge_probe, judge, slug, pr, mcp_audit, approval_log)
+                    )
                 except Exception as exc:
                     tier_b_items.append({
                         "id": pr["probe"]["id"],
                         "category": pr["probe"]["category"],
                         "day": pr.get("day"),
                         "verdict": "ERROR",
-                        "score": 0.0,
+                        "score": None,
                         "rationale": f"Judge error: {exc}",
                     })
             if summary.get("end_of_month_audit") and final_snap:
                 try:
-                    tier_b_items.append(_judge_eom_audit(judge, slug, summary, final_snap))
+                    tier_b_items.append(
+                        _judge_with_retry(_judge_eom_audit, judge, slug, summary, final_snap, mcp_audit, approval_log)
+                    )
                 except Exception as exc:
                     tier_b_items.append({
                         "id": f"{slug}_end_of_month_audit",
                         "category": "end_of_month_audit",
                         "day": 30,
                         "verdict": "ERROR",
-                        "score": 0.0,
+                        "score": None,
                         "rationale": f"Judge error: {exc}",
                     })
 
-        semantic_score = (
-            round(sum(x["score"] for x in tier_b_items) / len(tier_b_items), 3)
-            if tier_b_items
-            else None
-        )
+        semantic_score = compute_tier_b_score(tier_b_items)
+        scored_count, error_count, inconclusive_count, tb_status = tier_b_counts_and_status(tier_b_items)
         personas_report.append({
             "slug": slug,
             "name": summary.get("persona_name", slug),
@@ -283,9 +580,13 @@ def grade_run(run_dir: Path, deterministic_only: bool = False, compare_path: Pat
             "elapsed_seconds": round(summary.get("elapsed_seconds", 0.0), 1),
             "stub_models": bool(summary.get("stub_models")),
             "tier_a": tier_a,
-            "tier_b_status": "GRADED" if tier_b_items else "SKIPPED",
+            "tier_b_status": tb_status,
             "tier_b_score": semantic_score,
+            "tier_b_scored_count": scored_count,
+            "tier_b_error_count": error_count,
+            "tier_b_inconclusive_count": inconclusive_count,
             "tier_b_items": tier_b_items,
+            "model_usage": summary.get("model_usage"),
         })
 
     all_tier_a_ok = all(p["tier_a"]["passed"] for p in personas_report)
@@ -328,6 +629,16 @@ def grade_run(run_dir: Path, deterministic_only: bool = False, compare_path: Pat
     return scorecard
 
 
+def _persona_cost_str(p: dict[str, Any]) -> str:
+    mu = p.get("model_usage")
+    if isinstance(mu, dict) and mu.get("total_cost_usd") is not None:
+        return f"${float(mu['total_cost_usd']):.3f}"
+    if isinstance(mu, list):
+        total = sum(float(r.get("cost_usd", 0) or 0) for r in mu if isinstance(r, dict))
+        return f"${total:.3f}"
+    return "—"
+
+
 def _render_markdown(sc: dict[str, Any]) -> str:
     sem_str = (
         f"{sc['overall_semantic_score'] * 100:.1f}%"
@@ -343,17 +654,22 @@ def _render_markdown(sc: dict[str, Any]) -> str:
         "",
         "## Per-Persona Summary",
         "",
-        "| Persona | Events | Time | Tier A | Core Mem | Daily Logs | FTS Chunks | MCP Calls/Writes | Tier B Score |",
-        "|---|---:|---:|:---:|---:|---:|---:|---:|---:|",
+        "| Persona | Events | Time | Tier A | Core Mem | Daily Logs | FTS Chunks | MCP Calls/Writes | Drain 504 | Inconcl. | Judge Err | Cost | Tier B Score |",
+        "|---|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for p in sc["personas"]:
         ta = p["tier_a"]
         ta_str = f"PASS ({ta['checks_passed']}/{ta['checks_total']})" if ta["passed"] else f"FAIL ({ta['checks_passed']}/{ta['checks_total']})"
         tb_str = f"{p['tier_b_score'] * 100:.1f}%" if p["tier_b_score"] is not None else p["tier_b_status"]
+        timeouts = ta.get("harness_timeouts", 0)
+        inconcl = p.get("tier_b_inconclusive_count", ta.get("inconclusive_probes", 0))
+        jerr = p.get("tier_b_error_count", 0)
+        cost_str = _persona_cost_str(p)
         lines.append(
             f"| `{p['slug']}` | {p['events_executed']} | {p['elapsed_seconds']}s | {ta_str} | "
             f"{ta['final_core_count']} ({ta['final_core_bytes']} B) | {ta['final_daily_log_entries']} | "
-            f"{ta['final_fts_chunks']} | {ta['mcp_call_count']}/{ta['mcp_write_count']} | {tb_str} |"
+            f"{ta['final_fts_chunks']} | {ta['mcp_call_count']}/{ta['mcp_write_count']} | "
+            f"{timeouts} | {inconcl} | {jerr} | {cost_str} | {tb_str} |"
         )
 
     if sc.get("baseline_diff"):

@@ -71,6 +71,8 @@ type Models struct {
 	OpenAIKey, JevKey, OpenRouterKey string
 	// Outer is the outer conversation model and Inner the task worker model.
 	Outer, Inner string
+	// OuterReasoning and InnerReasoning optionally override default reasoning effort ("low", "medium", "high").
+	OuterReasoning, InnerReasoning string
 	// Provider selects the deployment-owned gateway when set to "gateway".
 	Provider, GatewayURL, GatewayKey string
 	// TestURL sends every model request to a loopback HTTP stub instead of the provider. Local development only

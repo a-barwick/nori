@@ -58,11 +58,12 @@ type Backend struct {
 }
 
 var (
-	_ docstore.Backend        = (*Backend)(nil)
-	_ docstore.Sequencer      = (*Backend)(nil)
-	_ docstore.SequenceReader = (*Backend)(nil)
-	_ docstore.LeaseStore     = (*Backend)(nil)
-	_ docstore.WakeListener   = (*Backend)(nil)
+	_ docstore.Backend          = (*Backend)(nil)
+	_ docstore.Sequencer        = (*Backend)(nil)
+	_ docstore.SequenceReader   = (*Backend)(nil)
+	_ docstore.LeaseStore       = (*Backend)(nil)
+	_ docstore.ScopedLeaseStore = (*Backend)(nil)
+	_ docstore.WakeListener     = (*Backend)(nil)
 )
 
 // New creates a fresh in-memory Backend seeded with the default system/control

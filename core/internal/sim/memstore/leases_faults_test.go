@@ -87,12 +87,18 @@ func TestBackendLeaseFaultInjectionAndDropResync(t *testing.T) {
 	if _, _, err := b.ClaimTask(ctx, "w1", 30*time.Second); !errors.Is(err, memstore.ErrInjectedFault) {
 		t.Fatalf("expected ClaimTask fault, got %v", err)
 	}
+	if _, _, err := b.ClaimTaskForUser(ctx, "u1", "w1", 30*time.Second); !errors.Is(err, memstore.ErrInjectedFault) {
+		t.Fatalf("expected ClaimTaskForUser fault, got %v", err)
+	}
+	if _, _, err := b.ClaimUserWakeForUser(ctx, "u1", docstore.LaneConversation, "w1", 30*time.Second); !errors.Is(err, memstore.ErrInjectedFault) {
+		t.Fatalf("expected ClaimUserWakeForUser fault, got %v", err)
+	}
 	if _, err := b.ListUserWakes(ctx, "u1"); !errors.Is(err, memstore.ErrInjectedFault) {
 		t.Fatalf("expected ListUserWakes fault, got %v", err)
 	}
 	stats := b.FaultStats()
-	if stats.LeaseErrors != 3 || stats.Total() != 3 {
-		t.Fatalf("expected LeaseErrors=3 Total=3, got %+v", stats)
+	if stats.LeaseErrors != 5 || stats.Total() != 5 {
+		t.Fatalf("expected LeaseErrors=5 Total=5, got %+v", stats)
 	}
 
 	inj.SetEnabled(false)

@@ -289,10 +289,17 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 					writes = append(writes, ruleResource)
 				}
 				if response.Kind == "decline" {
+					if len(response.Text) > state.MaxMessageBytes {
+						return state.MutationResult{}, state.ErrInvalidResource
+					}
 					prior := i
 					prior.ConnectionID = body.ConnectionID
 					declined = &prior
 					text = "The user declined this action. Do not attempt it; report what was not done: " + i.Prompt
+					if note := strings.TrimSpace(response.Text); note != "" {
+						resolution.Text = note
+						text += " User note: " + note
+					}
 				}
 			case response.Kind == "choose_account" && i.Kind == "account_selection":
 				if response.RememberRule {
@@ -535,6 +542,9 @@ func (s *Service) UndeliveredAnswers(ctx context.Context) ([]Answer, []string, e
 					body.AnswerText = "The user approved this exact action; retry the same call unchanged: " + i.Prompt
 				case "decline":
 					body.AnswerText = "The user declined this action. Do not attempt it; report what was not done: " + i.Prompt
+					if note := strings.TrimSpace(i.Resolution.Text); note != "" {
+						body.AnswerText += " User note: " + note
+					}
 				default:
 					body.AnswerText = i.Resolution.Text
 				}

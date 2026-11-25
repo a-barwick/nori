@@ -173,6 +173,14 @@ type LeaseStore interface {
 	WakeWriter
 }
 
+// ScopedLeaseStore is an optional LeaseStore extension supporting single-user
+// task and user-wake claiming (used when worker.Options.UserID is set).
+type ScopedLeaseStore interface {
+	LeaseStore
+	ClaimTaskForUser(ctx context.Context, userID, owner string, lease time.Duration) (TaskLease, bool, error)
+	ClaimUserWakeForUser(ctx context.Context, userID, lane, owner string, lease time.Duration) (UserWake, bool, error)
+}
+
 // WakeListener delivers post-commit wake events (Postgres LISTEN nori_wake or
 // in-memory memstore fan-out) until ctx is canceled.
 type WakeListener interface {

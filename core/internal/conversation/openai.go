@@ -38,6 +38,8 @@ type OpenAIModel struct {
 	Client     *http.Client
 	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
 	TestURL string
+	// ReasoningEffort overrides the direct OpenAI reasoning_effort (defaults to "low").
+	ReasoningEffort string
 	// Optional determinism hooks. Nil defaults to time.Now and uuid.NewString.
 	Now   func() time.Time
 	NewID func() string
@@ -184,8 +186,12 @@ func logRefusal(ctx context.Context, res *http.Response) bool {
 	return contextview.Refusal(bytes.NewReader(data))
 }
 
+func isSupportedDirectOpenAIModel(name string) bool {
+	return name == openAIModelName || name == "gpt-6.2-sol"
+}
+
 func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span trace.Span) ([]byte, error) {
-	if m.gatewayURL == "" && m.name != openAIModelName {
+	if m.gatewayURL == "" && !isSupportedDirectOpenAIModel(m.name) {
 		return nil, errors.New("unsupported direct OpenAI conversation model")
 	}
 	var breakpoints []int
@@ -200,9 +206,13 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 		"model": m.name, "messages": input, "max_completion_tokens": outputLimit, "store": false,
 	}
 	if m.gatewayURL == "" {
-		body["reasoning_effort"], body["service_tier"] = "low", "default"
+		effort := m.ReasoningEffort
+		if effort == "" {
+			effort = "low"
+		}
+		body["reasoning_effort"], body["service_tier"] = effort, "default"
 		body["prompt_cache_options"] = map[string]string{"mode": "explicit"}
-		span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", "low"), attribute.String("gen_ai.request.service_tier", "default"))
+		span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", effort), attribute.String("gen_ai.request.service_tier", "default"))
 	}
 	if request.Stream != nil {
 		body["stream"] = true
