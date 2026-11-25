@@ -223,7 +223,10 @@ func (r *Runner) handleExtractFailure(ctx context.Context, plan extractPlan, cal
 	now := r.now()
 	nowUTC := now.UTC()
 	failures := 1
-	if plan.base.LastExtractFailureThrough.Equal(plan.batchThrough) {
+	// Increment retries whenever the watermark (extractedThrough) has not advanced
+	// past the previous failure, so newly arriving turns cannot reset the 3-strike
+	// fallback into an infinite loop.
+	if plan.base.ExtractFailures > 0 && !plan.base.LastExtractFailureThrough.IsZero() && !plan.extractedThrough.After(plan.base.LastExtractFailureThrough) {
 		failures = plan.base.ExtractFailures + 1
 	}
 

@@ -277,7 +277,10 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		clock.Now = r.Now
 	}
 	recalled := <-recallReady
-	advisoryPayload := map[string]any{"user": facts, "classification_hint": hint, "task_context": taskContext, "now": clock.timeContext()}
+	advisoryPayload := map[string]any{"user": facts, "task_context": taskContext, "now": clock.timeContext()}
+	if hint.Available {
+		advisoryPayload["classification_hint"] = hint
+	}
 	if len(recalled) > 0 {
 		advisoryPayload["relevant_memory_logs"] = recalled
 	}
@@ -547,17 +550,15 @@ type historyView struct {
 
 const recordBytes = 4 << 10
 
-// buildMessages also returns prompt-cache breakpoints (message indices): the static system prompt, the end of the
-// leading memory/summary block, and the ends of the last two history turns. A request writes its latest four
-// breakpoints, so each turn writes the prefix through its newest history turn and the next turn, whose
-// second-to-last history turn ends at the same position, can read it back.
+// buildMessages orders messages static -> append-only -> volatile:
+//   [static system prompt] -> [append-only history turns] -> [Core Memory + Working Summary] -> [current inputs]
+// Keeping Core Memory and the Working Summary after history ensures that memory
+// mutations (remember/forget/idle extraction) do not invalidate the cached prefix
+// for the entire conversation history. Breakpoints mark: static system prompt (0),
+// the ends of the last two history turns, and the end of the memory/summary block.
 func buildMessages(t *state.ConversationTurn, visible []Message, view historyView, next string) ([]json.RawMessage, []int) {
 	messages := []json.RawMessage{modelMessage(map[string]string{"role": "system", "content": prompts.Conversation})}
-	messages = append(messages, memoryMessage(view.Memories))
-	if view.Summary != nil {
-		messages = append(messages, summaryMessage(*view.Summary))
-	}
-	breakpoints := []int{0, len(messages) - 1}
+	breakpoints := []int{0}
 	turnEnds := []int{}
 	history, truncated := view.Turns, view.Truncated
 	if next != "" {
@@ -620,6 +621,11 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 	for recordIndex >= 0 {
 		appendRecord()
 	}
+	messages = append(messages, memoryMessage(view.Memories))
+	if view.Summary != nil {
+		messages = append(messages, summaryMessage(*view.Summary))
+	}
+	breakpoints = append(breakpoints, len(messages)-1)
 	t.Attempt.ContextTruncated = truncated
 	t.Attempt.ContextTurns = len(history)
 	for _, in := range t.Inputs {

@@ -560,7 +560,10 @@ func (r *Runner) handleFlushFailure(ctx context.Context, plan flushPlan, callErr
 	now := r.now()
 	nowUTC := now.UTC()
 	failures := 1
-	if plan.base.LastFailureThrough.Equal(plan.batchThrough) {
+	// Increment retries whenever the watermark (flushedThrough) has not advanced
+	// past the previous failure, so newly arriving turns cannot reset the 3-strike
+	// fallback into an infinite loop.
+	if plan.base.FlushFailures > 0 && !plan.base.LastFailureThrough.IsZero() && !plan.flushedThrough.After(plan.base.LastFailureThrough) {
 		failures = plan.base.FlushFailures + 1
 	}
 
@@ -1048,11 +1051,13 @@ func (r *Runner) callFlushAndCompact(ctx context.Context, prompt string) (flushM
 	if r.Now != nil || r.NewID != nil {
 		ctx = usage.WithSession(ctx, usage.Session{Now: r.Now, NewID: r.NewID})
 	}
+	// Use low reasoning effort for structured extraction/compaction to cut
+	// output/reasoning token spend and latency while preserving schema fidelity.
 	response, err := r.summarizer.Respond(ctx, agent.Request{
 		Instructions:    prompts.Compaction,
 		Tools:           []transcript.Tool{flushAndCompactTool},
 		MaxOutputTokens: 4096,
-		Reasoning:       "medium",
+		Reasoning:       "low",
 		Messages:        []transcript.Message{{Role: transcript.RoleUser, Parts: []transcript.Part{{Text: prompt}}}},
 	})
 	if err != nil {

@@ -103,15 +103,27 @@ func TestBuildMessagesBreakpoints(t *testing.T) {
 	}
 	view := historyView{Turns: []state.ConversationTurn{turn("a"), turn("b"), turn("c")}}
 	msgs, bps := buildMessages(&state.ConversationTurn{}, nil, view, "")
-	// system(0), memory(1), then a(2,3) b(4,5) c(6,7): last two turn ends are 5 and 7.
-	if want := []int{0, 1, 5, 7}; !reflect.DeepEqual(bps, want) {
+	// system(0), a(1,2) b(3,4) c(5,6), memory(7): breakpoints at 0, 4, 6, 7.
+	if want := []int{0, 4, 6, 7}; !reflect.DeepEqual(bps, want) {
 		t.Fatalf("breakpoints = %v, want %v (messages=%d)", bps, want, len(msgs))
 	}
-	// Next turn: this turn's newest history end (7) is the next request's second-to-last turn end.
+	// Memory mutation must not change the cached history prefix or its breakpoints.
+	viewWithMem := view
+	viewWithMem.Memories = []state.Memory{{ID: "mem-1", Text: "User prefers concise replies"}}
+	msgsMem, bpsMem := buildMessages(&state.ConversationTurn{}, nil, viewWithMem, "")
+	if !reflect.DeepEqual(bpsMem, bps) {
+		t.Fatalf("memory mutation changed breakpoints: %v vs %v", bpsMem, bps)
+	}
+	for i := 0; i <= 6; i++ {
+		if string(msgsMem[i]) != string(msgs[i]) {
+			t.Fatalf("memory mutation altered history prefix at index %d", i)
+		}
+	}
+	// Next turn: this turn's newest history end (6) is the next request's second-to-last turn end.
 	view.Turns = append(view.Turns, turn("d"))
 	_, next := buildMessages(&state.ConversationTurn{}, nil, view, "")
-	if next[2] != bps[3] {
-		t.Fatalf("next turn does not re-mark the previous write position: %v vs %v", next, bps)
+	if next[1] != bps[2] {
+		t.Fatalf("next turn does not re-mark the previous history write position: %v vs %v", next, bps)
 	}
 }
 

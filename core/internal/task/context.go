@@ -18,8 +18,8 @@ const (
 	// InnerInputBytes is the transcript size that starts omitting older tool outputs. Omitting then continues until
 	// the newest InnerKeepBytes are whole, so the shortened prefix stays the same for later calls and the provider's
 	// prompt cache keeps working until the transcript grows past the limit again.
-	InnerInputBytes = 128 << 10
-	InnerKeepBytes  = 64 << 10
+	InnerInputBytes = 64 << 10
+	InnerKeepBytes  = 32 << 10
 	omitOutputBytes = 512
 )
 

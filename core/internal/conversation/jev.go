@@ -125,10 +125,15 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 	classification.Usage = state.Usage{
 		ID: c.newID(), Provider: "jev", Model: jevModel, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: c.now().UTC(),
 	}
-	// Classify against the whole visible conversation. Provider reasoning and
-	// protocol metadata belong to the conversational model's history, not Jev.
-	conversation := make([]map[string]string, 0, len(request.History))
-	for _, message := range request.History {
+	// Classify against a bounded recent suffix of the visible conversation so
+	// advisory intent classification stays fast and token-lean as history grows.
+	const maxJevHistoryMessages = 8
+	history := request.History
+	if len(history) > maxJevHistoryMessages {
+		history = history[len(history)-maxJevHistoryMessages:]
+	}
+	conversation := make([]map[string]string, 0, len(history))
+	for _, message := range history {
 		conversation = append(conversation, map[string]string{"role": message.Role, "content": message.Text})
 	}
 	questions := map[string]any{}

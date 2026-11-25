@@ -370,17 +370,37 @@ func (s *Service) capabilityLoad(ctx context.Context, names []string) (map[strin
 	snapshot, dynamic := s.Tools(ctx)
 	for _, capability := range s.catalog(dynamic, snapshot) {
 		if !capability.Default {
-			byName[strings.ToLower(capability.Name)] = capability
+			lower := strings.ToLower(capability.Name)
+			byName[lower] = capability
+			if bare, ok := strings.CutSuffix(lower, " (mcp)"); ok {
+				bare = strings.TrimSpace(bare)
+				if bare != "" {
+					if _, exists := byName[bare]; !exists {
+						byName[bare] = capability
+					}
+					if _, exists := byName["mcp_"+bare]; !exists {
+						byName["mcp_"+bare] = capability
+					}
+					if _, exists := byName["mcp_"+bare+"__"]; !exists {
+						byName["mcp_"+bare+"__"] = capability
+					}
+				}
+			}
 			valid = append(valid, capability.Name)
 		}
 	}
 	loaded := []string{}
+	seen := map[string]bool{}
 	described := []map[string]any{}
 	for _, name := range names {
 		capability, ok := byName[strings.ToLower(strings.TrimSpace(name))]
 		if !ok {
 			return nil, errors.New(prompts.Runtime("capability-unknown", map[string]any{"Name": name, "Choices": strings.Join(valid, ", ")}))
 		}
+		if seen[capability.Name] {
+			continue
+		}
+		seen[capability.Name] = true
 		loaded = append(loaded, capability.Name)
 		described = append(described, map[string]any{
 			"name": capability.Name, "tools": capability.ToolList(), "account": capability.Account, "availability": capability.Availability,
