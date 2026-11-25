@@ -24,6 +24,7 @@ func ReplyModelForUser(models settings.Models, userID string) conversation.Reply
 	case "anthropic":
 		model := conversation.NewAnthropicModel(models.AnthropicKey, models.Outer)
 		model.TestURL = models.TestURL
+		model.ReasoningEffort = models.OuterReasoning
 		model.Guard = llmguard.Default()
 		model.UserID = userID
 		return model
@@ -59,6 +60,7 @@ func TaskModelForUser(models settings.Models, meter usage.Meter, userID string) 
 	case "anthropic":
 		model := anthropic.New(key, models.Inner, meter)
 		model.TestURL = models.TestURL
+		model.DefaultReasoning = models.InnerReasoning
 		model.Guard = llmguard.Default()
 		model.UserID = userID
 		return model

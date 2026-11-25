@@ -33,8 +33,9 @@ type Client struct {
 	HTTP      *http.Client
 	Guard     *llmguard.Guard
 	UserID    string
-	Meter     usage.Meter
-	TestURL   string
+	Meter            usage.Meter
+	TestURL          string
+	DefaultReasoning string
 }
 
 func New(key, model string, meter usage.Meter) *Client {
@@ -128,6 +129,13 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 	if len(tools) > 0 {
 		fields["tools"] = tools
+	}
+	effort := strings.ToLower(strings.TrimSpace(req.Reasoning))
+	if effort == "" {
+		effort = strings.ToLower(strings.TrimSpace(c.DefaultReasoning))
+	}
+	if effort != "" && effort != "none" {
+		fields["output_config"] = map[string]string{"effort": effort}
 	}
 
 	body, err := json.Marshal(fields)

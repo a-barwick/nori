@@ -38,8 +38,10 @@ type AnthropicModel struct {
 	UserID string
 	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
 	TestURL string
-	Now     func() time.Time
-	NewID   func() string
+	// ReasoningEffort optionally sets Anthropic output_config.effort ("low", "medium", "high", "max").
+	ReasoningEffort string
+	Now             func() time.Time
+	NewID           func() string
 }
 
 func NewAnthropicModel(key, name string) *AnthropicModel {
@@ -376,6 +378,9 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 	}
 	if len(systemBlocks) > 0 {
 		body["system"] = systemBlocks
+	}
+	if effort := strings.ToLower(strings.TrimSpace(m.ReasoningEffort)); effort != "" && effort != "none" {
+		body["output_config"] = map[string]string{"effort": effort}
 	}
 
 	forcedTool := ""

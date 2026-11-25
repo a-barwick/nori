@@ -17,6 +17,7 @@ func TestAnthropicModel_StructuredResponseAndGuardAccounting(t *testing.T) {
 	var seenBody map[string]any
 	g := llmguard.New(llmguard.DefaultConfig())
 	model := NewAnthropicModel("sk-ant-test", "claude-sonnet-4-5")
+	model.ReasoningEffort = "low"
 	model.Guard = g
 	model.Client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		seenHeaders = req.Header.Clone()
@@ -63,6 +64,9 @@ func TestAnthropicModel_StructuredResponseAndGuardAccounting(t *testing.T) {
 	}
 	if seenHeaders.Get("x-api-key") != "sk-ant-test" || seenHeaders.Get("anthropic-version") != "2023-06-01" {
 		t.Fatalf("unexpected headers: %+v", seenHeaders)
+	}
+	if oc, _ := seenBody["output_config"].(map[string]any); oc["effort"] != "low" {
+		t.Fatalf("expected output_config.effort=low, got %+v", seenBody["output_config"])
 	}
 	if reply.Text != "Hello from Claude!" || !reply.Structured {
 		t.Fatalf("unexpected reply: %+v", reply)

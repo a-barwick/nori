@@ -234,6 +234,16 @@ func isLoopbackHostname(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// ValidReasoningEffort reports whether e is an accepted reasoning/thinking effort level.
+func ValidReasoningEffort(e string) bool {
+	switch e {
+	case "", "none", "low", "medium", "high", "max":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m Models) validateModels(cloud string) error {
 	if !ValidModelProvider(m.Provider) {
 		return fmt.Errorf("NORI_MODEL_PROVIDER must be openai, anthropic, openrouter, or gateway")
@@ -243,6 +253,12 @@ func (m Models) validateModels(cloud string) error {
 	}
 	if !ValidModelProvider(m.InnerProvider) {
 		return fmt.Errorf("NORI_INNER_PROVIDER must be openai, anthropic, openrouter, or gateway")
+	}
+	if !ValidReasoningEffort(m.OuterReasoning) {
+		return fmt.Errorf("NORI_OUTER_REASONING_EFFORT must be none, low, medium, high, or max")
+	}
+	if !ValidReasoningEffort(m.InnerReasoning) {
+		return fmt.Errorf("NORI_INNER_REASONING_EFFORT must be none, low, medium, high, or max")
 	}
 	if math.IsNaN(m.MaxUSD) || math.IsInf(m.MaxUSD, 0) || m.MaxUSD < 0 {
 		return fmt.Errorf("NORI_LLM_MAX_USD must be a non-negative dollar amount")

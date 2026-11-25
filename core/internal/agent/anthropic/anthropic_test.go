@@ -28,6 +28,7 @@ func TestClient_RespondToolCallAndUsage(t *testing.T) {
 		return nil
 	})
 	client := New("sk-ant-inner", "claude-sonnet-4-5", meter)
+	client.DefaultReasoning = "high"
 	client.Guard = g
 	client.HTTP = &http.Client{Transport: rtFunc(func(req *http.Request) (*http.Response, error) {
 		raw, _ := io.ReadAll(req.Body)
@@ -66,6 +67,9 @@ func TestClient_RespondToolCallAndUsage(t *testing.T) {
 	}
 	if len(res.Calls) != 1 || res.Calls[0].Name != "list_events" || res.Calls[0].ID != "tu_1" {
 		t.Fatalf("unexpected tool calls: %+v", res.Calls)
+	}
+	if oc, _ := seenBody["output_config"].(map[string]any); oc["effort"] != "high" {
+		t.Fatalf("expected output_config.effort=high, got %+v", seenBody["output_config"])
 	}
 	if !res.CostKnown || res.Cost <= 0 {
 		t.Fatalf("expected known positive cost, got %+v", res)
