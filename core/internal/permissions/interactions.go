@@ -65,6 +65,7 @@ type Response struct {
 	Text              string   `json:"text,omitempty"`
 	OptionIDs         []string `json:"option_ids,omitempty"`
 	ActionDigest      string   `json:"action_digest,omitempty"`
+	RememberRule      bool     `json:"remember_rule,omitempty"`
 	ConnectionID      string   `json:"connection_id,omitempty"`
 	RememberAsDefault bool     `json:"remember_as_default,omitempty"`
 }

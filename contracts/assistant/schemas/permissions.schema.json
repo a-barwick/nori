@@ -25,6 +25,7 @@
         "effect": {
           "enum": [
             "allow",
+            "ask",
             "deny"
           ]
         },
@@ -103,6 +104,7 @@
         "effect": {
           "enum": [
             "allow",
+            "ask",
             "deny"
           ]
         },
@@ -259,6 +261,12 @@
       ],
       "properties": {
         "summary": {
+          "type": "string"
+        },
+        "tool_id": {
+          "type": "string"
+        },
+        "warning": {
           "type": "string"
         },
         "effect": {
@@ -649,6 +657,9 @@
                     "action_digest": {
                       "type": "string",
                       "minLength": 1
+                    },
+                    "remember_rule": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false
