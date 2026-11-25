@@ -59,6 +59,40 @@ persona's `nori-sim` worker then executes the other personas' work with its own 
 concurrent schema migrations don't exhaust Postgres's lock table (`out of shared memory`). It also
 re-runs the judge for items that hit network errors.
 
+**Before you run:**
+
+- Local Postgres must be up on `127.0.0.1:15432` (`make deps`).
+- Keys come from `.env` at the repo root. A worktree reads the main checkout's `.env` automatically.
+- Inner/flush/dream calls go through OpenRouter. `suite.py` aborts up front if OpenRouter has less than `--min-credits` (default $15) or rejects a 1-token test call; a workspace monthly budget shows up as HTTP 403.
+- A full run costs roughly $25–30 (about $2.5–3 per persona). See `docs/vst-cost-plan.md`.
+- Keep the laptop awake with the lid open. Sleep mid-run corrupts results.
+
+**Where results go:** everything is written under `.sim-runs/` at the repo root. It's git-ignored, so results stay on your machine.
+
+```
+.sim-runs/<YYYYMMDD-HHMMSS>-<tag>/          # the graded run: this is what you read and diff against
+  scorecard.md                              # human-readable report: per-persona table + every FAIL/PARTIAL with the judge's reason
+  scorecard.json                            # same data, machine-readable; pass it to --compare / BASELINE=
+  suite_manifest.json                       # which personas ran, which failed/were excluded, and where each came from
+  _logs/<slug>.log                          # runner console output per persona (progress, crashes)
+  <slug>/                                   # one bundle per persona:
+    summary.json                            #   events run, HTTP 5xx count, runtime
+    probes.json                             #   each probe: user message, Nori's reply, memory/FTS evidence
+    trace.jsonl                             #   every event in order, with Nori's reply and any UI-action result
+    nori-sim.log                            #   Nori's own server log (ERROR/WARN lines, model calls, 402/403s)
+    mcp_audit.json                          #   every tool call into the mock email/calendar/docs world, incl. writes
+    snapshots/*.json                        #   memory state + invariant checks at each weekly checkpoint
+.sim-runs/<YYYYMMDD-HHMMSS>-<tag>-<slug>/   # raw per-persona run dirs suite.py collected from (safe to delete)
+```
+
+**Reading a run:**
+
+1. Start with `scorecard.md`. Tier A is hard invariants and must all pass; Tier B is the judge's score per probe.
+2. For anything that failed, open that persona's `probes.json` (what Nori said) and `nori-sim.log` (errors), then `trace.jsonl` for the surrounding events.
+3. Record confirmed issues in `docs/vst-findings.md`. That's the hand-maintained backlog; `scorecard.md` is regenerated on every run.
+
+The current baseline to diff against is listed at the top of `docs/vst-findings.md`. After a clean full run on current `main`, point `BASELINE=` at that run's `scorecard.json` instead.
+
 ### 4. Visual QA in the local Next.js Workbench (`http://localhost:3210`)
 
 Replay one persona against a dedicated test user in your local dev stack (never touches production):
