@@ -21,6 +21,9 @@ public struct ChatView: View {
     @State private var isAttachSheetPresented: Bool = false
     @State private var isFileImporterPresented: Bool = false
     @State private var isSending: Bool = false
+    @State private var retryingMessageIDs: Set<String> = []
+    @State private var cancellingReminderIDs: Set<String> = []
+    @State private var editingReminder: ReminderEditTarget?
     @State private var visiblePendingInteractionIDs: Set<String> = []
     @FocusState private var isInputFocused: Bool
 
@@ -127,9 +130,14 @@ public struct ChatView: View {
         }
         .sheet(isPresented: $isAttachSheetPresented) {
             AttachSheetView(
+                maxUploadBytes: store.capabilities?.uploadAccept?.maxBytes ?? ImageUploadNormalizer.defaultMaxBytes,
                 onPickedPhotoData: { data, filename, mediaType in
                     isAttachSheetPresented = false
                     uploadDraftAttachment(data: data, filename: filename, mediaType: mediaType)
+                },
+                onPhotoNormalizationError: { message in
+                    isAttachSheetPresented = false
+                    store.showToast("Photo failed: \(message)")
                 },
                 onRequestFilePicker: {
                     isAttachSheetPresented = false
@@ -138,6 +146,11 @@ public struct ChatView: View {
                     }
                 }
             )
+        }
+        .sheet(item: $editingReminder) { target in
+            EditReminderSheet(store: store, target: target)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
         }
         .fileImporter(
             isPresented: $isFileImporterPresented,
@@ -317,6 +330,47 @@ public struct ChatView: View {
             .padding(.bottom, 12)
             .id(id)
 
+        case .reminder(let message, let parts):
+            VStack(alignment: .leading, spacing: 8) {
+                let trimmedText = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let matchesFallback = parts.contains {
+                    $0.fallback?.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedText
+                }
+                if !trimmedText.isEmpty && !matchesFallback {
+                    NoriMessageBubble(message: message, showAvatar: true)
+                }
+
+                ForEach(parts) { part in
+                    let liveAutomation = store.automations.first(where: { $0.id == part.id })
+                    InlineReminderCard(
+                        part: part,
+                        automation: liveAutomation,
+                        isCancelling: cancellingReminderIDs.contains(part.id),
+                        onEdit: {
+                            openEditReminder(part: part, automation: liveAutomation)
+                        },
+                        onCancel: {
+                            cancelReminder(automationID: part.id)
+                        }
+                    )
+                }
+            }
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .id("reminder-\(message.id)")
+
+        case .error(let message):
+            ChatErrorCard(
+                message: message,
+                isRetrying: retryingMessageIDs.contains(message.id),
+                onRetry: {
+                    retryFailedMessage(message)
+                }
+            )
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .id(message.id)
+
         case .interaction(let item):
             InteractionCardView(
                 store: store,
@@ -365,11 +419,17 @@ public struct ChatView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(draftAttachments) { item in
-                            AttachmentChipView(item: item) {
-                                withAnimation(.easeOut(duration: 0.16)) {
-                                    draftAttachments.removeAll { $0.id == item.id }
+                            AttachmentChipView(
+                                item: item,
+                                onRetry: {
+                                    retryDraftAttachment(id: item.id)
+                                },
+                                onRemove: {
+                                    withAnimation(.easeOut(duration: 0.16)) {
+                                        draftAttachments.removeAll { $0.id == item.id }
+                                    }
                                 }
-                            }
+                            )
                         }
                     }
                     .padding(.horizontal, 4)
@@ -527,19 +587,37 @@ public struct ChatView: View {
             let data = try Data(contentsOf: url)
             let filename = url.lastPathComponent
             let ext = url.pathExtension.lowercased()
+            let imageExtensions: Set<String> = ["heic", "heif", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp", "gif"]
+            if imageExtensions.contains(ext) {
+                let maxBytes = store.capabilities?.uploadAccept?.maxBytes ?? ImageUploadNormalizer.defaultMaxBytes
+                Task {
+                    do {
+                        let normalized = try await Task.detached(priority: .userInitiated) {
+                            try ImageUploadNormalizer.normalize(
+                                data: data,
+                                suggestedFilename: filename,
+                                maxBytes: maxBytes
+                            )
+                        }.value
+                        uploadDraftAttachment(data: normalized.data, filename: normalized.filename, mediaType: normalized.mediaType)
+                    } catch {
+                        store.showToast("Could not prepare \(filename): \(error.localizedDescription)")
+                    }
+                }
+                return
+            }
             let mediaType: String
             switch ext {
             case "pdf": mediaType = "application/pdf"
             case "csv": mediaType = "text/csv"
-            case "png": mediaType = "image/png"
-            case "jpg", "jpeg": mediaType = "image/jpeg"
-            case "webp": mediaType = "image/webp"
-            case "md": mediaType = "text/markdown"
+            case "ics": mediaType = "text/calendar"
+            case "txt": mediaType = "text/plain"
+            case "md", "markdown": mediaType = "text/markdown"
             default: mediaType = "application/octet-stream"
             }
             uploadDraftAttachment(data: data, filename: filename, mediaType: mediaType)
         } catch {
-            store.showToast("Could not read \(url.lastPathComponent)")
+            store.showToast("Could not read \(url.lastPathComponent): \(error.localizedDescription)")
         }
     }
 
@@ -549,12 +627,25 @@ public struct ChatView: View {
             id: localID,
             name: filename,
             mediaType: mediaType,
+            data: data,
             isUploading: true,
             uploaded: nil,
             error: nil
         )
         draftAttachments.append(pending)
+        performAttachmentUpload(localID: localID, data: data, filename: filename, mediaType: mediaType)
+    }
 
+    private func retryDraftAttachment(id: String) {
+        guard let idx = draftAttachments.firstIndex(where: { $0.id == id }) else { return }
+        guard !draftAttachments[idx].isUploading else { return }
+        let item = draftAttachments[idx]
+        draftAttachments[idx].isUploading = true
+        draftAttachments[idx].error = nil
+        performAttachmentUpload(localID: item.id, data: item.data, filename: item.name, mediaType: item.mediaType)
+    }
+
+    private func performAttachmentUpload(localID: String, data: Data, filename: String, mediaType: String) {
         Task {
             do {
                 let uploaded = try await store.uploadAttachment(
@@ -565,14 +656,48 @@ public struct ChatView: View {
                 if let idx = draftAttachments.firstIndex(where: { $0.id == localID }) {
                     draftAttachments[idx].isUploading = false
                     draftAttachments[idx].uploaded = uploaded
+                    draftAttachments[idx].error = nil
                 }
             } catch {
+                let reason = error.localizedDescription
                 if let idx = draftAttachments.firstIndex(where: { $0.id == localID }) {
                     draftAttachments[idx].isUploading = false
-                    draftAttachments[idx].error = error.localizedDescription
+                    draftAttachments[idx].error = reason
                 }
-                store.showToast("Upload failed: \(filename)")
+                store.showToast("Upload failed (\(filename)): \(reason)")
             }
+        }
+    }
+
+    private func retryFailedMessage(_ message: Message) {
+        guard !retryingMessageIDs.contains(message.id) else { return }
+        triggerLightHaptic()
+        retryingMessageIDs.insert(message.id)
+        Task {
+            _ = await store.retryMessage(message)
+            retryingMessageIDs.remove(message.id)
+        }
+    }
+
+    private func openEditReminder(part: MessagePart, automation: Automation?) {
+        let initialTitle = automation?.title ?? part.reminderTitle
+        let rawISO = automation?.trigger.at ?? automation?.nextAt ?? part.scheduledAt
+        let initialDate = rawISO.flatMap { NoriDateFormatting.parse($0) }
+            ?? Date().addingTimeInterval(3600)
+        editingReminder = ReminderEditTarget(
+            automationID: part.id,
+            title: initialTitle,
+            scheduledAt: initialDate
+        )
+    }
+
+    private func cancelReminder(automationID: String) {
+        guard !cancellingReminderIDs.contains(automationID) else { return }
+        triggerLightHaptic()
+        cancellingReminderIDs.insert(automationID)
+        Task {
+            _ = await store.cancelAutomation(automationID: automationID)
+            cancellingReminderIDs.remove(automationID)
         }
     }
 
@@ -819,14 +944,18 @@ private enum BubblePosition {
 private enum ChatThreadUnit: Identifiable {
     case separator(id: String, label: String)
     case page(message: Message, part: MessagePart)
+    case reminder(message: Message, parts: [MessagePart])
     case group(id: String, isUser: Bool, messages: [Message])
+    case error(Message)
     case interaction(Interaction)
 
     var id: String {
         switch self {
         case .separator(let id, _): return id
         case .page(let message, _): return "page-\(message.id)"
+        case .reminder(let message, _): return "reminder-\(message.id)"
         case .group(let id, _, _): return id
+        case .error(let message): return "error-\(message.id)"
         case .interaction(let item): return Self.interactionAnchorID(for: item.id)
         }
     }
@@ -869,6 +998,10 @@ private enum ChatThreadUnit: Identifiable {
         }
 
         for msg in messages {
+            if msg.isSuperseded {
+                continue
+            }
+
             if let msgDate = NoriDateFormatting.parse(msg.createdAt) {
                 while interactionCursor < datedInteractions.count && datedInteractions[interactionCursor].date < msgDate {
                     flushBuffer()
@@ -880,6 +1013,19 @@ private enum ChatThreadUnit: Identifiable {
             if let sep = msg.separatorLabel, !sep.isEmpty {
                 flushBuffer()
                 result.append(.separator(id: "sep-\(msg.id)", label: sep))
+            }
+
+            if msg.isFailed {
+                flushBuffer()
+                result.append(.error(msg))
+                continue
+            }
+
+            let reminderParts = msg.reminderParts
+            if !reminderParts.isEmpty {
+                flushBuffer()
+                result.append(.reminder(message: msg, parts: reminderParts))
+                continue
             }
 
             if let pagePart = msg.pagePart {
@@ -1008,6 +1154,295 @@ private struct MessageReceiptView: View {
         }
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(NoriColors.ink3)
+    }
+}
+
+// MARK: - Inline Reminder Confirmation Card & Edit Sheet
+
+private struct ReminderEditTarget: Identifiable, Hashable {
+    var id: String { automationID }
+    let automationID: String
+    let title: String
+    let scheduledAt: Date
+}
+
+private struct InlineReminderCard: View {
+    let part: MessagePart
+    let automation: Automation?
+    let isCancelling: Bool
+    let onEdit: () -> Void
+    let onCancel: () -> Void
+
+    private var isCancelled: Bool {
+        automation?.status == .cancelled
+    }
+
+    private var displayTitle: String {
+        if let title = automation?.title.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return title
+        }
+        return part.reminderTitle
+    }
+
+    private var displayWhen: String? {
+        if let iso = automation?.trigger.at ?? automation?.nextAt ?? part.scheduledAt,
+           !iso.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let formatted = NoriDateFormatting.reminderDateTime(iso)
+            if !formatted.isEmpty {
+                return formatted
+            }
+        }
+        if let text = part.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+            return text
+        }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: isCancelled ? "bell.slash" : "bell.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(isCancelled ? NoriColors.ink3 : NoriColors.accent)
+                    .frame(width: 32, height: 32)
+                    .background(
+                        isCancelled ? NoriColors.fill1 : NoriColors.accentSubtle,
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Text(isCancelled ? "Reminder cancelled" : "Reminder set")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(isCancelled ? NoriColors.ink3 : NoriColors.accent)
+
+                        if let when = displayWhen, !isCancelled {
+                            Text("· \(when)")
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(NoriColors.ink2)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Text(displayTitle)
+                        .font(.system(size: 14.5, weight: .semibold))
+                        .foregroundStyle(isCancelled ? NoriColors.ink3 : NoriColors.ink)
+                        .strikethrough(isCancelled, color: NoriColors.ink3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if !isCancelled {
+                HStack(spacing: 8) {
+                    Button(action: onEdit) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Edit")
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                    .disabled(isCancelling)
+                    .accessibilityLabel("Edit reminder \(displayTitle)")
+
+                    Button(action: onCancel) {
+                        HStack(spacing: 4) {
+                            if isCancelling {
+                                ProgressView()
+                                    .controlSize(.mini)
+                            } else {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                            }
+                            Text(isCancelling ? "Cancelling…" : "Cancel")
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                    .disabled(isCancelling)
+                    .accessibilityLabel("Cancel reminder \(displayTitle)")
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 42)
+            }
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isCancelled ? NoriColors.sidebar : NoriColors.surface,
+            in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+                .strokeBorder(isCancelled ? NoriColors.hairline : NoriColors.hairlineStrong, lineWidth: 1)
+        )
+        .shadow(color: isCancelled ? .clear : NoriColors.ink.opacity(0.03), radius: 8, x: 0, y: 2)
+    }
+}
+
+private struct EditReminderSheet: View {
+    @Bindable var store: NoriStore
+    let target: ReminderEditTarget
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String
+    @State private var scheduledAt: Date
+    @State private var isSaving: Bool = false
+
+    init(store: NoriStore, target: ReminderEditTarget) {
+        self.store = store
+        self.target = target
+        self._title = State(initialValue: target.title)
+        self._scheduledAt = State(initialValue: target.scheduledAt)
+    }
+
+    private var isValid: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSaving
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Reminder")
+                            .font(NoriTypography.metaSemibold)
+                            .foregroundStyle(NoriColors.ink)
+                        TextField("What should Nori remind you about?", text: $title)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 12)
+                            .frame(height: 42)
+                            .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                                    .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                            )
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("When")
+                            .font(NoriTypography.metaSemibold)
+                            .foregroundStyle(NoriColors.ink)
+                        DatePicker(
+                            "Reminder time",
+                            selection: $scheduledAt,
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                        .labelsHidden()
+                        .tint(NoriColors.accent)
+                    }
+
+                    Button {
+                        save()
+                    } label: {
+                        if isSaving {
+                            ProgressView().tint(.white)
+                        } else {
+                            Text("Save changes")
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
+                    .disabled(!isValid)
+                    .opacity(isValid ? 1 : 0.5)
+                    .padding(.top, 4)
+                }
+                .padding(16)
+            }
+            .background(NoriColors.canvas)
+            .navigationTitle("Edit Reminder")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(NoriColors.ink2)
+                }
+            }
+        }
+    }
+
+    private func save() {
+        guard isValid else { return }
+        isSaving = true
+        Task {
+            let updated = await store.updateReminder(
+                automationID: target.automationID,
+                title: title,
+                scheduledAt: scheduledAt
+            )
+            isSaving = false
+            if updated != nil {
+                dismiss()
+            }
+        }
+    }
+}
+
+// MARK: - Inline Chat Error Card
+
+private struct ChatErrorCard: View {
+    let message: Message
+    let isRetrying: Bool
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(NoriColors.danger)
+                    .padding(.top, 1)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Couldn’t get a reply")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(NoriColors.ink)
+
+                    Text(message.displayErrorMessage)
+                        .font(.system(size: 13))
+                        .lineSpacing(2)
+                        .foregroundStyle(NoriColors.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if message.isRetryableError {
+                HStack {
+                    Button(action: onRetry) {
+                        HStack(spacing: 6) {
+                            if isRetrying {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                    .tint(NoriColors.onAccent)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 11.5, weight: .semibold))
+                            }
+                            Text(isRetrying ? "Retrying…" : "Retry")
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                    .disabled(isRetrying)
+                    .accessibilityLabel(isRetrying ? "Retrying message" : "Retry message")
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 25)
+            }
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            NoriColors.dangerBg.opacity(0.65),
+            in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+                .strokeBorder(NoriColors.danger.opacity(0.24), lineWidth: 1)
+        )
     }
 }
 
@@ -1143,6 +1578,7 @@ private struct DraftAttachment: Identifiable, Sendable {
     let id: String
     let name: String
     let mediaType: String
+    let data: Data
     var isUploading: Bool
     var uploaded: Attachment?
     var error: String?
@@ -1150,47 +1586,106 @@ private struct DraftAttachment: Identifiable, Sendable {
 
 private struct AttachmentChipView: View {
     let item: DraftAttachment
+    let onRetry: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
-        HStack(spacing: 5) {
-            if item.isUploading {
-                ProgressView()
-                    .controlSize(.mini)
-            } else {
-                Image(systemName: item.mediaType.hasPrefix("image/") ? "photo" : "doc.text")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(item.error != nil ? NoriColors.danger : NoriColors.ink2)
-            }
+        if let error = item.error, !error.isEmpty {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(NoriColors.danger)
 
-            Text(item.name)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(item.error != nil ? NoriColors.danger : NoriColors.ink)
-                .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(NoriColors.danger)
+                        .lineLimit(1)
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundStyle(NoriColors.ink2)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: 200, alignment: .leading)
 
-            Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(NoriColors.ink3)
-                    .frame(width: 18, height: 18)
+                Button(action: onRetry) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Retry")
+                            .font(.system(size: 11.5, weight: .semibold))
+                    }
+                    .foregroundStyle(NoriColors.danger)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(NoriColors.surface, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(NoriColors.danger.opacity(0.32), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Retry uploading \(item.name)")
+
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(NoriColors.ink3)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove \(item.name)")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove \(item.name)")
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(NoriColors.dangerBg, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(NoriColors.danger.opacity(0.35), lineWidth: 1)
+            )
+        } else {
+            HStack(spacing: 5) {
+                if item.isUploading {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: item.mediaType.hasPrefix("image/") ? "photo" : "doc.text")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(NoriColors.ink2)
+                }
+
+                Text(item.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(NoriColors.ink)
+                    .lineLimit(1)
+
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(NoriColors.ink3)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove \(item.name)")
+            }
+            .padding(.leading, 9)
+            .padding(.trailing, 5)
+            .padding(.vertical, 5)
+            .background(NoriColors.fill1, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(NoriColors.hairlineStrong, lineWidth: 1)
+            )
         }
-        .padding(.leading, 9)
-        .padding(.trailing, 5)
-        .padding(.vertical, 5)
-        .background(NoriColors.fill1, in: Capsule())
-        .overlay(
-            Capsule()
-                .strokeBorder(item.error != nil ? NoriColors.danger.opacity(0.4) : NoriColors.hairlineStrong, lineWidth: 1)
-        )
     }
 }
 
 private struct AttachSheetView: View {
     @Environment(\.dismiss) private var dismiss
+    let maxUploadBytes: Int
     let onPickedPhotoData: (Data, String, String) -> Void
+    let onPhotoNormalizationError: (String) -> Void
     let onRequestFilePicker: () -> Void
 
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -1198,7 +1693,7 @@ private struct AttachSheetView: View {
     var body: some View {
         let photoLibraryRow = NoriRow(
             title: "Photo Library",
-            detail: "PNG, JPEG, WebP via native PhotosPicker",
+            detail: "Photos & screenshots (auto-converted if needed)",
             systemImage: "photo.on.rectangle",
             iconTone: .accent,
             showChevron: true,
@@ -1253,10 +1748,25 @@ private struct AttachSheetView: View {
         }
         .onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }
+            let limit = maxUploadBytes
             Task {
-                if let data = try? await newItem.loadTransferable(type: Data.self) {
-                    let filename = "photo_\(Int(Date().timeIntervalSince1970)).jpg"
-                    onPickedPhotoData(data, filename, "image/jpeg")
+                do {
+                    guard let rawData = try await newItem.loadTransferable(type: Data.self) else {
+                        onPhotoNormalizationError("Could not load the selected photo.")
+                        selectedPhotoItem = nil
+                        return
+                    }
+                    let baseFilename = "photo_\(Int(Date().timeIntervalSince1970))"
+                    let normalized = try await Task.detached(priority: .userInitiated) {
+                        try ImageUploadNormalizer.normalize(
+                            data: rawData,
+                            suggestedFilename: baseFilename,
+                            maxBytes: limit
+                        )
+                    }.value
+                    onPickedPhotoData(normalized.data, normalized.filename, normalized.mediaType)
+                } catch {
+                    onPhotoNormalizationError(error.localizedDescription)
                 }
                 selectedPhotoItem = nil
             }

@@ -64,6 +64,7 @@ public protocol NoriTransport: Sendable {
 
     // Conversation & Uploads
     func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session
+    func retryTurn(turnID: String?, messageID: String?) async throws -> Session
     func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse
     func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> Attachment
 
@@ -160,6 +161,13 @@ public protocol NoriTransport: Sendable {
 
     // Automations, Goals, Permissions, Preferences
     func fetchAutomations() async throws -> [Automation]
+    func fetchAutomation(id: String) async throws -> Automation
+    func updateAutomation(
+        id: String,
+        expectedRevision: Int,
+        value: AutomationEditable,
+        requestID: String
+    ) async throws -> MutationReceipt<Automation>
     func performAutomationAction(
         id: String,
         expectedRevision: Int,

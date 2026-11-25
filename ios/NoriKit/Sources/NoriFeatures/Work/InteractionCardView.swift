@@ -10,7 +10,11 @@ import UIKit
 
 extension Interaction {
     var displayHeading: String {
-        if kind == .approval, case .approval(let payload) = payload, prompt == payload.summary {
+        if kind == .approval, case .approval(let payload) = payload,
+           prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || prompt == payload.summary {
+            if payload.isScheduleCreation {
+                return "Create this routine?"
+            }
             switch payload.effect {
             case .sensitiveSend: return "Send this?"
             case .reversibleWrite: return "Make this change?"
@@ -141,6 +145,16 @@ public struct InteractionCardView: View {
         .onAppear {
             seedInitialSelectionsIfNeeded()
         }
+        .onChange(of: interaction.id) { _, _ in
+            selectedOptionIDs = []
+            textAnswer = ""
+            rememberSimilarRule = false
+            isQuotedBodyExpanded = false
+            didSeedInitialChoice = false
+            didSeedAccountDefault = false
+            errorMessage = nil
+            seedInitialSelectionsIfNeeded()
+        }
     }
 
     @ViewBuilder
@@ -242,21 +256,38 @@ public struct InteractionCardView: View {
     private func approvalBody(_ payload: ApprovalPayload) -> some View {
         let isSensitiveSend = payload.effect == .sensitiveSend
         let parsed = parseApprovalSummary(payload)
+        let warning = payload.displayWarning
+        let hasRecipients = !(payload.recipients?.isEmpty ?? true)
+        let showEffectRow = !payload.isInternalNoriSchedule
+        let hasMetadataRows = hasRecipients || payload.hasAccountLabel || showEffectRow
 
         return VStack(alignment: .leading, spacing: 10) {
-            if let warning = payload.warning?.trimmingCharacters(in: .whitespacesAndNewlines), !warning.isEmpty {
-                NoriNotice(
-                    title: warning,
-                    tone: .warning,
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-            }
-
             if let head = parsed.head, !head.isEmpty {
-                Text(head)
-                    .font(.system(size: 13.5, weight: .medium))
-                    .foregroundStyle(NoriColors.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+                if payload.isScheduleCreation, let newline = head.firstIndex(of: "\n") {
+                    let firstLine = String(head[..<newline]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let restLines = String(head[head.index(after: newline)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if !firstLine.isEmpty {
+                            Text(firstLine)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(NoriColors.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if !restLines.isEmpty {
+                            Text(restLines)
+                                .font(.system(size: 13))
+                                .foregroundStyle(NoriColors.ink2)
+                                .lineSpacing(2.5)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                } else {
+                    Text(head)
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(NoriColors.ink)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             if let quotedBody = parsed.quotedBody, !quotedBody.isEmpty {
@@ -304,73 +335,63 @@ public struct InteractionCardView: View {
                 }
             }
 
-            // Key-Value Metadata Grid
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
-                if isSensitiveSend, let recipients = payload.recipients, !recipients.isEmpty {
-                    GridRow {
-                        Text("To")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(NoriColors.ink3)
-                        Text(recipients.joined(separator: ", "))
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(NoriColors.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+            if let warning, !warning.isEmpty {
+                NoriNotice(
+                    title: warning,
+                    tone: .warning,
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+            }
+
+            // Key-Value Metadata Grid (omits empty accounts, raw tool_id, and duplicate expiry)
+            if hasMetadataRows {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
+                    if isSensitiveSend, let recipients = payload.recipients, !recipients.isEmpty {
+                        GridRow {
+                            Text("To")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(NoriColors.ink3)
+                            Text(recipients.joined(separator: ", "))
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(NoriColors.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                }
 
-                GridRow {
-                    Text(isSensitiveSend ? "From" : "Account")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(NoriColors.ink3)
-                    Text(payload.account.label)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(NoriColors.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if !isSensitiveSend, let recipients = payload.recipients, !recipients.isEmpty {
-                    GridRow {
-                        Text("To")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(NoriColors.ink3)
-                        Text(recipients.joined(separator: ", "))
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(NoriColors.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if payload.hasAccountLabel {
+                        GridRow {
+                            Text(isSensitiveSend ? "From" : "Account")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(NoriColors.ink3)
+                            Text(payload.account.label)
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(NoriColors.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                }
 
-                if let toolID = payload.toolID, !toolID.isEmpty {
-                    GridRow {
-                        Text("Tool")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(NoriColors.ink3)
-                        Text(toolID)
-                            .font(NoriTypography.monoSmall)
-                            .foregroundStyle(NoriColors.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if !isSensitiveSend, let recipients = payload.recipients, !recipients.isEmpty {
+                        GridRow {
+                            Text("To")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(NoriColors.ink3)
+                            Text(recipients.joined(separator: ", "))
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(NoriColors.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                }
 
-                GridRow {
-                    Text("Effect")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(NoriColors.ink3)
-                    NoriPill(
-                        payload.effect.displayLabel,
-                        tone: isSensitiveSend ? .warning : .neutral
-                    )
-                }
-
-                if let expiresAt = interaction.expiresAt, !expiresAt.isEmpty {
-                    GridRow {
-                        Text("Expires")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(NoriColors.ink3)
-                        Text(NoriDateFormatting.shortDateTime(expiresAt))
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(NoriColors.warning)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if showEffectRow {
+                        GridRow {
+                            Text("Effect")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(NoriColors.ink3)
+                            NoriPill(
+                                payload.effect.displayLabel,
+                                tone: isSensitiveSend ? .warning : .neutral
+                            )
+                        }
                     }
                 }
             }
@@ -479,19 +500,19 @@ public struct InteractionCardView: View {
         case .confirm:
             HStack(spacing: 8) {
                 Button {
-                    submitAnswer(text: "Yes", optionIDs: nil)
+                    submitAnswer(text: "Yes", optionIDs: nil, actionTag: "confirm_yes")
                 } label: {
-                    Text("Yes")
+                    Text(submittingAction == "confirm_yes" ? "Sending…" : "Yes")
                 }
-                .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
+                .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: compact))
                 .disabled(isSubmitting)
 
                 Button {
-                    submitAnswer(text: "No", optionIDs: nil)
+                    submitAnswer(text: "No", optionIDs: nil, actionTag: "confirm_no")
                 } label: {
-                    Text("No")
+                    Text(submittingAction == "confirm_no" ? "Sending…" : "No")
                 }
-                .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true))
+                .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true, compact: compact))
                 .disabled(isSubmitting)
             }
 
@@ -839,10 +860,10 @@ public struct InteractionCardView: View {
         }
     }
 
-    private func submitAnswer(text: String, optionIDs: [String]?) {
+    private func submitAnswer(text: String, optionIDs: [String]?, actionTag: String = "answer") {
         errorMessage = nil
         isSubmitting = true
-        submittingAction = "answer"
+        submittingAction = actionTag
         Task {
             await store.answerInteraction(interaction, text: text, optionIDs: optionIDs)
             triggerNotificationHaptic(.success)

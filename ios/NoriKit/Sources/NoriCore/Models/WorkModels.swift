@@ -321,19 +321,152 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
         self.recovery = recovery
     }
 
-    public var displaySummary: String {
-        actionSummary ?? action?.text ?? name
+    public var isWebSearch: Bool {
+        let lowerName = name.lowercased()
+        if lowerName == "web_search" || lowerName == "web_search_call" {
+            return true
+        }
+        if let toolID = tool?.id.lowercased(), toolID == "web_search" || toolID.hasSuffix("/web_search") {
+            return true
+        }
+        return false
     }
 
-    public var displayAuthority: String {
-        switch authoritySource {
+    public var displaySummary: String {
+        if let summary = actionSummary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+            return summary
+        }
+        if let text = action?.text.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+            return text
+        }
+        if isWebSearch {
+            return "Searched the web"
+        }
+        return name
+    }
+
+    /// Returns a human-readable authority phrase only when `authoritySource` is explicitly present.
+    public var displayAuthorityLabel: String? {
+        guard let raw = authoritySource?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        switch raw {
         case "user_request": return "you asked"
         case "permission_rule": return "permission rule"
         case "automation": return "an automation"
         case "approval": return "your approval"
         case "internal": return "Nori"
-        default: return authoritySource ?? "Nori"
+        default: return raw
         }
+    }
+
+    public var displayAuthority: String {
+        displayAuthorityLabel ?? ""
+    }
+
+    /// Outcome badge for Work Detail actions.
+    /// Reserves the green `"Confirmed"` badge for real external side effects/changes (`effectClass != .read`),
+    /// omitting the badge for routine confirmed read-only operations.
+    public var statusBadge: OperationBadge? {
+        if let cleared = cleared?.trimmingCharacters(in: .whitespacesAndNewlines), !cleared.isEmpty {
+            switch cleared {
+            case "did_not_run": return OperationBadge(label: "Didn’t run", tone: .neutral)
+            case "read_only": return OperationBadge(label: "Only read", tone: .neutral)
+            case "answered": return OperationBadge(label: "Settled", tone: .neutral)
+            case "contained": return OperationBadge(label: "Contained", tone: .warning)
+            default: break
+            }
+        }
+        switch outcome {
+        case .confirmed:
+            if effectClass == .read {
+                return nil
+            }
+            return OperationBadge(label: "Confirmed", tone: .ok)
+        case .pending: return OperationBadge(label: "Waiting", tone: .warning)
+        case .uncertain: return OperationBadge(label: "Unconfirmed", tone: .warning)
+        case .failed: return OperationBadge(label: "Failed", tone: .danger)
+        case .submitted: return OperationBadge(label: "Submitted", tone: .neutral)
+        case .attempted: return OperationBadge(label: "In progress", tone: .neutral)
+        case .ready: return OperationBadge(label: "Ready", tone: .neutral)
+        case .skipped: return OperationBadge(label: "Skipped", tone: .neutral)
+        case .voided: return OperationBadge(label: "Cancelled", tone: .neutral)
+        }
+    }
+}
+
+public enum OperationBadgeTone: String, Sendable, Hashable {
+    case neutral
+    case ok
+    case warning
+    case danger
+}
+
+public struct OperationBadge: Sendable, Hashable {
+    public let label: String
+    public let tone: OperationBadgeTone
+
+    public init(label: String, tone: OperationBadgeTone) {
+        self.label = label
+        self.tone = tone
+    }
+}
+
+public enum WorkActionEntry: Sendable, Hashable, Identifiable {
+    case single(OperationProjection)
+    case webSearchGroup(id: String, operations: [OperationProjection])
+
+    public var id: String {
+        switch self {
+        case .single(let op):
+            return op.id
+        case .webSearchGroup(let id, _):
+            return id
+        }
+    }
+
+    public var groupTitle: String? {
+        guard case .webSearchGroup(_, let ops) = self else { return nil }
+        return "Searched the web (\(ops.count) \(ops.count == 1 ? "query" : "queries"))"
+    }
+
+    public var groupBadge: OperationBadge? {
+        guard case .webSearchGroup(_, let ops) = self else { return nil }
+        if ops.contains(where: { $0.outcome == .failed }) {
+            return OperationBadge(label: "Failed", tone: .danger)
+        }
+        if ops.contains(where: { $0.outcome == .attempted || $0.outcome == .pending }) {
+            return OperationBadge(label: "In progress", tone: .neutral)
+        }
+        return nil
+    }
+
+    /// Groups consecutive `web_search` operations (2+) into a single expandable `.webSearchGroup` entry,
+    /// while leaving single searches and non-search operations as `.single`.
+    public static func group(_ operations: [OperationProjection]) -> [WorkActionEntry] {
+        var entries: [WorkActionEntry] = []
+        var searchRun: [OperationProjection] = []
+
+        func flushSearchRun() {
+            guard !searchRun.isEmpty else { return }
+            if searchRun.count == 1 {
+                entries.append(.single(searchRun[0]))
+            } else {
+                entries.append(.webSearchGroup(id: "web-search-group-\(searchRun[0].id)-\(searchRun.count)", operations: searchRun))
+            }
+            searchRun.removeAll(keepingCapacity: true)
+        }
+
+        for op in operations {
+            if op.isWebSearch {
+                searchRun.append(op)
+            } else {
+                flushSearchRun()
+                entries.append(.single(op))
+            }
+        }
+        flushSearchRun()
+        return entries
     }
 }
 

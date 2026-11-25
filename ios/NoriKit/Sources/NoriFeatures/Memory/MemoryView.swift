@@ -21,10 +21,6 @@ public struct MemoryView: View {
         self.store = store
     }
 
-    private var pinnedCount: Int {
-        store.coreMemories.filter(\.pinned).count
-    }
-
     private var filteredCoreMemories: [MemoryFact] {
         let needle = coreFilter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else { return store.coreMemories }
@@ -150,7 +146,7 @@ public struct MemoryView: View {
         // Slim compact 24 KB Core Budget Strip
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 8) {
-                Text("Core budget · \(pinnedCount) pinned")
+                Text("Core memory budget")
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(NoriColors.ink2)
                     .lineLimit(1)
@@ -418,9 +414,6 @@ public struct MemoryView: View {
             hasSegment = true
         }
 
-        if fact.pinned {
-            append("Pinned", color: NoriColors.accent, weight: .semibold)
-        }
         if let section = fact.section, !section.isEmpty {
             append(section)
         }
@@ -476,12 +469,6 @@ public struct MemoryView: View {
     @ViewBuilder
     private func coreFactMenu(for fact: MemoryFact) -> some View {
         Menu {
-            Button {
-                Task { await store.togglePinMemory(memoryID: fact.id) }
-            } label: {
-                Label(fact.pinned ? "Unpin" : "Pin", systemImage: fact.pinned ? "pin.slash" : "pin")
-            }
-
             Button {
                 Task { await store.demoteMemory(memoryID: fact.id) }
             } label: {
@@ -586,7 +573,6 @@ private struct PromoteTaskOutcomeSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var reviewed = false
-    @State private var pinInCore = false
     @State private var isSaving = false
 
     var body: some View {
@@ -614,20 +600,13 @@ private struct PromoteTaskOutcomeSheet: View {
                     }
                     .tint(NoriColors.accent)
 
-                    Toggle(isOn: $pinInCore) {
-                        Text("Pin in Core Memory (never auto-demoted)")
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(NoriColors.ink2)
-                    }
-                    .tint(NoriColors.accent)
-
                     Button {
                         isSaving = true
                         Task {
                             await store.promoteLogEntry(
                                 date: candidate.date,
                                 entryID: candidate.entry.id,
-                                pinned: pinInCore
+                                pinned: false
                             )
                             isSaving = false
                             dismiss()
@@ -665,13 +644,9 @@ private struct AddMemorySheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var factText = ""
-    @State private var section = "Preferences"
-    @State private var about = ""
-    @State private var pinned = false
     @State private var isSaving = false
 
     private let maxBytes = 2000
-    private let sectionSuggestions = ["Preferences", "People", "Projects", "Decisions", "Context"]
 
     private var byteCount: Int {
         factText.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count
@@ -709,64 +684,13 @@ private struct AddMemorySheet: View {
                             .strokeBorder(byteCount > maxBytes ? NoriColors.danger : NoriColors.hairline, lineWidth: 1)
                     )
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Section")
-                            .font(NoriTypography.metaSemibold)
-                            .foregroundStyle(NoriColors.ink)
-
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(sectionSuggestions, id: \.self) { option in
-                                    Button {
-                                        section = option
-                                    } label: {
-                                        Text(option)
-                                            .font(.system(size: 12.5, weight: .semibold))
-                                            .foregroundStyle(section == option ? Color.white : NoriColors.ink2)
-                                            .padding(.horizontal, 11)
-                                            .frame(height: 30)
-                                            .background(section == option ? NoriColors.ink : NoriColors.fill1, in: Capsule())
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("About (optional)")
-                            .font(NoriTypography.metaSemibold)
-                            .foregroundStyle(NoriColors.ink)
-                        TextField("travel, procurement, calendar…", text: $about)
-                            .textFieldStyle(.plain)
-                            .padding(.horizontal, 12)
-                            .frame(height: 40)
-                            .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                                    .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                            )
-                    }
-
-                    Toggle(isOn: $pinned) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Pin to Core Memory")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(NoriColors.ink)
-                            Text("Never auto-demoted during memory consolidation.")
-                                .font(.system(size: 12))
-                                .foregroundStyle(NoriColors.ink2)
-                        }
-                    }
-                    .tint(NoriColors.accent)
-
                     Button {
                         save()
                     } label: {
                         if isSaving {
                             ProgressView().tint(.white)
                         } else {
-                            Text("Save to Core Memory")
+                            Text("Save")
                         }
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
@@ -776,7 +700,7 @@ private struct AddMemorySheet: View {
                 .padding(16)
             }
             .background(NoriColors.canvas)
-            .navigationTitle("Add Core Memory")
+            .navigationTitle("Add Memory")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -795,9 +719,9 @@ private struct AddMemorySheet: View {
         Task {
             await store.addMemory(
                 text: factText,
-                section: section.isEmpty ? nil : section,
-                about: about.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : about,
-                pinned: pinned
+                section: nil,
+                about: nil,
+                pinned: false
             )
             isSaving = false
             dismiss()

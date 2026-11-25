@@ -149,6 +149,35 @@ public enum NoriDateFormatting: Sendable {
         return "\(dateStr), \(timeStr)"
     }
 
+    /// Plain-English local reminder timestamp (e.g. `"Today at 2:15 PM"`,
+    /// `"Tomorrow at 12:00 PM"`, `"Nov 25 at 12:00 PM"`).
+    public static func reminderDateTime(_ isoString: String, now: Date = Date()) -> String {
+        let trimmed = isoString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let date = parse(trimmed) else { return isoString }
+
+        if isDateOnly(trimmed) {
+            return shortDate(trimmed, now: now)
+        }
+
+        let calendar = Calendar.current
+        let timeStr = formatTime(date)
+
+        if calendar.isDate(date, inSameDayAs: now) {
+            return "Today at \(timeStr)"
+        }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(date, inSameDayAs: yesterday) {
+            return "Yesterday at \(timeStr)"
+        }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+           calendar.isDate(date, inSameDayAs: tomorrow) {
+            return "Tomorrow at \(timeStr)"
+        }
+
+        let dateStr = formatMonthDay(date, relativeTo: now, calendar: calendar)
+        return "\(dateStr) at \(timeStr)"
+    }
+
     /// Short time string (e.g. `"2:15 PM"`).
     public static func shortTime(_ isoString: String) -> String {
         guard let date = parse(isoString) else { return isoString }

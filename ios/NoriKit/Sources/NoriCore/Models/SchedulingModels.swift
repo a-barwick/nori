@@ -199,6 +199,81 @@ public struct Automation: Sendable, Codable, Hashable, Identifiable {
         self.snoozedUntil = snoozedUntil
         self.lastOccurrence = lastOccurrence
     }
+
+    public var editable: AutomationEditable {
+        AutomationEditable(
+            title: title,
+            instruction: instruction,
+            trigger: trigger,
+            connectionIDs: connectionIDs,
+            budgetUSD: budgetUSD,
+            maxActiveRuns: maxActiveRuns,
+            missedRun: missedRun,
+            executionWindowSeconds: executionWindowSeconds,
+            destinationIDs: destinationIDs,
+            endAt: endAt,
+            maxOccurrences: maxOccurrences,
+            goalID: goalID
+        )
+    }
+}
+
+public struct AutomationEditable: Sendable, Codable, Hashable {
+    public var title: String
+    public var instruction: String
+    public var trigger: AutomationTrigger
+    public var connectionIDs: [String]
+    public var budgetUSD: Double
+    public var maxActiveRuns: Int
+    public var missedRun: MissedRun?
+    public var executionWindowSeconds: Int
+    public var destinationIDs: [String]
+    public var endAt: String?
+    public var maxOccurrences: Int?
+    public var goalID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case instruction
+        case trigger
+        case connectionIDs = "connection_ids"
+        case budgetUSD = "budget_usd"
+        case maxActiveRuns = "max_active_runs"
+        case missedRun = "missed_run"
+        case executionWindowSeconds = "execution_window_seconds"
+        case destinationIDs = "destination_ids"
+        case endAt = "end_at"
+        case maxOccurrences = "max_occurrences"
+        case goalID = "goal_id"
+    }
+
+    public init(
+        title: String,
+        instruction: String,
+        trigger: AutomationTrigger,
+        connectionIDs: [String] = [],
+        budgetUSD: Double = 0.50,
+        maxActiveRuns: Int = 1,
+        missedRun: MissedRun? = nil,
+        executionWindowSeconds: Int = 3600,
+        destinationIDs: [String] = [],
+        endAt: String? = nil,
+        maxOccurrences: Int? = nil,
+        goalID: String? = nil
+    ) {
+        self.title = title
+        self.instruction = instruction
+        self.trigger = trigger
+        self.connectionIDs = connectionIDs
+        self.budgetUSD = budgetUSD
+        self.maxActiveRuns = maxActiveRuns
+        self.missedRun = missedRun
+        self.executionWindowSeconds = executionWindowSeconds
+        self.destinationIDs = destinationIDs
+        self.endAt = endAt
+        self.maxOccurrences = maxOccurrences
+        self.goalID = goalID
+    }
 }
 
 // MARK: - Goals

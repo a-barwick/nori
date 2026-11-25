@@ -20,6 +20,13 @@ public enum MessageReceipt: String, Sendable, Codable, Hashable {
     case saved
 }
 
+public enum MessageStatus: String, Sendable, Codable, Hashable {
+    case completed
+    case failed
+    case cancelled
+    case superseded
+}
+
 public struct CardResourceRef: Sendable, Codable, Hashable {
     public var kind: String
     public var id: String
@@ -59,6 +66,7 @@ public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
     public var actions: [String]?
     public var title: String?
     public var metrics: [PageMetric]?
+    public var scheduledAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -76,6 +84,7 @@ public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
         case actions
         case title
         case metrics
+        case scheduledAt = "scheduled_at"
     }
 
     public init(
@@ -93,7 +102,8 @@ public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
         resource: CardResourceRef? = nil,
         actions: [String]? = nil,
         title: String? = nil,
-        metrics: [PageMetric]? = nil
+        metrics: [PageMetric]? = nil,
+        scheduledAt: String? = nil
     ) {
         self.id = id
         self.type = type
@@ -110,6 +120,7 @@ public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
         self.actions = actions
         self.title = title
         self.metrics = metrics
+        self.scheduledAt = scheduledAt
     }
 
     public init(from decoder: any Decoder) throws {
@@ -128,7 +139,28 @@ public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
         self.actions = try c.decodeIfPresent([String].self, forKey: .actions)
         self.title = try c.decodeIfPresent(String.self, forKey: .title)
         self.metrics = try c.decodeIfPresent([PageMetric].self, forKey: .metrics)
+        self.scheduledAt = try c.decodeIfPresent(String.self, forKey: .scheduledAt)
         self.id = try c.decodeIfPresent(String.self, forKey: .id) ?? "\(type)-\(resource?.id ?? name ?? UUID().uuidString)"
+    }
+
+    public var isReminder: Bool {
+        type == "reminder"
+    }
+
+    public var reminderTitle: String {
+        if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
+        if let title = title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return title
+        }
+        return fallback?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Reminder"
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }
 
@@ -158,8 +190,10 @@ public struct Message: Sendable, Codable, Hashable, Identifiable {
     public var runID: String
     public var turnID: String?
     public var role: MessageRole
+    public var status: MessageStatus?
     public var text: String
     public var parts: [MessagePart]?
+    public var error: ErrorDetail?
     public var resultIDs: [String]?
     public var createdAt: String
     /// Client-local delivery receipt (not required on wire).
@@ -172,8 +206,10 @@ public struct Message: Sendable, Codable, Hashable, Identifiable {
         case runID = "run_id"
         case turnID = "turn_id"
         case role
+        case status
         case text
         case parts
+        case error
         case resultIDs = "result_ids"
         case createdAt = "created_at"
         case receipt
@@ -185,8 +221,10 @@ public struct Message: Sendable, Codable, Hashable, Identifiable {
         runID: String = "",
         turnID: String? = nil,
         role: MessageRole,
+        status: MessageStatus? = nil,
         text: String,
         parts: [MessagePart]? = nil,
+        error: ErrorDetail? = nil,
         resultIDs: [String]? = nil,
         createdAt: String = ISO8601DateFormatter().string(from: Date()),
         receipt: MessageReceipt? = nil,
@@ -196,8 +234,10 @@ public struct Message: Sendable, Codable, Hashable, Identifiable {
         self.runID = runID
         self.turnID = turnID
         self.role = role
+        self.status = status
         self.text = text
         self.parts = parts
+        self.error = error
         self.resultIDs = resultIDs
         self.createdAt = createdAt
         self.receipt = receipt
@@ -210,8 +250,10 @@ public struct Message: Sendable, Codable, Hashable, Identifiable {
         self.runID = try c.decodeIfPresent(String.self, forKey: .runID) ?? ""
         self.turnID = try c.decodeIfPresent(String.self, forKey: .turnID)
         self.role = try c.decode(MessageRole.self, forKey: .role)
+        self.status = try? c.decodeIfPresent(MessageStatus.self, forKey: .status)
         self.text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
         self.parts = try c.decodeIfPresent([MessagePart].self, forKey: .parts)
+        self.error = try c.decodeIfPresent(ErrorDetail.self, forKey: .error)
         self.resultIDs = try c.decodeIfPresent([String].self, forKey: .resultIDs)
         self.createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
         self.receipt = try c.decodeIfPresent(MessageReceipt.self, forKey: .receipt)
@@ -219,9 +261,27 @@ public struct Message: Sendable, Codable, Hashable, Identifiable {
     }
 
     public var isFromUser: Bool { role == .user }
+    public var isFailed: Bool { status == .failed }
+    public var isSuperseded: Bool { status == .superseded }
+
+    public var isRetryableError: Bool {
+        isFailed && (error?.retryable ?? true)
+    }
+
+    public var displayErrorMessage: String {
+        if let errMsg = error?.message.trimmingCharacters(in: .whitespacesAndNewlines), !errMsg.isEmpty {
+            return errMsg
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Nori couldn’t finish replying just now. Please try again." : trimmed
+    }
 
     public var pagePart: MessagePart? {
         parts?.first(where: { $0.display == "page" || $0.type == "page" || ($0.type == "card" && $0.kind == "file") })
+    }
+
+    public var reminderParts: [MessagePart] {
+        (parts ?? []).filter { $0.isReminder }
     }
 }
 
