@@ -107,8 +107,8 @@ const (
 	MaxDailyLogBytes    = 64 << 10
 	MaxDailyLogEntries  = 128
 	MaxTaskOutcomeBytes = 600
-	TailRecallBytes     = 4 << 10
-	TailRecallTopK      = 8
+	TailRecallBytes     = 2560
+	TailRecallTopK      = 5
 
 	// Memory mutation kinds for Database.MutateMemory.
 	MemoryMutateCreateCore     = "create_core"

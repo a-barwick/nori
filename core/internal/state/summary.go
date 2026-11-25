@@ -132,8 +132,8 @@ const (
 	MaxSummaryGist  = 4000
 	// Coupled compaction, session-idle extraction, & AutoDream scheduling parameters.
 	MaxFlushRetries      = 3
-	IdleExtractDelay     = 2 * time.Minute
-	ExtractTurnThreshold = 3
+	IdleExtractDelay     = 10 * time.Minute
+	ExtractTurnThreshold = 6
 	IdleDreamDelay       = 15 * time.Minute
 	DreamMinInterval     = 12 * time.Hour
 	DreamMinLogEntries   = 10

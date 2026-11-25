@@ -32,11 +32,11 @@ func TestWindowAndCompactionConstants(t *testing.T) {
 	if CompactKeepUserTurns != 10 {
 		t.Fatalf("CompactKeepUserTurns = %d, want 10", CompactKeepUserTurns)
 	}
-	if ExtractTurnThreshold != 3 {
-		t.Fatalf("ExtractTurnThreshold = %d, want 3", ExtractTurnThreshold)
+	if ExtractTurnThreshold != 6 {
+		t.Fatalf("ExtractTurnThreshold = %d, want 6", ExtractTurnThreshold)
 	}
-	if IdleExtractDelay != 2*time.Minute {
-		t.Fatalf("IdleExtractDelay = %v, want 2m", IdleExtractDelay)
+	if IdleExtractDelay != 10*time.Minute {
+		t.Fatalf("IdleExtractDelay = %v, want 10m", IdleExtractDelay)
 	}
 	if !(CompactKeepUserTurns <= CompactKeep && CompactKeep < SoftCompactUserTurns && SoftCompactUserTurns < SoftCompactTurns && SoftCompactTurns < RecentTurnLimit && RecentTurnLimit < HistoryTurnsExamined) {
 		t.Fatalf("unexpected ordering of turn window constants")

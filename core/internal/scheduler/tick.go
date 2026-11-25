@@ -388,7 +388,65 @@ func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc,
 			s.checkpoint(ctx, a.ID, clip(summary, 2000))
 		}
 	}
-	return s.settle(ctx, r, o, status, "", clip(summary, 2000), failure)
+	if err := s.settle(ctx, r, o, status, "", clip(summary, 2000), failure); err != nil {
+		return err
+	}
+	s.recordOutcomeHealth(ctx, a.ID, status, run.Error)
+	return nil
+}
+
+const maxConsecutiveAutomationFailures = 3
+
+func isTransientAutomationFailure(errText string) bool {
+	lower := strings.ToLower(errText)
+	for _, marker := range []string{
+		"rate or spend limit",
+		"quota",
+		"http 429",
+		"http 503",
+		"temporarily unavailable",
+		"interrupted or unavailable",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) recordOutcomeHealth(ctx context.Context, id, status, errText string) {
+	if status != "completed" && status != "failed" {
+		return
+	}
+	if status == "failed" && isTransientAutomationFailure(errText) {
+		return
+	}
+	r, err := s.Store.Resource(ctx, CollectionAutomations, id)
+	if err != nil {
+		return
+	}
+	a, err := decodeAutomation(r)
+	if err != nil {
+		return
+	}
+	if status == "completed" {
+		if a.ConsecutiveFailures == 0 {
+			return
+		}
+		a.ConsecutiveFailures = 0
+	} else {
+		a.ConsecutiveFailures++
+		if a.ConsecutiveFailures >= maxConsecutiveAutomationFailures && a.Status == "enabled" {
+			a.Status = "paused"
+			a.NextAt = nil
+			slog.WarnContext(ctx, "auto-pausing automation after consecutive failures",
+				"automation_id", id, "consecutive_failures", a.ConsecutiveFailures)
+		}
+	}
+	resource, err := state.NewResource(CollectionAutomations, id, 0, a, map[string]string{"status": a.Status, "goal_id": a.GoalID}, s.now())
+	if err == nil {
+		_, _ = s.Store.PutResource(ctx, resource, r.Revision)
+	}
 }
 
 // sameFinding compares two monitor findings ignoring case and spacing.

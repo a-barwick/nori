@@ -91,6 +91,26 @@ func (s *composed) UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff
 	return 0, 0, 0, nil
 }
 
+// ErrReserveUnsupported indicates the underlying Database does not implement atomic
+// single-transaction quota reservation and callers should fall back to WindowReader.
+var ErrReserveUnsupported = errors.New("state: atomic usage reservation unsupported")
+
+func (s *composed) ReserveUsage(
+	ctx context.Context,
+	u Usage,
+	hourCutoff, dayCutoff time.Time,
+	maxCallsPerHour int,
+	maxUSDPerDay float64,
+	unknownEstimateUSD float64,
+) (bool, error) {
+	if r, ok := s.Database.(interface {
+		ReserveUsage(context.Context, Usage, time.Time, time.Time, int, float64, float64) (bool, error)
+	}); ok {
+		return r.ReserveUsage(ctx, u, hourCutoff, dayCutoff, maxCallsPerHour, maxUSDPerDay, unknownEstimateUSD)
+	}
+	return false, ErrReserveUnsupported
+}
+
 func (s *composed) PutPNG(ctx context.Context, run, id string, data []byte) error {
 	if err := ValidatePNG(run, id, data); err != nil {
 		return err

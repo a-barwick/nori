@@ -130,6 +130,13 @@ func parseOptionalNonNegativeFloat(name string) float64 {
 	return v
 }
 
+func parseOptionalNonNegativeFloatDefault(name string, fallback float64) float64 {
+	if strings.TrimSpace(os.Getenv(name)) == "" {
+		return fallback
+	}
+	return parseOptionalNonNegativeFloat(name)
+}
+
 func modelsFromEnvironment(profile string) Models {
 	models := Models{
 		EnvProfile:     profile,
@@ -148,6 +155,9 @@ func modelsFromEnvironment(profile string) Models {
 		OuterReasoning: strings.ToLower(strings.TrimSpace(os.Getenv("NORI_OUTER_REASONING_EFFORT"))),
 		InnerReasoning: strings.ToLower(strings.TrimSpace(os.Getenv("NORI_INNER_REASONING_EFFORT"))),
 		MaxUSD:         parseOptionalNonNegativeFloat("NORI_LLM_MAX_USD"),
+	}
+	if models.InnerReasoning == "" {
+		models.InnerReasoning = "low"
 	}
 	if models.Outer == "" {
 		switch models.EffectiveOuterProvider() {

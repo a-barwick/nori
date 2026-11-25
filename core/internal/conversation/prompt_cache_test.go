@@ -103,8 +103,8 @@ func TestBuildMessagesBreakpoints(t *testing.T) {
 	}
 	view := historyView{Turns: []state.ConversationTurn{turn("a"), turn("b"), turn("c")}}
 	msgs, bps := buildMessages(&state.ConversationTurn{}, nil, view, "")
-	// system(0), a(1,2) b(3,4) c(5,6), memory(7): breakpoints at 0, 4, 6, 7.
-	if want := []int{0, 4, 6, 7}; !reflect.DeepEqual(bps, want) {
+	// system(0), a(1,2) b(3,4) c(5,6), memory(7): breakpoints at 0, 4, 6 (no wasted BP3 on volatile memory block).
+	if want := []int{0, 4, 6}; !reflect.DeepEqual(bps, want) {
 		t.Fatalf("breakpoints = %v, want %v (messages=%d)", bps, want, len(msgs))
 	}
 	// Memory mutation must not change the cached history prefix or its breakpoints.

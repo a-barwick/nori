@@ -83,6 +83,14 @@ type TaskControl struct {
 	Tools  int `firestore:"tools,omitempty"`
 	Checks int `firestore:"checks,omitempty"`
 
+	// Durable spend-safety and runaway-loop guardrails.
+	ModelAttempts       int      `firestore:"model_attempts,omitempty"`
+	PaidTools           int      `firestore:"paid_tools,omitempty"`
+	ConsecutiveInvalid  int      `firestore:"consecutive_invalid,omitempty"`
+	TotalInvalid        int      `firestore:"total_invalid,omitempty"`
+	EstimatedUnknownUSD float64  `firestore:"estimated_unknown_usd,omitempty"`
+	RecentToolSigs      []string `firestore:"recent_tool_sigs,omitempty"`
+
 	// In-flight model step state (replaces Temporal modelActivityID + D-053 9m deadline).
 	PendingModelID     string     `firestore:"pending_model_id,omitempty"`
 	ModelRetries       int        `firestore:"model_retries,omitempty"`

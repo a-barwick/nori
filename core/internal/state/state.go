@@ -84,12 +84,13 @@ type Usage struct {
 	OutputTokens *int64 `json:"output_tokens,omitempty" firestore:"output_tokens,omitempty"`
 	TotalTokens  *int64 `json:"total_tokens,omitempty" firestore:"total_tokens,omitempty"`
 	// CachedTokens and CacheWriteTokens are the provider's prompt-cache reads and writes, when it reports them.
-	CachedTokens     *int64    `json:"cached_tokens,omitempty" firestore:"cached_tokens,omitempty"`
-	CacheWriteTokens *int64    `json:"cache_write_tokens,omitempty" firestore:"cache_write_tokens,omitempty"`
-	CostUSD          *float64  `json:"cost_usd,omitempty" firestore:"cost_usd,omitempty"`
-	CostStatus       string    `json:"cost_status" firestore:"cost_status"`
-	RequestStatus    string    `json:"request_status" firestore:"request_status"`
-	CreatedAt        time.Time `json:"created_at" firestore:"created_at"`
+	CachedTokens         *int64    `json:"cached_tokens,omitempty" firestore:"cached_tokens,omitempty"`
+	CacheWriteTokens     *int64    `json:"cache_write_tokens,omitempty" firestore:"cache_write_tokens,omitempty"`
+	CostUSD              *float64  `json:"cost_usd,omitempty" firestore:"cost_usd,omitempty"`
+	EstimatedExposureUSD float64   `json:"estimated_exposure_usd,omitempty" firestore:"estimated_exposure_usd,omitempty"`
+	CostStatus           string    `json:"cost_status" firestore:"cost_status"`
+	RequestStatus        string    `json:"request_status" firestore:"request_status"`
+	CreatedAt            time.Time `json:"created_at" firestore:"created_at"`
 }
 
 // Session is the bounded projection that clients and the outer loop read.

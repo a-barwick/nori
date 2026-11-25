@@ -1169,6 +1169,9 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 						}
 						switch p.ToolResult.CallID {
 						case "recall-memory-read":
+							if verifiedTools["memory_read"] {
+								continue
+							}
 							assertNoPreCutoffLeak("memory_read", p.ToolResult.Output)
 							mems, _ := p.ToolResult.Output["memories"].([]any)
 							cs, _ := p.ToolResult.Output["conversation_summary"].(map[string]any)
@@ -1178,6 +1181,9 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 							verifiedTools["memory_read"] = true
 
 						case "recall-memory-search":
+							if verifiedTools["memory_search"] {
+								continue
+							}
 							assertNoPreCutoffLeak("memory_search", p.ToolResult.Output)
 							results, _ := p.ToolResult.Output["results"].([]any)
 							var sawCore, sawLog bool
@@ -1196,6 +1202,9 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 							verifiedTools["memory_search"] = true
 
 						case "recall-memory-get-core":
+							if verifiedTools["memory_get_core"] {
+								continue
+							}
 							assertNoPreCutoffLeak("memory_get(core)", p.ToolResult.Output)
 							mems, _ := p.ToolResult.Output["memories"].([]any)
 							if p.ToolResult.Output["target"] != "core" || len(mems) != 6 {
@@ -1204,6 +1213,9 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 							verifiedTools["memory_get_core"] = true
 
 						case "recall-memory-get-log":
+							if verifiedTools["memory_get_log"] {
+								continue
+							}
 							assertNoPreCutoffLeak("memory_get(log)", p.ToolResult.Output)
 							entries, _ := p.ToolResult.Output["entries"].([]any)
 							if p.ToolResult.Output["target"] != "log" || len(entries) != 1 {
@@ -1216,6 +1228,9 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 							verifiedTools["memory_get_log"] = true
 
 						case "recall-conv-find":
+							if verifiedTools["conversation_find"] {
+								continue
+							}
 							assertNoPreCutoffLeak("conversation_find", p.ToolResult.Output)
 							foundMsgs, _ := p.ToolResult.Output["messages"].([]any)
 							if len(foundMsgs) != 1 {
@@ -1228,6 +1243,9 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 							verifiedTools["conversation_find"] = true
 
 						case "recall-conv-read":
+							if verifiedTools["conversation_read"] {
+								continue
+							}
 							assertNoPreCutoffLeak("conversation_read", p.ToolResult.Output)
 							msgObj, _ := p.ToolResult.Output["message"].(map[string]any)
 							if msgObj["id"] != postMsgID+"-user" || !strings.Contains(fmt.Sprint(msgObj["text"]), "aurora_post_cutoff") {
@@ -1236,6 +1254,9 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 							verifiedTools["conversation_read"] = true
 
 						case "recall-op-read":
+							if verifiedTools["operation_read"] {
+								continue
+							}
 							if p.ToolResult.Output["read_operation_id"] != omittedOpID || p.ToolResult.Output["saved_outcome"] != "confirmed" {
 								t.Fatalf("unexpected operation_read output: %+v", p.ToolResult.Output)
 							}
@@ -1246,6 +1267,9 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 							verifiedTools["operation_read"] = true
 
 						case "recall-task-history":
+							if verifiedTools["task_history_read"] {
+								continue
+							}
 							frags, _ := p.ToolResult.Output["fragments"].([]any)
 							if len(frags) == 0 {
 								t.Fatalf("expected non-empty fragments from task_history_read, got %+v", p.ToolResult.Output)

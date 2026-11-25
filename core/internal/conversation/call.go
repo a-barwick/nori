@@ -169,7 +169,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	}
 	r.runWork(&work, func() { historyReady <- r.readAttemptHistory(callCtx, contextFrom) })
 	recallReady := make(chan []recalledMemoryLog, 1)
-	if fromUser {
+	if fromUser && !isPureAckInputs(t.Inputs) {
 		var queryParts []string
 		for _, in := range t.Inputs {
 			if in.IsUser() && strings.TrimSpace(in.Text) != "" {
@@ -301,6 +301,16 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			return e
 		}
 		request.Messages, request.CacheBreakpoints = messages, breakpoints
+		if r.OnDelta != nil && len(request.WorkRequests) == 0 && !hasUntrustedTaskOutput(t, taskContext) {
+			turnID := t.ID
+			onDelta := r.OnDelta
+			request.Stream = func(visible string) error {
+				if visible != "" {
+					onDelta(turnID, visible)
+				}
+				return nil
+			}
+		}
 		var modelErr error
 		for {
 			reply, modelErr = r.model.Respond(callCtx, request)
@@ -331,12 +341,18 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 				break
 			}
 			t.Attempt.ContextReduced = true
+			if r.OnDelta != nil {
+				r.OnDelta(t.ID, "")
+			}
 			request.Messages, request.CacheBreakpoints = reduced, reducedBreakpoints
 			if e = r.checkpointModel(ctx, f, t, requestingReply, Reply{}); e != nil {
 				return e
 			}
 		}
 		if modelErr != nil {
+			if r.OnDelta != nil {
+				r.OnDelta(t.ID, "")
+			}
 			return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view)
 		}
 		phase := resolvedReply
@@ -551,7 +567,9 @@ type historyView struct {
 const recordBytes = 4 << 10
 
 // buildMessages orders messages static -> append-only -> volatile:
-//   [static system prompt] -> [append-only history turns] -> [Core Memory + Working Summary] -> [current inputs]
+//
+//	[static system prompt] -> [append-only history turns] -> [Core Memory + Working Summary] -> [current inputs]
+//
 // Keeping Core Memory and the Working Summary after history ensures that memory
 // mutations (remember/forget/idle extraction) do not invalidate the cached prefix
 // for the entire conversation history. Breakpoints mark: static system prompt (0),
@@ -625,7 +643,9 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 	if view.Summary != nil {
 		messages = append(messages, summaryMessage(*view.Summary))
 	}
-	breakpoints = append(breakpoints, len(messages)-1)
+	// Do not place a cache breakpoint on Core Memory + Working Summary: they sit after
+	// append-only history, so every new turn shifts their prefix and a breakpoint here
+	// pays a 1.25x Anthropic cache-write surcharge without ever being read on the next turn.
 	t.Attempt.ContextTruncated = truncated
 	t.Attempt.ContextTurns = len(history)
 	for _, in := range t.Inputs {

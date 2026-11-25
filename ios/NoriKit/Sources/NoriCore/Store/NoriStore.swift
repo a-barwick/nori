@@ -128,6 +128,8 @@ public final class NoriStore {
     // MARK: UI Coordination State
     public var isLoading: Bool = false
     public var isThinking: Bool = false
+    public var streamingAssistantText: String?
+    public var streamingTurnID: String?
     public var isComposerFocused: Bool = false
     public var pendingComposerDraft: String?
     public var lastError: String?
@@ -613,6 +615,20 @@ public final class NoriStore {
             }
             if message.role == .assistant && !message.isSuperseded {
                 isThinking = false
+                if streamingTurnID == nil || message.turnID == nil || streamingTurnID == message.turnID {
+                    streamingAssistantText = nil
+                    streamingTurnID = nil
+                }
+            }
+        case .assistantDelta(let turnID, let text):
+            if text.isEmpty {
+                if streamingTurnID == nil || streamingTurnID == turnID {
+                    streamingAssistantText = nil
+                    streamingTurnID = nil
+                }
+            } else if !session.messages.contains(where: { $0.role == .assistant && !$0.isSuperseded && $0.turnID == turnID }) {
+                streamingTurnID = turnID
+                streamingAssistantText = text
             }
         case .task(_, let run):
             if let idx = session.runs.firstIndex(where: { $0.id == run.id }) {
@@ -634,6 +650,10 @@ public final class NoriStore {
             if let conv = presence.conversation {
                 session.conversation = conv
                 isThinking = conv.processing || conv.pending
+                if !isThinking {
+                    streamingAssistantText = nil
+                    streamingTurnID = nil
+                }
             }
         case .memory:
             await refreshMemory()

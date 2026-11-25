@@ -306,7 +306,9 @@ func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.Op
 	if in.Call.Name == "operation_read" {
 		// The saved outputs belong to the task's evidence, which only the activities hold.
 		id, _ := in.Call.Args["operation_id"].(string)
-		output, err = a.operationRead(ctx, in.RunID, id)
+		offset := parseNonNegativeIntArg(in.Call.Args["offset"])
+		limit := parseNonNegativeIntArg(in.Call.Args["limit"])
+		output, err = a.operationReadPage(ctx, in.RunID, id, offset, limit)
 	} else if in.Call.Name == "task_history_read" {
 		ref, _ := in.Call.Args["history_ref"].(string)
 		before, _ := in.Call.Args["before"].(string)

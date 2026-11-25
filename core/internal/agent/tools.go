@@ -113,6 +113,15 @@ var taskToolDefinitions = func() []taskToolDefinition {
 	requestWork.access, requestWork.unavailable = delegationTools, "tool-request-work-is-not-available-in-a-subtask"
 
 	// Keep schema order stable for provider prompt caches.
+	operationReadParams := &transcript.Schema{
+		Type: transcript.TypeObject,
+		Properties: map[string]*transcript.Schema{
+			"operation_id": {Type: transcript.TypeString, Description: "The operation_id named in an omitted tool output."},
+			"offset":       {Type: transcript.TypeString, Description: "Optional byte offset for paging large outputs (pass \"\" or \"0\" for start)."},
+			"limit":        {Type: transcript.TypeString, Description: "Optional byte limit per page (up to 32768; pass \"\" for default 16384)."},
+		},
+		Required: []string{"operation_id", "offset", "limit"},
+	}
 	return []taskToolDefinition{
 		defineTaskTool("complete", completion, "", unknown),
 		defineTaskTool("web_search", params("query"), searchCapability, search),
@@ -126,7 +135,7 @@ var taskToolDefinitions = func() []taskToolDefinition {
 		defineTaskTool("conversation_read", params("message_id"), memoryCapability, runtimeRead),
 		defineTaskTool("conversation_find", params("query"), memoryCapability, runtimeRead),
 		defineTaskTool("task_history_read", params("history_ref", "before", "offset"), memoryCapability, runtimeRead),
-		defineTaskTool("operation_read", params("operation_id"), memoryCapability, runtimeRead),
+		defineTaskTool("operation_read", operationReadParams, memoryCapability, runtimeRead),
 		defineTaskTool("capability_load", capabilities, "", runtimeRead),
 		defineTaskTool("compose", params("script"), "", runtimeControl),
 		requestInput,

@@ -36,6 +36,13 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		return store.WatchEvents(ctx, after, deliver)
 	})
 
+	var deltaCh <-chan AssistantDelta
+	if s.Deltas != nil {
+		var unsub func()
+		deltaCh, unsub = s.Deltas.Subscribe()
+		defer unsub()
+	}
+
 	presence := s.sendPresence(ctx, stream, "")
 	open := map[string]string{}
 	heartbeat := time.NewTicker(streamHeartbeat)
@@ -49,6 +56,10 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 				slog.WarnContext(ctx, "event stream ended", "err", err)
 			}
 			return
+		case delta := <-deltaCh:
+			if stream.send("assistant_delta", 0, delta) != nil {
+				return
+			}
 		case <-heartbeat.C:
 			if stream.comment("heartbeat") != nil {
 				return
@@ -56,6 +67,15 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 			presence = s.sendPresence(ctx, stream, presence)
 			open = s.sendOpenTasks(ctx, stream, open)
 		case batch := <-batches:
+			// Drain any buffered ephemeral deltas before emitting durable messages so a
+			// stale delta cannot arrive after the final message and linger on clients.
+			for drained := false; !drained && deltaCh != nil; {
+				select {
+				case <-deltaCh:
+				default:
+					drained = true
+				}
+			}
 			for _, event := range state.CoalesceEvents(batch) {
 				err := s.sendEvent(ctx, stream, event)
 				// A record that's gone can't be sent, and it mustn't block every event after it.

@@ -6,11 +6,73 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
+	"unicode"
 
 	"nori/internal/llmguard"
 	"nori/internal/state"
 )
+
+// pureAckPhrases is a narrow exact allowlist of unmistakable non-decision
+// acknowledgments/gratitude that carry zero durable user facts, preferences, or
+// confirmations of assistant proposals (affirmative words like "ok", "sure", "yep",
+// "👍" are intentionally excluded because they can answer a preference question).
+// Never use a length heuristic (short messages like "No peanuts" contain critical facts).
+var pureAckPhrases = map[string]bool{
+	"thanks": true, "thank you": true, "thx": true, "ty": true, "tysm": true,
+	"got it": true, "cool": true, "nice": true, "awesome": true,
+	"np": true, "no problem": true, "cheers": true,
+	"🙏": true, "❤️": true, "❤": true, "🎉": true, "🙌": true,
+}
+
+func isPureAckText(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
+	// Strip trailing punctuation/whitespace for matching, e.g., "Thanks!" -> "thanks".
+	cleaned := strings.TrimRightFunc(strings.ToLower(trimmed), func(r rune) bool {
+		return unicode.IsSpace(r) || r == '!' || r == '.' || r == ','
+	})
+	if cleaned == "" {
+		return false
+	}
+	return pureAckPhrases[cleaned]
+}
+
+// isPureAckInputs reports whether every input in a turn is a user-only message with
+// no task events or attachments and matches the narrow pure-acknowledgment allowlist.
+func isPureAckInputs(inputs []state.ConversationInput) bool {
+	if len(inputs) == 0 {
+		return false
+	}
+	hasUser := false
+	for _, in := range inputs {
+		if in.Event != nil || in.Introduction || len(in.Attachments) > 0 {
+			return false
+		}
+		if in.IsUser() {
+			hasUser = true
+			if !isPureAckText(in.Text) {
+				return false
+			}
+		}
+	}
+	return hasUser
+}
+
+func isPureAckBatch(batch []state.ConversationTurn) bool {
+	if len(batch) == 0 {
+		return false
+	}
+	for _, t := range batch {
+		if !isPureAckInputs(t.Inputs) {
+			return false
+		}
+	}
+	return true
+}
 
 type extractPlan struct {
 	from             time.Time
@@ -157,6 +219,20 @@ func (r *Runner) extractIdleMemory(ctx context.Context) error {
 		return err
 	}
 
+	// Zero-cost skip when every turn in the batch is a user-only pure acknowledgment
+	// (no task events, no attachments, exact narrow allowlist match).
+	if isPureAckBatch(plan.batch) {
+		nowUTC := r.now().UTC()
+		if err := r.commitExtractWithRebase(ctx, plan, nil, nil, nowUTC); err != nil {
+			return err
+		}
+		slog.InfoContext(ctx, "conversation idle memory extraction skipped pure-ack batch",
+			"turns", len(plan.batch),
+			"extracted_through", plan.batchThrough,
+		)
+		return nil
+	}
+
 	coreMemories, err := r.tasks.Store.Memories(ctx)
 	if err != nil {
 		return err
@@ -183,7 +259,7 @@ func (r *Runner) extractIdleMemory(ctx context.Context) error {
 	loc := r.userLocation(ctx)
 	promptPayload := map[string]any{
 		"extract_only":  true,
-		"core_memories": coreMemories,
+		"core_memories": projectMaintenanceMemories(coreMemories, false),
 		"local_date":    now.In(loc).Format("2006-01-02"),
 		"timezone":      loc.String(),
 		"turns":         rendered,
@@ -192,7 +268,7 @@ func (r *Runner) extractIdleMemory(ctx context.Context) error {
 
 	modelCtx, cancel := context.WithTimeout(llmguard.WithScope(ctx, llmguard.ScopeExtract), 2*time.Minute)
 	defer cancel()
-	output, callErr := r.callFlushAndCompact(modelCtx, string(promptBytes))
+	output, callErr := r.callFlushAndCompactWithTool(modelCtx, string(promptBytes), extractOnlyTool)
 	if callErr != nil {
 		if ctx.Err() != nil {
 			// Preempted by arriving user input or shutdown: leave ExtractedThrough untouched.

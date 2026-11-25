@@ -244,6 +244,7 @@ export function Thread({
   conversation,
   status,
   thinking = false,
+  streamingText,
   emptyMessage,
   onOpenDocument,
   onStatusDetails,
@@ -267,6 +268,7 @@ export function Thread({
   conversation: Conversation;
   status?: string;
   thinking?: boolean;
+  streamingText?: string;
   emptyMessage: string;
   onUnread: (count: number, jump: () => void) => void;
   interactions?: InlineInteractionEntry[];
@@ -472,7 +474,15 @@ export function Thread({
               ))}
             </section>
           )}
-          {status && <WorkLine label={status} thinking={thinking} onDetails={onStatusDetails} />}
+          {streamingText && (
+            <div className="mt-4 flex max-w-[680px] items-start gap-2.5" data-streaming-reply>
+              <NoriMark size={28} state="thinking" />
+              <div className="min-w-0 flex-1 whitespace-pre-wrap text-body text-ink">
+                {streamingText}
+              </div>
+            </div>
+          )}
+          {status && !streamingText && <WorkLine label={status} thinking={thinking} onDetails={onStatusDetails} />}
         </div>
         <div className="sr-only">{announcement}</div>
       </div>

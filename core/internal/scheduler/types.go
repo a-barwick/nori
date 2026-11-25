@@ -107,6 +107,8 @@ type stored struct {
 	EventCheckedAt *time.Time `json:"event_checked_at,omitempty"`
 	// Checkpoint is a monitor's last meaningful observation, carried into its next run.
 	Checkpoint string `json:"checkpoint,omitempty"`
+	// ConsecutiveFailures tracks consecutive failed occurrences; auto-pauses at 3 strikes.
+	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
 }
 
 // Action is the contract AutomationAction value.

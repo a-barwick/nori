@@ -135,6 +135,7 @@ public enum NoriStreamEvent: Sendable, Hashable {
     case readPosition(seq: Int?, readPosition: ReadPosition)
     case conversation(seq: Int?, presence: PresencePayload)
     case presence(PresencePayload)
+    case assistantDelta(turnID: String, text: String)
     case memory(seq: Int?, ref: String?)
     case unknown(seq: Int?, kind: String)
 
@@ -148,6 +149,7 @@ public enum NoriStreamEvent: Sendable, Hashable {
         case .readPosition(let seq, _): return seq
         case .conversation(let seq, _): return seq
         case .presence: return nil
+        case .assistantDelta: return nil
         case .memory(let seq, _): return seq
         case .unknown(let seq, _): return seq
         }
@@ -200,6 +202,19 @@ public enum NoriStreamEvent: Sendable, Hashable {
         case "presence":
             if let presence = try? decoder.decode(PresencePayload.self, from: data) {
                 return .presence(presence)
+            }
+            return .unknown(seq: seq, kind: kind)
+        case "assistant_delta":
+            struct DeltaBody: Decodable {
+                let turnID: String
+                let text: String
+                enum CodingKeys: String, CodingKey {
+                    case turnID = "turn_id"
+                    case text
+                }
+            }
+            if let body = try? decoder.decode(DeltaBody.self, from: data) {
+                return .assistantDelta(turnID: body.turnID, text: body.text)
             }
             return .unknown(seq: seq, kind: kind)
         case "memory":

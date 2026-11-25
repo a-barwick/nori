@@ -3,14 +3,68 @@ package task
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"nori/internal/agent"
+	"nori/internal/extensions"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 )
+
+const (
+	defaultMaxModelAttempts        = 24
+	defaultMaxSubtaskModelAttempts = 14
+	defaultMaxPaidTools            = 20
+	maxConsecutiveInvalidRounds    = 3
+	maxTotalInvalidRounds          = 5
+	unknownModelStepExposureUSD    = 0.02
+	maxRepeatedFailedToolSigs      = 3
+	maxRepeatedConfirmedToolSigs   = 8
+	recentToolSigWindow            = 12
+)
+
+func (s *runSession) maxModelAttemptsFor(subtask bool) int {
+	if s.runner != nil && s.runner.MaxModelAttempts > 0 {
+		return s.runner.MaxModelAttempts
+	}
+	if subtask {
+		return defaultMaxSubtaskModelAttempts
+	}
+	// Preserve balanced 24-attempt cap for normal tasks (default $1 budget), while
+	// allowing explicitly high-budget long-running tasks (>= $5) up to 64 attempts.
+	if s.acct.budget >= 5.0 {
+		return 64
+	}
+	return defaultMaxModelAttempts
+}
+
+func isPaidTool(policy agent.ToolPolicy) bool {
+	return policy.InterruptedCostUSD > 0 || policy.InterruptedCostUnknown
+}
+
+func appendToolSig(sigs []string, sig string) ([]string, bool) {
+	if sig == "" {
+		return sigs, false
+	}
+	out := append(append([]string(nil), sigs...), sig)
+	if len(out) > recentToolSigWindow {
+		out = out[len(out)-recentToolSigWindow:]
+	}
+	count := 0
+	for _, s := range out {
+		if s == sig {
+			count++
+		}
+	}
+	threshold := maxRepeatedFailedToolSigs
+	if len(sig) >= 10 && sig[:10] == "confirmed:" {
+		threshold = maxRepeatedConfirmedToolSigs
+	}
+	return out, count >= threshold
+}
 
 func (s *runSession) runPhase() stepResult {
 	switch s.ctrl.Phase {
@@ -77,9 +131,27 @@ func (s *runSession) stepSync() stepResult {
 	next.Inherited = synced.ReadOnly
 	clearPendingWork(&next)
 
-	// Enforce shared family budget ceiling before starting any model call.
-	if next.Question == nil && s.acct.budget > 0 && s.acct.spent+s.acct.others >= s.acct.budget {
+	// Enforce shared family budget ceiling (including unknown-cost exposure) and max model attempts before starting any model call.
+	effectiveSpend := s.acct.spent + s.acct.others + next.EstimatedUnknownUSD
+	if next.Question == nil && s.acct.budget > 0 && effectiveSpend >= s.acct.budget {
 		detail := prompts.Runtime("spending-limit", map[string]any{"Budget": s.acct.budget})
+		next.PendingPublication = &state.TaskPublication{
+			RunID:              s.runID,
+			Revision:           next.Revision,
+			Status:             state.RunFailed,
+			Detail:             detail,
+			Text:               detail,
+			StopConfirmed:      true,
+			ExpectedIncomplete: true,
+			Spent:              s.acct.spent,
+			CostUnknown:        s.acct.costUnknown,
+			BypassRouting:      false,
+		}
+		next.Phase = state.TaskPhasePublish
+		return s.saveCtrl(next)
+	}
+	if next.Question == nil && next.ModelAttempts >= s.maxModelAttemptsFor(next.Subtask) {
+		detail := fmt.Sprintf("This task reached its step limit (%d model attempts) and stopped to avoid runaway cost.", s.maxModelAttemptsFor(next.Subtask))
 		next.PendingPublication = &state.TaskPublication{
 			RunID:              s.runID,
 			Revision:           next.Revision,
@@ -292,6 +364,12 @@ func (s *runSession) commitModelOutcome(model RefModelOutcome) stepResult {
 
 	next := s.ctrl
 	next.Models++
+	if !model.NotSent {
+		next.ModelAttempts++
+		if !model.CostKnown {
+			next.EstimatedUnknownUSD += unknownModelStepExposureUSD
+		}
+	}
 	next.Ref = model.Ref
 	next.PendingModelID = ""
 
@@ -322,9 +400,29 @@ func (s *runSession) commitModelOutcome(model RefModelOutcome) stepResult {
 		return s.advanceStep(next, spend)
 	}
 	if model.Invalid {
+		next.ConsecutiveInvalid++
+		next.TotalInvalid++
+		if next.ConsecutiveInvalid >= maxConsecutiveInvalidRounds || next.TotalInvalid >= maxTotalInvalidRounds {
+			detail := "The model returned repeated invalid tool calls, so the task stopped."
+			next.PendingPublication = &state.TaskPublication{
+				RunID:              s.runID,
+				Revision:           s.ctrl.Revision,
+				Status:             state.RunFailed,
+				Detail:             detail,
+				Text:               detail,
+				StopConfirmed:      true,
+				ExpectedIncomplete: true,
+				CostUnknown:        newCostUnknown,
+				Spent:              newSpent,
+				BypassRouting:      false,
+			}
+			next.Phase = state.TaskPhasePublish
+			return s.advanceStep(next, spend)
+		}
 		next.Phase = state.TaskPhaseSync
 		return s.advanceStep(next, spend)
 	}
+	next.ConsecutiveInvalid = 0
 
 	// Account and retain every model response before checking newer instructions.
 	pCtx, pCancel := s.stepCtx(stepTimeoutQuick)
@@ -438,11 +536,17 @@ func (s *runSession) stepCalls() stepResult {
 		}, s.ctrl, false, false)
 	}
 
-	// 2. Shared family budget ceiling check before every non-complete call in batch.
-	if call.Name != "complete" && s.acct.budget > 0 && s.acct.spent+s.acct.others >= s.acct.budget {
+	// 2. Shared family budget ceiling (including unknown-cost exposure) and paid-tool cap check before every non-complete call.
+	if call.Name != "complete" && s.acct.budget > 0 && s.acct.spent+s.acct.others+s.ctrl.EstimatedUnknownUSD >= s.acct.budget {
 		return s.appendSkippedCall(step, call, map[string]any{
 			"skipped": true,
 			"reason":  prompts.Runtime("spending-limit", map[string]any{"Budget": s.acct.budget}),
+		}, s.ctrl, false, false)
+	}
+	if call.Name != "complete" && isPaidTool(agent.PolicyFor(call.Name, call.Exec)) && s.ctrl.PaidTools >= defaultMaxPaidTools {
+		return s.appendSkippedCall(step, call, map[string]any{
+			"skipped": true,
+			"reason":  fmt.Sprintf("This task reached its limit of %d paid tool calls.", defaultMaxPaidTools),
 		}, s.ctrl, false, false)
 	}
 
@@ -453,8 +557,191 @@ func (s *runSession) stepCalls() stepResult {
 	case "complete":
 		return s.runCompleteCall(step, call)
 	default:
+		if batch := s.parallelReadBatch(); len(batch) > 1 {
+			return s.runParallelReadBatch(step, batch)
+		}
 		return s.runToolCall(step, call)
 	}
+}
+
+const maxParallelReads = 4
+
+// isParallelSafeReadCall allows ONLY independent, non-control, non-interactive
+// read tools whose cost is zero or fixed/known upfront (built-in runtime reads,
+// web_search, and trusted first-party nori.* read adapters). Third-party MCP tools,
+// external OAuth connectors (which may trigger sign-in/account interactions),
+// custom adapters with dynamic per-call costs, control tools, capability_load,
+// compose, writes, and unknown-cost reads always run serially.
+func isParallelSafeReadCall(call state.TaskCallRef) bool {
+	switch call.Name {
+	case "complete", "request_input", "request_work", "compose", "capability_load", "upload_inspect":
+		return false
+	}
+	policy := agent.PolicyFor(call.Name, call.Exec)
+	if policy.Effect != "read" || policy.InterruptedCostUnknown {
+		return false
+	}
+	if call.Exec == nil || call.Exec.Builtin {
+		return policy.Runtime
+	}
+	if call.Exec.Binding.Adapter == extensions.AdapterNative &&
+		strings.HasPrefix(call.Exec.Binding.Target, "nori.") {
+		return true
+	}
+	return false
+}
+
+func (s *runSession) parallelReadBatch() []state.TaskCallRef {
+	start := s.ctrl.CallIndex
+	if start >= len(s.ctrl.PendingCalls) {
+		return nil
+	}
+	var batch []state.TaskCallRef
+	var reservedCost float64
+	paidCount := 0
+	for i := start; i < len(s.ctrl.PendingCalls) && len(batch) < maxParallelReads; i++ {
+		c := s.ctrl.PendingCalls[i]
+		if !isParallelSafeReadCall(c) {
+			break
+		}
+		policy := agent.PolicyFor(c.Name, c.Exec)
+		if isPaidTool(policy) {
+			if s.ctrl.PaidTools+paidCount+1 > defaultMaxPaidTools {
+				break
+			}
+			if s.acct.budget > 0 && s.acct.spent+s.acct.others+s.ctrl.EstimatedUnknownUSD+reservedCost+policy.InterruptedCostUSD >= s.acct.budget {
+				break
+			}
+			paidCount++
+			reservedCost += policy.InterruptedCostUSD
+		}
+		batch = append(batch, c)
+	}
+	return batch
+}
+
+func (s *runSession) runParallelReadBatch(step Step, batch []state.TaskCallRef) stepResult {
+	items := make([]RefToolBatchItem, len(batch))
+	names := make([]string, len(batch))
+	for i, call := range batch {
+		items[i] = RefToolBatchItem{
+			OperationID: fmt.Sprintf("%s-m%d-t%d", s.runID, s.ctrl.Models, s.ctrl.Tools+1+i),
+			Index:       call.Index,
+			Exec:        call.Exec,
+		}
+		names[i] = call.Name
+	}
+	pCtx, pCancel := s.stepCtx(stepTimeoutQuick)
+	err := s.act.Project(pCtx, Projection{Step: step, Kind: "tool", Text: names[0]})
+	pCancel()
+	if err != nil {
+		if res, stopped := s.checkStopped(); stopped {
+			return res
+		}
+		switch {
+		case errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrPaused):
+			next := s.ctrl
+			next.Tools++
+			return s.appendSkippedCall(step, batch[0], map[string]any{
+				"skipped": true,
+				"reason":  prompts.Runtime("workflow-execution-admission-changed-before-this-call-ran", nil),
+			}, next, true, errors.Is(err, state.ErrPaused))
+		default:
+			return s.handleStepErr(err, false)
+		}
+	}
+
+	tCtx, tCancel := s.stepCtx(stepTimeoutLong)
+	out, err := s.act.ToolBatchRef(tCtx, RefToolBatchInput{
+		Step:     step,
+		Ref:      s.ctrl.Ref,
+		ReadOnly: s.ctrl.Inherited,
+		Items:    items,
+	})
+	tCancel()
+	if res, stopped := s.checkStopped(); stopped {
+		return res
+	}
+	if err != nil {
+		switch {
+		case errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrPaused):
+			// Fall back to serial skip handling on next loop pass (or mark superseded).
+			next := s.ctrl
+			next.CallsRevised = true
+			if res := s.saveCtrl(next); res.done {
+				return res
+			}
+			if errors.Is(err, state.ErrPaused) {
+				return s.handleMidRunPaused()
+			}
+			return stepContinue()
+		case errors.Is(err, state.ErrCancelled):
+			return s.transitionFailure(state.RunCancelled, state.ErrCancelled.Error(), true, nil)
+		case errors.Is(err, state.ErrBusy):
+			return s.handleBusy()
+		default:
+			if isPermanentTaskError(err) {
+				return s.transitionFailure(state.RunFailed, err.Error(), false, nil)
+			}
+			return s.backoff(err)
+		}
+	}
+
+	next := s.ctrl
+	next.Ref = out.Ref
+	next.Tools += len(batch)
+	loopDetected := false
+	loopToolName := ""
+	for i, itemOut := range out.Items {
+		policy := agent.PolicyFor(batch[i].Name, batch[i].Exec)
+		if isPaidTool(policy) || itemOut.Cost > 0 || itemOut.CostUnknown {
+			next.PaidTools++
+		}
+		if itemOut.CostUnknown {
+			next.EstimatedUnknownUSD += unknownModelStepExposureUSD
+		}
+		if applyAfterTool(&next, itemOut, s.runID) {
+			next.CallsRevised = true
+		}
+		var tripped bool
+		next.RecentToolSigs, tripped = appendToolSig(next.RecentToolSigs, itemOut.ToolSig)
+		if tripped {
+			loopDetected = true
+			loopToolName = batch[i].Name
+		}
+	}
+	for range batch {
+		advanceCallCursor(&next)
+	}
+
+	var spend *state.SpendUpdate
+	if out.TotalCost > 0 || out.CostUnknown {
+		spend = &state.SpendUpdate{
+			RunID:       s.runID,
+			Spent:       s.acct.spent + out.TotalCost,
+			Budget:      s.acct.budget,
+			CostUnknown: s.acct.costUnknown || out.CostUnknown,
+		}
+	}
+	if loopDetected {
+		detail := fmt.Sprintf("This task repeated the same %s tool call without making progress and stopped to prevent a runaway loop.", loopToolName)
+		clearPendingCalls(&next)
+		next.PendingPublication = &state.TaskPublication{
+			RunID:              s.runID,
+			Revision:           s.ctrl.Revision,
+			Status:             state.RunFailed,
+			Detail:             detail,
+			Text:               detail,
+			StopConfirmed:      true,
+			ExpectedIncomplete: true,
+			Spent:              s.acct.spent + out.TotalCost,
+			CostUnknown:        s.acct.costUnknown || out.CostUnknown,
+			BypassRouting:      false,
+		}
+		next.Phase = state.TaskPhasePublish
+		return s.advanceStep(next, spend)
+	}
+	return s.advanceStep(next, spend)
 }
 
 // appendSkippedCall writes a synthetic skipped/rejected tool result for call,
@@ -654,6 +941,12 @@ func (s *runSession) runToolCall(step Step, call state.TaskCallRef) stepResult {
 	next := s.ctrl
 	next.Ref = output.Ref
 	next.Tools++
+	if isPaidTool(policy) || output.Cost > 0 || output.CostUnknown {
+		next.PaidTools++
+	}
+	if output.CostUnknown {
+		next.EstimatedUnknownUSD += unknownModelStepExposureUSD
+	}
 	if applyAfterTool(&next, output, s.runID) {
 		next.CallsRevised = true
 	}
@@ -667,6 +960,26 @@ func (s *runSession) runToolCall(step Step, call state.TaskCallRef) stepResult {
 			Budget:      s.acct.budget,
 			CostUnknown: s.acct.costUnknown || output.CostUnknown,
 		}
+	}
+	var loopDetected bool
+	next.RecentToolSigs, loopDetected = appendToolSig(next.RecentToolSigs, output.ToolSig)
+	if loopDetected {
+		detail := fmt.Sprintf("This task repeated the same %s tool call without making progress and stopped to prevent a runaway loop.", call.Name)
+		clearPendingCalls(&next)
+		next.PendingPublication = &state.TaskPublication{
+			RunID:              s.runID,
+			Revision:           s.ctrl.Revision,
+			Status:             state.RunFailed,
+			Detail:             detail,
+			Text:               detail,
+			StopConfirmed:      true,
+			ExpectedIncomplete: true,
+			Spent:              s.acct.spent + output.Cost,
+			CostUnknown:        s.acct.costUnknown || output.CostUnknown,
+			BypassRouting:      false,
+		}
+		next.Phase = state.TaskPhasePublish
+		return s.advanceStep(next, spend)
 	}
 	return s.advanceStep(next, spend)
 }

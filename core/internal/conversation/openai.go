@@ -188,8 +188,43 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	}
 	reply.Usage.RequestStatus = "unknown"
 	requestStarted = m.now()
-	res, err := m.doWithRetry(reqCtx, endpoint, body)
+	onRetry := func(statusCode int) error {
+		if request.RecordUsage == nil {
+			return nil
+		}
+		prev := reply.Usage
+		if statusCode > 0 {
+			prev.RequestStatus = "received"
+		} else {
+			prev.RequestStatus = "unknown"
+		}
+		_ = usage.Finish(ctx, usage.Func(request.RecordUsage), prev)
+		nextUsage := prev
+		nextUsage.ID = m.newID()
+		nextUsage.CreatedAt = m.now().UTC()
+		nextUsage.RequestStatus = "pending"
+		nextUsage.CostStatus = "unknown"
+		nextUsage.CostUSD = nil
+		nextUsage.EstimatedExposureUSD = 0
+		nextUsage.InputTokens = nil
+		nextUsage.OutputTokens = nil
+		nextUsage.TotalTokens = nil
+		nextUsage.CachedTokens = nil
+		nextUsage.CacheWriteTokens = nil
+		reply.Usage = nextUsage
+		if err := request.RecordUsage(ctx, reply.Usage); err != nil {
+			reply.Usage.RequestStatus = "not_sent"
+			return err
+		}
+		reply.Usage.RequestStatus = "unknown"
+		return nil
+	}
+	res, err := m.doWithRetry(reqCtx, endpoint, body, onRetry)
 	if err != nil {
+		if errors.Is(err, usage.ErrUserQuotaExceeded) {
+			reply.Usage.RequestStatus = "not_sent"
+			return reply, err
+		}
 		if llmguard.IsGuardError(err) {
 			reply.Usage.RequestStatus = "not_sent"
 			return reply, err
@@ -454,11 +489,66 @@ func (m *OpenAIModel) observeCall(ctx context.Context, span trace.Span, requestS
 	span.End()
 }
 
+// collapseActionFreeReplay deduplicates historical action-free structured turns that
+// stored both assistant({"actions":[],"text":X}) and a consecutive identical assistant(X).
+// Turns with actions, receipts, or distinct published text (e.g. rejections) are preserved verbatim.
+func collapseActionFreeReplay(messages []json.RawMessage, breakpoints []int) ([]json.RawMessage, []int) {
+	if len(messages) < 2 {
+		return messages, breakpoints
+	}
+	marked := make(map[int]bool, len(breakpoints))
+	for _, b := range breakpoints {
+		marked[b] = true
+	}
+	out := make([]json.RawMessage, 0, len(messages))
+	outBPs := make([]int, 0, len(breakpoints))
+	for i := 0; i < len(messages); i++ {
+		if i+1 < len(messages) && isDuplicateActionFreePair(messages[i], messages[i+1]) {
+			// Skip the redundant JSON wrapper; preserve any breakpoint on the kept published message.
+			if marked[i] {
+				marked[i+1] = true
+			}
+			continue
+		}
+		if marked[i] {
+			outBPs = append(outBPs, len(out))
+		}
+		out = append(out, messages[i])
+	}
+	return out, outBPs
+}
+
+func isDuplicateActionFreePair(first, second json.RawMessage) bool {
+	var a, b struct {
+		Role    string          `json:"role"`
+		Content *string         `json:"content"`
+		Calls   json.RawMessage `json:"tool_calls"`
+	}
+	if json.Unmarshal(first, &a) != nil || json.Unmarshal(second, &b) != nil {
+		return false
+	}
+	if a.Role != "assistant" || b.Role != "assistant" || a.Content == nil || b.Content == nil {
+		return false
+	}
+	if len(a.Calls) > 0 && string(a.Calls) != "null" && string(a.Calls) != "[]" {
+		return false
+	}
+	var env struct {
+		Actions []json.RawMessage `json:"actions"`
+		Text    string            `json:"text"`
+	}
+	if json.Unmarshal([]byte(*a.Content), &env) != nil || len(env.Actions) != 0 {
+		return false
+	}
+	return strings.TrimSpace(env.Text) == strings.TrimSpace(*b.Content)
+}
+
 // openAIConversation sends only text and historical command facts to the structured-output model, without altering
 // the stored originals. Retained attempts can contain another provider's opaque reasoning and native tool messages.
 // openAIConversation renders saved messages for Chat Completions. A message whose index is in breakpoints is sent as
 // one text part carrying an explicit prompt_cache_breakpoint, marking the end of a reusable prefix.
 func openAIConversation(messages []json.RawMessage, breakpoints []int) ([]map[string]any, error) {
+	messages, breakpoints = collapseActionFreeReplay(messages, breakpoints)
 	marked := make(map[int]bool, len(breakpoints))
 	for _, i := range breakpoints {
 		marked[i] = true
@@ -574,9 +664,18 @@ func (m *OpenAIModel) decodeOpenAIStream(res *http.Response, reply Reply, reques
 				visible := text
 				if request.Foreground {
 					visible = foregroundPartial(text)
+				} else if !request.NoDispatch {
+					partial, ok := actionFreeStructuredPartial(text)
+					if !ok {
+						visible = ""
+					} else {
+						visible = partial
+					}
 				}
-				if err := request.Stream(visible); err != nil {
-					return reply, err
+				if visible != "" {
+					if err := request.Stream(visible); err != nil {
+						return reply, err
+					}
 				}
 			}
 			for _, delta := range choice.Delta.Calls {
@@ -612,7 +711,7 @@ func (m *OpenAIModel) decodeOpenAIStream(res *http.Response, reply Reply, reques
 	body, _ := json.Marshal(map[string]any{"id": id, "model": model, "service_tier": tier, "usage": usage, "choices": []any{map[string]any{"finish_reason": finish, "message": map[string]any{"role": "assistant", "content": text, "tool_calls": ordered}}}})
 	copyResponse := *res
 	copyResponse.Body = io.NopCloser(bytes.NewReader(body))
-	decoded, err := m.decodeOpenAIReply(&copyResponse, reply, true, span)
+	decoded, err := m.decodeOpenAIReply(&copyResponse, reply, request.NoDispatch || request.Foreground, span)
 	if err == nil && request.Foreground {
 		decoded.Text, decoded.Calls, err = decodeForeground(decoded.Text)
 	}

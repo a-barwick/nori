@@ -115,12 +115,18 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 }
 
 // Leaving a schema out shortens the request. Execution still checks every call.
+// Pre-Round-1 deterministic loading also keeps the top-level tools array immutable
+// across rounds (Anthropic invalidates cache whenever top-level tools change).
 func offeredTools(catalog []Capability, snapshot *extensions.Snapshot, messages []transcript.Message, wait, work, nativeSearch bool) []transcript.Tool {
 	results := []map[string]any{}
+	hasAttachments := false
 	for _, message := range messages {
 		for _, part := range message.Parts {
 			if part.ToolResult != nil && part.ToolResult.Name == "capability_load" {
 				results = append(results, part.ToolResult.Output)
+			}
+			if part.Text != "" && strings.Contains(part.Text, `"upload_id"`) {
+				hasAttachments = true
 			}
 		}
 	}
@@ -128,6 +134,43 @@ func offeredTools(catalog []Capability, snapshot *extensions.Snapshot, messages 
 	for _, capability := range catalog {
 		if capability.Default {
 			loaded[capability.Name] = true
+		}
+	}
+	if hasAttachments {
+		loaded[attachmentCapability] = true
+		loaded["Attached text files"] = true
+	}
+	// Preload small trusted first-party native discoverable capabilities (<= 12 tools
+	// and <= 6 KiB total schema) at Round 1 so the model avoids an extra capability_load
+	// round-trip and Anthropic's top-level tools array stays cache-stable across steps.
+	// Third-party MCP capabilities stay on-demand to keep untrusted descriptions out of
+	// Round 1 and prevent connection changes from busting the prompt cache.
+	const (
+		preloadMaxTools = 12
+		preloadMaxBytes = 6 << 10
+	)
+	type capSize struct {
+		count int
+		bytes int
+	}
+	discoverableSizes := map[string]capSize{}
+	if snapshot != nil {
+		for _, d := range snapshot.Definitions() {
+			if d.Builtin() || d.Exposure != extensions.ExposureDiscoverable || d.CapabilityTitle == "Attached text files" {
+				continue
+			}
+			if d.Binding.Adapter != extensions.AdapterNative {
+				continue
+			}
+			sz := discoverableSizes[d.CapabilityTitle]
+			sz.count++
+			sz.bytes += len(d.InputSchema) + len(d.Description) + len(d.ModelName)
+			discoverableSizes[d.CapabilityTitle] = sz
+		}
+	}
+	for title, sz := range discoverableSizes {
+		if sz.count > 0 && sz.count <= preloadMaxTools && sz.bytes <= preloadMaxBytes {
+			loaded[title] = true
 		}
 	}
 	access := availableTools(wait, work)
@@ -140,12 +183,14 @@ func offeredTools(catalog []Capability, snapshot *extensions.Snapshot, messages 
 			selected = append(selected, definition.Tool)
 		}
 	}
-	for _, d := range snapshot.Definitions() {
-		if d.Builtin() || (d.Exposure != extensions.ExposureDirect && !(d.Exposure == extensions.ExposureDiscoverable && loaded[d.CapabilityTitle])) {
-			continue
-		}
-		if tool, ok := modelTool(d); ok {
-			selected = append(selected, tool)
+	if snapshot != nil {
+		for _, d := range snapshot.Definitions() {
+			if d.Builtin() || (d.Exposure != extensions.ExposureDirect && !(d.Exposure == extensions.ExposureDiscoverable && loaded[d.CapabilityTitle])) {
+				continue
+			}
+			if tool, ok := modelTool(d); ok {
+				selected = append(selected, tool)
+			}
 		}
 	}
 	return selected

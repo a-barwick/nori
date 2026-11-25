@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -140,8 +141,44 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 	}
 	reply.Usage.RequestStatus = "unknown"
 
-	res, err := m.doWithRetry(reqCtx, body)
+	onRetry := func(statusCode int) error {
+		if request.RecordUsage == nil {
+			return nil
+		}
+		prev := reply.Usage
+		if statusCode > 0 {
+			prev.RequestStatus = "received"
+		} else {
+			prev.RequestStatus = "unknown"
+		}
+		_ = usage.Finish(ctx, usage.Func(request.RecordUsage), prev)
+		nextUsage := prev
+		nextUsage.ID = m.newID()
+		nextUsage.CreatedAt = m.now().UTC()
+		nextUsage.RequestStatus = "pending"
+		nextUsage.CostStatus = "unknown"
+		nextUsage.CostUSD = nil
+		nextUsage.EstimatedExposureUSD = 0
+		nextUsage.InputTokens = nil
+		nextUsage.OutputTokens = nil
+		nextUsage.TotalTokens = nil
+		nextUsage.CachedTokens = nil
+		nextUsage.CacheWriteTokens = nil
+		reply.Usage = nextUsage
+		if err := request.RecordUsage(ctx, reply.Usage); err != nil {
+			reply.Usage.RequestStatus = "not_sent"
+			return err
+		}
+		reply.Usage.RequestStatus = "unknown"
+		return nil
+	}
+
+	res, err := m.doWithRetry(reqCtx, body, onRetry)
 	if err != nil {
+		if errors.Is(err, usage.ErrUserQuotaExceeded) {
+			reply.Usage.RequestStatus = "not_sent"
+			return reply, err
+		}
 		if llmguard.IsGuardError(err) {
 			reply.Usage.RequestStatus = "not_sent"
 			return reply, err
@@ -159,6 +196,9 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 			return reply, contextview.ErrOverflow
 		}
 		return reply, providerHTTPError{res.StatusCode, fmt.Sprintf("model provider returned HTTP %d", res.StatusCode)}
+	}
+	if request.Stream != nil && len(request.Tools) == 0 {
+		return m.decodeAnthropicStream(res, reply, request, structured)
 	}
 
 	var response struct {
@@ -251,7 +291,165 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 	return reply, nil
 }
 
-func (m *AnthropicModel) doWithRetry(ctx context.Context, body []byte) (*http.Response, error) {
+// decodeAnthropicStream parses Anthropic Messages SSE streaming events, emitting safe
+// action-free partial text deltas via request.Stream while reconstructing the full Reply
+// and token/cache usage identically to the non-streaming path.
+func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, request ReplyRequest, structured bool) (Reply, error) {
+	scanner := bufio.NewScanner(io.LimitReader(res.Body, 2<<20))
+	scanner.Buffer(make([]byte, 4096), 256<<10)
+
+	var (
+		modelName   string
+		stopReason  string
+		inTok       int64
+		outTok      int64
+		cacheRead   int64
+		cacheWrite  int64
+		hasUsage    bool
+		done        bool
+		rawBuf      strings.Builder
+		lastEmitted string
+	)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var evt struct {
+			Type    string `json:"type"`
+			Message *struct {
+				Model string `json:"model"`
+				Usage *struct {
+					Input      int64 `json:"input_tokens"`
+					Output     int64 `json:"output_tokens"`
+					CacheRead  int64 `json:"cache_read_input_tokens"`
+					CacheWrite int64 `json:"cache_creation_input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+			Delta *struct {
+				Type       string `json:"type"`
+				Text       string `json:"text"`
+				StopReason string `json:"stop_reason"`
+			} `json:"delta"`
+			Usage *struct {
+				Output int64 `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if json.Unmarshal([]byte(data), &evt) != nil {
+			return reply, errors.New("anthropic model returned an unreadable stream")
+		}
+		switch evt.Type {
+		case "message_start":
+			if evt.Message != nil {
+				if evt.Message.Model != "" {
+					modelName = evt.Message.Model
+				}
+				if u := evt.Message.Usage; u != nil {
+					hasUsage = true
+					inTok = u.Input
+					cacheRead = u.CacheRead
+					cacheWrite = u.CacheWrite
+					if u.Output > outTok {
+						outTok = u.Output
+					}
+				}
+			}
+		case "content_block_delta":
+			if evt.Delta != nil && evt.Delta.Type == "text_delta" && evt.Delta.Text != "" {
+				rawBuf.WriteString(evt.Delta.Text)
+				if rawBuf.Len() > 32768 {
+					return reply, errors.New("model reply exceeded limit")
+				}
+				accum := rawBuf.String()
+				var visible string
+				switch {
+				case !structured:
+					visible = accum
+				case request.Foreground && len(request.Tools) > 0:
+					visible = foregroundPartial(accum)
+				default:
+					if partial, ok := actionFreeStructuredPartial(accum); ok {
+						visible = partial
+					}
+				}
+				if visible != "" && visible != lastEmitted {
+					lastEmitted = visible
+					if err := request.Stream(visible); err != nil {
+						return reply, err
+					}
+				}
+			}
+		case "message_delta":
+			if evt.Delta != nil && evt.Delta.StopReason != "" {
+				stopReason = evt.Delta.StopReason
+			}
+			if evt.Usage != nil {
+				hasUsage = true
+				if evt.Usage.Output > outTok {
+					outTok = evt.Usage.Output
+				}
+			}
+		case "message_stop":
+			done = true
+		case "error":
+			return reply, errors.New("anthropic model stream returned an error")
+		}
+	}
+
+	if hasUsage {
+		totalIn := inTok + cacheRead + cacheWrite
+		total := totalIn + outTok
+		reply.Usage.InputTokens = &totalIn
+		reply.Usage.OutputTokens = &outTok
+		reply.Usage.TotalTokens = &total
+		reply.Usage.CachedTokens = &cacheRead
+		reply.Usage.CacheWriteTokens = &cacheWrite
+		if modelName == "" {
+			modelName = m.name
+		}
+		if cost, costErr := usage.AnthropicCost(modelName, inTok, outTok, cacheRead, cacheWrite); costErr == nil {
+			reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
+			m.guard().RecordActualCost(cost)
+		}
+	}
+
+	if scanner.Err() != nil || !done {
+		return reply, errors.New("model stream interrupted; request will not be repeated")
+	}
+	if stopReason != "" && stopReason != "end_turn" {
+		return reply, fmt.Errorf("anthropic model did not finish normally (stop_reason=%s)", stopReason)
+	}
+
+	rawText := strings.TrimSpace(rawBuf.String())
+	if structured {
+		if rawText == "" {
+			return reply, errors.New("anthropic model did not return required structured JSON response")
+		}
+		reply.Message = modelMessage(map[string]any{"role": "assistant", "content": rawText})
+		if request.Foreground && len(request.Tools) > 0 {
+			var err error
+			reply.Text, reply.Calls, err = decodeForeground(rawText)
+			return reply, err
+		}
+		var err error
+		reply.Structured = true
+		reply.Text, reply.Calls, err = decodeResponse(rawText)
+		return reply, err
+	}
+	reply.Text = rawText
+	reply.Message = modelMessage(map[string]any{"role": "assistant", "content": reply.Text})
+	if reply.Text == "" {
+		return reply, fmt.Errorf("model returned neither a reply nor a task command")
+	}
+	return reply, nil
+}
+
+func (m *AnthropicModel) doWithRetry(ctx context.Context, body []byte, onRetry func(statusCode int) error) (*http.Response, error) {
 	client := m.httpClient()
 	const maxRetries = 3
 	baseDelay := 500 * time.Millisecond
@@ -275,6 +473,11 @@ func (m *AnthropicModel) doWithRetry(ctx context.Context, body []byte) (*http.Re
 				return nil, ctx.Err()
 			case <-time.After(delay):
 			}
+			if onRetry != nil {
+				if rErr := onRetry(0); rErr != nil {
+					return nil, rErr
+				}
+			}
 			continue
 		}
 		retryable := res.StatusCode == http.StatusTooManyRequests ||
@@ -283,6 +486,7 @@ func (m *AnthropicModel) doWithRetry(ctx context.Context, body []byte) (*http.Re
 		if !retryable || attempt >= maxRetries {
 			return res, nil
 		}
+		status := res.StatusCode
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
 		_ = res.Body.Close()
 		delay := baseDelay << attempt
@@ -291,12 +495,18 @@ func (m *AnthropicModel) doWithRetry(ctx context.Context, body []byte) (*http.Re
 			return nil, ctx.Err()
 		case <-time.After(delay):
 		}
+		if onRetry != nil {
+			if rErr := onRetry(status); rErr != nil {
+				return nil, rErr
+			}
+		}
 	}
 }
 
 func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int) ([]byte, bool, error) {
-	marked := make(map[int]bool, len(request.CacheBreakpoints))
-	for _, i := range request.CacheBreakpoints {
+	rawMessages, rawBreakpoints := collapseActionFreeReplay(request.Messages, request.CacheBreakpoints)
+	marked := make(map[int]bool, len(rawBreakpoints))
+	for _, i := range rawBreakpoints {
 		marked[i] = true
 	}
 
@@ -322,7 +532,7 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 	// system notices (task notifications, receipts, advisory) stay in chronological
 	// order inside `messages` so turn chronology and leading cache prefixes hold.
 	inLeadingSystem := true
-	for i, raw := range request.Messages {
+	for i, raw := range rawMessages {
 		var message struct {
 			Role    string          `json:"role"`
 			Content *string         `json:"content"`
@@ -374,6 +584,9 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 		"model":      m.name,
 		"max_tokens": outputLimit,
 		"messages":   messages,
+	}
+	if request.Stream != nil && len(request.Tools) == 0 {
+		body["stream"] = true
 	}
 	if len(systemBlocks) > 0 {
 		body["system"] = systemBlocks

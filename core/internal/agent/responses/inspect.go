@@ -52,8 +52,28 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	record.RequestStatus = "unknown"
 	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
 	out.Sent = true
-	res, err := c.doWithRetry(ctx, buildReq)
+	onRetry := func(statusCode int) error {
+		prev := record
+		if statusCode > 0 {
+			prev.RequestStatus = "received"
+		} else {
+			prev.RequestStatus = "unknown"
+		}
+		_ = usage.Finish(ctx, c.Meter, prev)
+		record = usage.Attempt(ctx, c.Provider(), c.ModelName)
+		if err := c.Meter.RecordUsage(ctx, record); err != nil {
+			record.RequestStatus = "not_sent"
+			return err
+		}
+		record.RequestStatus = "unknown"
+		return nil
+	}
+	res, err := c.doWithRetry(ctx, buildReq, onRetry)
 	if err != nil {
+		if errors.Is(err, usage.ErrUserQuotaExceeded) {
+			record.RequestStatus = "not_sent"
+			return out, err
+		}
 		if ctx.Err() != nil {
 			return out, ctx.Err()
 		}

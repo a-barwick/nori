@@ -29,7 +29,7 @@ type spec struct {
 	description, schema                              string
 }
 
-const triggerSchema = `"trigger": {"type": "object", "description": "One of: {kind:once, at:RFC3339}; {kind:recurring, local_start:YYYY-MM-DDTHH:MM, timezone:IANA, rrule:RRULE}; {kind:event_relative, event:{connection_id, kind:calendar_event, provider_id:'<calendar_id>/<event_id>'}, offset_seconds}; {kind:watch, source:{connection_id, kind, provider_id}, predicate_ref, min_interval_seconds>=60}",
+const triggerSchema = `"trigger": {"type": "object", "description": "One of: {kind:once, at:RFC3339}; {kind:recurring, local_start:YYYY-MM-DDTHH:MM, timezone:IANA, rrule:RRULE}; {kind:event_relative, event:{connection_id, kind:calendar_event, provider_id:'<calendar_id>/<event_id>'}, offset_seconds}; {kind:watch, source:{connection_id, kind, provider_id}, predicate_ref, min_interval_seconds>=300}",
 	"properties": {"kind": {"enum": ["once", "recurring", "event_relative", "watch"]}, "at": {"type": "string"}, "local_start": {"type": "string"}, "timezone": {"type": "string"}, "rrule": {"type": "string"},
 		"event": {"type": "object"}, "offset_seconds": {"type": "integer"}, "source": {"type": "object"}, "predicate_ref": {"type": "string"}, "min_interval_seconds": {"type": "integer"}},
 	"required": ["kind"]}`
@@ -74,13 +74,17 @@ var Definitions = func() []extensions.Definition {
 			panic("nori tool schema " + s.name + ": " + err.Error())
 		}
 		schema, _ := json.Marshal(compact)
+		exposure := extensions.ExposureDirect
+		if s.capability == "nori_files" {
+			exposure = extensions.ExposureDiscoverable
+		}
 		d, err := extensions.Seal(extensions.Definition{
 			Ref:       extensions.DefinitionRef{ID: "nori/assistant/" + strings.ReplaceAll(s.name, "_", "-"), Version: Version},
 			Extension: extensions.DefinitionRef{ID: "nori/assistant", Version: Version},
 			ModelName: s.name, Title: s.title, Description: s.description, Capability: s.capability, CapabilityTitle: s.capabilityTitle,
 			InputSchema: schema, Binding: extensions.Binding{Adapter: extensions.AdapterNative, Target: s.target, Version: Version},
 			Policy:   extensions.Policy{Effect: s.effect, Retry: s.retry, TimeoutMS: 20_000, Location: extensions.LocationRuntime},
-			Exposure: extensions.ExposureDirect,
+			Exposure: exposure,
 		})
 		if err != nil {
 			panic(err)
@@ -120,8 +124,18 @@ func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared
 		if err := decode(call.Args, &value); err != nil {
 			return invoke.Prepared{}, err
 		}
+		if value.Trigger.Kind == "watch" && value.Trigger.MinIntervalSeconds < 300 {
+			return invoke.Prepared{}, fmt.Errorf("%w: watch automations created by the assistant require min_interval_seconds >= 300 (5 minutes)", invoke.ErrInvalidArguments)
+		}
 		if value.MaxActiveRuns == 0 {
 			value.MaxActiveRuns = 1
+		}
+		existing, listErr := a.Scheduler.List(ctx, "enabled")
+		if listErr != nil {
+			return invoke.Prepared{}, fmt.Errorf("could not verify active automation limit: %w", listErr)
+		}
+		if len(existing) >= 25 {
+			return invoke.Prepared{}, fmt.Errorf("%w: maximum of 25 active automations reached; pause or cancel an existing automation first", invoke.ErrInvalidArguments)
 		}
 		preview, err := a.Scheduler.Preview(ctx, value, a.Unattended)
 		if err != nil {

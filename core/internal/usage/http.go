@@ -60,7 +60,9 @@ func Open(c Config, userID string, local Meter) (Meter, error) {
 		return nil, err
 	}
 	meter := local
-	if reader, ok := local.(WindowReader); ok && (c.MaxCallsPerHour > 0 || c.MaxUSDPerDay > 0) {
+	reader, _ := local.(WindowReader)
+	_, hasReserver := local.(AtomicReserver)
+	if (hasReserver || reader != nil) && (c.MaxCallsPerHour > 0 || c.MaxUSDPerDay > 0) {
 		meter = WithAdmission(meter, reader, c.MaxCallsPerHour, c.MaxUSDPerDay, nil)
 	}
 	if c.Mode != "http" {

@@ -182,6 +182,7 @@ export function ChatScreen() {
           onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
           status={work}
           thinking={runtime.conversationBusy}
+          streamingText={runtime.streamingDelta?.text}
           interactions={inlineInteractions}
           onInteractionResolved={handleInteractionResolved}
           onRetryMessage={(item) => void runtime.retryTurn({ turn_id: item.turnId, message_id: item.id })}

@@ -190,7 +190,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	fields := map[string]any{
 		"model": c.ModelName, "input": input, "instructions": req.Instructions,
 		"tools": tools, "max_output_tokens": req.MaxOutputTokens, "store": false,
-		"include": []string{"reasoning.encrypted_content"},
+	}
+	if !req.SingleTurn {
+		fields["include"] = []string{"reasoning.encrypted_content"}
 	}
 	effort := req.Reasoning
 	if effort == "" {
@@ -238,8 +240,28 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
 	// Once handed to HTTP, a transport failure cannot prove it was not billed.
 	out.NotSent = false
-	res, err := c.doWithRetry(reqCtx, buildReq)
+	onRetry := func(statusCode int) error {
+		prev := record
+		if statusCode > 0 {
+			prev.RequestStatus = "received"
+		} else {
+			prev.RequestStatus = "unknown"
+		}
+		_ = usage.Finish(ctx, c.Meter, prev)
+		record = usage.Attempt(ctx, c.Provider(), c.ModelName)
+		if err := c.Meter.RecordUsage(ctx, record); err != nil {
+			record.RequestStatus = "not_sent"
+			return err
+		}
+		record.RequestStatus = "unknown"
+		return nil
+	}
+	res, err := c.doWithRetry(reqCtx, buildReq, onRetry)
 	if err != nil {
+		if errors.Is(err, usage.ErrUserQuotaExceeded) {
+			record.RequestStatus = "not_sent"
+			return out, err
+		}
 		if llmguard.IsGuardError(err) {
 			out.NotSent = true
 			record.RequestStatus = "not_sent"

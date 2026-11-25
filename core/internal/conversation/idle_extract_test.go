@@ -448,7 +448,7 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 	}
 
 	// Send 15 user turns (> CompactKeep=14, < SoftCompactUserTurns=16) across two sessions.
-	// Every 3 turns triggers immediate decoupled extraction (5 extract calls total), NEVER compaction.
+	// Every ExtractTurnThreshold (6) turns triggers immediate decoupled extraction (2 calls + 1 idle drain), NEVER compaction.
 	var turnIDs []string
 	var turnTimes []time.Time
 	for i := 1; i <= 15; i++ {
@@ -461,9 +461,14 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 		turnIDs = append(turnIDs, id)
 		turnTimes = append(turnTimes, ts)
 	}
+	// Drain remaining unextracted turns (13..15) after IdleExtractDelay.
+	h.clk.Advance(state.IdleExtractDelay + time.Second)
+	if err := h.runner.Process(ctx); err != nil {
+		t.Fatalf("Process idle drain: %v", err)
+	}
 
-	if h.sum.CallCount() != 5 {
-		t.Fatalf("expected 5 extract_only calls across 15 user turns (every 3 turns), got %d", h.sum.CallCount())
+	if want := 3; h.sum.CallCount() != want {
+		t.Fatalf("expected %d extract_only calls across 15 user turns (threshold=%d + idle drain), got %d", want, state.ExtractTurnThreshold, h.sum.CallCount())
 	}
 	for idx, c := range h.sum.Calls() {
 		if extractOnly, _ := c.Payload["extract_only"].(bool); !extractOnly {
@@ -498,8 +503,8 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 			t.Fatalf("Process after idle %v: %v", d, err)
 		}
 	}
-	if h.sum.CallCount() != 5 {
-		t.Fatalf("expected still 5 calls (zero premature idle compaction), got %d", h.sum.CallCount())
+	if h.sum.CallCount() != 3 {
+		t.Fatalf("expected still 3 calls (zero premature idle compaction), got %d", h.sum.CallCount())
 	}
 	histBefore16 := h.runner.readAttemptHistory(ctx, time.Time{})
 	if histBefore16.err != nil || histBefore16.view.Summary != nil || len(histBefore16.view.Turns) != 15 {
@@ -510,10 +515,10 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 	// Keeps CompactKeep=14 turns verbatim (Turns 3..16) and compacts Turns 1..2.
 	h.clk.Advance(10 * time.Second)
 	_, t16 := h.sendTurn(ctx, "Turn 16: unique user fact #16.")
-	if h.sum.CallCount() != 6 {
-		t.Fatalf("expected 6 summarizer calls (5 extracts + 1 compact at turn 16), got %d", h.sum.CallCount())
+	if h.sum.CallCount() != 4 {
+		t.Fatalf("expected 4 summarizer calls (3 extracts + 1 compact at turn 16), got %d", h.sum.CallCount())
 	}
-	compactCall := h.sum.Calls()[5]
+	compactCall := h.sum.Calls()[3]
 	if _, hasExtractOnly := compactCall.Payload["extract_only"]; hasExtractOnly {
 		t.Fatalf("expected coupled flushAndCompact not to set extract_only, got %#v", compactCall.Payload["extract_only"])
 	}
@@ -597,10 +602,10 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process idle extract for Turn 16: %v", err)
 	}
-	if h.sum.CallCount() != 7 {
-		t.Fatalf("expected 7 summarizer calls total, got %d", h.sum.CallCount())
+	if h.sum.CallCount() != 5 {
+		t.Fatalf("expected 5 summarizer calls total, got %d", h.sum.CallCount())
 	}
-	extractTurns := decodePromptTurns(t, h.sum.Calls()[6].Payload)
+	extractTurns := decodePromptTurns(t, h.sum.Calls()[4].Payload)
 	if len(extractTurns) != 1 {
 		t.Fatalf("expected only Turn 16 (1 turn) in extract call, got %d", len(extractTurns))
 	}
@@ -800,12 +805,14 @@ func TestIdleExtract_AutoDreamPreservesExtractedThrough(t *testing.T) {
 		}), nil
 	}
 
-	// Complete 3 turns -> extracts immediately at ExtractTurnThreshold (3), so ExtractedThrough == T3 > FlushedThrough (0).
-	_, _ = h.sendTurn(ctx, "Turn 1")
-	h.clk.Advance(10 * time.Second)
-	_, _ = h.sendTurn(ctx, "Turn 2")
-	h.clk.Advance(10 * time.Second)
-	_, t3 := h.sendTurn(ctx, "Turn 3")
+	// Complete ExtractTurnThreshold turns -> extracts immediately, so ExtractedThrough == lastTurn > FlushedThrough (0).
+	var t3 time.Time
+	for i := 1; i <= state.ExtractTurnThreshold; i++ {
+		if i > 1 {
+			h.clk.Advance(10 * time.Second)
+		}
+		_, t3 = h.sendTurn(ctx, fmt.Sprintf("Turn %d", i))
+	}
 
 	// Seed 10 user-sourced Daily Log entries so AutoDream triple-gate is satisfied.
 	curSum, err := h.store.ConversationSummary(ctx)
@@ -1584,6 +1591,10 @@ func TestCompaction_ParkedWhenUserRoutingPendingAfterErrorTurn(t *testing.T) {
 	}
 	h.clk.Advance(10 * time.Second)
 	_, _ = h.sendTurn(ctx, "All good, carry on.")
+	h.clk.Advance(state.IdleExtractDelay + time.Second)
+	if err := h.runner.Process(ctx); err != nil {
+		t.Fatalf("Process idle extract after recovery: %v", err)
+	}
 	if sumCalls != 1 {
 		t.Fatalf("expected 1 extraction call after UserRoutingPending cleared, got %d", sumCalls)
 	}

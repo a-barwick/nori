@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"time"
 	"unicode/utf8"
 
@@ -152,31 +153,107 @@ func (a *Activities) Context(ctx context.Context, id string) ([]transcript.Messa
 	if e != nil {
 		return nil, e
 	}
-	// Only completed tasks provide background. Incomplete or cancelled user
-	// requests must not become dangling instructions for the next task. Accepted
-	// current-task commands are incorporated separately in durable order.
-	completed := map[string]bool{}
-	for _, run := range session.Runs {
-		if run.ID != id && run.Status == state.RunCompleted {
-			completed[run.ID] = true
+	// Identify any prior task explicitly continued or revised by this run so its
+	// full output is preserved while other completed tasks stay a compact index.
+	pinnedRunIDs := map[string]bool{}
+	var currentRun *state.Run
+	for i := range session.Runs {
+		if session.Runs[i].ID == id {
+			currentRun = &session.Runs[i]
+			break
 		}
 	}
+	if currentRun != nil {
+		if currentRun.Origin != nil && currentRun.Origin.ContinuesTaskID != "" {
+			pinnedRunIDs[currentRun.Origin.ContinuesTaskID] = true
+		}
+		if currentRun.Revises != "" {
+			if res, rErr := a.Store.GetResult(ctx, currentRun.Revises); rErr == nil && res.RunID != "" {
+				pinnedRunIDs[res.RunID] = true
+			}
+		}
+	}
+
+	// Only completed tasks provide background. Incomplete or cancelled user
+	// requests must not become dangling instructions for the next task.
+	completedRuns := make([]state.Run, 0, len(session.Runs))
+	completedSet := map[string]bool{}
+	for _, run := range session.Runs {
+		if run.ID != id && run.Status == state.RunCompleted {
+			completedRuns = append(completedRuns, run)
+			completedSet[run.ID] = true
+		}
+	}
+	if len(completedRuns) == 0 {
+		return nil, nil
+	}
+	// Sort completed runs newest-first by StartedAt (matching state.MergeOpenRuns) so the
+	// compact index always keeps the most recent tasks regardless of session.Runs order.
+	slices.SortStableFunc(completedRuns, func(a, b state.Run) int {
+		if a.StartedAt.After(b.StartedAt) {
+			return -1
+		}
+		if b.StartedAt.After(a.StartedAt) {
+			return 1
+		}
+		return 0
+	})
+
+	const (
+		maxIndexTasks     = 8
+		maxIndexBytes     = 3 << 10
+		maxPinnedBytes    = 72 << 10
+		maxRequestPreview = 120
+		maxResultPreview  = 160
+	)
 	records := []json.RawMessage{}
 	total := 0
-	for i := len(session.Messages) - 1; i >= 0 && len(records) < 20; i-- {
-		m := session.Messages[i]
-		if !completed[m.RunID] {
+	// First include full output for any directly continued/revised task.
+	if len(pinnedRunIDs) > 0 {
+		for i := len(session.Messages) - 1; i >= 0; i-- {
+			m := session.Messages[i]
+			if !pinnedRunIDs[m.RunID] || !completedSet[m.RunID] {
+				continue
+			}
+			rec, e := json.Marshal(map[string]string{"task_id": m.RunID, "status": "completed", "role": m.Role, "text": clip(m.Text, maxPinnedBytes)})
+			if e != nil {
+				return nil, e
+			}
+			if total+len(rec) > maxPinnedBytes {
+				break
+			}
+			records = append([]json.RawMessage{rec}, records...)
+			total += len(rec)
+		}
+	}
+	// Build a compact index of recent completed tasks (newest first, up to maxIndexTasks / maxIndexBytes).
+	indexBytes := 0
+	indexed := 0
+	for _, run := range completedRuns {
+		if pinnedRunIDs[run.ID] {
 			continue
 		}
-		record, e := json.Marshal(map[string]string{"task_id": m.RunID, "status": "completed", "role": m.Role, "text": m.Text})
+		if indexed >= maxIndexTasks {
+			break
+		}
+		entry := map[string]string{
+			"task_id": run.ID,
+			"status":  "completed",
+			"request": clip(run.Request, maxRequestPreview),
+		}
+		if run.Result != "" {
+			entry["summary"] = clip(run.Result, maxResultPreview)
+		}
+		rec, e := json.Marshal(entry)
 		if e != nil {
 			return nil, e
 		}
-		if total+len(record) > 64<<10 {
+		if indexBytes+len(rec) > maxIndexBytes {
 			break
 		}
-		records = append([]json.RawMessage{record}, records...)
-		total += len(record)
+		records = append(records, rec)
+		indexBytes += len(rec)
+		indexed++
 	}
 	if len(records) == 0 {
 		return nil, nil

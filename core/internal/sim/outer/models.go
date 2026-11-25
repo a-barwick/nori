@@ -1395,7 +1395,7 @@ func buildFlushPayload(req agent.Request, seq int, kind string, mode CompactionF
 					"quote":    quote,
 				})
 			}
-			if len(dailyLogs) < 3 {
+			if len(dailyLogs) < state.ExtractTurnThreshold {
 				dailyLogs = append(dailyLogs, map[string]any{
 					"text":     fmt.Sprintf("Session note #%d: %s", seq, safeSnippet(trimmed, 160)),
 					"about":    "the user",

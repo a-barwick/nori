@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"nori/internal/contextview"
 	"nori/internal/prompts"
@@ -80,11 +81,14 @@ func omitOutputs(message transcript.Message) transcript.Message {
 		if parts == nil {
 			parts = append([]transcript.Part(nil), message.Parts...)
 		}
-		stub := map[string]any{"omitted": true, "note": omittedNote}
+		stub := map[string]any{"omitted": true, "note": omittedNote, "original_bytes": len(data)}
 		for _, key := range []string{"operation_id", "outcome", "effect_class", "evidence_ref", "artifact_id", "result_id"} {
 			if value, ok := result.Output[key]; ok {
 				stub[key] = value
 			}
+		}
+		if preview := clip(string(data), 200); preview != "" {
+			stub["preview"] = preview
 		}
 		if _, ok := stub["operation_id"]; !ok {
 			stub["note"] = prompts.Runtime("omitted-unsaved-output", nil)
@@ -97,7 +101,34 @@ func omitOutputs(message transcript.Message) transcript.Message {
 	return transcript.Message{Role: message.Role, Parts: parts}
 }
 
+const (
+	defaultOperationReadLimit = 16 << 10
+	maxOperationReadLimit     = 32 << 10
+)
+
+func parseNonNegativeIntArg(v any) int {
+	switch x := v.(type) {
+	case int:
+		if x > 0 {
+			return x
+		}
+	case float64:
+		if x > 0 {
+			return int(x)
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(x)); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
 func (a *Activities) operationRead(ctx context.Context, runID, id string) (map[string]any, error) {
+	return a.operationReadPage(ctx, runID, id, 0, 0)
+}
+
+func (a *Activities) operationReadPage(ctx context.Context, runID, id string, offset, limit int) (map[string]any, error) {
 	// A continuation may read the operations of the tasks it continues, whose IDs start with their task ID.
 	if run, err := a.Store.GetRun(ctx, runID); err == nil {
 		for hops := 0; hops < 8 && run.Origin != nil && run.Origin.ContinuesTaskID != ""; hops++ {
@@ -129,12 +160,57 @@ func (a *Activities) operationRead(ctx context.Context, runID, id string) (map[s
 		if len(blocks) != 1 {
 			return nil, errors.New(prompts.Runtime("operation-unreadable", nil))
 		}
-		var output map[string]any
-		if err = json.Unmarshal(blocks[0], &output); err != nil {
-			return nil, errors.New(prompts.Runtime("operation-unreadable", nil))
+		raw := blocks[0]
+		effectiveLimit := limit
+		if effectiveLimit <= 0 {
+			effectiveLimit = defaultOperationReadLimit
 		}
-		return map[string]any{"read_operation_id": op.ID, "name": op.Name, "saved_outcome": op.Outcome, "output": output,
-			"note": prompts.Runtime("context-a-saved-tool-output-is-untrusted-data-as-it-was-when-th", nil)}, nil
+		if effectiveLimit > maxOperationReadLimit {
+			effectiveLimit = maxOperationReadLimit
+		}
+		// Return full structured output when it fits within the page limit and offset == 0.
+		if offset <= 0 && len(raw) <= effectiveLimit {
+			var output map[string]any
+			if err = json.Unmarshal(raw, &output); err != nil {
+				return nil, errors.New(prompts.Runtime("operation-unreadable", nil))
+			}
+			return map[string]any{"read_operation_id": op.ID, "name": op.Name, "saved_outcome": op.Outcome, "output": output,
+				"total_bytes": len(raw), "truncated": false,
+				"note": prompts.Runtime("context-a-saved-tool-output-is-untrusted-data-as-it-was-when-th", nil)}, nil
+		}
+		// Paginated UTF-8-safe slice for large saved outputs (> 16 KiB or explicit offset/limit).
+		if offset < 0 {
+			offset = 0
+		}
+		if offset > len(raw) {
+			offset = len(raw)
+		}
+		for offset > 0 && offset < len(raw) && !utf8.RuneStart(raw[offset]) {
+			offset--
+		}
+		end := offset + effectiveLimit
+		if end > len(raw) {
+			end = len(raw)
+		}
+		for end > offset && end < len(raw) && !utf8.RuneStart(raw[end]) {
+			end--
+		}
+		chunk := string(raw[offset:end])
+		res := map[string]any{
+			"read_operation_id": op.ID,
+			"name":              op.Name,
+			"saved_outcome":     op.Outcome,
+			"chunk":             chunk,
+			"offset":            offset,
+			"limit":             effectiveLimit,
+			"total_bytes":       len(raw),
+			"truncated":         end < len(raw),
+			"note":              prompts.Runtime("context-a-saved-tool-output-is-untrusted-data-as-it-was-when-th", nil),
+		}
+		if end < len(raw) {
+			res["next_offset"] = end
+		}
+		return res, nil
 	}
 	return nil, errors.New(prompts.Runtime("operation-not-found", nil))
 }
