@@ -16,6 +16,7 @@ public struct SettingsView: View {
     @State private var showingEditPreferences = false
     @State private var showingAddPermissionRule = false
     @State private var rulePendingRemoval: PermissionRule?
+    @State private var isPingingServer = false
 
     public init(store: NoriStore, initialSection: SettingsSection? = nil) {
         self.store = store
@@ -40,7 +41,12 @@ public struct SettingsView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
-                .padding(.bottom, 32)
+                .padding(.bottom, 96)
+            }
+            .refreshable {
+                async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
+                async let summaryTask: Void = store.refreshSummary()
+                _ = await (permsPrefsTask, summaryTask)
             }
             .onAppear {
                 if let initialSection {
@@ -56,6 +62,7 @@ public struct SettingsView: View {
         .navigationTitle("Settings")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         #endif
         .sheet(isPresented: $showingEditPreferences) {
             EditPreferencesSheet(store: store)
@@ -92,10 +99,11 @@ public struct SettingsView: View {
     @ViewBuilder
     private var accountSection: some View {
         NoriSectionHeader("Account") {
-            NoriPill(
-                store.connectionState == .connected ? "Connected" : store.connectionState.rawValue.capitalized,
-                tone: store.connectionState == .connected ? .ok : .warning
-            )
+            if store.connectionState == .reconnecting {
+                NoriPill("Reconnecting", tone: .warning)
+            } else if store.connectionState == .offline {
+                NoriPill("Offline", tone: .danger)
+            }
         }
 
         NoriRows {
@@ -233,16 +241,8 @@ public struct SettingsView: View {
             NoriRow(
                 title: "Task budget",
                 detail: budgetDetailString,
-                showDivider: true
-            )
-
-            NoriRow(
-                title: "Push notifications (APNs)",
-                detail: "Approvals, questions & task completions",
                 showDivider: false
-            ) {
-                NoriPill("On", tone: .ok)
-            }
+            )
         }
     }
 
@@ -258,12 +258,27 @@ public struct SettingsView: View {
 
     @ViewBuilder
     private var diagnosticsSection: some View {
-        NoriSectionHeader("Diagnostics")
+        NoriSectionHeader("Diagnostics") {
+            Button(isPingingServer ? "Checking…" : "Check health") {
+                pingServerHealth()
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(NoriColors.accent)
+            .buttonStyle(.plain)
+            .disabled(isPingingServer)
+        }
 
         NoriCard {
             VStack(alignment: .leading, spacing: 10) {
                 diagRow("Status", value: store.connectionState.rawValue.capitalized)
                 diagRow("Server", value: NoriConfig.serverURL.host() ?? "nori-core")
+                if let ping = store.lastPing {
+                    let pingTime = NoriDateFormatting.shortTime(ISO8601DateFormatter().string(from: ping.checkedAt))
+                    let pingSummary = ping.ok
+                        ? "Healthy · \(ping.latencyMs) ms · \(pingTime)"
+                        : "\(ping.errorMessage ?? ping.status) · \(ping.latencyMs) ms · \(pingTime)"
+                    diagRow("Health", value: pingSummary)
+                }
                 if let caps = store.capabilities {
                     let contracts = [caps.contract, caps.conversationContract, caps.assistantContract]
                         .compactMap { $0 }
@@ -286,6 +301,20 @@ public struct SettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func pingServerHealth() {
+        guard !isPingingServer else { return }
+        isPingingServer = true
+        Task {
+            defer { isPingingServer = false }
+            let result = await store.pingServer()
+            store.showToast(
+                result.ok
+                    ? "Server reachable (\(result.latencyMs) ms)"
+                    : (result.errorMessage ?? "Server unreachable")
+            )
         }
     }
 
@@ -317,6 +346,9 @@ public struct SettingsView: View {
         }
         if let recipients = rule.recipients, !recipients.isEmpty {
             parts.append("To \(recipients.joined(separator: ", "))")
+        }
+        if let expiresAt = rule.expiresAt, !expiresAt.isEmpty {
+            parts.append(NoriDateFormatting.expiryCountdown(expiresAt))
         }
         return parts.isEmpty ? "Standing rule" : parts.joined(separator: " · ")
     }

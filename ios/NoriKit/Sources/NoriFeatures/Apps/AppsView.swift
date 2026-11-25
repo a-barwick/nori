@@ -41,7 +41,7 @@ public struct AppsView: View {
                     NoriRows {
                         ForEach(Array(store.mcpServers.enumerated()), id: \.element.id) { index, server in
                             let isLast = index == store.mcpServers.count - 1
-                            NavigationLink(value: AppsRoute.mcpDetail(server.id)) {
+                            NavigationLink(value: MoreRoute.mcpDetail(server.id)) {
                                 NoriRow(
                                     title: server.name,
                                     detail: mcpDetailLine(for: server),
@@ -97,15 +97,16 @@ public struct AppsView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 4)
-            .padding(.bottom, 28)
+            .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
         .refreshable {
             await store.refreshApps()
         }
-        .navigationTitle("Apps")
+        .navigationTitle("Apps & MCP")
         #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         #endif
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -284,10 +285,6 @@ public struct AppsView: View {
             return (connection.status.displayLabel, .neutral)
         }
     }
-}
-
-public enum AppsRoute: Hashable, Sendable {
-    case mcpDetail(String)
 }
 
 // MARK: - Add MCP Server Sheet
