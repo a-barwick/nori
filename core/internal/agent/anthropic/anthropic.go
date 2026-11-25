@@ -28,11 +28,11 @@ const (
 // Client implements agent.Model using Anthropic's Messages API,
 // routed exclusively through llmguard.
 type Client struct {
-	Key       string
-	ModelName string
-	HTTP      *http.Client
-	Guard     *llmguard.Guard
-	UserID    string
+	Key              string
+	ModelName        string
+	HTTP             *http.Client
+	Guard            *llmguard.Guard
+	UserID           string
 	Meter            usage.Meter
 	TestURL          string
 	DefaultReasoning string
