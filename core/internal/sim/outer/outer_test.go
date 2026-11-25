@@ -398,8 +398,13 @@ func TestOuterCompactionFailurePauseAndRecovery(t *testing.T) {
 		return outer.BuildStructuredReply("Acknowledged: "+req.TelemetryInput, nil, state.Usage{}), nil, true
 	})
 
-	// Drive SoftCompactTurns (12) turns so coupled flush_and_compact triggers immediately.
-	for i := range state.SoftCompactTurns {
+	// Drive SoftCompactUserTurns (16) user turns so coupled flush_and_compact triggers on turn 16.
+	// Keep summary faults disabled during earlier 3-turn decoupled extractions so faults target flush_and_compact.
+	h.SummaryModels[0].SetFaultsEnabled(false)
+	for i := range state.SoftCompactUserTurns {
+		if i == state.SoftCompactUserTurns-1 {
+			h.SummaryModels[0].SetFaultsEnabled(true)
+		}
 		rig.clock.Advance(time.Second)
 		if _, err := h.AcceptInput(ctx, fmt.Sprintf("turn %d preference: always keep notes concise", i+1)); err != nil {
 			t.Fatalf("AcceptInput %d: %v", i, err)

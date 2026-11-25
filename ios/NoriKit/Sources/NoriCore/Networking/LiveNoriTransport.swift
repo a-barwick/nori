@@ -765,6 +765,39 @@ public actor LiveNoriTransport: NoriTransport {
         return resp.items
     }
 
+    public func createPermissionRule(
+        _ rule: PermissionRuleEditable,
+        requestID: String
+    ) async throws -> MutationReceipt<PermissionRule> {
+        struct RuleReq: Encodable {
+            let request_id: String
+            let expected_revision: Int
+            let value: PermissionRuleEditable
+        }
+        return try await mutate(
+            "/v1/permissions",
+            requestID: requestID,
+            body: RuleReq(request_id: requestID, expected_revision: 0, value: rule)
+        )
+    }
+
+    public func revokePermissionRule(
+        id: String,
+        expectedRevision: Int,
+        requestID: String
+    ) async throws -> MutationReceipt<PermissionRule> {
+        struct ActionReq: Encodable {
+            let request_id: String
+            let expected_revision: Int
+            let value: [String: String]
+        }
+        return try await mutate(
+            "/v1/permissions/\(id)/actions",
+            requestID: requestID,
+            body: ActionReq(request_id: requestID, expected_revision: expectedRevision, value: ["action": "revoke"])
+        )
+    }
+
     public func fetchPreferences() async throws -> Preferences {
         try await getJSON("/v1/preferences")
     }

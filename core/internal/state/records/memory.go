@@ -1324,6 +1324,21 @@ func (d *Database) MutateMemory(ctx context.Context, req state.MemoryMutationReq
 				CreatedAt:     now,
 				UpdatedAt:     now,
 			}
+			// Deduplicate repeat promotions of the same Daily Log entry so INV-MEM-05 holds
+			// even across distinct client request IDs.
+			if sourceInputID != "" && sourceInputID != "ui" {
+				for _, item := range existingCore {
+					if item.EffectiveProvenance() == state.ProvenanceUserExplicit && item.SourceInputID == sourceInputID && item.Text == text {
+						m.ID = item.ID
+						m.CreatedAt = item.CreatedAt
+						if req.Pinned == nil {
+							m.Pinned = item.Pinned
+						}
+						m.UpdatedAt = monotonicRevisionTime(now, item.UpdatedAt)
+						break
+					}
+				}
+			}
 			byID[m.ID] = m
 			demoted, err := d.commitCoreMutationWithDemotion(tx, origIDs, byID, m.ID, todayDate, demoteShards, now)
 			if err != nil {
@@ -1451,6 +1466,21 @@ func (d *Database) MutateMemory(ctx context.Context, req state.MemoryMutationReq
 				SourceText:    state.BoundedSource(item.Quote),
 				CreatedAt:     now,
 				UpdatedAt:     now,
+			}
+			// Deduplicate repeat promotions of the same Working Memory item so INV-MEM-05 holds
+			// even across distinct client request IDs.
+			if sourceInputID != "" && sourceInputID != "ui" {
+				for _, cm := range existingCore {
+					if cm.EffectiveProvenance() == state.ProvenanceUserExplicit && cm.SourceInputID == sourceInputID && cm.Text == text {
+						m.ID = cm.ID
+						m.CreatedAt = cm.CreatedAt
+						if req.Pinned == nil {
+							m.Pinned = cm.Pinned
+						}
+						m.UpdatedAt = monotonicRevisionTime(now, cm.UpdatedAt)
+						break
+					}
+				}
 			}
 			byID[m.ID] = m
 			demoted, err := d.commitCoreMutationWithDemotion(tx, origIDs, byID, m.ID, todayDate, shards, now)

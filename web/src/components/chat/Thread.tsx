@@ -2,13 +2,15 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, FileText } from "lucide-react";
+import { InteractionCard, type OnInteractionResolved } from "@/components/assistant/InteractionCard";
+import { DebugBlock } from "@/components/dev/DebugBlock";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
+import type { InlineInteractionEntry } from "@/lib/assistant/interactions";
 import { clock } from "@/lib/time";
 import { buildUnits, posOf, type Unit } from "@/lib/units";
 import type { ReadPosition, TextItem, Thread as Conversation } from "@/lib/types";
 import { cn, documentTitle, firstSentence } from "@/lib/utils";
-import { DebugBlock } from "@/components/dev/DebugBlock";
 import { Markdown } from "./Markdown";
 import { BubbleUnit } from "./Message";
 
@@ -120,6 +122,8 @@ export function Thread({
   onLoadOlder,
   onShown,
   readPosition,
+  interactions,
+  onInteractionResolved,
 }: {
   onShown?: (messageIDs: string[]) => void;
   readPosition?: ReadPosition;
@@ -132,6 +136,8 @@ export function Thread({
   status?: string;
   emptyMessage: string;
   onUnread: (count: number, jump: () => void) => void;
+  interactions?: InlineInteractionEntry[];
+  onInteractionResolved?: OnInteractionResolved;
 }) {
   const thread = conversation;
   const items = thread.items;
@@ -214,9 +220,11 @@ export function Thread({
     }
   }, [items]);
 
+  const interactionCount = interactions?.length ?? 0;
+
   useEffect(() => {
-    if (status && atBottom.current) requestAnimationFrame(() => scrollToBottom(true));
-  }, [status]);
+    if ((status || interactionCount > 0) && atBottom.current) requestAnimationFrame(() => scrollToBottom(true));
+  }, [status, interactionCount]);
 
   // Anything that grows the saved reply (fonts or document layout)
   // keeps you pinned to the bottom if that's where you were.
@@ -277,7 +285,7 @@ export function Thread({
             atBottom.current = false;
             onLoadOlder();
           }}>{loadingOlder ? "Loading older messages…" : "Load older messages"}</Button></div>}
-          {units.length === 0 && (
+          {units.length === 0 && !interactions?.length && (
             <div className="grid min-h-[calc(100dvh-320px)] place-items-center">
               <p className="arrive text-title text-ink-2" style={{ animationDelay: "250ms" }}>
                 {emptyMessage}
@@ -287,6 +295,19 @@ export function Thread({
           {units.map((u) => (
             <UnitView onOpenDocument={onOpenDocument} key={u.key} unit={u} />
           ))}
+          {!!interactions?.length && (
+            <section aria-label="Needs your approval or answer" data-inline-interactions className="mt-4 space-y-3">
+              {interactions.map((entry) => (
+                <InteractionCard
+                  key={entry.interaction.id}
+                  interaction={entry.interaction}
+                  inline
+                  rememberedRule={entry.rememberedRule}
+                  onResolved={onInteractionResolved}
+                />
+              ))}
+            </section>
+          )}
           {status && <WorkLine label={status} onDetails={onStatusDetails} />}
         </div>
         <div className="sr-only">{announcement}</div>

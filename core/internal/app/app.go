@@ -14,6 +14,7 @@ import (
 	"nori/internal/api"
 	"nori/internal/connections"
 	"nori/internal/conversation"
+	"nori/internal/permissions"
 	"nori/internal/platform"
 	"nori/internal/scheduler"
 	"nori/internal/settings"
@@ -91,6 +92,9 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		store.Close()
 		return nil, false, err
 	}
+	if services.Permissions != nil && services.Permissions.UserSends == "" {
+		services.Permissions.UserSends = "ask"
+	}
 	var collapsed bool
 	if !opts.skipCollapseDuplicates {
 		// One-time repair of duplicate connections to one account, left by sign-ins made before they were merged.
@@ -150,9 +154,10 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		Store:  store,
 		UserID: user.ID,
 		Executor: &task.Executor{
-			Adapters:    services.Adapters,
-			Connections: services.Connections,
-			Permissions: services.Permissions,
+			Adapters:     services.Adapters,
+			Connections:  services.Connections,
+			Permissions:  services.Permissions,
+			AutoReviewer: newAutoReviewer(outer, cfg),
 		},
 	}
 
@@ -598,6 +603,41 @@ func AssistantFeatures(conns *connections.Service, disableBackgroundTasks bool) 
 		"memory":       true,
 		"mcp":          true,
 	}
+}
+
+// NewOuterModelAutoReviewer wraps an outer conversation.ReplyModel behind deterministic
+// action-boundary guardrails. Deterministic blocks/escalations always run first and never
+// invoke the model; model errors fail safe to "ask".
+func NewOuterModelAutoReviewer(model conversation.ReplyModel) permissions.AutoReviewer {
+	if model == nil {
+		return permissions.DeterministicAutoReviewer{}
+	}
+	return &permissions.ModelAutoReviewer{
+		Review: func(ctx context.Context, prompt string) (string, error) {
+			reviewCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			msg, err := json.Marshal(map[string]string{"role": "user", "content": prompt})
+			if err != nil {
+				return "", err
+			}
+			reply, err := model.Respond(reviewCtx, conversation.ReplyRequest{
+				Messages:       []json.RawMessage{msg},
+				NoDispatch:     true,
+				TelemetryInput: "action-boundary auto-review",
+			})
+			if err != nil {
+				return "", err
+			}
+			return reply.Text, nil
+		},
+	}
+}
+
+func newAutoReviewer(outer conversation.ReplyModel, cfg settings.Settings) permissions.AutoReviewer {
+	if outer != nil && cfg.Models.TestURL == "" && (cfg.Models.UsesGateway() || cfg.Models.OpenAIKey != "") {
+		return NewOuterModelAutoReviewer(outer)
+	}
+	return permissions.DeterministicAutoReviewer{}
 }
 
 var _ api.Operations = (*App)(nil)

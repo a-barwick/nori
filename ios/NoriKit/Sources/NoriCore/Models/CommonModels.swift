@@ -537,9 +537,26 @@ public struct Preferences: Sendable, Codable, Hashable {
 }
 
 public struct PermissionRule: Sendable, Codable, Hashable, Identifiable {
-    public enum RuleEffect: String, Sendable, Codable, Hashable {
+    public enum RuleEffect: String, Sendable, Codable, Hashable, CaseIterable {
         case allow
+        case ask
         case deny
+
+        public var displayLabel: String {
+            switch self {
+            case .allow: return "Allow automatically"
+            case .ask: return "Ask first"
+            case .deny: return "Never allow"
+            }
+        }
+
+        public var badgeLabel: String {
+            switch self {
+            case .allow: return "Allowed"
+            case .ask: return "Ask first"
+            case .deny: return "Never"
+            }
+        }
     }
 
     public var id: String
@@ -612,5 +629,59 @@ public struct PermissionRule: Sendable, Codable, Hashable, Identifiable {
         self.updatedAt = updatedAt
         self.goalID = goalID
         self.summary = summary
+    }
+}
+
+public struct PermissionRuleEditable: Sendable, Codable, Hashable {
+    public var effect: PermissionRule.RuleEffect
+    public var toolIDs: [String]
+    public var connectionIDs: [String]
+    public var resourceIDs: [String]
+    public var actionClasses: [Effect]
+    public var recipients: [String]?
+    public var automationID: String?
+    public var expiresAt: String?
+    public var maxOperations: Int?
+    public var title: String?
+    public var goalID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case effect
+        case toolIDs = "tool_ids"
+        case connectionIDs = "connection_ids"
+        case resourceIDs = "resource_ids"
+        case actionClasses = "action_classes"
+        case recipients
+        case automationID = "automation_id"
+        case expiresAt = "expires_at"
+        case maxOperations = "max_operations"
+        case title
+        case goalID = "goal_id"
+    }
+
+    public init(
+        effect: PermissionRule.RuleEffect,
+        toolIDs: [String] = ["*"],
+        connectionIDs: [String] = ["*"],
+        resourceIDs: [String] = ["*"],
+        actionClasses: [Effect],
+        recipients: [String]? = nil,
+        automationID: String? = nil,
+        expiresAt: String? = nil,
+        maxOperations: Int? = nil,
+        title: String? = nil,
+        goalID: String? = nil
+    ) {
+        self.effect = effect
+        self.toolIDs = toolIDs
+        self.connectionIDs = connectionIDs
+        self.resourceIDs = resourceIDs
+        self.actionClasses = actionClasses
+        self.recipients = recipients
+        self.automationID = automationID
+        self.expiresAt = expiresAt
+        self.maxOperations = maxOperations
+        self.title = title
+        self.goalID = goalID
     }
 }

@@ -6,6 +6,9 @@ import { Activity, RefreshCw } from "lucide-react";
 import { Thread } from "@/components/chat/Thread";
 import { IconButton } from "@/components/ui/primitives";
 import { useAssistant } from "@/lib/assistant/context";
+import { mergeInlineInteractions, type InlineInteractionEntry } from "@/lib/assistant/interactions";
+import { usePendingInteractions } from "@/lib/assistant/sources";
+import type { Interaction } from "@/lib/contracts/assistant";
 import { useWide } from "@/lib/hooks";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import type { Message, Part, Thread as Conversation, TextItem } from "@/lib/types";
@@ -42,6 +45,18 @@ export function ChatScreen() {
     loading,
     error,
   } = runtime;
+  const pendingInteractions = usePendingInteractions();
+  const [sessionResolved, setSessionResolved] = useState<Record<string, InlineInteractionEntry>>({});
+  const handleInteractionResolved = useCallback((resolved: Interaction, meta?: { rememberRule?: boolean }) => {
+    setSessionResolved((current) => ({
+      ...current,
+      [resolved.id]: { interaction: resolved, rememberedRule: meta?.rememberRule },
+    }));
+  }, []);
+  const inlineInteractions = useMemo(
+    () => mergeInlineInteractions(pendingInteractions.items ?? [], sessionResolved),
+    [pendingInteractions.items, sessionResolved],
+  );
   const wide = useWide();
   const [document, setDocument] = useState<{ body: string; at: number } | null>(null);
   const [dockOpen, setDockOpen] = useState(false);
@@ -154,6 +169,8 @@ export function ChatScreen() {
             }
             onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
             status={work}
+            interactions={inlineInteractions}
+            onInteractionResolved={handleInteractionResolved}
             onUnread={onUnread}
             onShown={runtime.markShown}
             readPosition={session?.read_position}

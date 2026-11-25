@@ -57,9 +57,9 @@
       "action": "create_rule",
       "params": {
         "title": "Require explicit approval before any email_send or issue_update mutation",
-        "effect": "deny",
+        "effect": "ask",
         "tool_names": ["email_send", "issue_update"],
-        "action_classes": ["external_write"]
+        "action_classes": ["reversible_write", "sensitive_send", "unknown"]
       },
       "tags": ["permission_ui", "restraint"]
     },

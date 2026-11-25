@@ -75,7 +75,7 @@ type dreamPlan struct {
 }
 
 // planDream evaluates the AutoDream triple gate:
-// 1) Conversation idle and FlushedThrough == Through
+// 1) Conversation idle and (!summary.Applies(from) || EffectiveFlushedThrough() >= Through)
 // 2) At least DreamMinInterval (12h) since LastDreamAt (or first dream)
 // 3) At least DreamMinLogEntries (10) user-sourced Daily Log entries since DreamThrough
 // 4) Quiet for IdleDreamDelay (15m) after latestTurnAt
@@ -98,9 +98,6 @@ func (r *Runner) planDream(
 	if summary.From.Equal(from) {
 		lastDreamAt = summary.LastDreamAt
 		dreamThrough = summary.DreamThrough
-	}
-	if !lastDreamAt.IsZero() && now.Sub(lastDreamAt) < state.DreamMinInterval {
-		return dreamPlan{}, nil
 	}
 
 	logs, err := r.tasks.Store.MemoryLogs(ctx, "", dreamLogReadLimit)
@@ -129,9 +126,15 @@ func (r *Runner) planDream(
 	if latestTurnAt.IsZero() {
 		latestTurnAt = control.LatestAt
 	}
-	quietAt := latestTurnAt.Add(state.IdleDreamDelay)
-	if !latestTurnAt.IsZero() && now.Before(quietAt) {
-		return dreamPlan{eligible: true, ready: false, wakeAt: quietAt}, nil
+	var dueAt time.Time
+	if !latestTurnAt.IsZero() {
+		dueAt = latestTurnAt.Add(state.IdleDreamDelay)
+	}
+	if !lastDreamAt.IsZero() {
+		dueAt = maxTime(dueAt, lastDreamAt.Add(state.DreamMinInterval))
+	}
+	if !dueAt.IsZero() && now.Before(dueAt) {
+		return dreamPlan{eligible: true, ready: false, wakeAt: dueAt}, nil
 	}
 	return dreamPlan{eligible: true, ready: true, wakeAt: now}, nil
 }
