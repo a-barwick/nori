@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"nori/internal/llmguard"
 )
 
 const (
@@ -28,7 +30,7 @@ func isRetryableTransportError(ctx context.Context, err error) bool {
 	if err == nil || ctx.Err() != nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || llmguard.IsGuardError(err) {
 		return false
 	}
 	var urlErr *url.Error
@@ -156,7 +158,7 @@ func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request
 		if err != nil {
 			return nil, err
 		}
-		res, err := c.HTTP.Do(req)
+		res, err := c.httpClient().Do(req)
 		if err != nil {
 			if attempt >= retries || !isRetryableTransportError(ctx, err) {
 				return nil, err

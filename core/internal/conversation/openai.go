@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/contextview"
+	"nori/internal/llmguard"
 	"nori/internal/modelgateway"
 	"nori/internal/observability"
 	"nori/internal/prompts"
@@ -36,6 +37,8 @@ type OpenAIModel struct {
 	key        string
 	gatewayURL string
 	Client     *http.Client
+	Guard      *llmguard.Guard
+	UserID     string
 	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
 	TestURL string
 	// ReasoningEffort overrides the direct OpenAI reasoning_effort (defaults to "low").
@@ -48,6 +51,22 @@ type OpenAIModel struct {
 	RetryBaseDelay time.Duration
 	MaxRetryAfter  time.Duration
 	Sleep          func(context.Context, time.Duration) error
+}
+
+func (m *OpenAIModel) guard() *llmguard.Guard {
+	if m != nil && m.Guard != nil {
+		return m.Guard
+	}
+	return llmguard.Default()
+}
+
+func (m *OpenAIModel) httpClient() *http.Client {
+	return m.guard().WrapClient(m.Client, 75*time.Second, llmguard.CallMeta{
+		UserID:   m.UserID,
+		Scope:    llmguard.ScopeOuter,
+		Provider: m.provider(),
+		Model:    m.name,
+	})
 }
 
 func (m *OpenAIModel) now() time.Time {
@@ -65,7 +84,13 @@ func (m *OpenAIModel) newID() string {
 }
 
 func NewOpenAIModel(key, name string) *OpenAIModel {
-	return &OpenAIModel{name: name, key: key, Client: &http.Client{Timeout: 75 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	g := llmguard.New(llmguard.DefaultConfig())
+	return &OpenAIModel{
+		name:   name,
+		key:    key,
+		Guard:  g,
+		Client: g.Client(75*time.Second, llmguard.CallMeta{Scope: llmguard.ScopeOuter, Model: name}),
+	}
 }
 
 func NewGatewayModel(baseURL, key, name string) *OpenAIModel {
@@ -122,7 +147,18 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	} else if m.TestURL != "" {
 		endpoint = strings.TrimRight(m.TestURL, "/") + "/v1/chat/completions"
 	}
-	if _, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body)); err != nil {
+	scope := llmguard.MetaFromContext(ctx).Scope
+	if scope == "" {
+		scope = llmguard.ScopeOuter
+	}
+	reqCtx := llmguard.WithMeta(ctx, llmguard.CallMeta{
+		UserID:          m.UserID,
+		Scope:           scope,
+		Provider:        m.provider(),
+		Model:           m.name,
+		MaxOutputTokens: 4096,
+	})
+	if _, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body)); err != nil {
 		return reply, fmt.Errorf("invalid model request")
 	}
 	// Persist an unknown-cost attempt before provider I/O. A crash or failed
@@ -136,7 +172,7 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	}
 	reply.Usage.RequestStatus = "unknown"
 	requestStarted = m.now()
-	res, err := m.doWithRetry(ctx, endpoint, body)
+	res, err := m.doWithRetry(reqCtx, endpoint, body)
 	if err != nil {
 		if ctx.Err() != nil {
 			return reply, ctx.Err()
@@ -369,6 +405,7 @@ func (m *OpenAIModel) observeCall(ctx context.Context, span trace.Span, requestS
 		span.SetAttributes(attribute.Int64("llm.token_count.total", *reply.Usage.TotalTokens))
 	}
 	if reply.Usage.CostUSD != nil {
+		m.guard().RecordActualCost(*reply.Usage.CostUSD)
 		span.SetAttributes(attribute.Float64("nori.cost.usd", *reply.Usage.CostUSD), attribute.Float64("llm.cost.total", *reply.Usage.CostUSD))
 	}
 	if a, ok := observability.ContentAttribute("output.value", reply.Text); ok {

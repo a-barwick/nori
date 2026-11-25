@@ -44,6 +44,7 @@ type fakeReplyModel struct {
 	mu  sync.Mutex
 	seq int
 	now func() time.Time
+	err error
 }
 
 func (*fakeReplyModel) Name() string { return "fake-reply-model" }
@@ -52,7 +53,11 @@ func (m *fakeReplyModel) Respond(_ context.Context, req ReplyRequest) (Reply, er
 	m.mu.Lock()
 	m.seq++
 	id := fmt.Sprintf("usage-reply-%d", m.seq)
+	err := m.err
 	m.mu.Unlock()
+	if err != nil {
+		return Reply{Usage: state.Usage{ID: id, Model: "fake-reply-model"}}, err
+	}
 	text := "Noted: " + req.TelemetryInput
 	msg, _ := json.Marshal(map[string]any{"role": "assistant", "content": text})
 	return Reply{
@@ -133,6 +138,7 @@ type idleTestHarness struct {
 	clk    *fakeClock
 	store  *records.Database
 	runner *Runner
+	model  *fakeReplyModel
 	sum    *fakeSummaryModel
 	seq    int
 }
@@ -151,8 +157,9 @@ func newIdleTestHarness(t *testing.T, start time.Time) *idleTestHarness {
 	db.Now = clk.Now
 	store := state.Compose(db, memstore.NewArtifacts())
 	sum := &fakeSummaryModel{}
+	model := &fakeReplyModel{now: clk.Now}
 	tasks := &Tasks{Store: store, Now: clk.Now}
-	r := New(&fakeReplyModel{now: clk.Now}, nil, sum, tasks)
+	r := New(model, nil, sum, tasks)
 	r.Now = clk.Now
 	r.Clock = Clock{Now: clk.Now, Location: time.UTC}
 	r.SyncWork = true
@@ -161,6 +168,7 @@ func newIdleTestHarness(t *testing.T, start time.Time) *idleTestHarness {
 		clk:    clk,
 		store:  db,
 		runner: r,
+		model:  model,
 		sum:    sum,
 	}
 }
@@ -1496,5 +1504,94 @@ func TestAutoDream_UncompactedThreadMultiDayConsolidationAnd12hGate(t *testing.T
 	}
 	if dreamCalls != 2 {
 		t.Fatalf("expected second AutoDream call after 12h interval, got %d", dreamCalls)
+	}
+}
+
+func TestCompaction_ParkedWhenUserRoutingPendingAfterErrorTurn(t *testing.T) {
+	ctx := context.Background()
+	start := time.Date(2026, 11, 25, 16, 0, 0, 0, time.UTC)
+	h := newIdleTestHarness(t, start)
+
+	// Build two normal turns so idle extraction is eligible after IdleExtractDelay.
+	_, _ = h.sendTurn(ctx, "Remember my favorite coffee roaster is Heart.")
+	h.clk.Advance(10 * time.Second)
+	_, _ = h.sendTurn(ctx, "My flight is next Tuesday at 08:00.")
+
+	// Simulate an outer model failure on turn 3: CompleteTurn consumes the inbox
+	// (Pending() == false, Active == "") while intentionally leaving UserRouted < UserReceived
+	// (UserRoutingPending() == true) per Nori's replay-on-next-user-input contract.
+	h.clk.Advance(10 * time.Second)
+	h.model.err = errors.New("task command requires a canonical task UUID")
+	failID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("failed-turn-routing-pending")).String()
+	if _, err := h.runner.HandleInput(ctx, Input{ID: failID, Message: "Update my task"}); err != nil {
+		t.Fatalf("HandleInput failed turn: %v", err)
+	}
+	if err := h.runner.Process(ctx); err != nil {
+		t.Fatalf("Process failed turn: %v", err)
+	}
+	h.model.err = nil
+
+	control, _, err := h.store.ConversationStatus(ctx)
+	if err != nil {
+		t.Fatalf("ConversationStatus: %v", err)
+	}
+	if control.Pending() || control.Active != "" {
+		t.Fatalf("expected consumed idle control after failed turn, got pending=%v active=%q", control.Pending(), control.Active)
+	}
+	routingPending, err := h.store.UserRoutingPending(ctx)
+	if err != nil || !routingPending {
+		t.Fatalf("expected UserRoutingPending=true after error turn, got pending=%v err=%v", routingPending, err)
+	}
+
+	// Advance past IdleExtractDelay so extraction would otherwise be due immediately.
+	h.clk.Advance(state.IdleExtractDelay + time.Minute)
+
+	sumCalls := 0
+	h.sum.handler = func(_ context.Context, _ int, _ map[string]any, _ agent.Request) (agent.Response, error) {
+		sumCalls++
+		return agent.Response{}, errors.New("summarizer must not be called while UserRoutingPending is true")
+	}
+
+	// NextConversationWake MUST park (return zero), never spin the worker lane.
+	wakeAt, err := h.runner.NextConversationWake(ctx)
+	if err != nil {
+		t.Fatalf("NextConversationWake: %v", err)
+	}
+	if !wakeAt.IsZero() {
+		t.Fatalf("expected zero NextConversationWake while UserRoutingPending=true, got %v", wakeAt)
+	}
+
+	// Even if Process or compact or maybeDream is called directly, ZERO model calls may fire.
+	for i := range 5 {
+		if err := h.runner.Process(ctx); err != nil {
+			t.Fatalf("Process iter %d: %v", i, err)
+		}
+		h.runner.compact(ctx)
+		h.runner.maybeDream(ctx)
+	}
+	if sumCalls != 0 {
+		t.Fatalf("expected 0 summarizer calls while UserRoutingPending=true, got %d", sumCalls)
+	}
+
+	// Once a subsequent user turn succeeds, UserRoutingPending clears and Process immediately
+	// runs the queued idle extraction cleanly.
+	h.sum.handler = func(_ context.Context, _ int, _ map[string]any, _ agent.Request) (agent.Response, error) {
+		sumCalls++
+		return agent.Response{Calls: []transcript.ToolCall{{
+			Name: "flush_and_compact",
+			Args: map[string]any{"core_upserts": []any{}, "daily_log_entries": []any{}, "summary_items": []any{}, "gist": ""},
+		}}}, nil
+	}
+	h.clk.Advance(10 * time.Second)
+	_, _ = h.sendTurn(ctx, "All good, carry on.")
+	if sumCalls != 1 {
+		t.Fatalf("expected 1 extraction call after UserRoutingPending cleared, got %d", sumCalls)
+	}
+	wakeAfter, err := h.runner.NextConversationWake(ctx)
+	if err != nil {
+		t.Fatalf("NextConversationWake after recovery: %v", err)
+	}
+	if !wakeAfter.IsZero() {
+		t.Fatalf("expected zero NextConversationWake once extraction completed, got %v", wakeAfter)
 	}
 }

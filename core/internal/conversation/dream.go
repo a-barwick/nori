@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"nori/internal/agent"
+	"nori/internal/llmguard"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
@@ -145,11 +146,11 @@ func (r *Runner) maybeDream(ctx context.Context) {
 	if r.summarizer == nil || r.now().Before(r.dreamAfter) {
 		return
 	}
-	if pending, err := r.tasks.Store.UserRoutingPending(ctx); err != nil || pending {
+	control, _, err := r.tasks.Store.ConversationStatus(ctx)
+	if err != nil {
 		return
 	}
-	control, _, err := r.tasks.Store.ConversationStatus(ctx)
-	if err != nil || control.Pending() || control.Active != "" {
+	if blocked, err := r.backgroundIdleBlocked(ctx, control); err != nil || blocked {
 		return
 	}
 	summary, err := r.tasks.Store.ConversationSummary(ctx)
@@ -353,7 +354,7 @@ func (r *Runner) dreamConsolidate(ctx context.Context, manual bool) (state.Conve
 	}
 	promptBytes, _ := json.Marshal(promptPayload)
 
-	modelCtx, modelCancel := context.WithTimeout(runCtx, 2*time.Minute)
+	modelCtx, modelCancel := context.WithTimeout(llmguard.WithScope(runCtx, llmguard.ScopeDream), 2*time.Minute)
 	defer modelCancel()
 	output, err := r.callDreamConsolidate(modelCtx, string(promptBytes))
 	if err != nil {

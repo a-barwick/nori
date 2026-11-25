@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"nori/internal/agent"
+	"nori/internal/llmguard"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
@@ -136,6 +137,13 @@ func (r *Runner) contextStart(ctx context.Context) (time.Time, error) {
 // FlushedThrough or ExtractedThrough.
 func (r *Runner) compact(ctx context.Context) {
 	if r.summarizer == nil {
+		return
+	}
+	control, _, err := r.tasks.Store.ConversationStatus(ctx)
+	if err != nil {
+		return
+	}
+	if blocked, err := r.backgroundIdleBlocked(ctx, control); err != nil || blocked {
 		return
 	}
 	now := r.now()
@@ -415,8 +423,8 @@ func (r *Runner) flushAndCompact(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if control.Pending() || control.Active != "" {
-		return nil
+	if blocked, err := r.backgroundIdleBlocked(ctx, control); err != nil || blocked {
+		return err
 	}
 	summary, err := r.tasks.Store.ConversationSummary(ctx)
 	if err != nil {
@@ -508,7 +516,7 @@ func (r *Runner) flushAndCompact(ctx context.Context) error {
 	}
 	promptBytes, _ := json.Marshal(promptPayload)
 
-	modelCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	modelCtx, cancel := context.WithTimeout(llmguard.WithScope(ctx, llmguard.ScopeCompaction), 2*time.Minute)
 	defer cancel()
 	output, callErr := r.callFlushAndCompact(modelCtx, string(promptBytes))
 	if callErr != nil {

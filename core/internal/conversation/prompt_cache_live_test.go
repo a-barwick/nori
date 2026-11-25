@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"nori/internal/llmguard"
 	"nori/internal/state"
 )
 
@@ -20,6 +21,7 @@ func TestLivePromptCacheHits(t *testing.T) {
 		t.Skip("set NORI_LIVE_CACHE_TEST=1 and OPENAI_API_KEY to run against OpenAI")
 	}
 	model := NewOpenAIModel(key, openAIModelName)
+	model.Guard = llmguard.New(llmguard.Config{AllowLiveInTests: true})
 	memories := []state.Memory{}
 	for i := 0; i < 25; i++ {
 		memories = append(memories, state.Memory{

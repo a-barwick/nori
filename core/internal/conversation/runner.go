@@ -604,6 +604,22 @@ func (r *Runner) EnsureIntroduction(ctx context.Context) error {
 	return r.tasks.Store.EnsureConversationIntroduction(ctx, prompts.Introduction)
 }
 
+// backgroundIdleBlocked reports whether out-of-band background maintenance
+// (compaction, idle extraction, AutoDream) must stay parked because user input
+// or routing work is still pending or active. Shared by NextConversationWake,
+// compact, flushAndCompact, extractIdleMemory, and maybeDream so wake planning
+// and execution never disagree.
+func (r *Runner) backgroundIdleBlocked(ctx context.Context, control state.ConversationControl) (bool, error) {
+	if control.Pending() || control.Active != "" {
+		return true, nil
+	}
+	pending, err := r.tasks.Store.UserRoutingPending(ctx)
+	if err != nil {
+		return true, err
+	}
+	return pending, nil
+}
+
 // NextConversationWake returns the earliest deferred idle wake timestamp for
 // out-of-band flush/compaction or AutoDream consolidation, or zero when idle.
 func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
@@ -611,7 +627,11 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 		return time.Time{}, nil
 	}
 	control, _, err := r.tasks.Store.ConversationStatus(ctx)
-	if err != nil || control.Pending() || control.Active != "" {
+	if err != nil {
+		return time.Time{}, err
+	}
+	blocked, err := r.backgroundIdleBlocked(ctx, control)
+	if err != nil || blocked {
 		return time.Time{}, err
 	}
 	summary, err := r.tasks.Store.ConversationSummary(ctx)

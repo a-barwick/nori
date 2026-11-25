@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"nori/internal/llmguard"
 	"nori/internal/state"
 )
 
@@ -136,8 +137,8 @@ func (r *Runner) extractIdleMemory(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if control.Pending() || control.Active != "" {
-		return nil
+	if blocked, err := r.backgroundIdleBlocked(ctx, control); err != nil || blocked {
+		return err
 	}
 	summary, err := r.tasks.Store.ConversationSummary(ctx)
 	if err != nil {
@@ -189,7 +190,7 @@ func (r *Runner) extractIdleMemory(ctx context.Context) error {
 	}
 	promptBytes, _ := json.Marshal(promptPayload)
 
-	modelCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	modelCtx, cancel := context.WithTimeout(llmguard.WithScope(ctx, llmguard.ScopeExtract), 2*time.Minute)
 	defer cancel()
 	output, callErr := r.callFlushAndCompact(modelCtx, string(promptBytes))
 	if callErr != nil {

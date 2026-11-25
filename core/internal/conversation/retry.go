@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"nori/internal/llmguard"
 )
 
 const (
@@ -29,7 +31,7 @@ func isRetryableTransportError(ctx context.Context, err error) bool {
 	if err == nil || ctx.Err() != nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || llmguard.IsGuardError(err) {
 		return false
 	}
 	var urlErr *url.Error
@@ -156,7 +158,7 @@ func (m *OpenAIModel) doWithRetry(ctx context.Context, endpoint string, body []b
 	retries := m.maxRetries()
 	baseDelay := m.retryBaseDelay()
 	maxDelay := m.maxRetryAfter()
-	client := m.Client
+	client := m.httpClient()
 
 	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))

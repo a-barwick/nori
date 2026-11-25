@@ -14,6 +14,7 @@ import (
 	"nori/internal/api"
 	"nori/internal/connections"
 	"nori/internal/conversation"
+	"nori/internal/llmguard"
 	"nori/internal/permissions"
 	"nori/internal/platform"
 	"nori/internal/scheduler"
@@ -72,7 +73,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	}
 	waker = wake.ForUser(waker, user.ID)
 	model := cfg.Models.Outer
-	outer := platform.ReplyModel(cfg.Models)
+	outer := platform.ReplyModelForUser(cfg.Models, user.ID)
 	location, err := time.LoadLocation(cfg.TimeZone)
 	if err != nil {
 		store.Close()
@@ -125,17 +126,17 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	if !summaryModels.UsesGateway() && !summaryModels.UsesOpenAIForTasks() {
 		summaryModels.Inner = settings.DefaultOpenRouterInnerModel
 	}
-	summarizer := platform.TaskModel(summaryModels, store)
+	summarizer := platform.TaskModelForUser(summaryModels, store, user.ID)
 	var classifier conversation.IntentClassifier
 	if !cfg.Features.DisableJev {
-		classifier = conversation.NewJevClassifier(cfg.Models.JevKey)
+		classifier = platform.ClassifierForUser(cfg.Models, user.ID)
 	}
 	runner := conversation.New(outer, classifier, summarizer, tasks)
 	runner.UserFacts = userFacts
 	runner.Profile = platform.Profile(user, services.Connections)
 	runner.Clock = conversation.Clock{Location: location}
 
-	taskService := agent.New(store, platform.TaskModel(cfg.Models, store))
+	taskService := agent.New(store, platform.TaskModelForUser(cfg.Models, store, user.ID))
 	taskService.Capabilities = agent.Capabilities{SearchKey: cfg.SearchKey, Location: location}
 	taskService.UserFacts = userFacts
 	taskService.Extensions = services.Tools
@@ -615,7 +616,7 @@ func NewOuterModelAutoReviewer(model conversation.ReplyModel) permissions.AutoRe
 	}
 	return &permissions.ModelAutoReviewer{
 		Review: func(ctx context.Context, prompt string) (string, error) {
-			reviewCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			reviewCtx, cancel := context.WithTimeout(llmguard.WithScope(ctx, llmguard.ScopeReview), 15*time.Second)
 			defer cancel()
 			msg, err := json.Marshal(map[string]string{"role": "user", "content": prompt})
 			if err != nil {

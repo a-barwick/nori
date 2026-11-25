@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"nori/internal/llmguard"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -27,9 +28,27 @@ const (
 type JevClassifier struct {
 	key    string
 	Client *http.Client
+	Guard  *llmguard.Guard
+	UserID string
 	// Optional determinism hooks. Nil defaults to time.Now and uuid.NewString.
 	Now   func() time.Time
 	NewID func() string
+}
+
+func (c *JevClassifier) guard() *llmguard.Guard {
+	if c != nil && c.Guard != nil {
+		return c.Guard
+	}
+	return llmguard.Default()
+}
+
+func (c *JevClassifier) httpClient() *http.Client {
+	return c.guard().WrapClient(c.Client, 10*time.Second, llmguard.CallMeta{
+		UserID:   c.UserID,
+		Scope:    llmguard.ScopeClassify,
+		Provider: jevProvider,
+		Model:    jevModel,
+	})
 }
 
 func (c *JevClassifier) now() time.Time {
@@ -47,7 +66,12 @@ func (c *JevClassifier) newID() string {
 }
 
 func NewJevClassifier(key string) *JevClassifier {
-	return &JevClassifier{key: key, Client: &http.Client{Timeout: 10 * time.Second}}
+	g := llmguard.New(llmguard.DefaultConfig())
+	return &JevClassifier{
+		key:    key,
+		Guard:  g,
+		Client: g.Client(10*time.Second, llmguard.CallMeta{Scope: llmguard.ScopeClassify, Provider: jevProvider, Model: jevModel}),
+	}
 }
 
 func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (classification Classification, err error) {
@@ -126,7 +150,13 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 	if err != nil {
 		return classification, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, jevURL, bytes.NewReader(body))
+	reqCtx := llmguard.WithMeta(ctx, llmguard.CallMeta{
+		UserID:   c.UserID,
+		Scope:    llmguard.ScopeClassify,
+		Provider: jevProvider,
+		Model:    jevModel,
+	})
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, jevURL, bytes.NewReader(body))
 	if err != nil {
 		return classification, err
 	}
@@ -143,7 +173,7 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 	}
 	classification.Usage.RequestStatus = "unknown"
 	requestStarted = c.now()
-	res, err := c.Client.Do(req)
+	res, err := c.httpClient().Do(req)
 	if err != nil {
 		return classification, fmt.Errorf("classification unavailable")
 	}

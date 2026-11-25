@@ -14,6 +14,7 @@ import (
 
 	"nori/internal/agent"
 	"nori/internal/contextview"
+	"nori/internal/llmguard"
 	"nori/internal/modelgateway"
 	"nori/internal/settings"
 	"nori/internal/transcript"
@@ -34,6 +35,8 @@ type Client struct {
 	Key        string
 	ModelName  string
 	HTTP       *http.Client
+	Guard      *llmguard.Guard
+	UserID     string
 	Meter      usage.Meter
 	gatewayURL string
 	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
@@ -48,15 +51,30 @@ type Client struct {
 	Sleep          func(context.Context, time.Duration) error
 }
 
+func (c *Client) guard() *llmguard.Guard {
+	if c != nil && c.Guard != nil {
+		return c.Guard
+	}
+	return llmguard.Default()
+}
+
+func (c *Client) httpClient() *http.Client {
+	return c.guard().WrapClient(c.HTTP, 2*time.Minute, llmguard.CallMeta{
+		UserID:   c.UserID,
+		Scope:    llmguard.ScopeTask,
+		Provider: c.Provider(),
+		Model:    c.ModelName,
+	})
+}
+
 func New(key, model string, meter usage.Meter) *Client {
+	g := llmguard.New(llmguard.DefaultConfig())
 	return &Client{
 		Key:       key,
 		Meter:     meter,
 		ModelName: model,
-		HTTP: &http.Client{
-			Timeout:       2 * time.Minute,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
+		Guard:     g,
+		HTTP:      g.Client(2*time.Minute, llmguard.CallMeta{Scope: llmguard.ScopeTask, Model: model}),
 	}
 }
 
@@ -175,8 +193,19 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if err := contextview.Check(len(body)); err != nil {
 		return out, err
 	}
+	scope := llmguard.MetaFromContext(ctx).Scope
+	if scope == "" {
+		scope = llmguard.ScopeTask
+	}
+	reqCtx := llmguard.WithMeta(ctx, llmguard.CallMeta{
+		UserID:          c.UserID,
+		Scope:           scope,
+		Provider:        c.Provider(),
+		Model:           c.ModelName,
+		MaxOutputTokens: req.MaxOutputTokens,
+	})
 	buildReq := func() (*http.Request, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -195,7 +224,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
 	// Once handed to HTTP, a transport failure cannot prove it was not billed.
 	out.NotSent = false
-	res, err := c.doWithRetry(ctx, buildReq)
+	res, err := c.doWithRetry(reqCtx, buildReq)
 	if err != nil {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
@@ -224,6 +253,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, errors.New("task model returned an unreadable response")
 	}
 	out.Cost, out.CostKnown = c.recordCost(&record, response.Model, response.Tier, response.Usage)
+	if out.CostKnown && out.Cost > 0 {
+		c.guard().RecordActualCost(out.Cost)
+	}
 	if u := response.Usage; u != nil && u.Input != nil && u.Output != nil && u.Total != nil {
 		nonReasoning := max(*u.Output-u.OutputDetails.Reasoning, 0)
 		out.Usage = &agent.Usage{
