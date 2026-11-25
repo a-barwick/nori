@@ -6,7 +6,8 @@ Native SwiftUI iOS client for Nori (iOS 18+, Swift 6, zero external dependencies
 
 - `ios/Nori.xcodeproj` — Xcode app project targeting iOS 18+ (`com.nori.ios`).
 - `ios/NoriApp/` — Thin `@main` SwiftUI app shell, `Info.plist` (`nori://` OAuth & navigation deep links, local networking ATS), and `Assets.xcassets` (AccentColor `#5000FF` + onigiri AppIcon).
-- `ios/NoriKit/` — Local Swift Package containing `NoriCore` (models, live + demo transports, SSE, `NoriStore`), `NoriDesign` (Nori tokens, animated `NoriMark`, reusable primitives), and `NoriFeatures` (Chat, Work, Apps, Library, More, Memory, Automations, Goals, Settings).
+- `ios/NoriKit/` — Local Swift Package containing `NoriCore` (models, live + demo transports, SSE, `NoriStore`), `NoriDesign` (adaptive Light/Dark tokens, `NoriAppearance`, animated `NoriMark`, reusable primitives), and `NoriFeatures` (Chat, Work, Apps, Library, More, Memory, Automations, Goals, Settings).
+- **Design System:** See [`docs/design-system.md`](../docs/design-system.md) (base tokens & principles) and [`ios/DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) (iOS SwiftUI APIs, Dark Mode, Liquid Glass, and simulator preview workflow).
 
 ## 1. Open and Run in Xcode
 

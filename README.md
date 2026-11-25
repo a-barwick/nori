@@ -27,3 +27,8 @@
 - **Memory you can actually see.** Pin preferences, browse daily episodic logs, and watch working memory stay fresh automatically — no mystery black-box recall.
 - **Plug in your tools.** Connect MCP servers, set recurring automations and goals, and keep every brief, table, and artifact saved in your library.
 - **Everywhere you are.** Native SwiftUI iOS app, crisp web client, and a drop-in headless adapter for embedding inside your own app.
+
+### Design System
+
+- **Base foundations (colors, surfaces, mascot, semantic states, accessibility):** [`docs/design-system.md`](docs/design-system.md)
+- **iOS SwiftUI design system & Dark Mode guide:** [`ios/DESIGN_SYSTEM.md`](ios/DESIGN_SYSTEM.md)
