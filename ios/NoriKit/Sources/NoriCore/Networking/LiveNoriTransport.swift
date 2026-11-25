@@ -55,12 +55,16 @@ public actor LiveNoriTransport: NoriTransport {
     private let authProvider: AuthTokenProvider
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let sseInitialBackoffSeconds: Double
+    private let sseRolloverDelayMilliseconds: Int
     private var resolvedUserID: String?
 
     public init(
         baseURL: URL = NoriConfig.serverURL,
         authProvider: AuthTokenProvider = AuthTokenProvider(),
-        urlSession: URLSession? = nil
+        urlSession: URLSession? = nil,
+        sseInitialBackoffSeconds: Double = 1.0,
+        sseRolloverDelayMilliseconds: Int = 250
     ) {
         self.baseURL = baseURL
         self.router = NoriEndpointRouter(baseURL: baseURL)
@@ -84,6 +88,8 @@ public actor LiveNoriTransport: NoriTransport {
         self.authProvider = authProvider
         self.encoder = JSONEncoder()
         self.decoder = JSONDecoder()
+        self.sseInitialBackoffSeconds = max(0.01, sseInitialBackoffSeconds)
+        self.sseRolloverDelayMilliseconds = max(0, sseRolloverDelayMilliseconds)
     }
 
     public func clearCachedIdentity() {
@@ -242,6 +248,10 @@ public actor LiveNoriTransport: NoriTransport {
         try await getJSON("/v1/capabilities")
     }
 
+    public func fetchAssistantSummary() async throws -> AssistantSummary {
+        try await getJSON("/v1/assistant/summary")
+    }
+
     public func fetchSession(before cursor: String?) async throws -> Session {
         var query: [URLQueryItem] = []
         if let cursor, !cursor.isEmpty {
@@ -268,11 +278,24 @@ public actor LiveNoriTransport: NoriTransport {
         async let preferencesTask = (try? await fetchPreferences()) ?? Preferences()
 
         let servers = await mcpTask
-        var toolsByServer: [String: [MCPServerTool]] = [:]
-        for server in servers {
-            if let tools = try? await fetchMCPTools(serverID: server.id) {
-                toolsByServer[server.id] = tools
+        let toolsByServer = await withTaskGroup(
+            of: (String, [MCPServerTool]?).self,
+            returning: [String: [MCPServerTool]].self
+        ) { group in
+            for server in servers {
+                let serverID = server.id
+                group.addTask {
+                    let tools = try? await self.fetchMCPTools(serverID: serverID)
+                    return (serverID, tools)
+                }
             }
+            var result: [String: [MCPServerTool]] = [:]
+            for await (serverID, tools) in group {
+                if let tools {
+                    result[serverID] = tools
+                }
+            }
+            return result
         }
 
         return await NoriFullSnapshot(
@@ -300,12 +323,32 @@ public actor LiveNoriTransport: NoriTransport {
         AsyncThrowingStream { continuation in
             let task = Task {
                 var cursor = max(0, position)
-                var backoffSeconds: Double = 1.0
+                let initialBackoff = self.sseInitialBackoffSeconds
+                let rolloverDelayMs = self.sseRolloverDelayMilliseconds
+                var backoffSeconds = initialBackoff
+                var retriedAuthOnCurrentCycle = false
+                var forceNextTokenRefresh = false
+                var hasEmittedInitialConnecting = false
+
+                func updateCursor(for event: NoriStreamEvent) {
+                    if case .reset(let pos) = event {
+                        cursor = max(0, pos)
+                    } else if let seq = event.sequence, seq > cursor {
+                        cursor = seq
+                    }
+                }
 
                 while !Task.isCancelled {
+                    if !hasEmittedInitialConnecting {
+                        hasEmittedInitialConnecting = true
+                        continuation.yield(.connectionState(.connecting))
+                    }
+
                     do {
                         let userID = try await self.ensureUserID()
-                        let token = try await self.authProvider.validIDToken(forceRefresh: false)
+                        let token = try await self.authProvider.validIDToken(forceRefresh: forceNextTokenRefresh)
+                        forceNextTokenRefresh = false
+
                         let url = try self.router.scopedURL(
                             path: "/v1/events",
                             userID: userID,
@@ -318,13 +361,52 @@ public actor LiveNoriTransport: NoriTransport {
                         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
                         let (bytes, response) = try await self.streamSession.bytes(for: req)
-                        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-                            throw NoriAPIError(message: "Event stream rejected (\(code)).", statusCode: code, retryable: code >= 500 || code == 429)
+                        guard let http = response as? HTTPURLResponse else {
+                            throw NoriAPIError(message: "Invalid event stream response.", statusCode: 0, retryable: true)
                         }
 
-                        // Connected cleanly — reset backoff.
-                        backoffSeconds = 1.0
+                        if http.statusCode == 401 {
+                            if !retriedAuthOnCurrentCycle {
+                                retriedAuthOnCurrentCycle = true
+                                forceNextTokenRefresh = true
+                                continue
+                            }
+                            continuation.finish(
+                                throwing: NoriAPIError(
+                                    message: "Event stream unauthorized (401).",
+                                    statusCode: 401,
+                                    code: "unauthorized",
+                                    retryable: false
+                                )
+                            )
+                            return
+                        }
+
+                        if http.statusCode == 403 {
+                            continuation.finish(
+                                throwing: NoriAPIError(
+                                    message: "Event stream forbidden (403).",
+                                    statusCode: 403,
+                                    code: "forbidden",
+                                    retryable: false
+                                )
+                            )
+                            return
+                        }
+
+                        guard (200..<300).contains(http.statusCode) else {
+                            throw NoriAPIError(
+                                message: "Event stream rejected (\(http.statusCode)).",
+                                statusCode: http.statusCode,
+                                retryable: http.statusCode >= 500 || http.statusCode == 429
+                            )
+                        }
+
+                        // Connected cleanly — reset backoff and auth retry state.
+                        backoffSeconds = initialBackoff
+                        retriedAuthOnCurrentCycle = false
+                        continuation.yield(.connectionState(.connected))
+
                         var parser = SSEParser()
                         let jsonDecoder = JSONDecoder()
 
@@ -339,9 +421,7 @@ public actor LiveNoriTransport: NoriTransport {
                                 lineBuffer.removeAll(keepingCapacity: true)
                                 if let frame = parser.feedLine(line),
                                    let event = NoriStreamEvent.decode(from: frame, decoder: jsonDecoder) {
-                                    if let seq = event.sequence, seq > cursor {
-                                        cursor = seq
-                                    }
+                                    updateCursor(for: event)
                                     continuation.yield(event)
                                 }
                             } else {
@@ -353,28 +433,40 @@ public actor LiveNoriTransport: NoriTransport {
                             let line = String(decoding: lineBuffer, as: UTF8.self)
                             if let frame = parser.feedLine(line),
                                let event = NoriStreamEvent.decode(from: frame, decoder: jsonDecoder) {
-                                if let seq = event.sequence, seq > cursor {
-                                    cursor = seq
-                                }
+                                updateCursor(for: event)
                                 continuation.yield(event)
                             }
                         }
 
                         if let trailing = parser.flush(),
                            let event = NoriStreamEvent.decode(from: trailing, decoder: jsonDecoder) {
-                            if let seq = event.sequence, seq > cursor {
-                                cursor = seq
-                            }
+                            updateCursor(for: event)
                             continuation.yield(event)
                         }
 
                         // Clean EOF (e.g. 150s server rollover): reconnect immediately without backoff penalty.
-                        if !Task.isCancelled {
-                            try? await Task.sleep(for: .milliseconds(250))
+                        if !Task.isCancelled && rolloverDelayMs > 0 {
+                            try? await Task.sleep(for: .milliseconds(rolloverDelayMs))
                         }
                     } catch is CancellationError {
                         break
+                    } catch let apiErr as NoriAPIError where apiErr.statusCode == 401 || apiErr.statusCode == 403 {
+                        continuation.finish(throwing: apiErr)
+                        return
                     } catch {
+                        if Task.isCancelled { break }
+                        let transientState: ConnectionState
+                        if let urlErr = error as? URLError,
+                           [.notConnectedToInternet, .cannotFindHost, .dnsLookupFailed, .networkConnectionLost, .internationalRoamingOff, .dataNotAllowed].contains(urlErr.code) {
+                            transientState = .offline
+                        } else {
+                            transientState = .reconnecting
+                        }
+                        continuation.yield(.connectionState(transientState))
+                        if forceNextTokenRefresh {
+                            // Refresh attempt itself failed transiently; allow retrying it after backoff.
+                            retriedAuthOnCurrentCycle = false
+                        }
                         let delay = min(backoffSeconds, 15.0)
                         backoffSeconds = min(backoffSeconds * 2.0, 15.0)
                         try? await Task.sleep(for: .seconds(delay))
@@ -523,17 +615,41 @@ public actor LiveNoriTransport: NoriTransport {
         serverID: String,
         expectedRevision: Int,
         action: String,
+        returnTo: String?,
         requestID: String
     ) async throws -> MutationReceipt<MCPServer> {
+        struct ActionVal: Encodable {
+            let action: String
+            let return_to: String?
+        }
         struct ActionReq: Encodable {
             let request_id: String
             let expected_revision: Int
-            let value: [String: String]
+            let value: ActionVal
         }
+        let cleanReturnTo = (returnTo?.isEmpty == false) ? returnTo : nil
         return try await mutate(
             "/v1/mcp/\(serverID)/actions",
             requestID: requestID,
-            body: ActionReq(request_id: requestID, expected_revision: expectedRevision, value: ["action": action])
+            body: ActionReq(
+                request_id: requestID,
+                expected_revision: expectedRevision,
+                value: ActionVal(action: action, return_to: cleanReturnTo)
+            )
+        )
+    }
+
+    public func setMCPCredential(
+        serverID: String,
+        expectedRevision: Int,
+        secret: String,
+        requestID: String
+    ) async throws -> MutationReceipt<MCPServer> {
+        _ = expectedRevision
+        return try await mutate(
+            "/v1/mcp/\(serverID)/credential",
+            requestID: requestID,
+            body: MCPCredentialInput(requestID: requestID, token: secret)
         )
     }
 
@@ -574,17 +690,27 @@ public actor LiveNoriTransport: NoriTransport {
         connectionID: String,
         expectedRevision: Int,
         action: String,
+        returnTo: String?,
         requestID: String
     ) async throws -> MutationReceipt<Connection> {
+        struct ActionVal: Encodable {
+            let action: String
+            let return_to: String?
+        }
         struct ActionReq: Encodable {
             let request_id: String
             let expected_revision: Int
-            let value: [String: String]
+            let value: ActionVal
         }
+        let cleanReturnTo = (returnTo?.isEmpty == false) ? returnTo : nil
         return try await mutate(
             "/v1/connections/\(connectionID)/actions",
             requestID: requestID,
-            body: ActionReq(request_id: requestID, expected_revision: expectedRevision, value: ["action": action])
+            body: ActionReq(
+                request_id: requestID,
+                expected_revision: expectedRevision,
+                value: ActionVal(action: action, return_to: cleanReturnTo)
+            )
         )
     }
 
@@ -596,7 +722,49 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchLibraryItem(id: String) async throws -> LibraryItem {
-        try await getJSON("/v1/library/\(id)")
+        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        return try await getJSON("/v1/library/\(encodedID)")
+    }
+
+    public func fetchLibraryItemFile(id: String, format: String?) async throws -> LibraryFilePayload {
+        let userID = try await ensureUserID()
+        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        var query: [URLQueryItem] = []
+        if let format, !format.isEmpty {
+            query.append(URLQueryItem(name: "format", value: format))
+        }
+        let url = try router.scopedURL(path: "/v1/library/\(encodedID)/file", userID: userID, queryItems: query)
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        let (data, response) = try await performAuthenticated(req)
+        try validateHTTPResponse(response, data: data)
+        let http = response as? HTTPURLResponse
+        let mediaType = http?.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream"
+        let filename = Self.parseContentDispositionFilename(http?.value(forHTTPHeaderField: "Content-Disposition"))
+        return LibraryFilePayload(data: data, mediaType: mediaType, filename: filename)
+    }
+
+    private static func parseContentDispositionFilename(_ header: String?) -> String? {
+        guard let header, !header.isEmpty else { return nil }
+        for part in header.split(separator: ";") {
+            let trimmed = part.trimmingCharacters(in: .whitespaces)
+            let lower = trimmed.lowercased()
+            if lower.hasPrefix("filename*=") {
+                let raw = String(trimmed.dropFirst("filename*=".count)).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                if let range = raw.range(of: "''") {
+                    let encoded = String(raw[range.upperBound...])
+                    return encoded.removingPercentEncoding ?? encoded
+                }
+                return raw.removingPercentEncoding ?? raw
+            }
+            if lower.hasPrefix("filename=") {
+                let raw = String(trimmed.dropFirst("filename=".count))
+                    .trimmingCharacters(in: .whitespaces)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                if !raw.isEmpty { return raw }
+            }
+        }
+        return nil
     }
 
     public func search(query: String) async throws -> SearchResponse {
@@ -671,7 +839,7 @@ public actor LiveNoriTransport: NoriTransport {
         expectedRevision: Int,
         action: String,
         requestID: String
-    ) async throws -> MutationReceipt<MemoryFact> {
+    ) async throws -> MutationReceipt<MemoryActionResource> {
         struct ActionReq: Encodable {
             let request_id: String
             let expected_revision: Int
@@ -691,7 +859,7 @@ public actor LiveNoriTransport: NoriTransport {
         action: String,
         pinned: Bool,
         requestID: String
-    ) async throws -> MutationReceipt<MemoryLog> {
+    ) async throws -> MutationReceipt<MemoryLogEntryActionResource> {
         struct ActionVal: Encodable {
             let action: String
             let pinned: Bool?
@@ -717,7 +885,7 @@ public actor LiveNoriTransport: NoriTransport {
         expectedRevision: Int,
         action: String,
         requestID: String
-    ) async throws -> MutationReceipt<WorkingMemory> {
+    ) async throws -> MutationReceipt<WorkingMemoryActionResource> {
         struct ActionReq: Encodable {
             let request_id: String
             let expected_revision: Int

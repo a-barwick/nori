@@ -97,6 +97,7 @@ public final class NoriStore {
     public var authError: String?
     public var connectionState: ConnectionState = .offline
     public var capabilities: Capabilities?
+    public var assistantSummary: AssistantSummary?
     public var lastPing: HealthCheckResult?
 
     // MARK: Domain State
@@ -181,13 +182,17 @@ public final class NoriStore {
     }
 
     public var needsYouCount: Int {
-        pendingInteractions.count
+        assistantSummary?.needsYou ?? pendingInteractions.count
     }
 
-    public var appsAttentionCount: Int {
+    private var computedAppsAttentionCount: Int {
         let mcpCount = mcpServers.filter { $0.observed.status.needsAttention }.count
         let connCount = connections.filter { $0.status == .needsAttention }.count
         return mcpCount + connCount
+    }
+
+    public var appsAttentionCount: Int {
+        assistantSummary?.appsAttention ?? computedAppsAttentionCount
     }
 
     public var activeWorkItems: [WorkItem] {
@@ -199,7 +204,7 @@ public final class NoriStore {
     }
 
     public var activeTasksCount: Int {
-        activeWorkItems.count
+        assistantSummary?.working ?? activeWorkItems.count
     }
 
     public var statusLine: StatusLine {
@@ -294,6 +299,7 @@ public final class NoriStore {
         authError = nil
         connectionState = .offline
         capabilities = nil
+        assistantSummary = nil
         lastPing = nil
         session = Session()
         workItems = []
@@ -312,6 +318,179 @@ public final class NoriStore {
         permissions = []
         preferences = Preferences()
         isThinking = false
+    }
+
+    private func handleAuthFailureIfNeeded(_ error: Error) async -> Bool {
+        if let apiErr = error as? NoriAPIError, apiErr.isAuthError {
+            await signOut()
+            authError = "Your session expired or your account is not authorized. Please sign in again."
+            return true
+        }
+        return false
+    }
+
+    public func pauseForBackground() {
+        stopEventStream()
+    }
+
+    public func resumeFromBackground() async {
+        guard authState.isSignedIn else { return }
+        async let summaryTask: Void = refreshSummary()
+        async let sessionTask: Void = refreshSession()
+        async let workTask: Void = refreshWorkAndInteractions()
+        _ = await (summaryTask, sessionTask, workTask)
+        if authState.isSignedIn {
+            startEventStream()
+        }
+    }
+
+    public func refreshSummary() async {
+        do {
+            assistantSummary = try await transport.fetchAssistantSummary()
+        } catch {
+            _ = await handleAuthFailureIfNeeded(error)
+        }
+    }
+
+    public func refreshSession() async {
+        do {
+            let freshSession = try await transport.fetchSession(before: nil)
+            self.session = freshSession
+            self.isThinking = freshSession.conversation?.processing == true
+        } catch {
+            if !(await handleAuthFailureIfNeeded(error)) {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    public func refreshWorkAndInteractions() async {
+        let activeTransport = transport
+        async let workResult: Result<[WorkItem], Error> = {
+            do { return .success(try await activeTransport.fetchWorkItems(bucket: nil)) }
+            catch { return .failure(error) }
+        }()
+        async let interactionsResult: Result<[Interaction], Error> = {
+            do { return .success(try await activeTransport.fetchInteractions()) }
+            catch { return .failure(error) }
+        }()
+
+        let (workRes, interRes) = await (workResult, interactionsResult)
+        if case .failure(let err) = workRes, await handleAuthFailureIfNeeded(err) { return }
+        if case .failure(let err) = interRes, await handleAuthFailureIfNeeded(err) { return }
+
+        if case .success(let freshWork) = workRes {
+            self.workItems = freshWork
+        }
+        if case .success(let freshInteractions) = interRes {
+            self.interactions = freshInteractions
+        }
+        if assistantSummary != nil {
+            assistantSummary?.needsYou = pendingInteractions.count
+            assistantSummary?.working = activeWorkItems.count
+        }
+    }
+
+    public func refreshApps() async {
+        let activeTransport = transport
+        async let serversResult: Result<[MCPServer], Error> = {
+            do { return .success(try await activeTransport.fetchMCPServers()) }
+            catch { return .failure(error) }
+        }()
+        async let connectionsResult: Result<[Connection], Error> = {
+            do { return .success(try await activeTransport.fetchConnections()) }
+            catch { return .failure(error) }
+        }()
+
+        let (serversRes, connsRes) = await (serversResult, connectionsResult)
+        if case .failure(let err) = serversRes, await handleAuthFailureIfNeeded(err) { return }
+        if case .failure(let err) = connsRes, await handleAuthFailureIfNeeded(err) { return }
+
+        if case .success(let servers) = serversRes {
+            self.mcpServers = servers
+            let toolsByServer = await withTaskGroup(
+                of: (String, [MCPServerTool]?).self,
+                returning: [String: [MCPServerTool]].self
+            ) { group in
+                for server in servers {
+                    let serverID = server.id
+                    group.addTask {
+                        let tools = try? await activeTransport.fetchMCPTools(serverID: serverID)
+                        return (serverID, tools)
+                    }
+                }
+                var collected: [String: [MCPServerTool]] = [:]
+                for await (serverID, tools) in group {
+                    if let tools {
+                        collected[serverID] = tools
+                    }
+                }
+                return collected
+            }
+            self.mcpTools = toolsByServer
+        }
+        if case .success(let conns) = connsRes {
+            self.connections = conns
+        }
+        if assistantSummary != nil {
+            assistantSummary?.appsAttention = computedAppsAttentionCount
+        }
+    }
+
+    public func refreshLibrary() async {
+        do {
+            libraryItems = try await transport.fetchLibrary()
+        } catch {
+            if !(await handleAuthFailureIfNeeded(error)) {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    public func refreshRoutinesAndGoals() async {
+        let activeTransport = transport
+        async let autosResult: Result<[Automation], Error> = {
+            do { return .success(try await activeTransport.fetchAutomations()) }
+            catch { return .failure(error) }
+        }()
+        async let goalsResult: Result<[Goal], Error> = {
+            do { return .success(try await activeTransport.fetchGoals()) }
+            catch { return .failure(error) }
+        }()
+
+        let (autosRes, goalsRes) = await (autosResult, goalsResult)
+        if case .failure(let err) = autosRes, await handleAuthFailureIfNeeded(err) { return }
+        if case .failure(let err) = goalsRes, await handleAuthFailureIfNeeded(err) { return }
+
+        if case .success(let autos) = autosRes {
+            self.automations = autos
+        }
+        if case .success(let freshGoals) = goalsRes {
+            self.goals = freshGoals
+        }
+    }
+
+    public func refreshPermissionsAndPreferences() async {
+        let activeTransport = transport
+        async let permsResult: Result<[PermissionRule], Error> = {
+            do { return .success(try await activeTransport.fetchPermissions()) }
+            catch { return .failure(error) }
+        }()
+        async let prefsResult: Result<Preferences, Error> = {
+            do { return .success(try await activeTransport.fetchPreferences()) }
+            catch { return .failure(error) }
+        }()
+
+        let (permsRes, prefsRes) = await (permsResult, prefsResult)
+        if case .failure(let err) = permsRes, await handleAuthFailureIfNeeded(err) { return }
+        if case .failure(let err) = prefsRes, await handleAuthFailureIfNeeded(err) { return }
+
+        if case .success(let perms) = permsRes {
+            self.permissions = perms
+        }
+        if case .success(let prefs) = prefsRes {
+            self.preferences = prefs
+        }
     }
 
     public func refreshMemory() async {
@@ -351,6 +530,7 @@ public final class NoriStore {
 
     private func applySnapshot(_ snapshot: NoriFullSnapshot) {
         self.capabilities = snapshot.capabilities
+        self.assistantSummary = nil
         self.session = snapshot.session
         self.workItems = snapshot.workItems
         self.interactions = snapshot.interactions
@@ -381,6 +561,10 @@ public final class NoriStore {
                     guard let self, !Task.isCancelled else { break }
                     await self.handleStreamEvent(event)
                 }
+            } catch let apiErr as NoriAPIError where apiErr.statusCode == 401 || apiErr.statusCode == 403 {
+                guard let self, !Task.isCancelled else { return }
+                await self.signOut()
+                self.authError = "Your session expired or your account is not authorized. Please sign in again."
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.connectionState = .reconnecting
@@ -394,13 +578,25 @@ public final class NoriStore {
     }
 
     private func handleStreamEvent(_ event: NoriStreamEvent) async {
+        if case .connectionState(let state) = event {
+            connectionState = state
+            return
+        }
         connectionState = .connected
+        if case .reset(let pos) = event {
+            session.position = pos
+            await refreshAll()
+            if session.position == nil {
+                session.position = pos
+            }
+            return
+        }
         if let seq = event.sequence, seq > (session.position ?? 0) {
             session.position = seq
         }
         switch event {
-        case .reset:
-            await refreshAll()
+        case .connectionState, .reset:
+            break
         case .message(_, let message):
             if let idx = session.messages.firstIndex(where: { $0.id == message.id }) {
                 session.messages[idx] = message
@@ -416,12 +612,7 @@ public final class NoriStore {
             } else {
                 session.runs.insert(run, at: 0)
             }
-            if let freshWork = try? await transport.fetchWorkItems(bucket: nil) {
-                self.workItems = freshWork
-            }
-            if let freshInteractions = try? await transport.fetchInteractions() {
-                self.interactions = freshInteractions
-            }
+            await refreshWorkAndInteractions()
         case .result:
             if let items = try? await transport.fetchLibrary() {
                 self.libraryItems = items
@@ -445,9 +636,10 @@ public final class NoriStore {
 
     // MARK: - Chat & Uploads
 
-    public func sendMessage(_ text: String, attachments: [Attachment] = []) async {
+    @discardableResult
+    public func sendMessage(_ text: String, attachments: [Attachment] = []) async -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !attachments.isEmpty else { return }
+        guard !trimmed.isEmpty || !attachments.isEmpty else { return false }
 
         let clientID = UUID().uuidString.lowercased()
         let expectedUserMessageID = "\(clientID)-user"
@@ -477,11 +669,13 @@ public final class NoriStore {
             }
             self.session = updated
             isThinking = updated.conversation?.processing == true || updated.conversation?.pending == true
+            return true
         } catch {
             session.messages.removeAll { $0.id == expectedUserMessageID }
             isThinking = false
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
+            return false
         }
     }
 
@@ -515,21 +709,22 @@ public final class NoriStore {
             if let idx = interactions.firstIndex(where: { $0.id == interaction.id }) {
                 interactions[idx] = receipt.resource
             }
-            // Refresh linked state cleanly (interactions, work, and permissions when remembering a rule)
-            if let snapshot = try? await transport.fetchFullSnapshot() {
-                applySnapshot(snapshot)
+            // Targeted refresh (avoid 14+ request fetchFullSnapshot() fan-out).
+            async let workAndInteractionsTask: Void = refreshWorkAndInteractions()
+            async let summaryTask: Void = refreshSummary()
+            let shouldRefreshPermissions: Bool
+            if case .approve(_, let rememberRule) = answer, rememberRule {
+                shouldRefreshPermissions = true
             } else {
-                async let freshInteractions = try? transport.fetchInteractions()
-                async let freshWork = try? transport.fetchWorkItems(bucket: nil)
-                if let items = await freshInteractions {
-                    self.interactions = items
-                }
-                if let work = await freshWork {
-                    self.workItems = work
-                }
+                shouldRefreshPermissions = false
             }
-            if case .approve(_, let rememberRule) = answer, rememberRule,
-               let freshPermissions = try? await transport.fetchPermissions() {
+            let activeTransport = transport
+            async let permissionsTask: [PermissionRule]? = shouldRefreshPermissions
+                ? (try? await activeTransport.fetchPermissions())
+                : nil
+
+            _ = await (workAndInteractionsTask, summaryTask)
+            if let freshPermissions = await permissionsTask {
                 self.permissions = freshPermissions
             }
 
@@ -695,13 +890,15 @@ public final class NoriStore {
         }
     }
 
-    public func completeMCPOAuth(serverID: String, callbackURL: URL? = nil) async -> AuthAttempt? {
+    @discardableResult
+    public func startMCPOAuth(serverID: String) async -> AuthAttempt? {
         guard let server = mcpServers.first(where: { $0.id == serverID }) else { return nil }
         do {
             let receipt = try await transport.performMCPAction(
                 serverID: serverID,
                 expectedRevision: server.revision,
                 action: "sign_in",
+                returnTo: NoriConfig.oauthCallbackURL,
                 requestID: UUID().uuidString.lowercased()
             )
             if let idx = mcpServers.firstIndex(where: { $0.id == serverID }) {
@@ -721,26 +918,107 @@ public final class NoriStore {
         }
     }
 
-    public func connectConnection(connectionID: String) async {
-        guard let conn = connections.first(where: { $0.id == connectionID }) else { return }
+    @discardableResult
+    public func completeMCPOAuth(serverID: String, callbackURL: URL? = nil) async -> AuthAttempt? {
+        if callbackURL != nil {
+            async let appsTask: Void = refreshApps()
+            async let workTask: Void = refreshWorkAndInteractions()
+            async let summaryTask: Void = refreshSummary()
+            _ = await (appsTask, workTask, summaryTask)
+            if let server = mcpServers.first(where: { $0.id == serverID }),
+               server.observed.status == .connected {
+                showToast("Signed in to \(server.name)")
+            }
+            return nil
+        }
+        return await startMCPOAuth(serverID: serverID)
+    }
+
+    @discardableResult
+    public func saveMCPCredential(serverID: String, secret: String) async -> Bool {
+        let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let server = mcpServers.first(where: { $0.id == serverID }) else {
+            return false
+        }
+        do {
+            let receipt = try await transport.setMCPCredential(
+                serverID: serverID,
+                expectedRevision: server.revision,
+                secret: trimmed,
+                requestID: UUID().uuidString.lowercased()
+            )
+            if let idx = mcpServers.firstIndex(where: { $0.id == serverID }) {
+                mcpServers[idx] = receipt.resource
+            }
+            if let tools = try? await transport.fetchMCPTools(serverID: serverID) {
+                mcpTools[serverID] = tools
+            }
+            showToast("Saved credential for \(server.name)")
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult
+    public func connectConnection(connectionID: String) async -> AuthAttempt? {
+        guard let conn = connections.first(where: { $0.id == connectionID }) else { return nil }
         do {
             let receipt = try await transport.performConnectionAction(
                 connectionID: connectionID,
                 expectedRevision: conn.revision,
                 action: "connect",
+                returnTo: NoriConfig.oauthCallbackURL,
                 requestID: UUID().uuidString.lowercased()
             )
             if let idx = connections.firstIndex(where: { $0.id == connectionID }) {
                 connections[idx] = receipt.resource
             }
-            showToast("Connected \(conn.title)")
+            if receipt.auth == nil {
+                showToast("Connected \(conn.title)")
+            }
+            return receipt.auth
         } catch {
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
+            return nil
         }
     }
 
     // MARK: - Library & Search
+
+    public func loadLibraryItem(id: String) async -> LibraryItem? {
+        do {
+            let item = try await transport.fetchLibraryItem(id: id)
+            if let idx = libraryItems.firstIndex(where: { $0.id == item.id }) {
+                var merged = item
+                if merged.bodyText == nil {
+                    merged.bodyText = libraryItems[idx].bodyText
+                }
+                libraryItems[idx] = merged
+                return merged
+            } else {
+                libraryItems.insert(item, at: 0)
+                return item
+            }
+        } catch {
+            lastError = error.localizedDescription
+            return libraryItems.first(where: { $0.id == id })
+        }
+    }
+
+    public func loadLibraryItemFile(id: String, format: String? = nil) async throws -> LibraryFilePayload {
+        let payload = try await transport.fetchLibraryItemFile(id: id, format: format)
+        if payload.mediaType.lowercased().hasPrefix("text/"),
+           let text = payload.utf8Text,
+           let idx = libraryItems.firstIndex(where: { $0.id == id }) {
+            libraryItems[idx].bodyText = text
+        }
+        return payload
+    }
 
     public func searchLibrary(query: String) async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -756,9 +1034,18 @@ public final class NoriStore {
         }
     }
 
-    public func reviseDocument(itemID: String, instruction: String) async {
+    @discardableResult
+    public func reviseDocument(itemID: String, instruction: String) async -> LibraryRevisionResult? {
         let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let item = libraryItems.first(where: { $0.id == itemID }) else { return }
+        guard !trimmed.isEmpty else { return nil }
+        let item: LibraryItem
+        if let cached = libraryItems.first(where: { $0.id == itemID }) {
+            item = cached
+        } else if let loaded = await loadLibraryItem(id: itemID) {
+            item = loaded
+        } else {
+            return nil
+        }
         do {
             let receipt = try await transport.reviseLibraryItem(
                 id: itemID,
@@ -768,11 +1055,24 @@ public final class NoriStore {
             )
             if let idx = libraryItems.firstIndex(where: { $0.id == itemID }) {
                 libraryItems[idx] = receipt.resource
+            } else {
+                libraryItems.insert(receipt.resource, at: 0)
             }
-            showToast("Revision saved (v\(receipt.resource.version))")
+            if receipt.status == .queued {
+                showToast("Revision started")
+                await refreshWorkAndInteractions()
+            } else {
+                showToast("Revision saved (v\(receipt.resource.version))")
+            }
+            return LibraryRevisionResult(
+                status: receipt.status,
+                taskID: receipt.work?.taskID,
+                item: receipt.resource
+            )
         } catch {
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
+            return nil
         }
     }
 
@@ -800,6 +1100,14 @@ public final class NoriStore {
         }
     }
 
+    private func upsertCoreMemory(_ fact: MemoryFact) {
+        if let idx = coreMemories.firstIndex(where: { $0.id == fact.id }) {
+            coreMemories[idx] = fact
+        } else {
+            coreMemories.insert(fact, at: 0)
+        }
+    }
+
     public func togglePinMemory(memoryID: String) async {
         guard let fact = coreMemories.first(where: { $0.id == memoryID }) else { return }
         let action = fact.pinned ? "unpin" : "pin"
@@ -810,10 +1118,16 @@ public final class NoriStore {
                 action: action,
                 requestID: UUID().uuidString.lowercased()
             )
-            if let idx = coreMemories.firstIndex(where: { $0.id == memoryID }) {
-                coreMemories[idx] = receipt.resource
+            if case .fact(let updated) = receipt.resource {
+                upsertCoreMemory(updated)
+                showToast(updated.pinned ? "Pinned to Core Memory" : "Unpinned memory")
+            } else if let freshFacts = try? await transport.fetchCoreMemories() {
+                coreMemories = freshFacts
+                let nowPinned = coreMemories.first(where: { $0.id == memoryID })?.pinned ?? !fact.pinned
+                showToast(nowPinned ? "Pinned to Core Memory" : "Unpinned memory")
+            } else {
+                showToast(!fact.pinned ? "Pinned to Core Memory" : "Unpinned memory")
             }
-            showToast(receipt.resource.pinned ? "Pinned to Core Memory" : "Unpinned memory")
         } catch {
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
@@ -830,10 +1144,13 @@ public final class NoriStore {
                 requestID: UUID().uuidString.lowercased()
             )
             coreMemories.removeAll { $0.id == memoryID }
-            if let logs = try? await transport.fetchMemoryLogs() {
+            let activeTransport = transport
+            async let logsTask = try? activeTransport.fetchMemoryLogs()
+            async let workingTask = try? activeTransport.fetchWorkingMemory()
+            if let logs = await logsTask {
                 memoryLogs = logs
             }
-            if let working = try? await transport.fetchWorkingMemory() {
+            if let working = await workingTask {
                 workingMemory = working
             }
             showToast("Moved to Daily Log")
@@ -874,11 +1191,24 @@ public final class NoriStore {
                 pinned: pinned,
                 requestID: UUID().uuidString.lowercased()
             )
-            if let idx = memoryLogs.firstIndex(where: { $0.date == date }) {
-                memoryLogs[idx] = receipt.resource
-            }
-            if let facts = try? await transport.fetchCoreMemories() {
-                coreMemories = facts
+            switch receipt.resource {
+            case .promoted(let fact):
+                upsertCoreMemory(fact)
+                if let logIdx = memoryLogs.firstIndex(where: { $0.date == date }),
+                   let entryIdx = memoryLogs[logIdx].entries.firstIndex(where: { $0.id == entryID }) {
+                    memoryLogs[logIdx].entries[entryIdx].promoted = true
+                }
+            case .log(let updatedLog):
+                if let idx = memoryLogs.firstIndex(where: { $0.date == date }) {
+                    memoryLogs[idx] = updatedLog
+                }
+                if let facts = try? await transport.fetchCoreMemories() {
+                    coreMemories = facts
+                }
+            case .forgotten:
+                if let facts = try? await transport.fetchCoreMemories() {
+                    coreMemories = facts
+                }
             }
             if let working = try? await transport.fetchWorkingMemory() {
                 workingMemory = working
@@ -901,8 +1231,21 @@ public final class NoriStore {
                 pinned: false,
                 requestID: UUID().uuidString.lowercased()
             )
-            if let idx = memoryLogs.firstIndex(where: { $0.date == date }) {
-                memoryLogs[idx] = receipt.resource
+            switch receipt.resource {
+            case .log(let updatedLog):
+                if let idx = memoryLogs.firstIndex(where: { $0.date == date }) {
+                    memoryLogs[idx] = updatedLog
+                }
+            case .forgotten, .promoted:
+                if let logIdx = memoryLogs.firstIndex(where: { $0.date == date }) {
+                    memoryLogs[logIdx].entries.removeAll { $0.id == entryID }
+                    if memoryLogs[logIdx].entries.isEmpty {
+                        memoryLogs.remove(at: logIdx)
+                    }
+                }
+                if let freshLogs = try? await transport.fetchMemoryLogs() {
+                    memoryLogs = freshLogs
+                }
             }
             showToast("Removed log entry")
         } catch {
@@ -919,9 +1262,22 @@ public final class NoriStore {
                 action: "promote",
                 requestID: UUID().uuidString.lowercased()
             )
-            workingMemory = receipt.resource
-            if let facts = try? await transport.fetchCoreMemories() {
-                coreMemories = facts
+            switch receipt.resource {
+            case .promoted(let fact):
+                upsertCoreMemory(fact)
+            case .workingMemory(let updatedWorking):
+                workingMemory = updatedWorking
+                if let facts = try? await transport.fetchCoreMemories() {
+                    coreMemories = facts
+                }
+            case .dismissed(let dismissed):
+                workingMemory.items.removeAll { $0.id == dismissed.dismissedItemID || $0.id == itemID }
+                if let facts = try? await transport.fetchCoreMemories() {
+                    coreMemories = facts
+                }
+            }
+            if let freshWorking = try? await transport.fetchWorkingMemory() {
+                workingMemory = freshWorking
             }
             showToast("Saved to Core Memory")
         } catch {
@@ -938,7 +1294,17 @@ public final class NoriStore {
                 action: "dismiss",
                 requestID: UUID().uuidString.lowercased()
             )
-            workingMemory = receipt.resource
+            switch receipt.resource {
+            case .workingMemory(let updatedWorking):
+                workingMemory = updatedWorking
+            case .dismissed(let dismissed):
+                workingMemory.items.removeAll { $0.id == dismissed.dismissedItemID || $0.id == itemID }
+                if let freshWorking = try? await transport.fetchWorkingMemory() {
+                    workingMemory = freshWorking
+                }
+            case .promoted:
+                workingMemory.items.removeAll { $0.id == itemID }
+            }
             showToast("Dismissed working note")
         } catch {
             lastError = error.localizedDescription
@@ -1049,7 +1415,12 @@ public final class NoriStore {
         guard let link = NoriDeepLink.parse(url) else { return }
         if case .oauthCallback = link {
             showToast("Sign-in callback received")
-            Task { await refreshAll() }
+            Task {
+                async let appsTask: Void = refreshApps()
+                async let workTask: Void = refreshWorkAndInteractions()
+                async let summaryTask: Void = refreshSummary()
+                _ = await (appsTask, workTask, summaryTask)
+            }
         }
         pendingDeepLink = link
     }

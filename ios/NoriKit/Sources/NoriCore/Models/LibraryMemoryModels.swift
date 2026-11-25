@@ -311,6 +311,42 @@ public struct SearchResponse: Sendable, Codable, Hashable {
     }
 }
 
+public struct LibraryFilePayload: Sendable, Hashable {
+    public var data: Data
+    public var mediaType: String
+    public var filename: String?
+
+    public var utf8Text: String? {
+        String(data: data, encoding: .utf8)
+    }
+
+    public init(data: Data, mediaType: String, filename: String? = nil) {
+        self.data = data
+        self.mediaType = mediaType
+        self.filename = filename
+    }
+}
+
+public struct LibraryRevisionResult: Sendable, Hashable {
+    public var status: MutationReceipt<LibraryItem>.Status
+    public var taskID: String?
+    public var item: LibraryItem?
+
+    public var isQueued: Bool {
+        status == .queued
+    }
+
+    public init(
+        status: MutationReceipt<LibraryItem>.Status,
+        taskID: String? = nil,
+        item: LibraryItem? = nil
+    ) {
+        self.status = status
+        self.taskID = taskID
+        self.item = item
+    }
+}
+
 // MARK: - Memory Models (3-Layer Architecture)
 
 public enum MemoryProvenance: String, Sendable, Codable, Hashable {
@@ -571,6 +607,7 @@ public struct WorkingMemoryItem: Sendable, Codable, Hashable, Identifiable {
 public struct WorkingMemory: Sendable, Codable, Hashable {
     public var revision: Int
     public var from: String?
+    public var extractedThrough: String?
     public var flushedThrough: String?
     public var through: String?
     public var dreamThrough: String?
@@ -586,6 +623,7 @@ public struct WorkingMemory: Sendable, Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case revision
         case from
+        case extractedThrough = "extracted_through"
         case flushedThrough = "flushed_through"
         case through
         case dreamThrough = "dream_through"
@@ -602,6 +640,7 @@ public struct WorkingMemory: Sendable, Codable, Hashable {
     public init(
         revision: Int = 1,
         from: String? = nil,
+        extractedThrough: String? = nil,
         flushedThrough: String? = nil,
         through: String? = nil,
         dreamThrough: String? = nil,
@@ -616,6 +655,7 @@ public struct WorkingMemory: Sendable, Codable, Hashable {
     ) {
         self.revision = revision
         self.from = from
+        self.extractedThrough = extractedThrough
         self.flushedThrough = flushedThrough
         self.through = through
         self.dreamThrough = dreamThrough
@@ -633,6 +673,7 @@ public struct WorkingMemory: Sendable, Codable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.revision = try c.decodeIfPresent(Int.self, forKey: .revision) ?? 1
         self.from = try c.decodeIfPresent(String.self, forKey: .from)
+        self.extractedThrough = try c.decodeIfPresent(String.self, forKey: .extractedThrough)
         self.flushedThrough = try c.decodeIfPresent(String.self, forKey: .flushedThrough)
         self.through = try c.decodeIfPresent(String.self, forKey: .through)
         self.dreamThrough = try c.decodeIfPresent(String.self, forKey: .dreamThrough)
@@ -644,5 +685,215 @@ public struct WorkingMemory: Sendable, Codable, Hashable {
         self.coreBytes = try c.decodeIfPresent(Int.self, forKey: .coreBytes) ?? 0
         self.coreBudgetBytes = try c.decodeIfPresent(Int.self, forKey: .coreBudgetBytes) ?? (24 * 1024)
         self.updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
+    }
+}
+
+// MARK: - Memory Mutation Receipt Payloads
+
+public struct MemoryForgetResult: Sendable, Codable, Hashable {
+    public var note: String?
+    public var forgotten: MemoryFact?
+
+    public init(note: String? = nil, forgotten: MemoryFact? = nil) {
+        self.note = note
+        self.forgotten = forgotten
+    }
+}
+
+public struct MemoryDemoteResult: Sendable, Codable, Hashable {
+    public var demoted: MemoryFact?
+    public var logEntry: MemoryLogEntry?
+    public var note: String?
+
+    enum CodingKeys: String, CodingKey {
+        case demoted
+        case logEntry = "log_entry"
+        case note
+    }
+
+    public init(demoted: MemoryFact? = nil, logEntry: MemoryLogEntry? = nil, note: String? = nil) {
+        self.demoted = demoted
+        self.logEntry = logEntry
+        self.note = note
+    }
+}
+
+/// Decodes `POST /v1/memory/{id}/actions` receipt `resource`:
+/// - `pin` / `unpin` -> `MemoryFact`
+/// - `forget` -> `{"note", "forgotten"}`
+/// - `demote` -> `{"demoted", "log_entry", "note"}`
+public enum MemoryActionResource: Sendable, Codable, Hashable {
+    case fact(MemoryFact)
+    case forgotten(MemoryForgetResult)
+    case demoted(MemoryDemoteResult)
+
+    public var fact: MemoryFact? {
+        if case .fact(let fact) = self { return fact }
+        return nil
+    }
+
+    public var forgetResult: MemoryForgetResult? {
+        if case .forgotten(let result) = self { return result }
+        return nil
+    }
+
+    public var demoteResult: MemoryDemoteResult? {
+        if case .demoted(let result) = self { return result }
+        return nil
+    }
+
+    private enum DiscriminatorKeys: String, CodingKey {
+        case id
+        case text
+        case demoted
+        case logEntry = "log_entry"
+        case forgotten
+        case note
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let keys = try decoder.container(keyedBy: DiscriminatorKeys.self)
+        if keys.contains(.id), keys.contains(.text) {
+            self = .fact(try MemoryFact(from: decoder))
+        } else if keys.contains(.demoted) || keys.contains(.logEntry) {
+            self = .demoted(try MemoryDemoteResult(from: decoder))
+        } else {
+            self = .forgotten(try MemoryForgetResult(from: decoder))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .fact(let fact):
+            try fact.encode(to: encoder)
+        case .forgotten(let result):
+            try result.encode(to: encoder)
+        case .demoted(let result):
+            try result.encode(to: encoder)
+        }
+    }
+}
+
+public struct MemoryLogEntryForgetResult: Sendable, Codable, Hashable {
+    public var note: String?
+    public var forgotten: MemoryLogEntry?
+
+    public init(note: String? = nil, forgotten: MemoryLogEntry? = nil) {
+        self.note = note
+        self.forgotten = forgotten
+    }
+}
+
+/// Decodes `POST /v1/memory/logs/{date}/{entry_id}/actions` receipt `resource`:
+/// - `promote` -> `MemoryFact`
+/// - `forget` -> `{"note", "forgotten"}`
+public enum MemoryLogEntryActionResource: Sendable, Codable, Hashable {
+    case promoted(MemoryFact)
+    case forgotten(MemoryLogEntryForgetResult)
+    case log(MemoryLog)
+
+    public var promotedFact: MemoryFact? {
+        if case .promoted(let fact) = self { return fact }
+        return nil
+    }
+
+    public var forgetResult: MemoryLogEntryForgetResult? {
+        if case .forgotten(let result) = self { return result }
+        return nil
+    }
+
+    private enum DiscriminatorKeys: String, CodingKey {
+        case id
+        case text
+        case date
+        case entries
+        case forgotten
+        case note
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let keys = try decoder.container(keyedBy: DiscriminatorKeys.self)
+        if keys.contains(.date), keys.contains(.entries) {
+            self = .log(try MemoryLog(from: decoder))
+        } else if keys.contains(.id), keys.contains(.text) {
+            self = .promoted(try MemoryFact(from: decoder))
+        } else {
+            self = .forgotten(try MemoryLogEntryForgetResult(from: decoder))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .promoted(let fact):
+            try fact.encode(to: encoder)
+        case .forgotten(let result):
+            try result.encode(to: encoder)
+        case .log(let log):
+            try log.encode(to: encoder)
+        }
+    }
+}
+
+public struct WorkingMemoryDismissResult: Sendable, Codable, Hashable {
+    public var dismissedItemID: String
+
+    enum CodingKeys: String, CodingKey {
+        case dismissedItemID = "dismissed_item_id"
+    }
+
+    public init(dismissedItemID: String) {
+        self.dismissedItemID = dismissedItemID
+    }
+}
+
+/// Decodes `POST /v1/memory/working/{item_id}/actions` receipt `resource`:
+/// - `promote` -> `MemoryFact`
+/// - `dismiss` -> `WorkingMemory` (when summary exists) or `{"dismissed_item_id"}`
+public enum WorkingMemoryActionResource: Sendable, Codable, Hashable {
+    case promoted(MemoryFact)
+    case workingMemory(WorkingMemory)
+    case dismissed(WorkingMemoryDismissResult)
+
+    public var promotedFact: MemoryFact? {
+        if case .promoted(let fact) = self { return fact }
+        return nil
+    }
+
+    public var workingMemory: WorkingMemory? {
+        if case .workingMemory(let wm) = self { return wm }
+        return nil
+    }
+
+    public var dismissResult: WorkingMemoryDismissResult? {
+        if case .dismissed(let result) = self { return result }
+        return nil
+    }
+
+    private enum DiscriminatorKeys: String, CodingKey {
+        case id
+        case text
+        case dismissedItemID = "dismissed_item_id"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let keys = try decoder.container(keyedBy: DiscriminatorKeys.self)
+        if keys.contains(.id), keys.contains(.text) {
+            self = .promoted(try MemoryFact(from: decoder))
+        } else if keys.contains(.dismissedItemID) {
+            self = .dismissed(try WorkingMemoryDismissResult(from: decoder))
+        } else {
+            self = .workingMemory(try WorkingMemory(from: decoder))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .promoted(let fact):
+            try fact.encode(to: encoder)
+        case .workingMemory(let wm):
+            try wm.encode(to: encoder)
+        case .dismissed(let result):
+            try result.encode(to: encoder)
+        }
     }
 }

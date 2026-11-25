@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -542,19 +541,7 @@ func (a *Assistant) legacyQuestions(ctx context.Context, taskID string, stored [
 }
 
 func validReturnTo(path string) bool {
-	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
-		return false
-	}
-	if strings.ContainsAny(path, "\\?#") {
-		return false
-	}
-	for i := 0; i < len(path); i++ {
-		if path[i] < 0x20 || path[i] == 0x7f {
-			return false
-		}
-	}
-	parsed, err := url.Parse(path)
-	return err == nil && parsed.Scheme == "" && parsed.Host == ""
+	return connections.ValidReturnTo(path)
 }
 
 func clip(text string, limit int) string {

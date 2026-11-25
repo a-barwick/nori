@@ -293,6 +293,10 @@ public struct NoriAPIError: Error, LocalizedError, Sendable, Hashable {
         statusCode == 409 || code == "revision_conflict" || code == "interaction_stale"
     }
 
+    public var isAuthError: Bool {
+        statusCode == 401 || statusCode == 403
+    }
+
     public var errorDescription: String? { message }
 
     public init(
@@ -432,6 +436,16 @@ public struct AssistantSummary: Sendable, Codable, Hashable {
         self.appsAttention = appsAttention
         self.inboxUnread = inboxUnread
         self.nextScheduledAt = nextScheduledAt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.revision = try c.decodeIfPresent(Int.self, forKey: .revision) ?? 0
+        self.needsYou = try c.decodeIfPresent(Int.self, forKey: .needsYou) ?? 0
+        self.working = try c.decodeIfPresent(Int.self, forKey: .working) ?? 0
+        self.appsAttention = try c.decodeIfPresent(Int.self, forKey: .appsAttention) ?? 0
+        self.inboxUnread = try c.decodeIfPresent(Int.self, forKey: .inboxUnread) ?? 0
+        self.nextScheduledAt = try c.decodeIfPresent(String.self, forKey: .nextScheduledAt)
     }
 }
 

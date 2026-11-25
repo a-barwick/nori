@@ -62,12 +62,13 @@ type Editable struct {
 	Exposure        Exposure `json:"exposure"`
 }
 
-// Action is the contract MCPServerAction value. set_exposure names a tool and an exposure; the other actions
-// carry neither.
+// Action is the contract MCPServerAction value. set_exposure names a tool and an exposure; sign_in may carry
+// return_to; the other actions carry none of these.
 type Action struct {
 	Action   string `json:"action"`
 	Tool     string `json:"tool,omitempty"`
 	Exposure string `json:"exposure,omitempty"`
+	ReturnTo string `json:"return_to,omitempty"`
 }
 
 func validExposure(v string) bool {
@@ -80,10 +81,12 @@ func validExposure(v string) bool {
 
 func (a Action) Valid() bool {
 	switch a.Action {
-	case "connect", "reconnect", "sign_in", "sign_out", "start", "stop", "restart":
-		return a.Tool == "" && a.Exposure == ""
+	case "connect", "reconnect", "sign_out", "start", "stop", "restart":
+		return a.Tool == "" && a.Exposure == "" && a.ReturnTo == ""
+	case "sign_in":
+		return a.Tool == "" && a.Exposure == "" && (a.ReturnTo == "" || validReturnTo(a.ReturnTo))
 	case "set_exposure":
-		return validExposure(a.Exposure) && strings.TrimSpace(a.Tool) != ""
+		return validExposure(a.Exposure) && strings.TrimSpace(a.Tool) != "" && a.ReturnTo == ""
 	}
 	return false
 }
@@ -630,7 +633,7 @@ func (s *Service) Discover(ctx context.Context, id string) (Server, error) {
 	return server.Server, nil
 }
 
-func (s *Service) Act(ctx context.Context, id, requestID string, expected int64, action, tool, exposure string) (state.MutationReceipt, error) {
+func (s *Service) Act(ctx context.Context, id, requestID string, expected int64, action, tool, exposure string, returnTo ...string) (state.MutationReceipt, error) {
 	switch action {
 	case "connect", "reconnect":
 		if expected > 0 {
@@ -683,7 +686,11 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 				return state.MutationReceipt{}, state.ErrRevisionConflict
 			}
 		}
-		attempt, err := s.SignIn(ctx, id, "")
+		target := ""
+		if len(returnTo) > 0 {
+			target = returnTo[0]
+		}
+		attempt, err := s.SignIn(ctx, id, target)
 		if err != nil {
 			return state.MutationReceipt{}, err
 		}

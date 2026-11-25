@@ -55,6 +55,7 @@ public struct NoriFullSnapshot: Sendable, Hashable {
 public protocol NoriTransport: Sendable {
     func ping() async -> HealthCheckResult
     func fetchCapabilities() async throws -> Capabilities
+    func fetchAssistantSummary() async throws -> AssistantSummary
     func fetchSession(before cursor: String?) async throws -> Session
     func fetchFullSnapshot() async throws -> NoriFullSnapshot
 
@@ -88,6 +89,13 @@ public protocol NoriTransport: Sendable {
         serverID: String,
         expectedRevision: Int,
         action: String,
+        returnTo: String?,
+        requestID: String
+    ) async throws -> MutationReceipt<MCPServer>
+    func setMCPCredential(
+        serverID: String,
+        expectedRevision: Int,
+        secret: String,
         requestID: String
     ) async throws -> MutationReceipt<MCPServer>
     func setMCPToolExposure(
@@ -102,12 +110,14 @@ public protocol NoriTransport: Sendable {
         connectionID: String,
         expectedRevision: Int,
         action: String,
+        returnTo: String?,
         requestID: String
     ) async throws -> MutationReceipt<Connection>
 
     // Library & Search
     func fetchLibrary() async throws -> [LibraryItem]
     func fetchLibraryItem(id: String) async throws -> LibraryItem
+    func fetchLibraryItemFile(id: String, format: String?) async throws -> LibraryFilePayload
     func search(query: String) async throws -> SearchResponse
     func reviseLibraryItem(
         id: String,
@@ -132,7 +142,7 @@ public protocol NoriTransport: Sendable {
         expectedRevision: Int,
         action: String,
         requestID: String
-    ) async throws -> MutationReceipt<MemoryFact>
+    ) async throws -> MutationReceipt<MemoryActionResource>
     func performMemoryLogEntryAction(
         date: String,
         entryID: String,
@@ -140,13 +150,13 @@ public protocol NoriTransport: Sendable {
         action: String,
         pinned: Bool,
         requestID: String
-    ) async throws -> MutationReceipt<MemoryLog>
+    ) async throws -> MutationReceipt<MemoryLogEntryActionResource>
     func performWorkingMemoryAction(
         itemID: String,
         expectedRevision: Int,
         action: String,
         requestID: String
-    ) async throws -> MutationReceipt<WorkingMemory>
+    ) async throws -> MutationReceipt<WorkingMemoryActionResource>
 
     // Automations, Goals, Permissions, Preferences
     func fetchAutomations() async throws -> [Automation]
@@ -172,4 +182,40 @@ public protocol NoriTransport: Sendable {
         _ preferences: Preferences,
         requestID: String
     ) async throws -> MutationReceipt<Preferences>
+}
+
+public extension NoriTransport {
+    func performMCPAction(
+        serverID: String,
+        expectedRevision: Int,
+        action: String,
+        requestID: String
+    ) async throws -> MutationReceipt<MCPServer> {
+        try await performMCPAction(
+            serverID: serverID,
+            expectedRevision: expectedRevision,
+            action: action,
+            returnTo: nil,
+            requestID: requestID
+        )
+    }
+
+    func performConnectionAction(
+        connectionID: String,
+        expectedRevision: Int,
+        action: String,
+        requestID: String
+    ) async throws -> MutationReceipt<Connection> {
+        try await performConnectionAction(
+            connectionID: connectionID,
+            expectedRevision: expectedRevision,
+            action: action,
+            returnTo: nil,
+            requestID: requestID
+        )
+    }
+
+    func fetchLibraryItemFile(id: String) async throws -> LibraryFilePayload {
+        try await fetchLibraryItemFile(id: id, format: nil)
+    }
 }

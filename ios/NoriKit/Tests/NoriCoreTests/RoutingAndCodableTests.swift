@@ -265,6 +265,7 @@ struct RoutingAndCodableTests {
         let captured = await mock.recordedAnswers
         #expect(captured == [.approve(actionDigest: "sha256:xyz", rememberRule: true)])
         #expect(await mock.fetchPermissionsCallCount >= 1)
+        #expect(await mock.fetchFullSnapshotCallCount == 0)
         #expect(store.pendingInteractions.isEmpty)
         #expect(store.permissions.count == 1)
         #expect(store.permissions.first?.id == "rule-remembered")
@@ -274,6 +275,7 @@ struct RoutingAndCodableTests {
 private actor MockApprovalTransport: NoriTransport {
     var recordedAnswers: [InteractionAnswer] = []
     var fetchPermissionsCallCount: Int = 0
+    var fetchFullSnapshotCallCount: Int = 0
     private var savedRule = PermissionRule(
         id: "rule-remembered",
         revision: 1,
@@ -286,9 +288,11 @@ private actor MockApprovalTransport: NoriTransport {
 
     func ping() async -> HealthCheckResult { HealthCheckResult(ok: true, status: "ok", latencyMs: 1) }
     func fetchCapabilities() async throws -> Capabilities { Capabilities() }
+    func fetchAssistantSummary() async throws -> AssistantSummary { AssistantSummary() }
     func fetchSession(before cursor: String?) async throws -> Session { Session() }
     func fetchFullSnapshot() async throws -> NoriFullSnapshot {
-        NoriFullSnapshot(interactions: [], permissions: [])
+        fetchFullSnapshotCallCount += 1
+        return NoriFullSnapshot(interactions: [], permissions: [])
     }
     nonisolated func eventStream(after position: Int) -> AsyncThrowingStream<NoriStreamEvent, Error> {
         AsyncThrowingStream { $0.finish() }
@@ -332,18 +336,24 @@ private actor MockApprovalTransport: NoriTransport {
     func createMCPServer(input: MCPServerInput, requestID: String) async throws -> MutationReceipt<MCPServer> {
         throw NoriAPIError(message: "Not implemented")
     }
-    func performMCPAction(serverID: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<MCPServer> {
+    func performMCPAction(serverID: String, expectedRevision: Int, action: String, returnTo: String?, requestID: String) async throws -> MutationReceipt<MCPServer> {
+        throw NoriAPIError(message: "Not implemented")
+    }
+    func setMCPCredential(serverID: String, expectedRevision: Int, secret: String, requestID: String) async throws -> MutationReceipt<MCPServer> {
         throw NoriAPIError(message: "Not implemented")
     }
     func setMCPToolExposure(serverID: String, expectedRevision: Int, toolName: String, exposure: MCPToolExposure, requestID: String) async throws -> MutationReceipt<MCPServer> {
         throw NoriAPIError(message: "Not implemented")
     }
     func fetchConnections() async throws -> [Connection] { [] }
-    func performConnectionAction(connectionID: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<Connection> {
+    func performConnectionAction(connectionID: String, expectedRevision: Int, action: String, returnTo: String?, requestID: String) async throws -> MutationReceipt<Connection> {
         throw NoriAPIError(message: "Not implemented")
     }
     func fetchLibrary() async throws -> [LibraryItem] { [] }
     func fetchLibraryItem(id: String) async throws -> LibraryItem {
+        throw NoriAPIError(message: "Not implemented")
+    }
+    func fetchLibraryItemFile(id: String, format: String?) async throws -> LibraryFilePayload {
         throw NoriAPIError(message: "Not implemented")
     }
     func search(query: String) async throws -> SearchResponse { SearchResponse(items: []) }
@@ -356,13 +366,13 @@ private actor MockApprovalTransport: NoriTransport {
     func createMemory(text: String, section: String?, about: String?, pinned: Bool, requestID: String) async throws -> MutationReceipt<MemoryFact> {
         throw NoriAPIError(message: "Not implemented")
     }
-    func performMemoryAction(id: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<MemoryFact> {
+    func performMemoryAction(id: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<MemoryActionResource> {
         throw NoriAPIError(message: "Not implemented")
     }
-    func performMemoryLogEntryAction(date: String, entryID: String, expectedRevision: Int, action: String, pinned: Bool, requestID: String) async throws -> MutationReceipt<MemoryLog> {
+    func performMemoryLogEntryAction(date: String, entryID: String, expectedRevision: Int, action: String, pinned: Bool, requestID: String) async throws -> MutationReceipt<MemoryLogEntryActionResource> {
         throw NoriAPIError(message: "Not implemented")
     }
-    func performWorkingMemoryAction(itemID: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<WorkingMemory> {
+    func performWorkingMemoryAction(itemID: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<WorkingMemoryActionResource> {
         throw NoriAPIError(message: "Not implemented")
     }
     func fetchAutomations() async throws -> [Automation] { [] }
