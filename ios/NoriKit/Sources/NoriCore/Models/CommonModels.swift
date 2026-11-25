@@ -351,6 +351,115 @@ public struct UploadAccept: Sendable, Codable, Hashable {
     }
 }
 
+public struct ModelProfile: Sendable, Codable, Hashable, Identifiable {
+    public var id: String
+    public var version: String
+    public var label: String
+    public var backend: String
+    public var model: String
+    public var lanes: [String]
+    public var supportedReasoning: [String]?
+    public var defaultReasoning: String?
+    public var paid: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case version
+        case label
+        case backend
+        case model
+        case lanes
+        case supportedReasoning = "supported_reasoning"
+        case defaultReasoning = "default_reasoning"
+        case paid
+    }
+
+    public init(
+        id: String,
+        version: String = "v1",
+        label: String,
+        backend: String,
+        model: String,
+        lanes: [String],
+        supportedReasoning: [String]? = nil,
+        defaultReasoning: String? = nil,
+        paid: Bool
+    ) {
+        self.id = id
+        self.version = version
+        self.label = label
+        self.backend = backend
+        self.model = model
+        self.lanes = lanes
+        self.supportedReasoning = supportedReasoning
+        self.defaultReasoning = defaultReasoning
+        self.paid = paid
+    }
+}
+
+public struct ModelProfileCatalog: Sendable, Codable, Hashable {
+    public var defaultChatProfileID: String?
+    public var defaultChatReasoning: String?
+    public var defaultTaskProfileID: String?
+    public var defaultTaskReasoning: String?
+    public var profiles: [ModelProfile]
+
+    enum CodingKeys: String, CodingKey {
+        case defaultChatProfileID = "default_chat_profile_id"
+        case defaultChatReasoning = "default_chat_reasoning"
+        case defaultTaskProfileID = "default_task_profile_id"
+        case defaultTaskReasoning = "default_task_reasoning"
+        case profiles
+    }
+
+    public init(
+        defaultChatProfileID: String? = nil,
+        defaultChatReasoning: String? = nil,
+        defaultTaskProfileID: String? = nil,
+        defaultTaskReasoning: String? = nil,
+        profiles: [ModelProfile] = []
+    ) {
+        self.defaultChatProfileID = defaultChatProfileID
+        self.defaultChatReasoning = defaultChatReasoning
+        self.defaultTaskProfileID = defaultTaskProfileID
+        self.defaultTaskReasoning = defaultTaskReasoning
+        self.profiles = profiles
+    }
+}
+
+public struct ModelSelection: Sendable, Codable, Hashable {
+    public var chatProfileID: String?
+    public var chatReasoning: String?
+    public var taskProfileID: String?
+    public var taskReasoning: String?
+
+    enum CodingKeys: String, CodingKey {
+        case chatProfileID = "chat_profile_id"
+        case chatReasoning = "chat_reasoning"
+        case taskProfileID = "task_profile_id"
+        case taskReasoning = "task_reasoning"
+    }
+
+    public var isEmpty: Bool {
+        (chatProfileID ?? "").isEmpty &&
+            (chatReasoning ?? "").isEmpty &&
+            (taskProfileID ?? "").isEmpty &&
+            (taskReasoning ?? "").isEmpty
+    }
+
+    public init(
+        chatProfileID: String? = nil,
+        chatReasoning: String? = nil,
+        taskProfileID: String? = nil,
+        taskReasoning: String? = nil
+    ) {
+        self.chatProfileID = chatProfileID
+        self.chatReasoning = chatReasoning
+        self.taskProfileID = taskProfileID
+        self.taskReasoning = taskReasoning
+    }
+}
+
 public struct Capabilities: Sendable, Codable, Hashable {
     public var contract: String
     public var conversationContract: String?
@@ -363,6 +472,7 @@ public struct Capabilities: Sendable, Codable, Hashable {
     public var assistantContract: String?
     public var assistantFeatures: [String: Bool]?
     public var uploadAccept: UploadAccept?
+    public var modelProfiles: ModelProfileCatalog?
 
     enum CodingKeys: String, CodingKey {
         case contract
@@ -376,6 +486,7 @@ public struct Capabilities: Sendable, Codable, Hashable {
         case assistantContract = "assistant_contract"
         case assistantFeatures = "assistant_features"
         case uploadAccept = "upload_accept"
+        case modelProfiles = "model_profiles"
     }
 
     public init(
@@ -389,7 +500,8 @@ public struct Capabilities: Sendable, Codable, Hashable {
         features: [String: Bool] = ["backgroundTasks": true],
         assistantContract: String? = "nori-assistant-1",
         assistantFeatures: [String: Bool]? = nil,
-        uploadAccept: UploadAccept? = nil
+        uploadAccept: UploadAccept? = nil,
+        modelProfiles: ModelProfileCatalog? = nil
     ) {
         self.contract = contract
         self.conversationContract = conversationContract
@@ -402,6 +514,7 @@ public struct Capabilities: Sendable, Codable, Hashable {
         self.assistantContract = assistantContract
         self.assistantFeatures = assistantFeatures
         self.uploadAccept = uploadAccept
+        self.modelProfiles = modelProfiles
     }
 }
 

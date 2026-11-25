@@ -484,15 +484,21 @@ public actor LiveNoriTransport: NoriTransport {
     // MARK: - Conversation & Uploads
 
     public func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session {
+        try await sendTurn(id: id, message: message, attachmentIDs: attachmentIDs, modelSelection: nil)
+    }
+
+    public func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session {
         struct TurnBody: Encodable {
             let id: String
             let message: String
             let attachments: [String]?
+            let model: ModelSelection?
         }
+        let activeModel = (modelSelection?.isEmpty == false) ? modelSelection : nil
         return try await sendJSON(
             "/api/turn",
             method: "POST",
-            body: TurnBody(id: id, message: message, attachments: attachmentIDs.isEmpty ? nil : attachmentIDs)
+            body: TurnBody(id: id, message: message, attachments: attachmentIDs.isEmpty ? nil : attachmentIDs, model: activeModel)
         )
     }
 

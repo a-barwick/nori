@@ -106,6 +106,55 @@ public final class NoriStore {
     public var capabilities: Capabilities?
     public var assistantSummary: AssistantSummary?
     public var lastPing: HealthCheckResult?
+    public var modelSelection: ModelSelection = NoriStore.loadStoredModelSelection()
+
+    private static let modelSelectionStorageKey = "nori.diagnostics.modelSelection.v1"
+
+    private static func loadStoredModelSelection() -> ModelSelection {
+        guard let data = UserDefaults.standard.data(forKey: modelSelectionStorageKey),
+              let decoded = try? JSONDecoder().decode(ModelSelection.self, from: data)
+        else {
+            return ModelSelection()
+        }
+        return decoded
+    }
+
+    public func setModelSelection(_ next: ModelSelection) {
+        modelSelection = next
+        if next.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.modelSelectionStorageKey)
+        } else if let encoded = try? JSONEncoder().encode(next) {
+            UserDefaults.standard.set(encoded, forKey: Self.modelSelectionStorageKey)
+        }
+    }
+
+    /// Returns the active model selection pruned against the server's currently advertised catalog.
+    public var effectiveModelSelection: ModelSelection {
+        guard let catalog = capabilities?.modelProfiles else { return ModelSelection() }
+        guard !catalog.profiles.isEmpty else { return ModelSelection() }
+        var out = ModelSelection()
+        let chatTargetID = modelSelection.chatProfileID ?? catalog.defaultChatProfileID
+        let chatProfile = catalog.profiles.first { $0.lanes.contains("chat") && $0.id == chatTargetID }
+        if let cid = modelSelection.chatProfileID,
+           catalog.profiles.contains(where: { $0.lanes.contains("chat") && $0.id == cid }) {
+            out.chatProfileID = cid
+        }
+        if let cr = modelSelection.chatReasoning,
+           chatProfile?.supportedReasoning?.contains(cr) == true {
+            out.chatReasoning = cr
+        }
+        let taskTargetID = modelSelection.taskProfileID ?? catalog.defaultTaskProfileID
+        let taskProfile = catalog.profiles.first { $0.lanes.contains("task") && $0.id == taskTargetID }
+        if let tid = modelSelection.taskProfileID,
+           catalog.profiles.contains(where: { $0.lanes.contains("task") && $0.id == tid }) {
+            out.taskProfileID = tid
+        }
+        if let tr = modelSelection.taskReasoning,
+           taskProfile?.supportedReasoning?.contains(tr) == true {
+            out.taskReasoning = tr
+        }
+        return out
+    }
 
     // MARK: Domain State
     public var session: Session
@@ -684,10 +733,12 @@ public final class NoriStore {
         lastError = nil
 
         do {
+            let activeSelection = effectiveModelSelection
             var updated = try await transport.sendTurn(
                 id: clientID,
                 message: trimmed,
-                attachmentIDs: attachments.map(\.id)
+                attachmentIDs: attachments.map(\.id),
+                modelSelection: activeSelection.isEmpty ? nil : activeSelection
             )
             // Keep the confirmed user message visible while the core worker processes the turn.
             if !updated.messages.contains(where: { $0.id == expectedUserMessageID || $0.turnID == clientID && $0.role == .user }) {

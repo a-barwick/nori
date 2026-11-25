@@ -64,6 +64,7 @@ public protocol NoriTransport: Sendable {
 
     // Conversation & Uploads
     func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session
+    func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session
     func retryTurn(turnID: String?, messageID: String?) async throws -> Session
     func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse
     func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> Attachment
@@ -225,5 +226,9 @@ public extension NoriTransport {
 
     func fetchLibraryItemFile(id: String) async throws -> LibraryFilePayload {
         try await fetchLibraryItemFile(id: id, format: nil)
+    }
+
+    func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session {
+        try await sendTurn(id: id, message: message, attachmentIDs: attachmentIDs)
     }
 }
