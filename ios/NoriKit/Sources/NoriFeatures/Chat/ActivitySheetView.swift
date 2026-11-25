@@ -107,7 +107,7 @@ public struct ActivitySheetView: View {
                             ForEach(Array(activeTasks.enumerated()), id: \.element.id) { idx, item in
                                 taskNavigationRow(
                                     item: item,
-                                    detail: item.progress ?? "Started \(item.startedAt)",
+                                    detail: item.progress ?? "Started \(NoriDateFormatting.relative(item.startedAt))",
                                     showDivider: idx < activeTasks.count - 1
                                 ) {
                                     if let amount = item.cost.amountUSD {
@@ -132,7 +132,7 @@ public struct ActivitySheetView: View {
                                 let pill = WorkStatusPresentation.pill(for: item)
                                 taskNavigationRow(
                                     item: item,
-                                    detail: item.finishedAt ?? item.startedAt,
+                                    detail: recentTaskDetail(for: item),
                                     showDivider: idx < recentTasks.count - 1
                                 ) {
                                     NoriPill(pill.label, tone: pill.tone)
@@ -222,6 +222,17 @@ public struct ActivitySheetView: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    private func recentTaskDetail(for item: WorkItem) -> String {
+        if let finishedAt = item.finishedAt, !finishedAt.isEmpty {
+            let relativeFinished = NoriDateFormatting.relative(finishedAt)
+            if let dur = NoriDateFormatting.duration(from: item.startedAt, to: finishedAt) {
+                return "\(relativeFinished) · \(dur)"
+            }
+            return relativeFinished
+        }
+        return "Started \(NoriDateFormatting.relative(item.startedAt))"
     }
 
     private func formatUSD(_ value: Double) -> String {

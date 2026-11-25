@@ -16,12 +16,30 @@ public struct RoutinesView: View {
 
     private var nextRunLine: String {
         if let next = activeAutomations.first(where: { $0.status == .enabled }) {
-            let when = next.nextAt ?? next.trigger.summaryLabel
+            let when: String = {
+                if let nextAt = next.nextAt, !nextAt.isEmpty {
+                    return NoriDateFormatting.shortDateTime(nextAt)
+                }
+                return triggerSummary(for: next.trigger)
+            }()
             return "Next: \(next.title), \(when)."
         }
         return activeAutomations.isEmpty
             ? "No automations scheduled yet."
             : "All automations are currently paused."
+    }
+
+    private func triggerSummary(for trigger: AutomationTrigger) -> String {
+        if let displayCadence = trigger.displayCadence, !displayCadence.isEmpty {
+            return displayCadence
+        }
+        if let rrule = trigger.rrule, !rrule.isEmpty {
+            return rrule
+        }
+        if let at = trigger.at, !at.isEmpty {
+            return "Once at \(NoriDateFormatting.shortDateTime(at))"
+        }
+        return trigger.summaryLabel
     }
 
     public var body: some View {
@@ -47,12 +65,12 @@ public struct RoutinesView: View {
                                             .font(.system(size: 15, weight: .semibold))
                                             .foregroundStyle(NoriColors.ink)
 
-                                        Text("\(automation.trigger.summaryLabel) · $\(String(format: "%.2f", automation.budgetUSD))/run")
+                                        Text("\(triggerSummary(for: automation.trigger)) · $\(String(format: "%.2f", automation.budgetUSD))/run")
                                             .font(.system(size: 12.5))
                                             .foregroundStyle(NoriColors.ink2)
 
                                         if isEnabled, let nextAt = automation.nextAt, !nextAt.isEmpty {
-                                            Text("Next run: \(nextAt)")
+                                            Text("Next run: \(NoriDateFormatting.shortDateTime(nextAt))")
                                                 .font(.system(size: 12, weight: .medium))
                                                 .foregroundStyle(NoriColors.accent)
                                         }

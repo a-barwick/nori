@@ -136,7 +136,7 @@ public struct GoalsView: View {
     private func subtitle(for goal: Goal) -> String {
         var parts = ["\(goal.metCriteriaCount) of \(goal.completionCriteria.count) done"]
         if let deadline = goal.deadline, !deadline.isEmpty {
-            parts.append("By \(deadline)")
+            parts.append("By \(NoriDateFormatting.shortDate(deadline))")
         }
         return parts.joined(separator: " · ")
     }

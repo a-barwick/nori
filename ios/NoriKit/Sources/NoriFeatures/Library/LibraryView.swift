@@ -100,7 +100,9 @@ public struct LibraryView: View {
                                         } label: {
                                             NoriRow(
                                                 title: item.title,
-                                                detail: "\(item.provenance.content.displayLabel) · \(item.createdAt)",
+                                                detail: item.createdAt.isEmpty
+                                                    ? item.provenance.content.displayLabel
+                                                    : "\(item.provenance.content.displayLabel) · \(NoriDateFormatting.relative(item.createdAt))",
                                                 systemImage: iconName(for: item),
                                                 iconTone: iconTone(for: item),
                                                 showChevron: true,

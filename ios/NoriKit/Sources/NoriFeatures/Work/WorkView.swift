@@ -232,14 +232,14 @@ public struct WorkView: View {
                     Button(action: onOpenRoutines) {
                         NoriRow(
                             title: automation.title,
-                            detail: automation.trigger.summaryLabel,
+                            detail: triggerSummary(for: automation.trigger),
                             systemImage: "repeat",
                             iconTone: .accent,
                             showChevron: true,
                             showDivider: idx < scheduled.count - 1
                         ) {
                             if let nextAt = automation.nextAt, !nextAt.isEmpty {
-                                NoriPill(nextAt, tone: .neutral)
+                                NoriPill(NoriDateFormatting.relative(nextAt), tone: .neutral)
                             }
                         }
                     }
@@ -270,7 +270,13 @@ public struct WorkView: View {
 
     private func workRow(item: WorkItem, showDivider: Bool) -> some View {
         let pill = WorkStatusPresentation.pill(for: item)
-        let detail = item.error?.message ?? item.progress ?? (item.finishedAt.map { "Finished \($0)" } ?? "Started \(item.startedAt)")
+        let timestampDetail: String = {
+            if let finishedAt = item.finishedAt, !finishedAt.isEmpty {
+                return "Finished \(NoriDateFormatting.relative(finishedAt))"
+            }
+            return "Started \(NoriDateFormatting.relative(item.startedAt))"
+        }()
+        let detail = item.error?.message ?? item.progress ?? timestampDetail
 
         return Button {
             navigateToTask(item.taskID)
@@ -293,6 +299,19 @@ public struct WorkView: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private func triggerSummary(for trigger: AutomationTrigger) -> String {
+        if let displayCadence = trigger.displayCadence, !displayCadence.isEmpty {
+            return displayCadence
+        }
+        if let rrule = trigger.rrule, !rrule.isEmpty {
+            return rrule
+        }
+        if let at = trigger.at, !at.isEmpty {
+            return "Once at \(NoriDateFormatting.shortDateTime(at))"
+        }
+        return trigger.summaryLabel
     }
 
     private func navigateToTask(_ taskID: String) {

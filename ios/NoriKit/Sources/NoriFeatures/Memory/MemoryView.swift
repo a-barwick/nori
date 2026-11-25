@@ -254,7 +254,7 @@ public struct MemoryView: View {
                                 }
                                 HStack(spacing: 6) {
                                     if !fact.createdAt.isEmpty {
-                                        Text("Saved \(fact.createdAt)")
+                                        Text("Saved \(NoriDateFormatting.shortDate(fact.createdAt))")
                                             .font(.system(size: 11.5))
                                             .foregroundStyle(NoriColors.ink3)
                                             .lineLimit(1)
@@ -290,7 +290,7 @@ public struct MemoryView: View {
         } else {
             ForEach(store.memoryLogs) { dayLog in
                 VStack(alignment: .leading, spacing: 0) {
-                    NoriSectionHeader(dayLog.date) {
+                    NoriSectionHeader(NoriDateFormatting.shortDate(dayLog.date)) {
                         Text("\(dayLog.entries.count) \(dayLog.entries.count == 1 ? "entry" : "entries")")
                             .font(NoriTypography.caption)
                             .foregroundStyle(NoriColors.ink3)

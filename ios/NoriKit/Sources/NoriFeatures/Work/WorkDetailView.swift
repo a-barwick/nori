@@ -313,7 +313,7 @@ public struct WorkDetailView: View {
                 HStack {
                     Text("From \(item.origin.displayLabel)")
                     Spacer()
-                    Text("Started \(item.startedAt)")
+                    Text("Started \(NoriDateFormatting.shortDateTime(item.startedAt))")
                 }
                 .font(.system(size: 11.5))
                 .foregroundStyle(NoriColors.ink3)
@@ -432,7 +432,7 @@ public struct WorkDetailView: View {
         }
         detailParts.append("because \(op.displayAuthority)")
         if let createdAt = op.createdAt, !createdAt.isEmpty {
-            detailParts.append(createdAt)
+            detailParts.append(NoriDateFormatting.shortDateTime(createdAt))
         }
 
         return NoriRow(
@@ -545,7 +545,7 @@ private struct ActivityTimelineView: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         if !event.createdAt.isEmpty {
-                            Text(event.createdAt)
+                            Text(NoriDateFormatting.shortDateTime(event.createdAt))
                                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                                 .foregroundStyle(NoriColors.ink3)
                         }
