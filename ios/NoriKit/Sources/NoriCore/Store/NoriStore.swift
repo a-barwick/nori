@@ -6,8 +6,6 @@ import Observation
 public enum NoriTab: String, Sendable, Hashable, CaseIterable, Identifiable {
     case chat
     case work
-    case apps
-    case library
     case more
 
     public var id: String { rawValue }
@@ -16,6 +14,8 @@ public enum NoriTab: String, Sendable, Hashable, CaseIterable, Identifiable {
 public enum NoriDeepLink: Sendable, Hashable {
     case tab(NoriTab)
     case activitySheet
+    case apps
+    case library
     case memory
     case routines
     case goals
@@ -31,8 +31,15 @@ public enum NoriDeepLink: Sendable, Hashable {
 
         switch host {
         case "tab":
-            if let name = parts.first?.lowercased(), let tab = NoriTab(rawValue: name) {
-                return .tab(tab)
+            if let name = parts.first?.lowercased() {
+                if let tab = NoriTab(rawValue: name) {
+                    return .tab(tab)
+                }
+                switch name {
+                case "apps": return .apps
+                case "library": return .library
+                default: break
+                }
             }
         case "chat": return .tab(.chat)
         case "work":
@@ -40,12 +47,12 @@ public enum NoriDeepLink: Sendable, Hashable {
                 return .workDetail(taskID)
             }
             return .tab(.work)
-        case "apps": return .tab(.apps)
+        case "apps": return .apps
         case "library":
             if let itemID = parts.first, !itemID.isEmpty {
                 return .document(itemID)
             }
-            return .tab(.library)
+            return .library
         case "more": return .tab(.more)
         case "sheet":
             if parts.first?.lowercased() == "activity" {

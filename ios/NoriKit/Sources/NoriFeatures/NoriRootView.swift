@@ -6,15 +6,14 @@ private struct DocumentPresentation: Identifiable, Hashable {
     let id: String
 }
 
-/// Root 5-tab navigation shell for Nori iOS.
+/// Root 3-tab navigation shell for Nori iOS.
 public struct NoriRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var store: NoriStore
 
     @State private var selectedTab: NoriTab = .chat
-    @State private var workTabFilter: WorkTabFilter = .needsYou
+    @State private var workTabFilter: WorkTabFilter = .tasks
     @State private var workPath: [String] = []
-    @State private var appsPath: [AppsRoute] = []
     @State private var morePath: [MoreRoute] = []
 
     @State private var isActivitySheetPresented = false
@@ -95,17 +94,16 @@ public struct NoriRootView: View {
             async let summaryTask: Void = store.refreshSummary()
             _ = await (sessionTask, summaryTask)
         case .work:
-            await store.refreshWorkAndInteractions()
-        case .apps:
-            await store.refreshApps()
-        case .library:
-            await store.refreshLibrary()
+            async let workTask: Void = store.refreshWorkAndInteractions()
+            async let libraryTask: Void = store.refreshLibrary()
+            async let routinesGoalsTask: Void = store.refreshRoutinesAndGoals()
+            _ = await (workTask, libraryTask, routinesGoalsTask)
         case .more:
             async let summaryTask: Void = store.refreshSummary()
+            async let appsTask: Void = store.refreshApps()
             async let memoryTask: Void = store.refreshMemory()
-            async let routinesGoalsTask: Void = store.refreshRoutinesAndGoals()
             async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
-            _ = await (summaryTask, memoryTask, routinesGoalsTask, permsPrefsTask)
+            _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask)
         }
     }
 
@@ -121,7 +119,7 @@ public struct NoriRootView: View {
                     onOpenTask: openWorkTask
                 )
                 .tabItem {
-                    Label("Chat", systemImage: "bubble.left")
+                    Label("Chat", systemImage: "message")
                 }
                 .tag(NoriTab.chat)
 
@@ -129,9 +127,7 @@ public struct NoriRootView: View {
                     WorkView(
                         store: store,
                         selectedTab: $workTabFilter,
-                        onOpenActivity: { isActivitySheetPresented = true },
                         onOpenDocument: openDocument,
-                        onOpenRoutines: jumpToRoutines,
                         onOpenTask: openWorkTask
                     )
                     .navigationDestination(for: String.self) { taskID in
@@ -148,43 +144,16 @@ public struct NoriRootView: View {
                 .badge(store.needsYouCount)
                 .tag(NoriTab.work)
 
-                NavigationStack(path: $appsPath) {
-                    AppsView(store: store)
-                        .navigationDestination(for: AppsRoute.self) { route in
-                            switch route {
-                            case .mcpDetail(let serverID):
-                                MCPDetailView(store: store, serverID: serverID)
-                            }
-                        }
-                }
-                .tabItem {
-                    Label("Apps", systemImage: "square.grid.2x2")
-                }
-                .badge(store.appsAttentionCount)
-                .tag(NoriTab.apps)
-
-                NavigationStack {
-                    LibraryView(
-                        store: store,
-                        onOpenDocument: openDocument,
-                        onSelectSearchHit: handleSearchHit
-                    )
-                }
-                .tabItem {
-                    Label("Library", systemImage: "folder")
-                }
-                .tag(NoriTab.library)
-
                 NavigationStack(path: $morePath) {
                     MoreHubView(store: store)
                         .navigationDestination(for: MoreRoute.self) { route in
                             switch route {
+                            case .apps:
+                                AppsView(store: store)
+                            case .mcpDetail(let serverID):
+                                MCPDetailView(store: store, serverID: serverID)
                             case .memory:
                                 MemoryView(store: store)
-                            case .routines:
-                                RoutinesView(store: store)
-                            case .goals:
-                                GoalsView(store: store, onJumpToNeedsYou: jumpToNeedsYou)
                             case .settings(let section):
                                 SettingsView(store: store, initialSection: section)
                             }
@@ -241,15 +210,8 @@ public struct NoriRootView: View {
         isActivitySheetPresented = false
         presentedDocument = nil
         workPath = []
-        workTabFilter = .needsYou
+        workTabFilter = .tasks
         selectedTab = .work
-    }
-
-    private func jumpToRoutines() {
-        isActivitySheetPresented = false
-        presentedDocument = nil
-        selectedTab = .more
-        morePath = [.routines]
     }
 
     private func openWorkTask(_ taskID: String) {
@@ -257,58 +219,6 @@ public struct NoriRootView: View {
         presentedDocument = nil
         selectedTab = .work
         workPath = [taskID]
-    }
-
-    private func handleSearchHit(_ hit: SearchHit) {
-        if let jump = hit.jump {
-            switch jump.kind {
-            case "conversation":
-                selectedTab = .chat
-                return
-            case "task":
-                if let taskID = jump.taskID {
-                    openWorkTask(taskID)
-                    return
-                }
-            case "library":
-                if let itemID = jump.itemID {
-                    presentedDocument = DocumentPresentation(id: itemID)
-                    return
-                }
-            case "goal":
-                selectedTab = .more
-                morePath = [.goals]
-                return
-            case "automation":
-                selectedTab = .more
-                morePath = [.routines]
-                return
-            case "memory":
-                selectedTab = .more
-                morePath = [.memory]
-                return
-            default:
-                break
-            }
-        }
-
-        switch hit.kind {
-        case .message:
-            selectedTab = .chat
-        case .task:
-            openWorkTask(hit.id)
-        case .result, .file:
-            presentedDocument = DocumentPresentation(id: hit.id)
-        case .goal:
-            selectedTab = .more
-            morePath = [.goals]
-        case .automation:
-            selectedTab = .more
-            morePath = [.routines]
-        case .memory:
-            selectedTab = .more
-            morePath = [.memory]
-        }
     }
 
     private func applyDeepLink(_ link: NoriDeepLink) {
@@ -319,30 +229,41 @@ public struct NoriRootView: View {
             selectedTab = tab
             if tab == .work {
                 workPath = []
-                workTabFilter = .needsYou
-            } else if tab == .apps {
-                appsPath = []
+                workTabFilter = .tasks
             } else if tab == .more {
                 morePath = []
             }
-        case .activitySheet:
+        case .apps:
+            isActivitySheetPresented = false
             presentedDocument = nil
-            isActivitySheetPresented = true
+            selectedTab = .more
+            morePath = [.apps]
         case .memory:
             isActivitySheetPresented = false
             presentedDocument = nil
             selectedTab = .more
             morePath = [.memory]
+        case .library:
+            isActivitySheetPresented = false
+            presentedDocument = nil
+            selectedTab = .work
+            workPath = []
+            workTabFilter = .artifacts
+        case .document(let itemID):
+            isActivitySheetPresented = false
+            presentedDocument = DocumentPresentation(id: itemID)
         case .routines:
             isActivitySheetPresented = false
             presentedDocument = nil
-            selectedTab = .more
-            morePath = [.routines]
+            selectedTab = .work
+            workPath = []
+            workTabFilter = .routines
         case .goals:
             isActivitySheetPresented = false
             presentedDocument = nil
-            selectedTab = .more
-            morePath = [.goals]
+            selectedTab = .work
+            workPath = []
+            workTabFilter = .goals
         case .settings:
             isActivitySheetPresented = false
             presentedDocument = nil
@@ -350,9 +271,9 @@ public struct NoriRootView: View {
             morePath = [.settings(nil)]
         case .workDetail(let taskID):
             openWorkTask(taskID)
-        case .document(let itemID):
-            isActivitySheetPresented = false
-            presentedDocument = DocumentPresentation(id: itemID)
+        case .activitySheet:
+            presentedDocument = nil
+            isActivitySheetPresented = true
         case .oauthCallback:
             break
         }

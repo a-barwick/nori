@@ -43,18 +43,53 @@ struct RoutingAndCodableTests {
         #expect(try pkce.extractAuthorizationCode(from: goodCallback) == "xyz")
     }
 
-    @Test("Parses nori:// deep links for tabs, sheets, subroutes, and OAuth")
+    @Test("NoriTab exposes the 3-tab Chat, Work, and More structure")
+    func threeTabStructure() {
+        #expect(NoriTab.allCases == [.chat, .work, .more])
+        #expect(NoriTab.chat.id == "chat")
+        #expect(NoriTab.work.id == "work")
+        #expect(NoriTab.more.id == "more")
+        #expect(NoriTab(rawValue: "apps") == nil)
+        #expect(NoriTab(rawValue: "library") == nil)
+    }
+
+    @Test("Parses nori:// deep links for 3-tab shell, backwards-compatible subroutes, sheets, and OAuth")
     func deepLinkParsing() {
+        // 3 top-level tabs (direct + legacy /tab/ prefix)
+        #expect(NoriDeepLink.parse(URL(string: "nori://chat")!) == .tab(.chat))
+        #expect(NoriDeepLink.parse(URL(string: "nori://tab/chat")!) == .tab(.chat))
+        #expect(NoriDeepLink.parse(URL(string: "nori://work")!) == .tab(.work))
         #expect(NoriDeepLink.parse(URL(string: "nori://tab/work")!) == .tab(.work))
-        #expect(NoriDeepLink.parse(URL(string: "nori://tab/apps")!) == .tab(.apps))
-        #expect(NoriDeepLink.parse(URL(string: "nori://sheet/activity")!) == .activitySheet)
-        #expect(NoriDeepLink.parse(URL(string: "nori://memory")!) == .memory)
         #expect(NoriDeepLink.parse(URL(string: "nori://work/task-1")!) == .workDetail("task-1"))
+        #expect(NoriDeepLink.parse(URL(string: "nori://more")!) == .tab(.more))
+        #expect(NoriDeepLink.parse(URL(string: "nori://tab/more")!) == .tab(.more))
+
+        // Backwards-compatible legacy tabs & subroutes
+        #expect(NoriDeepLink.parse(URL(string: "nori://apps")!) == .apps)
+        #expect(NoriDeepLink.parse(URL(string: "nori://tab/apps")!) == .apps)
+        #expect(NoriDeepLink.parse(URL(string: "nori://memory")!) == .memory)
+        #expect(NoriDeepLink.parse(URL(string: "nori://library")!) == .library)
+        #expect(NoriDeepLink.parse(URL(string: "nori://tab/library")!) == .library)
+        #expect(NoriDeepLink.parse(URL(string: "nori://library/doc-123")!) == .document("doc-123"))
+        #expect(NoriDeepLink.parse(URL(string: "nori://routines")!) == .routines)
+        #expect(NoriDeepLink.parse(URL(string: "nori://automations")!) == .routines)
+        #expect(NoriDeepLink.parse(URL(string: "nori://goals")!) == .goals)
+        #expect(NoriDeepLink.parse(URL(string: "nori://settings")!) == .settings)
+
+        // Sheets & OAuth callbacks
+        #expect(NoriDeepLink.parse(URL(string: "nori://activity")!) == .activitySheet)
+        #expect(NoriDeepLink.parse(URL(string: "nori://sheet/activity")!) == .activitySheet)
         if case .oauthCallback(let url) = NoriDeepLink.parse(URL(string: "nori://oauth/callback?code=abc&state=123")!) {
             #expect(url.query?.contains("code=abc") == true)
         } else {
             Issue.record("Expected oauthCallback deep link")
         }
+        if case .oauthCallback(let url) = NoriDeepLink.parse(URL(string: "nori://callback/oauth?code=def")!) {
+            #expect(url.query?.contains("code=def") == true)
+        } else {
+            Issue.record("Expected callback oauthCallback deep link")
+        }
+        #expect(NoriDeepLink.parse(URL(string: "https://example.com/work")!) == nil)
     }
 
     @Test("Codable round-trip for Interaction variants, Session, MCPServer, Memory, Automation, Goal, Preferences")
