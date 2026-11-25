@@ -45,7 +45,7 @@
     },
     {
       "title": "Require confirmation before sending emails to PI or external landlords",
-      "effect": "deny",
+      "effect": "ask",
       "tool_names": ["email_send"],
       "recipients": ["a.vance@ucl.sim.local", "derek.halloway@rentals.sim.local"]
     }

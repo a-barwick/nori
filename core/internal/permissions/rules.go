@@ -84,8 +84,11 @@ func validEffects(classes []string) bool {
 // Summarize renders a rule's exact selectors as readable text.
 func Summarize(r RuleEditable) string {
 	verb := "Allow"
-	if r.Effect == "deny" {
+	switch r.Effect {
+	case "deny":
 		verb = "Never allow"
+	case "ask":
+		verb = "Ask before"
 	}
 	list := func(values []string, all, none string) string {
 		if slices.Contains(values, Wildcard) {
@@ -127,9 +130,9 @@ type Service struct {
 	// UnattendedWrites controls automation-origin writes: "confirm_writes" (default)
 	// turns them into interactions; "require_rule" denies them without a matching rule.
 	UnattendedWrites string
-	// UserSends says how a sensitive send in a task the user asked for directly is treated without a rule: "allow"
-	// (the default, D2: a direct explicit request authorizes its action) or "ask". Unattended automation runs follow
-	// UnattendedWrites instead, and unknown-effect tools always ask.
+	// UserSends says how a sensitive send in a task the user asked for directly is treated without a rule: "ask"
+	// (the default: external sends require approval until an allow rule is saved) or "allow". Unattended automation
+	// runs follow UnattendedWrites instead, and unknown-effect tools always ask without an allow rule.
 	UserSends string
 	Now       func() time.Time
 	// OnDecline runs before a declined approval is recorded, to undo what Nori set up for the action (an unsent draft
@@ -187,7 +190,7 @@ func (s *Service) Rule(ctx context.Context, id string) (Rule, error) {
 }
 
 func validRule(value RuleEditable) error {
-	if value.Effect != "allow" && value.Effect != "deny" || !validEffects(value.ActionClasses) || len(value.ActionClasses) == 0 {
+	if (value.Effect != "allow" && value.Effect != "ask" && value.Effect != "deny") || !validEffects(value.ActionClasses) || len(value.ActionClasses) == 0 {
 		return state.ErrInvalidResource
 	}
 	if value.MaxOperations < 0 {
@@ -307,11 +310,13 @@ type Request struct {
 
 // Decision is the result of a Permission check.
 type Decision struct {
-	Result       string // allow, deny, needs_interaction
-	Reason       string
-	Source       string // user_request, permission_rule, automation, approval, internal
-	AuthorityRef string
-	RuleIDs      []string
+	Result          string // allow, deny, needs_interaction
+	Reason          string
+	Source          string // user_request, permission_rule, automation, approval, internal
+	AuthorityRef    string
+	RuleIDs         []string
+	RuleSummaries   []string
+	ApprovedByHuman bool
 }
 
 func matches(selector []string, value string) bool {
@@ -375,7 +380,7 @@ func (s *Service) applies(rule Rule, req Request) bool {
 			return false
 		}
 	}
-	if rule.Effect == "deny" {
+	if rule.Effect == "deny" || rule.Effect == "ask" {
 		if len(rule.ResourceIDs) > 0 && !slices.Contains(rule.ResourceIDs, Wildcard) && !intersects(rule.ResourceIDs, req.ResourceIDs) {
 			return false
 		}
@@ -419,8 +424,10 @@ type approval struct {
 	At          time.Time `json:"at"`
 }
 
-// Check evaluates authority for one prepared action. Deny rules win; a decline recorded for this exact action
-// denies; an approval for it allows; matching allow rules allow; otherwise the task's origin decides.
+// Check evaluates authority for one prepared action with strict deny > ask > allow precedence.
+// Deny rules win over everything; a recorded decline denies and a recorded exact-digest approval allows;
+// matching ask rules require explicit approval (overriding allow rules); matching allow rules allow
+// (subject to action-boundary AutoReview); otherwise the action class and task origin decide.
 func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 	if req.ReadOnly && req.Effect != "read" {
 		return Decision{Result: "deny", Reason: "This task may only read."}, nil
@@ -430,11 +437,13 @@ func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 		return Decision{}, err
 	}
 	sort.Slice(rules, func(i, j int) bool { return rules[i].ID < rules[j].ID })
+	// 1. Deny rules beat everything, even direct user requests and prior approvals.
 	for _, rule := range rules {
 		if rule.Effect == "deny" && s.applies(rule, req) {
-			return Decision{Result: "deny", Reason: "A permission rule forbids this: " + rule.Summary, RuleIDs: []string{rule.ID}}, nil
+			return Decision{Result: "deny", Reason: "A permission rule forbids this: " + rule.Summary, RuleIDs: []string{rule.ID}, RuleSummaries: []string{rule.Summary}}, nil
 		}
 	}
+	// 2. Recorded exact-digest human decision for (RunID, Revision, Digest).
 	if req.Digest != "" && req.RunID != "" {
 		if r, err := s.Store.Resource(ctx, CollectionApprovals, ApprovalKey(req.RunID, req.Revision, req.Digest)); err == nil {
 			var a approval
@@ -444,11 +453,23 @@ func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 			if a.Decision == "decline" {
 				return Decision{Result: "deny", Reason: "The user declined this exact action."}, nil
 			}
-			return s.allow(ctx, req, "approval", nil, a.Interaction)
+			dec, err := s.allow(ctx, req, "approval", nil, a.Interaction)
+			if err != nil {
+				return Decision{}, err
+			}
+			dec.ApprovedByHuman = true
+			return dec, nil
 		} else if !errors.Is(err, state.ErrNotFound) {
 			return Decision{}, err
 		}
 	}
+	// 3. Ask rules always beat Allow automatically.
+	for _, rule := range rules {
+		if rule.Effect == "ask" && s.applies(rule, req) {
+			return Decision{Result: "needs_interaction", Reason: "A custom rule requires your approval: " + rule.Summary, RuleIDs: []string{rule.ID}, RuleSummaries: []string{rule.Summary}}, nil
+		}
+	}
+	// 4. Allow rules authorize tentatively (subject to action-boundary AutoReview).
 	for _, rule := range rules {
 		if rule.Effect == "allow" && s.applies(rule, req) {
 			if err := s.consume(ctx, rule); err != nil {
@@ -457,14 +478,20 @@ func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 				}
 				return Decision{}, err
 			}
-			return s.allow(ctx, req, "permission_rule", []string{rule.ID}, "")
+			dec, err := s.allow(ctx, req, "permission_rule", []string{rule.ID}, "")
+			if err != nil {
+				return Decision{}, err
+			}
+			dec.RuleSummaries = []string{rule.Summary}
+			return dec, nil
 		}
 	}
+	// 5. Default fallback when no rule matches.
 	switch {
 	case req.Effect == "read" || req.Effect == "control":
 		return s.allow(ctx, req, originSource(req.Origin), nil, "")
 	case req.Origin == "user" && req.Effect == "reversible_write":
-		// A direct request from the user authorizes the change it asked for.
+		// User-requested reversible writes proceed tentatively into action-boundary AutoReview.
 		return s.allow(ctx, req, "user_request", nil, "")
 	case req.Origin == "user" && req.Effect == "sensitive_send" && s.UserSends == "allow":
 		return s.allow(ctx, req, "user_request", nil, "")

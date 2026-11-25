@@ -45,7 +45,7 @@
     },
     {
       "title": "Require explicit CEO approval before sending any external email or calendar invite",
-      "effect": "deny",
+      "effect": "ask",
       "tool_names": ["email_send", "calendar_create_event"]
     }
   ],
