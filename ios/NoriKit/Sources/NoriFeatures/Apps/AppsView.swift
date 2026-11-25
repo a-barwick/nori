@@ -1,10 +1,16 @@
+import AuthenticationServices
 import SwiftUI
 import NoriCore
 import NoriDesign
+#if os(iOS)
+import UIKit
+#endif
 
 public struct AppsView: View {
     @Bindable private var store: NoriStore
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @State private var showingAddMCP = false
+    @State private var connectingConnectionID: String?
 
     public init(store: NoriStore) {
         self.store = store
@@ -74,11 +80,13 @@ public struct AppsView: View {
                                 showChevron: false,
                                 showDivider: !isLast
                             ) {
-                                if connection.status == .needsAttention || connection.status == .notConnected {
-                                    Button("Connect") {
-                                        Task { await store.connectConnection(connectionID: connection.id) }
+                                if let actionLabel = connectionActionLabel(for: connection) {
+                                    let isConnectingThis = connectingConnectionID == connection.id
+                                    Button(isConnectingThis ? "Connecting…" : actionLabel) {
+                                        startConnectionOAuth(for: connection)
                                     }
                                     .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                                    .disabled(connectingConnectionID != nil)
                                 } else {
                                     NoriPill(state.label, tone: state.tone)
                                 }
@@ -93,7 +101,7 @@ public struct AppsView: View {
         }
         .background(NoriColors.canvas)
         .refreshable {
-            await store.refreshAll()
+            await store.refreshApps()
         }
         .navigationTitle("Apps")
         #if os(iOS)
@@ -129,7 +137,7 @@ public struct AppsView: View {
         if let err = server.observed.error?.message, !err.isEmpty {
             parts.append(err)
         } else if let last = server.observed.lastSuccessAt, !last.isEmpty {
-            parts.append("Last call \(last)")
+            parts.append("Last call \(NoriDateFormatting.relative(last))")
         }
         return parts.joined(separator: " · ")
     }
@@ -159,9 +167,98 @@ public struct AppsView: View {
         if let msg = connection.health.message, !msg.isEmpty {
             parts.append(msg)
         } else if let last = connection.health.lastSuccessAt, !last.isEmpty {
-            parts.append("Last used \(last)")
+            parts.append("Last used \(NoriDateFormatting.relative(last))")
         }
         return parts.joined(separator: " · ")
+    }
+
+    private func connectionActionLabel(for connection: Connection) -> String? {
+        switch connection.status {
+        case .notConnected, .disconnected:
+            return "Connect"
+        case .needsAttention:
+            return "Reconnect"
+        case .connected:
+            switch connection.health.code {
+            case "needs_sign_in", "revoked", "needs_more_access":
+                return "Reconnect"
+            default:
+                return nil
+            }
+        default:
+            return nil
+        }
+    }
+
+    private func startConnectionOAuth(for connection: Connection) {
+        guard connectingConnectionID == nil else { return }
+        connectingConnectionID = connection.id
+        Task {
+            defer { connectingConnectionID = nil }
+            let attempt = await store.connectConnection(connectionID: connection.id)
+            guard let attempt else {
+                await store.refreshSummary()
+                return
+            }
+
+            guard let authorizeURL = URL(string: attempt.authorizeURL),
+                  authorizeURL.scheme?.lowercased() == "https" else {
+                store.showToast("Invalid sign-in link for \(connection.title)")
+                return
+            }
+
+            do {
+                let callbackURL = try await webAuthenticationSession.authenticate(
+                    using: authorizeURL,
+                    callback: .customScheme("nori"),
+                    preferredBrowserSession: .ephemeral,
+                    additionalHeaderFields: [:]
+                )
+                let outcome = Self.parseOAuthCallback(callbackURL)
+                switch outcome.result {
+                case "connected":
+                    store.showToast("Connected \(connection.title)")
+                    #if os(iOS)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    #endif
+                case "cancelled", "canceled":
+                    store.showToast("Sign-in cancelled")
+                case "failed":
+                    if let reason = outcome.reason {
+                        store.showToast("Connection failed: \(reason)")
+                    } else {
+                        store.showToast("Failed to connect \(connection.title)")
+                    }
+                default:
+                    store.showToast("Updated \(connection.title)")
+                }
+                async let appsTask: Void = store.refreshApps()
+                async let summaryTask: Void = store.refreshSummary()
+                _ = await (appsTask, summaryTask)
+            } catch {
+                let nsError = error as NSError
+                if nsError.domain == ASWebAuthenticationSessionErrorDomain,
+                   nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                    store.showToast("Sign-in cancelled")
+                } else {
+                    store.showToast(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private static func parseOAuthCallback(_ url: URL) -> (result: String?, reason: String?) {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let map = Dictionary(
+            items.compactMap { item in item.value.map { (item.name.lowercased(), $0) } },
+            uniquingKeysWith: { _, latest in latest }
+        )
+        let result = map["result"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rawReason = map["reason"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reason = (rawReason?.isEmpty == false)
+            ? rawReason?.replacingOccurrences(of: "_", with: " ")
+            : nil
+        return (result, reason)
     }
 
     private func connectionHealthDisplay(for connection: Connection) -> (label: String, tone: NoriTone) {

@@ -5,9 +5,6 @@ import NoriDesign
 #if canImport(UIKit)
 import UIKit
 #endif
-#if canImport(AppKit)
-import AppKit
-#endif
 
 // MARK: - Interaction Heading Helper
 
@@ -48,7 +45,7 @@ public struct InteractionCardView: View {
     @State private var didSeedAccountDefault: Bool = false
 
     // Sign-in OAuth helper
-    @State private var oauthCoordinator = OAuthWebSessionRunner()
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
     public init(
         store: NoriStore,
@@ -156,7 +153,7 @@ public struct InteractionCardView: View {
                 EmptyView()
             }
         } else if let expiresAt = interaction.expiresAt, !expiresAt.isEmpty {
-            NoriPill(Self.formattedExpiryBadge(expiresAt), tone: .warning, systemImage: "clock")
+            NoriPill(NoriDateFormatting.expiryCountdown(expiresAt), tone: .warning, systemImage: "clock")
         } else {
             NoriPill("Waiting", tone: .accent)
         }
@@ -207,7 +204,7 @@ public struct InteractionCardView: View {
             }
         }
         if !res.at.isEmpty {
-            return "\(base) · \(res.at)"
+            return "\(base) · \(NoriDateFormatting.shortDateTime(res.at))"
         }
         return base
     }
@@ -347,7 +344,7 @@ public struct InteractionCardView: View {
                         Text("Expires")
                             .font(.system(size: 12.5))
                             .foregroundStyle(NoriColors.ink3)
-                        Text(Self.formattedExpiryDetail(expiresAt))
+                        Text(NoriDateFormatting.shortDateTime(expiresAt))
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(NoriColors.warning)
                             .fixedSize(horizontal: false, vertical: true)
@@ -404,52 +401,6 @@ public struct InteractionCardView: View {
             }
             .padding(.top, 4)
         }
-    }
-
-    private static func parseISO8601Date(_ raw: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: raw) {
-            return date
-        }
-        let standard = ISO8601DateFormatter()
-        standard.formatOptions = [.withInternetDateTime]
-        return standard.date(from: raw)
-    }
-
-    private static func formattedExpiryBadge(_ raw: String) -> String {
-        guard let date = parseISO8601Date(raw) else {
-            return "Expires \(raw)"
-        }
-        let remaining = date.timeIntervalSinceNow
-        if remaining <= 0 {
-            return "Expiring now"
-        }
-        if remaining < 3600 {
-            let mins = max(1, Int(ceil(remaining / 60)))
-            return "Expires in \(mins)m"
-        }
-        if remaining < 86_400 {
-            let hours = max(1, Int(ceil(remaining / 3600)))
-            return "Expires in \(hours)h"
-        }
-        return "Expires \(date.formatted(date: .abbreviated, time: .shortened))"
-    }
-
-    private static func formattedExpiryDetail(_ raw: String) -> String {
-        guard let date = parseISO8601Date(raw) else {
-            return raw
-        }
-        let formattedTime = date.formatted(date: .omitted, time: .shortened)
-        let remaining = date.timeIntervalSinceNow
-        if remaining <= 0 {
-            return "Expired (\(formattedTime))"
-        }
-        if remaining < 3600 {
-            let mins = max(1, Int(ceil(remaining / 60)))
-            return "In \(mins)m (\(formattedTime))"
-        }
-        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func parseApprovalSummary(_ payload: ApprovalPayload) -> (head: String?, quotedBody: String?) {
@@ -760,7 +711,13 @@ public struct InteractionCardView: View {
 
             HStack(spacing: 8) {
                 Button {
-                    startSignInFlow(payload: payload, safeURL: safeURL, server: server)
+                    startSignInFlow(
+                        payload: payload,
+                        safeURL: safeURL,
+                        server: server,
+                        connection: connection,
+                        displayTitle: displayTitle
+                    )
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "key")
@@ -855,7 +812,13 @@ public struct InteractionCardView: View {
         }
     }
 
-    private func startSignInFlow(payload: SignInPayload, safeURL: URL?, server: MCPServer?) {
+    private func startSignInFlow(
+        payload: SignInPayload,
+        safeURL: URL?,
+        server: MCPServer?,
+        connection: Connection?,
+        displayTitle: String
+    ) {
         errorMessage = nil
         isSubmitting = true
         submittingAction = "sign_in"
@@ -866,51 +829,97 @@ public struct InteractionCardView: View {
                 submittingAction = nil
             }
 
+            let targetURL: URL
             if let safeURL {
-                do {
-                    let callbackURL = try await oauthCoordinator.start(url: safeURL, callbackScheme: "nori")
-                    if let server {
-                        _ = await store.completeMCPOAuth(serverID: server.id, callbackURL: callbackURL)
-                    } else {
-                        await store.refreshAll()
-                    }
-                    triggerNotificationHaptic(.success)
-                    return
-                } catch {
-                    if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
-                        store.showToast("Sign-in cancelled")
-                        return
-                    }
-                    errorMessage = error.localizedDescription
-                    return
-                }
-            }
-
-            // Fallback: request a fresh authorize URL or complete Demo OAuth
-            if let server {
-                if let attempt = await store.completeMCPOAuth(serverID: server.id),
-                   let attemptURL = Self.safeAuthorizeURL(attempt.authorizeURL) {
-                    do {
-                        let callback = try await oauthCoordinator.start(url: attemptURL, callbackScheme: "nori")
-                        _ = await store.completeMCPOAuth(serverID: server.id, callbackURL: callback)
+                targetURL = safeURL
+            } else if let server {
+                let attempt = await store.startMCPOAuth(serverID: server.id)
+                guard let attempt else {
+                    await refreshAfterSignIn()
+                    if store.lastError == nil {
                         triggerNotificationHaptic(.success)
-                    } catch {
-                        if (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin {
-                            errorMessage = error.localizedDescription
-                        }
                     }
-                } else {
-                    triggerNotificationHaptic(.success)
-                    await store.refreshAll()
+                    return
                 }
-            } else if let connID = payload.connectionID {
-                await store.connectConnection(connectionID: connID)
-                triggerNotificationHaptic(.success)
-                await store.refreshAll()
+                guard let attemptURL = Self.safeAuthorizeURL(attempt.authorizeURL) else {
+                    errorMessage = "The server returned an invalid sign-in link."
+                    return
+                }
+                targetURL = attemptURL
+            } else if let connID = connection?.id ?? payload.connectionID {
+                let attempt = await store.connectConnection(connectionID: connID)
+                guard let attempt else {
+                    await refreshAfterSignIn()
+                    if store.lastError == nil {
+                        triggerNotificationHaptic(.success)
+                    }
+                    return
+                }
+                guard let attemptURL = Self.safeAuthorizeURL(attempt.authorizeURL) else {
+                    errorMessage = "The server returned an invalid sign-in link."
+                    return
+                }
+                targetURL = attemptURL
             } else {
                 errorMessage = "Sign-in link expired. Reconnect from the Apps tab to resume this task."
+                return
+            }
+
+            do {
+                let callbackURL = try await webAuthenticationSession.authenticate(
+                    using: targetURL,
+                    callback: .customScheme("nori"),
+                    preferredBrowserSession: .ephemeral,
+                    additionalHeaderFields: [:]
+                )
+                let outcome = Self.parseOAuthCallback(callbackURL)
+                switch outcome.result {
+                case "connected":
+                    store.showToast(server != nil ? "Signed in to \(displayTitle)" : "Connected \(displayTitle)")
+                    triggerNotificationHaptic(.success)
+                case "cancelled", "canceled":
+                    store.showToast("Sign-in cancelled")
+                    triggerNotificationHaptic(.warning)
+                case "failed":
+                    let message = outcome.reason.map { "Sign-in failed: \($0)" } ?? "Sign-in failed for \(displayTitle)"
+                    errorMessage = message
+                    store.showToast(message)
+                    triggerNotificationHaptic(.warning)
+                default:
+                    triggerNotificationHaptic(.success)
+                }
+                await refreshAfterSignIn()
+            } catch {
+                let nsError = error as NSError
+                if nsError.domain == ASWebAuthenticationSessionErrorDomain,
+                   nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                    store.showToast("Sign-in cancelled")
+                    return
+                }
+                errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private func refreshAfterSignIn() async {
+        async let appsTask: Void = store.refreshApps()
+        async let workTask: Void = store.refreshWorkAndInteractions()
+        async let summaryTask: Void = store.refreshSummary()
+        _ = await (appsTask, workTask, summaryTask)
+    }
+
+    private static func parseOAuthCallback(_ url: URL) -> (result: String?, reason: String?) {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let map = Dictionary(
+            items.compactMap { item in item.value.map { (item.name.lowercased(), $0) } },
+            uniquingKeysWith: { _, latest in latest }
+        )
+        let result = map["result"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rawReason = map["reason"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reason = (rawReason?.isEmpty == false)
+            ? rawReason?.replacingOccurrences(of: "_", with: " ")
+            : nil
+        return (result, reason)
     }
 
     private enum HapticOutcome {
@@ -923,58 +932,6 @@ public struct InteractionCardView: View {
         let generator = UINotificationFeedbackGenerator()
         generator.prepare()
         generator.notificationOccurred(outcome == .success ? .success : .warning)
-        #endif
-    }
-}
-
-// MARK: - ASWebAuthenticationSession Runner
-
-@MainActor
-private final class OAuthWebSessionRunner: NSObject, ASWebAuthenticationPresentationContextProviding {
-    private var activeSession: ASWebAuthenticationSession?
-
-    func start(url: URL, callbackScheme: String) async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(
-                url: url,
-                callbackURLScheme: callbackScheme
-            ) { [weak self] callbackURL, error in
-                Task { @MainActor in
-                    self?.activeSession = nil
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else if let callbackURL {
-                        continuation.resume(returning: callbackURL)
-                    } else {
-                        continuation.resume(
-                            throwing: NSError(
-                                domain: "NoriOAuth",
-                                code: -1,
-                                userInfo: [NSLocalizedDescriptionKey: "No OAuth callback URL received."]
-                            )
-                        )
-                    }
-                }
-            }
-            session.prefersEphemeralWebBrowserSession = true
-            session.presentationContextProvider = self
-            self.activeSession = session
-            session.start()
-        }
-    }
-
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        #if os(iOS)
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        if let keyWindow = scenes.flatMap(\.windows).first(where: \.isKeyWindow) {
-            return keyWindow
-        }
-        if let firstWindow = scenes.flatMap(\.windows).first {
-            return firstWindow
-        }
-        return ASPresentationAnchor()
-        #elseif os(macOS)
-        return NSApplication.shared.keyWindow ?? NSWindow()
         #endif
     }
 }
