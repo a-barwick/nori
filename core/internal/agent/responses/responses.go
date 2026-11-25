@@ -40,6 +40,12 @@ type Client struct {
 	TestURL string
 	// DefaultReasoning sets the reasoning effort for requests that do not specify one.
 	DefaultReasoning string
+	// Optional retry configuration hooks for transient provider errors (429, 5xx, network).
+	MaxRetries     int
+	RetryBaseDelay time.Duration
+	MaxRetryAfter  time.Duration
+	Now            func() time.Time
+	Sleep          func(context.Context, time.Duration) error
 }
 
 func New(key, model string, meter usage.Meter) *Client {
@@ -169,12 +175,18 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if err := contextview.Check(len(body)); err != nil {
 		return out, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
-	if err != nil {
+	buildReq := func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+c.Key)
+		httpReq.Header.Set("Content-Type", "application/json")
+		return httpReq, nil
+	}
+	if _, err := buildReq(); err != nil {
 		return out, err
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	httpReq.Header.Set("Content-Type", "application/json")
 	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
@@ -183,8 +195,11 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
 	// Once handed to HTTP, a transport failure cannot prove it was not billed.
 	out.NotSent = false
-	res, err := c.HTTP.Do(httpReq)
+	res, err := c.doWithRetry(ctx, buildReq)
 	if err != nil {
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
 		return out, errors.New("task model request interrupted or unavailable")
 	}
 	record.RequestStatus = "received"

@@ -114,6 +114,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, MCP: services.MCP,
 		Features:      AssistantFeatures(services.Connections, cfg.Features.DisableBackgroundTasks),
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
+		NormalizeMemory: newMemoryNormalizer(outer, cfg),
 	}
 	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
 	if cfg.Features.DisableBackgroundTasks {
@@ -638,6 +639,13 @@ func newAutoReviewer(outer conversation.ReplyModel, cfg settings.Settings) permi
 		return NewOuterModelAutoReviewer(outer)
 	}
 	return permissions.DeterministicAutoReviewer{}
+}
+
+func newMemoryNormalizer(outer conversation.ReplyModel, cfg settings.Settings) func(context.Context, conversation.ManualMemoryInput) (conversation.NormalizedMemory, error) {
+	if outer != nil && cfg.Models.TestURL == "" && (cfg.Models.UsesGateway() || cfg.Models.OpenAIKey != "") {
+		return conversation.NewMemoryNormalizer(outer)
+	}
+	return nil
 }
 
 var _ api.Operations = (*App)(nil)

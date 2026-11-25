@@ -33,12 +33,18 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	if err != nil {
 		return out, errors.New("inspection request could not be encoded")
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
-	if err != nil {
+	buildReq := func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+c.Key)
+		httpReq.Header.Set("Content-Type", "application/json")
+		return httpReq, nil
+	}
+	if _, err := buildReq(); err != nil {
 		return out, err
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	httpReq.Header.Set("Content-Type", "application/json")
 	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
@@ -46,8 +52,11 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	record.RequestStatus = "unknown"
 	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
 	out.Sent = true
-	res, err := c.HTTP.Do(httpReq)
+	res, err := c.doWithRetry(ctx, buildReq)
 	if err != nil {
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
 		return out, errors.New("inspection request interrupted or unavailable")
 	}
 	record.RequestStatus = "received"

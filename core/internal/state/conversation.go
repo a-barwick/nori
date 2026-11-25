@@ -20,6 +20,7 @@ type ConversationInput struct {
 	Position     int64             `firestore:"position"`
 	CreatedAt    time.Time         `firestore:"created_at"`
 	Introduction bool              `firestore:"introduction,omitempty"`
+	Retry        bool              `firestore:"retry,omitempty"`
 	Event        *TaskEvent        `firestore:"event,omitempty"`
 	TraceContext map[string]string `json:"-" firestore:"trace_context,omitempty"`
 	// Attachments are the files sent with a user's message.
@@ -39,6 +40,8 @@ type ConversationControl struct {
 	LatestAt     time.Time `firestore:"latest_at"`
 	// Retained operator-set cutoff for model history. The UI can still read earlier messages.
 	ContextFrom time.Time `firestore:"context_from,omitempty"`
+	// FailedMessageIDs tracks assistant error messages whose turns have not yet been retried or resolved.
+	FailedMessageIDs []string `firestore:"failed_message_ids,omitempty"`
 }
 
 type ConversationAction struct {
@@ -72,6 +75,7 @@ type ConversationAttempt struct {
 	Actions          []ConversationAction `firestore:"actions"`
 	Usage            []Usage              `firestore:"usage"`
 	Error            string               `firestore:"error"`
+	Failure          *MessageError        `firestore:"failure,omitempty"`
 	ContextReduced   bool                 `firestore:"context_reduced,omitempty"`
 	ContextTruncated bool                 `firestore:"context_truncated"`
 	ContextTurns     int                  `firestore:"context_turns"`
@@ -136,7 +140,16 @@ const (
 )
 
 func (in ConversationInput) IsUser() bool {
-	return !in.Introduction && in.Event == nil
+	return !in.Introduction && in.Event == nil && !in.Retry
+}
+
+func hasRetryInput(inputs []ConversationInput) bool {
+	for _, in := range inputs {
+		if in.Retry {
+			return true
+		}
+	}
+	return false
 }
 
 func (c ConversationControl) RoutingPending() bool { return c.UserReceived > c.UserRouted }
@@ -273,11 +286,18 @@ func (r *RoutingContext) Add(in ConversationInput) error {
 	return nil
 }
 
+// AdmitRetryInput queues a synthetic retry trigger without creating a visible user message or advancing UserReceived.
+func AdmitRetryInput(c ConversationControl, id string, now time.Time, traceContext map[string]string) (ConversationControl, ConversationInput) {
+	c.Received++
+	c.LatestAt = now
+	return c, ConversationInput{ID: id, Position: c.Received, CreatedAt: now, Retry: true, TraceContext: traceContext}
+}
+
 // NeedsUnrouted reports whether a new turn must also replay earlier user inputs that were never routed. A failed
-// routing attempt stays unresolved until the next user turn, and its inputs are replayed as context without creating
-// another visible message.
+// routing attempt stays unresolved until the next user turn or explicit retry, and its inputs are replayed as context
+// without creating another visible message.
 func NeedsUnrouted(c ConversationControl, inputs []ConversationInput) bool {
-	return userThrough(inputs) > 0 && c.UserRouted < c.Consumed
+	return (userThrough(inputs) > 0 || hasRetryInput(inputs)) && c.UserRouted < c.Consumed
 }
 
 // CanAcquire reports ErrConversationBusy while another processor holds the lease.
@@ -404,6 +424,31 @@ func CompleteTurn(c ConversationControl, t ConversationTurn, text string, now ti
 	c.Owner = ""
 	c.LeaseUntil = time.Time{}
 	message := Message{ID: AssistantMessageID(t.ID), Role: "assistant", Text: text, Parts: TextParts(text), CreatedAt: now, TurnID: t.ID}
+	if t.Attempt.Status == "error" {
+		message.Status = MessageStatusFailed
+		if t.Attempt.Failure != nil {
+			cp := *t.Attempt.Failure
+			message.Error = &cp
+		} else {
+			message.Error = &MessageError{
+				Code:      "reply_failed",
+				Message:   text,
+				Retryable: userThrough(t.Inputs) > 0,
+			}
+		}
+		if userThrough(t.Inputs) > 0 {
+			seen := false
+			for _, id := range c.FailedMessageIDs {
+				if id == message.ID {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				c.FailedMessageIDs = append(c.FailedMessageIDs, message.ID)
+			}
+		}
+	}
 	return c, t, message
 }
 

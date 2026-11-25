@@ -43,6 +43,11 @@ type OpenAIModel struct {
 	// Optional determinism hooks. Nil defaults to time.Now and uuid.NewString.
 	Now   func() time.Time
 	NewID func() string
+	// Optional retry configuration hooks for transient provider errors (429, 5xx, network).
+	MaxRetries     int
+	RetryBaseDelay time.Duration
+	MaxRetryAfter  time.Duration
+	Sleep          func(context.Context, time.Duration) error
 }
 
 func (m *OpenAIModel) now() time.Time {
@@ -117,12 +122,9 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	} else if m.TestURL != "" {
 		endpoint = strings.TrimRight(m.TestURL, "/") + "/v1/chat/completions"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
+	if _, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body)); err != nil {
 		return reply, fmt.Errorf("invalid model request")
 	}
-	req.Header.Set("Authorization", "Bearer "+m.key)
-	req.Header.Set("Content-Type", "application/json")
 	// Persist an unknown-cost attempt before provider I/O. A crash or failed
 	// response projection can leave its cost unknown, but cannot erase the call.
 	reply.Usage.RequestStatus = "pending"
@@ -134,9 +136,11 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	}
 	reply.Usage.RequestStatus = "unknown"
 	requestStarted = m.now()
-	client := m.Client
-	res, err := client.Do(req)
+	res, err := m.doWithRetry(ctx, endpoint, body)
 	if err != nil {
+		if ctx.Err() != nil {
+			return reply, ctx.Err()
+		}
 		return reply, fmt.Errorf("model request interrupted or unavailable")
 	}
 	reply.Usage.RequestStatus = "received"

@@ -650,7 +650,8 @@ func (h *Harness) CheckOuterInvariants(ctx context.Context) error {
 			fail("previously published assistant message %q (turn %q) disappeared", prev.id, turnID)
 			continue
 		}
-		if curr.id != prev.id || curr.text != prev.text || curr.status != prev.status || !curr.createdAt.Equal(prev.createdAt) {
+		validSupersede := prev.status == state.MessageStatusFailed && curr.status == state.MessageStatusSuperseded
+		if curr.id != prev.id || curr.text != prev.text || (curr.status != prev.status && !validSupersede) || !curr.createdAt.Equal(prev.createdAt) {
 			fail("published assistant message for turn %q mutated: was %+v now %+v", turnID, prev, curr)
 		}
 	}

@@ -1,3 +1,1 @@
-
-
-No new task commands were accepted by this attempt. Your message is saved. Once conversation replies are available, send a follow-up to retry it.
+Your message is saved — tap Retry to try again.

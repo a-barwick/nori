@@ -976,7 +976,10 @@ func (d *Database) MutateMemory(ctx context.Context, req state.MemoryMutationReq
 	if !state.ValidResourceID(req.RequestID) {
 		return state.MutationReceipt{}, state.ErrInvalidResource
 	}
-	binding := memoryMutationBinding(req)
+	binding := req.Binding
+	if binding == "" {
+		binding = memoryMutationBinding(req)
+	}
 	var receipt state.MutationReceipt
 
 	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
@@ -1027,6 +1030,43 @@ func (d *Database) MutateMemory(ctx context.Context, req state.MemoryMutationReq
 				byID[m.ID] = m
 				origIDs[m.ID] = true
 			}
+			if existing, exists := byID[req.ReplacesID]; req.ReplacesID != "" && exists {
+				shards, err := d.readDailyLogShards(tx, todayDate)
+				if err != nil {
+					return err
+				}
+				log, err := d.openLog(tx)
+				if err != nil {
+					return err
+				}
+				m := existing
+				m.Text = req.Text
+				m.About = cmp.Or(req.About, existing.About, "the user")
+				m.Section = cmp.Or(req.Section, existing.Section)
+				if req.Pinned != nil {
+					m.Pinned = *req.Pinned
+				}
+				m.Provenance = state.ProvenanceUserExplicit
+				m.SourceInputID = "ui"
+				if req.SourceText != "" {
+					m.SourceText = state.BoundedSource(req.SourceText)
+				}
+				m.UpdatedAt = monotonicRevisionTime(now, existing.UpdatedAt)
+				if m.UpdatedAt.Before(m.CreatedAt) {
+					m.UpdatedAt = m.CreatedAt
+				}
+				byID[m.ID] = m
+				demoted, err := d.commitCoreMutationWithDemotion(tx, origIDs, byID, m.ID, todayDate, shards, now)
+				if err != nil {
+					return err
+				}
+				if err := log.add(state.EventMemory, ""); err != nil {
+					return err
+				}
+				result = state.MemoryMutationResult{Memory: &m, Demoted: demoted}
+				httpStatus = 200
+				break
+			}
 			if _, exists := byID[targetID]; exists {
 				return state.ErrRevisionConflict
 			}
@@ -1047,6 +1087,7 @@ func (d *Database) MutateMemory(ctx context.Context, req state.MemoryMutationReq
 				Pinned:        req.Pinned != nil && *req.Pinned,
 				Provenance:    state.ProvenanceUserExplicit,
 				SourceInputID: "ui",
+				SourceText:    state.BoundedSource(req.SourceText),
 				CreatedAt:     now,
 				UpdatedAt:     now,
 			}

@@ -33,16 +33,32 @@ func (c Control) Check() error {
 	return nil
 }
 
+const (
+	MessageStatusCompleted  = "completed"
+	MessageStatusFailed     = "failed"
+	MessageStatusCancelled  = "cancelled"
+	MessageStatusSuperseded = "superseded"
+)
+
+// MessageError carries structured error metadata for a failed assistant reply.
+// It never contains raw provider error strings or HTTP status codes.
+type MessageError struct {
+	Code      string `json:"code" firestore:"code"`
+	Message   string `json:"message" firestore:"message"`
+	Retryable bool   `json:"retryable" firestore:"retryable"`
+}
+
 type Message struct {
-	Status    string    `json:"status,omitempty" firestore:"status,omitempty"`
-	ID        string    `json:"id" firestore:"id"`
-	TurnID    string    `json:"turn_id,omitempty" firestore:"turn_id,omitempty"`
-	RunID     string    `json:"run_id" firestore:"run_id"`
-	Role      string    `json:"role" firestore:"role"`
-	Text      string    `json:"text" firestore:"text"`
-	Parts     []Part    `json:"parts,omitempty" firestore:"parts,omitempty"`
-	ResultIDs []string  `json:"result_ids,omitempty" firestore:"result_ids,omitempty"`
-	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
+	Status    string        `json:"status,omitempty" firestore:"status,omitempty"`
+	ID        string        `json:"id" firestore:"id"`
+	TurnID    string        `json:"turn_id,omitempty" firestore:"turn_id,omitempty"`
+	RunID     string        `json:"run_id" firestore:"run_id"`
+	Role      string        `json:"role" firestore:"role"`
+	Text      string        `json:"text" firestore:"text"`
+	Parts     []Part        `json:"parts,omitempty" firestore:"parts,omitempty"`
+	ResultIDs []string      `json:"result_ids,omitempty" firestore:"result_ids,omitempty"`
+	Error     *MessageError `json:"error,omitempty" firestore:"error,omitempty"`
+	CreatedAt time.Time     `json:"created_at" firestore:"created_at"`
 }
 
 type Event struct {
