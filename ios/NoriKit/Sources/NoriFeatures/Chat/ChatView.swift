@@ -68,8 +68,7 @@ public struct ChatView: View {
             if isReconnecting {
                 ReconnectingBanner {
                     Task {
-                        await store.refreshAll()
-                        store.startEventStream()
+                        await store.resumeFromBackground()
                     }
                 }
                 .padding(.horizontal, 14)
@@ -192,7 +191,9 @@ public struct ChatView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .refreshable {
-                await store.refreshAll()
+                async let sessionTask: Void = store.refreshSession()
+                async let summaryTask: Void = store.refreshSummary()
+                _ = await (sessionTask, summaryTask)
             }
             .onChange(of: store.messages.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.24)) {
@@ -345,22 +346,30 @@ public struct ChatView: View {
                         #endif
                     }
 
-                if canSend || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftAttachments.isEmpty {
+                if isSending || canSend || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftAttachments.isEmpty {
                     Button {
                         sendCurrentDraft()
                     } label: {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(Color.white)
-                            .frame(width: 34, height: 34)
-                            .background(
-                                canSend ? NoriColors.accent : NoriColors.accent.opacity(0.4),
-                                in: Circle()
-                            )
+                        Group {
+                            if isSending {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "arrow.up")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(Color.white)
+                            }
+                        }
+                        .frame(width: 34, height: 34)
+                        .background(
+                            canSend ? NoriColors.accent : NoriColors.accent.opacity(0.4),
+                            in: Circle()
+                        )
                     }
                     .buttonStyle(.plain)
                     .disabled(!canSend)
-                    .accessibilityLabel("Send message")
+                    .accessibilityLabel(isSending ? "Sending message" : "Send message")
                 } else {
                     Button {
                         handleVoicePrompt()
@@ -413,18 +422,51 @@ public struct ChatView: View {
     // MARK: - Actions
 
     private func sendCurrentDraft() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let uploaded = draftAttachments.compactMap(\.uploaded)
+        guard !isSending else { return }
+        guard !draftAttachments.contains(where: \.isUploading) else { return }
+
+        let rawDraft = draft
+        let text = rawDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sentAttachments = draftAttachments.filter { $0.uploaded != nil }
+        let uploaded = sentAttachments.compactMap(\.uploaded)
         guard !text.isEmpty || !uploaded.isEmpty else { return }
 
         triggerLightHaptic()
         draft = ""
-        draftAttachments = []
+        draftAttachments.removeAll { $0.uploaded != nil }
         isSending = true
 
         Task {
-            await store.sendMessage(text, attachments: uploaded)
+            let success = await store.sendMessage(text, attachments: uploaded)
             isSending = false
+            if !success {
+                restoreDraftAfterFailure(originalDraft: rawDraft, attachments: sentAttachments)
+            }
+        }
+    }
+
+    private func restoreDraftAfterFailure(originalDraft: String, attachments: [DraftAttachment]) {
+        if !originalDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                draft = originalDraft
+            } else {
+                draft = "\(originalDraft)\n\(draft)"
+            }
+        }
+
+        if !attachments.isEmpty {
+            let existingIDs = Set(draftAttachments.map(\.id))
+            let existingUploadedIDs = Set(draftAttachments.compactMap { $0.uploaded?.id })
+            let missing = attachments.filter { item in
+                guard !existingIDs.contains(item.id) else { return false }
+                if let uploadedID = item.uploaded?.id, existingUploadedIDs.contains(uploadedID) {
+                    return false
+                }
+                return true
+            }
+            if !missing.isEmpty {
+                draftAttachments.insert(contentsOf: missing, at: 0)
+            }
         }
     }
 
@@ -869,7 +911,7 @@ private struct PageBlockCard: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(NoriColors.ink)
                 if !message.createdAt.isEmpty {
-                    Text("· \(message.createdAt)")
+                    Text("· \(NoriDateFormatting.shortDateTime(message.createdAt))")
                         .font(.system(size: 12))
                         .foregroundStyle(NoriColors.ink2)
                 }

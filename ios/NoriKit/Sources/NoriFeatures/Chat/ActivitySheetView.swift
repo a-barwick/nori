@@ -7,6 +7,7 @@ public struct ActivitySheetView: View {
     @Bindable private var store: NoriStore
     private let onSelectTask: ((String) -> Void)?
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
+    @State private var isRefreshing = false
 
     public init(
         store: NoriStore,
@@ -142,17 +143,24 @@ public struct ActivitySheetView: View {
                     }
 
                     Button {
-                        Task { await store.refreshAll() }
+                        guard !isRefreshing else { return }
+                        isRefreshing = true
+                        Task {
+                            async let sessionTask: Void = store.refreshSession()
+                            async let workTask: Void = store.refreshWorkAndInteractions()
+                            _ = await (sessionTask, workTask)
+                            isRefreshing = false
+                        }
                     } label: {
                         HStack(spacing: 6) {
-                            if store.isLoading {
+                            if isRefreshing || store.isLoading {
                                 ProgressView().controlSize(.mini)
                             }
-                            Text(store.isLoading ? "Refreshing…" : "Refresh activity")
+                            Text(isRefreshing || store.isLoading ? "Refreshing…" : "Refresh activity")
                         }
                     }
                     .buttonStyle(NoriButtonStyle(.quiet, fullWidth: true, compact: true))
-                    .disabled(store.isLoading)
+                    .disabled(isRefreshing || store.isLoading)
                     .padding(.top, 16)
                 }
                 .padding(.horizontal, 16)

@@ -129,7 +129,7 @@ public struct GoalsView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .refreshable {
-            await store.refreshAll()
+            await store.refreshRoutinesAndGoals()
         }
     }
 

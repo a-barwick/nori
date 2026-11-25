@@ -27,7 +27,12 @@ public struct MoreHubView: View {
 
     private var nextAutomationSummary: String {
         if let next = store.automations.first(where: { $0.status == .enabled }) {
-            let when = next.nextAt ?? next.trigger.summaryLabel
+            let when: String = {
+                if let nextAt = next.nextAt, !nextAt.isEmpty {
+                    return NoriDateFormatting.shortDateTime(nextAt)
+                }
+                return next.trigger.summaryLabel
+            }()
             return "Next: \(next.title), \(when)"
         }
         return "No active automations"
@@ -190,7 +195,10 @@ public struct MoreHubView: View {
         .navigationBarTitleDisplayMode(.large)
         #endif
         .refreshable {
-            await store.refreshAll()
+            async let summaryTask: Void = store.refreshSummary()
+            async let memoryTask: Void = store.refreshMemory()
+            async let routinesGoalsTask: Void = store.refreshRoutinesAndGoals()
+            _ = await (summaryTask, memoryTask, routinesGoalsTask)
         }
     }
 

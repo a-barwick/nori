@@ -145,7 +145,7 @@ public struct WorkView: View {
                 .padding(.bottom, 28)
             }
             .refreshable {
-                await store.refreshAll()
+                await store.refreshWorkAndInteractions()
             }
         }
         .background(NoriColors.canvas.ignoresSafeArea())

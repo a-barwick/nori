@@ -8,6 +8,7 @@ private struct DocumentPresentation: Identifiable, Hashable {
 
 /// Root 5-tab navigation shell for Nori iOS.
 public struct NoriRootView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var store: NoriStore
 
     @State private var selectedTab: NoriTab = .chat
@@ -18,6 +19,8 @@ public struct NoriRootView: View {
 
     @State private var isActivitySheetPresented = false
     @State private var presentedDocument: DocumentPresentation?
+    @State private var hasBackgrounded = false
+    @State private var tabRefreshTask: Task<Void, Never>?
 
     public init(store: NoriStore) {
         self._store = State(initialValue: store)
@@ -49,6 +52,60 @@ public struct NoriRootView: View {
             guard let next else { return }
             applyDeepLink(next)
             store.pendingDeepLink = nil
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .background:
+                hasBackgrounded = true
+                tabRefreshTask?.cancel()
+                tabRefreshTask = nil
+                store.pauseForBackground()
+            case .active:
+                guard hasBackgrounded else { return }
+                hasBackgrounded = false
+                guard store.authState.isSignedIn else { return }
+                Task {
+                    await store.resumeFromBackground()
+                }
+            case .inactive:
+                break
+            @unknown default:
+                break
+            }
+        }
+        .onChange(of: store.authState.isSignedIn) { _, isSignedIn in
+            if !isSignedIn {
+                tabRefreshTask?.cancel()
+                tabRefreshTask = nil
+            }
+        }
+        .onChange(of: selectedTab) { _, nextTab in
+            tabRefreshTask?.cancel()
+            guard store.authState.isSignedIn else { return }
+            tabRefreshTask = Task {
+                await refresh(for: nextTab)
+            }
+        }
+    }
+
+    private func refresh(for tab: NoriTab) async {
+        switch tab {
+        case .chat:
+            async let sessionTask: Void = store.refreshSession()
+            async let summaryTask: Void = store.refreshSummary()
+            _ = await (sessionTask, summaryTask)
+        case .work:
+            await store.refreshWorkAndInteractions()
+        case .apps:
+            await store.refreshApps()
+        case .library:
+            await store.refreshLibrary()
+        case .more:
+            async let summaryTask: Void = store.refreshSummary()
+            async let memoryTask: Void = store.refreshMemory()
+            async let routinesGoalsTask: Void = store.refreshRoutinesAndGoals()
+            async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
+            _ = await (summaryTask, memoryTask, routinesGoalsTask, permsPrefsTask)
         }
     }
 

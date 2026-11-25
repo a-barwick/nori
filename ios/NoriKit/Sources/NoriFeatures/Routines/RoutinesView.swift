@@ -131,7 +131,7 @@ public struct RoutinesView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .refreshable {
-            await store.refreshAll()
+            await store.refreshRoutinesAndGoals()
         }
     }
 }

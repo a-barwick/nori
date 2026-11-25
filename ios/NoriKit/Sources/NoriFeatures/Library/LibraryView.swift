@@ -189,7 +189,7 @@ public struct LibraryView: View {
             }
         }
         .refreshable {
-            await store.refreshAll()
+            await store.refreshLibrary()
         }
     }
 

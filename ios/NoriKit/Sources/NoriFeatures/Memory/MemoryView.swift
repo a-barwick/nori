@@ -107,7 +107,7 @@ public struct MemoryView: View {
             await store.refreshMemory()
         }
         .refreshable {
-            await store.refreshAll()
+            await store.refreshMemory()
         }
         .sheet(isPresented: $showingAddSheet) {
             AddMemorySheet(store: store)
