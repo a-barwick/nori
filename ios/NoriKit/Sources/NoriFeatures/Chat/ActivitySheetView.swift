@@ -24,7 +24,7 @@ public struct ActivitySheetView: View {
     }
 
     private var recentTasks: [WorkItem] {
-        store.finishedWorkItems
+        Array(store.finishedWorkItems.prefix(8))
     }
 
     private var heroMarkState: MarkState {
@@ -42,21 +42,21 @@ public struct ActivitySheetView: View {
         }
     }
 
-    private var heroStatusText: String {
+    private var statusSummaryText: String {
         switch store.connectionState {
         case .reconnecting, .offline:
             return "Connection interrupted"
         case .connecting:
-            return "Connecting to Nori…"
+            return "Connecting…"
         case .connected:
             if store.isThinking && activeTasks.isEmpty {
                 return "Thinking…"
             }
             if !activeTasks.isEmpty {
                 let n = activeTasks.count
-                return "Working on \(n) \(n == 1 ? "task" : "tasks")"
+                return "\(n) \(n == 1 ? "task" : "tasks") running"
             }
-            return "Ready when you are"
+            return "All quiet"
         }
     }
 
@@ -64,29 +64,33 @@ public struct ActivitySheetView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Hero NoriMedallion & connection status
-                    VStack(spacing: 6) {
-                        NoriMark(size: 72, state: heroMarkState)
-                        Text("Nori")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(NoriColors.ink)
+                    // Compact status header strip
+                    HStack(spacing: 12) {
+                        NoriMark(size: 34, state: heroMarkState)
                         HStack(spacing: 6) {
                             PulsingStatusDot(
                                 color: statusDotColor,
                                 size: 7,
                                 animated: !activeTasks.isEmpty || store.isThinking
                             )
-                            Text(heroStatusText)
-                                .font(.system(size: 13))
-                                .foregroundStyle(NoriColors.ink2)
+                            Text(statusSummaryText)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(NoriColors.ink)
                         }
+                        Spacer(minLength: 8)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 8)
-                    .padding(.bottom, 16)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+                            .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                    )
+                    .padding(.top, 6)
+                    .padding(.bottom, 4)
 
                     // Active Tasks Section
-                    NoriSectionHeader("Active tasks") {
+                    NoriSectionHeader("Active") {
                         if !activeTasks.isEmpty {
                             Text("\(activeTasks.count)")
                                 .font(.system(size: 12, weight: .semibold))
@@ -95,31 +99,23 @@ public struct ActivitySheetView: View {
                     }
 
                     if activeTasks.isEmpty {
-                        NoriCard(padding: 14, backgroundColor: NoriColors.fill1, borderColor: NoriColors.hairline) {
+                        NoriCard(padding: 13, backgroundColor: NoriColors.fill1, borderColor: NoriColors.hairline) {
                             Text(store.isThinking
-                                 ? "Nori is handling your latest message…"
-                                 : "No background tasks running right now.")
+                                 ? "Handling your latest message…"
+                                 : "No background tasks running.")
                                 .font(NoriTypography.meta)
                                 .foregroundStyle(NoriColors.ink2)
-                                .frame(maxWidth: .infinity, alignment: .center)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     } else {
                         NoriRows {
                             ForEach(Array(activeTasks.enumerated()), id: \.element.id) { idx, item in
                                 taskNavigationRow(
                                     item: item,
-                                    detail: item.progress ?? "Started \(NoriDateFormatting.relative(item.startedAt))",
+                                    detail: activeTaskDetail(for: item),
                                     showDivider: idx < activeTasks.count - 1
                                 ) {
-                                    if let amount = item.cost.amountUSD {
-                                        NoriPill(
-                                            formatUSD(amount),
-                                            tone: item.bucket == .needsYou ? .accent : .neutral
-                                        )
-                                    } else {
-                                        let pill = WorkStatusPresentation.pill(for: item)
-                                        NoriPill(pill.label, tone: pill.tone)
-                                    }
+                                    activeTaskTrailing(for: item)
                                 }
                             }
                         }
@@ -127,7 +123,7 @@ public struct ActivitySheetView: View {
 
                     // Recent Tasks Section
                     if !recentTasks.isEmpty {
-                        NoriSectionHeader("Recent (\(recentTasks.count))")
+                        NoriSectionHeader("Recent")
                         NoriRows {
                             ForEach(Array(recentTasks.enumerated()), id: \.element.id) { idx, item in
                                 let pill = WorkStatusPresentation.pill(for: item)
@@ -141,32 +137,14 @@ public struct ActivitySheetView: View {
                             }
                         }
                     }
-
-                    Button {
-                        guard !isRefreshing else { return }
-                        isRefreshing = true
-                        Task {
-                            async let sessionTask: Void = store.refreshSession()
-                            async let workTask: Void = store.refreshWorkAndInteractions()
-                            _ = await (sessionTask, workTask)
-                            isRefreshing = false
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            if isRefreshing || store.isLoading {
-                                ProgressView().controlSize(.mini)
-                            }
-                            Text(isRefreshing || store.isLoading ? "Refreshing…" : "Refresh activity")
-                        }
-                    }
-                    .buttonStyle(NoriButtonStyle(.quiet, fullWidth: true, compact: true))
-                    .disabled(isRefreshing || store.isLoading)
-                    .padding(.top, 16)
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
             .background(NoriColors.canvas)
+            .refreshable {
+                await refreshActivity()
+            }
             .navigationTitle("Activity")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -185,10 +163,62 @@ public struct ActivitySheetView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close Activity")
                 }
+
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await refreshActivity() }
+                    } label: {
+                        Group {
+                            if isRefreshing || store.isLoading {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(NoriColors.ink)
+                            }
+                        }
+                        .frame(width: 30, height: 30)
+                        .background(NoriColors.fill1, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isRefreshing || store.isLoading)
+                    .accessibilityLabel("Refresh activity")
+                }
             }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+    private func refreshActivity() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        async let sessionTask: Void = store.refreshSession()
+        async let workTask: Void = store.refreshWorkAndInteractions()
+        _ = await (sessionTask, workTask)
+        isRefreshing = false
+    }
+
+    private func activeTaskDetail(for item: WorkItem) -> String {
+        if let progress = item.progress?.trimmingCharacters(in: .whitespacesAndNewlines), !progress.isEmpty {
+            return progress
+        }
+        return "Started \(NoriDateFormatting.relative(item.startedAt))"
+    }
+
+    @ViewBuilder
+    private func activeTaskTrailing(for item: WorkItem) -> some View {
+        if item.cancelRequested {
+            NoriPill("Stopping", tone: .neutral)
+        } else if item.bucket == .needsYou {
+            NoriPill("Needs you", tone: .accent)
+        } else if item.operations.uncertain > 0 {
+            NoriPill("Checking", tone: .warning)
+        } else if let progress = item.progress?.trimmingCharacters(in: .whitespacesAndNewlines), !progress.isEmpty {
+            Text(NoriDateFormatting.relative(item.startedAt))
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(NoriColors.ink3)
+        }
     }
 
     @ViewBuilder
@@ -241,9 +271,5 @@ public struct ActivitySheetView: View {
             return relativeFinished
         }
         return "Started \(NoriDateFormatting.relative(item.startedAt))"
-    }
-
-    private func formatUSD(_ value: Double) -> String {
-        String(format: "$%.2f", value)
     }
 }

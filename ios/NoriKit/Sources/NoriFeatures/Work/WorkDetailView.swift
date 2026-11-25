@@ -119,9 +119,11 @@ public struct WorkDetailView: View {
     // MARK: - Detail Content
 
     private func detailScrollView(item: WorkItem) -> some View {
-        ScrollView {
+        let isRunning = item.status == .running
+
+        return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // Task Title & NoriLine
+                // 1. Task Title & Progress / Status Line
                 Text(item.title)
                     .font(.system(size: 19, weight: .bold))
                     .foregroundStyle(NoriColors.ink)
@@ -130,110 +132,83 @@ public struct WorkDetailView: View {
 
                 NoriLine(
                     noriProgressLine(for: item),
-                    state: item.status == .running ? .thinking : .idle
+                    state: isRunning ? .thinking : .idle
                 )
                 .padding(.bottom, 14)
 
-                // Pending Interactions inline
-                if !pendingInteractions.isEmpty {
-                    NoriSectionHeader("Needs you")
-                    VStack(spacing: 10) {
-                        ForEach(pendingInteractions) { interaction in
-                            InteractionCardView(
-                                store: store,
-                                interaction: interaction,
-                                compact: true
-                            )
-                        }
-                    }
-                    .padding(.bottom, 10)
-                }
-
-                // Uncertain action notice
-                if item.operations.uncertain > 0 {
-                    NoriNotice(
-                        title: "Checking an unconfirmed action",
-                        detail: "An action may or may not have gone through. Nori is checking with the provider and won’t repeat it.",
-                        tone: .warning,
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .padding(.bottom, 14)
-                }
-
-                // USD Budget Card
-                budgetCard(item: item)
-                    .padding(.bottom, 4)
-
-                // Running: Steer + Stop OR Stopping Notice
-                if item.status == .running && !item.cancelRequested {
-                    steerSection(item: item)
-                } else if item.status == .running && item.cancelRequested {
-                    NoriNotice(
-                        title: "Stopping task",
-                        detail: "Work already done stays done; anything unconfirmed stays marked.",
-                        tone: .neutral,
-                        systemImage: "stop.circle"
-                    )
-                    .padding(.top, 10)
-                } else if item.status == .failed {
-                    continueCard(item: item)
-                        .padding(.top, 10)
-                }
-
-                // Result / Partial Answer
-                if let resultText = detail?.result, !resultText.isEmpty {
-                    NoriSectionHeader(item.status == .failed ? "Partial answer" : "Result")
-                    NoriCard(padding: 14) {
-                        Text(resultText)
-                            .font(.system(size: 13.5))
-                            .lineSpacing(3)
-                            .foregroundStyle(NoriColors.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                // Saved Results Links
-                if !savedItems.isEmpty {
-                    NoriSectionHeader("Saved results")
-                    NoriRows {
-                        ForEach(Array(savedItems.enumerated()), id: \.element.id) { idx, doc in
-                            Button {
-                                onOpenDocument(doc)
-                            } label: {
-                                NoriRow(
-                                    title: doc.title,
-                                    detail: doc.previewText ?? doc.provenance.content.displayLabel,
-                                    systemImage: "doc.text",
-                                    iconTone: .accent,
-                                    showChevron: true,
-                                    showDivider: idx < savedItems.count - 1
-                                ) {
-                                    if doc.version > 1 {
-                                        NoriPill("v\(doc.version)", tone: .neutral)
-                                    }
-                                }
+                if isRunning {
+                    // Running State Ordering:
+                    // 2. Pending Needs you cards
+                    if !pendingInteractions.isEmpty {
+                        NoriSectionHeader("Needs you")
+                        VStack(spacing: 10) {
+                            ForEach(pendingInteractions) { interaction in
+                                InteractionCardView(
+                                    store: store,
+                                    interaction: interaction,
+                                    compact: true
+                                )
                             }
-                            .buttonStyle(.plain)
                         }
+                        .padding(.bottom, 10)
                     }
+
+                    // 3. Uncertain notice (if any)
+                    if item.operations.uncertain > 0 {
+                        uncertainNotice
+                            .padding(.bottom, 14)
+                    }
+
+                    // 4. Steer & Stop controls (or Stopping notice)
+                    if !item.cancelRequested {
+                        steerSection(item: item)
+                    } else {
+                        NoriNotice(
+                            title: "Stopping task",
+                            detail: "Work already done stays done; anything unconfirmed stays marked.",
+                            tone: .neutral,
+                            systemImage: "stop.circle"
+                        )
+                        .padding(.bottom, 4)
+                    }
+
+                    // 5. Actions audit & Activity timeline
+                    actionsAuditSection
+                    activityTimelineSection
+
+                    // Preserve early result / artifacts if already generated while running
+                    resultSection(item: item)
+                    savedArtifactsSection
+                } else {
+                    // Finished State Ordering:
+                    // 2. Continue card (if failed / budget-capped / incomplete)
+                    if shouldShowContinueCard(for: item) {
+                        continueCard(item: item)
+                            .padding(.bottom, 6)
+                    }
+
+                    if item.operations.uncertain > 0 {
+                        uncertainNotice
+                            .padding(.top, shouldShowContinueCard(for: item) ? 8 : 0)
+                            .padding(.bottom, 6)
+                    }
+
+                    // 3. Result
+                    resultSection(item: item)
+
+                    // 4. Saved artifacts
+                    savedArtifactsSection
+
+                    // 5. Actions audit
+                    actionsAuditSection
+
+                    // 6. Activity timeline
+                    activityTimelineSection
                 }
 
-                // Operations Audit Section
-                if !shownOperations.isEmpty {
-                    NoriSectionHeader("Actions (\(shownOperations.count))")
-                    NoriRows {
-                        ForEach(Array(shownOperations.enumerated()), id: \.element.id) { idx, op in
-                            operationRow(op: op, showDivider: idx < shownOperations.count - 1)
-                        }
-                    }
-                }
-
-                // Activity Timeline
-                if !timelineEvents.isEmpty {
-                    NoriSectionHeader("Activity")
-                    ActivityTimelineView(events: timelineEvents)
-                        .padding(.top, 4)
-                }
+                // Bottom Footer: Task budget & origin demoted to a compact single strip
+                taskFooterStrip(item: item)
+                    .padding(.top, 18)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -254,6 +229,82 @@ public struct WorkDetailView: View {
 
     // MARK: - Subsections
 
+    private func shouldShowContinueCard(for item: WorkItem) -> Bool {
+        item.status == .failed || item.isBudgetExhausted
+    }
+
+    private var uncertainNotice: some View {
+        NoriNotice(
+            title: "Checking an unconfirmed action",
+            detail: "An action may or may not have gone through. Nori is checking with the provider and won’t repeat it.",
+            tone: .warning,
+            systemImage: "exclamationmark.triangle.fill"
+        )
+    }
+
+    @ViewBuilder
+    private func resultSection(item: WorkItem) -> some View {
+        if let resultText = detail?.result, !resultText.isEmpty {
+            NoriSectionHeader(item.status == .failed ? "Partial answer" : "Result")
+            NoriCard(padding: 14) {
+                Text(resultText)
+                    .font(.system(size: 13.5))
+                    .lineSpacing(3)
+                    .foregroundStyle(NoriColors.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var savedArtifactsSection: some View {
+        if !savedItems.isEmpty {
+            NoriSectionHeader("Saved artifacts")
+            NoriRows {
+                ForEach(Array(savedItems.enumerated()), id: \.element.id) { idx, doc in
+                    Button {
+                        onOpenDocument(doc)
+                    } label: {
+                        NoriRow(
+                            title: doc.title,
+                            detail: doc.previewText ?? doc.provenance.content.displayLabel,
+                            systemImage: "doc.text",
+                            iconTone: .accent,
+                            showChevron: true,
+                            showDivider: idx < savedItems.count - 1
+                        ) {
+                            if doc.version > 1 {
+                                NoriPill("v\(doc.version)", tone: .neutral)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var actionsAuditSection: some View {
+        if !shownOperations.isEmpty {
+            NoriSectionHeader("Actions (\(shownOperations.count))")
+            NoriRows {
+                ForEach(Array(shownOperations.enumerated()), id: \.element.id) { idx, op in
+                    operationRow(op: op, showDivider: idx < shownOperations.count - 1)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var activityTimelineSection: some View {
+        if !timelineEvents.isEmpty {
+            NoriSectionHeader("Activity")
+            ActivityTimelineView(events: timelineEvents)
+                .padding(.top, 4)
+        }
+    }
+
     private func noriProgressLine(for item: WorkItem) -> String {
         if item.status == .running && item.cancelRequested {
             return "Stopping."
@@ -272,14 +323,14 @@ public struct WorkDetailView: View {
         }
     }
 
-    private func budgetCard(item: WorkItem) -> some View {
+    private func taskFooterStrip(item: WorkItem) -> some View {
         let spent = item.cost.amountUSD ?? 0
         let budget = max(0.01, item.cost.budgetUSD ?? 1.00)
         let ratio = min(1.0, max(0, spent / budget))
-        let isNearCap = ratio >= 0.95
+        let isNearCap = item.cost.budgetUSD != nil && ratio >= 0.95
         let costLabel: String = {
             if item.cost.status == .unknown && item.cost.amountUSD == nil {
-                return "Not known yet"
+                return "Cost pending"
             }
             if let budgetUSD = item.cost.budgetUSD {
                 return String(format: "$%.2f / $%.2f", spent, budgetUSD)
@@ -287,38 +338,43 @@ public struct WorkDetailView: View {
             return String(format: "$%.2f", spent)
         }()
 
-        return NoriCard(padding: 13) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Task budget")
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(NoriColors.ink)
-                    Spacer()
-                    Text(costLabel)
-                        .font(.system(size: 12.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(isNearCap ? NoriColors.danger : NoriColors.ink2)
-                }
+        return HStack(spacing: 8) {
+            Text("From \(item.origin.displayLabel) · \(NoriDateFormatting.shortDateTime(item.startedAt))")
+                .font(.system(size: 11.5))
+                .foregroundStyle(NoriColors.ink3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .truncationMode(.tail)
 
-                GeometryReader { geo in
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                if item.cost.budgetUSD != nil {
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(NoriColors.fill2)
                         Capsule()
                             .fill(isNearCap ? NoriColors.danger : NoriColors.accent)
-                            .frame(width: max(6, geo.size.width * ratio))
+                            .frame(width: max(4, 28 * ratio))
                     }
+                    .frame(width: 28, height: 4)
                 }
-                .frame(height: 6)
 
-                HStack {
-                    Text("From \(item.origin.displayLabel)")
-                    Spacer()
-                    Text("Started \(NoriDateFormatting.shortDateTime(item.startedAt))")
-                }
-                .font(.system(size: 11.5))
-                .foregroundStyle(NoriColors.ink3)
+                Text(costLabel)
+                    .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isNearCap ? NoriColors.danger : NoriColors.ink2)
+                    .lineLimit(1)
+                    .fixedSize()
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+        )
     }
 
     private func steerSection(item: WorkItem) -> some View {

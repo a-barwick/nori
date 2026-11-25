@@ -21,6 +21,7 @@ public struct ChatView: View {
     @State private var isAttachSheetPresented: Bool = false
     @State private var isFileImporterPresented: Bool = false
     @State private var isSending: Bool = false
+    @State private var visiblePendingInteractionIDs: Set<String> = []
     @FocusState private var isInputFocused: Bool
 
     public init(
@@ -56,13 +57,53 @@ public struct ChatView: View {
         store.connectionState == .reconnecting || store.connectionState == .offline
     }
 
+    private var threadUnits: [ChatThreadUnit] {
+        ChatThreadUnit.build(
+            from: store.messages,
+            pendingInteractions: store.pendingInteractions
+        )
+    }
+
+    private var hasVisiblePendingInteraction: Bool {
+        store.pendingInteractions.contains { visiblePendingInteractionIDs.contains($0.id) }
+    }
+
+    private var shouldShowNeedsYouBanner: Bool {
+        store.needsYouCount > 0 && !hasVisiblePendingInteraction
+    }
+
+    private var activeBackgroundTasksCount: Int {
+        let needsYouTaskIDs = Set(
+            store.workItems
+                .filter { $0.bucket == .needsYou }
+                .map(\.taskID)
+        )
+        let runningRuns = store.runs.filter {
+            $0.status == .running
+                && ($0.waiting?.isEmpty ?? true)
+                && !needsYouTaskIDs.contains($0.id)
+        }.count
+        if let working = store.assistantSummary?.working {
+            return max(working, runningRuns)
+        }
+        if !store.workItems.isEmpty {
+            let workingItems = store.workItems.filter { $0.status == .running && $0.bucket == .working }.count
+            return max(workingItems, runningRuns)
+        }
+        return max(store.activeTasksCount, runningRuns)
+    }
+
+    private var shouldShowInlineWorkLine: Bool {
+        store.isThinking || activeBackgroundTasksCount > 0
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             ChatTopBar(
                 markState: effectiveMarkState,
-                statusLine: store.statusLine,
-                isActive: store.activeTasksCount > 0 || store.isThinking,
-                onOpenActivity: onOpenActivity
+                needsYouCount: store.needsYouCount,
+                onOpenActivity: onOpenActivity,
+                onNavigateToNeedsYou: onNavigateToNeedsYou
             )
 
             if isReconnecting {
@@ -76,18 +117,7 @@ public struct ChatView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            if let firstPending = store.pendingInteractions.first {
-                InlineNeedsYouBanner(
-                    interaction: firstPending,
-                    totalPendingCount: store.needsYouCount,
-                    onTap: onNavigateToNeedsYou
-                )
-                .padding(.horizontal, 14)
-                .padding(.top, 8)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-
-            threadScrollView
+            threadArea
 
             floatingComposer
         }
@@ -106,11 +136,6 @@ public struct ChatView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                         isFileImporterPresented = true
                     }
-                },
-                onPickDemoSample: { sample in
-                    isAttachSheetPresented = false
-                    let sampleData = Data(sample.content.utf8)
-                    uploadDraftAttachment(data: sampleData, filename: sample.filename, mediaType: sample.mediaType)
                 }
             )
         }
@@ -135,84 +160,103 @@ public struct ChatView: View {
 
     // MARK: - Thread
 
-    private var threadScrollView: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if store.messages.isEmpty && store.pendingInteractions.isEmpty {
-                        NoriEmptyState(
-                            title: store.isLoading ? "Loading conversation…" : "Ask Nori anything",
-                            message: store.isLoading
-                                ? "Syncing your persistent thread."
-                                : "Messages, files, and background work all live in one continuous thread.",
-                            markState: store.isLoading ? .thinking : .idle
-                        )
-                        .padding(.top, 48)
-                    } else {
-                        let units = ChatThreadUnit.build(from: store.messages)
-                        ForEach(units) { unit in
-                            threadUnitView(unit)
-                        }
-                    }
+    private var threadArea: some View {
+        let units = threadUnits
+        let primaryPendingInThread: Interaction? = units.compactMap { unit in
+            if case .interaction(let item) = unit { return item }
+            return nil
+        }.first
 
-                    if !store.pendingInteractions.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(store.pendingInteractions) { item in
-                                InteractionCardView(
-                                    store: store,
-                                    interaction: item,
-                                    compact: true,
-                                    onOpenTask: onOpenTask
-                                )
-                                .id("inline-interaction-\(item.id)")
+        return ScrollViewReader { proxy in
+            ZStack(alignment: .top) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        if units.isEmpty {
+                            NoriEmptyState(
+                                title: store.isLoading ? "Loading conversation…" : "Ask Nori anything",
+                                message: store.isLoading
+                                    ? "Syncing your persistent thread."
+                                    : "Messages, files, and background work all live in one continuous thread.",
+                                markState: store.isLoading ? .thinking : .idle
+                            )
+                            .padding(.top, 48)
+                        } else {
+                            ForEach(units) { unit in
+                                threadUnitView(unit)
                             }
                         }
-                        .padding(.top, 4)
-                        .padding(.bottom, 10)
-                    }
 
-                    if store.isThinking || store.activeTasksCount > 0 {
-                        InlineWorkLine(
-                            label: workLineLabel,
-                            onDetails: onOpenActivity
-                        )
-                        .padding(.top, 6)
-                        .padding(.bottom, 10)
-                        .id("work-line-anchor")
-                    }
+                        if shouldShowInlineWorkLine {
+                            InlineWorkLine(
+                                label: workLineLabel,
+                                onDetails: onOpenActivity
+                            )
+                            .padding(.top, 6)
+                            .padding(.bottom, 10)
+                            .id("work-line-anchor")
+                        }
 
-                    Color.clear
-                        .frame(height: 8)
-                        .id("chat-bottom-anchor")
+                        Color.clear
+                            .frame(height: 8)
+                            .id("chat-bottom-anchor")
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 12)
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 12)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .refreshable {
-                async let sessionTask: Void = store.refreshSession()
-                async let summaryTask: Void = store.refreshSummary()
-                _ = await (sessionTask, summaryTask)
-            }
-            .onChange(of: store.messages.count) { _, _ in
-                withAnimation(.easeOut(duration: 0.24)) {
+                .scrollDismissesKeyboard(.interactively)
+                .refreshable {
+                    async let sessionTask: Void = store.refreshSession()
+                    async let summaryTask: Void = store.refreshSummary()
+                    _ = await (sessionTask, summaryTask)
+                }
+                .onChange(of: store.messages.count) { _, _ in
+                    withAnimation(.easeOut(duration: 0.24)) {
+                        proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                    }
+                }
+                .onChange(of: store.pendingInteractions.map(\.id)) { oldIDs, newIDs in
+                    let activeIDs = Set(newIDs)
+                    visiblePendingInteractionIDs.formIntersection(activeIDs)
+                    if !activeIDs.subtracting(oldIDs).isEmpty {
+                        withAnimation(.easeOut(duration: 0.24)) {
+                            proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                        }
+                    }
+                }
+                .onChange(of: store.isThinking) { _, _ in
+                    withAnimation(.easeOut(duration: 0.24)) {
+                        proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                    }
+                }
+                .onAppear {
                     proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                 }
-            }
-            .onChange(of: store.pendingInteractions.map(\.id)) { _, _ in
-                withAnimation(.easeOut(duration: 0.24)) {
-                    proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+
+                if shouldShowNeedsYouBanner {
+                    InlineNeedsYouBanner(
+                        interaction: primaryPendingInThread,
+                        totalPendingCount: store.needsYouCount,
+                        scrollsToInlineCard: primaryPendingInThread != nil,
+                        onTap: {
+                            if let target = primaryPendingInThread {
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    proxy.scrollTo(
+                                        ChatThreadUnit.interactionAnchorID(for: target.id),
+                                        anchor: .center
+                                    )
+                                }
+                            } else {
+                                onNavigateToNeedsYou()
+                            }
+                        }
+                    )
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            .onChange(of: store.isThinking) { _, _ in
-                withAnimation(.easeOut(duration: 0.24)) {
-                    proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
-                }
-            }
-            .onAppear {
-                proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
-            }
+            .animation(.easeInOut(duration: 0.2), value: shouldShowNeedsYouBanner)
         }
     }
 
@@ -220,13 +264,8 @@ public struct ChatView: View {
         if store.isThinking {
             return "Nori is thinking…"
         }
-        let active = store.activeTasksCount
-        let needs = store.needsYouCount
-        let base = "\(active) \(active == 1 ? "task" : "tasks") in progress"
-        if needs > 0 {
-            return "\(base) · \(needs) waiting for you"
-        }
-        return base
+        let active = activeBackgroundTasksCount
+        return "\(active) \(active == 1 ? "task" : "tasks") in progress"
     }
 
     @ViewBuilder
@@ -277,6 +316,27 @@ public struct ChatView: View {
             .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
             .padding(.bottom, 12)
             .id(id)
+
+        case .interaction(let item):
+            InteractionCardView(
+                store: store,
+                interaction: item,
+                compact: true,
+                onOpenTask: onOpenTask
+            )
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .id(ChatThreadUnit.interactionAnchorID(for: item.id))
+            .onScrollVisibilityChange(threshold: 0.15) { isVisible in
+                if isVisible {
+                    visiblePendingInteractionIDs.insert(item.id)
+                } else {
+                    visiblePendingInteractionIDs.remove(item.id)
+                }
+            }
+            .onDisappear {
+                visiblePendingInteractionIDs.remove(item.id)
+            }
         }
     }
 
@@ -346,43 +406,31 @@ public struct ChatView: View {
                         #endif
                     }
 
-                if isSending || canSend || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftAttachments.isEmpty {
-                    Button {
-                        sendCurrentDraft()
-                    } label: {
-                        Group {
-                            if isSending {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .tint(.white)
-                            } else {
-                                Image(systemName: "arrow.up")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundStyle(Color.white)
-                            }
+                Button {
+                    sendCurrentDraft()
+                } label: {
+                    Group {
+                        if isSending {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(canSend ? Color.white : NoriColors.ink3)
                         }
-                        .frame(width: 34, height: 34)
-                        .background(
-                            canSend ? NoriColors.accent : NoriColors.accent.opacity(0.4),
-                            in: Circle()
-                        )
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!canSend)
-                    .accessibilityLabel(isSending ? "Sending message" : "Send message")
-                } else {
-                    Button {
-                        handleVoicePrompt()
-                    } label: {
-                        Image(systemName: "mic")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(NoriColors.ink)
-                            .frame(width: 34, height: 34)
-                            .background(NoriColors.fill1, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Dictate prompt")
+                    .frame(width: 34, height: 34)
+                    .background(
+                        isSending
+                            ? NoriColors.accent.opacity(0.55)
+                            : (canSend ? NoriColors.accent : NoriColors.fill1),
+                        in: Circle()
+                    )
                 }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .accessibilityLabel(isSending ? "Sending message" : "Send message")
             }
             .padding(.leading, 8)
             .padding(.trailing, 6)
@@ -470,12 +518,6 @@ public struct ChatView: View {
         }
     }
 
-    private func handleVoicePrompt() {
-        triggerLightHaptic()
-        store.showToast("Use the iOS keyboard microphone to dictate")
-        isInputFocused = true
-    }
-
     private func importLocalFile(url: URL) {
         let accessed = url.startAccessingSecurityScopedResource()
         defer {
@@ -546,77 +588,75 @@ public struct ChatView: View {
 
 private struct ChatTopBar: View {
     let markState: MarkState
-    let statusLine: StatusLine
-    let isActive: Bool
+    let needsYouCount: Int
     let onOpenActivity: () -> Void
+    let onNavigateToNeedsYou: () -> Void
 
-    private var statusColor: Color {
-        switch statusLine.tone {
-        case .needsYou: return NoriColors.accent
-        case .offline: return NoriColors.warning
-        case .normal: return NoriColors.ink2
-        }
+    private var hasPendingNeedsYou: Bool {
+        needsYouCount > 0
     }
 
-    private var statusWeight: Font.Weight {
-        switch statusLine.tone {
-        case .needsYou: return .semibold
-        case .offline: return .medium
-        case .normal: return .regular
+    private var titleAccessibilityLabel: String {
+        if needsYouCount == 1 {
+            return "Nori, 1 item needs your attention"
+        } else if needsYouCount > 1 {
+            return "Nori, \(needsYouCount) items need your attention"
         }
+        return "Nori"
+    }
+
+    private var titleAccessibilityHint: String {
+        hasPendingNeedsYou
+            ? "Navigates to pending tasks needing your review"
+            : "Opens activity overview"
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Button(action: onOpenActivity) {
-                    HStack(spacing: 10) {
-                        NoriMark(size: 36, state: markState)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Nori")
-                                .font(.system(size: 17, weight: .bold))
-                                .foregroundStyle(NoriColors.ink)
-                            Text(statusLine.text)
-                                .font(.system(size: 11.5, weight: statusWeight))
-                                .foregroundStyle(statusColor)
-                                .lineLimit(1)
+                    NoriMark(size: 34, state: markState)
+                        .frame(minWidth: 36, minHeight: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Nori activity")
+                .accessibilityHint("Opens quick-peek activity sheet")
+
+                Button {
+                    if hasPendingNeedsYou {
+                        onNavigateToNeedsYou()
+                    } else {
+                        onOpenActivity()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Nori")
+                            .font(.system(size: 17.5, weight: .bold))
+                            .foregroundStyle(NoriColors.ink)
+
+                        if hasPendingNeedsYou {
+                            Circle()
+                                .fill(NoriColors.accent)
+                                .frame(width: 7.5, height: 7.5)
+                                .transition(.scale.combined(with: .opacity))
                         }
                     }
-                    .padding(.vertical, 2)
-                    .padding(.trailing, 6)
+                    .padding(.vertical, 6)
+                    .padding(.trailing, 8)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Nori status: \(statusLine.text)")
+                .accessibilityLabel(titleAccessibilityLabel)
+                .accessibilityHint(titleAccessibilityHint)
 
-                Spacer(minLength: 8)
-
-                Button(action: onOpenActivity) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "waveform.path.ecg")
-                            .font(.system(size: 13.5, weight: .semibold))
-                        Text("Activity")
-                            .font(.system(size: 12.5, weight: .semibold))
-                        if isActive {
-                            PulsingStatusDot(color: NoriColors.accent, size: 6.5)
-                        }
-                    }
-                    .foregroundStyle(NoriColors.accent)
-                    .padding(.horizontal, 11)
-                    .frame(height: 34)
-                    .background(NoriColors.surface, in: Capsule())
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(NoriColors.hairlineStrong, lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open Activity sheet")
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 10)
             .background(NoriColors.canvas.opacity(0.94))
+            .animation(.easeInOut(duration: 0.2), value: hasPendingNeedsYou)
 
             Rectangle()
                 .fill(NoriColors.hairline)
@@ -652,29 +692,41 @@ private struct ReconnectingBanner: View {
 }
 
 private struct InlineNeedsYouBanner: View {
-    let interaction: Interaction
+    let interaction: Interaction?
     let totalPendingCount: Int
+    let scrollsToInlineCard: Bool
     let onTap: () -> Void
 
-    private var subtitle: String {
-        let base = interaction.taskTitle ?? "Waiting for your review"
-        if totalPendingCount > 1 {
-            return "\(base) · +\(totalPendingCount - 1) more"
+    private var heading: String {
+        if let interaction {
+            return interaction.displayHeading
         }
-        return base
+        return totalPendingCount == 1
+            ? "1 item needs your review"
+            : "\(totalPendingCount) items need your review"
+    }
+
+    private var subtitle: String {
+        if let interaction {
+            let base = interaction.taskTitle ?? "Waiting for your review"
+            if totalPendingCount > 1 {
+                return "\(base) · +\(totalPendingCount - 1) more"
+            }
+            return base
+        }
+        return "Open Work to review"
     }
 
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
-                Image(systemName: "checkmark.shield")
-                    .font(.system(size: 14.5, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .frame(width: 30, height: 30)
-                    .background(NoriColors.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                Circle()
+                    .fill(NoriColors.accent)
+                    .frame(width: 8, height: 8)
+                    .padding(.leading, 2)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(interaction.displayHeading)
+                    Text(heading)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(NoriColors.ink)
                         .lineLimit(1)
@@ -685,28 +737,51 @@ private struct InlineNeedsYouBanner: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("Review")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(NoriColors.accent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(NoriColors.surface, in: Capsule())
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(NoriColors.hairlineStrong, lineWidth: 1)
-                    )
+                HStack(spacing: 4) {
+                    if scrollsToInlineCard {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    Text("Review")
+                        .font(.system(size: 12, weight: .semibold))
+                    if !scrollsToInlineCard {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(NoriColors.accent)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(NoriColors.surface, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .strokeBorder(NoriColors.hairlineStrong, lineWidth: 1)
+                )
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .padding(.vertical, 9)
+            .background {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                            .fill(NoriColors.accentSubtle.opacity(0.88))
+                    )
+            }
             .overlay(
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
                     .strokeBorder(NoriColors.hairlineStrong, lineWidth: 1)
             )
+            .shadow(color: NoriColors.shadowColor, radius: 10, x: 0, y: 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(interaction.displayHeading). \(subtitle). Tap to review.")
+        .accessibilityLabel("\(heading). \(subtitle).")
+        .accessibilityHint(
+            scrollsToInlineCard
+                ? "Scrolls to the pending card in this conversation"
+                : "Opens Work tasks needing your review"
+        )
     }
 }
 
@@ -745,18 +820,47 @@ private enum ChatThreadUnit: Identifiable {
     case separator(id: String, label: String)
     case page(message: Message, part: MessagePart)
     case group(id: String, isUser: Bool, messages: [Message])
+    case interaction(Interaction)
 
     var id: String {
         switch self {
         case .separator(let id, _): return id
         case .page(let message, _): return "page-\(message.id)"
         case .group(let id, _, _): return id
+        case .interaction(let item): return Self.interactionAnchorID(for: item.id)
         }
     }
 
-    static func build(from messages: [Message]) -> [ChatThreadUnit] {
+    static func interactionAnchorID(for interactionID: String) -> String {
+        "inline-interaction-\(interactionID)"
+    }
+
+    static func build(
+        from messages: [Message],
+        pendingInteractions: [Interaction]
+    ) -> [ChatThreadUnit] {
+        var datedInteractions: [(index: Int, date: Date, interaction: Interaction)] = []
+        var undatedInteractions: [Interaction] = []
+
+        for (idx, interaction) in pendingInteractions.enumerated() {
+            if let rawDate = interaction.createdAt,
+               let parsedDate = NoriDateFormatting.parse(rawDate) {
+                datedInteractions.append((index: idx, date: parsedDate, interaction: interaction))
+            } else {
+                undatedInteractions.append(interaction)
+            }
+        }
+
+        datedInteractions.sort { lhs, rhs in
+            if lhs.date != rhs.date {
+                return lhs.date < rhs.date
+            }
+            return lhs.index < rhs.index
+        }
+
         var result: [ChatThreadUnit] = []
         var buffer: [Message] = []
+        var interactionCursor = 0
 
         func flushBuffer() {
             guard let first = buffer.first else { return }
@@ -765,6 +869,14 @@ private enum ChatThreadUnit: Identifiable {
         }
 
         for msg in messages {
+            if let msgDate = NoriDateFormatting.parse(msg.createdAt) {
+                while interactionCursor < datedInteractions.count && datedInteractions[interactionCursor].date < msgDate {
+                    flushBuffer()
+                    result.append(.interaction(datedInteractions[interactionCursor].interaction))
+                    interactionCursor += 1
+                }
+            }
+
             if let sep = msg.separatorLabel, !sep.isEmpty {
                 flushBuffer()
                 result.append(.separator(id: "sep-\(msg.id)", label: sep))
@@ -783,7 +895,18 @@ private enum ChatThreadUnit: Identifiable {
                 buffer = [msg]
             }
         }
+
         flushBuffer()
+
+        while interactionCursor < datedInteractions.count {
+            result.append(.interaction(datedInteractions[interactionCursor].interaction))
+            interactionCursor += 1
+        }
+
+        for interaction in undatedInteractions {
+            result.append(.interaction(interaction))
+        }
+
         return result
     }
 }
@@ -1065,47 +1188,10 @@ private struct AttachmentChipView: View {
     }
 }
 
-private struct DemoAttachmentSample: Identifiable {
-    let id: String
-    let filename: String
-    let detail: String
-    let mediaType: String
-    let systemImage: String
-    let content: String
-
-    static let samples: [DemoAttachmentSample] = [
-        DemoAttachmentSample(
-            id: "quote",
-            filename: "vendor_quote.pdf",
-            detail: "Sample Q4 Datadog renewal quote",
-            mediaType: "application/pdf",
-            systemImage: "doc.text",
-            content: "Datadog Pro Annual Quote — 8 seats @ $150/mo = $14,400/yr."
-        ),
-        DemoAttachmentSample(
-            id: "whiteboard",
-            filename: "whiteboard_sketch.png",
-            detail: "Sample architecture whiteboard capture",
-            mediaType: "image/png",
-            systemImage: "photo",
-            content: "PNG_DEMO_IMAGE_PAYLOAD"
-        ),
-        DemoAttachmentSample(
-            id: "csv",
-            filename: "Q4_billing_export.csv",
-            detail: "Sample vendor seats CSV export",
-            mediaType: "text/csv",
-            systemImage: "tablecells",
-            content: "vendor,plan,annual_usd,seats_active,seats_billed\nAWS,Enterprise,29400,18,18\nDatadog,Pro,14200,6,8\n"
-        )
-    ]
-}
-
 private struct AttachSheetView: View {
     @Environment(\.dismiss) private var dismiss
     let onPickedPhotoData: (Data, String, String) -> Void
     let onRequestFilePicker: () -> Void
-    let onPickDemoSample: (DemoAttachmentSample) -> Void
 
     @State private var selectedPhotoItem: PhotosPickerItem?
 
@@ -1139,28 +1225,6 @@ private struct AttachSheetView: View {
                             )
                         }
                         .buttonStyle(.plain)
-                    }
-
-                    NoriSectionHeader("Quick Demo Samples")
-
-                    NoriRows {
-                        ForEach(Array(DemoAttachmentSample.samples.enumerated()), id: \.element.id) { idx, sample in
-                            Button {
-                                onPickDemoSample(sample)
-                            } label: {
-                                NoriRow(
-                                    title: sample.filename,
-                                    detail: sample.detail,
-                                    systemImage: sample.systemImage,
-                                    iconTone: .neutral,
-                                    showChevron: false,
-                                    showDivider: idx < DemoAttachmentSample.samples.count - 1
-                                ) {
-                                    NoriPill("Attach", tone: .accent)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -1197,7 +1261,7 @@ private struct AttachSheetView: View {
                 selectedPhotoItem = nil
             }
         }
-        .presentationDetents([.height(410), .medium])
+        .presentationDetents([.height(240), .medium])
         .presentationDragIndicator(.visible)
     }
 }

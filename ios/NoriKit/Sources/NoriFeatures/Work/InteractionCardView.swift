@@ -34,6 +34,10 @@ public struct InteractionCardView: View {
     @State private var submittingAction: String?
     @State private var errorMessage: String?
 
+    // Approval state (never defaulted on)
+    @State private var rememberSimilarRule: Bool = false
+    @State private var isQuotedBodyExpanded: Bool = false
+
     // Question state
     @State private var selectedOptionIDs: Set<String> = []
     @State private var textAnswer: String = ""
@@ -152,10 +156,8 @@ public struct InteractionCardView: View {
             case .pending:
                 EmptyView()
             }
-        } else if let expiresAt = interaction.expiresAt, !expiresAt.isEmpty {
+        } else if let expiresAt = interaction.expiresAt?.trimmingCharacters(in: .whitespacesAndNewlines), !expiresAt.isEmpty {
             NoriPill(NoriDateFormatting.expiryCountdown(expiresAt), tone: .warning, systemImage: "clock")
-        } else {
-            NoriPill("Waiting", tone: .accent)
         }
     }
 
@@ -258,20 +260,41 @@ public struct InteractionCardView: View {
             }
 
             if let quotedBody = parsed.quotedBody, !quotedBody.isEmpty {
+                let canExpand = shouldOfferQuotedBodyExpansion(quotedBody)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(quotedBody)
-                        .font(.system(size: 13))
-                        .lineSpacing(2.5)
-                        .foregroundStyle(NoriColors.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                        )
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(quotedBody)
+                            .font(.system(size: 13))
+                            .lineSpacing(2.5)
+                            .foregroundStyle(NoriColors.ink)
+                            .lineLimit(isQuotedBodyExpanded || !canExpand ? nil : 4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if canExpand {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.18)) {
+                                    isQuotedBodyExpanded.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(isQuotedBodyExpanded ? "Show less" : "Show more")
+                                    Image(systemName: isQuotedBodyExpanded ? "chevron.up" : "chevron.down")
+                                        .font(.system(size: 10, weight: .semibold))
+                                }
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(NoriColors.accent)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                    )
 
                     if quotedBody.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("…") {
                         Text("Only the start of the message is shown here. The rest is sent too.")
@@ -371,36 +394,68 @@ public struct InteractionCardView: View {
                 .padding(.top, 2)
             }
 
-            // 3-Button Approval Actions: Allow once / Always allow / Deny
-            VStack(spacing: 8) {
+            // Primary 2-Button Approval Actions + deliberate secondary rule checkbox
+            let canRememberRule = supportsRememberRule(for: payload)
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Button {
-                        submitApprove(rememberRule: false)
+                        submitApprove(rememberRule: canRememberRule && rememberSimilarRule)
                     } label: {
-                        Text(submittingAction == "approve_once" ? "Allowing…" : "Allow once")
+                        Text(
+                            submittingAction == "approve_always"
+                                ? "Saving rule…"
+                                : (submittingAction == "approve_once" ? "Approving…" : "Approve")
+                        )
                     }
-                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
+                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: compact))
                     .disabled(isSubmitting)
 
                     Button {
-                        submitApprove(rememberRule: true)
+                        submitDecline()
                     } label: {
-                        Text(submittingAction == "approve_always" ? "Saving rule…" : "Always allow")
+                        Text(submittingAction == "decline" ? "Declining…" : "Decline")
                     }
-                    .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true))
+                    .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true, compact: compact))
                     .disabled(isSubmitting)
                 }
 
-                Button {
-                    submitDecline()
-                } label: {
-                    Text(submittingAction == "decline" ? "Denying…" : "Deny")
+                if canRememberRule {
+                    Button {
+                        rememberSimilarRule.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            selectionIndicator(isSelected: rememberSimilarRule, isMulti: true)
+                            Text("Always allow similar")
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(rememberSimilarRule ? NoriColors.ink : NoriColors.ink2)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 3)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSubmitting)
+                    .accessibilityLabel("Always allow similar")
+                    .accessibilityValue(rememberSimilarRule ? "Selected" : "Not selected")
                 }
-                .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: compact))
-                .disabled(isSubmitting)
             }
             .padding(.top, 4)
         }
+    }
+
+    private func supportsRememberRule(for payload: ApprovalPayload) -> Bool {
+        true
+    }
+
+    private func shouldOfferQuotedBodyExpansion(_ text: String) -> Bool {
+        let lines = text.components(separatedBy: .newlines)
+        if lines.count > 4 {
+            return true
+        }
+        let estimatedWrappedLines = lines.reduce(0) { total, line in
+            total + max(1, Int(ceil(Double(max(1, line.count)) / 42.0)))
+        }
+        return estimatedWrappedLines > 4 || text.count > 160
     }
 
     private func parseApprovalSummary(_ payload: ApprovalPayload) -> (head: String?, quotedBody: String?) {
