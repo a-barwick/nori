@@ -45,3 +45,23 @@ func TerraCostWithWrites(model, tier string, input, output, total *int64, cached
 	}
 	return float64((*input-cached-written)*inputRate+cached*cacheRate+written*writeRate+*output*outputRate) / 1e9, nil
 }
+
+func LunaCost(model, tier string, input, output, total *int64, cached int64) (float64, error) {
+	return LunaCostWithWrites(model, tier, input, output, total, cached, 0)
+}
+
+// LunaCostWithWrites prices a gpt-6-luna call with prompt caching: $0.10/M input,
+// $0.01/M cached read (0.1x), $0.125/M 30-minute cache write (1.25x), and $0.50/M output.
+func LunaCostWithWrites(model, tier string, input, output, total *int64, cached, written int64) (float64, error) {
+	if (!matchOpenAIModel(model, "gpt-6-luna") && !matchOpenAIModel(model, "gpt-6.1-luna") && !matchOpenAIModel(model, "gpt-6.2-luna")) ||
+		tier != "default" || input == nil || output == nil || total == nil ||
+		*input < 0 || *input > 1_050_000 || *output < 0 || *output > 1_050_000 || *total != *input+*output ||
+		cached < 0 || written < 0 || cached+written > *input {
+		return 0, errors.New("OpenAI usage does not match the configured tariff")
+	}
+	inputRate, cacheRate, writeRate, outputRate := int64(100), int64(10), int64(125), int64(500)
+	if *input > 272_000 {
+		inputRate, cacheRate, writeRate, outputRate = 200, 20, 250, 750
+	}
+	return float64((*input-cached-written)*inputRate+cached*cacheRate+written*writeRate+*output*outputRate) / 1e9, nil
+}

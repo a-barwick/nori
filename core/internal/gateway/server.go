@@ -550,7 +550,10 @@ func extractAndCalculateCost(provider, fallbackModel string, raw []byte) (cost f
 	if c, err := usage.TerraCostWithWrites(model, tier, inPtr, outPtr, totalPtr, cached, written); err == nil {
 		return c, inTok, outTok, true
 	}
-	// Standard GPT-4.1 / 4.1-mini tariffs used by persona-sim responder and judge.
+	if c, err := usage.LunaCostWithWrites(model, tier, inPtr, outPtr, totalPtr, cached, written); err == nil {
+		return c, inTok, outTok, true
+	}
+	// Standard GPT-4.1 / 4.1-mini tariffs (legacy fallback if overridden via SIM_*_MODEL).
 	low := strings.ToLower(model)
 	switch {
 	case strings.HasPrefix(low, "gpt-4.1-mini"):

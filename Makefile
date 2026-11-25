@@ -1,4 +1,4 @@
-.PHONY: dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-memory sim-personas-full deps deps-stop deploy-gcp
+.PHONY: dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop deploy-gcp
 
 NORI_ENV_FILE ?= $(abspath .env)
 NORI_TASK_ENV_FILE ?= $(NORI_ENV_FILE)
@@ -46,6 +46,12 @@ sim-personas-smoke:
 
 # Multi-persona runs go through suite.py: one runner process + ephemeral DB per persona (runner.py
 # --concurrency shares one DB across personas and cross-contaminates them). Optional BASELINE=<scorecard.json>.
+sim-personas-quick:
+	python3 scripts/persona-sim/suite.py --preset core --weeks 1 --outer-reasoning low --inner-reasoning low --tag quick $(if $(BASELINE),--compare $(BASELINE),)
+
+sim-personas-core:
+	python3 scripts/persona-sim/suite.py --preset core --tag core $(if $(BASELINE),--compare $(BASELINE),)
+
 sim-personas-memory:
 	python3 scripts/persona-sim/suite.py --preset memory-pack --tag memory-pack $(if $(BASELINE),--compare $(BASELINE),)
 

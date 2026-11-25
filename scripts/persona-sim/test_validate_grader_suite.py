@@ -1071,10 +1071,99 @@ class SuiteTests(unittest.TestCase):
         assert resp_client is not None and judge_client is not None
         self.assertEqual(resp_client.base_url, gw.url)
         self.assertEqual(resp_client.api_key, gw.token)
-        self.assertEqual(resp_client.model, "gpt-4.1-mini")
+        self.assertEqual(resp_client.model, "gpt-6-luna")
         self.assertEqual(judge_client.base_url, gw.url)
         self.assertEqual(judge_client.api_key, gw.token)
-        self.assertEqual(judge_client.model, "gpt-4.1")
+        self.assertEqual(judge_client.model, "gpt-6-luna")
+
+    def test_horizon_resolution_core_preset_and_eom_skip(self) -> None:
+        self.assertEqual(suite.resolve_max_days(None, 1), 7)
+        self.assertEqual(suite.resolve_max_days(None, 2), 14)
+        self.assertEqual(suite.resolve_max_days(None, 3), 21)
+        self.assertIsNone(suite.resolve_max_days(None, 4))
+        self.assertEqual(suite.resolve_max_days(10, None), 10)
+        with self.assertRaises(ValueError):
+            suite.resolve_max_days(7, 1)
+        with self.assertRaises(ValueError):
+            suite.resolve_max_days(0, None)
+
+        core = suite.select_personas("core", None)
+        self.assertEqual(
+            core,
+            [
+                "02-devon-brooks",
+                "03-priya-subramanian",
+                "04-carlos-mendoza",
+                "08-tariq-al-mansoor",
+                "09-sora-takahashi",
+            ],
+        )
+        self.assertEqual(suite.select_area_personas(["core"]), core)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = GraderTests()._make_run_bundle(
+                Path(tmp),
+                summary_extra={"max_days": 7, "horizon_truncated": True},
+            )
+            called_ids: list[str] = []
+
+            class FakeJudge:
+                model = "gpt-6-luna"
+
+                def chat_json(self, system: str, user: str, temperature: float = 0.0) -> dict:
+                    payload = json.loads(user)
+                    called_ids.append(payload.get("probe_id", "eom"))
+                    return {"verdict": "PASS", "rationale": "ok", "evidence": "e"}
+
+            with mock.patch.object(grader.LLMClient, "from_env", return_value=FakeJudge()):
+                sc = grader.grade_run(run_dir)
+            self.assertNotIn("eom", called_ids)
+            self.assertEqual(sc["personas"][0]["max_days"], 7)
+            self.assertTrue(sc["personas"][0]["horizon_truncated"])
+
+    def test_luna_chat_json_and_polite_closing_offer_filter(self) -> None:
+        from llm_client import AdaptivePersonaResponder, LLMClient, _is_polite_closing_offer_only
+
+        self.assertTrue(_is_polite_closing_offer_only("Done! Would you like me to draft an email?"))
+        self.assertTrue(_is_polite_closing_offer_only("All set. Anything else I can help with?"))
+        self.assertFalse(_is_polite_closing_offer_only("Which recipient should I send this to?"))
+        self.assertFalse(_is_polite_closing_offer_only("Should I use the May or June budget? Let me know if you want a PDF too."))
+
+        called = {"n": 0}
+
+        class SpyClient:
+            def chat_json(self, *args, **kwargs):
+                called["n"] += 1
+                return {"needs_reply": True, "reply": "yes"}
+
+        resp = AdaptivePersonaResponder(SpyClient(), "brief", "Maya")
+        self.assertIsNone(resp.decide_chat_followup("Save this", "Saved! Would you like me to do anything else?", 1, "09:00"))
+        self.assertEqual(called["n"], 0)
+
+        captured_req: dict[str, object] = {}
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps({"choices": [{"message": {"content": "{\"ok\": true}"}}]}).encode("utf-8")
+
+        def fake_urlopen(req, timeout=90):
+            captured_req["body"] = json.loads(req.data.decode("utf-8"))
+            return FakeResp()
+
+        client = LLMClient("tok", "http://127.0.0.1:9999/v1", "gpt-6-luna", scope="sim_judge")
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = client.chat_json("sys", "usr", temperature=0.0)
+        self.assertEqual(out, {"ok": True})
+        body = captured_req["body"]
+        assert isinstance(body, dict)
+        self.assertNotIn("temperature", body)
+        self.assertEqual(body["reasoning_effort"], "low")
 
 
 if __name__ == "__main__":

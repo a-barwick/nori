@@ -556,7 +556,10 @@ def grade_run(run_dir: Path, deterministic_only: bool = False, compare_path: Pat
                         "score": None,
                         "rationale": f"Judge error: {exc}",
                     })
-            if summary.get("end_of_month_audit") and final_snap:
+            eom_applicable = not summary.get("horizon_truncated") and (
+                summary.get("max_days") is None or int(summary["max_days"]) >= 30
+            )
+            if eom_applicable and summary.get("end_of_month_audit") and final_snap:
                 try:
                     tier_b_items.append(
                         _judge_with_retry(_judge_eom_audit, judge, slug, summary, final_snap, mcp_audit, approval_log)
@@ -577,6 +580,8 @@ def grade_run(run_dir: Path, deterministic_only: bool = False, compare_path: Pat
             "slug": slug,
             "name": summary.get("persona_name", slug),
             "events_executed": summary.get("events_executed", 0),
+            "max_days": summary.get("max_days"),
+            "horizon_truncated": bool(summary.get("horizon_truncated")),
             "elapsed_seconds": round(summary.get("elapsed_seconds", 0.0), 1),
             "stub_models": bool(summary.get("stub_models")),
             "tier_a": tier_a,

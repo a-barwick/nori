@@ -50,7 +50,7 @@ from llm_client import (  # noqa: E402
     resolve_dotenv_path,
     strip_raw_provider_keys,
 )
-from runner import select_personas  # noqa: E402
+from runner import resolve_max_days, select_personas  # noqa: E402
 
 _start_lock = threading.Lock()
 _last_start = [0.0]
@@ -72,6 +72,13 @@ FATAL_PROVIDER_MARKERS = (
 
 AREA_PERSONAS: dict[str, list[str]] = {
     "smoke": ["01-maya-lin"],
+    "core": [
+        "02-devon-brooks",
+        "03-priya-subramanian",
+        "04-carlos-mendoza",
+        "08-tariq-al-mansoor",
+        "09-sora-takahashi",
+    ],
     "memory": ["01-maya-lin", "03-priya-subramanian", "05-hannah-okafor", "09-sora-takahashi"],
     "permissions": ["02-devon-brooks", "04-carlos-mendoza", "08-tariq-al-mansoor"],
     "approvals": ["02-devon-brooks", "04-carlos-mendoza", "08-tariq-al-mansoor"],
@@ -857,7 +864,7 @@ def rejudge_errors(run_dir: Path) -> list[tuple[str, str, str]]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Isolated persona VST suite: run, collect, grade, compare.")
-    ap.add_argument("--preset", choices=["smoke", "memory-pack", "full"], default=None)
+    ap.add_argument("--preset", choices=["smoke", "core", "memory-pack", "full"], default=None)
     ap.add_argument(
         "--area",
         action="append",
@@ -866,6 +873,8 @@ def main() -> int:
         help="Feature-area persona subset (repeatable; overrides --preset, overridden by --persona).",
     )
     ap.add_argument("--persona", action="append", default=[], help="Persona slug (repeatable). Overrides --area and --preset.")
+    ap.add_argument("--max-days", type=int, default=None, help="Cap simulated days per persona (e.g. 7 for 1 week, 14 for 2 weeks)")
+    ap.add_argument("--weeks", type=int, default=None, help="Simulated duration in weeks (1=7d, 2=14d, 3=21d, 4=full 30d month)")
     ap.add_argument("--parallel", type=int, default=4, help="Personas running at once (default 4)")
     ap.add_argument("--stagger", type=float, default=45.0, help="Seconds between persona starts (default 45)")
     ap.add_argument("--retries", type=int, default=1, help="Re-runs for a persona whose runner fails (default 1)")
@@ -892,6 +901,10 @@ def main() -> int:
     ap.add_argument("--collect-only", nargs="+", type=Path, metavar="PERSONA_DIR",
                     help="Skip running; collect existing persona bundles into a new run dir and grade")
     args, extra = ap.parse_known_args()
+
+    effective_max_days = resolve_max_days(args.max_days, args.weeks)
+    if effective_max_days is not None:
+        extra = [*extra, "--max-days", str(effective_max_days)]
 
     model_overrides: dict[str, str] = {}
     if args.outer_model:
@@ -1018,6 +1031,7 @@ def main() -> int:
         manifest_payload = {
             "personas": manifest,
             "models": model_overrides,
+            "max_days": effective_max_days,
             "cost_summary": cost_summary,
             "gateway_stats": gateway_stats,
             "max_usd": args.max_usd,

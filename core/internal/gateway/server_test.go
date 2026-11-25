@@ -108,3 +108,39 @@ func TestGateway_AuthRoutingCostInjectionAndKillSwitch(t *testing.T) {
 		t.Fatalf("unexpected stats: %+v", st)
 	}
 }
+
+func TestGateway_LunaCostCalculation(t *testing.T) {
+	srv, err := New(Config{
+		Token:     "tok",
+		OpenAIKey: "sk-test",
+		Transport: stubRT(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(
+					`{"id":"chatcmpl-luna","model":"gpt-6-luna","service_tier":"default","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"ok\":true}"}}],"usage":{"prompt_tokens":1000000,"completion_tokens":1000000,"total_tokens":2000000}}`,
+				)),
+			}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-6-luna","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer tok")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	u := body["usage"].(map[string]any)
+	// 1M input (>272k -> $0.20/M) + 1M output (>272k -> $0.75/M) = $0.95
+	cost, ok := u["cost"].(float64)
+	if !ok || cost < 0.949 || cost > 0.951 {
+		t.Fatalf("expected gpt-6-luna cost ~0.95, got %v (usage=%+v)", cost, u)
+	}
+}

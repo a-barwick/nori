@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -112,7 +113,7 @@ class LLMClient:
         env.update(os.environ)
 
         prefix = f"SIM_{role.upper()}_"
-        default_model = "gpt-4.1-mini" if role == "responder" else "gpt-4.1"
+        default_model = "gpt-6-luna"
         model = env.get(prefix + "MODEL", "").strip()
 
         sim_gw_url = env.get("SIM_GATEWAY_URL", "").strip()
@@ -149,7 +150,7 @@ class LLMClient:
             elif openrouter_key:
                 api_key = openrouter_key
                 base_url = base_url or "https://openrouter.ai/api/v1"
-                model = model or ("openai/gpt-4.1-mini" if role == "responder" else "openai/gpt-4.1")
+                model = model or "openai/gpt-6-luna"
             elif env.get("NORI_MODEL_GATEWAY_API_KEY", "").strip() and env.get("NORI_MODEL_GATEWAY_URL", "").strip():
                 api_key = env["NORI_MODEL_GATEWAY_API_KEY"].strip()
                 base_url = base_url or env["NORI_MODEL_GATEWAY_URL"].strip()
@@ -169,15 +170,20 @@ class LLMClient:
     ) -> dict[str, Any]:
         """Request a JSON object response from the configured chat completions API."""
         url = f"{self.base_url}/chat/completions"
-        payload = {
+        bare_model = self.model.split("/", 1)[-1].lower()
+        is_reasoning_model = bare_model.startswith(("gpt-6", "gpt-5", "o1", "o3", "o4"))
+        payload: dict[str, Any] = {
             "model": self.model,
-            "temperature": temperature,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         }
+        if is_reasoning_model:
+            payload["reasoning_effort"] = "low"
+        else:
+            payload["temperature"] = temperature
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -212,6 +218,36 @@ class LLMClient:
         return json.loads(content)
 
 
+_POLITE_CLOSING_OFFER_RE = re.compile(
+    r"^\s*(?:"
+    r"would you like(?: me)? to\b|"
+    r"do you want(?: me)? to\b|"
+    r"want me to\b|"
+    r"shall i\b|"
+    r"should i also\b|"
+    r"can i help(?: you)? with anything else\b|"
+    r"is there anything else\b|"
+    r"anything else\b|"
+    r"let me know if\b|"
+    r"would you also like\b|"
+    r"need anything else\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_polite_closing_offer_only(reply: str) -> bool:
+    """Return True if every question sentence in reply is a boilerplate optional closing offer."""
+    question_sentences = [
+        seg.strip()
+        for seg in re.split(r"(?<=[.!?])\s+|\n+", reply.strip())
+        if "?" in seg
+    ]
+    if not question_sentences:
+        return True
+    return all(_POLITE_CLOSING_OFFER_RE.search(q) is not None for q in question_sentences)
+
+
 class AdaptivePersonaResponder:
     """In-character responder that resolves unexpected Nori clarifying questions or approvals."""
 
@@ -229,6 +265,8 @@ class AdaptivePersonaResponder:
     ) -> str | None:
         """Return a brief in-character follow-up ONLY if Nori is blocked waiting for an answer."""
         if not nori_reply or "?" not in nori_reply:
+            return None
+        if _is_polite_closing_offer_only(nori_reply):
             return None
         if self.client is None:
             return None

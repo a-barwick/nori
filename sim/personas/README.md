@@ -37,11 +37,17 @@ Configure model keys in `.env` (or export `OPENAI_API_KEY`, `OPENROUTER_API_KEY`
 # Fast 1-persona sanity check (~2-4 min)
 python3 scripts/persona-sim/runner.py --preset smoke
 
+# Quick 1-week check across the 5 highest-signal core personas (low reasoning, ~$1-2)
+make sim-personas-quick
+
+# Full-month 5-persona high-signal core suite (~$5-8)
+make sim-personas-core
+
 # 3 memory/compaction-heavy personas (~8-10 min)
 python3 scripts/persona-sim/runner.py --preset memory-pack
 
 # Full 10-persona × 30-day suite: one isolated runner + DB per persona, graded together
-# (~45-60 min at the default --parallel 4)
+# (~45-60 min at the default --parallel 4); add --weeks 1|2|3 or --max-days N to shorten
 python3 scripts/persona-sim/suite.py --preset full --tag full
 make sim-personas-full BASELINE=.sim-runs/<baseline-dir>/scorecard.json   # same, plus a diff
 

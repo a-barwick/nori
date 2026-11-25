@@ -800,8 +800,12 @@ def _estimate_usage_cost_usd(rec: dict[str, Any]) -> float | None:
         return (uncached * 2.0 + cached * 0.10 + cache_write * 2.50 + out_tok * 10.0) / 1_000_000.0
     if "gpt-6.1-terra" in model:
         if inp > 272_000:
-            return (uncached * 2.0 + cached * 0.10 + out_tok * 7.50) / 1_000_000.0
-        return (uncached * 1.0 + cached * 0.05 + out_tok * 5.0) / 1_000_000.0
+            return (uncached * 2.0 + cached * 0.10 + cache_write * 2.50 + out_tok * 7.50) / 1_000_000.0
+        return (uncached * 1.0 + cached * 0.05 + cache_write * 1.25 + out_tok * 5.0) / 1_000_000.0
+    if "gpt-6-luna" in model or "gpt-6.1-luna" in model or "gpt-6.2-luna" in model:
+        if inp > 272_000:
+            return (uncached * 0.20 + cached * 0.02 + cache_write * 0.25 + out_tok * 0.75) / 1_000_000.0
+        return (uncached * 0.10 + cached * 0.01 + cache_write * 0.125 + out_tok * 0.50) / 1_000_000.0
     return None
 
 
@@ -1006,6 +1010,21 @@ def _count_5xx_in_result(res: Any) -> int:
     return 0
 
 
+def resolve_max_days(max_days: int | None = None, weeks: int | None = None) -> int | None:
+    """Resolve --max-days / --weeks into an inclusive simulated day cap (None = full 30-day month)."""
+    if max_days is not None and weeks is not None:
+        raise ValueError("Pass either --max-days or --weeks, not both.")
+    if max_days is not None:
+        if max_days < 1:
+            raise ValueError(f"--max-days must be >= 1, got {max_days}")
+        return max_days
+    if weeks is not None:
+        if weeks < 1:
+            raise ValueError(f"--weeks must be >= 1, got {weeks}")
+        return None if weeks >= 4 else weeks * 7
+    return None
+
+
 def run_single_persona(
     slug: str,
     run_root: Path,
@@ -1021,6 +1040,7 @@ def run_single_persona(
     supports_user_id: bool = False,
     sim_url: str | None = None,
     personas_dir: Path | None = None,
+    max_days: int | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     pdir = (personas_dir or PERSONAS_DIR) / slug
@@ -1279,9 +1299,13 @@ def run_single_persona(
             raise RuntimeError(f"Initial snapshot failed ({st_intro}): {res_intro}")
         _drain(60)
 
-        events = month["events"]
+        all_events = month["events"]
+        events = list(all_events)
+        if max_days is not None:
+            events = [ev for ev in events if int(ev["day"]) <= max_days]
         if max_events is not None:
             events = events[:max_events]
+        horizon_truncated = len(events) < len(all_events)
 
         last_msg_id = ""
         final_snap: dict[str, Any] = {}
@@ -1600,6 +1624,8 @@ def run_single_persona(
         "user_id": user_id,
         "events_executed": len(trace_lines),
         "probes_captured": len(probe_records),
+        "max_days": max_days,
+        "horizon_truncated": horizon_truncated,
         "http_5xx_count": http_5xx_count,
         "harness_timeouts": harness_timeouts,
         "ui_errors": ui_errors,
@@ -2647,6 +2673,15 @@ def _exec_interaction_reply(base_url: str, user_id: str, action: str, params: di
     return results
 
 
+CORE_PRESET_PERSONAS: tuple[str, ...] = (
+    "02-devon-brooks",
+    "03-priya-subramanian",
+    "04-carlos-mendoza",
+    "08-tariq-al-mansoor",
+    "09-sora-takahashi",
+)
+
+
 def select_personas(preset: str | None, persona: str | None) -> list[str]:
     all_dirs = sorted(d.name for d in PERSONAS_DIR.iterdir() if d.is_dir() and (d / "profile.json").is_file())
     if persona:
@@ -2654,6 +2689,8 @@ def select_personas(preset: str | None, persona: str | None) -> list[str]:
             raise ValueError(f"Unknown persona {persona!r}; available: {', '.join(all_dirs)}")
         return [persona]
     target_preset = preset or "smoke"
+    if target_preset == "core":
+        return [slug for slug in CORE_PRESET_PERSONAS if slug in all_dirs]
     selected = []
     for slug in all_dirs:
         prof = json.loads((PERSONAS_DIR / slug / "profile.json").read_text(encoding="utf-8"))
@@ -2666,12 +2703,14 @@ def select_personas(preset: str | None, persona: str | None) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Nori Real-Life Persona Simulations.")
-    parser.add_argument("--preset", choices=["smoke", "memory-pack", "full"], default=None, help="Persona subset preset")
+    parser.add_argument("--preset", choices=["smoke", "core", "memory-pack", "full"], default=None, help="Persona subset preset")
     parser.add_argument("--persona", help="Run a single persona slug (e.g. 01-maya-lin)")
     parser.add_argument("--concurrency", type=int, default=1, help="Number of personas to run in parallel")
     parser.add_argument("--tag", default="run", help="Label for output folder under .sim-runs/")
     parser.add_argument("--stub-models", action="store_true", help="Use local deterministic model stub (free harness smoke test)")
     parser.add_argument("--max-events", type=int, default=None, help="Optional cap on events per persona (for fast smoke checks)")
+    parser.add_argument("--max-days", type=int, default=None, help="Optional cap on simulated days per persona (e.g. 7 for 1 week, 14 for 2 weeks)")
+    parser.add_argument("--weeks", type=int, default=None, help="Optional simulated duration in weeks (1=7d, 2=14d, 3=21d, 4=full 30d month)")
     parser.add_argument("--workbench-seed", action="store_true", help="Replay against a running local Nori stack for UI inspection")
     parser.add_argument("--target-url", default="http://127.0.0.1:8080", help="Local Nori URL when using --workbench-seed")
     parser.add_argument("--keep-db", action="store_true", help="Keep the ephemeral Postgres database after completion")
@@ -2685,6 +2724,7 @@ def main() -> int:
     parser.add_argument("--compare", type=Path, help="Optional baseline scorecard.json to diff against")
     args = parser.parse_args()
 
+    effective_max_days = resolve_max_days(args.max_days, args.weeks)
     if args.outer_model:
         os.environ["NORI_AGENT_MODEL"] = args.outer_model
     if args.outer_reasoning:
@@ -2748,6 +2788,7 @@ def main() -> int:
                 workbench_url=args.target_url if args.workbench_seed else None,
                 keep_db=args.keep_db,
                 supports_user_id=supports_user_id,
+                max_days=effective_max_days,
             )
 
         if args.concurrency > 1 and len(slugs) > 1:
