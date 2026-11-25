@@ -11,9 +11,11 @@ public struct MCPDetailView: View {
     public let serverID: String
 
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
-    @State private var showingDemoOAuth = false
     @State private var isBusy = false
     @State private var authError: String?
+    @State private var accessToken = ""
+    @State private var isTokenVisible = false
+    @State private var isSavingCredential = false
 
     public init(store: NoriStore, serverID: String) {
         self.store = store
@@ -64,7 +66,7 @@ public struct MCPDetailView: View {
                             }
 
                             if let lastSuccess = server.observed.lastSuccessAt, !lastSuccess.isEmpty {
-                                metadataRow("Last call", value: lastSuccess)
+                                metadataRow("Last call", value: NoriDateFormatting.shortDateTime(lastSuccess))
                             }
 
                             if let capabilities = server.observed.capabilities, !capabilities.isEmpty {
@@ -72,7 +74,8 @@ public struct MCPDetailView: View {
                             }
 
                             HStack(spacing: 8) {
-                                if server.observed.status == .needsSignIn || (server.auth == .oauth && server.observed.status != .connected) {
+                                let supportsOAuth = server.auth == .oauth || (server.auth == nil && server.observed.status == .needsSignIn)
+                                if supportsOAuth && server.observed.status != .connected {
                                     Button {
                                         startOAuthFlow(for: server)
                                     } label: {
@@ -80,6 +83,14 @@ public struct MCPDetailView: View {
                                     }
                                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
                                     .disabled(isBusy)
+
+                                    if server.observed.status == .needsSignIn || server.observed.status == .failed {
+                                        Button("Reconnect") {
+                                            reconnect(serverID: server.id)
+                                        }
+                                        .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                                        .disabled(isBusy)
+                                    }
                                 } else {
                                     Button {
                                         reconnect(serverID: server.id)
@@ -89,17 +100,13 @@ public struct MCPDetailView: View {
                                     .buttonStyle(NoriButtonStyle(.primary, compact: true))
                                     .disabled(isBusy)
                                 }
-
-                                if server.observed.status == .needsSignIn {
-                                    Button("Reconnect") {
-                                        reconnect(serverID: server.id)
-                                    }
-                                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-                                    .disabled(isBusy)
-                                }
                             }
                             .padding(.top, 4)
                         }
+                    }
+
+                    if server.auth == .configured {
+                        credentialCard(for: server)
                     }
 
                     // Discovered Tools
@@ -185,11 +192,91 @@ public struct MCPDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingDemoOAuth) {
-            if let server {
-                MCPOAuthDemoSheet(store: store, server: server)
-                    .presentationDetents([.medium])
-                    .presentationDragIndicator(.visible)
+    }
+
+    @ViewBuilder
+    private func credentialCard(for server: MCPServer) -> some View {
+        let hasExistingToken = server.observed.status == .connected
+            || server.observed.credential == "configured"
+            || server.observed.credential == "set"
+        let trimmedToken = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let canSave = !trimmedToken.isEmpty && !isSavingCredential
+
+        NoriCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 8) {
+                    Label("Access token", systemImage: "key.fill")
+                        .font(NoriTypography.metaSemibold)
+                        .foregroundStyle(NoriColors.ink)
+                    Spacer()
+                    if server.observed.status.needsAttention {
+                        NoriPill("Required", tone: .warning)
+                    } else if hasExistingToken {
+                        NoriPill("Configured", tone: .ok)
+                    }
+                }
+
+                Text(
+                    hasExistingToken
+                        ? "Enter a new access token or API key to replace the saved credential."
+                        : "Enter an access token or API key to authenticate with this server."
+                )
+                .font(NoriTypography.caption)
+                .foregroundStyle(NoriColors.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    Group {
+                        if isTokenVisible {
+                            TextField("Paste access token or API key", text: $accessToken)
+                        } else {
+                            SecureField("Paste access token or API key", text: $accessToken)
+                        }
+                    }
+                    .textFieldStyle(.plain)
+                    .font(NoriTypography.monoSmall)
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    #endif
+                    .disabled(isSavingCredential)
+
+                    Button {
+                        isTokenVisible.toggle()
+                    } label: {
+                        Image(systemName: isTokenVisible ? "eye.slash" : "eye")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(NoriColors.ink3)
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isTokenVisible ? "Hide token" : "Show token")
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 42)
+                .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                )
+
+                Button {
+                    saveCredential(for: server)
+                } label: {
+                    if isSavingCredential {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.white)
+                            Text("Saving…")
+                        }
+                    } else {
+                        Text(hasExistingToken ? "Update token" : "Save access token")
+                    }
+                }
+                .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
+                .disabled(!canSave)
+                .opacity(canSave ? 1 : 0.5)
             }
         }
     }
@@ -248,15 +335,37 @@ public struct MCPDetailView: View {
         }
     }
 
+    private func saveCredential(for server: MCPServer) {
+        let trimmed = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isSavingCredential else { return }
+        isSavingCredential = true
+        authError = nil
+        Task {
+            defer { isSavingCredential = false }
+            let saved = await store.saveMCPCredential(serverID: server.id, secret: trimmed)
+            if saved {
+                accessToken = ""
+                isTokenVisible = false
+                #if os(iOS)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                #endif
+            }
+        }
+    }
+
     private func startOAuthFlow(for server: MCPServer) {
         authError = nil
         isBusy = true
         Task {
             defer { isBusy = false }
-            let authAttempt = await store.completeMCPOAuth(serverID: server.id)
-            guard let urlString = authAttempt?.authorizeURL,
-                  let authorizeURL = URL(string: urlString),
-                  authorizeURL.scheme == "https" else {
+            let attempt = await store.startMCPOAuth(serverID: server.id)
+            guard let attempt else { return }
+
+            guard let authorizeURL = URL(string: attempt.authorizeURL),
+                  authorizeURL.scheme?.lowercased() == "https" else {
+                let message = "The server returned an invalid sign-in link."
+                authError = message
+                store.showToast(message)
                 return
             }
 
@@ -267,92 +376,47 @@ public struct MCPDetailView: View {
                     preferredBrowserSession: .ephemeral,
                     additionalHeaderFields: [:]
                 )
-                store.handleIncomingURL(callbackURL)
-                await store.refreshAll()
+                let outcome = Self.parseOAuthCallback(callbackURL)
+                switch outcome.result {
+                case "connected":
+                    store.showToast("Signed in to \(server.name)")
+                    #if os(iOS)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    #endif
+                case "cancelled", "canceled":
+                    store.showToast("Sign-in cancelled")
+                case "failed":
+                    let message = outcome.reason.map { "Sign-in failed: \($0)" } ?? "Sign-in failed for \(server.name)"
+                    authError = message
+                    store.showToast(message)
+                default:
+                    store.showToast("Updated \(server.name)")
+                }
+                await store.refreshApps()
             } catch {
                 let nsError = error as NSError
-                if nsError.domain != ASWebAuthenticationSessionErrorDomain || nsError.code != ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                if nsError.domain == ASWebAuthenticationSessionErrorDomain,
+                   nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                    store.showToast("Sign-in cancelled")
+                } else {
                     authError = error.localizedDescription
+                    store.showToast(error.localizedDescription)
                 }
             }
         }
     }
-}
 
-// MARK: - Demo OAuth Sheet
-
-struct MCPOAuthDemoSheet: View {
-    @Bindable var store: NoriStore
-    let server: MCPServer
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var isAuthorizing = false
-
-    private var hostTitle: String {
-        if let endpoint = server.endpoint, let host = URL(string: endpoint)?.host {
-            return "\(host) · OAuth"
-        }
-        return "\(server.name) · OAuth"
-    }
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 16) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(NoriColors.accentSubtle)
-                        .frame(width: 56, height: 56)
-                    Image(systemName: "key.fill")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(NoriColors.accent)
-                }
-                .padding(.top, 12)
-
-                Text("ASWebAuthenticationSession")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(NoriColors.ink)
-
-                Text("Native iOS ephemeral OAuth returns directly to nori://oauth/callback and resumes waiting tasks automatically.")
-                    .font(NoriTypography.meta)
-                    .foregroundStyle(NoriColors.ink2)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 12)
-
-                Button {
-                    isAuthorizing = true
-                    Task {
-                        _ = await store.completeMCPOAuth(serverID: server.id)
-                        #if os(iOS)
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
-                        #endif
-                        isAuthorizing = false
-                        dismiss()
-                    }
-                } label: {
-                    if isAuthorizing {
-                        ProgressView().tint(.white)
-                    } else {
-                        Text("Authorize \(server.name)")
-                    }
-                }
-                .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
-                .disabled(isAuthorizing)
-                .padding(.top, 6)
-
-                Spacer()
-            }
-            .padding(20)
-            .background(NoriColors.canvas)
-            .navigationTitle(hostTitle)
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(NoriColors.ink2)
-                }
-            }
-        }
+    private static func parseOAuthCallback(_ url: URL) -> (result: String?, reason: String?) {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let map = Dictionary(
+            items.compactMap { item in item.value.map { (item.name.lowercased(), $0) } },
+            uniquingKeysWith: { _, latest in latest }
+        )
+        let result = map["result"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rawReason = map["reason"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reason = (rawReason?.isEmpty == false)
+            ? rawReason?.replacingOccurrences(of: "_", with: " ")
+            : nil
+        return (result, reason)
     }
 }
