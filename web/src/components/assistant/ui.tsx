@@ -22,6 +22,7 @@ export function Screen({
   backLabel = "Back",
   actions,
   tabs,
+  hideHeaderTitle = false,
   children,
 }: {
   title: string;
@@ -31,40 +32,53 @@ export function Screen({
   backLabel?: string;
   actions?: ReactNode;
   tabs?: ReactNode;
+  hideHeaderTitle?: boolean;
   children: ReactNode;
   /** Kept for backwards-compatible call sites; every tab uses the unified 960px column. */
   wide?: boolean;
 }) {
   const router = useRouter();
+  const showHeader = !hideHeaderTitle || !!tabs || !!back || !!actions || !!line;
   return (
     <main className="nori-screen flex min-h-0 flex-1 flex-col overflow-clip" aria-label={title}>
-      <header className={cn("nori-top-wash shrink-0", !tabs && "border-b border-hairline")}>
-        <div className={cn("nori-page-col pt-5 sm:pt-6", tabs ? "pb-0" : "pb-4")}>
-          {back && (
-            <button
-              type="button"
-              onClick={() => (window.history.length > 1 ? router.back() : router.push(back))}
-              className="mb-3 inline-flex h-8 items-center gap-1.5 rounded-full bg-fill-1 px-3 text-meta font-semibold text-ink transition-colors hover:bg-fill-2"
-            >
-              <ArrowLeft size={14} aria-hidden />
-              {backLabel}
-            </button>
-          )}
-          <div className="flex flex-wrap items-baseline justify-between gap-3">
-            <h1 className="min-w-0 text-[26px] leading-8 font-bold tracking-[-0.025em] text-ink sm:text-[28px]">
-              {title}
-            </h1>
-            {(subtitle || actions) && (
-              <div className="flex shrink-0 flex-wrap items-center gap-2.5">
-                {subtitle && <span className="text-meta text-ink-2">{subtitle}</span>}
-                {actions}
+      {hideHeaderTitle && <h1 className="sr-only">{title}</h1>}
+      {showHeader && (
+        <header className={cn("shrink-0", hideHeaderTitle ? "bg-canvas" : "nori-top-wash", !tabs && "border-b border-hairline")}>
+          <div
+            className={cn(
+              "nori-page-col",
+              hideHeaderTitle ? "pt-2 pb-0" : "pt-5 sm:pt-6",
+              !hideHeaderTitle && (tabs ? "pb-0" : "pb-4"),
+            )}
+          >
+            {back && (
+              <button
+                type="button"
+                onClick={() => (window.history.length > 1 ? router.back() : router.push(back))}
+                className="mb-3 inline-flex h-8 items-center gap-1.5 rounded-full bg-fill-1 px-3 text-meta font-semibold text-ink transition-colors hover:bg-fill-2"
+              >
+                <ArrowLeft size={14} aria-hidden />
+                {backLabel}
+              </button>
+            )}
+            {!hideHeaderTitle && (
+              <div className="flex flex-wrap items-baseline justify-between gap-3">
+                <h1 className="min-w-0 text-[26px] leading-8 font-bold tracking-[-0.025em] text-ink sm:text-[28px]">
+                  {title}
+                </h1>
+                {(subtitle || actions) && (
+                  <div className="flex shrink-0 flex-wrap items-center gap-2.5">
+                    {subtitle && <span className="text-meta text-ink-2">{subtitle}</span>}
+                    {actions}
+                  </div>
+                )}
               </div>
             )}
+            {line && <NoriLine className="mt-2.5">{line}</NoriLine>}
+            {tabs && <div className={hideHeaderTitle ? "" : "mt-3"}>{tabs}</div>}
           </div>
-          {line && <NoriLine className="mt-2.5">{line}</NoriLine>}
-          {tabs && <div className="mt-3">{tabs}</div>}
-        </div>
-      </header>
+        </header>
+      )}
       <div className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto">
         <div className="nori-page-col pt-5 pb-16">{children}</div>
       </div>
@@ -116,7 +130,7 @@ export function Rows({ children, label }: { children: ReactNode; label?: string 
   return (
     <ul
       aria-label={label}
-      className="divide-y divide-hairline overflow-hidden rounded-card border border-hairline bg-surface"
+      className="divide-y divide-hairline overflow-hidden rounded-card border border-card-border bg-surface"
     >
       {children}
     </ul>
@@ -180,10 +194,12 @@ export function Row({
 }
 
 const TONES = {
-  neutral: "bg-fill-1 text-ink-2",
+  neutral: "bg-inactive-bg text-inactive",
   accent: "bg-accent-subtle text-accent-text",
+  working: "bg-working-bg text-working",
   warning: "bg-warning-bg text-warning",
   danger: "bg-danger-bg text-danger",
+  scheduled: "bg-scheduled-bg text-scheduled",
   ok: "bg-ok-bg text-ok",
 } as const;
 export type Tone = keyof typeof TONES;
@@ -224,7 +240,7 @@ export function Empty({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center rounded-card border border-hairline bg-wash-top/70 px-6 py-10 text-center">
+    <div className="flex flex-col items-center rounded-card border border-card-border bg-surface px-6 py-10 text-center">
       <NoriMark size={38} state="idle" />
       {title && <p className="mt-3 text-section font-semibold text-ink">{title}</p>}
       <p className={cn("max-w-md text-meta text-ink-2", title ? "mt-1" : "mt-3")}>{children}</p>
@@ -318,7 +334,7 @@ export function Confirm({
       <AlertDialog.Trigger asChild>{trigger}</AlertDialog.Trigger>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="scrim fixed inset-0 z-50 bg-overlay" />
-        <AlertDialog.Content className="anim-pop fixed top-1/2 left-1/2 z-50 w-[min(440px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-sheet bg-surface p-6 shadow-pop">
+        <AlertDialog.Content className="anim-pop fixed top-1/2 left-1/2 z-50 w-[min(440px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-sheet border border-card-border bg-sheet p-6 shadow-pop">
           <AlertDialog.Title className="text-section font-semibold text-ink">{title}</AlertDialog.Title>
           {body ? (
             <AlertDialog.Description asChild>
@@ -366,7 +382,7 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 }
 
 export const inputBase =
-  "rounded-tile border border-hairline bg-surface px-3 py-2 text-input text-ink placeholder:text-ink-3 focus-visible:border-accent-signal";
+  "rounded-tile border border-card-border bg-fill-1 px-3 py-2 text-input text-ink placeholder:text-ink-3 focus-visible:border-accent-signal focus-visible:bg-surface";
 export const inputClass = `w-full ${inputBase}`;
 
 /** Redesigned iOS NoriUnderlineTabs — animated Electric Violet indicator bar & subtle count pills. */
@@ -438,7 +454,7 @@ export function UnderlineTabs<T extends string>({
             {active && (
               <span
                 aria-hidden
-                className="absolute right-1.5 bottom-0 left-1.5 h-[2.5px] rounded-full bg-accent"
+                className="absolute right-1.5 bottom-0 left-1.5 h-[2.5px] rounded-full bg-accent-text"
               />
             )}
           </button>
@@ -497,13 +513,15 @@ export function Tabs<T extends string>({
           aria-selected={value === item.id}
           onClick={() => onChange(item.id)}
           className={cn(
-            "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-meta font-semibold transition-colors",
-            value === item.id ? "bg-ink text-surface" : "bg-fill-1 text-ink-2 hover:bg-fill-2 hover:text-ink",
+            "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-meta font-semibold transition-colors",
+            value === item.id
+              ? "border-chip-selected-border bg-chip-selected-bg text-chip-selected-fg"
+              : "border-transparent bg-fill-1 text-ink-2 hover:bg-fill-2 hover:text-ink",
           )}
         >
           {item.label}
           {item.count ? (
-            <span className={cn("text-caption", value === item.id ? "text-surface/75" : "text-ink-3")}>
+            <span className={cn("text-caption", value === item.id ? "text-chip-selected-fg/80" : "text-ink-3")}>
               {item.count}
             </span>
           ) : null}

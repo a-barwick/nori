@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, RotateCw, X } from "lucide-react";
 import { useBlobURL } from "@/lib/useBlobURL";
 import { hasSubmission, MAX_FILE_BYTES, MAX_MESSAGE_BYTES } from "@/lib/submission";
@@ -70,6 +70,20 @@ export function RuntimeComposer({
   const area = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const canSend = !disabled && hasSubmission(draft, files);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("compose") !== "1") return;
+    url.searchParams.delete("compose");
+    window.history.replaceState(window.history.state, "", url);
+    requestAnimationFrame(() => {
+      const el = area.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, []);
 
   useLayoutEffect(() => {
     const el = area.current;

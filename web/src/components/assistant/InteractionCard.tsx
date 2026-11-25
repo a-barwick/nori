@@ -132,10 +132,10 @@ export function InteractionCard({
       data-interaction-id={shown.id}
       data-interaction-status={shown.status}
       className={cn(
-        "rounded-[18px] transition-[border-color,background-color]",
+        "rounded-[20px] transition-[border-color,background-color]",
         resolved
-          ? "border border-hairline bg-sidebar px-4 py-3"
-          : "border-[1.5px] border-hairline-strong bg-surface p-4 shadow-card",
+          ? "border border-card-border bg-sidebar px-4 py-3"
+          : "border border-card-border bg-surface p-4 shadow-card",
       )}
     >
       <div className="flex items-start gap-2.5">
@@ -406,7 +406,7 @@ function Approval({
           role="note"
           aria-label="Warning"
           data-approval-warning
-          className="mt-3 flex items-start gap-2 rounded-tile border border-warning/25 bg-warning-bg px-3 py-2.5 text-meta font-medium text-warning"
+          className="mt-3 flex items-start gap-2 rounded-tile bg-warning-bg px-3 py-2.5 text-meta font-medium text-warning"
         >
           <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden />
           <p className="min-w-0 flex-1 whitespace-pre-line [overflow-wrap:anywhere]">{warning}</p>

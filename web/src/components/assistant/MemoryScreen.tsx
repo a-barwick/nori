@@ -933,8 +933,10 @@ function DailyLogsTab({
               aria-pressed={layer === option.id}
               onClick={() => setLayer(option.id)}
               className={cn(
-                "h-9 rounded-full px-3 text-meta font-medium",
-                layer === option.id ? "bg-ink text-surface" : "bg-fill-1 text-ink-2 hover:text-ink",
+                "h-9 rounded-full border px-3 text-meta font-medium",
+                layer === option.id
+                  ? "border-chip-selected-border bg-chip-selected-bg text-chip-selected-fg"
+                  : "border-transparent bg-fill-1 text-ink-2 hover:text-ink",
               )}
             >
               {option.label}

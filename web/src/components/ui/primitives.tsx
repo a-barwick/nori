@@ -25,7 +25,7 @@ function Tip({
         <Tooltip.Content
           side={side}
           sideOffset={8}
-          className="tooltip z-[80] flex items-center gap-2 rounded-full bg-ink px-2.5 py-1 text-caption text-surface shadow-pop"
+          className="tooltip z-[80] flex items-center gap-2 rounded-full bg-toast-bg px-2.5 py-1 text-caption text-toast-fg shadow-pop"
         >
           {label}
           {shortcut && <span className="font-mono text-mono-data opacity-70">{shortcut}</span>}
@@ -54,7 +54,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       type="button"
       aria-label={label}
       className={cn(
-        "t-fast inline-grid shrink-0 place-items-center rounded-full transition-[background-color,color,opacity]",
+        "t-fast inline-grid shrink-0 place-items-center rounded-full transition-[background-color,color,opacity] disabled:text-disabled",
         active ? "bg-fill-2 text-ink" : "text-ink-2 hover:bg-fill-1 hover:text-ink",
         className,
       )}
@@ -74,7 +74,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
 });
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "neutral" | "quiet";
+  variant?: "primary" | "neutral" | "tonal" | "quiet" | "danger";
   size?: "sm" | "md";
 };
 
@@ -87,19 +87,20 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ref={ref}
       type={type}
       className={cn(
-        "t-fast inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium transition-[background-color,color,box-shadow] disabled:opacity-50",
+        "t-fast inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium transition-[background-color,color,box-shadow] disabled:bg-disabled-bg disabled:text-disabled disabled:shadow-none",
         size === "md" ? "h-9 px-4 text-row-title" : "h-8 px-3 text-meta",
         variant === "primary" && "bg-accent text-on-accent hover:bg-accent-hover active:bg-accent-pressed",
         variant === "neutral" &&
           "bg-surface text-ink shadow-[inset_0_0_0_1px_var(--hairline-strong)] hover:bg-fill-1 active:bg-fill-2",
-        variant === "quiet" && "text-ink-2 hover:bg-fill-1 hover:text-ink",
+        variant === "tonal" && "bg-fill-2 text-accent-text hover:bg-accent-muted",
+        variant === "quiet" && "text-ink-2 hover:bg-fill-1 hover:text-ink disabled:bg-transparent",
+        variant === "danger" && "bg-danger-bg text-danger hover:opacity-90",
         className,
       )}
       {...rest}
     />
   );
 });
-
 
 export function SectionHeader({ children, first, className }: { children: React.ReactNode; first?: boolean; className?: string }) {
   return (

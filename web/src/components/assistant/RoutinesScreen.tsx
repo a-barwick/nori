@@ -132,13 +132,13 @@ export function RoutinesContent() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <NoriLine>
-          {next
-            ? `Next up: ${next.title}, ${relative(next.next_at)}.`
-            : active.length
-              ? "All routines are currently paused."
-              : "No routines scheduled yet."}
-        </NoriLine>
+        {next ? (
+          <NoriLine>Next up: {next.title}, {relative(next.next_at)}.</NoriLine>
+        ) : active.length ? (
+          <NoriLine>All routines are paused.</NoriLine>
+        ) : (
+          <div />
+        )}
         <Link
           href="/routines/new"
           className="inline-flex h-8 items-center gap-1.5 rounded-full bg-accent px-3.5 text-meta font-semibold text-on-accent transition-colors hover:bg-accent-hover"
@@ -707,8 +707,10 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
                     aria-pressed={days.includes(code)}
                     onClick={() => setDays(days.includes(code) ? days.filter((day) => day !== code) : [...days, code])}
                     className={cn(
-                      "h-11 min-w-11 rounded-full px-3 text-meta font-medium",
-                      days.includes(code) ? "bg-ink text-surface" : "bg-fill-1 text-ink-2",
+                      "h-11 min-w-11 rounded-full border px-3 text-meta font-medium",
+                      days.includes(code)
+                        ? "border-chip-selected-border bg-chip-selected-bg text-chip-selected-fg"
+                        : "border-transparent bg-fill-1 text-ink-2",
                     )}
                   >
                     {label}
