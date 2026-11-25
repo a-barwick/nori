@@ -93,9 +93,10 @@ public struct RoutinesView: View {
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
 
-                        if !isEnabled {
-                            NoriPill(automation.status.displayLabel, tone: .neutral)
-                        }
+                        NoriPill(
+                            isEnabled ? "Scheduled" : automation.status.displayLabel,
+                            tone: isEnabled ? .scheduled : .neutral
+                        )
                     }
 
                     Text(triggerSummary(for: automation.trigger))
@@ -106,7 +107,7 @@ public struct RoutinesView: View {
                     if isEnabled, let nextAt = automation.nextAt, !nextAt.isEmpty {
                         Text("Next \(NoriDateFormatting.shortDateTime(nextAt))")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(NoriColors.accent)
+                            .foregroundStyle(NoriColors.scheduled)
                             .lineLimit(1)
                     }
                 }
@@ -138,7 +139,7 @@ public struct RoutinesView: View {
                         .background(NoriColors.accentSubtle, in: Capsule())
                         .overlay(
                             Capsule()
-                                .strokeBorder(Color(hex: 0xDFD4F6), lineWidth: 1)
+                                .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
                         )
                     }
                     .buttonStyle(.plain)

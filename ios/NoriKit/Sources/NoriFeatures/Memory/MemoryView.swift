@@ -39,7 +39,7 @@ public struct MemoryView: View {
     private var budgetBarColor: Color {
         if store.coreMemoryRatio >= 0.98 { return NoriColors.danger }
         if store.coreMemoryRatio >= 0.85 { return NoriColors.warning }
-        return NoriColors.accent
+        return NoriColors.brandPrimary
     }
 
     private var budgetMetricColor: Color {
@@ -96,7 +96,7 @@ public struct MemoryView: View {
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(NoriColors.onAccent)
                         .frame(width: 30, height: 30)
-                        .background(NoriColors.accent, in: Circle())
+                        .background(NoriColors.brandPrimary, in: Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Add memory")
@@ -112,11 +112,15 @@ public struct MemoryView: View {
             AddMemorySheet(store: store)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
         }
         .sheet(item: $pendingPromoteEntry) { candidate in
             PromoteTaskOutcomeSheet(store: store, candidate: candidate)
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
         }
         .alert(
             "Forget this memory?",
@@ -174,7 +178,7 @@ public struct MemoryView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(hex: 0xFAF8FE), in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+        .background(NoriColors.surfaceTinted, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                 .strokeBorder(NoriColors.hairline, lineWidth: 1)
@@ -188,6 +192,8 @@ public struct MemoryView: View {
             TextField("Filter core memories…", text: $coreFilter)
                 .textFieldStyle(.plain)
                 .font(NoriTypography.body)
+                .foregroundStyle(NoriColors.ink)
+                .tint(NoriColors.accent)
             if !coreFilter.isEmpty {
                 Button {
                     coreFilter = ""
@@ -335,7 +341,7 @@ public struct MemoryView: View {
     @ViewBuilder
     private var workingMemorySection: some View {
         if !store.workingMemory.gist.isEmpty {
-            NoriCard(backgroundColor: Color(hex: 0xFAF8FE), borderColor: NoriColors.hairline) {
+            NoriCard(backgroundColor: NoriColors.surfaceTinted, borderColor: NoriColors.hairline) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Active session gist")
                         .font(.system(size: 12, weight: .semibold))
@@ -598,7 +604,7 @@ private struct PromoteTaskOutcomeSheet: View {
                             .font(.system(size: 13.5, weight: .medium))
                             .foregroundStyle(NoriColors.ink)
                     }
-                    .tint(NoriColors.accent)
+                    .tint(NoriColors.brandPrimary)
 
                     Button {
                         isSaving = true
@@ -620,11 +626,10 @@ private struct PromoteTaskOutcomeSheet: View {
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
                     .disabled(!reviewed || isSaving)
-                    .opacity(reviewed ? 1 : 0.5)
                 }
                 .padding(16)
             }
-            .background(NoriColors.canvas)
+            .background(NoriColors.sheetBackground)
             .navigationTitle("Promote to Core")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -677,8 +682,10 @@ private struct AddMemorySheet: View {
                     )
                     .lineLimit(3...6)
                     .textFieldStyle(.plain)
+                    .foregroundStyle(NoriColors.ink)
+                    .tint(NoriColors.accent)
                     .padding(12)
-                    .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                    .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                             .strokeBorder(byteCount > maxBytes ? NoriColors.danger : NoriColors.hairline, lineWidth: 1)
@@ -695,11 +702,10 @@ private struct AddMemorySheet: View {
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
                     .disabled(!isValid)
-                    .opacity(isValid ? 1 : 0.5)
                 }
                 .padding(16)
             }
-            .background(NoriColors.canvas)
+            .background(NoriColors.sheetBackground)
             .navigationTitle("Add Memory")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

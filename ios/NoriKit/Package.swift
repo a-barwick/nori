@@ -32,6 +32,11 @@ let package = Package(
             name: "NoriCoreTests",
             dependencies: ["NoriCore"],
             path: "Tests/NoriCoreTests"
+        ),
+        .testTarget(
+            name: "NoriDesignTests",
+            dependencies: ["NoriDesign"],
+            path: "Tests/NoriDesignTests"
         )
     ]
 )

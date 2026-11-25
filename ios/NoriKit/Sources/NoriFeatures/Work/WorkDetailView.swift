@@ -373,7 +373,7 @@ public struct WorkDetailView: View {
                         Capsule()
                             .fill(NoriColors.fill2)
                         Capsule()
-                            .fill(isNearCap ? NoriColors.danger : NoriColors.accent)
+                            .fill(isNearCap ? NoriColors.danger : NoriColors.brandPrimary)
                             .frame(width: max(4, 28 * ratio))
                     }
                     .frame(width: 28, height: 4)
@@ -470,12 +470,19 @@ public struct WorkDetailView: View {
                                 } label: {
                                     Text(String(format: "$%.0f", preset))
                                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                        .foregroundStyle(selected ? Color.white : NoriColors.ink)
+                                        .foregroundStyle(selected ? NoriColors.chipSelectedFg : NoriColors.ink)
                                         .padding(.horizontal, 10)
                                         .frame(height: 26)
                                         .background(
-                                            selected ? NoriColors.ink : NoriColors.surface,
+                                            selected ? NoriColors.chipSelectedBg : NoriColors.surface,
                                             in: Capsule()
+                                        )
+                                        .overlay(
+                                            Capsule()
+                                                .strokeBorder(
+                                                    selected ? NoriColors.chipSelectedBorder : NoriColors.hairline,
+                                                    lineWidth: 1
+                                                )
                                         )
                                 }
                                 .buttonStyle(.plain)

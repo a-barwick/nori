@@ -38,7 +38,7 @@ public struct ActivitySheetView: View {
         case .connecting:
             return NoriColors.ink3
         case .connected:
-            return NoriColors.accentSignal
+            return NoriColors.markActivity
         }
     }
 
@@ -141,7 +141,7 @@ public struct ActivitySheetView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
-            .background(NoriColors.canvas)
+            .background(NoriColors.sheetBackground)
             .refreshable {
                 await refreshActivity()
             }
@@ -158,7 +158,7 @@ public struct ActivitySheetView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(NoriColors.ink)
                             .frame(width: 30, height: 30)
-                            .background(NoriColors.fill1, in: Circle())
+                            .background(NoriColors.elevated, in: Circle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close Activity")
@@ -178,7 +178,7 @@ public struct ActivitySheetView: View {
                             }
                         }
                         .frame(width: 30, height: 30)
-                        .background(NoriColors.fill1, in: Circle())
+                        .background(NoriColors.elevated, in: Circle())
                     }
                     .buttonStyle(.plain)
                     .disabled(isRefreshing || store.isLoading)
@@ -188,6 +188,8 @@ public struct ActivitySheetView: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .presentationBackground(NoriColors.sheetBackground)
+        .presentationCornerRadius(NoriRadius.sheet)
     }
 
     private func refreshActivity() async {
@@ -211,7 +213,7 @@ public struct ActivitySheetView: View {
         if item.cancelRequested {
             NoriPill("Stopping", tone: .neutral)
         } else if item.bucket == .needsYou {
-            NoriPill("Needs you", tone: .accent)
+            NoriPill("Needs you", tone: .warning)
         } else if item.operations.uncertain > 0 {
             NoriPill("Checking", tone: .warning)
         } else if let progress = item.progress?.trimmingCharacters(in: .whitespacesAndNewlines), !progress.isEmpty {

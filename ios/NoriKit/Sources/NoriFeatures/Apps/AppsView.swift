@@ -117,7 +117,7 @@ public struct AppsView: View {
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(NoriColors.onAccent)
                         .frame(width: 32, height: 32)
-                        .background(NoriColors.accent, in: Circle())
+                        .background(NoriColors.brandPrimary, in: Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Add MCP server")
@@ -127,6 +127,8 @@ public struct AppsView: View {
             AddMCPServerSheet(store: store)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
         }
     }
 
@@ -155,7 +157,7 @@ public struct AppsView: View {
         switch server.observed.status {
         case .connected: return .ok
         case .needsSignIn, .failed: return .danger
-        case .connecting: return .accent
+        case .connecting: return .working
         default: return .neutral
         }
     }
@@ -278,7 +280,7 @@ public struct AppsView: View {
         case .needsAttention:
             return ("Needs sign-in", .danger)
         case .connecting:
-            return ("Connecting", .accent)
+            return ("Connecting", .working)
         case .disabled:
             return ("Off", .neutral)
         default:
@@ -325,9 +327,11 @@ struct AddMCPServerSheet: View {
                             .foregroundStyle(NoriColors.ink)
                         TextField("e.g. Home Assistant", text: $name)
                             .textFieldStyle(.plain)
+                            .foregroundStyle(NoriColors.ink)
+                            .tint(NoriColors.accent)
                             .padding(.horizontal, 12)
                             .frame(height: 42)
-                            .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                                     .strokeBorder(NoriColors.hairline, lineWidth: 1)
@@ -341,6 +345,8 @@ struct AddMCPServerSheet: View {
                         TextField("https://mcp.example.com/mcp", text: $endpoint)
                             .textFieldStyle(.plain)
                             .font(NoriTypography.mono)
+                            .foregroundStyle(NoriColors.ink)
+                            .tint(NoriColors.accent)
                             .autocorrectionDisabled()
                             #if os(iOS)
                             .textInputAutocapitalization(.never)
@@ -348,7 +354,7 @@ struct AddMCPServerSheet: View {
                             #endif
                             .padding(.horizontal, 12)
                             .frame(height: 42)
-                            .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                                     .strokeBorder(
@@ -410,12 +416,11 @@ struct AddMCPServerSheet: View {
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
                     .disabled(!canSubmit)
-                    .opacity(canSubmit ? 1 : 0.5)
                     .padding(.top, 4)
                 }
                 .padding(16)
             }
-            .background(NoriColors.canvas)
+            .background(NoriColors.sheetBackground)
             .navigationTitle("Add MCP Server")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

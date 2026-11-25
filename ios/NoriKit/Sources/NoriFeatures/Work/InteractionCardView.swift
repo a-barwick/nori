@@ -127,17 +127,17 @@ public struct InteractionCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             isResolved ? NoriColors.sidebar : NoriColors.surface,
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            in: RoundedRectangle(cornerRadius: NoriRadius.approvalCard, style: .continuous)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: NoriRadius.approvalCard, style: .continuous)
                 .strokeBorder(
-                    isResolved ? NoriColors.hairline : NoriColors.hairlineStrong,
-                    lineWidth: isResolved ? 1 : 1.5
+                    NoriColors.cardBorder,
+                    lineWidth: 1
                 )
         )
         .shadow(
-            color: isResolved ? .clear : NoriColors.accent.opacity(0.05),
+            color: isResolved ? .clear : NoriColors.accentShadow,
             radius: 10,
             x: 0,
             y: 2
@@ -544,11 +544,11 @@ public struct InteractionCardView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                             .background(
-                                isSelected ? NoriColors.accentSubtle : NoriColors.surface,
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                isSelected ? NoriColors.selected : NoriColors.elevated,
+                                in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                             )
                             .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                                     .strokeBorder(
                                         isSelected ? NoriColors.accent : NoriColors.hairline,
                                         lineWidth: 1
@@ -619,7 +619,7 @@ public struct InteractionCardView: View {
                 .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                        .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                 )
 
             Button {
@@ -637,28 +637,28 @@ public struct InteractionCardView: View {
         if isMulti {
             ZStack {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(isSelected ? NoriColors.accent : Color.clear)
+                    .fill(isSelected ? NoriColors.brandPrimary : Color.clear)
                     .frame(width: 18, height: 18)
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .strokeBorder(isSelected ? NoriColors.accent : NoriColors.hairlineStrong, lineWidth: 2)
+                    .strokeBorder(isSelected ? NoriColors.brandPrimary : NoriColors.hairlineStrong, lineWidth: 2)
                     .frame(width: 18, height: 18)
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10.5, weight: .bold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(NoriColors.onAccent)
                 }
             }
         } else {
             ZStack {
                 Circle()
-                    .fill(isSelected ? NoriColors.accent : Color.clear)
+                    .fill(isSelected ? NoriColors.brandPrimary : Color.clear)
                     .frame(width: 18, height: 18)
                 Circle()
-                    .strokeBorder(isSelected ? NoriColors.accent : NoriColors.hairlineStrong, lineWidth: 2)
+                    .strokeBorder(isSelected ? NoriColors.brandPrimary : NoriColors.hairlineStrong, lineWidth: 2)
                     .frame(width: 18, height: 18)
                 if isSelected {
                     Circle()
-                        .fill(Color.white)
+                        .fill(NoriColors.onAccent)
                         .frame(width: 6, height: 6)
                 }
             }
@@ -728,7 +728,7 @@ public struct InteractionCardView: View {
                     .font(.system(size: 12.5))
                     .foregroundStyle(NoriColors.ink2)
             }
-            .tint(NoriColors.accent)
+            .tint(NoriColors.brandPrimary)
             .padding(.top, 2)
         }
     }

@@ -188,7 +188,7 @@ public struct LibraryView: View {
                                 .background(NoriColors.surface, in: Capsule())
                                 .overlay(
                                     Capsule()
-                                        .strokeBorder(Color(hex: 0xDFD4F6), lineWidth: 1)
+                                        .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
                                 )
                         }
 
@@ -199,7 +199,7 @@ public struct LibraryView: View {
                     .padding(.bottom, 10)
 
                     Rectangle()
-                        .fill(Color(hex: 0xDFD4F6).opacity(0.8))
+                        .fill(NoriColors.accentBorder.opacity(0.8))
                         .frame(height: 1)
                         .padding(.bottom, 10)
 
@@ -247,7 +247,7 @@ public struct LibraryView: View {
                                 )
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .strokeBorder(Color(hex: 0xDFD4F6).opacity(0.7), lineWidth: 1)
+                                        .strokeBorder(NoriColors.accentBorder.opacity(0.75), lineWidth: 1)
                                 )
                             }
                         }
@@ -267,7 +267,7 @@ public struct LibraryView: View {
                                     )
                                     .overlay(
                                         Capsule()
-                                            .strokeBorder(Color(hex: 0xDFD4F6).opacity(0.75), lineWidth: 1)
+                                            .strokeBorder(NoriColors.accentBorder.opacity(0.75), lineWidth: 1)
                                     )
                             }
                             Spacer(minLength: 0)
@@ -294,17 +294,17 @@ public struct LibraryView: View {
                 } label: {
                     Text(kind.label)
                         .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(isSelected ? NoriColors.accent : NoriColors.ink2)
+                        .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink2)
                         .padding(.horizontal, 11)
                         .frame(height: 28)
                         .background(
-                            isSelected ? NoriColors.accentSubtle : NoriColors.fill1,
+                            isSelected ? NoriColors.chipSelectedBg : NoriColors.elevated,
                             in: Capsule()
                         )
                         .overlay(
                             Capsule()
                                 .strokeBorder(
-                                    isSelected ? Color(hex: 0xDFD4F6) : NoriColors.hairline,
+                                    isSelected ? NoriColors.chipSelectedBorder : NoriColors.hairline,
                                     lineWidth: 1
                                 )
                         )

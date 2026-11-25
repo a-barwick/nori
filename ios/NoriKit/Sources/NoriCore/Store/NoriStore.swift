@@ -139,7 +139,7 @@ public final class NoriStore {
     private var transport: any NoriTransport
     private var eventTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
-    private var hasBootstrapped: Bool = false
+    var hasBootstrapped: Bool = false
 
     public init(
         transport: (any NoriTransport)? = nil,
