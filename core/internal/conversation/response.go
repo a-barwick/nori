@@ -3,6 +3,7 @@ package conversation
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"nori/internal/prompts"
@@ -11,7 +12,11 @@ import (
 
 // Reuse the runtime's command schemas in one strict action-list response.
 // Validated actions enter the same durable admission and replay path.
-func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string, commandPlan, gateway bool) any {
+//
+// stable omits every per-turn ID enum and keeps every tool, so the schema (part of the cached prompt prefix) does not
+// change when memories or tasks do. Callers using it must check reply IDs with validateReplyIDs. It does not apply to
+// command-plan or work-request turns, which keep their enum-restricted schemas.
+func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string, commandPlan, gateway, stable bool) any {
 	var tools []struct {
 		Function struct {
 			Name, Description string
@@ -24,6 +29,12 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string
 	asking, questions := []string{}, []string{}
 	for _, request := range requests {
 		asking, questions = append(asking, request.TaskID), append(questions, request.QuestionID)
+	}
+	if stable && !commandPlan && !restricted {
+		for _, tool := range tools {
+			variants = append(variants, actionVariant(tool.Function.Name, tool.Function.Description, tool.Function.Parameters))
+		}
+		tools = nil
 	}
 	for _, tool := range tools {
 		if commandPlan && tool.Function.Name != "dispatch" && tool.Function.Name != "steer" &&
@@ -84,6 +95,48 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string
 			}, "required": []string{"actions", "text"}, "additionalProperties": false,
 		},
 	}}
+}
+
+// validateReplyIDs enforces, after decoding, the ID restrictions a non-stable response schema expresses as enums:
+// task commands name only the tasks shown to the model, and memory changes name only saved memories.
+func validateReplyIDs(calls []ToolCall, taskIDs, memoryIDs []string) error {
+	for _, call := range calls {
+		var args map[string]any
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			continue // malformed arguments are rejected with their own error downstream
+		}
+		check := func(key string, allowed []string, nullable bool, what string) error {
+			value, present := args[key]
+			if !present || (nullable && value == nil) {
+				return nil
+			}
+			id, ok := value.(string)
+			if ok && nullable && id == "" {
+				return nil
+			}
+			if !ok || !slices.Contains(allowed, id) {
+				return fmt.Errorf("%s names a %s that isn't in this conversation", call.Function.Name, what)
+			}
+			return nil
+		}
+		var err error
+		switch call.Function.Name {
+		case "steer", "answer", "stop":
+			err = check("run_id", taskIDs, false, "task")
+		case "hold":
+			err = check("task_id", taskIDs, false, "task")
+		case "dispatch":
+			err = check("for", taskIDs, true, "task")
+		case state.MemoryForget:
+			err = check("memory_id", memoryIDs, false, "memory")
+		case state.MemoryRemember:
+			err = check("replaces", memoryIDs, true, "memory")
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Some model providers reject a null enum member on a field with a union type.

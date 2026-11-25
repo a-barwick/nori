@@ -44,11 +44,13 @@ sim-personas-validate:
 sim-personas-smoke:
 	python3 scripts/persona-sim/runner.py --preset smoke --tag smoke
 
+# Multi-persona runs go through suite.py: one runner process + ephemeral DB per persona (runner.py
+# --concurrency shares one DB across personas and cross-contaminates them). Optional BASELINE=<scorecard.json>.
 sim-personas-memory:
-	python3 scripts/persona-sim/runner.py --preset memory-pack --concurrency 3 --tag memory-pack
+	python3 scripts/persona-sim/suite.py --preset memory-pack --tag memory-pack $(if $(BASELINE),--compare $(BASELINE),)
 
 sim-personas-full:
-	python3 scripts/persona-sim/runner.py --preset full --concurrency 3 --tag full
+	python3 scripts/persona-sim/suite.py --preset full --tag full $(if $(BASELINE),--compare $(BASELINE),)
 
 # Local dependencies retain their named volumes across stop/start.
 deps:

@@ -40,12 +40,24 @@ python3 scripts/persona-sim/runner.py --preset smoke
 # 3 memory/compaction-heavy personas (~8-10 min)
 python3 scripts/persona-sim/runner.py --preset memory-pack
 
-# Full 10-persona × 30-day suite (~15-20 min with --concurrency 3)
-python3 scripts/persona-sim/runner.py --preset full --concurrency 3
+# Full 10-persona × 30-day suite: one isolated runner + DB per persona, graded together
+# (~45-60 min at the default --parallel 4)
+python3 scripts/persona-sim/suite.py --preset full --tag full
+make sim-personas-full BASELINE=.sim-runs/<baseline-dir>/scorecard.json   # same, plus a diff
+
+# Re-run a few personas, or merge existing bundles into one graded run
+python3 scripts/persona-sim/suite.py --persona 03-priya-subramanian --tag retry
+python3 scripts/persona-sim/suite.py --collect-only .sim-runs/<a>/01-maya-lin .sim-runs/<b>/02-devon-brooks --tag merged
 
 # Grade a completed run and compare against a previous baseline
 python3 scripts/persona-sim/grader.py .sim-runs/<run-dir> --compare .sim-runs/<baseline-dir>/scorecard.json
 ```
+
+Don't use `runner.py --concurrency N` for real runs. It shares one ephemeral DB, and every
+persona's `nori-sim` worker then executes the other personas' work with its own virtual clock (see
+`docs/vst-findings.md`, H-1). `suite.py` also staggers starts (`--stagger`, default 45 s) so
+concurrent schema migrations don't exhaust Postgres's lock table (`out of shared memory`). It also
+re-runs the judge for items that hit network errors.
 
 ### 4. Visual QA in the local Next.js Workbench (`http://localhost:3210`)
 

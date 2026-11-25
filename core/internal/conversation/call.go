@@ -235,7 +235,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		request.MemoryIDs = append(request.MemoryIDs, memory.ID)
 	}
 	promptStarted := r.now()
-	messages := buildMessages(t, visible, view, next)
+	messages, breakpoints := buildMessages(t, visible, view, next)
 	promptMS = r.now().Sub(promptStarted).Milliseconds()
 	taskRead := <-tasksReady
 	tasksMS = taskRead.durationMS
@@ -287,7 +287,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	// the summary.
 	for t.Attempt.ContextBytes+len(advisory) > state.OuterInputBytes && len(view.Turns) > 0 {
 		view.Turns, view.Truncated = view.Turns[1:], true
-		messages = buildMessages(t, visible, view, next)
+		messages, breakpoints = buildMessages(t, visible, view, next)
 	}
 	messages = append(messages, advisory)
 	t.Attempt.ContextBytes += len(advisory)
@@ -297,10 +297,14 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		if e = r.checkpointModel(ctx, f, t, requestingReply, Reply{}); e != nil {
 			return e
 		}
-		request.Messages = messages
+		request.Messages, request.CacheBreakpoints = messages, breakpoints
 		var modelErr error
 		for {
 			reply, modelErr = r.model.Respond(callCtx, request)
+			if modelErr == nil && len(request.WorkRequests) == 0 {
+				// The reply schema carries no ID enums (they would defeat prompt caching), so check IDs here.
+				modelErr = validateReplyIDs(reply.Calls, request.TaskIDs, request.MemoryIDs)
+			}
 			reply.Usage.InputID = inputID
 			attemptUsage(&t.Attempt, reply.Usage)
 			if e = r.recordUsage(inputID, reply.Usage); e != nil {
@@ -311,7 +315,8 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			}
 			view.Turns = nil
 			view.Truncated = true
-			reduced := append(buildMessages(t, visible, view, next), advisory)
+			reducedMessages, reducedBreakpoints := buildMessages(t, visible, view, next)
+			reduced := append(reducedMessages, advisory)
 			beforeBytes, afterBytes := 0, 0
 			for _, m := range request.Messages {
 				beforeBytes += len(m)
@@ -323,7 +328,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 				break
 			}
 			t.Attempt.ContextReduced = true
-			request.Messages = reduced
+			request.Messages, request.CacheBreakpoints = reduced, reducedBreakpoints
 			if e = r.checkpointModel(ctx, f, t, requestingReply, Reply{}); e != nil {
 				return e
 			}
@@ -484,12 +489,18 @@ type historyView struct {
 
 const recordBytes = 4 << 10
 
-func buildMessages(t *state.ConversationTurn, visible []Message, view historyView, next string) []json.RawMessage {
+// buildMessages also returns prompt-cache breakpoints (message indices): the static system prompt, the end of the
+// leading memory/summary block, and the ends of the last two history turns. A request writes its latest four
+// breakpoints, so each turn writes the prefix through its newest history turn and the next turn, whose
+// second-to-last history turn ends at the same position, can read it back.
+func buildMessages(t *state.ConversationTurn, visible []Message, view historyView, next string) ([]json.RawMessage, []int) {
 	messages := []json.RawMessage{modelMessage(map[string]string{"role": "system", "content": prompts.Conversation})}
 	messages = append(messages, memoryMessage(view.Memories))
 	if view.Summary != nil {
 		messages = append(messages, summaryMessage(*view.Summary))
 	}
+	breakpoints := []int{0, len(messages) - 1}
+	turnEnds := []int{}
 	history, truncated := view.Turns, view.Truncated
 	if next != "" {
 		truncated = true
@@ -534,7 +545,14 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 		for _, p := range turn.Protocol {
 			messages = append(messages, json.RawMessage(p))
 		}
+		if len(turn.Protocol) > 0 {
+			turnEnds = append(turnEnds, len(messages)-1)
+		}
 	}
+	if n := len(turnEnds); n > 2 {
+		turnEnds = turnEnds[n-2:]
+	}
+	breakpoints = append(breakpoints, turnEnds...)
 	for recordIndex >= 0 {
 		appendRecord()
 	}
@@ -550,7 +568,7 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 	for _, m := range messages {
 		t.Attempt.ContextBytes += len(m)
 	}
-	return messages
+	return messages, breakpoints
 }
 
 func (r *Runner) finishCall(

@@ -60,17 +60,20 @@ type Artifact struct {
 // Usage records one provider request independently from the inner task budget.
 // A nil cost is unknown, never a free request. IDs are stable across writes.
 type Usage struct {
-	ID            string    `json:"id" firestore:"id"`
-	InputID       string    `json:"input_id" firestore:"input_id"`
-	Provider      string    `json:"provider" firestore:"provider"`
-	Model         string    `json:"model" firestore:"model"`
-	InputTokens   *int64    `json:"input_tokens,omitempty" firestore:"input_tokens,omitempty"`
-	OutputTokens  *int64    `json:"output_tokens,omitempty" firestore:"output_tokens,omitempty"`
-	TotalTokens   *int64    `json:"total_tokens,omitempty" firestore:"total_tokens,omitempty"`
-	CostUSD       *float64  `json:"cost_usd,omitempty" firestore:"cost_usd,omitempty"`
-	CostStatus    string    `json:"cost_status" firestore:"cost_status"`
-	RequestStatus string    `json:"request_status" firestore:"request_status"`
-	CreatedAt     time.Time `json:"created_at" firestore:"created_at"`
+	ID           string `json:"id" firestore:"id"`
+	InputID      string `json:"input_id" firestore:"input_id"`
+	Provider     string `json:"provider" firestore:"provider"`
+	Model        string `json:"model" firestore:"model"`
+	InputTokens  *int64 `json:"input_tokens,omitempty" firestore:"input_tokens,omitempty"`
+	OutputTokens *int64 `json:"output_tokens,omitempty" firestore:"output_tokens,omitempty"`
+	TotalTokens  *int64 `json:"total_tokens,omitempty" firestore:"total_tokens,omitempty"`
+	// CachedTokens and CacheWriteTokens are the provider's prompt-cache reads and writes, when it reports them.
+	CachedTokens     *int64    `json:"cached_tokens,omitempty" firestore:"cached_tokens,omitempty"`
+	CacheWriteTokens *int64    `json:"cache_write_tokens,omitempty" firestore:"cache_write_tokens,omitempty"`
+	CostUSD          *float64  `json:"cost_usd,omitempty" firestore:"cost_usd,omitempty"`
+	CostStatus       string    `json:"cost_status" firestore:"cost_status"`
+	RequestStatus    string    `json:"request_status" firestore:"request_status"`
+	CreatedAt        time.Time `json:"created_at" firestore:"created_at"`
 }
 
 // Session is the bounded projection that clients and the outer loop read.

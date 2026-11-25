@@ -35,6 +35,8 @@ type ReplyRequest struct {
 	MemoryIDs []string
 	// TelemetryInput is the current user message, not the conversation history.
 	TelemetryInput string
+	// CacheBreakpoints are Messages indices whose end marks a reusable prompt prefix (explicit prompt caching).
+	CacheBreakpoints []int
 	// RecordUsage saves a usage entry before the provider is called and again once the result is known.
 	RecordUsage func(context.Context, state.Usage) error
 }

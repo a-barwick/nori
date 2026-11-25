@@ -188,7 +188,11 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 	if m.gatewayURL == "" && m.name != openAIModelName {
 		return nil, errors.New("unsupported direct OpenAI conversation model")
 	}
-	input, err := openAIConversation(request.Messages)
+	var breakpoints []int
+	if m.gatewayURL == "" {
+		breakpoints = request.CacheBreakpoints
+	}
+	input, err := openAIConversation(request.Messages, breakpoints)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +212,10 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 		body["response_format"] = foregroundFormat(request.Tools)
 	}
 	if !request.NoDispatch {
-		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.CommandPlan, m.gatewayURL != "")
+		// Direct reply calls use an ID-free schema: per-turn ID enums would change the cached prompt prefix on every new
+		// memory or task. Their IDs are validated against the request instead (validateReplyIDs).
+		stable := m.gatewayURL == "" && !request.CommandPlan
+		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.CommandPlan, m.gatewayURL != "", stable)
 	}
 	return json.Marshal(body)
 }
@@ -227,6 +234,7 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 			Cost         json.RawMessage `json:"cost"`
 			InputDetails struct {
 				Cached int64 `json:"cached_tokens"`
+				Write  int64 `json:"cache_write_tokens"`
 			} `json:"prompt_tokens_details"`
 			OutputDetails struct {
 				Reasoning int64 `json:"reasoning_tokens"`
@@ -244,14 +252,16 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 		reply.Usage.InputTokens = response.Usage.Input
 		reply.Usage.OutputTokens = response.Usage.Output
 		reply.Usage.TotalTokens = response.Usage.Total
+		cached, written := response.Usage.InputDetails.Cached, response.Usage.InputDetails.Write
+		reply.Usage.CachedTokens, reply.Usage.CacheWriteTokens = &cached, &written
 		if m.gatewayURL != "" {
 			var cost *float64
 			if json.Unmarshal(response.Usage.Cost, &cost) == nil {
 				usage.RecordReportedCost(&reply.Usage, cost)
 			}
 		} else {
-			cost, costErr := usage.SolCost(
-				response.Model, response.Tier, response.Usage.Input, response.Usage.Output, response.Usage.Total, response.Usage.InputDetails.Cached,
+			cost, costErr := usage.SolCostWithWrites(
+				response.Model, response.Tier, response.Usage.Input, response.Usage.Output, response.Usage.Total, cached, written,
 			)
 			if costErr == nil {
 				reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
@@ -259,7 +269,8 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 		}
 		span.SetAttributes(
 			attribute.Int64("gen_ai.usage.reasoning.output_tokens", response.Usage.OutputDetails.Reasoning),
-			attribute.Int64("gen_ai.usage.cache_read.input_tokens", response.Usage.InputDetails.Cached),
+			attribute.Int64("gen_ai.usage.cache_read.input_tokens", cached),
+			attribute.Int64("gen_ai.usage.cache_write.input_tokens", written),
 		)
 	}
 	if len(response.Choices) != 1 {
@@ -365,9 +376,15 @@ func (m *OpenAIModel) observeCall(ctx context.Context, span trace.Span, requestS
 
 // openAIConversation sends only text and historical command facts to the structured-output model, without altering
 // the stored originals. Retained attempts can contain another provider's opaque reasoning and native tool messages.
-func openAIConversation(messages []json.RawMessage) ([]map[string]string, error) {
-	input := make([]map[string]string, 0, len(messages))
-	for _, raw := range messages {
+// openAIConversation renders saved messages for Chat Completions. A message whose index is in breakpoints is sent as
+// one text part carrying an explicit prompt_cache_breakpoint, marking the end of a reusable prefix.
+func openAIConversation(messages []json.RawMessage, breakpoints []int) ([]map[string]any, error) {
+	marked := make(map[int]bool, len(breakpoints))
+	for _, i := range breakpoints {
+		marked[i] = true
+	}
+	input := make([]map[string]any, 0, len(messages))
+	for i, raw := range messages {
 		var message struct {
 			Role    string          `json:"role"`
 			Content *string         `json:"content"`
@@ -391,7 +408,13 @@ func openAIConversation(messages []json.RawMessage) ([]map[string]string, error)
 		if len(message.Calls) > 0 && string(message.Calls) != "null" && string(message.Calls) != "[]" {
 			text += prompts.Runtime("historical-command-proposal", nil) + string(message.Calls)
 		}
-		input = append(input, map[string]string{"role": message.Role, "content": text})
+		if marked[i] && text != "" {
+			input = append(input, map[string]any{"role": message.Role, "content": []map[string]any{{
+				"type": "text", "text": text, "prompt_cache_breakpoint": map[string]string{"mode": "explicit"},
+			}}})
+			continue
+		}
+		input = append(input, map[string]any{"role": message.Role, "content": text})
 	}
 	return input, nil
 }
