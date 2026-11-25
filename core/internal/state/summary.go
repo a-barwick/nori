@@ -112,15 +112,18 @@ const (
 	// OuterInputBytes bounds every message one outer reply sends, other than its tool schema.
 	// RecentTurnLimit and RecentTurnBytes bound the turns replayed word for word after the summary.
 	OuterInputBytes = 128 << 10
-	RecentTurnLimit = 20
-	RecentTurnBytes = 48 << 10
-	// SoftCompactTurns and SoftCompactBytes trigger proactive out-of-band flush+compact well before
-	// the hard verbatim window cap. CompactKeep leaves the newest turns verbatim.
-	SoftCompactTurns  = 12
-	SoftCompactBytes  = 32 << 10
-	CompactKeep       = 5
-	CompactTurnLimit  = 24
-	CompactInputBytes = 64 << 10
+	RecentTurnLimit = 36
+	RecentTurnBytes = 64 << 10
+	// SoftCompactUserTurns, SoftCompactTurns, and SoftCompactBytes trigger proactive out-of-band
+	// flush+compact well before the hard verbatim window cap. CompactKeep and CompactKeepUserTurns
+	// leave the newest turns (and at least CompactKeepUserTurns user turns) verbatim.
+	SoftCompactUserTurns = 16
+	SoftCompactTurns     = 28
+	SoftCompactBytes     = 48 << 10
+	CompactKeep          = 14
+	CompactKeepUserTurns = 10
+	CompactTurnLimit     = 24
+	CompactInputBytes    = 64 << 10
 	// SummaryBytes bounds the saved Working Memory summary.
 	SummaryBytes    = 16 << 10
 	MaxSummaryItems = 80
@@ -128,13 +131,14 @@ const (
 	MaxSummaryNote  = 200
 	MaxSummaryGist  = 4000
 	// Coupled compaction, session-idle extraction, & AutoDream scheduling parameters.
-	MaxFlushRetries      = 3
+	MaxFlushRetries = 3
+	// Deprecated: compaction no longer triggers on idle time alone; retained temporarily for sim compilation.
 	IdleFlushDelay       = 2 * time.Minute
-	IdleExtractDelay     = 5 * time.Minute
-	ExtractTurnThreshold = 5
+	IdleExtractDelay     = 2 * time.Minute
+	ExtractTurnThreshold = 3
 	IdleDreamDelay       = 15 * time.Minute
-	DreamMinInterval   = 12 * time.Hour
-	DreamMinLogEntries = 10
+	DreamMinInterval     = 12 * time.Hour
+	DreamMinLogEntries   = 10
 )
 
 func (s ConversationSummary) Applies(from time.Time) bool {

@@ -601,11 +601,7 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	if flushState.hasWork {
-		target := flushState.wakeAt
-		if flushState.ready || target.IsZero() {
-			target = now
-		}
-		consider(maxTime(target, r.compactAfter))
+		consider(maxTime(now, r.compactAfter))
 	}
 
 	extractState, err := r.planExtract(ctx, control, summary, now, false)
