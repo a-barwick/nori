@@ -102,6 +102,7 @@ public struct WorkDetailView: View {
         .navigationTitle("Task")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         #endif
         .toolbar {
             if let item {

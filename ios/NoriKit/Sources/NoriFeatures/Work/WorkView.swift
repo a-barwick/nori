@@ -175,7 +175,10 @@ public struct WorkView: View {
         let pending = pendingInteractions
         let orphans = orphanNeedsYouTasks
         let needsYouTotal = pending.count + orphans.count
-        let active = store.activeWorkItems
+        let pendingTaskIDs = Set(pending.compactMap(\.taskID))
+        let active = store.activeWorkItems.filter { item in
+            item.bucket != .needsYou && !pendingTaskIDs.contains(item.taskID)
+        }
         let finished = store.finishedWorkItems
         let resolved = resolvedInteractions
         let visibleRecent = showAllRecentTasks ? finished : Array(finished.prefix(5))

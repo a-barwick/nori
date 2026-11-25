@@ -916,7 +916,7 @@ public struct InteractionCardView: View {
                 }
                 targetURL = attemptURL
             } else {
-                errorMessage = "Sign-in link expired. Reconnect from the Apps tab to resume this task."
+                errorMessage = "Sign-in link expired. Reconnect from More → Apps & MCP to resume this task."
                 return
             }
 
