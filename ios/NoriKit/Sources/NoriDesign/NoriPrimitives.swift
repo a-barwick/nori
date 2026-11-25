@@ -516,13 +516,13 @@ public struct NoriToast: View {
 
 public struct NoriEmptyState<Action: View>: View {
     public let title: String
-    public let message: String
+    public let message: String?
     public let markState: MarkState
     private let action: Action
 
     public init(
         title: String,
-        message: String,
+        message: String? = nil,
         markState: MarkState = .idle,
         @ViewBuilder action: () -> Action
     ) {
@@ -538,11 +538,13 @@ public struct NoriEmptyState<Action: View>: View {
             Text(title)
                 .font(NoriTypography.section)
                 .foregroundStyle(NoriColors.ink)
-            Text(message)
-                .font(NoriTypography.meta)
-                .foregroundStyle(NoriColors.ink2)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 16)
+            if let message, !message.isEmpty {
+                Text(message)
+                    .font(NoriTypography.meta)
+                    .foregroundStyle(NoriColors.ink2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+            }
             action
                 .padding(.top, 4)
         }
@@ -553,7 +555,7 @@ public struct NoriEmptyState<Action: View>: View {
 }
 
 public extension NoriEmptyState where Action == EmptyView {
-    init(title: String, message: String, markState: MarkState = .idle) {
+    init(title: String, message: String? = nil, markState: MarkState = .idle) {
         self.init(title: title, message: message, markState: markState, action: { EmptyView() })
     }
 }

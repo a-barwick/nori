@@ -122,6 +122,12 @@ public struct ChatView: View {
         .onChange(of: isInputFocused) { _, focused in
             store.isComposerFocused = focused
         }
+        .onAppear {
+            consumePendingComposerDraft()
+        }
+        .onChange(of: store.pendingComposerDraft) { _, _ in
+            consumePendingComposerDraft()
+        }
         .sheet(isPresented: $isAttachSheetPresented) {
             AttachSheetView(
                 maxUploadBytes: store.capabilities?.uploadAccept?.maxBytes ?? ImageUploadNormalizer.defaultMaxBytes,
@@ -205,9 +211,6 @@ public struct ChatView: View {
                         if units.isEmpty {
                             NoriEmptyState(
                                 title: store.isLoading ? "Loading conversation…" : "Ask Nori anything",
-                                message: store.isLoading
-                                    ? "Syncing your persistent thread."
-                                    : "Messages, files, and background work all live in one continuous thread.",
                                 markState: store.isLoading ? .thinking : .idle
                             )
                             .padding(.top, 48)
@@ -572,6 +575,15 @@ public struct ChatView: View {
     }
 
     // MARK: - Actions
+
+    private func consumePendingComposerDraft() {
+        guard let pending = store.pendingComposerDraft else { return }
+        draft = pending
+        store.pendingComposerDraft = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            isInputFocused = true
+        }
+    }
 
     private func sendCurrentDraft() {
         guard !isSending else { return }

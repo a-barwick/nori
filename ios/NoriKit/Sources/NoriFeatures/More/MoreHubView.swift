@@ -31,36 +31,37 @@ public struct MoreHubView: View {
         return connectedMCP + connectedConnections
     }
 
-    private var totalAppsCount: Int {
-        store.mcpServers.count + store.connections.count
+    private var appsSummary: String? {
+        guard connectedAppsCount > 0 else { return nil }
+        return "\(connectedAppsCount) connected"
     }
 
-    private var appsSummary: String {
-        if connectedAppsCount > 0 {
-            return "\(connectedAppsCount) connected"
-        }
-        return "\(totalAppsCount) configured"
-    }
-
-    private var memoryRatioString: String {
+    private var memoryRatioString: String? {
+        guard store.coreMemoryBudgetBytes > 0 else { return nil }
         let usedKB = Double(store.coreMemoryUsedBytes) / 1024.0
         let budgetKB = Double(store.coreMemoryBudgetBytes) / 1024.0
         return String(format: "%.1f / %.0f KB", usedKB, budgetKB)
     }
 
-    private var permissionsDetail: String {
+    private var permissionsDetail: String? {
         let count = store.permissions.count
+        guard count > 0 else { return nil }
         let noun = count == 1 ? "rule" : "rules"
-        return "\(count) \(noun) · deny-wins"
+        return "\(count) \(noun)"
     }
 
-    private var preferencesDetail: String {
-        "\(store.preferences.timezone) · $\(String(format: "%.2f", store.preferences.budgets.taskUSD)) / task"
+    private var preferencesDetail: String? {
+        let tz = store.preferences.timezone.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tz.isEmpty else { return nil }
+        return "\(tz) · $\(String(format: "%.2f", store.preferences.budgets.taskUSD)) / task"
     }
 
-    private var diagnosticsDetail: String {
-        let host = NoriConfig.serverURL.host() ?? "nori-core"
-        return "\(store.connectionState.rawValue.capitalized) · \(host)"
+    private var diagnosticsDetail: String? {
+        switch store.connectionState {
+        case .reconnecting: return "Reconnecting"
+        case .offline: return "Offline"
+        case .connected, .connecting: return nil
+        }
     }
 
     public var body: some View {
@@ -176,7 +177,7 @@ public struct MoreHubView: View {
             NavigationLink(value: MoreRoute.account) {
                 NoriRow(
                     title: "Account",
-                    detail: store.authState.email ?? "Signed in",
+                    detail: store.authState.email,
                     systemImage: "person.crop.circle",
                     iconTone: .neutral,
                     showChevron: true,

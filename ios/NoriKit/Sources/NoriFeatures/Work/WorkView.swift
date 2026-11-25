@@ -54,6 +54,7 @@ public struct WorkView: View {
     private let externalSelection: Binding<WorkTabFilter>?
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
     private let onOpenTask: ((String) -> Void)?
+    private let onStartInChat: (String) -> Void
 
     @State private var internalTab: WorkTabFilter = .tasks
     @State private var selectedTaskDestination: String?
@@ -65,12 +66,14 @@ public struct WorkView: View {
         store: NoriStore,
         selectedTab: Binding<WorkTabFilter>? = nil,
         onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in },
-        onOpenTask: ((String) -> Void)? = nil
+        onOpenTask: ((String) -> Void)? = nil,
+        onStartInChat: @escaping (String) -> Void = { _ in }
     ) {
         self.store = store
         self.externalSelection = selectedTab
         self.onOpenDocument = onOpenDocument
         self.onOpenTask = onOpenTask
+        self.onStartInChat = onStartInChat
     }
 
     private var activeTabBinding: Binding<WorkTabFilter> {
@@ -120,11 +123,15 @@ public struct WorkView: View {
                 case .artifacts:
                     LibraryView(store: store, onOpenDocument: onOpenDocument)
                 case .goals:
-                    GoalsView(store: store) {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            activeTabBinding.wrappedValue = .tasks
-                        }
-                    }
+                    GoalsView(
+                        store: store,
+                        onJumpToNeedsYou: {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                activeTabBinding.wrappedValue = .tasks
+                            }
+                        },
+                        onStartInChat: onStartInChat
+                    )
                 case .routines:
                     RoutinesView(store: store)
                 }
@@ -268,26 +275,31 @@ public struct WorkView: View {
     // MARK: - Task Components
 
     private var allClearCard: some View {
-        NoriHeroCard(padding: 16) {
-            HStack(alignment: .center, spacing: 14) {
-                NoriMark(size: 34, state: .idle)
-                    .frame(width: 46, height: 46)
-                    .background(
-                        NoriColors.surface,
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                    )
+        HStack(alignment: .center, spacing: 12) {
+            NoriMark(size: 22, state: .idle)
+                .frame(width: 32, height: 32)
+                .background(
+                    NoriColors.elevated,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
 
-                Text("All clear")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(NoriColors.ink)
+            Text("All clear")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(NoriColors.ink)
 
-                Spacer(minLength: 0)
-            }
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            NoriColors.surface,
+            in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+        )
     }
 
     private func runningTaskCard(item: WorkItem) -> some View {
