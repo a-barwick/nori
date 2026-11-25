@@ -7,11 +7,23 @@ import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, when } from "@/lib/assistant/format";
+import {
+  buildPermissionRuleEditable,
+  countRulesByEffect,
+  describePermissionRulePreview,
+  groupPermissionRules,
+  revokeRuleConfirmationBody,
+  RULE_EFFECT_META,
+  RULE_EFFECT_ORDER,
+  RULE_PRECEDENCE_NOTE,
+  type RuleEffect,
+  type RuleFilter,
+} from "@/lib/assistant/permissions";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Connection, MCPServer, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { OperationRows, shownOperations } from "./WorkScreen";
-import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section } from "./ui";
+import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
 
 type List<T> = { items: T[] };
 export type SettingsSection = "permissions" | "preferences" | "history" | "diagnostics";
@@ -48,64 +60,90 @@ function Permissions() {
   const servers = useResource<List<MCPServer>>(has("mcp") ? "/mcp" : null, { poll: 0 });
   const action = useAction();
   const [adding, setAdding] = useState(false);
+  const [filter, setFilter] = useState<RuleFilter>("all");
   if (rules.loading) return <Loading />;
   const items = rules.data?.items ?? [];
+  const counts = countRulesByEffect(items);
   const revoke = (rule: PermissionRule) => action.run(rule.id, async () => {
     await mutate(`/permissions/${encodeURIComponent(rule.id)}/actions`, { request_id: newRequestID(), expected_revision: rule.revision, value: { action: "revoke" } });
     invalidate("/permissions", "/automations");
   });
   const account = (id: string) => connections.data?.items.find((connection) => connection.id === id);
   const server = (id: string) => servers.data?.items.find((item) => item.id === id);
-  const groups = [
-    { title: "Never", rules: items.filter((rule) => rule.effect === "deny") },
-    { title: "Allowed without asking", rules: items.filter((rule) => rule.effect === "allow" && !rule.automation_id && !rule.goal_id) },
-    { title: "For automations and goals", rules: items.filter((rule) => rule.effect === "allow" && (rule.automation_id || rule.goal_id)) },
-  ];
+  const groups = groupPermissionRules(items, filter);
+  const shownCount = groups.reduce((total, group) => total + group.rules.length, 0);
   return <>
+    <Notice tone="neutral">{RULE_PRECEDENCE_NOTE}</Notice>
     {rules.error && <div className="mt-4"><Failure error={rules.error} onRetry={() => void rules.reload()} /></div>}
     {action.error && <div className="mt-4"><Notice tone="danger">{action.error}</Notice></div>}
-    {groups.map((group) => group.rules.length > 0 && <Section key={group.title} title={group.title}><Rows>{group.rules.map((rule) => <li key={rule.id} id={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-      <span className="min-w-0 flex-1">
-        <span className="block text-row font-medium">{rule.summary ?? rule.title ?? "Permission"}</span>
-        <span className="mt-0.5 block text-meta text-ink-2">{[rule.action_classes.map((effect) => EFFECT_LABEL[effect]).join(", "), rule.connection_ids.map((id) => id === "*" ? "all tools & MCP servers" : account(id)?.title ?? server(id)?.name ?? id).join(", "), rule.recipients?.length ? `to ${rule.recipients.join(", ")}` : "", rule.expires_at ? `until ${when(rule.expires_at)}` : "", rule.max_operations ? `up to ${rule.max_operations} times` : ""].filter(Boolean).join(" · ")}</span>
-        {rule.automation_id && <Link href={`/routines/${encodeURIComponent(rule.automation_id)}`} className="text-meta text-accent-text hover:underline">Automation</Link>}
-        {rule.goal_id && <Link href={`/goals/${encodeURIComponent(rule.goal_id)}`} className="text-meta text-accent-text hover:underline">Goal</Link>}
-      </span>
-      <Confirm danger title="Remove this permission?" body={rule.automation_id ? "The automation will ask you before doing this from now on." : "Nori will ask you before doing this from now on."} confirm="Remove" onConfirm={() => void revoke(rule)}
-        trigger={<Button size="sm" variant="quiet" disabled={action.pending === rule.id}>{action.pending === rule.id ? "Removing…" : "Remove"}</Button>} />
-    </li>)}</Rows></Section>)}
+    {items.length > 0 && (
+      <div className="mt-6">
+        <Tabs<RuleFilter>
+          label="Filter permission rules"
+          value={filter}
+          onChange={setFilter}
+          items={[
+            { id: "all", label: "All", count: items.length },
+            ...RULE_EFFECT_ORDER.map((effect) => ({
+              id: effect,
+              label: RULE_EFFECT_META[effect].label,
+              count: counts[effect],
+            })),
+          ]}
+        />
+      </div>
+    )}
+    {groups.map((group) => group.rules.length > 0 && <Section key={group.id} title={group.title}><Rows>{group.rules.map((rule) => {
+      const effectMeta = RULE_EFFECT_META[rule.effect];
+      return <li key={rule.id} id={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <span className="min-w-0 flex-1">
+          <span className="block text-row font-medium">{rule.summary ?? rule.title ?? "Permission"}</span>
+          <span className="mt-0.5 block text-meta text-ink-2">{[rule.action_classes.map((effect) => EFFECT_LABEL[effect]).join(", "), rule.connection_ids.map((id) => id === "*" ? "all tools & MCP servers" : account(id)?.title ?? server(id)?.name ?? id).join(", "), rule.recipients?.length ? `to ${rule.recipients.join(", ")}` : "", rule.expires_at ? `until ${when(rule.expires_at)}` : "", rule.max_operations ? `up to ${rule.max_operations} times` : ""].filter(Boolean).join(" · ")}</span>
+          {rule.automation_id && <Link href={`/routines/${encodeURIComponent(rule.automation_id)}`} className="text-meta text-accent-text hover:underline">Automation</Link>}
+          {rule.goal_id && <Link href={`/goals/${encodeURIComponent(rule.goal_id)}`} className="text-meta text-accent-text hover:underline">Goal</Link>}
+        </span>
+        <Pill tone={effectMeta.tone}>{effectMeta.label}</Pill>
+        <Confirm danger title="Remove this permission?" body={revokeRuleConfirmationBody(rule)} confirm="Remove" onConfirm={() => void revoke(rule)}
+          trigger={<Button size="sm" variant="quiet" disabled={action.pending === rule.id}>{action.pending === rule.id ? "Removing…" : "Remove"}</Button>} />
+      </li>;
+    })}</Rows></Section>)}
     {!items.length && <div className="mt-6"><Empty>No standing permissions. Nori asks before each change or send.</Empty></div>}
+    {items.length > 0 && shownCount === 0 && <div className="mt-4"><Empty>No {RULE_EFFECT_META[filter as RuleEffect].label.toLowerCase()} rules yet.</Empty></div>}
     <Section>{adding ? <NewRule connections={connections.data?.items ?? []} servers={servers.data?.items ?? []} onDone={() => setAdding(false)} /> : <Button onClick={() => setAdding(true)}>Add a permission</Button>}</Section>
   </>;
 }
 
-function NewRule({ connections, servers, onDone }: { connections: Connection[]; servers: MCPServer[]; onDone: () => void }) {
+export function NewRule({ connections, servers, onDone }: { connections: Connection[]; servers: MCPServer[]; onDone: () => void }) {
   const action = useAction();
-  const [effect, setEffect] = useState<"allow" | "deny">("allow");
+  const [effect, setEffect] = useState<RuleEffect>("allow");
   const [account, setAccount] = useState(connections[0]?.id ?? "*");
   const [classes, setClasses] = useState<PermissionRule["action_classes"]>(["reversible_write"]);
   const [recipients, setRecipients] = useState("");
   const [expires, setExpires] = useState("");
   const save = () => action.run("save", async () => {
-    await mutate("/permissions", { request_id: newRequestID(), expected_revision: 0, value: {
-      effect, tool_ids: ["*"], connection_ids: [account], resource_ids: ["*"], action_classes: classes,
-      ...(classes.includes("sensitive_send") ? { recipients: recipients.split(",").map((value) => value.trim()).filter(Boolean) } : {}),
-      ...(expires ? { expires_at: new Date(`${expires}T23:59:59`).toISOString() } : {}),
-    } });
+    await mutate("/permissions", {
+      request_id: newRequestID(),
+      expected_revision: 0,
+      value: buildPermissionRuleEditable({ effect, account, classes, recipients, expires }),
+    });
     invalidate("/permissions"); onDone();
   });
   const selected = connections.find((connection) => connection.id === account);
   const selectedServer = servers.find((item) => item.id === account);
   const targetLabel = account === "*" ? "all tools & MCP servers" : selected?.account?.label ?? selected?.title ?? selectedServer?.name ?? "this account";
-  const example = `${effect === "allow" ? "Nori may" : "Nori will never"} ${classes.map((effectClass) => ({ read: "read", reversible_write: "make undoable changes", sensitive_send: "send", unknown: "use tools that don’t say what they do", control: "" }[effectClass])).join(" or ")} with ${targetLabel}${classes.includes("sensitive_send") && recipients ? ` to ${recipients}` : ""}${effect === "allow" ? " without asking" : ""}.`;
+  const example = describePermissionRulePreview({ effect, classes, targetLabel, recipients });
   return <form className="space-y-4 rounded-card border border-hairline-strong p-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
     <div className="flex flex-wrap gap-3">
-      <Field label="Rule"><select value={effect} onChange={(event) => setEffect(event.target.value as "allow" | "deny")} className={cn(inputBase, "w-auto")}><option value="allow">Allow without asking</option><option value="deny">Never allow</option></select></Field>
+      <Field label="Rule"><select value={effect} onChange={(event) => setEffect(event.target.value as RuleEffect)} className={cn(inputBase, "w-auto")}>
+        <option value="allow">{RULE_EFFECT_META.allow.label}</option>
+        <option value="ask">{RULE_EFFECT_META.ask.label}</option>
+        <option value="deny">{RULE_EFFECT_META.deny.label}</option>
+      </select></Field>
       <Field label="Target"><select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputBase, "w-auto")}><option value="*">All tools &amp; MCP servers</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}{servers.map((item) => <option key={item.id} value={item.id}>{item.name} (MCP)</option>)}</select></Field>
     </div>
     <fieldset><legend className="mb-1.5 text-meta font-medium">Actions</legend><div className="flex flex-wrap gap-2">{(["read", "reversible_write", "sensitive_send"] as const).map((effectClass) => <label key={effectClass} className={cn("flex min-h-11 items-center gap-2 rounded-full border px-3 text-meta", classes.includes(effectClass) ? "border-accent bg-accent-subtle" : "border-hairline")}>
       <input type="checkbox" className="accent-[var(--accent)]" checked={classes.includes(effectClass)} onChange={() => setClasses(classes.includes(effectClass) ? classes.filter((other) => other !== effectClass) : [...classes, effectClass])} />{EFFECT_LABEL[effectClass]}</label>)}</div></fieldset>
-    {classes.includes("sensitive_send") && <Field label="Only to"><input value={recipients} onChange={(event) => setRecipients(event.target.value)} placeholder="sam@example.com, family@example.com" className={inputClass} /></Field>}
+    {classes.includes("sensitive_send") && <Field label={effect === "allow" ? "Only to" : "Only to (optional)"}><input value={recipients} onChange={(event) => setRecipients(event.target.value)} placeholder={effect === "allow" ? "sam@example.com, family@example.com" : "Any recipient, or sam@example.com"} className={inputClass} /></Field>}
     <Field label="Until (optional)"><input type="date" value={expires} onChange={(event) => setExpires(event.target.value)} className={cn(inputBase, "w-auto")} /></Field>
     <p className="rounded-tile bg-fill-1 px-3 py-2 text-meta text-ink">{example}</p>
     {action.error && <Notice tone="danger">{action.error}</Notice>}
