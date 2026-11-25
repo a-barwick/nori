@@ -94,6 +94,11 @@ type Run struct {
 	OriginTraceContext map[string]string `json:"-" firestore:"origin_trace_context,omitempty"`
 }
 
+type QuestionOption struct {
+	ID    string `json:"id" firestore:"id"`
+	Label string `json:"label" firestore:"label"`
+}
+
 type Question struct {
 	ResolvedBy string `json:"resolved_by,omitempty" firestore:"resolved_by,omitempty"`
 	ID         string `json:"id" firestore:"id"`
@@ -105,6 +110,12 @@ type Question struct {
 	ReadOnly bool `json:"read_only,omitempty" firestore:"read_only,omitempty"`
 	// Clears lists the operations this question names. An answer stops them blocking later commands.
 	Clears []string `json:"clears,omitempty" firestore:"clears,omitempty"`
+	// Input and Options describe structured choice/confirm inputs for QuestionPayload (defaults to "text").
+	Input   string           `json:"input,omitempty" firestore:"input,omitempty"`
+	Options []QuestionOption `json:"options,omitempty" firestore:"options,omitempty"`
+	// Interactive is set when a pending Interaction card already represents this wait in chat,
+	// so ProjectQuestion does not wake the outer conversation loop to emit a duplicate text bubble.
+	Interactive bool `json:"interactive,omitempty" firestore:"interactive,omitempty"`
 }
 
 // TaskOrigin links a task to the conversation message, automation occurrence or goal it serves.
@@ -130,6 +141,7 @@ type TaskEvent struct {
 	QuestionID    string     `json:"question_id,omitempty" firestore:"question_id,omitempty"`
 	Reason        string     `json:"reason,omitempty" firestore:"reason,omitempty"`
 	OperationRefs []string   `json:"operation_refs,omitempty" firestore:"operation_refs,omitempty"`
+	Parts         []Part     `json:"parts,omitempty" firestore:"parts,omitempty"`
 	CreatedAt     time.Time  `json:"created_at" firestore:"created_at"`
 }
 
@@ -216,7 +228,10 @@ func QuestionEvent(run Run, revision int64, question Question, now time.Time) (e
 }
 
 func WithQuestion(run Run, question Question, event TaskEvent) Run {
-	run.Question, run.Waiting, run.EventSequence = &question, question.Text, event.Sequence
+	run.Question, run.Waiting = &question, question.Text
+	if !question.Interactive && event.Sequence > 0 {
+		run.EventSequence = event.Sequence
+	}
 	return run
 }
 
@@ -233,6 +248,8 @@ type PublishRequest struct {
 	BypassRouting bool    `json:"-" firestore:"bypass_routing"`
 	// Answer is set when the task proposed an answer, which is then saved as a result.
 	Answer *ResultDraft `json:"-" firestore:"answer,omitempty"`
+	// Parts carries typed inline message parts (e.g. PartReminder) to attach to the assistant reply announcing completion.
+	Parts []Part `json:"-" firestore:"parts,omitempty"`
 }
 
 func (p PublishRequest) GatesOnRouting() bool {
@@ -302,7 +319,7 @@ func FinishRun(run Run, req PublishRequest, now time.Time) (Run, TaskEvent) {
 	event := TaskEvent{
 		Holds: pendingTaskHolds(run.Holds), ID: req.RunID + "-terminal", RunID: req.RunID, Kind: kind,
 		Sequence: run.EventSequence + 1, Revision: req.Revision, Text: text, Reason: detail,
-		OperationRefs: run.OperationRefs, CreatedAt: now,
+		OperationRefs: run.OperationRefs, Parts: req.Parts, CreatedAt: now,
 	}
 	run.PublicationPending = false
 	run.Finishing = nil

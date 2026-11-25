@@ -158,6 +158,23 @@ func (s *Service) Get(ctx context.Context, id string) (Automation, error) {
 	return s.project(ctx, a), nil
 }
 
+// DefaultOnceExecutionWindowSeconds is the default grace window (1 hour) applied to one-time reminders
+// when missed_run and execution_window_seconds are omitted.
+const DefaultOnceExecutionWindowSeconds int64 = 3600
+
+// applyEditableDefaults fills trustworthy defaults when missed_run is omitted on creation/preview.
+// It returns true if the caller explicitly specified missed_run.
+func applyEditableDefaults(value *Editable) bool {
+	if strings.TrimSpace(value.MissedRun) != "" {
+		return true
+	}
+	value.MissedRun = "latest"
+	if value.Trigger.Kind == "once" && value.ExecutionWindowSeconds == 0 {
+		value.ExecutionWindowSeconds = DefaultOnceExecutionWindowSeconds
+	}
+	return false
+}
+
 func (s *Service) validate(ctx context.Context, value Editable) error {
 	if strings.TrimSpace(value.Title) == "" || strings.TrimSpace(value.Instruction) == "" || len(value.Instruction) > state.MaxMessageBytes-1024 {
 		return fmt.Errorf("%w: title and instruction are required", state.ErrInvalidResource)
@@ -265,8 +282,16 @@ var missedText = map[string]string{
 	"all":    "Every missed run still runs when Nori catches up, in order.",
 }
 
+func missedRunExplanation(kind, policy string) string {
+	if kind == "once" && policy == "latest" {
+		return "If Nori was briefly unavailable at the scheduled time, this reminder will still be delivered when Nori catches up."
+	}
+	return missedText[policy]
+}
+
 // Preview shows the next runs, the exact standing authority and warnings before saving. It is read-only.
 func (s *Service) Preview(ctx context.Context, value Editable, unattendedMode string) (Preview, error) {
+	explicitMissedRun := applyEditableDefaults(&value)
 	zone := s.resolveTimezone(ctx, value.Trigger.Timezone)
 	if value.Trigger.Kind == "recurring" {
 		value.Trigger.Timezone = zone
@@ -284,7 +309,11 @@ func (s *Service) Preview(ctx context.Context, value Editable, unattendedMode st
 	if err != nil {
 		return Preview{}, err
 	}
-	p := Preview{NextRuns: runs, Timezone: zone, ProposedRules: []json.RawMessage{}, MissedRunExplanation: missedText[value.MissedRun], Warnings: []Warning{}}
+	explanation := ""
+	if explicitMissedRun {
+		explanation = missedRunExplanation(value.Trigger.Kind, value.MissedRun)
+	}
+	p := Preview{NextRuns: runs, Timezone: zone, ProposedRules: []json.RawMessage{}, MissedRunExplanation: explanation, Warnings: []Warning{}}
 	if p.NextRuns == nil {
 		p.NextRuns = []time.Time{}
 	}
@@ -297,13 +326,13 @@ func (s *Service) Preview(ctx context.Context, value Editable, unattendedMode st
 		summaries = append(summaries, permissions.Summarize(rule))
 		sends = sends || slices.Contains(rule.ActionClasses, "sensitive_send")
 	}
-	if len(summaries) == 0 {
-		p.AuthoritySummary = "This automation may read with the user's connected accounts. Any change or send will ask the user first."
-	} else {
+	if len(summaries) > 0 {
 		p.AuthoritySummary = strings.Join(summaries, " ")
+	} else if len(value.ConnectionIDs) > 0 {
+		p.AuthoritySummary = "This routine can read from your connected accounts. Any change or send will ask you first."
 	}
-	if !sends && unattendedMode != "require_rule" {
-		p.Warnings = append(p.Warnings, Warning{Code: "unattended_send_requires_rule", Message: "Sends and changes made while the user is away will wait for approval unless this automation is given standing permission for them."})
+	if !sends && unattendedMode != "require_rule" && len(value.ConnectionIDs) > 0 {
+		p.Warnings = append(p.Warnings, Warning{Code: "unattended_send_requires_rule", Message: "Sends and changes made while you are away will wait for approval unless this routine is given standing permission for them."})
 	}
 	if value.Trigger.Kind == "recurring" && len(runs) > 1 {
 		if loc, err := time.LoadLocation(value.Trigger.Timezone); err == nil {
@@ -344,6 +373,7 @@ func (s *Service) ruleIDs(id string, count int) []string {
 // Save creates (id empty) or replaces an automation. An edit advances the generation; occurrences of the old
 // generation that were not accepted are superseded, and the cursor never moves back.
 func (s *Service) Save(ctx context.Context, id, requestID string, expected int64, value Editable) (state.MutationReceipt, error) {
+	applyEditableDefaults(&value)
 	if value.Trigger.Kind == "recurring" {
 		value.Trigger.Timezone = s.resolveTimezone(ctx, value.Trigger.Timezone)
 	}
@@ -416,7 +446,11 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 			}
 			a.AuthoritySummary = strings.Join(summaries, " ")
 			if a.AuthoritySummary == "" {
-				a.AuthoritySummary = "Reads only; any change or send asks the user first."
+				if len(a.ConnectionIDs) > 0 {
+					a.AuthoritySummary = "Reads from your connected accounts; any change or send asks you first."
+				} else {
+					a.AuthoritySummary = "Nori reminder only; no connected accounts."
+				}
 			}
 			a.NextAt = s.computeNext(ctx, a, now)
 			resource, err := state.NewResource(CollectionAutomations, id, revision, a, map[string]string{"status": a.Status, "goal_id": a.GoalID}, now)

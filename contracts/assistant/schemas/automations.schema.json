@@ -104,7 +104,7 @@
         "latest",
         "all"
       ],
-      "description": "Per-definition policy. The default offered at creation depends on D3; no hidden global default."
+      "description": "Per-definition policy for runs missed during downtime. Optional on creation; defaults to \"latest\"."
     },
     "Automation": {
       "type": "object",
@@ -246,7 +246,6 @@
         "connection_ids",
         "budget_usd",
         "max_active_runs",
-        "missed_run",
         "execution_window_seconds",
         "destination_ids"
       ],

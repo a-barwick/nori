@@ -386,6 +386,27 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 		c, completed, message := state.CompleteTurn(c, t, text, now)
 		marked, parts := state.ReportResults(results, t.Attempt.ShowResults, message.ID, now)
 		message.Parts = append(message.Parts, parts...)
+		seenParts := map[[2]string]bool{}
+		for _, p := range message.Parts {
+			if p.ID != "" {
+				seenParts[[2]string{p.Type, p.ID}] = true
+			}
+		}
+		for _, in := range t.Inputs {
+			if in.Event == nil || len(in.Event.Parts) == 0 {
+				continue
+			}
+			for _, p := range in.Event.Parts {
+				key := [2]string{p.Type, p.ID}
+				if p.ID != "" && seenParts[key] {
+					continue
+				}
+				if p.ID != "" {
+					seenParts[key] = true
+				}
+				message.Parts = append(message.Parts, p)
+			}
+		}
 		for _, result := range marked {
 			message.ResultIDs = append(message.ResultIDs, result.ID)
 			if err = tx.Set(d.results().Doc(result.ID), result); err != nil {

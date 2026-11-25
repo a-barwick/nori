@@ -12,22 +12,26 @@ const (
 	PartArtifact   = "artifact"
 	PartImage      = "image"
 	PartLink       = "link"
+	PartReminder   = "reminder"
 )
 
 // Part is one piece of a message. Clients read parts and never parse model output.
 type Part struct {
 	Type string `json:"type" firestore:"type"`
 	// Text and Display belong to a text part. Display is "page" or "bubble" when the model asked for one.
+	// For a reminder part, Text carries the human-readable local schedule time.
 	Text    string `json:"text,omitempty" firestore:"text,omitempty"`
 	Display string `json:"display,omitempty" firestore:"display,omitempty"`
 	// Fallback is what a client shows for a type it doesn't know. Every non-text part has one.
 	Fallback string `json:"fallback,omitempty" firestore:"fallback,omitempty"`
-	// ID names the upload or result behind an attachment, artifact or image part.
+	// ID names the upload, result, or automation behind an attachment, artifact, image, or reminder part.
 	ID        string `json:"id,omitempty" firestore:"id,omitempty"`
 	Name      string `json:"name,omitempty" firestore:"name,omitempty"`
 	MediaType string `json:"media_type,omitempty" firestore:"media_type,omitempty"`
 	Size      int64  `json:"size,omitempty" firestore:"size,omitempty"`
 	URL       string `json:"url,omitempty" firestore:"url,omitempty"`
+	// ScheduledAt is an optional RFC 3339 instant for reminder parts so clients can format relative local times.
+	ScheduledAt string `json:"scheduled_at,omitempty" firestore:"scheduled_at,omitempty"`
 }
 
 var (

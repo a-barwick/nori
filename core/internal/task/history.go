@@ -507,7 +507,25 @@ func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Quest
 		named = clip(named, 4096)
 		text = named + "\n\n" + clip(text, state.MaxMessageBytes-len(named)-8)
 	}
-	return state.Question{Kind: "input", Text: text, CallID: call.ID, Revision: in.Revision, Clears: clears}, nil
+	inputKind, _ := call.Args["input"].(string)
+	inputKind = strings.TrimSpace(inputKind)
+	var options []state.QuestionOption
+	if rawOpts, ok := call.Args["options"].([]any); ok {
+		for _, item := range rawOpts {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			id, _ := m["id"].(string)
+			label, _ := m["label"].(string)
+			id = strings.TrimSpace(id)
+			label = strings.TrimSpace(label)
+			if id != "" && label != "" {
+				options = append(options, state.QuestionOption{ID: id, Label: label})
+			}
+		}
+	}
+	return state.Question{Kind: "input", Text: text, CallID: call.ID, Revision: in.Revision, Clears: clears, Input: inputKind, Options: options}, nil
 }
 func (a *Activities) AppendToolResult(ctx context.Context, in AppendResult) (ref string, err error) {
 	ctx, span := startActivity(ctx, "task.history.append_result", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
@@ -547,6 +565,9 @@ func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run sta
 		in.Answer = &state.ResultDraft{Checked: in.Status == state.RunCompleted, Evidence: proposed.Evidence, Unmet: proposed.Unmet}
 		if ops, e := a.Store.Operations(ctx, in.RunID); e == nil {
 			in.Answer.Artifacts, in.Answer.Cited = citedOutputs(ops, proposed.Evidence)
+			if in.Status == state.RunCompleted {
+				in.Parts = append(in.Parts, a.reminderParts(ctx, in.RunID, ops)...)
+			}
 		}
 	}
 	if in.Status != state.RunCompleted && in.Text != "" && in.Detail != "" {
@@ -554,4 +575,52 @@ func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run sta
 	}
 	run, e := a.Publish(ctx, in.Publication)
 	return state.Run{ID: run.ID, Status: run.Status, Revision: run.Revision}, e
+}
+
+// reminderParts extracts inline PartReminder cards from confirmed one-time reminder creations in this task.
+func (a *Activities) reminderParts(ctx context.Context, runID string, ops []state.OperationRecord) []state.Part {
+	var parts []state.Part
+	seen := map[string]bool{}
+	for _, op := range ops {
+		if op.Outcome != "confirmed" || op.ResultRef == "" {
+			continue
+		}
+		if op.Name != "automation_create" && (op.Tool == nil || op.Tool.ID != "nori/assistant/automation-create") {
+			continue
+		}
+		blocks, err := a.Store.ReadHistory(ctx, runID, op.ResultRef)
+		if err != nil || len(blocks) != 1 {
+			continue
+		}
+		var out struct {
+			ReminderCard *struct {
+				ID          string `json:"id"`
+				Name        string `json:"name"`
+				Text        string `json:"text"`
+				ScheduledAt string `json:"scheduled_at"`
+				Fallback    string `json:"fallback"`
+			} `json:"reminder_card"`
+		}
+		if json.Unmarshal(blocks[0], &out) != nil || out.ReminderCard == nil || out.ReminderCard.ID == "" {
+			continue
+		}
+		card := out.ReminderCard
+		if seen[card.ID] {
+			continue
+		}
+		seen[card.ID] = true
+		fallback := strings.TrimSpace(card.Fallback)
+		if fallback == "" {
+			fallback = "Reminder set · " + card.Name
+		}
+		parts = append(parts, state.Part{
+			Type:        state.PartReminder,
+			ID:          card.ID,
+			Name:        card.Name,
+			Text:        card.Text,
+			ScheduledAt: card.ScheduledAt,
+			Fallback:    fallback,
+		})
+	}
+	return parts
 }

@@ -55,7 +55,7 @@ type Editable struct {
 	RequestedAuthority     *RequestedAuthority `json:"requested_authority,omitempty"`
 	BudgetUSD              float64             `json:"budget_usd"`
 	MaxActiveRuns          int                 `json:"max_active_runs"`
-	MissedRun              string              `json:"missed_run"`
+	MissedRun              string              `json:"missed_run,omitempty"`
 	ExecutionWindowSeconds int64               `json:"execution_window_seconds"`
 	DestinationIDs         []string            `json:"destination_ids"`
 	EndAt                  *time.Time          `json:"end_at,omitempty"`
