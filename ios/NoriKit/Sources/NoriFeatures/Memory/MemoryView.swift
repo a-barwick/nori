@@ -40,19 +40,19 @@ public struct MemoryView: View {
         }
     }
 
-    private var budgetTone: NoriTone {
-        if store.coreMemoryRatio >= 0.98 { return .danger }
-        if store.coreMemoryRatio >= 0.85 { return .warning }
-        return .neutral
-    }
-
     private var budgetBarColor: Color {
         if store.coreMemoryRatio >= 0.98 { return NoriColors.danger }
         if store.coreMemoryRatio >= 0.85 { return NoriColors.warning }
         return NoriColors.accent
     }
 
-    private var budgetPillText: String {
+    private var budgetMetricColor: Color {
+        if store.coreMemoryRatio >= 0.98 { return NoriColors.danger }
+        if store.coreMemoryRatio >= 0.85 { return NoriColors.warning }
+        return NoriColors.ink2
+    }
+
+    private var budgetSummaryText: String {
         let used = Double(store.coreMemoryUsedBytes) / 1024.0
         let total = Double(store.coreMemoryBudgetBytes) / 1024.0
         return String(format: "%.1f / %.0f KB", used, total)
@@ -60,8 +60,8 @@ public struct MemoryView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                NoriSegmentedTabs(
+            VStack(alignment: .leading, spacing: 0) {
+                NoriUnderlineTabs(
                     options: [
                         NoriSegmentOption(value: MemoryLayerTab.core, label: "Core", count: store.coreMemories.count),
                         NoriSegmentOption(value: MemoryLayerTab.logs, label: "Daily Logs", count: totalLogEntries),
@@ -70,23 +70,26 @@ public struct MemoryView: View {
                     selection: $selectedTab
                 )
 
-                switch selectedTab {
-                case .core:
-                    coreMemorySection
-                case .logs:
-                    dailyLogsSection
-                case .working:
-                    workingMemorySection
+                VStack(alignment: .leading, spacing: 14) {
+                    switch selectedTab {
+                    case .core:
+                        coreMemorySection
+                    case .logs:
+                        dailyLogsSection
+                    case .working:
+                        workingMemorySection
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 96)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 28)
         }
         .background(NoriColors.canvas)
         .navigationTitle("Memory")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         #endif
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -144,33 +147,42 @@ public struct MemoryView: View {
 
     @ViewBuilder
     private var coreMemorySection: some View {
-        // 24 KB Core Budget Card
-        NoriCard {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Core budget")
-                        .font(.system(size: 13.5, weight: .bold))
-                        .foregroundStyle(NoriColors.ink)
-                    Spacer()
-                    NoriPill(budgetPillText, tone: budgetTone)
-                }
+        // Slim compact 24 KB Core Budget Strip
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text("Core budget · \(pinnedCount) pinned")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(NoriColors.ink2)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text(budgetSummaryText)
+                    .font(.system(size: 12, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(budgetMetricColor)
+                    .lineLimit(1)
+            }
 
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(NoriColors.fill2)
+            GeometryReader { proxy in
+                let ratio = min(max(store.coreMemoryRatio, 0), 1)
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(NoriColors.fill2)
+                    if ratio > 0 {
                         Capsule()
                             .fill(budgetBarColor)
-                            .frame(width: max(6, proxy.size.width * store.coreMemoryRatio))
+                            .frame(width: max(4, proxy.size.width * ratio))
                     }
                 }
-                .frame(height: 6)
-
-                Text("\(store.coreMemories.count) facts · \(pinnedCount) pinned · always loaded in chat context")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(NoriColors.ink3)
             }
+            .frame(height: 4)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(hex: 0xFAF8FE), in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+        )
 
         // Filter bar
         HStack(spacing: 8) {
@@ -221,51 +233,39 @@ public struct MemoryView: View {
             NoriRows {
                 ForEach(Array(filteredCoreMemories.enumerated()), id: \.element.id) { index, fact in
                     let isLast = index == filteredCoreMemories.count - 1
-                    VStack(alignment: .leading, spacing: 9) {
-                        Text(fact.text)
-                            .font(.system(size: 14))
-                            .foregroundStyle(NoriColors.ink)
-                            .lineSpacing(2)
-                            .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(fact.text)
+                                .font(.system(size: 14))
+                                .foregroundStyle(NoriColors.ink)
+                                .lineSpacing(2)
+                                .fixedSize(horizontal: false, vertical: true)
 
-                        if let source = fact.sourceText, !source.isEmpty {
-                            Text("“\(source)”")
-                                .font(.system(size: 12))
-                                .foregroundStyle(NoriColors.ink2)
-                                .padding(.leading, 8)
-                                .overlay(alignment: .leading) {
-                                    Rectangle()
-                                        .fill(NoriColors.hairlineStrong)
-                                        .frame(width: 2)
-                                }
-                        }
-
-                        // Metadata Pills + Actions (never truncates Pin/Unpin or pills)
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 6) {
-                                coreFactPills(for: fact)
-                                Spacer(minLength: 6)
-                                coreFactActions(for: fact)
-                            }
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 6) {
-                                    coreFactPills(for: fact)
-                                }
-                                HStack(spacing: 6) {
-                                    if !fact.createdAt.isEmpty {
-                                        Text("Saved \(NoriDateFormatting.shortDate(fact.createdAt))")
-                                            .font(.system(size: 11.5))
-                                            .foregroundStyle(NoriColors.ink3)
-                                            .lineLimit(1)
+                            if let source = fact.sourceText, !source.isEmpty {
+                                Text("“\(source)”")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(NoriColors.ink2)
+                                    .padding(.leading, 8)
+                                    .overlay(alignment: .leading) {
+                                        Rectangle()
+                                            .fill(NoriColors.hairlineStrong)
+                                            .frame(width: 2)
                                     }
-                                    Spacer(minLength: 6)
-                                    coreFactActions(for: fact)
-                                }
+                            }
+
+                            let metadata = coreMetadata(for: fact)
+                            if !metadata.characters.isEmpty {
+                                Text(metadata)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(NoriColors.ink2)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        coreFactMenu(for: fact)
                     }
-                    .padding(.horizontal, 13)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 12)
 
                     if !isLast {
@@ -299,32 +299,27 @@ public struct MemoryView: View {
                     NoriRows {
                         ForEach(Array(dayLog.entries.enumerated()), id: \.element.id) { index, entry in
                             let isLast = index == dayLog.entries.count - 1
-                            VStack(alignment: .leading, spacing: 9) {
-                                Text(entry.text)
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(NoriColors.ink)
-                                    .lineSpacing(2)
-                                    .fixedSize(horizontal: false, vertical: true)
+                            HStack(alignment: .top, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(entry.text)
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(NoriColors.ink)
+                                        .lineSpacing(2)
+                                        .fixedSize(horizontal: false, vertical: true)
 
-                                ViewThatFits(in: .horizontal) {
-                                    HStack(spacing: 6) {
-                                        logEntryPills(for: entry)
-                                        Spacer(minLength: 6)
-                                        logEntryActions(date: dayLog.date, entry: entry)
-                                    }
-
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        HStack(spacing: 6) {
-                                            logEntryPills(for: entry)
-                                        }
-                                        HStack(spacing: 6) {
-                                            Spacer(minLength: 0)
-                                            logEntryActions(date: dayLog.date, entry: entry)
-                                        }
+                                    let metadata = logMetadata(for: entry)
+                                    if !metadata.characters.isEmpty {
+                                        Text(metadata)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(NoriColors.ink2)
+                                            .fixedSize(horizontal: false, vertical: true)
                                     }
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                                logEntryMenu(date: dayLog.date, entry: entry)
                             }
-                            .padding(.horizontal, 13)
+                            .padding(.horizontal, 14)
                             .padding(.vertical, 12)
 
                             if !isLast {
@@ -344,10 +339,10 @@ public struct MemoryView: View {
     @ViewBuilder
     private var workingMemorySection: some View {
         if !store.workingMemory.gist.isEmpty {
-            NoriCard(backgroundColor: NoriColors.sidebar, borderColor: NoriColors.hairline) {
+            NoriCard(backgroundColor: Color(hex: 0xFAF8FE), borderColor: NoriColors.hairline) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Active session gist")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(NoriColors.ink2)
                     Text(store.workingMemory.gist)
                         .font(.system(size: 13.5))
@@ -366,42 +361,30 @@ public struct MemoryView: View {
             NoriRows {
                 ForEach(Array(store.workingMemory.items.enumerated()), id: \.element.id) { index, item in
                     let isLast = index == store.workingMemory.items.count - 1
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            NoriPill(item.kind.displayLabel, tone: workingKindTone(item.kind))
-                            Spacer()
-                            Button("Save to Core") {
-                                Task { await store.promoteWorkingMemoryItem(itemID: item.id) }
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.quote)
+                                .font(.system(size: 14))
+                                .foregroundStyle(NoriColors.ink)
+                                .lineSpacing(2)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            if let note = item.note, !note.isEmpty {
+                                Text(note)
+                                    .font(.system(size: 12.5))
+                                    .foregroundStyle(NoriColors.ink2)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundStyle(NoriColors.accent)
-                            .buttonStyle(.plain)
 
-                            Button {
-                                Task { await store.dismissWorkingMemoryItem(itemID: item.id) }
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(NoriColors.ink3)
-                                    .frame(width: 24, height: 24)
-                                    .background(NoriColors.fill1, in: Circle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Dismiss working note")
+                            Text(item.kind.displayLabel)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(workingKindColor(item.kind))
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Text(item.quote)
-                            .font(.system(size: 14))
-                            .foregroundStyle(NoriColors.ink)
-                            .lineSpacing(2)
-
-                        if let note = item.note, !note.isEmpty {
-                            Text(note)
-                                .font(.system(size: 12))
-                                .foregroundStyle(NoriColors.ink2)
-                        }
+                        workingItemMenu(for: item)
                     }
-                    .padding(.horizontal, 13)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 12)
 
                     if !isLast {
@@ -414,98 +397,131 @@ public struct MemoryView: View {
         }
     }
 
-    // MARK: - Row Pill & Action Helpers
+    // MARK: - Quiet Metadata & Row Action Menus
 
-    @ViewBuilder
-    private func coreFactPills(for fact: MemoryFact) -> some View {
-        if fact.pinned {
-            NoriPill("Pinned", tone: .accent)
-                .fixedSize()
+    private func coreMetadata(for fact: MemoryFact) -> AttributedString {
+        var result = AttributedString()
+        var hasSegment = false
+
+        func append(_ text: String, color: Color = NoriColors.ink2, weight: Font.Weight = .regular) {
+            if hasSegment {
+                var separator = AttributedString(" · ")
+                separator.foregroundColor = NoriColors.ink3
+                result.append(separator)
+            }
+            var segment = AttributedString(text)
+            segment.foregroundColor = color
+            if weight != .regular {
+                segment.font = .system(size: 12, weight: weight)
+            }
+            result.append(segment)
+            hasSegment = true
         }
-        if let prov = fact.provenance {
-            NoriPill(prov.displayLabel, tone: provenanceTone(prov))
-                .fixedSize()
+
+        if fact.pinned {
+            append("Pinned", color: NoriColors.accent, weight: .semibold)
         }
         if let section = fact.section, !section.isEmpty {
-            NoriPill(section, tone: .neutral)
-                .fixedSize()
+            append(section)
         }
+        if let provenance = fact.provenance {
+            append(provenance.displayLabel)
+        }
+        if !fact.createdAt.isEmpty {
+            append(NoriDateFormatting.relative(fact.createdAt))
+        }
+        return result
+    }
+
+    private func logMetadata(for entry: MemoryLogEntry) -> AttributedString {
+        var result = AttributedString()
+        var hasSegment = false
+
+        func append(_ text: String, color: Color = NoriColors.ink2, weight: Font.Weight = .regular) {
+            if hasSegment {
+                var separator = AttributedString(" · ")
+                separator.foregroundColor = NoriColors.ink3
+                result.append(separator)
+            }
+            var segment = AttributedString(text)
+            segment.foregroundColor = color
+            if weight != .regular {
+                segment.font = .system(size: 12, weight: weight)
+            }
+            result.append(segment)
+            hasSegment = true
+        }
+
+        if entry.promoted {
+            append("In Core", color: NoriColors.ok, weight: .semibold)
+        }
+        if let section = entry.section, !section.isEmpty {
+            append(section)
+        }
+        append(entry.provenance.displayLabel)
+        if !entry.createdAt.isEmpty, NoriDateFormatting.parse(entry.createdAt) != nil {
+            append(NoriDateFormatting.shortTime(entry.createdAt))
+        }
+        return result
+    }
+
+    private var rowMenuLabel: some View {
+        Image(systemName: "ellipsis")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(NoriColors.ink2)
+            .frame(width: 28, height: 28)
+            .contentShape(Circle())
     }
 
     @ViewBuilder
-    private func coreFactActions(for fact: MemoryFact) -> some View {
-        Button {
-            Task { await store.togglePinMemory(memoryID: fact.id) }
-        } label: {
-            Label(fact.pinned ? "Unpin" : "Pin", systemImage: fact.pinned ? "pin.slash" : "pin")
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(NoriColors.ink2)
-                .padding(.horizontal, 9)
-                .frame(height: 26)
-                .background(NoriColors.fill1, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .fixedSize()
-
+    private func coreFactMenu(for fact: MemoryFact) -> some View {
         Menu {
+            Button {
+                Task { await store.togglePinMemory(memoryID: fact.id) }
+            } label: {
+                Label(fact.pinned ? "Unpin" : "Pin", systemImage: fact.pinned ? "pin.slash" : "pin")
+            }
+
             Button {
                 Task { await store.demoteMemory(memoryID: fact.id) }
             } label: {
                 Label("Demote to Daily Logs", systemImage: "arrow.down.to.line")
             }
 
+            Divider()
+
             Button(role: .destructive) {
                 pendingForgetFact = fact
             } label: {
-                Label("Forget memory", systemImage: "trash")
+                Label("Forget", systemImage: "trash")
             }
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(NoriColors.ink2)
-                .frame(width: 26, height: 26)
-                .background(NoriColors.fill1, in: Circle())
+            rowMenuLabel
         }
-        .fixedSize()
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Memory actions")
     }
 
     @ViewBuilder
-    private func logEntryPills(for entry: MemoryLogEntry) -> some View {
-        NoriPill(entry.provenance.displayLabel, tone: provenanceTone(entry.provenance))
-            .fixedSize()
-        if let section = entry.section, !section.isEmpty {
-            NoriPill(section, tone: .neutral)
-                .fixedSize()
-        }
-    }
-
-    @ViewBuilder
-    private func logEntryActions(date: String, entry: MemoryLogEntry) -> some View {
-        if entry.promoted {
-            NoriPill("In Core", tone: .ok, systemImage: "checkmark")
-                .fixedSize()
-        } else {
-            Button {
-                if entry.provenance == .taskOutcome {
-                    pendingPromoteEntry = PromoteCandidate(date: date, entry: entry)
-                } else {
-                    Task {
-                        await store.promoteLogEntry(date: date, entryID: entry.id, pinned: false)
-                    }
-                }
-            } label: {
-                Text("Promote to Core")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(NoriColors.accent)
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .background(NoriColors.accentSubtle, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
-        }
-
+    private func logEntryMenu(date: String, entry: MemoryLogEntry) -> some View {
         Menu {
+            if !entry.promoted {
+                Button {
+                    if entry.provenance == .taskOutcome {
+                        pendingPromoteEntry = PromoteCandidate(date: date, entry: entry)
+                    } else {
+                        Task {
+                            await store.promoteLogEntry(date: date, entryID: entry.id, pinned: false)
+                        }
+                    }
+                } label: {
+                    Label("Promote to Core", systemImage: "arrow.up.to.line")
+                }
+
+                Divider()
+            }
+
             Button(role: .destructive) {
                 Task {
                     await store.forgetLogEntry(date: date, entryID: entry.id)
@@ -514,31 +530,44 @@ public struct MemoryView: View {
                 Label("Remove from log", systemImage: "trash")
             }
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(NoriColors.ink2)
-                .frame(width: 26, height: 26)
-                .background(NoriColors.fill1, in: Circle())
+            rowMenuLabel
         }
-        .fixedSize()
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Log entry actions")
     }
 
-    private func provenanceTone(_ provenance: MemoryProvenance) -> NoriTone {
-        switch provenance {
-        case .userExplicit: return .accent
-        case .dreamCurated: return .ok
-        case .taskOutcome: return .warning
-        case .preCompactFlush, .summaryEvicted: return .neutral
+    @ViewBuilder
+    private func workingItemMenu(for item: WorkingMemoryItem) -> some View {
+        Menu {
+            Button {
+                Task { await store.promoteWorkingMemoryItem(itemID: item.id) }
+            } label: {
+                Label("Save to Core", systemImage: "arrow.up.to.line")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                Task { await store.dismissWorkingMemoryItem(itemID: item.id) }
+            } label: {
+                Label("Dismiss", systemImage: "xmark")
+            }
+        } label: {
+            rowMenuLabel
         }
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Working note actions")
     }
 
-    private func workingKindTone(_ kind: WorkingMemoryItemKind) -> NoriTone {
+    private func workingKindColor(_ kind: WorkingMemoryItemKind) -> Color {
         switch kind {
-        case .constraint: return .warning
-        case .correction: return .danger
-        case .preference, .commitment: return .accent
-        case .approval, .decision: return .ok
-        case .openQuestion, .fact: return .neutral
+        case .constraint: return NoriColors.warning
+        case .correction: return NoriColors.danger
+        case .preference, .commitment: return NoriColors.accent
+        case .approval, .decision: return NoriColors.ok
+        case .openQuestion, .fact: return NoriColors.ink2
         }
     }
 }
