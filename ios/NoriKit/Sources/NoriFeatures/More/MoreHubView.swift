@@ -6,7 +6,11 @@ public enum MoreRoute: Hashable, Sendable {
     case apps
     case mcpDetail(String)
     case memory
-    case settings(SettingsSection?)
+    case permissions
+    case preferences
+    case appearance
+    case account
+    case diagnostics
 }
 
 public struct MoreHubView: View {
@@ -44,12 +48,6 @@ public struct MoreHubView: View {
         return String(format: "%.1f / %.0f KB", usedKB, budgetKB)
     }
 
-    private var memoryBarColor: Color {
-        if store.coreMemoryRatio >= 0.98 { return NoriColors.danger }
-        if store.coreMemoryRatio >= 0.85 { return NoriColors.warning }
-        return NoriColors.brandPrimary
-    }
-
     private var permissionsDetail: String {
         let count = store.permissions.count
         let noun = count == 1 ? "rule" : "rules"
@@ -60,147 +58,80 @@ public struct MoreHubView: View {
         "\(store.preferences.timezone) · $\(String(format: "%.2f", store.preferences.budgets.taskUSD)) / task"
     }
 
+    private var diagnosticsDetail: String {
+        let host = NoriConfig.serverURL.host() ?? "nori-core"
+        return "\(store.connectionState.rawValue.capitalized) · \(host)"
+    }
+
     public var body: some View {
-        VStack(spacing: 0) {
-            header
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                NoriSectionHeader("Workspace")
+                workspaceRows
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    heroCard
-                        .padding(.top, 12)
+                NoriSectionHeader("Controls")
+                controlsRows
 
-                    NoriSectionHeader("Workspace")
-
-                    workspacePair
-
-                    NoriSectionHeader("Controls & Account")
-
-                    controlsAndAccountRows
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 96)
+                NoriSectionHeader("Account")
+                accountRows
             }
-            .refreshable {
-                async let summaryTask: Void = store.refreshSummary()
-                async let appsTask: Void = store.refreshApps()
-                async let memoryTask: Void = store.refreshMemory()
-                async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
-                _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask)
-            }
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            .padding(.bottom, 96)
         }
-        .background(NoriColors.canvas)
+        .refreshable {
+            async let summaryTask: Void = store.refreshSummary()
+            async let appsTask: Void = store.refreshApps()
+            async let memoryTask: Void = store.refreshMemory()
+            async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
+            _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask)
+        }
+        .background(NoriColors.canvas.ignoresSafeArea())
         .navigationTitle("More")
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         #endif
     }
 
-    // MARK: - Header
+    // MARK: - Workspace
 
-    private var header: some View {
-        HStack(alignment: .center) {
-            Text("More")
-                .font(.system(size: 26, weight: .bold))
-                .foregroundStyle(NoriColors.ink)
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 10)
-        .background(
-            NoriTopWash()
-                .ignoresSafeArea(edges: .top)
-        )
-    }
-
-    // MARK: - Your Nori Hero Card
-
-    private var heroCard: some View {
-        NoriHeroCard(padding: 16) {
-            HStack(alignment: .center, spacing: 14) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(NoriColors.surface)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                        )
-                        .shadow(color: NoriColors.shadowColor, radius: 6, x: 0, y: 2)
-
-                    NoriMark(size: 30, state: store.markState)
-                }
-                .frame(width: 50, height: 50)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Your Nori")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(NoriColors.ink)
-
-                    Text(store.authState.email ?? "Signed in")
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(NoriColors.ink2)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                if store.connectionState == .reconnecting {
-                    NoriPill("Reconnecting", tone: .warning)
-                } else if store.connectionState == .offline {
-                    NoriPill("Offline", tone: .danger)
-                }
-            }
-        }
-    }
-
-    // MARK: - Workspace Pair
-
-    private var workspacePair: some View {
-        HStack(alignment: .top, spacing: 12) {
+    private var workspaceRows: some View {
+        NoriRows {
             NavigationLink(value: MoreRoute.apps) {
-                WorkspaceCard(
-                    icon: "square.grid.2x2",
+                NoriRow(
                     title: "Apps & MCP",
-                    subtitle: appsSummary,
-                    badgeText: store.appsAttentionCount > 0 ? "\(store.appsAttentionCount) attention" : nil,
-                    badgeTone: .warning
-                )
+                    detail: appsSummary,
+                    systemImage: "square.grid.2x2",
+                    iconTone: .accent,
+                    showChevron: true,
+                    showDivider: true
+                ) {
+                    if store.appsAttentionCount > 0 {
+                        NoriPill("\(store.appsAttentionCount) attention", tone: .warning)
+                    }
+                }
             }
             .buttonStyle(.plain)
 
             NavigationLink(value: MoreRoute.memory) {
-                WorkspaceCard(
-                    icon: "brain.head.profile",
+                NoriRow(
                     title: "Memory",
-                    subtitle: memoryRatioString
-                ) {
-                    GeometryReader { proxy in
-                        let fillWidth = store.coreMemoryUsedBytes > 0
-                            ? max(6, proxy.size.width * store.coreMemoryRatio)
-                            : 0
-                        ZStack(alignment: .leading) {
-                            Capsule()
-                                .fill(NoriColors.fill2)
-                            if fillWidth > 0 {
-                                Capsule()
-                                    .fill(memoryBarColor)
-                                    .frame(width: min(proxy.size.width, fillWidth))
-                            }
-                        }
-                    }
-                    .frame(height: 4)
-                }
+                    detail: memoryRatioString,
+                    systemImage: "brain.head.profile",
+                    iconTone: .accent,
+                    showChevron: true,
+                    showDivider: false
+                )
             }
             .buttonStyle(.plain)
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
-    // MARK: - Controls & Account
+    // MARK: - Controls
 
-    private var controlsAndAccountRows: some View {
+    private var controlsRows: some View {
         NoriRows {
-            NavigationLink(value: MoreRoute.settings(.permissions)) {
+            NavigationLink(value: MoreRoute.permissions) {
                 NoriRow(
                     title: "Standing Permissions",
                     detail: permissionsDetail,
@@ -212,7 +143,7 @@ public struct MoreHubView: View {
             }
             .buttonStyle(.plain)
 
-            NavigationLink(value: MoreRoute.settings(.preferences)) {
+            NavigationLink(value: MoreRoute.preferences) {
                 NoriRow(
                     title: "Preferences & Budgets",
                     detail: preferencesDetail,
@@ -224,23 +155,11 @@ public struct MoreHubView: View {
             }
             .buttonStyle(.plain)
 
-            NavigationLink(value: MoreRoute.settings(.appearance)) {
+            NavigationLink(value: MoreRoute.appearance) {
                 NoriRow(
                     title: "Appearance",
-                    detail: "\(appearance.displayLabel) · Theme & preview",
+                    detail: appearance.displayLabel,
                     systemImage: appearance.systemImage,
-                    iconTone: .neutral,
-                    showChevron: true,
-                    showDivider: true
-                )
-            }
-            .buttonStyle(.plain)
-
-            NavigationLink(value: MoreRoute.settings(.account)) {
-                NoriRow(
-                    title: "Account & Diagnostics",
-                    detail: "Google Sign-In · Diagnostics",
-                    systemImage: "person.crop.circle",
                     iconTone: .neutral,
                     showChevron: true,
                     showDivider: false
@@ -249,92 +168,40 @@ public struct MoreHubView: View {
             .buttonStyle(.plain)
         }
     }
-}
 
-// MARK: - Workspace Card
+    // MARK: - Account
 
-private struct WorkspaceCard<Footer: View>: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-    let badgeText: String?
-    let badgeTone: NoriTone
-    private let footer: Footer
-
-    init(
-        icon: String,
-        title: String,
-        subtitle: String,
-        badgeText: String? = nil,
-        badgeTone: NoriTone = .warning,
-        @ViewBuilder footer: () -> Footer
-    ) {
-        self.icon = icon
-        self.title = title
-        self.subtitle = subtitle
-        self.badgeText = badgeText
-        self.badgeTone = badgeTone
-        self.footer = footer()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(NoriColors.accent)
-                    .frame(width: 36, height: 36)
-                    .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                Spacer(minLength: 4)
-
-                if let badgeText {
-                    NoriPill(badgeText, tone: badgeTone)
+    private var accountRows: some View {
+        NoriRows {
+            NavigationLink(value: MoreRoute.account) {
+                NoriRow(
+                    title: "Account",
+                    detail: store.authState.email ?? "Signed in",
+                    systemImage: "person.crop.circle",
+                    iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: true
+                ) {
+                    if store.connectionState == .reconnecting {
+                        NoriPill("Reconnecting", tone: .warning)
+                    } else if store.connectionState == .offline {
+                        NoriPill("Offline", tone: .danger)
+                    }
                 }
             }
+            .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(NoriColors.ink)
-                    .lineLimit(1)
-
-                Text(subtitle)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(NoriColors.ink2)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.9)
+            NavigationLink(value: MoreRoute.diagnostics) {
+                NoriRow(
+                    title: "Diagnostics",
+                    detail: diagnosticsDetail,
+                    systemImage: "waveform.path.ecg",
+                    iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: false
+                )
             }
-
-            Spacer(minLength: 0)
-
-            footer
+            .buttonStyle(.plain)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 124, maxHeight: .infinity, alignment: .topLeading)
-        .background(NoriColors.surface, in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
-                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
-        )
-    }
-}
-
-private extension WorkspaceCard where Footer == EmptyView {
-    init(
-        icon: String,
-        title: String,
-        subtitle: String,
-        badgeText: String? = nil,
-        badgeTone: NoriTone = .warning
-    ) {
-        self.init(
-            icon: icon,
-            title: title,
-            subtitle: subtitle,
-            badgeText: badgeText,
-            badgeTone: badgeTone,
-            footer: { EmptyView() }
-        )
     }
 }

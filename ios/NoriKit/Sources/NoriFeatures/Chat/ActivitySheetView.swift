@@ -213,7 +213,7 @@ public struct ActivitySheetView: View {
         if item.cancelRequested {
             NoriPill("Stopping", tone: .neutral)
         } else if item.bucket == .needsYou {
-            NoriPill("Needs you", tone: .warning)
+            NoriPill("Action needed", tone: .warning)
         } else if item.operations.uncertain > 0 {
             NoriPill("Checking", tone: .warning)
         } else if let progress = item.progress?.trimmingCharacters(in: .whitespacesAndNewlines), !progress.isEmpty {

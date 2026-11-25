@@ -26,7 +26,7 @@ enum WorkStatusPresentation {
             return PillInfo(label: "Stopping", tone: .neutral)
         }
         if item.bucket == .needsYou && item.status == .running {
-            return PillInfo(label: "Needs you", tone: .warning)
+            return PillInfo(label: "Action needed", tone: .warning)
         }
         switch item.status {
         case .running:
@@ -151,17 +151,8 @@ public struct WorkView: View {
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center) {
-                Text("Work")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(NoriColors.ink)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 4)
-
             NoriUnderlineTabs(options: tabOptions, selection: activeTabBinding)
+                .padding(.top, 4)
         }
         .background(
             NoriTopWash()
@@ -186,9 +177,9 @@ public struct WorkView: View {
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // 1. Needs you
+                // 1. Action needed
                 if needsYouTotal > 0 {
-                    NoriSectionHeader("Needs you · \(needsYouTotal)")
+                    NoriSectionHeader("Action needed · \(needsYouTotal)")
                     VStack(spacing: 12) {
                         ForEach(pending) { interaction in
                             InteractionCardView(
@@ -290,15 +281,9 @@ public struct WorkView: View {
                             .strokeBorder(NoriColors.hairline, lineWidth: 1)
                     )
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("All clear")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(NoriColors.ink)
-                    Text("Nothing needs you right now.")
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(NoriColors.ink2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text("All clear")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(NoriColors.ink)
 
                 Spacer(minLength: 0)
             }

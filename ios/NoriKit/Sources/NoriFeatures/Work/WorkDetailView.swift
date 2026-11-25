@@ -144,9 +144,9 @@ public struct WorkDetailView: View {
 
                 if isRunning {
                     // Running State Ordering:
-                    // 2. Pending Needs you cards
+                    // 2. Pending action needed cards
                     if !pendingInteractions.isEmpty {
-                        NoriSectionHeader("Needs you")
+                        NoriSectionHeader("Action needed")
                         VStack(spacing: 10) {
                             ForEach(pendingInteractions) { interaction in
                                 InteractionCardView(

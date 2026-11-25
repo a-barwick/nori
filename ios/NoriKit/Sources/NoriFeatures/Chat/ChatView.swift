@@ -26,6 +26,7 @@ public struct ChatView: View {
     @State private var editingReminder: ReminderEditTarget?
     @State private var visiblePendingInteractionIDs: Set<String> = []
     @FocusState private var isInputFocused: Bool
+    @Namespace private var noriAvatarNamespace
 
     public init(
         store: NoriStore,
@@ -102,13 +103,6 @@ public struct ChatView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            ChatTopBar(
-                markState: effectiveMarkState,
-                needsYouCount: store.needsYouCount,
-                onOpenActivity: onOpenActivity,
-                onNavigateToNeedsYou: onNavigateToNeedsYou
-            )
-
             if isReconnecting {
                 ReconnectingBanner {
                     Task {
@@ -173,8 +167,32 @@ public struct ChatView: View {
 
     // MARK: - Thread
 
+    private func latestNoriMessageID(in units: [ChatThreadUnit]) -> String? {
+        for unit in units.reversed() {
+            switch unit {
+            case .group(_, let isUser, let messages) where !isUser:
+                if let last = messages.last {
+                    return last.id
+                }
+            case .reminder(let message, let parts):
+                let trimmedText = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let matchesFallback = parts.contains {
+                    $0.fallback?.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedText
+                }
+                if !trimmedText.isEmpty && !matchesFallback {
+                    return message.id
+                }
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+
     private var threadArea: some View {
         let units = threadUnits
+        let latestNoriID = latestNoriMessageID(in: units)
+        let activeAvatarTargetID = store.isThinking ? "__thinking__" : (latestNoriID ?? "__none__")
         let primaryPendingInThread: Interaction? = units.compactMap { unit in
             if case .interaction(let item) = unit { return item }
             return nil
@@ -195,24 +213,42 @@ public struct ChatView: View {
                             .padding(.top, 48)
                         } else {
                             ForEach(units) { unit in
-                                threadUnitView(unit)
+                                threadUnitView(unit, activeNoriMessageID: store.isThinking ? nil : latestNoriID)
                             }
                         }
 
                         if shouldShowInlineWorkLine {
-                            InlineWorkLine(
-                                label: workLineLabel,
-                                onDetails: onOpenActivity
-                            )
-                            .padding(.top, 6)
-                            .padding(.bottom, 10)
-                            .id("work-line-anchor")
+                            if store.isThinking {
+                                HStack(alignment: .center, spacing: 8) {
+                                    NoriMark(size: 28, state: .thinking)
+                                        .matchedGeometryEffect(id: "active-nori-avatar", in: noriAvatarNamespace)
+
+                                    InlineWorkLine(
+                                        label: workLineLabel,
+                                        showMark: false,
+                                        onDetails: onOpenActivity
+                                    )
+                                }
+                                .padding(.top, 4)
+                                .padding(.bottom, 10)
+                                .id("work-line-anchor")
+                            } else {
+                                InlineWorkLine(
+                                    label: workLineLabel,
+                                    showMark: true,
+                                    onDetails: onOpenActivity
+                                )
+                                .padding(.top, 6)
+                                .padding(.bottom, 10)
+                                .id("work-line-anchor")
+                            }
                         }
 
                         Color.clear
                             .frame(height: 8)
                             .id("chat-bottom-anchor")
                     }
+                    .animation(.spring(response: 0.38, dampingFraction: 0.82), value: activeAvatarTargetID)
                     .padding(.horizontal, 14)
                     .padding(.top, 12)
                     .padding(.bottom, 12)
@@ -282,7 +318,7 @@ public struct ChatView: View {
     }
 
     @ViewBuilder
-    private func threadUnitView(_ unit: ChatThreadUnit) -> some View {
+    private func threadUnitView(_ unit: ChatThreadUnit, activeNoriMessageID: String?) -> some View {
         switch unit {
         case .separator(let id, let label):
             Text(label)
@@ -315,7 +351,9 @@ public struct ChatView: View {
                     } else {
                         NoriMessageBubble(
                             message: message,
-                            showAvatar: index == 0
+                            showAvatar: message.id == activeNoriMessageID,
+                            markState: effectiveMarkState,
+                            avatarNamespace: noriAvatarNamespace
                         )
                     }
                 }
@@ -337,7 +375,12 @@ public struct ChatView: View {
                     $0.fallback?.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedText
                 }
                 if !trimmedText.isEmpty && !matchesFallback {
-                    NoriMessageBubble(message: message, showAvatar: true)
+                    NoriMessageBubble(
+                        message: message,
+                        showAvatar: message.id == activeNoriMessageID,
+                        markState: effectiveMarkState,
+                        avatarNamespace: noriAvatarNamespace
+                    )
                 }
 
                 ForEach(parts) { part in
@@ -710,87 +753,6 @@ public struct ChatView: View {
     }
 }
 
-// MARK: - Top Navigation Bar
-
-private struct ChatTopBar: View {
-    let markState: MarkState
-    let needsYouCount: Int
-    let onOpenActivity: () -> Void
-    let onNavigateToNeedsYou: () -> Void
-
-    private var hasPendingNeedsYou: Bool {
-        needsYouCount > 0
-    }
-
-    private var titleAccessibilityLabel: String {
-        if needsYouCount == 1 {
-            return "Nori, 1 item needs your attention"
-        } else if needsYouCount > 1 {
-            return "Nori, \(needsYouCount) items need your attention"
-        }
-        return "Nori"
-    }
-
-    private var titleAccessibilityHint: String {
-        hasPendingNeedsYou
-            ? "Navigates to pending tasks needing your review"
-            : "Opens activity overview"
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Button(action: onOpenActivity) {
-                    NoriMark(size: 34, state: markState)
-                        .frame(minWidth: 36, minHeight: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Nori activity")
-                .accessibilityHint("Opens quick-peek activity sheet")
-
-                Button {
-                    if hasPendingNeedsYou {
-                        onNavigateToNeedsYou()
-                    } else {
-                        onOpenActivity()
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Nori")
-                            .font(.system(size: 17.5, weight: .bold))
-                            .foregroundStyle(NoriColors.ink)
-
-                        if hasPendingNeedsYou {
-                            Circle()
-                                .fill(NoriColors.markActivity)
-                                .frame(width: 7.5, height: 7.5)
-                                .transition(.scale.combined(with: .opacity))
-                        }
-                    }
-                    .padding(.vertical, 6)
-                    .padding(.trailing, 8)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(titleAccessibilityLabel)
-                .accessibilityHint(titleAccessibilityHint)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 10)
-            .background(NoriColors.canvas.opacity(0.94))
-            .animation(.easeInOut(duration: 0.2), value: hasPendingNeedsYou)
-
-            Rectangle()
-                .fill(NoriColors.cardBorder)
-                .frame(height: 0.5)
-        }
-    }
-}
-
 // MARK: - Banners
 
 private struct ReconnectingBanner: View {
@@ -1105,11 +1067,14 @@ private struct UserMessageBubble: View {
 private struct NoriMessageBubble: View {
     let message: Message
     let showAvatar: Bool
+    let markState: MarkState
+    let avatarNamespace: Namespace.ID
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             if showAvatar {
-                NoriMark(size: 28, state: .idle)
+                NoriMark(size: 28, state: markState)
+                    .matchedGeometryEffect(id: "active-nori-avatar", in: avatarNamespace)
                     .padding(.top, 2)
             } else {
                 Color.clear
@@ -1553,11 +1518,14 @@ private struct PageBlockCard: View {
 
 private struct InlineWorkLine: View {
     let label: String
+    var showMark: Bool = true
     let onDetails: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            NoriMark(size: 18, state: .thinking)
+            if showMark {
+                NoriMark(size: 18, state: .thinking)
+            }
             Text(label)
                 .font(.system(size: 12.5))
                 .foregroundStyle(NoriColors.ink2)

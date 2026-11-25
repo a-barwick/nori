@@ -125,7 +125,8 @@ public struct NoriRootView: View {
                     onOpenTask: openWorkTask
                 )
                 .tabItem {
-                    Label("Chat", systemImage: "message")
+                    NoriMark.tabBarIcon(selected: selectedTab == .chat)
+                    Text("Chat")
                 }
                 .tag(NoriTab.chat)
 
@@ -160,8 +161,16 @@ public struct NoriRootView: View {
                                 MCPDetailView(store: store, serverID: serverID)
                             case .memory:
                                 MemoryView(store: store)
-                            case .settings(let section):
-                                SettingsView(store: store, initialSection: section)
+                            case .permissions:
+                                StandingPermissionsView(store: store)
+                            case .preferences:
+                                PreferencesBudgetsView(store: store)
+                            case .appearance:
+                                AppearanceSettingsView()
+                            case .account:
+                                AccountSettingsView(store: store)
+                            case .diagnostics:
+                                DiagnosticsSettingsView(store: store)
                             }
                         }
                 }
@@ -278,7 +287,7 @@ public struct NoriRootView: View {
             isActivitySheetPresented = false
             presentedDocument = nil
             selectedTab = .more
-            morePath = [.settings(nil)]
+            morePath = []
         case .workDetail(let taskID):
             openWorkTask(taskID)
         case .activitySheet:

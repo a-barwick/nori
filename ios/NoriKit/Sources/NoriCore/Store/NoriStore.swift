@@ -222,7 +222,7 @@ public final class NoriStore {
             return StatusLine(text: "Thinking…", tone: .normal)
         }
         if needsYouCount > 0 {
-            let label = needsYouCount == 1 ? "1 thing needs you" : "\(needsYouCount) things need you"
+            let label = needsYouCount == 1 ? "1 item needs action" : "\(needsYouCount) items need action"
             return StatusLine(text: label, tone: .needsYou)
         }
         if activeTasksCount > 0 {

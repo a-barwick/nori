@@ -97,7 +97,7 @@ public struct GoalsView: View {
                         onJumpToNeedsYou()
                     } label: {
                         HStack(spacing: 10) {
-                            Text("\(Text("Needs you: ").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(NoriColors.accent))\(Text(blocker.text).font(.system(size: 12.5)).foregroundStyle(NoriColors.ink))")
+                            Text("\(Text("Action needed: ").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(NoriColors.accent))\(Text(blocker.text).font(.system(size: 12.5)).foregroundStyle(NoriColors.ink))")
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -130,7 +130,7 @@ public struct GoalsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Needs you: \(blocker.text). Review in Tasks.")
+                    .accessibilityLabel("Action needed: \(blocker.text). Review in Tasks.")
                 }
 
                 // Completion Criteria Checklist
