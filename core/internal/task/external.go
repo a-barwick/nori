@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"nori/internal/connections"
@@ -16,12 +17,16 @@ import (
 	"nori/internal/state"
 )
 
+// ApprovalExpiry is how long a pending approval card stays valid before expiring.
+const ApprovalExpiry = 30 * time.Minute
+
 // Executor holds what the Tool executor needs for registry tools beyond the engine's own: adapters, the user's
 // Connections and Permission checks. A nil Executor leaves registry tools unavailable, never silently substituted.
 type Executor struct {
-	Adapters    *invoke.Registry
-	Connections *connections.Service
-	Permissions *permissions.Service
+	Adapters     *invoke.Registry
+	Connections  *connections.Service
+	Permissions  *permissions.Service
+	AutoReviewer permissions.AutoReviewer
 	// Optional determinism hooks. Nil falls back to Activities hooks or time.Now / context-aware timer.
 	Now   func() time.Time
 	Sleep func(context.Context, time.Duration) error
@@ -231,11 +236,94 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		if a.Executor.Permissions == nil {
 			return nil, denial(in, string(prepared.Effect), "denied", decision.Reason, nil), nil
 		}
-		out, err := a.requestApproval(ctx, in, run, plan, connectionID)
+		out, err := a.requestApproval(ctx, in, run, plan, connectionID, decision.Reason)
 		return nil, out, err
+	}
+	// Run independent action-boundary AutoReview on tentatively-allowed non-read external actions,
+	// unless already explicitly approved by the user via an approval card.
+	if prepared.Effect != extensions.EffectRead && prepared.Effect != extensions.EffectControl &&
+		!decision.ApprovedByHuman && decision.Source != "approval" {
+		reviewer := a.Executor.AutoReviewer
+		if reviewer == nil && a.Executor.Permissions != nil {
+			reviewer = permissions.DeterministicAutoReviewer{}
+		}
+		if reviewer != nil {
+			review, reviewErr := reviewer.ReviewAction(ctx, permissions.AutoReviewRequest{
+				ToolID:         in.Exec.Tool.ID,
+				Summary:        prepared.Summary,
+				Effect:         string(prepared.Effect),
+				ConnectionID:   connectionID,
+				Recipients:     prepared.Recipients,
+				Resources:      resourceIDs,
+				Origin:         origin,
+				RuleSummaries:  decision.RuleSummaries,
+				DecisionSource: decision.Source,
+				UserSources:    a.verifiedUserSources(ctx, in.RunID, run),
+			})
+			if reviewErr != nil {
+				review = permissions.AutoReviewDecision{
+					Verdict: "ask",
+					Reason:  "Action safety review could not complete; please confirm this action.",
+				}
+			}
+			switch review.Verdict {
+			case "deny":
+				reason := review.Reason
+				if reason == "" {
+					reason = "Blocked by action-boundary safety review."
+				}
+				return nil, denial(in, string(prepared.Effect), "denied", reason, nil), nil
+			case "ask":
+				if a.Executor.Permissions == nil {
+					return nil, denial(in, string(prepared.Effect), "denied", review.Reason, nil), nil
+				}
+				out, err := a.requestApproval(ctx, in, run, plan, connectionID, review.Reason)
+				return nil, out, err
+			}
+		}
 	}
 	plan.authority = decision
 	return plan, nil, nil
+}
+
+func (a *Activities) verifiedUserSources(ctx context.Context, runID string, run state.Run) []string {
+	var out []string
+	if a.Store != nil {
+		if inputs, err := a.Store.ReadTaskSourceInputs(ctx, runID); err == nil {
+			for _, input := range inputs {
+				// Strictly exclude TaskEvent/untrusted inputs; keep only verified user messages.
+				if input.Event != nil {
+					continue
+				}
+				if text := strings.TrimSpace(input.Text); text != "" {
+					out = append(out, text)
+				}
+			}
+		}
+	}
+	if len(out) == 0 {
+		if req := strings.TrimSpace(run.Request); req != "" {
+			out = append(out, req)
+		}
+	}
+	return out
+}
+
+func approvalWarning(effect extensions.Effect, reason string) string {
+	base := "This performs an external action."
+	switch effect {
+	case extensions.EffectSensitiveSend:
+		base = "This sends or shares data outside this chat."
+	case extensions.EffectReversibleWrite:
+		base = "This modifies external records."
+	case extensions.EffectUnknown:
+		base = "This performs an unclassified external action."
+	}
+	trimmed := strings.TrimSpace(reason)
+	if trimmed == "" || trimmed == "This action needs the user's approval." {
+		return base
+	}
+	return base + " " + trimmed
 }
 
 func (e *Executor) adapter(in ToolInput) (invoke.Adapter, bool) {
@@ -245,7 +333,7 @@ func (e *Executor) adapter(in ToolInput) (invoke.Adapter, bool) {
 	return e.Adapters.Lookup(in.Exec.Binding)
 }
 
-func (a *Activities) requestApproval(ctx context.Context, in ToolInput, run state.Run, plan *externalPlan, connectionID string) (map[string]any, error) {
+func (a *Activities) requestApproval(ctx context.Context, in ToolInput, run state.Run, plan *externalPlan, connectionID, reason string) (map[string]any, error) {
 	label := ""
 	if plan.call.Grant != nil {
 		label = plan.call.Grant.Connection.Account.Label
@@ -262,6 +350,16 @@ func (a *Activities) requestApproval(ctx context.Context, in ToolInput, run stat
 		"summary": plan.prepared.Summary, "effect": string(plan.prepared.Effect),
 		"account": map[string]any{"connection_id": connectionID, "label": label}, "resources": resources,
 	}
+	toolID := ""
+	if in.Exec != nil {
+		toolID = in.Exec.Tool.ID
+	}
+	if toolID != "" {
+		payload["tool_id"] = toolID
+	}
+	if warning := approvalWarning(plan.prepared.Effect, reason); warning != "" {
+		payload["warning"] = warning
+	}
 	if len(plan.prepared.Recipients) > 0 {
 		payload["recipients"] = plan.prepared.Recipients
 	}
@@ -270,11 +368,15 @@ func (a *Activities) requestApproval(ctx context.Context, in ToolInput, run stat
 	}
 	data, _ := json.Marshal(payload)
 	revision := in.Revision
-	expires := a.externalNow().Add(24 * time.Hour).UTC()
+	expires := a.externalNow().Add(ApprovalExpiry).UTC()
+	toolTitle := in.Call.Name
+	if toolTitle == "" {
+		toolTitle = toolID
+	}
 	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
 		ID: interactionID("int_", in.OperationID, plan.digest), TaskID: in.RunID, InstructionRevision: &revision, Kind: "approval",
 		Prompt: plan.prepared.Summary, Payload: data, ActionDigest: plan.digest, ExpiresAt: &expires, TaskTitle: clip(run.Request, 200),
-		ConnectionID: connectionID,
+		ConnectionID: connectionID, ToolID: toolID, ToolTitle: toolTitle, ActionClass: string(plan.prepared.Effect), Recipients: plan.prepared.Recipients,
 	}, "")
 	if err != nil {
 		return nil, err

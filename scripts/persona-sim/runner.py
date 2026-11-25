@@ -356,13 +356,15 @@ def connect_sandbox_mcp(base_url: str, user_id: str, mcp_url: str, server_name: 
         })
 
     for perm in initial_perms:
-        tids = [tool_id_by_name[n] for n in (perm.get("tool_names") or []) if n in tool_id_by_name]
+        tool_names = perm.get("tool_names") or []
+        tids = [tool_id_by_name[n] for n in tool_names if n in tool_id_by_name]
+        effect = perm["effect"]
         val: dict[str, Any] = {
-            "effect": perm["effect"],
+            "effect": effect,
             "tool_ids": tids,
             "connection_ids": [],
             "resource_ids": [],
-            "action_classes": perm.get("action_classes") or ["write", "send", "unknown"],
+            "action_classes": _normalize_action_classes(perm.get("action_classes"), effect, tool_names),
             "title": perm["title"],
         }
         if perm.get("recipients"):
@@ -703,10 +705,12 @@ def run_single_persona(
                                 for item in pending_list:
                                     decision = responder.decide_interaction(item, day, local_time)
                                     payload: dict[str, Any] = {"kind": decision["kind"]}
-                                    if decision.get("text"):
+                                    if decision.get("text") and decision["kind"] == "answer":
                                         payload["text"] = decision["text"]
                                     if item.get("action_digest") and decision["kind"] in ("approve", "decline"):
                                         payload["action_digest"] = item["action_digest"]
+                                    if decision["kind"] == "approve" and decision.get("remember_rule"):
+                                        payload["remember_rule"] = True
                                     http_json(base_url, "POST", f"/users/{user_id}/v1/interactions/{item['id']}/responses", {
                                         "request_id": str(uuid4()),
                                         "expected_revision": int(item.get("revision", 0)),
@@ -944,15 +948,40 @@ def _match_query(params: dict[str, Any]) -> str:
     return ""
 
 
+_VALID_ACTION_CLASSES = {"read", "reversible_write", "sensitive_send", "unknown"}
+
+
+def _normalize_action_classes(raw: Any, effect: str, tool_names: list[str] | None = None) -> list[str]:
+    """Map persona shorthand action_classes onto valid contract Effect enum values."""
+    if not raw:
+        if effect == "allow" and tool_names and all(n in READ_ONLY_TOOL_NAMES for n in tool_names):
+            return ["read", "unknown"]
+        return ["reversible_write", "sensitive_send", "unknown"]
+    alias_map = {
+        "write": ["reversible_write"],
+        "send": ["sensitive_send"],
+        "external_write": ["reversible_write", "sensitive_send", "unknown"],
+    }
+    out: list[str] = []
+    for item in raw:
+        mapped = alias_map.get(str(item), [str(item)])
+        for cls in mapped:
+            if cls in _VALID_ACTION_CLASSES and cls not in out:
+                out.append(cls)
+    return out or ["reversible_write", "sensitive_send", "unknown"]
+
+
 def _exec_permission_ui(base_url: str, user_id: str, tool_ids: dict[str, str], action: str, params: dict[str, Any]) -> Any:
     if action in ("create", "create_rule", "add_rule"):
-        tids = [tool_ids[n] for n in (params.get("tool_names") or []) if n in tool_ids]
+        tool_names = params.get("tool_names") or []
+        tids = [tool_ids[n] for n in tool_names if n in tool_ids]
+        effect = params.get("effect", "allow")
         val: dict[str, Any] = {
-            "effect": params.get("effect", "allow"),
+            "effect": effect,
             "tool_ids": tids,
             "connection_ids": [],
             "resource_ids": [],
-            "action_classes": params.get("action_classes") or ["write", "send", "unknown"],
+            "action_classes": _normalize_action_classes(params.get("action_classes"), effect, tool_names),
             "title": params.get("title", "Simulation rule"),
         }
         if params.get("recipients"):
@@ -1141,10 +1170,12 @@ def _exec_interaction_reply(base_url: str, user_id: str, action: str, params: di
     results = []
     for item in pending:
         val: dict[str, Any] = {"kind": kind}
-        if note:
+        if note and kind == "answer":
             val["text"] = str(note)
         if item.get("action_digest") and kind in ("approve", "decline"):
             val["action_digest"] = item["action_digest"]
+        if kind == "approve" and params.get("remember_rule"):
+            val["remember_rule"] = True
         _, res = http_json(base_url, "POST", f"/users/{user_id}/v1/interactions/{item['id']}/responses", {
             "request_id": str(uuid4()), "expected_revision": int(item.get("revision", 0)), "value": val,
         })

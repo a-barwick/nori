@@ -46,7 +46,7 @@
     },
     {
       "title": "Require confirmation before sending emails or creating calendar events",
-      "effect": "deny",
+      "effect": "ask",
       "tool_names": ["email_send", "calendar_create_event"]
     }
   ],

@@ -37,8 +37,12 @@ type Interaction struct {
 	SupersededBy        string          `json:"superseded_by,omitempty"`
 	TaskTitle           string          `json:"task_title,omitempty"`
 	Resolution          *Resolution     `json:"resolution,omitempty"`
-	// Private fields the executor needs when the call is retried; never projected.
-	ConnectionID string `json:"-"`
+	// Private fields the executor needs when the call is retried or remembered; never projected.
+	ConnectionID string   `json:"-"`
+	ToolID       string   `json:"-"`
+	ToolTitle    string   `json:"-"`
+	ActionClass  string   `json:"-"`
+	Recipients   []string `json:"-"`
 }
 
 type Resolution struct {
@@ -50,8 +54,12 @@ type Resolution struct {
 
 type stored struct {
 	Interaction
-	ConnectionID    string `json:"private_connection_id,omitempty"`
-	CommandAccepted bool   `json:"command_accepted,omitempty"`
+	ConnectionID    string   `json:"private_connection_id,omitempty"`
+	ToolID          string   `json:"private_tool_id,omitempty"`
+	ToolTitle       string   `json:"private_tool_title,omitempty"`
+	ActionClass     string   `json:"private_action_class,omitempty"`
+	Recipients      []string `json:"private_recipients,omitempty"`
+	CommandAccepted bool     `json:"command_accepted,omitempty"`
 	// AnswerText is the exact answer command text, so a retried response delivers the identical command.
 	AnswerText      string `json:"answer_text,omitempty"`
 	AnswerID        string `json:"answer_command_id,omitempty"`
@@ -94,7 +102,15 @@ func (s *Service) Open(ctx context.Context, i Interaction, purpose string) (Inte
 		i.Payload = json.RawMessage("{}")
 	}
 	i.Status = "pending"
-	body := stored{Interaction: i, ConnectionID: i.ConnectionID, Purpose: purpose}
+	body := stored{
+		Interaction:  i,
+		ConnectionID: i.ConnectionID,
+		ToolID:       i.ToolID,
+		ToolTitle:    i.ToolTitle,
+		ActionClass:  i.ActionClass,
+		Recipients:   append([]string(nil), i.Recipients...),
+		Purpose:      purpose,
+	}
 	r, err := state.NewResource(CollectionInteractions, i.ID, 0, body, map[string]string{"task_id": i.TaskID, "status": "pending", "kind": i.Kind}, s.now())
 	if err != nil {
 		return Interaction{}, err
@@ -235,12 +251,15 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 			var writes []state.Resource
 			switch {
 			case response.Kind == "decline" && i.Kind == "sign_in":
+				if response.RememberRule {
+					return state.MutationResult{}, state.ErrInvalidResource
+				}
 				text = "The user chose not to sign in now. Continue without that account, or report what could not be done."
 				resolution.Text = text
 			case response.Kind == "signed_in" && i.Kind == "sign_in":
 				resolution.Text, text = response.Text, response.Text
 			case response.Kind == "answer" && (i.Kind == "question" || i.Kind == "sign_in"):
-				if response.Text == "" || len(response.Text) > state.MaxMessageBytes {
+				if response.RememberRule || response.Text == "" || len(response.Text) > state.MaxMessageBytes {
 					return state.MutationResult{}, state.ErrInvalidResource
 				}
 				resolution.Text, text = response.Text, response.Text
@@ -262,6 +281,13 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 				}
 				writes = append(writes, approvalResource)
 				text = "The user approved this exact action; retry the same call unchanged: " + i.Prompt
+				if response.Kind == "approve" && response.RememberRule {
+					ruleResource, err := s.rememberApprovalRule(requestID, i, body)
+					if err != nil {
+						return state.MutationResult{}, err
+					}
+					writes = append(writes, ruleResource)
+				}
 				if response.Kind == "decline" {
 					prior := i
 					prior.ConnectionID = body.ConnectionID
@@ -269,6 +295,9 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 					text = "The user declined this action. Do not attempt it; report what was not done: " + i.Prompt
 				}
 			case response.Kind == "choose_account" && i.Kind == "account_selection":
+				if response.RememberRule {
+					return state.MutationResult{}, state.ErrInvalidResource
+				}
 				var payload struct {
 					Purpose  string   `json:"purpose"`
 					Eligible []string `json:"eligible_connection_ids"`
@@ -370,6 +399,73 @@ func contains(values []string, value string) bool {
 		}
 	}
 	return false
+}
+
+// rememberApprovalRule constructs the standing allow Rule resource committed atomically alongside an
+// "Always allow" approval response. Selectors scope to the approved tool, action class, and account
+// (or "*" when unscoped), with wildcard resources and wildcard recipients when recipient-addressed so
+// subsequent calls to that tool/account auto-allow cleanly (still subject to AutoReview).
+func (s *Service) rememberApprovalRule(requestID string, i Interaction, body stored) (state.Resource, error) {
+	toolID := strings.TrimSpace(body.ToolID)
+	toolTitle := strings.TrimSpace(body.ToolTitle)
+	actionClass := strings.TrimSpace(body.ActionClass)
+	connID := strings.TrimSpace(body.ConnectionID)
+	recipients := body.Recipients
+
+	// Fallback to the stored approval payload if private fields were not populated directly.
+	if toolID == "" || actionClass == "" || (connID == "" && len(recipients) == 0) {
+		var payload struct {
+			ToolID     string   `json:"tool_id"`
+			Effect     string   `json:"effect"`
+			Recipients []string `json:"recipients"`
+			Account    struct {
+				ConnectionID string `json:"connection_id"`
+			} `json:"account"`
+		}
+		if json.Unmarshal(i.Payload, &payload) == nil {
+			if toolID == "" {
+				toolID = strings.TrimSpace(payload.ToolID)
+			}
+			if actionClass == "" {
+				actionClass = strings.TrimSpace(payload.Effect)
+			}
+			if connID == "" {
+				connID = strings.TrimSpace(payload.Account.ConnectionID)
+			}
+			if len(recipients) == 0 && len(payload.Recipients) > 0 {
+				recipients = payload.Recipients
+			}
+		}
+	}
+	if toolID == "" || actionClass == "" {
+		return state.Resource{}, fmt.Errorf("%w: approval interaction lacks tool or action class metadata for always-allow rule", state.ErrInvalidResource)
+	}
+	if toolTitle == "" {
+		toolTitle = toolID
+	}
+	title := "Always allow " + toolTitle
+	if len(title) > 200 {
+		title = title[:200]
+	}
+	connSelector := []string{Wildcard}
+	if connID != "" {
+		connSelector = []string{connID}
+	}
+	var recipientSelector []string
+	if actionClass == "sensitive_send" || len(recipients) > 0 {
+		recipientSelector = []string{Wildcard}
+	}
+	ruleID := "rule_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte("rule:"+requestID)).String(), "-", "")[:20]
+	res, _, err := s.RuleWrites(ruleID, 1, RuleEditable{
+		Effect:        "allow",
+		ToolIDs:       []string{toolID},
+		ConnectionIDs: connSelector,
+		ResourceIDs:   []string{Wildcard},
+		ActionClasses: []string{actionClass},
+		Recipients:    recipientSelector,
+		Title:         title,
+	})
+	return res, err
 }
 
 // MarkDelivered records that the answer command was accepted, so repair does not repeat it.

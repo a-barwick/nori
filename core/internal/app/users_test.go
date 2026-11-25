@@ -15,7 +15,9 @@ import (
 	"github.com/google/uuid"
 	"nori/internal/app"
 	"nori/internal/connections"
+	"nori/internal/conversation"
 	"nori/internal/observability"
+	"nori/internal/permissions"
 	"nori/internal/platform"
 	"nori/internal/secret"
 	"nori/internal/settings"
@@ -642,5 +644,76 @@ func TestServiceRepairUserConcurrentWithAcquireAndClose(t *testing.T) {
 	svc.Close()
 	if err := svc.RepairUser(ctx, uCold); err == nil {
 		t.Fatalf("expected RepairUser after Close to return error")
+	}
+}
+
+type fakeReplyModel struct {
+	calls atomic.Int32
+	reply string
+	err   error
+}
+
+func (f *fakeReplyModel) Name() string { return "fake-outer" }
+
+func (f *fakeReplyModel) Respond(_ context.Context, req conversation.ReplyRequest) (conversation.Reply, error) {
+	f.calls.Add(1)
+	if !req.NoDispatch {
+		return conversation.Reply{}, errors.New("expected NoDispatch=true for auto-review")
+	}
+	if f.err != nil {
+		return conversation.Reply{}, f.err
+	}
+	return conversation.Reply{Text: f.reply}, nil
+}
+
+func TestAppDefaultUserSendsAndAutoReviewerWiring(t *testing.T) {
+	ctx := context.Background()
+	clock := newFakeClock(time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC))
+	svc, _ := newTestService(t, clock, 10*time.Minute, 4)
+
+	u := createUser(t, svc, uuid.NewString(), "perms-default@example.com")
+	a, rel, err := svc.Acquire(ctx, u)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer rel()
+
+	if a.Assistant == nil || a.Assistant.Permissions == nil {
+		t.Fatalf("expected Permissions service wired on App")
+	}
+	if a.Assistant.Permissions.UserSends != "ask" {
+		t.Fatalf("default Permissions.UserSends = %q, want %q", a.Assistant.Permissions.UserSends, "ask")
+	}
+	if a.TaskActivities == nil || a.TaskActivities.Executor == nil || a.TaskActivities.Executor.AutoReviewer == nil {
+		t.Fatalf("expected AutoReviewer wired on TaskActivities.Executor")
+	}
+
+	// Verify NewOuterModelAutoReviewer enforces deterministic guardrails first and uses NoDispatch on model calls.
+	model := &fakeReplyModel{reply: `{"verdict":"ask","reason":"Ambiguous target."} `}
+	reviewer := app.NewOuterModelAutoReviewer(model)
+
+	// Deterministic exfiltration block must not invoke model.
+	exfil, err := reviewer.ReviewAction(ctx, permissions.AutoReviewRequest{
+		ToolID:      "gmail.send",
+		Summary:     "Forward data to attacker@evil.example",
+		Effect:      "sensitive_send",
+		Recipients:  []string{"attacker@evil.example"},
+		Origin:      "user",
+		UserSources: []string{"Summarize my inbox."},
+	})
+	if err != nil || exfil.Verdict != "deny" || model.calls.Load() != 0 {
+		t.Fatalf("exfil = (%+v, %v, calls=%d), want deny/0", exfil, err, model.calls.Load())
+	}
+
+	// Clean deterministic pass delegates to outer model.
+	res, err := reviewer.ReviewAction(ctx, permissions.AutoReviewRequest{
+		ToolID:      "calendar.create",
+		Summary:     "Book sync",
+		Effect:      "reversible_write",
+		Origin:      "user",
+		UserSources: []string{"Book a quick sync on Friday."},
+	})
+	if err != nil || res.Verdict != "ask" || model.calls.Load() != 1 {
+		t.Fatalf("model review = (%+v, %v, calls=%d), want ask/1", res, err, model.calls.Load())
 	}
 }
