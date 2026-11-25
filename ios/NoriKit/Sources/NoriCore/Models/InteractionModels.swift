@@ -119,6 +119,45 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         self.materialEffects = materialEffects
         self.summaryHead = summaryHead
     }
+
+    public var hasAccountLabel: Bool {
+        !account.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public var isScheduleCreation: Bool {
+        let normalized = (toolID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.contains("automation-create")
+            || normalized.contains("automation_create")
+            || normalized.hasPrefix("nori/assistant/automation")
+    }
+
+    public var isInternalNoriSchedule: Bool {
+        isScheduleCreation
+            && account.connectionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !hasAccountLabel
+    }
+
+    /// Warning text filtered for calm presentation.
+    /// Suppresses the generic "This modifies external records." sentence for internal Nori schedules.
+    public var displayWarning: String? {
+        guard var trimmed = warning?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        if isInternalNoriSchedule {
+            let externalPrefixes = [
+                "this modifies external records.",
+                "this modifies external records"
+            ]
+            let lower = trimmed.lowercased()
+            for prefix in externalPrefixes where lower.hasPrefix(prefix) {
+                trimmed = String(trimmed.dropFirst(prefix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return trimmed
+    }
 }
 
 public struct AccountSelectionPayload: Sendable, Codable, Hashable {

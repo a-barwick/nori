@@ -610,7 +610,7 @@ public final class NoriStore {
             } else {
                 session.messages.append(message)
             }
-            if message.role == .assistant {
+            if message.role == .assistant && !message.isSuperseded {
                 isThinking = false
             }
         case .task(_, let run):
@@ -679,6 +679,26 @@ public final class NoriStore {
             return true
         } catch {
             session.messages.removeAll { $0.id == expectedUserMessageID }
+            isThinking = false
+            lastError = error.localizedDescription
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult
+    public func retryMessage(_ message: Message) async -> Bool {
+        isThinking = true
+        lastError = nil
+        do {
+            let updated = try await transport.retryTurn(
+                turnID: message.turnID,
+                messageID: message.id
+            )
+            self.session = updated
+            isThinking = updated.conversation?.processing == true || updated.conversation?.pending == true
+            return true
+        } catch {
             isThinking = false
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
@@ -1085,7 +1105,7 @@ public final class NoriStore {
 
     // MARK: - 3-Layer Memory
 
-    public func addMemory(text: String, section: String? = "Preferences", about: String? = nil, pinned: Bool = false) async {
+    public func addMemory(text: String, section: String? = nil, about: String? = nil, pinned: Bool = false) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         do {
@@ -1096,7 +1116,7 @@ public final class NoriStore {
                 pinned: pinned,
                 requestID: UUID().uuidString.lowercased()
             )
-            coreMemories.insert(receipt.resource, at: 0)
+            upsertCoreMemory(receipt.resource)
             if let working = try? await transport.fetchWorkingMemory() {
                 workingMemory = working
             }
@@ -1320,6 +1340,89 @@ public final class NoriStore {
     }
 
     // MARK: - Automations & Preferences
+
+    private func upsertAutomation(_ automation: Automation) {
+        if let idx = automations.firstIndex(where: { $0.id == automation.id }) {
+            automations[idx] = automation
+        } else {
+            automations.insert(automation, at: 0)
+        }
+    }
+
+    public func loadAutomation(id: String) async -> Automation? {
+        do {
+            let fresh = try await transport.fetchAutomation(id: id)
+            upsertAutomation(fresh)
+            return fresh
+        } catch {
+            return automations.first(where: { $0.id == id })
+        }
+    }
+
+    @discardableResult
+    public func cancelAutomation(automationID: String) async -> Bool {
+        let target: Automation
+        if let fresh = await loadAutomation(id: automationID) {
+            target = fresh
+        } else {
+            showToast("Reminder not found")
+            return false
+        }
+        do {
+            let receipt = try await transport.performAutomationAction(
+                id: automationID,
+                expectedRevision: target.revision,
+                action: "cancel",
+                requestID: UUID().uuidString.lowercased()
+            )
+            upsertAutomation(receipt.resource)
+            showToast("Reminder cancelled")
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult
+    public func updateReminder(automationID: String, title: String, scheduledAt: Date) async -> Automation? {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty else { return nil }
+        guard let current = await loadAutomation(id: automationID) else {
+            showToast("Reminder not found")
+            return nil
+        }
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let isoAt = formatter.string(from: scheduledAt)
+
+        var editable = current.editable
+        let previousTitle = current.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        editable.title = cleanTitle
+        if editable.instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || editable.instruction.trimmingCharacters(in: .whitespacesAndNewlines) == previousTitle {
+            editable.instruction = cleanTitle
+        }
+        editable.trigger = AutomationTrigger(kind: "once", at: isoAt, timezone: nil)
+
+        do {
+            let receipt = try await transport.updateAutomation(
+                id: automationID,
+                expectedRevision: current.revision,
+                value: editable,
+                requestID: UUID().uuidString.lowercased()
+            )
+            upsertAutomation(receipt.resource)
+            showToast("Reminder updated")
+            return receipt.resource
+        } catch {
+            lastError = error.localizedDescription
+            showToast(error.localizedDescription)
+            return nil
+        }
+    }
 
     public func toggleAutomation(automationID: String) async {
         guard let auto = automations.first(where: { $0.id == automationID }) else { return }

@@ -1125,6 +1125,45 @@ struct MemoryReceiptsAndStoreTests {
         #expect(await mock.fetchWorkItemsCallCount >= 1)
         #expect(await mock.fetchSummaryCallCount >= 2)
     }
+
+    @Test("NoriStore retryMessage, updateReminder, and cancelAutomation update state cleanly")
+    @MainActor
+    func storeRetryAndReminderActions() async {
+        let mock = FullMockTransport()
+        let store = NoriStore(transport: mock)
+
+        let failedMsg = Message(
+            id: "turn-9-assistant",
+            turnID: "turn-9",
+            role: .assistant,
+            status: .failed,
+            text: "Model busy",
+            error: ErrorDetail(code: "provider_overloaded", message: "Model busy", retryable: true),
+            createdAt: "2026-11-25T07:01:18Z"
+        )
+        store.session = Session(messages: [failedMsg])
+
+        let retried = await store.retryMessage(failedMsg)
+        #expect(retried == true)
+        #expect(store.isThinking == true)
+        #expect(store.messages.first?.status == .superseded)
+
+        // Update reminder via PUT /v1/automations/{id}
+        let targetDate = Date(timeIntervalSince1970: 1_795_640_400)
+        let updated = await store.updateReminder(
+            automationID: "auto_1234",
+            title: "Check supernino updates at 2 PM",
+            scheduledAt: targetDate
+        )
+        #expect(updated?.id == "auto_1234")
+        #expect(updated?.title == "Check supernino updates at 2 PM")
+        #expect(store.automations.first(where: { $0.id == "auto_1234" })?.title == "Check supernino updates at 2 PM")
+
+        // Cancel reminder via POST /v1/automations/{id}/actions
+        let cancelled = await store.cancelAutomation(automationID: "auto_1234")
+        #expect(cancelled == true)
+        #expect(store.automations.first(where: { $0.id == "auto_1234" })?.status == .cancelled)
+    }
 }
 
 // MARK: - Test Concurrency Helpers
@@ -1244,6 +1283,24 @@ private actor FullMockTransport: NoriTransport {
         }
         return Session(messages: [Message(id: "\(id)-user", turnID: id, role: .user, text: message, createdAt: "2026-11-24T10:00:00Z")])
     }
+    func retryTurn(turnID: String?, messageID: String?) async throws -> Session {
+        if shouldFailSendTurn {
+            throw NoriAPIError(message: "Network dropped", statusCode: 503, retryable: true)
+        }
+        return Session(
+            messages: [
+                Message(
+                    id: messageID ?? "m-err",
+                    turnID: turnID,
+                    role: .assistant,
+                    status: .superseded,
+                    text: "Retrying",
+                    createdAt: "2026-11-24T10:00:00Z"
+                )
+            ],
+            conversation: Conversation(pending: true, processing: true)
+        )
+    }
     func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse { TaskCommandResponse(accepted: true) }
     func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> NoriCore.Attachment {
         NoriCore.Attachment(id: id, name: filename, mediaType: mediaType, size: data.count)
@@ -1358,8 +1415,47 @@ private actor FullMockTransport: NoriTransport {
         return MutationReceipt(requestID: requestID, resource: .workingMemory(WorkingMemory(revision: expectedRevision + 1, items: [])))
     }
     func fetchAutomations() async throws -> [Automation] { [] }
+    func fetchAutomation(id: String) async throws -> Automation {
+        Automation(
+            id: id,
+            revision: 1,
+            title: "Check supernino updates",
+            instruction: "Check supernino updates",
+            status: .enabled,
+            trigger: AutomationTrigger(kind: "once", at: "2026-11-25T20:00:00Z", timezone: nil),
+            missedRun: .latest
+        )
+    }
+    func updateAutomation(id: String, expectedRevision: Int, value: AutomationEditable, requestID: String) async throws -> MutationReceipt<Automation> {
+        let updated = Automation(
+            id: id,
+            revision: expectedRevision + 1,
+            title: value.title,
+            instruction: value.instruction,
+            status: .enabled,
+            trigger: value.trigger,
+            connectionIDs: value.connectionIDs,
+            budgetUSD: value.budgetUSD,
+            maxActiveRuns: value.maxActiveRuns,
+            missedRun: value.missedRun ?? .latest,
+            executionWindowSeconds: value.executionWindowSeconds,
+            destinationIDs: value.destinationIDs,
+            nextAt: value.trigger.at
+        )
+        return MutationReceipt(requestID: requestID, resource: updated)
+    }
     func performAutomationAction(id: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<Automation> {
-        throw NoriAPIError(message: "unimplemented")
+        let status: AutomationStatus = action == "cancel" ? .cancelled : (action == "pause" ? .paused : .enabled)
+        let updated = Automation(
+            id: id,
+            revision: expectedRevision + 1,
+            title: "Check supernino updates",
+            instruction: "Check supernino updates",
+            status: status,
+            trigger: AutomationTrigger(kind: "once", at: "2026-11-25T20:00:00Z", timezone: nil),
+            missedRun: .latest
+        )
+        return MutationReceipt(requestID: requestID, resource: updated)
     }
     func fetchGoals() async throws -> [Goal] { [] }
     func fetchPermissions() async throws -> [PermissionRule] { [] }

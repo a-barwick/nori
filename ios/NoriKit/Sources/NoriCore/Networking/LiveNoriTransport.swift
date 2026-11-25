@@ -496,6 +496,18 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
+    public func retryTurn(turnID: String?, messageID: String?) async throws -> Session {
+        struct RetryBody: Encodable {
+            let turn_id: String?
+            let message_id: String?
+        }
+        return try await sendJSON(
+            "/api/retry",
+            method: "POST",
+            body: RetryBody(turn_id: turnID, message_id: messageID)
+        )
+    }
+
     public func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse {
         try await sendJSON("/api/command", method: "POST", body: command)
     }
@@ -903,6 +915,31 @@ public actor LiveNoriTransport: NoriTransport {
     public func fetchAutomations() async throws -> [Automation] {
         let resp: ListResponse<Automation> = try await getJSON("/v1/automations")
         return resp.items
+    }
+
+    public func fetchAutomation(id: String) async throws -> Automation {
+        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        return try await getJSON("/v1/automations/\(encodedID)")
+    }
+
+    public func updateAutomation(
+        id: String,
+        expectedRevision: Int,
+        value: AutomationEditable,
+        requestID: String
+    ) async throws -> MutationReceipt<Automation> {
+        struct UpdateReq: Encodable {
+            let request_id: String
+            let expected_revision: Int
+            let value: AutomationEditable
+        }
+        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        return try await mutate(
+            "/v1/automations/\(encodedID)",
+            method: "PUT",
+            requestID: requestID,
+            body: UpdateReq(request_id: requestID, expected_revision: expectedRevision, value: value)
+        )
     }
 
     public func performAutomationAction(

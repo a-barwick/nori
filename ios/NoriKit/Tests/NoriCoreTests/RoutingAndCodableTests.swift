@@ -333,6 +333,7 @@ private actor MockApprovalTransport: NoriTransport {
         AsyncThrowingStream { $0.finish() }
     }
     func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session { Session() }
+    func retryTurn(turnID: String?, messageID: String?) async throws -> Session { Session() }
     func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse { TaskCommandResponse(accepted: true) }
     func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> NoriCore.Attachment {
         NoriCore.Attachment(id: id, name: filename, mediaType: mediaType, size: data.count)
@@ -411,6 +412,12 @@ private actor MockApprovalTransport: NoriTransport {
         throw NoriAPIError(message: "Not implemented")
     }
     func fetchAutomations() async throws -> [Automation] { [] }
+    func fetchAutomation(id: String) async throws -> Automation {
+        throw NoriAPIError(message: "Not implemented")
+    }
+    func updateAutomation(id: String, expectedRevision: Int, value: AutomationEditable, requestID: String) async throws -> MutationReceipt<Automation> {
+        throw NoriAPIError(message: "Not implemented")
+    }
     func performAutomationAction(id: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<Automation> {
         throw NoriAPIError(message: "Not implemented")
     }

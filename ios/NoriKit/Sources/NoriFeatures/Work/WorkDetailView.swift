@@ -17,6 +17,7 @@ public struct WorkDetailView: View {
     @State private var continueBudgetUSD: Double = 2.00
     @State private var didInitializeBudget: Bool = false
     @State private var isLoadingDetail: Bool = false
+    @State private var expandedSearchGroupIDs: Set<String> = []
 
     public init(
         store: NoriStore,
@@ -44,6 +45,10 @@ public struct WorkDetailView: View {
 
     private var shownOperations: [OperationProjection] {
         (detail?.operations ?? []).filter { $0.name != "capability_load" }
+    }
+
+    private var groupedActions: [WorkActionEntry] {
+        WorkActionEntry.group(shownOperations)
     }
 
     private var timelineEvents: [RunEvent] {
@@ -287,11 +292,24 @@ public struct WorkDetailView: View {
 
     @ViewBuilder
     private var actionsAuditSection: some View {
-        if !shownOperations.isEmpty {
-            NoriSectionHeader("Actions (\(shownOperations.count))")
+        let entries = groupedActions
+        if !entries.isEmpty {
+            NoriSectionHeader("Actions (\(entries.count))")
             NoriRows {
-                ForEach(Array(shownOperations.enumerated()), id: \.element.id) { idx, op in
-                    operationRow(op: op, showDivider: idx < shownOperations.count - 1)
+                ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
+                    let showDivider = idx < entries.count - 1
+                    switch entry {
+                    case .single(let op):
+                        operationRow(op: op, showDivider: showDivider)
+                    case .webSearchGroup(let groupID, let ops):
+                        webSearchGroupRow(
+                            groupID: groupID,
+                            title: entry.groupTitle ?? "Searched the web (\(ops.count) queries)",
+                            operations: ops,
+                            badge: entry.groupBadge,
+                            showDivider: showDivider
+                        )
+                    }
                 }
             }
         }
@@ -482,47 +500,140 @@ public struct WorkDetailView: View {
     }
 
     private func operationRow(op: OperationProjection, showDivider: Bool) -> some View {
-        let badge = operationOutcomePill(for: op)
         var detailParts: [String] = []
-        if let account = op.accountSummary, !account.isEmpty {
+        if let account = op.accountSummary?.trimmingCharacters(in: .whitespacesAndNewlines), !account.isEmpty {
             detailParts.append(account)
         }
-        detailParts.append("because \(op.displayAuthority)")
-        if let createdAt = op.createdAt, !createdAt.isEmpty {
+        if let authority = op.displayAuthorityLabel {
+            detailParts.append("because \(authority)")
+        }
+        if let createdAt = op.createdAt?.trimmingCharacters(in: .whitespacesAndNewlines), !createdAt.isEmpty {
             detailParts.append(NoriDateFormatting.shortDateTime(createdAt))
         }
 
         return NoriRow(
             title: op.displaySummary,
-            detail: detailParts.joined(separator: " · "),
+            detail: detailParts.isEmpty ? nil : detailParts.joined(separator: " · "),
+            systemImage: op.isWebSearch ? "magnifyingglass" : nil,
+            iconTone: .neutral,
             showChevron: false,
             showDivider: showDivider,
             wrapTitle: true
         ) {
-            NoriPill(badge.label, tone: badge.tone)
+            if let badge = op.statusBadge {
+                NoriPill(badge.label, tone: noriTone(for: badge.tone))
+            }
         }
     }
 
-    private func operationOutcomePill(for op: OperationProjection) -> (label: String, tone: NoriTone) {
-        if let cleared = op.cleared {
-            switch cleared {
-            case "did_not_run": return ("Didn’t run", .neutral)
-            case "read_only": return ("Only read", .neutral)
-            case "answered": return ("Settled", .neutral)
-            case "contained": return ("Contained", .warning)
-            default: break
+    private func webSearchGroupRow(
+        groupID: String,
+        title: String,
+        operations: [OperationProjection],
+        badge: OperationBadge?,
+        showDivider: Bool
+    ) -> some View {
+        let isExpanded = expandedSearchGroupIDs.contains(groupID)
+        let latestTimestamp = operations.compactMap { $0.createdAt?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+
+        return VStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if isExpanded {
+                        expandedSearchGroupIDs.remove(groupID)
+                    } else {
+                        expandedSearchGroupIDs.insert(groupID)
+                    }
+                }
+            } label: {
+                HStack(spacing: 11) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(NoriColors.ink2)
+                        .frame(width: 36, height: 36)
+                        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(NoriTypography.rowTitle)
+                            .foregroundStyle(NoriColors.ink)
+                            .multilineTextAlignment(.leading)
+
+                        if let latestTimestamp {
+                            Text(NoriDateFormatting.shortDateTime(latestTimestamp))
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(NoriColors.ink2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    HStack(spacing: 6) {
+                        if let badge {
+                            NoriPill(badge.label, tone: noriTone(for: badge.tone))
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(NoriColors.ink3)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                }
+                .padding(.horizontal, 13)
+                .padding(.vertical, 12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(isExpanded ? "Collapses web search queries" : "Expands web search queries")
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(operations) { op in
+                        HStack(alignment: .top, spacing: 8) {
+                            Circle()
+                                .fill(NoriColors.hairlineStrong)
+                                .frame(width: 5, height: 5)
+                                .padding(.top, 6)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(op.displaySummary)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(NoriColors.ink)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let createdAt = op.createdAt, !createdAt.isEmpty {
+                                    Text(NoriDateFormatting.shortTime(createdAt))
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(NoriColors.ink3)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            if let opBadge = op.statusBadge {
+                                NoriPill(opBadge.label, tone: noriTone(for: opBadge.tone))
+                            }
+                        }
+                    }
+                }
+                .padding(.leading, 60)
+                .padding(.trailing, 13)
+                .padding(.bottom, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            if showDivider {
+                Rectangle()
+                    .fill(NoriColors.hairline)
+                    .frame(height: 1)
+                    .padding(.leading, 60)
             }
         }
-        switch op.outcome {
-        case .confirmed: return ("Confirmed", .ok)
-        case .pending: return ("Waiting", .warning)
-        case .uncertain: return ("Unconfirmed", .warning)
-        case .failed: return ("Failed", .danger)
-        case .submitted: return ("Submitted", .neutral)
-        case .attempted: return ("In progress", .neutral)
-        case .ready: return ("Ready", .neutral)
-        case .skipped: return ("Skipped", .neutral)
-        case .voided: return ("Cancelled", .neutral)
+    }
+
+    private func noriTone(for tone: OperationBadgeTone) -> NoriTone {
+        switch tone {
+        case .neutral: return .neutral
+        case .ok: return .ok
+        case .warning: return .warning
+        case .danger: return .danger
         }
     }
 

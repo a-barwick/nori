@@ -75,9 +75,9 @@ public enum Effect: String, Sendable, Codable, Hashable, CaseIterable {
     public var displayLabel: String {
         switch self {
         case .read: return "Read"
-        case .reversibleWrite: return "Reversible write"
-        case .sensitiveSend: return "Sensitive send"
-        case .unknown: return "Unknown effect"
+        case .reversibleWrite: return "Change"
+        case .sensitiveSend: return "Send"
+        case .unknown: return "Action"
         case .control: return "Control"
         }
     }
